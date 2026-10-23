@@ -84,6 +84,15 @@ pub struct StructDeclaration {
     /// `eliminate-duplicate-functions` points an entry at the instance a
     /// merged member became.
     pub members: Vec<StructMember>,
+    /// The witness table of each conformance the struct declares to a
+    /// trait with method requirements, sorted by trait.
+    ///
+    /// Upstream's struct conformance carries its witness table: a call
+    /// through a bound whose receiver a substitution made this struct names
+    /// the member the table records for its requirement. A template carries
+    /// them; an elaborated instance carries none, its [`Self::members`]
+    /// naming the instances.
+    pub witness_tables: Vec<WitnessTable>,
 }
 
 /// An associated type with explicit parameters of its own (`comptime
@@ -189,6 +198,42 @@ impl StructDeclaration {
                 fields: obligation.fields.clone(),
             })
     }
+
+    /// The member witnessing the requirement whose dispatch symbol is
+    /// `requirement` (`__trait_dispatch.__len__$ov$SelfRead`).
+    ///
+    /// `None` when no declared conformance's table records it. Every table
+    /// that records the requirement names the same member, the dispatch
+    /// symbol spelling its signature.
+    pub fn witness(&self, requirement: &str) -> Option<&str> {
+        self.witness_tables
+            .iter()
+            .flat_map(|table| &table.witnesses)
+            .find(|witness| witness.requirement == requirement)
+            .map(|witness| witness.member.as_str())
+    }
+}
+
+/// One entry of [`StructDeclaration::witness_tables`].
+///
+/// It is the struct's conformance to `trait_name` and the member satisfying
+/// each of its method requirements, its parents' included, sorted by
+/// requirement.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WitnessTable {
+    pub trait_name: String,
+    pub witnesses: Vec<Witness>,
+}
+
+/// One requirement of a [`WitnessTable`] and the member satisfying it.
+///
+/// The requirement is the dispatch symbol a call through a bound selects it
+/// by ([`TraitRequirement::dispatch`]); the member is the symbol of the
+/// struct's written method or synthesized trait default.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Witness {
+    pub requirement: String,
+    pub member: String,
 }
 
 /// A trait declaration as a conformance decision and an overload lookup

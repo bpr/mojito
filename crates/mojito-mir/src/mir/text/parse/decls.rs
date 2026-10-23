@@ -312,6 +312,20 @@ impl Decoder {
                     .collect()
             })
             .unwrap_or_default();
+        // Schema 1.89 carries the witness tables; an older artifact, or a
+        // struct that declares no conformance with method requirements, has
+        // none.
+        let witness_tables = self
+            .field(fields, "witness_tables")
+            .ok()
+            .and_then(|tables| self.list(tables).ok())
+            .map(|tables| {
+                tables
+                    .iter()
+                    .filter_map(|table| self.witness_table(table))
+                    .collect()
+            })
+            .unwrap_or_default();
         self.unknown(
             fields,
             &[
@@ -331,6 +345,7 @@ impl Decoder {
                 "associated_values",
                 "parameterized_associated_values",
                 "members",
+                "witness_tables",
             ],
         );
         Some(MirStructDeclaration {
@@ -348,6 +363,38 @@ impl Decoder {
             associated_values,
             parameterized_associated_values,
             members,
+            witness_tables,
+        })
+    }
+
+    fn witness_table(
+        &mut self,
+        value: &Value,
+    ) -> Option<mojito_checked::declaration::WitnessTable> {
+        let fields = self.record(value, "witness_table").ok()?;
+        let trait_name = self.req(value, fields, "trait", Self::symbol);
+        let witnesses = self.req(value, fields, "witnesses", |d, v| {
+            let entries = d.list(v).ok()?;
+            Some(
+                entries
+                    .iter()
+                    .filter_map(|entry| {
+                        let entry_fields = d.record(entry, "witness").ok()?;
+                        let requirement = d.req(entry, entry_fields, "requirement", Self::symbol);
+                        let member = d.req(entry, entry_fields, "member", Self::symbol);
+                        d.unknown(entry_fields, &["requirement", "member"]);
+                        Some(mojito_checked::declaration::Witness {
+                            requirement: requirement?,
+                            member: member?,
+                        })
+                    })
+                    .collect(),
+            )
+        });
+        self.unknown(fields, &["trait", "witnesses"]);
+        Some(mojito_checked::declaration::WitnessTable {
+            trait_name: trait_name?,
+            witnesses: witnesses?,
         })
     }
 

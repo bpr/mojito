@@ -3445,6 +3445,7 @@ impl<'a> Specializer<'a> {
                         associated_values: Vec::new(),
                         parameterized_associated_values: Vec::new(),
                         members: Vec::new(),
+                        witness_tables: Vec::new(),
                     });
                 }
                 continue;
@@ -3503,6 +3504,7 @@ impl<'a> Specializer<'a> {
             declaration.associated_values.clear();
             declaration.parameterized_associated_values.clear();
             declaration.members.clear();
+            declaration.witness_tables.clear();
             // Overload-qualified `mut self` entries name the template
             // (for example, a signature-qualified `List.pop`); respell them
             // under the instance so

@@ -159,7 +159,8 @@ use mojito_mir::mir::{
     MirPlace, MirSubscriptCall, MirTerm, Proj, Reg, RegionFrame, UseMode, callable_targets,
     cleanup_slots, count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
     instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
-    loop_breaks_mut, loop_continues_mut, lower_copies_and_moves, name_constructors, region_exit,
+    instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
+    loop_continues_mut, lower_copies_and_moves, member_receiver_ty, name_constructors, region_exit,
     removed_argument_operands, renumber_block_slots, terminator_regs_mut,
     with_removed_argument_forwards_erased, without_removed_arguments,
 };
@@ -1231,13 +1232,13 @@ impl<'c> Inliner<'_, 'c> {
         let instantiated = match reduced {
             Some(body) => {
                 let Instantiated { body, closures } =
-                    instantiated(body, declaration, owner, &arguments)?;
+                    instantiated(body, declaration, owner, &arguments, self.declarations)?;
                 Instantiated {
                     body: Cow::Owned(body.into_owned()),
                     closures,
                 }
             }
-            None => instantiated(full, declaration, owner, &arguments)?,
+            None => instantiated(full, declaration, owner, &arguments, self.declarations)?,
         };
         // A nested body's direct call carries the body's own accesses to
         // the captured places, which the inlined body performs itself.
@@ -2673,6 +2674,7 @@ fn instantiated<'c>(
     declaration: &MirFunctionDeclaration,
     owner: Option<&OwnerInstance<'_>>,
     arguments: &Arguments<'_>,
+    declarations: &MirDeclarations,
 ) -> Option<Instantiated<'c>> {
     if owner.is_none() && declaration.param_decls.is_empty() {
         return arguments.binding().is_empty().then_some(Instantiated {
@@ -2684,10 +2686,91 @@ fn instantiated<'c>(
     let mut function = callee.clone();
     walk_function_mut(&mut instantiation, &mut function).ok()?;
     let closures = instantiation.read_binders(&mut function)?;
+    let mut blocks = std::mem::take(&mut function.blocks);
+    fold_witnesses(&mut blocks, &function, declarations);
+    function.blocks = blocks;
     Some(Instantiated {
         body: Cow::Owned(function),
         closures,
     })
+}
+
+/// Fold each witness lookup the substitution closed in `blocks`.
+///
+/// `blocks` is the body of `function`, whose own blocks are taken. A call
+/// through a bound whose receiver the substitution made a struct is
+/// respelled to the member that struct's witness table records for the
+/// call's requirement, as upstream's substitution folds the witness lookup:
+/// a method call takes the member's own compile-time parameter
+/// declarations, which its arguments bind by position as they bound the
+/// requirement's. A call whose result the checker adapts, or whose result
+/// ABI or parameter count differs from the member's, keeps the dispatch.
+fn fold_witnesses(blocks: &mut [MirBlock], function: &MirFunction, declarations: &MirDeclarations) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            for region in instruction_regions_mut(instruction) {
+                fold_witnesses(region, function, declarations);
+            }
+            let Some(member) = witness_of(instruction, function, declarations) else {
+                continue;
+            };
+            let Some(declaration) = declarations.function(&member) else {
+                continue;
+            };
+            match instruction {
+                MirInstr::MethodCall {
+                    resolved,
+                    reference_result,
+                    result_adapter: None,
+                    param_decls,
+                    ..
+                } if declaration.returns_reference == reference_result.is_some()
+                    && declaration.param_decls.len() == param_decls.len() =>
+                {
+                    *resolved = Some(member);
+                    param_decls.clone_from(&declaration.param_decls);
+                }
+                MirInstr::BinOp { resolved, .. } if declaration.param_decls.is_empty() => {
+                    *resolved = Some(member);
+                }
+                instruction => {
+                    if let Some(call) = instruction_subscript_call_mut(instruction)
+                        && declaration.param_decls.len() == call.param_decls.len()
+                    {
+                        call.target = member;
+                        call.param_decls.clone_from(&declaration.param_decls);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The member `instruction`'s receiver's witness table records for the
+/// requirement it calls through a bound, when it calls one.
+fn witness_of(
+    instruction: &MirInstr,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+) -> Option<String> {
+    let requirement = match instruction {
+        MirInstr::MethodCall {
+            resolved: Some(target),
+            ..
+        }
+        | MirInstr::BinOp {
+            resolved: Some(target),
+            ..
+        } => target,
+        instruction => &instruction_subscript_call(instruction)?.target,
+    };
+    if !mojito_symbol::symbol::is_trait_dispatch_symbol(requirement) {
+        return None;
+    }
+    let receiver = member_receiver_ty(function, instruction)?;
+    declarations
+        .witness(receiver, requirement)
+        .map(str::to_string)
 }
 
 /// The compile-time arguments the subscript `call` at `index` of `block`

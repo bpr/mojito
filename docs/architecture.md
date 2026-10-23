@@ -5623,7 +5623,19 @@ point where a slot declared in a loop is uninitialized again.
   `types::replace_constraint_parameters` for a `comptime if` condition),
   as upstream's `InlineParametric` substitutes through MLIR's
   `AttrTypeReplacer`. An argument over the caller's own binders stays
-  symbolic, for the elaborator to fold in each instance of the caller. A
+  symbolic, for the elaborator to fold in each instance of the caller.
+  The substitution then folds each witness lookup it closed (the private
+  `fold_witnesses`): a method call, a resolved operator, or a subscript
+  through a bound (`symbol::is_trait_dispatch_symbol`) whose receiver
+  (`mir::member_receiver_ty`) is now a struct names the member that
+  struct's witness table records for the requirement
+  (`MirDeclarations::witness`, from `StructDeclaration::witness_tables`,
+  which the checker's `verify_conformance` records per declared
+  conformance), a method call taking the member's own `param_decls`, as
+  upstream's substitution folds the witness. `remove-unused-params` then
+  reads only the struct arguments that member kept. A call with a result
+  adapter, a differing result ABI or parameter count, an iteration step
+  (R1280), and a builtin receiver keep the dispatch. A
   value binder's slot reads become its argument as a constant
   (`Const::of_parameter_value`, or `Const::Param` while symbolic), and the
   slot's drops are deleted. A callable value binder

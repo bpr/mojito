@@ -80,9 +80,9 @@ mod lower_stmt;
 mod node;
 mod param_uses;
 pub use param_uses::{
-    Removals, UnreadParameters, has_no_destructor, lifecycle_callees, method_owner_params,
-    named_lifted_bodies, unread_parameters, unread_parameters_of, with_removed_forwards_erased,
-    without_removed_forwards,
+    Removals, UnreadParameters, has_no_destructor, lifecycle_callees, member_receiver_ty,
+    method_owner_params, named_lifted_bodies, unread_parameters, unread_parameters_of,
+    with_removed_forwards_erased, without_removed_forwards,
 };
 mod struct_reads;
 pub use struct_reads::{
@@ -287,6 +287,20 @@ impl MirDeclarations {
     pub fn struct_member(&self, ty: &Ty, member: &str) -> Option<&str> {
         match ty.kind() {
             TyKind::Struct(name, _) => self.lifecycle_member(name, member),
+            _ => None,
+        }
+    }
+
+    /// The member a call through a bound runs on a `receiver`.
+    ///
+    /// It is the one the receiver's struct (a reference's referent's)
+    /// records in its witness tables for the requirement whose dispatch
+    /// symbol is `requirement`; `None` for any other type, or a struct that
+    /// records none.
+    pub fn witness(&self, receiver: &Ty, requirement: &str) -> Option<&str> {
+        match receiver.kind() {
+            TyKind::Ref(reference) => self.witness(&reference.referent, requirement),
+            TyKind::Struct(name, _) => self.structure(name)?.witness(requirement),
             _ => None,
         }
     }
@@ -1524,6 +1538,12 @@ fn struct_declaration(
             .cloned()
             .unwrap_or_default(),
         members: Vec::new(),
+        witness_tables: checked
+            .conformances()
+            .witness_tables
+            .get(name)
+            .cloned()
+            .unwrap_or_default(),
     })
 }
 

@@ -151,6 +151,7 @@ impl ConformanceOracle {
                     conforms: conforms.clone(),
                     callable_conformance: None,
                     callable_target: None,
+                    witness_tables: Vec::new(),
                     conformance_conditions: conformance_conditions.iter().cloned().collect(),
                     fields: Vec::new(),
                     declared_field_names: fields.iter().map(|field| field.name.clone()).collect(),

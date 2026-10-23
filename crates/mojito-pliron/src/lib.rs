@@ -1688,6 +1688,7 @@ mod tests {
                     parameterized_associated_types: Vec::new(),
                     associated_values: Vec::new(),
                     parameterized_associated_values: Vec::new(),
+                    witness_tables: Vec::new(),
                     members: vec![
                         mojito_mir::mir::MirStructMember {
                             member: "__copyinit__".to_string(),

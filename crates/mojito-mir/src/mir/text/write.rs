@@ -297,6 +297,33 @@ fn write_structs(output: &mut String, declarations: &[MirStructDeclaration]) {
                 })),
             ));
         }
+        // Schema 1.89 carries the witness tables, written only when the
+        // struct declares a conformance with method requirements.
+        if !declaration.witness_tables.is_empty() {
+            entries.push((
+                "witness_tables",
+                list(declaration.witness_tables.iter().map(|table| {
+                    record(
+                        "witness_table",
+                        &[
+                            ("trait", symbol(&table.trait_name)),
+                            (
+                                "witnesses",
+                                list(table.witnesses.iter().map(|witness| {
+                                    record(
+                                        "witness",
+                                        &[
+                                            ("requirement", symbol(&witness.requirement)),
+                                            ("member", symbol(&witness.member)),
+                                        ],
+                                    )
+                                })),
+                            ),
+                        ],
+                    )
+                })),
+            ));
+        }
         let value = record("struct", &entries);
         write!(output, "    {value}").unwrap();
         writeln!(

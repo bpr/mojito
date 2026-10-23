@@ -168,6 +168,7 @@ fn metadata_program() -> MirProgram {
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
             parameterized_associated_values: Vec::new(),
+            witness_tables: Vec::new(),
             members: Vec::new(),
         }],
         functions: vec![MirFunctionDeclaration {

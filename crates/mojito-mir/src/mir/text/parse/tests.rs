@@ -1478,6 +1478,13 @@ fn declaration_metadata_reprints_byte_identically() {
             ("First".into(), generator_read()),
         ],
         parameterized_associated_values: vec![generator_member()],
+        witness_tables: vec![mojito_checked::declaration::WitnessTable {
+            trait_name: "MySized".into(),
+            witnesses: vec![mojito_checked::declaration::Witness {
+                requirement: "__trait_dispatch.__len__$ov$SelfRead".into(),
+                member: "Box.__len__".into(),
+            }],
+        }],
         members: vec![crate::mir::MirStructMember {
             member: "__deinit__".into(),
             symbol: "Box.__deinit__".into(),
@@ -1497,6 +1504,7 @@ fn declaration_metadata_reprints_byte_identically() {
         parameterized_associated_types: Vec::new(),
         associated_values: Vec::new(),
         parameterized_associated_values: Vec::new(),
+        witness_tables: Vec::new(),
         members: Vec::new(),
     };
     let add = MirFunctionDeclaration {

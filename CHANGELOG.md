@@ -635,6 +635,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call through a trait bound that `inline-parametric` inlines at a
+  concrete struct now names the member the struct's conformance witnesses
+  rather than the abstract dispatch (R1052): the checker records each
+  declared conformance's witness table on the struct's declaration (MIR
+  text 1.89, `mojito-package 78`), and the inliner's substitution folds a
+  method call, comparison, or subscript through it, as upstream's
+  substitution folds the witness. A caller that reached the member only
+  through an inlined bound, such as `fbound[n](b: NBox[n])` returning
+  `mylen(b)`, now keeps one instance for every `n`, as on the pin.
 - An `@fieldwise_init` struct's construction calls a synthesized `nodebug`
   `S.__init__`, as upstream's `StructEmitter::synthesizeFieldwiseInit`
   declares one, rather than naming the struct (R1049). Each field that is

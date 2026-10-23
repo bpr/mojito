@@ -1159,6 +1159,7 @@ mod tests {
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
             parameterized_associated_values: Vec::new(),
+            witness_tables: Vec::new(),
             members: Vec::new(),
         });
         let boxed = TyKind::Struct("Box".into(), vec![TyArg::Val(CtValue::Expr(n.clone()))]);
@@ -1379,6 +1380,7 @@ mod tests {
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
             parameterized_associated_values: Vec::new(),
+            witness_tables: Vec::new(),
             members: Vec::new(),
         });
         let mut errors = Vec::new();

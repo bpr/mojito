@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1280**.
+Next free ID: **R1283**.
 
 ## Ordered Work
 
@@ -668,28 +668,52 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1277, R1082.
   - Model: Fable, Not Planned.
 
-- [ ] **R1052 An inlined call through a bound still names the trait
-  dispatch after its receiver is concrete**
+- [ ] **R1280 An iteration step through a bound keeps its abstract
+  protocol after inlining**
 
-  When `inline-parametric` substitutes `NBox[n]` for a callee's `T:
-  MySized`, the inlined `value.__len__()` keeps `resolved:
-  "__trait_dispatch.__len__$ov$SelfRead"`, where upstream's substitution
-  folds the witness to `NBox.__len__`.
-  - `Walker::member_call` (`mir::param_uses`) reads only the member's kept
-    struct arguments when the callee's owner is the receiver's struct, so
-    the unfolded call reads `NBox[n]` whole and the caller keeps `n`.
-  - Fold it the Mojo way: the checker records each declared conformance's
-    witness table (requirement dispatch symbol to member symbol) on the
-    `StructDeclaration`, and the inliner's substitution respells
-    `resolved` through it; never compose `"{struct}.{method}"` (R1027).
-  - The same holds for an operator's `resolved`, a subscript call, and an
-    iterator step through a bound.
-  - The new declaration field bumps the MIR text version.
-  - Probe: `fal[n](b: NBox[n])` returning `mylen(b)`, with
-    `@always_inline("nodebug") def mylen[T: MySized](value: T)` returning
-    `value.__len__()` and `NBox.__len__` `@no_inline`; done when `fal`
-    shows `removed_params` and one instance on both backends.
-  - Found while planning R1021 (2026-10-16).
+  When `inline-parametric` substitutes `List[Int]` for a callee's `T:
+  Iterable`, the inlined `for x in a` keeps `prepare:
+  ["__trait_dispatch.__iter__$ov$SelfRead"]` and `iter.try_next { target:
+  "__iterator_dispatch.__next__" }`, where upstream's substitution folds
+  both witnesses.
+  - The inliner's witness fold (`inline_parametric::fold_witnesses`) skips
+    `GetIter` and `TryNext`: the iterator slot is typed by an associated
+    projection (`T.IteratorType[o]`) only the elaborator solves.
+  - `prepare` names the borrowed alternate
+    (`symbol::borrowed_iterator_dispatch_alternate`) of `Iterable`'s
+    `__iter__$ov$SelfRef` requirement, which no witness table records.
+  - Fold both at once, through `StructDeclaration::witness_tables`, once
+    the substitution closes `T.IteratorType[o]` at a concrete struct; the
+    `abstract_value_next` rules in `mir/verify/calls.rs` then meet only
+    an unfolded step.
+  - Probe: `fc(xs: List[Int])` returning `count(xs)`, for
+    `@always_inline("nodebug") def count[T: Iterable](a: T) -> Int`
+    counting `for _ in a`; done when `fc`'s inlined body names
+    `List.__iter__` and the iterator's `__next__`.
+  - Found while landing R1052 (2026-10-22).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1281 The elaborator resolves a call through a bound by composing
+  `{struct}.{method}`**
+
+  A trait dispatch the elaborator meets at a concrete receiver is resolved
+  by respelling the dispatch symbol under the receiver's struct name, where
+  upstream's elaborator specializes the conformance's witness lookup.
+  - The sites: `Specializer`'s call arm (`mono/specializer.rs`) through
+    `symbol::resolve_method_symbol`/`retarget_method_symbol`, then
+    `Instances::dispatched_overload_target`.
+  - Read `StructDeclaration::witness` (the template's table) instead, and
+    delete `dispatched_overload_target`; never compose the name (R1027).
+  - Compiler-known traits other than `Equatable`/`Comparable` (`Hashable`,
+    `Writable`, `Copyable.copy`) have no declaration, so their conformances
+    record no table; their dispatches keep the composed name until the
+    bundled library declares them.
+  - The VM's retargeting of a surviving dispatch is R204's.
+  - Probe: `assets/ok/trait_bound_comparison_drop_order.mojo` and
+    `comparable_ordered_algorithms.mojo` print the same on both backends
+    with `retarget_method_symbol` gone from `native::mono`.
+  - Found while landing R1052 (2026-10-22).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -701,9 +725,8 @@ which names the upstream pass each one follows. Each is measured by the
   because `__len__` is `_REMOVED_ARG`.
   - Not landable yet: `len(b)` is an undeclared builtin `call`, which
     `mir::unread_parameters` reads whole, and the pin's reduction needs
-    the library `len` (R988), plain `@always_inline` inlining (R923;
-    a `@no_inline` `len` lookalike keeps `n` on the pin), and the folded
-    witness after inlining (R1052).
+    the library `len` (R988) and plain `@always_inline` inlining (R923;
+    a `@no_inline` `len` lookalike keeps `n` on the pin).
   - Do not special-case `len` in `param_uses` or lower it as
     `b.__len__()` in the checker: both would freeze the builtin R988
     removes.
@@ -712,7 +735,7 @@ which names the upstream pass each one follows. Each is measured by the
     `assets/ok/member_call_unread_struct_parameter_instances.mojo`,
     pin-checked.
   - Found while landing R998 (2026-10-15).
-  - Depends on R1051, R988, R923, R1052.
+  - Depends on R1051, R988, R923.
   - Model: Fable, Not Planned.
 
 - [ ] **R983 With the pre-elaboration pipeline off, a capturing callable
@@ -4025,6 +4048,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1282 An arithmetic operator through a user trait bound is
+  rejected**
+
+  Problem: `def add2[T: Addy](a: T, b: T) -> T: return a + b`, for `trait
+  Addy` declaring `def __add__(self, other: Self) -> Self`, fails with
+  "operator '+' is not defined for T and T", where the pin prints `7` for
+  `add2(Box[1](3), Box[1](4)).x`.
+  - The checker dispatches an operator through a bound only for a
+    comparison (`operators.rs::bound_comparison_target`, `Equatable` and
+    `Comparable`); any other dunder a bound's trait declares is not looked
+    up.
+  - Select the requirement the bound's trait declares for the operator's
+    dunder, as a method call through a bound does, and record its
+    dispatch symbol as the `binary`'s `resolved`; the inliner's witness
+    fold then folds it as it folds a comparison.
+  - Found while planning R1052 (2026-10-22).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 - [ ] **R394 A requirement with its own value parameter cannot be called
   through a bound**
 
@@ -4035,6 +4077,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The call on the conformer itself (`M().mk[2]()`) runs.
   - The result type through the bound keeps the requirement's binder
     instead of the call's argument.
+  - The cause: a call through a bound records no instantiation of the
+    requirement's own parameters (`record_method_call_instantiation` needs
+    a struct receiver), so `instantiated_args` stays empty and the
+    bracket argument keeps a run-time register.
+  - Probe: `fp[n](b: PBox[n])` returning `pk(b)`, for
+    `@always_inline("nodebug") def pk[T: Pick](a: T)` returning
+    `a.pick[2]()`: the inliner folds the call to `PBox.pick`, but `fp`
+    keeps `n` (two instances), where the pin and the direct call
+    `b.pick[2]()` remove it.
   - Found while landing a function applied in a signature (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.

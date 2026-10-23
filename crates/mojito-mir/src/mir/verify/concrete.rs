@@ -50,7 +50,8 @@ pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<Str
 /// declaration the bodies are checked against. A declaration's availability
 /// clauses and conformance conditions are decided when it is instantiated,
 /// and an instance has no enclosing binders, so none survives. A struct's
-/// member table names only lifecycle members the program defines.
+/// member table names only lifecycle members the program defines, and its
+/// witness tables, which name template members, are gone.
 pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<String>) {
     for (name, function) in &program.functions {
         errors.extend(concrete_function_findings(name, function));
@@ -87,6 +88,11 @@ pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<Str
         require_no_parameters(&head, &declaration.param_decls, errors);
         for (field, ty) in &declaration.fields {
             require_concrete(&head, &format!("field `{field}`"), ty, errors);
+        }
+        if !declaration.witness_tables.is_empty() {
+            errors.push(format!(
+                "{head} still carries witness tables, which elaborated MIR carries none of"
+            ));
         }
         for (position, entry) in declaration.members.iter().enumerate() {
             let lifecycle = crate::mir::LIFECYCLE_MEMBERS.contains(&entry.member.as_str());

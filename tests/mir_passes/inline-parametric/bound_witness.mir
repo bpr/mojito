@@ -1,0 +1,99 @@
+mojito-mir 1.89
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("bw.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: NBox, fields: [field { name: x, type: Int }], mut_self_methods: [], fieldwise_init: true, param_decls: [value_param { owner: "NBox", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: MySized, conditions: [constraint_bool(true)] }, conformance { trait: Copyable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], witness_tables: [witness_table { trait: MySized, witnesses: [witness { requirement: "__trait_dispatch.__len__$ov$SelfRead", member: "NBox.__len__" }] }] }
+  ],
+  decls: [
+    decl { lowered_name: "NBox.__len__", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: never },
+    decl { lowered_name: fal, param_names: [b], param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [value_param { owner: "fal", slot: 0, name: n, type: Int, default: absent, callable_default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: mylen, param_names: [value], param_types: [param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "mylen", slot: 0, name: T, bounds: [MySized], trait_param: absent, callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug }
+  ],
+  functions: [
+      fn {
+        name: "NBox.__len__",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: NBox, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 191, end: 197, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 191, end: 197, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              value.copy { dest: %r1, value: %r0 }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: mylen,
+        registers: 2,
+        vars: 1,
+        var_names: [value],
+        params: 1,
+        param_types: [param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent } }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 277, end: 282, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 277, end: 292, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }), projections: [], type: present(param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }), through: absent } },
+              call.method { dest: %r1, recv: %r0, method: __len__, resolved: present("__trait_dispatch.__len__$ov$SelfRead"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }), projections: [], type: present(param { owner: "mylen", slot: 0, name: T, bounds: [MySized], callable_bound: absent }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: fal,
+        registers: 2,
+        vars: 1,
+        var_names: [b],
+        params: 1,
+        param_types: [struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 348, end: 349, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 342, end: 350, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              call { dest: %r1, func: mylen, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(struct_type { name: NBox, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fal", slot: 0, name: n, type: meta_value(Int) }))] })], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      }
+  ]
+}

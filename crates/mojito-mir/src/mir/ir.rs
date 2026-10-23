@@ -400,6 +400,17 @@ pub fn instruction_subscript_call(instruction: &MirInstr) -> Option<&MirSubscrip
     }
 }
 
+/// [`instruction_subscript_call`], mutably.
+pub fn instruction_subscript_call_mut(instruction: &mut MirInstr) -> Option<&mut MirSubscriptCall> {
+    match instruction {
+        MirInstr::Index { call, .. }
+        | MirInstr::Slice { call, .. }
+        | MirInstr::MultiIndex { call, .. } => call.as_deref_mut(),
+        MirInstr::MultiSet { call, .. } => Some(call),
+        _ => None,
+    }
+}
+
 /// Add every register read in `blocks`, their regions included, to
 /// `reads`. Each register an instruction names counts as a read but its
 /// own results, so an operand no enumeration classifies is kept alive.
@@ -3593,6 +3604,7 @@ mod tests {
                 parameterized_associated_types: Vec::new(),
                 associated_values: Vec::new(),
                 parameterized_associated_values: Vec::new(),
+                witness_tables: Vec::new(),
                 members: Vec::new(),
             };
         let struct_ty = |name: &str| Ty::new(TyKind::Struct(name.into(), Vec::new()));

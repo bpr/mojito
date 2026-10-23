@@ -4233,6 +4233,9 @@ pub struct ConformanceFacts {
     /// (`OwnedMem`) for any other. A struct with a `ref` field has none
     /// ([`CheckedProgram::synthesizes_fieldwise_constructor`]).
     pub fieldwise_conventions: HashMap<String, Vec<Option<ArgConvention>>>,
+    /// Each own struct's witness tables; see
+    /// [`crate::declaration::StructDeclaration::witness_tables`].
+    pub witness_tables: HashMap<String, Vec<crate::declaration::WitnessTable>>,
 }
 
 /// One struct's conformance to one trait: it holds for the instances whose

@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.88
+mojito-mir 1.89
 ```
 
-The writer emits 1.88. The reader accepts 1.0 through 1.88; *Schema 1.0*
+The writer emits 1.89. The reader accepts 1.0 through 1.89; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -368,6 +368,11 @@ included, holds one block, which the verifier requires, as upstream's
 minor that spells none of them, and names one it meets as an unknown
 terminator.
 
+Minor version 89 adds a struct declaration's `witness_tables`, the
+witness table of each conformance it declares, which `inline-parametric`
+folds a call through a bound by (*Struct declarations*). An older artifact
+carries none, which the reader takes as empty.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -539,6 +544,20 @@ naming a function the program does not define, a key that is no
 lifecycle or dispatched member, or a second entry for a lifecycle member.
 The writer omits the field when it is empty, the reader takes an absent
 field as empty.
+
+A struct that declares a conformance to a trait with method requirements
+carries `witness_tables: [witness_table { trait: symbol, witnesses:
+[witness { requirement: symbol, member: symbol }, ...] }, ...]` after
+`members` (schema 1.89), as upstream's struct conformance carries its
+witness table: one table per declared conformance, sorted by trait, each
+entry keyed by the requirement's dispatch symbol
+(`__trait_dispatch.__len__$ov$SelfRead`) and naming the template member
+that satisfies it, a written method or a synthesized trait default, its
+parents' requirements included. A call through a bound whose receiver
+`inline-parametric`'s substitution made the struct names the member its
+table records. Elaborated MIR carries none, which the concrete verifier
+checks. The writer omits the field when it is empty, the reader takes an
+absent field as empty.
 
 ### Function declarations
 
@@ -1159,10 +1178,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 77`.
+MLIR bytecode throughout. The format line is `mojito-package 78`.
 
 ```text
-mojito-package 77
+mojito-package 78
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

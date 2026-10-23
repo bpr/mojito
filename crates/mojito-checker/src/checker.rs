@@ -2301,6 +2301,9 @@ struct StructInfo {
     /// methods with the same arity require the signature-qualified target to
     /// survive into indirect-call MIR.
     callable_target: Option<String>,
+    /// The witness table of each declared conformance, verified at
+    /// definition; see [`mojito_checked::declaration::StructDeclaration::witness_tables`].
+    witness_tables: Vec<mojito_checked::declaration::WitnessTable>,
     #[serde(serialize_with = "interface::sorted")]
     conformance_conditions: HashMap<String, Expr>,
     /// Declared fields, in order (drives the fieldwise constructor).

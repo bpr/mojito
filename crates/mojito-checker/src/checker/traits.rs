@@ -6,6 +6,8 @@
 use super::decorators::DecoratorSite;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::declaration::{Witness, WitnessTable, compiler_trait_declaration};
+use mojito_symbol::symbol::{TRAIT_DISPATCH, qualified_method_symbol};
 use mojito_types::conformance::{LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule};
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 
@@ -503,6 +505,7 @@ impl Checker {
                 conforms: declaration.conforms.to_vec(),
                 callable_conformance: None,
                 callable_target: None,
+                witness_tables: Vec::new(),
                 conformance_conditions: declaration
                     .conformance_conditions
                     .iter()
@@ -970,9 +973,16 @@ impl Checker {
     ) -> Result<(), TypeError> {
         let name = declaration.name;
         let methods = declaration.methods;
-        // Verify each declared conformance now that the method signatures exist.
+        // Verify each declared conformance now that the method signatures
+        // exist, recording each one's witness table.
+        let mut witness_tables = Vec::new();
         for tr in declaration.conforms {
-            self.verify_conformance(name, tr, self_ty)?;
+            witness_tables.extend(self.verify_conformance(name, tr, self_ty)?);
+        }
+        witness_tables.sort_by(|left: &WitnessTable, right| left.trait_name.cmp(&right.trait_name));
+        witness_tables.dedup_by(|left, right| left.trait_name == right.trait_name);
+        if let Some(info) = self.structs.get_mut(name) {
+            info.witness_tables = witness_tables;
         }
         if let Some(expected) = self
             .structs
@@ -1095,15 +1105,19 @@ impl Checker {
     }
 
     /// Verify that struct `name` (whose `Self` type is `self_ty`) implements
-    /// every method required by trait `tr`, with a matching signature. A few
-    /// built-in marker traits have real lifecycle semantics; other built-ins
-    /// remain shallow recognized bounds until their corresponding feature grows.
+    /// every method required by trait `tr`, with a matching signature.
+    ///
+    /// Answers the conformance's witness table: the member satisfying each
+    /// method requirement, keyed by the requirement's dispatch symbol. A
+    /// trait with no method requirements has no table. A few built-in marker
+    /// traits have real lifecycle semantics; other built-ins remain shallow
+    /// recognized bounds until their corresponding feature grows.
     pub(super) fn verify_conformance(
         &self,
         name: &str,
         tr: &str,
         self_ty: &Ty,
-    ) -> Result<(), TypeError> {
+    ) -> Result<Option<WitnessTable>, TypeError> {
         // Validate the declaration shape even for builtin marker traits.
         // Truth is evaluated at each concrete use, but a malformed
         // `(condition, message)` tuple is always a declaration error. The
@@ -1121,10 +1135,11 @@ impl Checker {
         // In production `Iterator`/`Iterable` are ordinary stdlib traits; the
         // builtin compatibility spelling must not bypass their requirements.
         if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
-            return self.verify_builtin_conformance(name, tr, self_ty, declared_condition.as_ref());
+            self.verify_builtin_conformance(name, tr, self_ty, declared_condition.as_ref())?;
+            return Ok(self.compiler_trait_witness_table(name, tr, self_ty));
         }
         let Some(trait_info) = self.traits.get(tr) else {
-            return Ok(());
+            return Ok(None);
         };
         let struct_info = self.structs.get(name).ok_or_else(|| {
             TypeError::InvariantViolation(format!(
@@ -1136,6 +1151,7 @@ impl Checker {
             .get(tr)
             .map(|condition| self.compile_condition(&struct_info.decls, condition))
             .transpose()?;
+        let mut witnesses = Vec::new();
         for (mname, req_sigs) in &trait_info.methods {
             let got_sigs =
                 struct_info
@@ -1148,22 +1164,28 @@ impl Checker {
                     })?;
             for req_sig in req_sigs {
                 let want = self.requirement_at(req_sig, self_ty);
-                if !got_sigs.iter().any(|got| {
-                    self.method_satisfies_requirement_under(
-                        got,
-                        &want,
-                        conformance_assumption.as_ref(),
-                        mname == "__next__",
-                    )
-                }) {
-                    return Err(TypeError::TraitMethodMismatch {
+                let got = got_sigs
+                    .iter()
+                    .find(|got| {
+                        self.method_satisfies_requirement_under(
+                            got,
+                            &want,
+                            conformance_assumption.as_ref(),
+                            mname == "__next__",
+                        )
+                    })
+                    .ok_or_else(|| TypeError::TraitMethodMismatch {
                         struct_name: name.to_string(),
                         trait_name: tr.to_string(),
                         method: mname.clone(),
-                    });
-                }
+                    })?;
+                witnesses.push(Witness {
+                    requirement: method_lowered_name(TRAIT_DISPATCH, mname, req_sig, None),
+                    member: qualified_method_symbol(name, mname, got.overload.as_deref()),
+                });
             }
         }
+        witnesses.sort_by(|left, right| left.requirement.cmp(&right.requirement));
         for (member, req) in &trait_info.comptime_members {
             let witness_constraints = struct_info
                 .parameterized_associated
@@ -1312,7 +1334,52 @@ impl Checker {
                 });
             }
         }
-        Ok(())
+        Ok((!witnesses.is_empty()).then(|| WitnessTable {
+            trait_name: tr.to_string(),
+            witnesses,
+        }))
+    }
+
+    /// The witness table of struct `name`'s conformance to the
+    /// compiler-declared trait `tr` (`Comparable`).
+    ///
+    /// It records, its parents' requirements included, each requirement the
+    /// struct declares a method for whose one parameter is the struct.
+    fn compiler_trait_witness_table(
+        &self,
+        name: &str,
+        tr: &str,
+        self_ty: &Ty,
+    ) -> Option<WitnessTable> {
+        let methods = &self.structs.get(name)?.methods;
+        let mut pending = vec![compiler_trait_declaration(tr)?];
+        let mut witnesses = Vec::new();
+        while let Some(declaration) = pending.pop() {
+            pending.extend(
+                declaration
+                    .refines
+                    .iter()
+                    .filter_map(|parent| compiler_trait_declaration(parent)),
+            );
+            witnesses.extend(declaration.requirements.iter().filter_map(|requirement| {
+                let got = methods.get(&requirement.name)?.iter().find(|got| {
+                    got.has_self && matches!(got.params.as_slice(), [param] if param == self_ty)
+                })?;
+                Some(Witness {
+                    requirement: requirement.dispatch.clone(),
+                    member: qualified_method_symbol(
+                        name,
+                        &requirement.name,
+                        got.overload.as_deref(),
+                    ),
+                })
+            }));
+        }
+        witnesses.sort_by(|left, right| left.requirement.cmp(&right.requirement));
+        (!witnesses.is_empty()).then(|| WitnessTable {
+            trait_name: tr.to_string(),
+            witnesses,
+        })
     }
 
     pub(super) fn method_satisfies_requirement_under(
@@ -2175,6 +2242,11 @@ impl Checker {
             })
             .map(|(name, info)| (name.clone(), self.fieldwise_conventions(&info.fields)))
             .collect();
+        let witness_tables = own
+            .iter()
+            .filter(|(_, info)| !info.witness_tables.is_empty())
+            .map(|(name, info)| (name.clone(), info.witness_tables.clone()))
+            .collect();
         mojito_checked::checked::ConformanceFacts {
             traits,
             structs,
@@ -2184,6 +2256,7 @@ impl Checker {
             associated_values,
             parameterized_values,
             fieldwise_conventions,
+            witness_tables,
         }
     }
 

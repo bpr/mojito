@@ -6,8 +6,16 @@
 # prefix operator whose `__invert__` ignores `n` (`finv`), a generic method
 # (`fput`, keyed on its inferred `T`; `fk`, on its explicit `k`), a `for`
 # loop over an iterator `__iter__` builds from `self.v` (`fit`), and `ft`,
-# whose `TBox[T].again` returns `self.copy()`. `fneg`, whose `__neg__`
-# reads `Self.n`, keeps one instance per value, as on the pin.
+# whose `TBox[T].again` returns `self.copy()`. So does `fbound`, whose
+# inlined `mylen[T: MySized]` calls `__len__` through its bound, which the
+# inlining folds to `NBox.__len__`, the witness `NBox`'s conformance records.
+# `fneg`, whose `__neg__` reads `Self.n`, keeps one instance per value, as on
+# the pin.
+trait MySized:
+    def __len__(self) -> Int:
+        ...
+
+
 struct IntIter(Iterator, Movable):
     comptime Element = Int
     var i: Int
@@ -23,7 +31,7 @@ struct IntIter(Iterator, Movable):
         return self.i
 
 
-struct NBox[n: Int](Copyable, Movable):
+struct NBox[n: Int](Copyable, Movable, MySized):
     var v: Int
 
     def __init__(out self, v: Int):
@@ -65,6 +73,10 @@ struct NBox[n: Int](Copyable, Movable):
     @no_inline
     def __iter__(self) -> IntIter:
         return IntIter(self.v)
+
+    @no_inline
+    def __len__(self) -> Int:
+        return self.v
 
 
 struct TBox[T: AnyType](Copyable, Movable):
@@ -121,6 +133,16 @@ def fit[n: Int](b: NBox[n]) -> Int:
     return s
 
 
+@always_inline("nodebug")
+def mylen[T: MySized](value: T) -> Int:
+    return value.__len__()
+
+
+@no_inline
+def fbound[n: Int](b: NBox[n]) -> Int:
+    return mylen(b)
+
+
 @no_inline
 def ft[T: AnyType](b: TBox[T]) -> Int:
     return b.again().v
@@ -137,3 +159,4 @@ def main():
     print(fk[1, 3](NBox[1](1)), fk[2, 3](NBox[2](2)))
     print(fit(NBox[1](3)), fit(NBox[2](4)))
     print(ft(TBox[Int](5)), ft(TBox[String](6)))
+    print(fbound(NBox[1](3)), fbound(NBox[2](4)))

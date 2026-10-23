@@ -474,6 +474,46 @@ pub fn register_reads(function: &mut MirFunction) -> Vec<u32> {
     reads
 }
 
+/// The type of the receiver a call of a struct member runs on.
+///
+/// That is a method call's receiver (its place's, when it names one), a
+/// resolved operator's left operand, or a subscript's object; `None` for
+/// any other instruction.
+pub fn member_receiver_ty<'f>(
+    function: &'f MirFunction,
+    instruction: &'f MirInstr,
+) -> Option<&'f Ty> {
+    let (register, place) = match instruction {
+        MirInstr::MethodCall {
+            recv, recv_place, ..
+        } => (recv, recv_place),
+        MirInstr::BinOp { a, .. } => (a, &None),
+        MirInstr::Index {
+            base, base_place, ..
+        } => (base, base_place),
+        MirInstr::Slice {
+            object,
+            object_place,
+            ..
+        }
+        | MirInstr::MultiIndex {
+            object,
+            object_place,
+            ..
+        } => (object, object_place),
+        MirInstr::MultiSet {
+            receiver,
+            receiver_place,
+            ..
+        } => (receiver, receiver_place),
+        _ => return None,
+    };
+    place
+        .as_deref()
+        .and_then(|place| place_ty(function, place))
+        .or_else(|| function.reg_types.get(&register.0))
+}
+
 /// The parameters `unread_parameters` may remove from `name`: its own
 /// compile-time parameters and, for a method, its struct's, or for a nested
 /// function, whose own parameters' owner is its source name, those and its
@@ -1539,8 +1579,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             }
             MirInstr::MethodCall {
                 resolved: Some(callee),
-                recv,
-                recv_place,
                 raises,
                 param_arg_regs,
                 instantiated_args,
@@ -1548,22 +1586,18 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             } => self.member_call(
                 declarations,
                 callee,
-                recv_place
-                    .as_deref()
-                    .and_then(|place| place_ty(function, place))
-                    .or_else(|| register(recv)),
+                member_receiver_ty(function, instruction),
                 &(raises, param_arg_regs, instantiated_args),
                 |own| own.is_empty() || instantiated_args.len() >= own.len(),
             ),
             MirInstr::BinOp {
                 resolved: Some(callee),
-                a,
                 raises,
                 ..
             } => self.member_call(
                 declarations,
                 callee,
-                register(a),
+                member_receiver_ty(function, instruction),
                 raises,
                 |own: &[&ParamDecl]| own.is_empty(),
             ),
@@ -1598,36 +1632,7 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 let Some(call) = instruction_subscript_call(instruction) else {
                     return false;
                 };
-                let receiver = match instruction {
-                    MirInstr::Index {
-                        base, base_place, ..
-                    } => base_place
-                        .as_deref()
-                        .and_then(|place| place_ty(function, place))
-                        .or_else(|| register(base)),
-                    MirInstr::Slice {
-                        object,
-                        object_place,
-                        ..
-                    }
-                    | MirInstr::MultiIndex {
-                        object,
-                        object_place,
-                        ..
-                    } => object_place
-                        .as_deref()
-                        .and_then(|place| place_ty(function, place))
-                        .or_else(|| register(object)),
-                    MirInstr::MultiSet {
-                        receiver,
-                        receiver_place,
-                        ..
-                    } => receiver_place
-                        .as_deref()
-                        .and_then(|place| place_ty(function, place))
-                        .or_else(|| register(receiver)),
-                    _ => None,
-                };
+                let receiver = member_receiver_ty(function, instruction);
                 let supplied: Vec<&ParamId> =
                     supplied_parameter_arguments(&call.param_decls, &call.param_arg_regs)
                         .into_iter()

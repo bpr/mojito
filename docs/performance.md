@@ -2098,3 +2098,30 @@ diffed):
 Fewer slots are left for the post-elaboration round, and every instance
 of a generic body starts from the smaller generator. The nightly
 `scripts/instantiation-report` refreshes `benchmarks/instantiation.tsv`.
+
+## An inlined call through a bound names the witness (2026-10-22, R1052)
+
+`inline-parametric` now folds a call through a trait bound in an inlined
+body to the member the receiver's struct records in its witness table,
+once the substitution made the receiver a struct, so
+`remove-unused-params` reads only the struct arguments that member kept
+(`docs/architecture.md` §Pre-Elaboration Pipeline). On four probes, each a
+caller `f[n](b: Box[n])` reaching a `@no_inline` member
+through an `@always_inline("nodebug")` helper bounded by a trait, debug
+binary, the parent commit before:
+
+| probe (call through the bound) | `generator_instances` before | after |
+|---|---:|---:|
+| method (`value.__len__()`) | 3 | 2 |
+| comparison and subscript (`a < b`, `a[1]`) | 6 | 4 |
+| trait default (`value.one()`) | 4 | 2 |
+| generic requirement (`a.pick[2]()`) | 3 | 3 |
+
+The generic requirement's call folds, but its bracket argument keeps a
+run-time register, since a call through a bound records no instantiation
+(R394). Over the 582 `assets/ok` and `assets/runtime_error` fixtures that
+declare a bounded parameter, every output is unchanged on the VM and no
+other fixture's `generator_instances` moves; the stage fixture,
+`assets/ok/member_call_unread_struct_parameter_instances.mojo`, gains
+`fbound`, one instance for every `n`. The nightly
+`scripts/instantiation-report` refreshes `benchmarks/instantiation.tsv`.

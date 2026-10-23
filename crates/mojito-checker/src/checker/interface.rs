@@ -2026,6 +2026,7 @@ mod tests {
             conforms: Vec::new(),
             callable_conformance: None,
             callable_target: None,
+            witness_tables: Vec::new(),
             conformance_conditions: HashMap::new(),
             fields: Vec::new(),
             declared_field_names: Vec::new(),
@@ -2053,6 +2054,7 @@ mod tests {
             parameterized_associated_types: Vec::new(),
             associated_values: Vec::new(),
             parameterized_associated_values: Vec::new(),
+            witness_tables: Vec::new(),
             members: Vec::new(),
         };
         (
