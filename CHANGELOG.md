@@ -494,6 +494,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `deinit` parameter's fields now die in drop elaboration's one
+  field-sensitive walk, as upstream's `DestructorInsertion` destroys them,
+  replacing the second walk after it: every exit marks the parameter
+  destroyed, so a method that transfers `self^` on one path no longer fails
+  at run time after destroying the fields it handed on, a second `deinit`
+  parameter's `Tuple` field read no longer traps (R354), and a field a
+  pointer borrows dies by its own destructor after the pointer's last use
+  (`assets/ok/deinit_receiver_fields_die_in_drop_walk.mojo`, R1252). A
+  register's or a loan's owner is now the field its place reaches, so a
+  replaced field read past a sibling's read through a register or a
+  reference dies as soon as nothing reads it
+  (`assets/ok/replaced_field_read_through_register.mojo`, R1307).
+
 - A field's replaced value now dies at its own last use, as the pin's
   field-sensitive destructor insertion places it, rather than at the store
   that replaces it: after the read that last uses it, right after its

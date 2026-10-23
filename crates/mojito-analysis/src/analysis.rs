@@ -31,8 +31,6 @@ use drop_values::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use drops::*;
 pub use duplicate_functions::{ELIMINATE_DUPLICATE_FUNCTIONS, eliminate_duplicate_functions};
-#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
-use field_drops::*;
 pub use inline_parametric::{INLINE_PARAMETRIC, inline_parametric, is_inlined_before_elaboration};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use interior::*;
@@ -271,22 +269,26 @@ pub fn elaborate_drops_function(
     let pack = declarations
         .function(name)
         .and_then(mojito_mir::mir::owned_pack_slot);
-    let values = DropValues::new(&function, declarations, |v| {
-        let parameter = (v as usize) < function.n_params;
-        let flag = |flags: &[bool]| parameter && flags.get(v as usize).copied() == Some(true);
-        Some(v) != receiver
-            && Some(v) != pack
-            && !slots.contains(&v)
-            && !flag(&function.deinit_params)
-            && (is_droppable_root(&function, v) || flag(&function.ref_params))
-    });
+    let flag = |v: VarId, flags: &[bool]| {
+        (v as usize) < function.n_params && flags.get(v as usize).copied() == Some(true)
+    };
+    let values = DropValues::new(
+        &function,
+        declarations,
+        |v| {
+            Some(v) != receiver
+                && Some(v) != pack
+                && !slots.contains(&v)
+                && (is_droppable_root(&function, v) || flag(v, &function.ref_params))
+        },
+        |v| flag(v, &function.deinit_params),
+    );
     elaborate_store_drops(&mut function, name, declarations, &|place| {
         values.defines_part(place)
     });
     let mut elaborated = elaborate_drops(function, &slots, receiver, &values, declarations);
     refine_receiver_drops(&mut elaborated, name, declarations);
     elide_dying_copies(&mut elaborated);
-    refine_deinit_fields(&mut elaborated, declarations);
     mojito_mir::mir::refine_pack_drops(&mut elaborated, pack, &|ty| {
         declarations.drop_runs_no_code(ty)
     });
@@ -304,7 +306,6 @@ mod destructor_calls;
 mod drop_values;
 mod drops;
 mod duplicate_functions;
-mod field_drops;
 mod fold;
 mod inline_parametric;
 mod interior;

@@ -215,6 +215,7 @@ assets/ok/defines_main.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_body_field_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_field_dies_before_non_raising_call_in_try.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_param_destruction_timing.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/deinit_receiver_fields_die_in_drop_walk.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_list_wrong_length_raises.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_nested_targets.mojo	-	ineligible	no-scalar-entry-shape
@@ -766,6 +767,7 @@ assets/ok/reflection_list_materialized_whole.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/reflection_runtime_query.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_symbolic_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_template_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/replaced_field_read_through_register.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_sized_scalars.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_type_names.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reversed_iteration.mojo	-	ineligible	no-scalar-entry-shape

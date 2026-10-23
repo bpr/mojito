@@ -93,8 +93,7 @@ artifact {
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: D, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
-              call { dest: %r1, func: note, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              consume.var { var: $v0 }
+              call { dest: %r1, func: note, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }
@@ -151,7 +150,6 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              consume.var { var: $v0 }
             ],
             terminator: return { value: absent }
           }

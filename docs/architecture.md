@@ -4840,8 +4840,8 @@ declaring no `__deinit__` over droppable fields gets a synthesized
 `S.__deinit__(deinit self)` with an empty body, marked `nodebug` and
 `synthesized` (`mir::lower_unit` for `LoweringUnit::Destructor`), as
 upstream synthesizes a `__del__` for every struct that declares none;
-`refine_deinit_fields` then destroys each field at entry by its own named
-`drop.place`, so a drop of the struct names the destructor and reaches its
+drop liveness, which lays out a `deinit` parameter per field, then destroys
+each field at entry by its own named `drop.place`, so a drop of the struct names the destructor and reaches its
 fields' through its body, and the pre-elaboration inliner inlines it at the
 drop. A drop of a type whose destruction runs no code, or of a symbolic
 type, names none; the elaborator names the instance's
@@ -5173,9 +5173,12 @@ current Mojo:
   concrete register-passable `read` or `var` parameter, a built-in operator's
   operand, or a slice bound is loaded at call setup instead, in parameter
   order (slice descriptors first), so an owner whose last use it is drops just
-  before the consumer, in that load order (`RegisterUses::loaded`).
-  `refine_deinit_fields` applies the same split to a `deinit self` receiver's
-  fields; a subscript setter's plain indices load like a getter's. An
+  before the consumer, in that load order (`RegisterUses::loaded`). The
+  owner a register or a loan carries is the part its source place reaches
+  (`DropValues::access`, upstream's `getValueRefsForAccess`), a `ValueRef`
+  of the root's bits, so a read of `p.b` keeps `p.b` alone live, and a
+  `deinit self` receiver's fields take the same split one by one; a
+  subscript setter's plain indices load like a getter's. An
   aggregate load retains its owner through every consumer as before. A
   moving end of a slot (a `move`/`forward` use, a consume, a whole-root
   move capture) removes that root from every register's provenance: the
@@ -5271,7 +5274,8 @@ declaration order. Struct destruction runs:
    at its own last use inside the body (an unused one at the destructor's
    entry, before its first statement; a nested projection keeps its whole
    direct field alive; a transferred field is its new owner's), and the
-   receiver's `ConsumeVar` at its last use destroys only the survivors
+   receiver's `ConsumeVar` before each exit ends what is left, the fields
+   that need no destructor work
 2. otherwise the fields, in declaration order
 
 The compiler-private tuple storage likewise drops elements left-to-right
@@ -5280,39 +5284,42 @@ where it backs a `Tuple`. An owning `var *args` collector — the slot
 matching current Mojo's pack lifecycle, in the VM and natively. Public
 collections, including `Tuple`, are nominal structs and follow the ordinary
 declaration order for fields; their library destructors own any
-element-specific teardown. Per-field liveness for `deinit` parameters is a
-refinement pass after the drop walk, which keeps each `deinit` parameter one
-bit (`analysis/field_drops.rs`), on the structured body and the same region
-walks: for every `deinit` parameter of struct type a forward walk
-(`FieldFacts`) records the fields each instruction consumes through its
-operand registers — a loaded register carries its field to every consumer as
-the register-loan rule does, and a `yield` hands its op what its values carry
-— and a backward walk (`FieldLiveness`) gives liveness over the parameter's
-fields — a depth-one field projection uses that field, a bare receiver touch
-uses every field — with the variable pass's raise, return, and frame
-channels. A splice places `DropPlace` (a whole-value destruction of one field
-that tombstones it) after each field's last use, at the function's entry for
-the unused, at the entry of an `if`/`comptime if` arm that leaves out a field
-a sibling keeps (`destroyValuesAtEntryIfNeeded`), a raising call's error
-region among them. A raise keeps live only
-what its handler reads, so a field the handler reads dies right after the
-body's last raising call, as on the pin.
-The receiver's existing `ConsumeVar` (in-block, and the native exit
-backstop) then skips the tombstoned fields, so raise edges stay sound.
-Fields that root a loan, are moved below depth one, or need no destructor
-work are left to the `ConsumeVar`. A field read only inside a loop dies after
-the loop, as on the pin; in the recorded `deinit_body_field_loop_read` shape
-the pinned Mojo destroys it at entry instead and reads the destroyed value (an
-upstream bug left unmatched, an `output-diff` row). Upstream destroys fields in `DestructorInsertion`'s
-one field-sensitive walk; here they are a second walk after it.
+element-specific teardown. A `deinit` parameter's fields die in the one drop
+walk, as upstream's `DestructorInsertion` destroys them: the walk lays the
+parameter out per field (see below), and every `return` and every raise out
+of the function demands its whole-object bit alone, upstream's
+`mark_destroyed` of a `DeinitMem` argument, so a field's last use drills to
+that field and the field dies there by a `DropPlace` (a whole-value
+destruction of one field that tombstones it), an unused one at the
+function's entry, and one a sibling `if`/`comptime if` arm keeps at the
+entry of the arm that leaves it out (`destroyValuesAtEntryIfNeeded`), a
+raising call's error region among them. A raise keeps live only what its
+handler reads, so a field the handler reads dies right after the body's
+last raising call, as on the pin. A field a loan roots dies after the
+loan's last use, the loan carrying that field alone. The splice then ends
+the receiver with a `ConsumeVar` before each exit, which tears down only the
+fields that need no destructor work, unless every path there has already
+ended it, as a whole transfer (`self^.finish()`) does — the forward
+`DropFacts` walk records that must-set (`DropFacts::ended`), upstream's
+`unusedMarkDestroyName`. A field read only inside a loop dies after the
+loop, as on the pin; in the recorded `deinit_body_field_loop_read` shape
+the pinned Mojo destroys it at entry instead and reads the destroyed value
+(an upstream bug left unmatched, an `output-diff` row).
 
 Drop liveness is field-sensitive over the values it tracks, as upstream's
 `DestructorInsertion` is over its `ValueSet`: `analysis/drop_values.rs`
 (`DropValues`) gives every variable one bit, except a root whose owned parts
 the body stores a droppable value into (a local, a `var` parameter, a `mut`
-or `ref` parameter). That root is laid out along the stored paths: at each
-struct or tuple level a stored path enters, every field in declaration order
-gets its own range, and the level's whole-object bit comes last. A `Store`
+or `ref` parameter), and a `deinit` parameter. That root is laid out along
+the stored paths, a `deinit` parameter's along each of its fields (the
+declared ones over the struct's own parameters, for its `Self`; a public
+`Tuple`'s elements live in compiler-private storage, so it stays one bit):
+at each struct or tuple level a stored path enters, every field in
+declaration order gets its own range, and the level's whole-object bit
+comes last. One more bit is upstream's sentinel slot, set where a path
+reaches an exit, so a live set without it — a loop's first continue set, an
+arm ending in `unreachable` — is unreached, and the join takes the other
+side over it. A `Store`
 into a laid-out part is a definition of that part alone, so the value it
 replaces dies at its own last use, as a whole variable's does before its
 redefining `DefVar`; a use drills into a level only while the level's
@@ -5323,8 +5330,8 @@ is upstream's `unifyConsumedSets`; and a death under a live level is a
 A split `mut`/`ref` parameter is demanded whole at every `return` and every
 raise out of the function (`checkTerminatorOp`), so a part the body
 overwrites before reading dies at the function's entry. The receiver of an
-initializer, `deinit` parameters, and an owning pack stay one bit each: their
-fields are refined by the passes after the walk.
+initializer and an owning pack stay one bit each: their fields are refined
+by the passes after the walk.
 
 A store into a field of a root the walk does not lay out still destroys the
 value it replaces at the store, through a pass ahead of the walk

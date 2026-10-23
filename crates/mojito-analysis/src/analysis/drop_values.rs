@@ -2,12 +2,18 @@
 //! bits per variable, which drop liveness ([`elaborate_drops`]) carries.
 //!
 //! A variable is one bit, except a root whose owned parts the body stores
-//! into. That root is laid out as upstream lays out a value: at each struct
-//! or tuple level a stored path enters, every field in declaration order
-//! gets its own range (a further level where a stored path continues, one
-//! bit otherwise), and the level's whole-object bit comes last. A store into
-//! a laid-out part then defines that part alone, so the value it replaces
-//! dies at its own last use rather than at the store.
+//! into, and a `deinit` parameter. That root is laid out as upstream lays
+//! out a value: at each struct or tuple level a stored path enters, every
+//! field in declaration order gets its own range (a further level where a
+//! stored path continues, one bit otherwise), and the level's whole-object
+//! bit comes last; a `deinit` parameter's every field enters its first
+//! level. A store into a laid-out part then defines that part alone, so the
+//! value it replaces dies at its own last use rather than at the store, and
+//! a `deinit` parameter's fields die one by one, each at its own last use.
+//!
+//! One bit past every variable's is upstream's sentinel slot: set where a
+//! path reaches an exit, so a live set without it is unreached, which a
+//! join takes the other side over.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -17,7 +23,8 @@ use std::ops::Range;
 
 /// Every variable's bits, and the layout of each root split into parts.
 pub(super) struct DropValues {
-    /// Variable `v`'s bits are `starts[v]..starts[v + 1]`.
+    /// Variable `v`'s bits are `starts[v]..starts[v + 1]`; the last start is
+    /// the sentinel bit, set where a path reaches an exit.
     starts: Vec<u32>,
     layouts: HashMap<VarId, Level>,
 }
@@ -25,14 +32,31 @@ pub(super) struct DropValues {
 impl DropValues {
     /// The layout of `f`'s variables: a root `splittable` admits is split
     /// along the owned parts its body stores a value that needs destroying
-    /// into, when every level on the way has fields the declarations list.
+    /// into, and, when `fielded` admits it too, along each of its fields,
+    /// when every level on the way has fields the declarations list.
     pub(super) fn new(
         f: &MirFunction,
         declarations: &MirDeclarations,
         splittable: impl Fn(VarId) -> bool,
+        fielded: impl Fn(VarId) -> bool,
     ) -> Self {
         let mut stored: BTreeMap<VarId, (Ty, Vec<Vec<OwnedStep>>)> = BTreeMap::new();
         let mut unsplit: BTreeSet<VarId> = BTreeSet::new();
+        for var in (0..f.n_vars as VarId).filter(|v| splittable(*v) && fielded(*v)) {
+            // The public `Tuple`'s elements live in its compiler-private
+            // storage, which no place projects from the nominal value.
+            let Some(ty) = f
+                .var_tys
+                .get(&var)
+                .filter(|ty| mojito_types::types::tuple_elements(ty.kind()).is_none())
+            else {
+                continue;
+            };
+            if let Some(fields) = level_fields(ty, declarations) {
+                let paths = fields.into_iter().map(|(step, _, _)| vec![step]).collect();
+                stored.insert(var, (ty.clone(), paths));
+            }
+        }
         for_each_instr_deep(&f.blocks, &mut |instr| {
             let MirInstr::Store { place, .. } = instr else {
                 return;
@@ -89,6 +113,22 @@ impl DropValues {
         Self { starts, layouts }
     }
 
+    /// The sentinel bit: set in a live set a path to an exit reaches.
+    fn reached(&self) -> u32 {
+        self.starts.last().copied().unwrap_or_default()
+    }
+
+    /// Mark `live` as reached by a path to an exit, as upstream's
+    /// `checkTerminatorOp` sets slot 0 at a `return` or a raise.
+    pub(super) fn mark_reached(&self, live: &mut DenseSet) {
+        live.insert(self.reached());
+    }
+
+    /// Whether `bit` is a variable's, not the sentinel.
+    pub(super) fn is_value_bit(&self, bit: u32) -> bool {
+        bit < self.reached()
+    }
+
     /// The bits of variable `v`.
     pub(super) fn range(&self, v: VarId) -> Range<u32> {
         let v = v as usize;
@@ -125,23 +165,67 @@ impl DropValues {
         }
     }
 
-    /// A use of the part of `root` at `path` (the whole root when `None`),
-    /// made live as upstream's `scheduleNeededDtors` marks it: the walk
-    /// drills into a level only while the level's whole-object bit is live,
-    /// so the last use of any part of a value that dies whole marks it whole
-    /// (`computeAccessPathForMaxUnconsumedField`). Returns the range marked.
-    pub(super) fn mark_use(
-        &self,
-        live: &mut DenseSet,
-        root: VarId,
-        path: Option<&[OwnedStep]>,
-    ) -> Range<u32> {
-        let marked = match (self.layouts.get(&root), path) {
-            (Some(level), Some(path)) => level.used(live, path),
-            _ => self.range(root),
+    /// The whole of variable `v`.
+    pub(super) fn whole(&self, v: VarId) -> ValueRef {
+        let bits = self.range(v);
+        ValueRef {
+            root: v,
+            start: bits.start,
+            end: bits.end,
+        }
+    }
+
+    /// The part `place` reaches, upstream's `getValueRefsForAccess`: the
+    /// deepest laid-out part its leading field and element steps name, the
+    /// whole root when it is not laid out or the first step names no field.
+    /// A `through` reference is the caller's to add.
+    pub(super) fn access(&self, place: &MirPlace) -> ValueRef {
+        let Some(level) = self.layouts.get(&place.root) else {
+            return self.whole(place.root);
         };
+        let steps = place.proj.iter().map_while(|step| match step {
+            Proj::Field(name) => Some(OwnedStep::Field(name.clone())),
+            Proj::ConstIndex(index) => Some(OwnedStep::Element(*index)),
+            _ => None,
+        });
+        let bits = level.reached(steps);
+        ValueRef {
+            root: place.root,
+            start: bits.start,
+            end: bits.end,
+        }
+    }
+
+    /// The bits a use of `part` makes live in `live`, as upstream's
+    /// `scheduleNeededDtors` marks them: the walk drills into a level only
+    /// while the level's whole-object bit is live, so the last use of any
+    /// part of a value that dies whole marks it whole
+    /// (`computeAccessPathForMaxUnconsumedField`).
+    pub(super) fn ref_bits(&self, live: &DenseSet, part: ValueRef) -> Range<u32> {
+        match self.layouts.get(&part.root) {
+            Some(level) => level.used(live, part.bits()),
+            None => self.range(part.root),
+        }
+    }
+
+    /// Make a use of `part` live ([`Self::ref_bits`]); returns the range
+    /// marked.
+    pub(super) fn mark_ref(&self, live: &mut DenseSet, part: ValueRef) -> Range<u32> {
+        let marked = self.ref_bits(live, part);
         live.extend(marked.clone());
         marked
+    }
+
+    /// Make the whole-object bit of `v` live alone, upstream's
+    /// `memMarkDestroyed`: a later use of a part then drills to that part.
+    /// An unsplit `v` is its one bit.
+    pub(super) fn mark_whole_bit(&self, live: &mut DenseSet, v: VarId) {
+        match self.layouts.get(&v) {
+            Some(level) => {
+                live.insert(level.whole_bit());
+            }
+            None => self.mark_all(live, v),
+        }
     }
 
     /// The bits of the laid-out part of `root` at exactly `path`.
@@ -156,12 +240,20 @@ impl DropValues {
             .is_some_and(|path| self.part(place.root, &path).is_some())
     }
 
-    /// The join of two live sets, upstream's `unifyConsumedSets`: their
-    /// union, except that a level whose whole-object bit is live on one side
-    /// only, with any of its bits live, is live whole, so the side that does
-    /// not keep it destroys it whole and the other side destroys the parts
-    /// it redefines.
+    /// The join of two live sets, upstream's `unifyConsumedSets`: the
+    /// reached side when the other is unreached, else their union, except
+    /// that a level whose whole-object bit is live on one side only, with
+    /// any of its bits live, is live whole, so the side that does not keep
+    /// it destroys it whole and the other side destroys the parts it
+    /// redefines.
     pub(super) fn unify(&self, state: &mut DenseSet, other: &DenseSet) {
+        if !other.contains(self.reached()) {
+            return;
+        }
+        if !state.contains(self.reached()) {
+            state.clone_from(other);
+            return;
+        }
         let mut whole = Vec::new();
         for level in self.layouts.values() {
             level.unified(state, other, &mut whole);
@@ -192,7 +284,7 @@ impl DropValues {
                 }
                 if !live.contains(level.whole_bit()) {
                     if whole {
-                        out.push(Death::var(root));
+                        out.push(Death::var(root, self.range(root)));
                     }
                     return;
                 }
@@ -200,11 +292,38 @@ impl DropValues {
             }
             None => {
                 if whole && self.range(root).any(|bit| dying.contains(bit)) {
-                    out.push(Death::var(root));
+                    out.push(Death::var(root, self.range(root)));
                 }
             }
         }
     }
+}
+
+/// A reference to bits of one variable, upstream's `ValueRef`: the whole
+/// variable ([`DropValues::whole`]) or one laid-out part of it
+/// ([`DropValues::access`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct ValueRef {
+    pub(super) root: VarId,
+    start: u32,
+    end: u32,
+}
+
+impl ValueRef {
+    /// Its bits.
+    pub(super) const fn bits(self) -> Range<u32> {
+        self.start..self.end
+    }
+
+    /// Whether any of its bits is in `bits`.
+    pub(super) const fn overlaps(self, bits: &Range<u32>) -> bool {
+        overlap(&self.bits(), bits)
+    }
+}
+
+/// Whether two ranges of bits share one.
+pub(super) const fn overlap(a: &Range<u32>, b: &Range<u32>) -> bool {
+    a.start < b.end && b.start < a.end
 }
 
 /// One destruction drop elaboration places: a variable whole, or one owned
@@ -212,19 +331,25 @@ impl DropValues {
 #[derive(Clone)]
 pub(super) struct Death {
     pub(super) root: VarId,
-    /// The part's first bit, which orders a root's parts as their fields
-    /// are declared; zero for a whole variable.
-    start: u32,
+    /// Its bits: the variable's, or the part's, whose first bit orders a
+    /// root's parts as their fields are declared.
+    bits: Range<u32>,
     place: Option<MirPlace>,
 }
 
 impl Death {
-    pub(super) const fn var(root: VarId) -> Self {
+    /// The death of variable `root`, whose bits are `bits`, whole.
+    pub(super) const fn var(root: VarId, bits: Range<u32>) -> Self {
         Self {
             root,
-            start: 0,
+            bits,
             place: None,
         }
+    }
+
+    /// Its bits.
+    pub(super) fn bits(&self) -> Range<u32> {
+        self.bits.clone()
     }
 
     /// The drop: a `DropVar`, or a `DropPlace` of the part, its destructor
@@ -248,7 +373,7 @@ impl Death {
         (
             Some(self.root) != receiver,
             std::cmp::Reverse(self.root),
-            self.start,
+            self.bits.start,
         )
     }
 }
@@ -343,17 +468,32 @@ impl Level {
         self.fields.iter().find(|field| &field.step == step)
     }
 
-    /// The range a use of the part at `path` marks ([`DropValues::mark_use`]).
-    fn used(&self, live: &DenseSet, path: &[OwnedStep]) -> Range<u32> {
-        let Some((step, rest)) = path.split_first() else {
-            return self.range();
-        };
-        if !live.contains(self.whole) {
+    /// The range a use of the part whose bits are `part` marks
+    /// ([`DropValues::ref_bits`]).
+    fn used(&self, live: &DenseSet, part: Range<u32>) -> Range<u32> {
+        if part == self.range() || !live.contains(self.whole) {
             return self.range();
         }
-        match self.field(step).map(|field| &field.node) {
+        let field = self.fields.iter().find(|field| match &field.node {
+            Node::Leaf(bit) => part.start == *bit,
+            Node::Level(level) => level.range().contains(&part.start),
+        });
+        match field.map(|field| &field.node) {
             Some(Node::Leaf(bit)) => *bit..*bit + 1,
-            Some(Node::Level(level)) => level.used(live, rest),
+            Some(Node::Level(level)) => level.used(live, part),
+            None => self.range(),
+        }
+    }
+
+    /// The bits of the deepest part `steps` reach: a leaf ends the walk, and
+    /// a step that names no field stops it at the level it would enter.
+    fn reached(&self, mut steps: impl Iterator<Item = OwnedStep>) -> Range<u32> {
+        let Some(step) = steps.next() else {
+            return self.range();
+        };
+        match self.field(&step).map(|field| &field.node) {
+            Some(Node::Leaf(bit)) => *bit..*bit + 1,
+            Some(Node::Level(level)) => level.reached(steps),
             None => self.range(),
         }
     }
@@ -394,9 +534,9 @@ impl Level {
         for field in &self.fields {
             let death = || Death {
                 root,
-                start: match &field.node {
-                    Node::Leaf(bit) => *bit,
-                    Node::Level(level) => level.start,
+                bits: match &field.node {
+                    Node::Leaf(bit) => *bit..*bit + 1,
+                    Node::Level(level) => level.range(),
                 },
                 place: Some(field.place.clone()),
             };
@@ -423,7 +563,8 @@ impl Level {
 
 /// The fields of a value of type `ty` in declaration order, each with its
 /// step, its projection, and its type: a tuple's elements, the public
-/// `Tuple`'s included, or a struct's fields (`MirDeclarations::field_types`).
+/// `Tuple`'s included, or a struct's fields (`MirDeclarations::field_types`,
+/// or the declared ones of a struct's own `Self`).
 fn level_fields(ty: &Ty, declarations: &MirDeclarations) -> Option<Vec<(OwnedStep, Proj, Ty)>> {
     let elements = match ty.kind() {
         TyKind::Tuple(items) => Some(items.iter().collect()),
@@ -444,9 +585,18 @@ fn level_fields(ty: &Ty, declarations: &MirDeclarations) -> Option<Vec<(OwnedSte
                 .collect(),
         );
     }
+    // A struct named without arguments in its own body is its `Self`, whose
+    // fields are the declared ones, over its own parameters.
+    let declared = || match ty.kind() {
+        TyKind::Struct(name, arguments) if arguments.is_empty() => declarations
+            .structure(name)
+            .map(|structure| std::borrow::Cow::Borrowed(structure.fields.as_slice())),
+        _ => None,
+    };
     Some(
         declarations
-            .field_types(ty)?
+            .field_types(ty)
+            .or_else(declared)?
             .iter()
             .map(|(name, field_ty)| {
                 (
@@ -469,21 +619,26 @@ mod tests {
         Ty::new(TyKind::Struct("D".into(), Vec::new()))
     }
 
+    /// The place of the elements at `path` of variable 0, of type `root`.
+    fn place(root: &Ty, path: &[usize]) -> MirPlace {
+        let mut place = MirPlace::root(0, Some(root.clone()));
+        let mut ty = root.clone();
+        for index in path {
+            let element = mojito_types::types::tuple_elements(ty.kind()).unwrap()[*index].clone();
+            place.project(Proj::ConstIndex(*index), element.clone());
+            ty = element;
+        }
+        place
+    }
+
     /// A body storing into `paths` of variable 0, of type `root`, beside an
     /// untouched variable 1.
     fn values(root: &Ty, paths: &[&[usize]]) -> DropValues {
         let instrs = paths
             .iter()
-            .map(|path| {
-                let mut place = MirPlace::root(0, Some(root.clone()));
-                let mut ty = root.clone();
-                for index in *path {
-                    let element =
-                        mojito_types::types::tuple_elements(ty.kind()).unwrap()[*index].clone();
-                    place.project(Proj::ConstIndex(*index), element.clone());
-                    ty = element;
-                }
-                MirInstr::Store { place, src: Reg(0) }
+            .map(|path| MirInstr::Store {
+                place: place(root, path),
+                src: Reg(0),
             })
             .collect();
         let function = MirFunction {
@@ -494,7 +649,7 @@ mod tests {
             n_vars: 2,
             ..MirFunction::default()
         };
-        DropValues::new(&function, &MirDeclarations::default(), |_| true)
+        DropValues::new(&function, &MirDeclarations::default(), |_| true, |_| false)
     }
 
     fn element(index: usize) -> OwnedStep {
@@ -530,9 +685,42 @@ mod tests {
         let pair = tuple_type(vec![droppable(), droppable()]);
         let values = values(&pair, &[&[0]]);
         let mut live = DenseSet::default();
-        assert_eq!(values.mark_use(&mut live, 0, Some(&[element(1)])), 0..3);
+        let second = values.access(&place(&pair, &[1]));
+        assert_eq!(values.mark_ref(&mut live, second), 0..3);
         live.remove(0);
-        assert_eq!(values.mark_use(&mut live, 0, Some(&[element(0)])), 0..1);
+        let first = values.access(&place(&pair, &[0]));
+        assert_eq!(values.mark_ref(&mut live, first), 0..1);
+    }
+
+    #[test]
+    fn an_access_reaches_the_deepest_laid_out_part() {
+        let inner = tuple_type(vec![droppable(), droppable()]);
+        let outer = tuple_type(vec![inner, droppable()]);
+        let values = values(&outer, &[&[0, 1]]);
+        assert_eq!(values.access(&place(&outer, &[0, 1])).bits(), 1..2);
+        assert_eq!(values.access(&place(&outer, &[0])).bits(), 0..3);
+        assert_eq!(values.access(&place(&outer, &[1])).bits(), 3..4);
+        assert_eq!(values.access(&place(&outer, &[])), values.whole(0));
+    }
+
+    #[test]
+    fn an_access_past_a_leaf_stops_at_the_leaf() {
+        let inner = tuple_type(vec![droppable(), droppable()]);
+        let outer = tuple_type(vec![inner, droppable()]);
+        let values = values(&outer, &[&[1]]);
+        assert_eq!(values.access(&place(&outer, &[0, 1])).bits(), 0..1);
+    }
+
+    #[test]
+    fn a_part_under_a_dead_whole_object_bit_marks_its_level() {
+        let inner = tuple_type(vec![droppable(), droppable()]);
+        let outer = tuple_type(vec![inner, droppable()]);
+        let values = values(&outer, &[&[0, 1]]);
+        let part = values.access(&place(&outer, &[0, 1]));
+        let mut live: DenseSet = [4].into_iter().collect();
+        assert_eq!(values.mark_ref(&mut live, part), 0..3);
+        let mut live: DenseSet = [2, 4].into_iter().collect();
+        assert_eq!(values.mark_ref(&mut live, part), 1..2);
     }
 
     #[test]
@@ -569,9 +757,22 @@ mod tests {
     fn unify_makes_a_level_live_whole_where_one_side_drops_it() {
         let pair = tuple_type(vec![droppable(), droppable()]);
         let values = values(&pair, &[&[0]]);
-        let mut state: DenseSet = [1, 2].into_iter().collect();
+        let mut state: DenseSet = [1, 2, 4].into_iter().collect();
+        values.unify(&mut state, &[4].into_iter().collect());
+        assert!(state == [0, 1, 2, 4].into_iter().collect());
+    }
+
+    #[test]
+    fn unify_takes_the_reached_side_over_an_unreached_one() {
+        let pair = tuple_type(vec![droppable(), droppable()]);
+        let values = values(&pair, &[&[0]]);
+        let reached: DenseSet = [1, 2, 4].into_iter().collect();
+        let mut state = reached.clone();
         values.unify(&mut state, &DenseSet::default());
-        assert!(state == [0, 1, 2].into_iter().collect());
+        assert!(state == reached);
+        let mut state = DenseSet::default();
+        values.unify(&mut state, &reached);
+        assert!(state == reached);
     }
 
     #[test]

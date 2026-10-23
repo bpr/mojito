@@ -22,6 +22,10 @@ use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
 /// An initializer's `out self` `receiver` is a root too, which every
 /// `return` reads: it dies only where a path leaves without returning, a
 /// raise's, and [`refine_receiver_drops`] destroys there what it holds.
+/// A `deinit` parameter laid out per field is marked destroyed at every
+/// exit, as upstream marks a `DeinitMem` argument: each field dies at its
+/// own last use, and a `ConsumeVar` before the exit ends the parameter
+/// unless every path there already has.
 ///
 /// At a shared death point, variables drop in reverse declaration order
 /// (descending `VarId`), the receiver first, as the pin destroys a partly
@@ -39,21 +43,31 @@ pub(super) fn elaborate_drops(
     declarations: &MirDeclarations,
 ) -> MirFunction {
     let passing = ArgumentPassing::new(declarations);
-    let loan_roots = drop_loan_generations(&function);
+    let loan_roots = drop_loan_generations(&function, values);
     let generation_dests = loan_generation_dests(&function);
-    let facts = DropFacts::new(&function, &loan_roots, &generation_dests, &passing);
+    let split_parameters = |flags: &[bool]| -> Vec<VarId> {
+        (0..function.n_params)
+            .map(|v| v as VarId)
+            .filter(|v| values.is_split(*v) && flags.get(*v as usize).copied() == Some(true))
+            .collect()
+    };
     // A `mut` or `ref` parameter laid out in parts must be whole again
     // wherever the function leaves, as upstream's `checkTerminatorOp`
-    // demands a value live on exit.
+    // demands a value live on exit; a `deinit` parameter is marked
+    // destroyed there.
     let demands = ExitDemands {
         receiver,
-        parameters: (0..function.n_params)
-            .map(|v| v as VarId)
-            .filter(|v| {
-                values.is_split(*v) && function.ref_params.get(*v as usize).copied() == Some(true)
-            })
-            .collect(),
+        parameters: split_parameters(&function.ref_params),
+        deinit: split_parameters(&function.deinit_params),
     };
+    let facts = DropFacts::new(
+        &function,
+        &loan_roots,
+        &generation_dests,
+        &passing,
+        values,
+        &demands.deinit,
+    );
     let mut plan = DropPlan::default();
     let liveness = DropLiveness {
         facts: &facts,
@@ -103,10 +117,12 @@ pub(super) fn elaborate_drops(
 
     // A `deinit` parameter is *consumed*, not destroyed: the spliced teardown
     // for it must skip the value's whole-value `__deinit__` (its resources already
-    // moved into the receiver) while still destroying any residual fields. Drop
-    // elaboration emits an ordinary `DropVar`; rewrite those to `ConsumeVar` for
-    // deinit parameters. Their `^`-transferred fields are `Value::Moved` and a
-    // no-op to drop, so this cannot double-free.
+    // moved into the receiver) while still destroying any residual fields. Where
+    // one dies whole — one not laid out per field, at its last use, or one whose
+    // whole-object bit dies on a path reaching no exit — drop elaboration emits
+    // an ordinary `DropVar`; rewrite those to `ConsumeVar`. Their
+    // `^`-transferred fields are `Value::Moved` and a no-op to drop, so this
+    // cannot double-free.
     if function.deinit_params.iter().any(|&d| d) {
         let is_deinit_param = |var: VarId| {
             (var as usize) < function.n_params
@@ -129,12 +145,13 @@ pub(super) fn elaborate_drops(
     function
 }
 
-/// The owner roots carried by each `EstablishLoans` generation. A later
+/// The owner parts carried by each `EstablishLoans` generation. A later
 /// establishment for the same aggregate replaces the old marker; keeping the
 /// marker as the key prevents historical owners from becoming one permanent
 /// dependency of the variable slot.
 pub(super) struct DropLoanGeneration {
-    pub(super) roots: Vec<VarId>,
+    /// The part each loan's place reaches ([`DropValues::access`]).
+    pub(super) roots: Vec<ValueRef>,
     /// `ref` values, reference-bearing aggregates, and tracked pointers can
     /// leave a handle in an SSA register (a pointer argument is read inside
     /// its callee) and therefore participate in transient register
@@ -146,7 +163,10 @@ pub(super) struct DropLoanGeneration {
 /// elaboration, so their generations participate in owner retention too.
 /// Markers are function-wide unique registers, so the extra entries are inert
 /// for any walk that never activates them.
-pub(super) fn drop_loan_generations(f: &MirFunction) -> BTreeMap<u32, DropLoanGeneration> {
+pub(super) fn drop_loan_generations(
+    f: &MirFunction,
+    values: &DropValues,
+) -> BTreeMap<u32, DropLoanGeneration> {
     let mut roots_by_generation: BTreeMap<u32, DropLoanGeneration> = BTreeMap::new();
     for_each_instr_deep(&f.blocks, &mut |instr| {
         if let MirInstr::EstablishLoans { loans, marker, .. } = instr {
@@ -161,8 +181,9 @@ pub(super) fn drop_loan_generations(f: &MirFunction) -> BTreeMap<u32, DropLoanGe
                         propagate_through_registers: true,
                     });
             for loan in loans {
-                if !generation.roots.contains(&loan.place.root) {
-                    generation.roots.push(loan.place.root);
+                let part = values.access(&loan.place);
+                if !generation.roots.contains(&part) {
+                    generation.roots.push(part);
                 }
             }
         }
@@ -173,7 +194,7 @@ pub(super) fn drop_loan_generations(f: &MirFunction) -> BTreeMap<u32, DropLoanGe
 pub(super) fn active_drop_loan_roots(
     state: &LoanGenerationState,
     roots_by_generation: &BTreeMap<u32, DropLoanGeneration>,
-) -> BTreeSet<VarId> {
+) -> BTreeSet<ValueRef> {
     state
         .active
         .values()
@@ -233,7 +254,8 @@ impl BackwardRecorder<DenseSet> for DropPlan {
 /// generations join where paths meet and would keep every historical owner
 /// of a rebound aggregate live; the splice adds them per point, and a `try`
 /// part's live-in as the `try` sees it. A `return` reads an initializer's
-/// receiver, the value it returns, and every exit a split `mut` parameter.
+/// receiver, the value it returns, and every exit a split `mut` parameter
+/// and a split `deinit` parameter's whole-object bit.
 struct DropLiveness<'a> {
     facts: &'a DropFacts,
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
@@ -261,10 +283,14 @@ impl BackwardScan for DropLiveness<'_> {
     }
 
     fn terminate(&self, live: &mut DenseSet, block: &MirBlock) {
-        for v in &self.facts.yielded(block).retained {
-            self.values.mark_all(live, *v);
+        for part in &self.facts.yielded(block).retained {
+            self.values.mark_ref(live, *part);
         }
         self.demands.at_exit(self.values, live, &block.term);
+    }
+
+    fn loop_entry(&self, live: &mut DenseSet) {
+        self.values.mark_reached(live);
     }
 
     fn enter(&self, live: &mut DenseSet, part: &[MirBlock]) {
@@ -279,11 +305,16 @@ impl BackwardScan for DropLiveness<'_> {
 }
 
 /// The values a function's exits read: an initializer's receiver, which a
-/// `return` returns, and the split `mut` and `ref` parameters, which every
-/// `return` and every raise out of the function hands back whole.
+/// `return` returns, the split `mut` and `ref` parameters, which every
+/// `return` and every raise out of the function hands back whole, and the
+/// whole-object bit of each split `deinit` parameter, which every such exit
+/// marks destroyed, as upstream's `mark_destroyed` of a `DeinitMem`
+/// argument before each `return` and raise does: what a field holds then
+/// died at the field's own last use.
 struct ExitDemands {
     receiver: Option<VarId>,
     parameters: Vec<VarId>,
+    deinit: Vec<VarId>,
 }
 
 impl ExitDemands {
@@ -293,12 +324,37 @@ impl ExitDemands {
         if let (Some(receiver), true) = (self.receiver, returns) {
             values.mark_all(live, receiver);
         }
-        if returns || matches!(term, MirTerm::Raise { label: None, .. }) {
+        if leaves(term) {
+            values.mark_reached(live);
             for parameter in &self.parameters {
                 values.mark_all(live, *parameter);
             }
+            for parameter in &self.deinit {
+                values.mark_whole_bit(live, *parameter);
+            }
         }
     }
+
+    /// The `ConsumeVar`s before the exit `term` that end the `deinit`
+    /// parameters no path to it has ended already (`ended`).
+    fn consumed_at_exit(&self, term: &MirTerm, ended: &BTreeSet<VarId>) -> Vec<MirInstr> {
+        if !leaves(term) {
+            return Vec::new();
+        }
+        self.deinit
+            .iter()
+            .filter(|parameter| !ended.contains(parameter))
+            .map(|parameter| MirInstr::ConsumeVar { var: *parameter })
+            .collect()
+    }
+}
+
+/// Whether `term` leaves the function: a `return`, or a raise out of it.
+const fn leaves(term: &MirTerm) -> bool {
+    matches!(
+        term,
+        MirTerm::Return(_) | MirTerm::Raise { label: None, .. }
+    )
 }
 
 /// What one instruction does to the live bits, walked backward.
@@ -314,15 +370,17 @@ struct Effects {
     /// The laid-out parts it moves out or ends, which their new owner
     /// destroys.
     consumed: Vec<std::ops::Range<u32>>,
-    /// The roots it reads itself, through a place or a variable.
-    observed: Vec<VarId>,
+    /// The bits its own places and variables make live, beside those its
+    /// operand registers do.
+    direct: Vec<std::ops::Range<u32>>,
     /// The variables it moves out or tears down whole.
     moved: Vec<VarId>,
 }
 
 /// Undo `instr` on `live`, upstream's `scanBlock` operand effects: kill
 /// what it defines, a store into a laid-out part that part alone, then add
-/// what it uses, a use of a part as [`DropValues::mark_use`] marks it.
+/// what it uses, a use of the part a place reaches as
+/// [`DropValues::mark_ref`] marks it.
 fn effects(
     values: &DropValues,
     live: &mut DenseSet,
@@ -350,11 +408,7 @@ fn effects(
             // whole value when its whole-object bit is, and the part holds
             // no live value before it.
             if let Used::Place(place) = used {
-                let path = place.owned_path();
-                effects
-                    .marked
-                    .push(values.mark_use(live, place.root, path.as_deref()));
-                effects.observed.push(place.root);
+                effects.mark(values.mark_ref(live, values.access(place)));
             }
             for bit in part.clone() {
                 live.remove(bit);
@@ -374,22 +428,16 @@ fn effects(
             continue;
         }
         match used {
-            Used::Var(v) => {
-                effects.marked.push(values.mark_use(live, *v, None));
-                effects.observed.push(*v);
-            }
+            Used::Var(v) => effects.mark(values.mark_ref(live, values.whole(*v))),
             Used::Place(place) => {
                 if let Some(through) = place.through {
-                    effects.marked.push(values.mark_use(live, through, None));
-                    effects.observed.push(through);
+                    effects.mark(values.mark_ref(live, values.whole(through)));
                 }
-                let path = place.owned_path();
-                effects
-                    .marked
-                    .push(values.mark_use(live, place.root, path.as_deref()));
-                effects.observed.push(place.root);
+                effects.mark(values.mark_ref(live, values.access(place)));
                 if consuming
-                    && let Some(part) = path.and_then(|path| values.part(place.root, &path))
+                    && let Some(part) = place
+                        .owned_path()
+                        .and_then(|path| values.part(place.root, &path))
                 {
                     effects.consumed.push(part);
                 }
@@ -399,15 +447,22 @@ fn effects(
     // A pending teardown keeps its variable live up to that point so no
     // earlier death splices a competing `DropVar`.
     if let Some(v) = teardown(instr) {
-        effects.marked.push(values.mark_use(live, v, None));
-        effects.observed.push(v);
+        effects.mark(values.mark_ref(live, values.whole(v)));
         effects.moved.push(v);
     }
     effects.moved.extend(vars_moved(instr));
-    for v in uses.retained.iter().chain(&uses.loaded) {
-        effects.marked.push(values.mark_use(live, *v, None));
+    for part in uses.retained.iter().chain(&uses.loaded) {
+        effects.marked.push(values.mark_ref(live, *part));
     }
     effects
+}
+
+impl Effects {
+    /// Record bits the instruction's own places or variables make live.
+    fn mark(&mut self, bits: std::ops::Range<u32>) {
+        self.marked.push(bits.clone());
+        self.direct.push(bits);
+    }
 }
 
 /// The splice pass: the plan's drops placed in the body, nested regions
@@ -446,7 +501,11 @@ impl Splice<'_> {
     /// The deaths of every root with bits in `dying`, with `live` live
     /// after.
     fn all_deaths(&self, dying: &DenseSet, live: &DenseSet) -> Vec<Death> {
-        let mut roots: Vec<VarId> = dying.iter().map(|bit| self.values.owner(bit)).collect();
+        let mut roots: Vec<VarId> = dying
+            .iter()
+            .filter(|bit| self.values.is_value_bit(*bit))
+            .map(|bit| self.values.owner(bit))
+            .collect();
         roots.dedup();
         let mut deaths = Vec::new();
         for root in roots {
@@ -506,7 +565,6 @@ impl Splice<'_> {
             steps,
             end,
             yielded: self.facts.yielded(block),
-            deinit_params: &self.f.deinit_params,
             receiver: self.receiver,
             loan_roots: self.loan_roots,
             splice: self,
@@ -515,6 +573,10 @@ impl Splice<'_> {
         self.demands
             .at_exit(self.values, &mut live_out, &block.term);
         block.instrs = replay.elaborate(&live_out);
+        if let Some(ended) = self.facts.ended(block) {
+            let consumed = self.demands.consumed_at_exit(&block.term, ended);
+            block.instrs.extend(consumed);
+        }
     }
 
     /// Place the drops of one region op's regions. An `if` or `comptime if`
@@ -625,7 +687,9 @@ impl Splice<'_> {
                     .is_some_and(|live| self.values.any_live(live, *bound))
                 && let Some(entry) = h.first_mut()
             {
-                entry.instrs.insert(0, Death::var(*bound).into_drop());
+                entry
+                    .instrs
+                    .insert(0, Death::var(*bound, self.values.range(*bound)).into_drop());
             }
         }
         if let Some(e) = orelse {
@@ -639,7 +703,7 @@ impl Splice<'_> {
 struct Step<'a> {
     /// The loan generations reaching it.
     generations: &'a LoanGenerationState,
-    /// The roots it consumes through its operand registers.
+    /// The parts it consumes through its operand registers.
     uses: &'a RegisterUses,
     /// For a region op: its live-in.
     op: Option<&'a DenseSet>,
@@ -652,12 +716,8 @@ struct BlockReplay<'a> {
     steps: Vec<Step<'a>>,
     /// The generations at the terminator; `None` when it is unreachable.
     end: Option<&'a LoanGenerationState>,
-    /// The roots the values the terminator hands on consume.
+    /// The parts the values the terminator hands on consume.
     yielded: &'a RegisterUses,
-    /// The function's `deinit` parameters, whose fields
-    /// [`refine_deinit_fields`] destroys one by one: the variable's own
-    /// teardown stays after the instruction.
-    deinit_params: &'a [bool],
     /// An initializer's receiver, first at a shared death point.
     receiver: Option<VarId>,
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
@@ -686,15 +746,16 @@ impl BlockReplay<'_> {
             let extra_after = loan_extras(&live, end, self.loan_roots, values);
             let mut live_after = live.clone();
             live_after.union(&extra_after);
-            for v in &self.yielded.retained {
-                values.mark_all(&mut live, *v);
-            }
-            let extra_before = loan_extras(&live, end, self.loan_roots, values);
-            let dying: DenseSet = self
+            let marked: Vec<std::ops::Range<u32>> = self
                 .yielded
                 .retained
                 .iter()
-                .flat_map(|v| values.range(*v))
+                .map(|part| values.mark_ref(&mut live, *part))
+                .collect();
+            let extra_before = loan_extras(&live, end, self.loan_roots, values);
+            let dying: DenseSet = marked
+                .into_iter()
+                .flatten()
                 .chain(extra_before.iter())
                 .filter(|bit| !live_after.contains(*bit))
                 .collect();
@@ -733,7 +794,7 @@ impl BlockReplay<'_> {
             let effects = effects(values, &mut live, &instr, register_uses);
             let extra_before = loan_extras(&live, generation_before, self.loan_roots, values);
 
-            let retired: Vec<VarId> = if std::ptr::eq(generation_before, generation_after)
+            let retired: Vec<ValueRef> = if std::ptr::eq(generation_before, generation_after)
                 || generation_before == generation_after
             {
                 Vec::new()
@@ -757,29 +818,34 @@ impl BlockReplay<'_> {
                 .chain(&effects.marked)
                 .flat_map(Clone::clone)
                 .chain(extra_before.iter())
-                .chain(retired.iter().flat_map(|v| values.range(*v)))
+                .chain(
+                    retired
+                        .iter()
+                        .flat_map(|part| values.ref_bits(&live, *part)),
+                )
                 .filter(|bit| !live_after.contains(*bit) && !ended.contains(*bit))
                 .collect();
             let mut dying = self.splice.all_deaths(&dying, &live_after);
             // An owner whose last use is a scalar the instruction loads by
-            // value dies at that load, before the instruction runs.
-            let deinit = |v: VarId| self.deinit_params.get(v as usize).copied() == Some(true);
-            let loaded: Vec<VarId> = register_uses
-                .loaded
-                .iter()
-                .copied()
-                .filter(|v| {
-                    dying.iter().any(|death| death.root == *v)
-                        && !deinit(*v)
-                        && !effects.observed.contains(v)
-                        && effects.def != Some(*v)
-                        && !retired.contains(v)
-                        && !values.any_live(&extra_before, *v)
-                })
-                .collect();
-            let (loaded_deaths, kept): (Vec<Death>, Vec<Death>) = dying
+            // value dies at that load, before the instruction runs: the
+            // first loaded part its bits hold ranks it.
+            let load_rank = |death: &Death| {
+                let bits = death.bits();
+                if effects.def == Some(death.root)
+                    || effects.direct.iter().any(|marked| overlap(marked, &bits))
+                    || retired.iter().any(|part| part.overlaps(&bits))
+                    || bits.clone().any(|bit| extra_before.contains(bit))
+                {
+                    return None;
+                }
+                register_uses
+                    .loaded
+                    .iter()
+                    .position(|part| part.overlaps(&bits))
+            };
+            let (mut loaded_deaths, kept): (Vec<Death>, Vec<Death>) = dying
                 .into_iter()
-                .partition(|death| loaded.contains(&death.root));
+                .partition(|death| load_rank(death).is_some());
             dying = kept;
             if let Some(held) = pending.take() {
                 // The slot's previous value dying at the producer must drop
@@ -806,15 +872,9 @@ impl BlockReplay<'_> {
                 }
                 _ => push_drops_reversed(&mut reversed, dying, self.receiver),
             }
-            reversed.push(instr);
             // In the order the instruction loads them.
-            let mut loaded_deaths = loaded_deaths;
-            loaded_deaths.sort_by_key(|death| {
-                loaded
-                    .iter()
-                    .position(|v| *v == death.root)
-                    .unwrap_or(usize::MAX)
-            });
+            loaded_deaths.sort_by_key(|death| load_rank(death).unwrap_or(usize::MAX));
+            reversed.push(instr);
             reversed.extend(loaded_deaths.into_iter().rev().map(Death::into_drop));
         }
         if let Some(held) = pending {
@@ -894,8 +954,8 @@ fn loan_extras(
                 let Some(generation) = roots_by_generation.get(generation) else {
                     continue;
                 };
-                for root in &generation.roots {
-                    for bit in values.range(*root) {
+                for part in &generation.roots {
+                    for bit in values.ref_bits(live, *part) {
                         if !live.contains(bit) {
                             changed |= extras.insert(bit);
                         }

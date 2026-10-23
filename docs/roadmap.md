@@ -107,31 +107,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1252 A `deinit` receiver's fields die in a second backward walk
-  after drop elaboration, where `DestructorInsertion` destroys them in its
-  one field-sensitive walk**
-
-  Upstream tracks one bit per field of each value (`ValueSet`/`ValueInfo`
-  in `CheckLifetimes.cpp`), so a `deinit self` receiver's fields die in the
-  same walk as every variable, with no pass after it.
-  - `analysis/field_drops.rs` (`refine_deinit_fields`) runs its own
-    forward and backward walks per receiver after `drops.rs` has placed
-    the variable drops, and splices `DropPlace`s around them.
-  - Lever: fold `FieldFacts`/`FieldLiveness` into `drops.rs`'s
-    `DropLiveness`, whose bits (`analysis/drop_values.rs`'s `DropValues`)
-    leave `deinit` parameters out today, and let the splice place field
-    and variable drops together.
-  - No output difference is known: R878's probes (a field read in a
-    handler, in one `if` arm, in a loop) match the pin.
-  - Probe: a field the body borrows (`var p = Pointer(to=self.a)` in
-    `W.__deinit__`) is pinned, so no named `DropPlace` destroys it and the
-    receiver's `consume.var` tears it down by type (the VM's
-    `drop_struct_fields`, Pliron's `emit_surviving_leaf_drops`), where
-    upstream's walk names its `__del__` after the borrow's last use; the
-    output matches the pin (found while landing R1090).
-  - Depends on R1251, whose field-sensitive drop state this walk needs.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1291 A method call returning no reference runs its callee on the
   host stack, so recursion through a method overflows where upstream's
   interpreter pushes a frame for every call**
@@ -1563,26 +1538,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1307 A replaced field read through a register or a reference
-  dies at that read, where the pin destroys it as soon as nothing reads
-  it**
-
-  Problem: `var p = Pair(Inner(1), Inner(2))`, `print("built")`,
-  `print("b is", p.b.id)`, then `p.a = Inner(3)` prints `del 1` after
-  `b is 2`, where the pin prints it first, right after `p` is built.
-  - Cause: drop liveness (`analysis/drops.rs`) follows each part a place
-    names, but the roots `DropFacts` hands it through operand registers
-    (`RegisterUses`) and the owners a loan generation keeps alive
-    (`loan_extras`) are whole roots, so a read of `p.b` through either
-    keeps `p.a` live too.
-  - Upstream's `DestructorInsertion` follows the field a register or a
-    reference reaches (`getValueRefsForAccess`).
-  - Probe: `ref r = p.b`, `print("r is", r.id)`, then `p.a = Inner(3)`:
-    Mojito prints `del 1` after `r is 2`, the pin first.
-  - Found while landing R1251 (2026-10-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1296 Parameters dying beside locals drop after them, where the pin
   drops them first**
 
@@ -2469,18 +2424,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R354 A `deinit self` method reading a `Tuple` field's element beside
-  a second `deinit` parameter traps in the VM**
-
-  Problem: `def swap(deinit self, deinit other: Box2) -> Int: return
-  self.t[0].id + other.t[1].id`, `t` a `Tuple[Token, Token]` of non-copyable
-  elements, stops with "invalid reference projection Field("storage") on
-  <moved>", where the pin prints `5`.
-  - Each receiver's field is destroyed at its last use, and the element
-    read reaches the storage after that.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R750 A discard of a field transfer `_ = w.m^` is rejected**
 

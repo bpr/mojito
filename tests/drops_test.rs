@@ -751,10 +751,13 @@ fn deinit_move_source_consumes_residual_field_without_running_its_destructor() {
     // a residual field left live still receives its own destruction. Here the
     // Copyable `Handle` is *copied* by the move constructor rather than
     // transferred, so both the source's and the destination's handles are live
-    // and each must be released — two "handle del 7", never a leak and never a
-    // double `box del`.
-    let src = "struct Handle(Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __copyinit__(out self, existing: Self):\n        self.id = existing.id\n    def __deinit__(deinit self):\n        print(\"handle del\", self.id)\n\nstruct Box(Movable):\n    var h: Handle\n    def __init__(out self, h: Handle):\n        self.h = h.copy()\n    def __init__(out self, *, deinit move: Self):\n        self.h = move.h.copy()\n    def __deinit__(deinit self):\n        print(\"box del\")\n\ndef main():\n    var b1 = Box(Handle(7))\n    var b2 = b1^\n    print(\"mid\", b2.h.id)\n";
-    assert_eq!(vm(src), "handle del 7\nmid 7\nhandle del 7\nbox del\n");
+    // and each must be released — after the argument temporary's, two more
+    // "handle del 7", never a leak and never a double `box del`.
+    let src = "struct Handle(Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __init__(out self, *, copy: Self):\n        self.id = copy.id\n    def __deinit__(deinit self):\n        print(\"handle del\", self.id)\n\nstruct Box(Movable):\n    var h: Handle\n    def __init__(out self, h: Handle):\n        self.h = h.copy()\n    def __init__(out self, *, deinit move: Self):\n        self.h = move.h.copy()\n    def __deinit__(deinit self):\n        print(\"box del\")\n\ndef main():\n    var b1 = Box(Handle(7))\n    var b2 = b1^\n    print(\"mid\", b2.h.id)\n";
+    assert_eq!(
+        vm(src),
+        "handle del 7\nhandle del 7\nmid 7\nhandle del 7\nbox del\n"
+    );
 }
 
 // Borrowed iteration source/iterator slot split: a temporary iterable that owns

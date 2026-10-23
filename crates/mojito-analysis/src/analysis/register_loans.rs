@@ -9,12 +9,12 @@ use mojito_types::types::{Ty, TyKind};
 
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(super) struct RegisterLoanState {
-    owners: BTreeMap<u32, BTreeSet<VarId>>,
-    /// Roots a scalar `LoadPlace` result keeps alive through its consumers
+    owners: BTreeMap<u32, BTreeSet<ValueRef>>,
+    /// Parts a scalar `LoadPlace` result keeps alive through its consumers
     /// only: reported as uses at every instruction reading the register, but
     /// never inherited by that instruction's own results (`t.n + 1` borrows
     /// `t` for `__add__` alone; the sum owns its bits).
-    single_hop: BTreeMap<u32, BTreeSet<VarId>>,
+    single_hop: BTreeMap<u32, BTreeSet<ValueRef>>,
 }
 
 pub(super) fn join_register_loan_states(
@@ -34,7 +34,7 @@ pub(super) fn active_register_loan_roots(
     references: impl IntoIterator<Item = VarId>,
     state: &LoanGenerationState,
     generations: &BTreeMap<u32, DropLoanGeneration>,
-) -> BTreeSet<VarId> {
+) -> BTreeSet<ValueRef> {
     let mut roots = BTreeSet::new();
     let mut pending: Vec<VarId> = references.into_iter().collect();
     let mut visited = BTreeSet::new();
@@ -52,9 +52,9 @@ pub(super) fn active_register_loan_roots(
             if !generation.propagate_through_registers {
                 continue;
             }
-            for root in &generation.roots {
-                if roots.insert(*root) {
-                    pending.push(*root);
+            for part in &generation.roots {
+                if roots.insert(*part) {
+                    pending.push(part.root);
                 }
             }
         }
@@ -82,15 +82,17 @@ pub(super) fn may_alias_owned_storage(ty: &Ty) -> bool {
     )
 }
 
-/// The roots one instruction consumes through its operand registers.
+/// The parts of roots one instruction consumes through its operand
+/// registers, each the part the register's source place reached
+/// ([`DropValues::access`]).
 pub(super) struct RegisterUses {
-    /// Roots the instruction keeps alive through itself: owner provenance,
+    /// Parts the instruction keeps alive through itself: owner provenance,
     /// and the owners of scalars it receives by address.
-    pub(super) retained: Vec<VarId>,
+    pub(super) retained: Vec<ValueRef>,
     /// The owners of scalars the instruction receives by value, in the order
     /// it loads them (parameter-slot order): each read is a load at call
     /// setup, so an owner whose last use it is dies before the instruction.
-    pub(super) loaded: Vec<VarId>,
+    pub(super) loaded: Vec<ValueRef>,
 }
 
 /// Which operand registers an instruction receives by value, as the callee's
@@ -417,11 +419,15 @@ impl DropFacts {
         loan_roots: &BTreeMap<u32, DropLoanGeneration>,
         generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
         passing: &ArgumentPassing,
+        values: &DropValues,
+        exits: &[VarId],
     ) -> Self {
         let scan = DropFactsScan {
             loan_roots,
             generation_dests,
             reg_types: &f.reg_types,
+            values,
+            exits,
         };
         let mut observer = DropFactsObserver {
             scan: &scan,
@@ -450,7 +456,7 @@ impl DropFacts {
             .map_or(&self.unreached, |index| &self.states[*index])
     }
 
-    /// The roots `instr` consumes through its operand registers.
+    /// The parts `instr` consumes through its operand registers.
     pub(super) fn uses(&self, instr: &MirInstr) -> &RegisterUses {
         self.uses
             .get(&std::ptr::from_ref(instr))
@@ -480,7 +486,16 @@ impl DropFacts {
             .map(|index| &self.states[index])
     }
 
-    /// The roots `block`'s terminator consumes through the values it
+    /// Which of the variables the walk tracks the ending of have ended on
+    /// every path to `block`'s terminator, a whole transfer's or teardown's;
+    /// `None` when the walk never reaches it.
+    pub(super) fn ended(&self, block: &MirBlock) -> Option<&BTreeSet<VarId>> {
+        self.blocks
+            .get(&std::ptr::from_ref(block))
+            .and_then(|facts| facts.end.map(|_| &facts.ended))
+    }
+
+    /// The parts `block`'s terminator consumes through the values it
     /// yields, as an op's result takes each value over.
     pub(super) fn yielded(&self, block: &MirBlock) -> &RegisterUses {
         self.blocks
@@ -524,16 +539,16 @@ fn tracked_pointer_result(
 struct RegisterLoanStep {
     operands: Vec<Reg>,
     results: Vec<Reg>,
-    /// The roots the instruction uses whatever its operands carry: the active
-    /// loan roots of the variables it reads, and the roots its place reads
-    /// retain or its callee-produced handle seeds.
-    owners: BTreeSet<VarId>,
-    /// The roots a callee-produced handle result carries.
-    seeded: BTreeSet<VarId>,
+    /// The parts the instruction uses whatever its operands carry: the
+    /// active loan roots of the variables it reads, and the parts its place
+    /// reads retain or its callee-produced handle seeds.
+    owners: BTreeSet<ValueRef>,
+    /// The parts a callee-produced handle result carries.
+    seeded: BTreeSet<ValueRef>,
     /// Whether the results are fresh values that inherit only `seeded`.
     call_result: bool,
-    /// A scalar read's result register and the roots it borrows for one hop.
-    single_hop: Option<(u32, BTreeSet<VarId>)>,
+    /// A scalar read's result register and the parts it borrows for one hop.
+    single_hop: Option<(u32, BTreeSet<ValueRef>)>,
     /// The slots the instruction ends by moving them. An ended slot's storage
     /// backs no register: a by-value scalar already holds its bits, and a
     /// handle into the slot is dead (use after move is `moves`' error).
@@ -546,7 +561,12 @@ impl RegisterLoanStep {
         instruction: &MirInstr,
         loan_roots: &BTreeMap<u32, DropLoanGeneration>,
         register_types: &HashMap<u32, mojito_types::types::Ty>,
+        values: &DropValues,
     ) -> Self {
+        // The part a place reaches, and the reference it is reached through.
+        let reached = |place: &MirPlace| {
+            std::iter::once(values.access(place)).chain(place.through.map(|v| values.whole(v)))
+        };
         let mut operands = Vec::new();
         mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
         let mut owners = active_register_loan_roots(
@@ -584,16 +604,14 @@ impl RegisterLoanStep {
                 {
                     Some(place)
                 } else {
-                    let roots = std::iter::once(place.root).chain(place.through);
-                    single_hop = Some((dest.0, roots.collect()));
+                    single_hop = Some((dest.0, reached(place).collect()));
                     None
                 }
             }
             _ => None,
         };
         if let Some(place) = retained_place {
-            owners.insert(place.root);
-            owners.extend(place.through);
+            owners.extend(reached(place));
         }
 
         // A nominal subscript returning `ref T` establishes a transient handle to
@@ -650,8 +668,7 @@ impl RegisterLoanStep {
         };
         let mut seeded = BTreeSet::new();
         if let Some(place) = reference_subscript_place {
-            seeded.insert(place.root);
-            seeded.extend(place.through);
+            seeded.extend(reached(place));
         }
         // A free call returning a tracked pointer borrows through its retained
         // argument places.
@@ -661,8 +678,7 @@ impl RegisterLoanStep {
             && tracked_pointer_result(register_types, dest)
         {
             for place in arg_places.iter().flatten() {
-                seeded.insert(place.root);
-                seeded.extend(place.through);
+                seeded.extend(reached(place));
             }
         }
         // An element read out of pack storage is the same shallow read as a
@@ -676,14 +692,13 @@ impl RegisterLoanStep {
             ..
         } = instruction
         {
-            let roots = std::iter::once(place.root).chain(place.through);
             if register_types
                 .get(&dest.0)
                 .is_none_or(may_alias_owned_storage)
             {
-                seeded.extend(roots);
+                seeded.extend(reached(place));
             } else {
-                single_hop = Some((dest.0, roots.collect()));
+                single_hop = Some((dest.0, reached(place).collect()));
             }
         }
         owners.extend(seeded.iter().copied());
@@ -719,14 +734,14 @@ impl RegisterLoanStep {
         }
     }
 
-    /// The roots the instruction retains: its own owners and its operands'
-    /// provenance. Each operand's single-hop roots, which a scalar read
+    /// The parts the instruction retains: its own owners and its operands'
+    /// provenance. Each operand's single-hop parts, which a scalar read
     /// borrows for this one hop, are pushed to `single_hop`.
     fn retained(
         &self,
         registers: &RegisterLoanState,
-        single_hop: &mut Vec<(u32, BTreeSet<VarId>)>,
-    ) -> BTreeSet<VarId> {
+        single_hop: &mut Vec<(u32, BTreeSet<ValueRef>)>,
+    ) -> BTreeSet<ValueRef> {
         let mut owners = self.owners.clone();
         for operand in &self.operands {
             if let Some(provenance) = registers.owners.get(&operand.0) {
@@ -769,8 +784,8 @@ impl RegisterLoanStep {
         }
         if !self.ended.is_empty() {
             for map in [&mut registers.owners, &mut registers.single_hop] {
-                for roots in map.values_mut() {
-                    roots.retain(|root| !self.ended.contains(root));
+                for parts in map.values_mut() {
+                    parts.retain(|part| !self.ended.contains(&part.root));
                 }
                 map.retain(|_, roots| !roots.is_empty());
             }
@@ -782,8 +797,8 @@ impl RegisterLoanStep {
 /// its scalar reads borrow: a by-value operand's roots load in rank order, an
 /// addressed one's are retained, and a root also retained is not loaded.
 fn split_register_uses(
-    mut retained: BTreeSet<VarId>,
-    single_hop: Vec<(u32, BTreeSet<VarId>)>,
+    mut retained: BTreeSet<ValueRef>,
+    single_hop: Vec<(u32, BTreeSet<ValueRef>)>,
     by_value: impl FnOnce() -> Vec<(u32, usize)>,
 ) -> RegisterUses {
     let loaded = split_single_hop(&mut retained, single_hop, by_value);
@@ -1024,6 +1039,7 @@ struct BlockFacts {
     entry: usize,
     end: Option<usize>,
     yielded: RegisterUses,
+    ended: BTreeSet<VarId>,
 }
 
 /// One program point of the drop-facts walk.
@@ -1031,6 +1047,10 @@ struct BlockFacts {
 struct DropFactsState {
     generations: LoanGenerationState,
     registers: RegisterLoanState,
+    /// The tracked variables ended on every path here, upstream's
+    /// `unusedMarkDestroyName` facts: an exit's `mark_destroyed` of one
+    /// is no use.
+    ended: BTreeSet<VarId>,
 }
 
 /// The forward walk [`DropFacts`] records.
@@ -1038,11 +1058,21 @@ struct DropFactsScan<'a> {
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
     generation_dests: &'a BTreeMap<u32, Option<MirInteriorOrigin>>,
     reg_types: &'a HashMap<u32, Ty>,
+    values: &'a DropValues,
+    /// The variables whose ending the walk tracks: the split `deinit`
+    /// parameters, which every exit ends unless a path already did.
+    exits: &'a [VarId],
 }
 
 impl DropFactsScan<'_> {
     fn step(&self, state: &DropFactsState, instr: &MirInstr) -> RegisterLoanStep {
-        RegisterLoanStep::new(&state.generations, instr, self.loan_roots, self.reg_types)
+        RegisterLoanStep::new(
+            &state.generations,
+            instr,
+            self.loan_roots,
+            self.reg_types,
+            self.values,
+        )
     }
 }
 
@@ -1053,18 +1083,29 @@ impl ForwardScan for DropFactsScan<'_> {
         DropFactsState {
             generations: join_loan_generation_states(state.generations.clone(), &other.generations),
             registers: join_register_loan_states(state.registers.clone(), &other.registers),
+            ended: state.ended.intersection(&other.ended).copied().collect(),
         }
     }
 
     fn transfer(&self, state: &mut DropFactsState, instr: &MirInstr) {
         self.step(state, instr).transfer(&mut state.registers);
         transfer_loan_generation(&mut state.generations, instr, self.generation_dests);
+        if !self.exits.is_empty() {
+            if let Some(def) = var_def(instr) {
+                state.ended.remove(&def);
+            }
+            let ended = vars_moved(instr).into_iter();
+            state
+                .ended
+                .extend(ended.filter(|var| self.exits.contains(var)));
+        }
     }
 
     fn raise_seed(&self, state: &DropFactsState) -> DropFactsState {
         DropFactsState {
             generations: state.generations.clone(),
             registers: RegisterLoanState::default(),
+            ended: state.ended.clone(),
         }
     }
 
@@ -1107,6 +1148,7 @@ impl ForwardObserver<DropFactsState> for DropFactsObserver<'_> {
             retained: Vec::new(),
             loaded: Vec::new(),
         };
+        let ended = end.map(|state| state.ended.clone()).unwrap_or_default();
         let end = end.map(|state| {
             let mut owners = BTreeSet::new();
             for value in handed_values(&block.term) {
@@ -1124,6 +1166,7 @@ impl ForwardObserver<DropFactsState> for DropFactsObserver<'_> {
                 entry,
                 end,
                 yielded,
+                ended,
             },
         );
     }

@@ -105,6 +105,10 @@ pub(super) trait BackwardScan {
     /// `live`, the live-in of a `try` part, as the `try` sees it at the
     /// part's entry.
     fn enter(&self, _live: &mut Self::State, _part: &[MirBlock]) {}
+    /// `live`, a loop body's live-in in a dry run, as the loop's entry sees
+    /// it: `checkLoopOp` counts the continue point reached even when no
+    /// path through the body leaves the loop.
+    fn loop_entry(&self, _live: &mut Self::State) {}
 }
 
 /// What a backward walk reports on its final replay, each event once. A
@@ -837,6 +841,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
         let mut resume = S::State::default();
         loop {
             let mut next = self.framed(kind, body, exit, resume.clone(), None::<&mut R>);
+            self.scan.loop_entry(&mut next);
             self.scan.join(&mut next, &resume);
             if next == resume {
                 break;
