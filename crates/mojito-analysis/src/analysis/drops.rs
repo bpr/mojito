@@ -17,15 +17,22 @@ use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
 /// - before a block's terminator, when the values the block yields were the
 ///   last use.
 ///
+/// An initializer's `out self` `receiver` is a root too, which every
+/// `return` reads: it dies only where a path leaves without returning, a
+/// raise's, and [`refine_receiver_drops`] destroys there what it holds.
+///
 /// At a shared death point, variables drop in reverse declaration order
-/// (descending `VarId`), except that an `in_place` binding joins its
-/// producer's death point and its slot drops first (see [`InPlaceDeaths`]).
-/// No block is added: MIR lowering copied each `finally` before the exits
-/// crossing it, so every death has an instruction to follow or a region
-/// entry to lead, a raise's at its arm's entry or before it.
+/// (descending `VarId`), the receiver first, as the pin destroys a partly
+/// built `self` before the values dying with it, except that an `in_place`
+/// binding joins its producer's death point and its slot drops first (see
+/// [`InPlaceDeaths`]). No block is added: MIR lowering copied each
+/// `finally` before the exits crossing it, so every death has an
+/// instruction to follow or a region entry to lead, a raise's at its arm's
+/// entry or before it.
 pub(super) fn elaborate_drops(
     mut function: MirFunction,
     value_parameters: &HashSet<VarId>,
+    receiver: Option<VarId>,
     declarations: &MirDeclarations,
 ) -> MirFunction {
     let passing = ArgumentPassing::new(declarations);
@@ -36,6 +43,7 @@ pub(super) fn elaborate_drops(
     let liveness = DropLiveness {
         facts: &facts,
         loan_roots: &loan_roots,
+        receiver,
     };
     walk_backward(&liveness, &function.blocks, &mut plan);
     // Taking the blocks moves no block: the plan's addresses stay valid.
@@ -43,6 +51,7 @@ pub(super) fn elaborate_drops(
     let splice = Splice {
         f: &function,
         parameter_slots: value_parameters,
+        receiver,
         loan_roots: &loan_roots,
         facts: &facts,
         plan: &plan,
@@ -65,7 +74,7 @@ pub(super) fn elaborate_drops(
         .unwrap_or_default();
     splice.region(&mut blocks);
     if let Some(entry) = blocks.first_mut() {
-        prepend_drops(&mut entry.instrs, entry_dead);
+        prepend_drops(&mut entry.instrs, entry_dead, receiver);
     }
 
     // A `deinit` parameter is *consumed*, not destroyed: the spliced teardown
@@ -198,10 +207,11 @@ impl BackwardRecorder<DenseSet> for DropPlan {
 /// owners are not folded in, since generations join where paths meet and
 /// would keep every historical owner of a rebound aggregate live; the
 /// splice adds them per point, and a `try` part's live-in as the `try` sees
-/// it.
+/// it. A `return` reads an initializer's receiver, the value it returns.
 struct DropLiveness<'a> {
     facts: &'a DropFacts,
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
+    receiver: Option<VarId>,
 }
 
 impl BackwardScan for DropLiveness<'_> {
@@ -234,6 +244,9 @@ impl BackwardScan for DropLiveness<'_> {
 
     fn terminate(&self, live: &mut DenseSet, block: &MirBlock) {
         live.extend(self.facts.yielded(block).retained.iter().copied());
+        if let (Some(receiver), MirTerm::Return(_)) = (self.receiver, &block.term) {
+            live.insert(receiver);
+        }
     }
 
     fn enter(&self, live: &mut DenseSet, part: &[MirBlock]) {
@@ -249,16 +262,20 @@ struct Splice<'a> {
     /// The function's compile-time parameter slots: its materialized value
     /// parameters (`materialized_parameter_slots`), which it never drops.
     parameter_slots: &'a HashSet<VarId>,
+    /// An initializer's `out self`, which a path leaving without returning
+    /// drops.
+    receiver: Option<VarId>,
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
     facts: &'a DropFacts,
     plan: &'a DropPlan,
 }
 
 impl Splice<'_> {
-    /// Whether the function drops the value in `v` ([`is_droppable_root`]);
-    /// a value parameter's slot never.
+    /// Whether the function drops the value in `v` ([`is_droppable_root`]),
+    /// or an initializer's receiver; a value parameter's slot never.
     fn droppable(&self, v: VarId) -> bool {
-        is_droppable_root(self.f, v) && !self.parameter_slots.contains(&v)
+        self.receiver == Some(v)
+            || (is_droppable_root(self.f, v) && !self.parameter_slots.contains(&v))
     }
 
     /// `live` with the owners the loan generations of `state` keep alive
@@ -313,9 +330,14 @@ impl Splice<'_> {
             end,
             yielded: self.facts.yielded(block),
             deinit_params: &self.f.deinit_params,
+            receiver: self.receiver,
             loan_roots: self.loan_roots,
         };
-        block.instrs = replay.elaborate(&plan.live_out, |v| self.droppable(v));
+        let mut live_out = plan.live_out.clone();
+        if let (Some(receiver), MirTerm::Return(_)) = (self.receiver, &block.term) {
+            live_out.insert(receiver);
+        }
+        block.instrs = replay.elaborate(&live_out, |v| self.droppable(v));
     }
 
     /// Place the drops of one region op's regions. An `if` or `comptime if`
@@ -384,14 +406,14 @@ impl Splice<'_> {
     }
 
     /// What dies entering a region whose effective live-in is `live` when
-    /// its sibling's is `sibling`, in reverse declaration order.
+    /// its sibling's is `sibling`, in drop order ([`order_deaths`]).
     fn dying(&self, live: &HashSet<VarId>, sibling: &HashSet<VarId>) -> Vec<VarId> {
         let mut dying: Vec<VarId> = sibling
             .iter()
             .copied()
             .filter(|v| !live.contains(v) && self.droppable(*v))
             .collect();
-        dying.sort_unstable_by(|a, b| b.cmp(a));
+        order_deaths(&mut dying, self.receiver);
         dying
     }
 
@@ -454,6 +476,8 @@ struct BlockReplay<'a> {
     /// [`refine_deinit_fields`] destroys one by one: the variable's own
     /// teardown stays after the instruction.
     deinit_params: &'a [bool],
+    /// An initializer's receiver, first at a shared death point.
+    receiver: Option<VarId>,
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
 }
 
@@ -490,7 +514,7 @@ impl BlockReplay<'_> {
                     dying.push(v);
                 }
             }
-            push_drops_reversed(&mut reversed, dying);
+            push_drops_reversed(&mut reversed, dying, self.receiver);
         }
         let mut entering = Vec::new();
         // An in-place binding's deaths, held until its producer is reached so
@@ -502,7 +526,7 @@ impl BlockReplay<'_> {
             let generation_before = step.generations;
             if let Some(live_in) = step.op {
                 if let Some(binding) = pending.take() {
-                    binding.splice(&mut reversed, Vec::new());
+                    binding.splice(&mut reversed, Vec::new(), self.receiver);
                 }
                 live = live_in.clone();
                 reversed.push(instr);
@@ -590,9 +614,9 @@ impl BlockReplay<'_> {
                 // The slot's previous value dying at the producer must drop
                 // before the binding overwrites it, so that death point stays.
                 if held.produced_by(&instr) && !dying.contains(&held.var) {
-                    held.splice(&mut reversed, std::mem::take(&mut dying));
+                    held.splice(&mut reversed, std::mem::take(&mut dying), self.receiver);
                 } else {
-                    held.splice(&mut reversed, Vec::new());
+                    held.splice(&mut reversed, Vec::new(), self.receiver);
                 }
             }
             match &instr {
@@ -609,13 +633,13 @@ impl BlockReplay<'_> {
                         dying,
                     });
                 }
-                _ => push_drops_reversed(&mut reversed, dying),
+                _ => push_drops_reversed(&mut reversed, dying, self.receiver),
             }
             reversed.push(instr);
             reversed.extend(loaded.into_iter().rev().map(drop_var));
         }
         if let Some(held) = pending {
-            held.splice(&mut reversed, Vec::new());
+            held.splice(&mut reversed, Vec::new(), self.receiver);
         }
         reversed.reverse();
         reversed
@@ -643,8 +667,8 @@ impl InPlaceDeaths {
     }
 
     /// Splice the binding's deaths and its producer's into `reversed`: the
-    /// binding's slot first, the rest in descending `VarId`.
-    fn splice(self, reversed: &mut Vec<MirInstr>, producer: Vec<VarId>) {
+    /// binding's slot first, the rest in drop order ([`order_deaths`]).
+    fn splice(self, reversed: &mut Vec<MirInstr>, producer: Vec<VarId>, receiver: Option<VarId>) {
         let own = self.dying.contains(&self.var);
         let mut rest: Vec<VarId> = self
             .dying
@@ -654,8 +678,10 @@ impl InPlaceDeaths {
             .collect();
         rest.sort_unstable();
         rest.dedup();
+        order_deaths(&mut rest, receiver);
         let drops = rest
             .into_iter()
+            .rev()
             .chain(own.then_some(self.var))
             .map(drop_var);
         reversed.splice(self.mark..self.mark, drops);
@@ -704,17 +730,28 @@ fn loan_extras(
     }
 }
 
-/// Push `DropVar`s in reverse declaration order onto a block being built
-/// back to front.
-fn push_drops_reversed(reversed: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
-    vars.sort_unstable();
-    reversed.extend(vars.into_iter().map(drop_var));
+/// Push `DropVar`s in drop order ([`order_deaths`]) onto a block being
+/// built back to front.
+fn push_drops_reversed(
+    reversed: &mut Vec<MirInstr>,
+    mut vars: Vec<VarId>,
+    receiver: Option<VarId>,
+) {
+    order_deaths(&mut vars, receiver);
+    reversed.extend(vars.into_iter().rev().map(drop_var));
 }
 
-/// Prepend `DropVar`s (reverse declaration order) to the front of a block.
-fn prepend_drops(instrs: &mut Vec<MirInstr>, mut vars: Vec<VarId>) {
-    vars.sort_unstable_by(|a, b| b.cmp(a));
+/// Prepend `DropVar`s in drop order ([`order_deaths`]) to the front of a
+/// block.
+fn prepend_drops(instrs: &mut Vec<MirInstr>, mut vars: Vec<VarId>, receiver: Option<VarId>) {
+    order_deaths(&mut vars, receiver);
     instrs.splice(0..0, vars.into_iter().map(drop_var));
+}
+
+/// Sort the variables dying at one point into the order they drop: an
+/// initializer's receiver first, then reverse declaration order.
+fn order_deaths(vars: &mut [VarId], receiver: Option<VarId>) {
+    vars.sort_unstable_by_key(|v| (Some(*v) != receiver, std::cmp::Reverse(*v)));
 }
 
 /// A `DropVar` of `var`, its destructor named later.

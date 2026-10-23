@@ -5275,6 +5275,21 @@ the place reaches below its root (the value `p.src[].v = …` replaces lives
 wherever `p.src` points); natively a nested or reference-rooted place drops
 unguarded at its address.
 
+An initializer's `out self` receiver is a drop root too, which every `return`
+reads as the value it returns (`DropLiveness::terminate`, and the block
+replay's live-out at a `return`). It therefore dies only where a path leaves
+without returning it: at a raising arm's entry, before the values dying with
+it, or after its last field store when no path returns. Upstream's
+`CheckLifetimes` marks such an error return from a partly built `self`, and
+`DestructorInsertion` destroys its live fields but not `self` as a whole.
+Here `refine_receiver_drops` (`analysis/receiver_drops.rs`), between
+`elaborate_drops` and copy elision, replays the same place-tree flow and
+rewrites each receiver `DropVar`. A receiver with every field set stays one
+drop, which runs its `__deinit__`. A partly built one becomes a `DropPlace`
+per field set on every path, in declaration order, and an empty one drops
+nothing. The inliner copies these drops with the body, so an inlined
+initializer's fresh receiver slot ends the same way.
+
 Types whose `Deinitable` conformance is explicitly unavailable, such
 as `Deinitable where False`, are excluded from this automatic path.
 A declared conditional `Movable` conformance is likewise effective:

@@ -494,6 +494,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A raising initializer destroys the `self` it has partly built when a
+  raise leaves it, as upstream's `DestructorInsertion` destroys a partially
+  initialized `self`: `self.a = Tracer("a")` then `raise` now prints
+  `del a` before the handler runs, on the VM and natively, kept as a call
+  or inlined. Drop elaboration makes an initializer's `out self` a drop
+  root that every `return` reads, so it dies where a raise path leaves it,
+  first among the values dying there, and `refine_receiver_drops` destroys
+  it whole once every field is set, through its `__deinit__`, or each field
+  set on every path, in declaration order
+  (`assets/ok/init_raise_destroys_initialized_fields.mojo`). This closes
+  R956 and files R1295 and R1296.
+
 - A `for` loop or comprehension over an iterable whose `__iter__` raises
   calls that `__iter__` as an ordinary raising method call with its error
   region, as upstream's `emitForStmt` does, instead of inside `iter.init`,

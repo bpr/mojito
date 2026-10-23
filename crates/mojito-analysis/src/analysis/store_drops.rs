@@ -25,18 +25,7 @@ pub(super) fn elaborate_store_drops(
 ) {
     let receiver = initializer_receiver_entry(f, name, declarations);
     let uninitialized_receiver = receiver.is_some();
-    let mut entry: Vec<Node> = (0..f.n_vars)
-        .map(|var| {
-            if var < f.n_params {
-                Node::owned()
-            } else {
-                Node::moved()
-            }
-        })
-        .collect();
-    if let Some(receiver) = receiver {
-        entry[0] = receiver;
-    }
+    let entry = entry_move_states(f, receiver);
     let handles = make_ref_places(&f.blocks);
     let mut overwrites: HashMap<*const MirInstr, MirPlace> = HashMap::new();
     let observed = observe_move_states(f, entry, &mut |state, instr| {
@@ -53,7 +42,7 @@ pub(super) fn elaborate_store_drops(
 /// `Type.__init__`/`__copyinit__`/`__moveinit__`): every declared field
 /// uninitialized. A receiver whose struct declaration is unknown stays wholly
 /// uninitialized, so none of its stores destroys anything.
-fn initializer_receiver_entry(
+pub(super) fn initializer_receiver_entry(
     f: &MirFunction,
     name: &str,
     declarations: &MirDeclarations,
@@ -74,6 +63,24 @@ fn initializer_receiver_entry(
         _ => None,
     };
     Some(fields.map_or_else(Node::moved, Node::with_uninitialized_fields))
+}
+
+/// Every variable's state entering `f`: parameters initialized, other slots
+/// not, and an initializer's receiver as `receiver` has it.
+pub(super) fn entry_move_states(f: &MirFunction, receiver: Option<Node>) -> Vec<Node> {
+    let mut entry: Vec<Node> = (0..f.n_vars)
+        .map(|var| {
+            if var < f.n_params {
+                Node::owned()
+            } else {
+                Node::moved()
+            }
+        })
+        .collect();
+    if let Some(receiver) = receiver {
+        entry[0] = receiver;
+    }
+    entry
 }
 
 /// The place an overwriting write destroys before replacing it, if any: a

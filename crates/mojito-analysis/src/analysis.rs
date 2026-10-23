@@ -59,6 +59,8 @@ pub use pre_elaboration::{
     pre_elaborate_program, run_pipeline,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use receiver_drops::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use region_walk::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use register_loans::*;
@@ -262,7 +264,9 @@ pub fn elaborate_drops_function(
     elaborate_store_drops(&mut function, name, declarations);
     let scope = binder_scope(name, |name| declarations.function(name));
     let slots = materialized_parameter_slots(&function, &scope);
-    let mut elaborated = elaborate_drops(function, &slots, declarations);
+    let receiver = initializer_receiver_entry(&function, name, declarations).map(|_| 0);
+    let mut elaborated = elaborate_drops(function, &slots, receiver, declarations);
+    refine_receiver_drops(&mut elaborated, name, declarations);
     elide_dying_copies(&mut elaborated);
     refine_deinit_fields(&mut elaborated, declarations);
     name_destructors(&mut elaborated, declarations);
@@ -289,6 +293,7 @@ mod moves;
 mod opt;
 mod post_elaboration;
 mod pre_elaboration;
+mod receiver_drops;
 mod region_walk;
 mod register_loans;
 mod scan;

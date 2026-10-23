@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1295**.
+Next free ID: **R1297**.
 
 ## Ordered Work
 
@@ -1609,25 +1609,49 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R956 A raising initializer's initialized fields are not destroyed
-  when it raises**
+- [ ] **R1295 A partly built `self` dies as one value, where upstream
+  tracks each of its fields**
 
-  Problem: `self.a = Tracer("a")` then `raise` in a raising `__init__`
-  leaks `a`, where the pin destroys each field initialized before the
-  raise.
-  - Inlined (`inline-parametric`), the body's raise breaks out with the
-    call's error flag, and neither the body's error region nor the
-    caller's ends the partly initialized `out self` slot.
-  - Kept as a call, the `raise` terminator (R906) is an exit drop
-    elaboration places drops before, but it never ends part of the
-    `out self` slot: only a `deinit` receiver's fields get field drops
-    (`field_drops.rs`), where upstream's `DestructorInsertion` destroys a
-    partially initialized `self` field by field.
-  - Fix: end the fields the raise holds, one `DropPlace` each, before the
-    `raise`, a raising call's in its error region too.
-  - Probe: a `Pair.__init__` setting `a`, raising, then setting `b`,
-    called in a `try` (found while landing R919, 2026-10-14); the pin
-    prints `del a`, `caught boom`, Mojito only `caught boom`.
+  Problem: a raising initializer that sets a field on only some paths, or
+  sets one field before an `if` that sets the next, destroys its partly
+  built `self` at other points than the pin, or leaks a field.
+  - Drop elaboration ends an initializer's receiver as one variable
+    (`drops.rs`), so it dies after its last field store, and
+    `refine_receiver_drops` destroys what it holds there.
+  - Upstream's `DestructorInsertion` gives each field of `self` its own
+    liveness bit beside the full-object bit, so a field no `return` reads
+    dies at its own store (`CheckLifetimes.cpp`, where
+    `selfPartiallyInitializedAttrName` marks a raise from a partly built
+    `self`).
+  - A field set on some paths only is maybe initialized where the receiver
+    dies, and `refine_receiver_drops` leaves it alone.
+  - A drop there could not be guarded natively: Pliron's leaf flags start
+    present below an initializer's receiver and an inlined receiver slot.
+  - Probe: `if c: self.a = Tracer("a")`, then `self.b = Tracer("b")`,
+    `print("stored")`, `raise`. The pin prints `del a`, `del b`, `stored`
+    for `c = True`, and Mojito leaks `a`.
+  - Probe: `self.b = Tracer("b")`, `print("b stored")`, then
+    `if c: self.a = Tracer("a")`, `print("a stored")`, then `raise`. The
+    pin prints `del b` before `b stored` and `del a` before `a stored`;
+    Mojito prints both after `b stored`, `a` first.
+  - Found while landing R956 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1296 Parameters dying beside locals drop after them, where the pin
+  drops them first**
+
+  Problem: `def g(var p: T, var q: T)` with locals `l1` and `l2`, all last
+  read by one `print`, prints `del l2`, `del l1`, `del q`, `del p`, and the
+  pin prints `del q`, `del p`, `del l2`, `del l1`.
+  - The same order shows at a raising arm's entry and at an early
+    `return`.
+  - `order_deaths` in `drops.rs` sorts a death point's variables by
+    descending `VarId`, which puts the parameters last.
+  - An initializer's `out self` already drops first, as the pin does.
+  - Read upstream's order in `DestructorInsertion` (`CheckLifetimes.cpp`)
+    before changing the sort.
+  - Found while landing R956 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
