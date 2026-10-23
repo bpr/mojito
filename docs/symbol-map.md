@@ -1742,9 +1742,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`lower_pack_spread_argument`, `mir/calls.rs`; `verify_pack_spread`,
   `verify/calls.rs`), the position of the collector operand a call passes,
   and `native::mono::spread` (`mono/spread.rs`: `expand_pack_spreads`, after
-  `substitute_function`; `spread_operands` reads either call form) reads the
-  bound pack's element places and builds the call's collector of them,
-  `print` taking them as its arguments, while `unpack_builtin_collectors`
+  `substitute_function`; `spread_operands` reads either call form) checks
+  the pack is bound and leaves the caller's pack the call's operand,
+  `print` taking its element places as its arguments, while `unpack_builtin_collectors`
   passes a builtin writer's `write` the elements of the collector its call
   builds; the VM's `bind_args` (`backend/vm/calls.rs`) and Pliron's
   `bind_call_slots` take the collector operand whole; `Checker::pack_length_binder`/`pack_length_query`

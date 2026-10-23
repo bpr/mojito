@@ -1632,7 +1632,7 @@ fn reflected_field_type_construction_closes_per_unrolled_copy() {
 }
 
 #[test]
-fn method_call_spread_builds_its_collector_of_the_bound_pack_elements() {
+fn method_call_spread_passes_the_bound_pack_itself() {
     let pack = Ty::new(TyKind::Tuple(vec![Ty::int(), Ty::bool()]));
     let collector = MirPlace::root(0, Some(pack.clone()));
     let mut call = dunder_method_call(
@@ -1682,44 +1682,65 @@ fn method_call_spread_builds_its_collector_of_the_bound_pack_elements() {
         removed_args: Vec::new(),
         lowered_calls: Vec::new(),
     };
-    expand_pack_spreads("fwd", &mut function).expect("expand the method-call spread");
-    let instrs = &function.blocks[0].instrs;
-    assert!(
-        !instrs.iter().any(
-            |instruction| matches!(instruction, MirInstr::LoadPlace { dest, .. } if *dest == Reg(0))
-        ),
-        "the collector's whole read must go once its elements are read"
-    );
-    let loaded: Vec<(Reg, MirPlace)> = instrs
-        .iter()
-        .filter_map(|instruction| match instruction {
-            MirInstr::LoadPlace { dest, place } => Some((*dest, place.clone())),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(loaded.len(), 2);
-    let built = instrs.iter().find_map(|instruction| match instruction {
-        MirInstr::MakeTuple { dest, elems, .. } if *dest == Reg(0) => Some(elems.clone()),
-        _ => None,
-    });
+    let before = format!("{:?}", function.blocks[0].instrs);
+    expand_pack_spreads("fwd", &mut function).expect("check the method-call spread");
     assert_eq!(
-        built,
-        Some(vec![loaded[0].0, loaded[1].0]),
-        "the call builds its collector of the elements read"
+        format!("{:?}", function.blocks[0].instrs),
+        before,
+        "the call passes the caller's pack, read whole, at its spread position"
     );
-    let Some(MirInstr::MethodCall {
-        args,
-        arg_places,
-        spread,
-        ..
-    }) = instrs.last()
-    else {
-        panic!("the method call must stay last");
+}
+
+#[test]
+fn spread_of_an_unbound_pack_is_the_instance_boundary() {
+    let pack = Ty::new(TyKind::VariadicPack(Ty::int()));
+    let collector = MirPlace::root(0, Some(pack.clone()));
+    let mut call = dunder_method_call(
+        Reg(3),
+        Reg(1),
+        "tagged",
+        Some("Sink.tagged".into()),
+        None,
+        vec![Reg(0)],
+    );
+    if let MirInstr::MethodCall { spread, .. } = &mut call {
+        *spread = Some(0);
+    }
+    let mut function = MirFunction {
+        blocks: vec![MirBlock {
+            instrs: vec![
+                MirInstr::LoadPlace {
+                    dest: Reg(0),
+                    place: collector,
+                },
+                call,
+            ],
+            term: MirTerm::Return(None),
+        }],
+        n_regs: 4,
+        n_vars: 1,
+        var_names: vec!["a".into()],
+        n_params: 1,
+        param_types: vec![pack.clone()],
+        owned_params: vec![false],
+        deinit_params: vec![false],
+        ref_params: vec![false],
+        returns_reference: false,
+        var_tys: HashMap::from([(0, pack.clone())]),
+        ret_ty: Some(Ty::none()),
+        raises: false,
+        error_ty: None,
+        spans: mojito_mir::mir::SpanTable::default(),
+        reg_types: HashMap::from([(0, pack)]),
+        removed_params: Vec::new(),
+        callee_removed_params: Vec::new(),
+        callee_removed_args: Vec::new(),
+        removed_args: Vec::new(),
+        lowered_calls: Vec::new(),
     };
-    assert_eq!(*spread, Some(1));
-    assert_eq!(args, &vec![Reg(2), Reg(0)]);
-    assert!(arg_places.iter().all(Option::is_none));
-    assert_eq!(function.reg_types.get(&loaded[1].0.0), Some(&Ty::bool()));
+    let error = expand_pack_spreads("fwd", &mut function)
+        .expect_err("a spread of a pack the bindings leave open is unsupported");
+    assert_eq!(error.construct, "a spread's pack is still a parameter");
 }
 
 #[test]

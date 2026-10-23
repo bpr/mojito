@@ -1145,14 +1145,14 @@ binds the pack to the tuple of the call's values. A pack spread whole
 into another served `def` or into `print` (`show(*args)`, `drain(*args^)`)
 is a call whose spread argument is the collector itself, read in place or
 moved, at the position `MirInstr::Call::spread` names; the ownership
-analysis sees the whole collector lent or moved, and the elaborator
-(`expand_pack_spreads`) replaces the argument with one place read or move
-per element of the bound pack before it binds the callee, so concrete MIR
-carries no spread; a spread `inline-parametric` leaves in an inlined body,
-its collector already bound to its elements' tuple, is expanded the same
-way (R1103). A method call carries the same position
-(`MirInstr::MethodCall::spread`, schema 1.24), which the elaborator
-expands. The checker types the spread against the
+analysis sees the whole collector lent or moved, and the call passes
+that pack itself, as upstream's call passes the `VariadicPack`: the
+elaborator (`expand_pack_spreads`) checks that the bindings close the pack,
+the argument typed its elements' tuple, and expands only a spread into the
+builtin `print` into its elements; a spread `inline-parametric` leaves in an
+inlined body, its collector already bound, is passed the same way. A method
+call carries the same position (`MirInstr::MethodCall::spread`, schema
+1.24). The checker types the spread against the
 callee it selects, a `def`, method, or constructor whose collector is a
 type pack (a method's own `*a: *Ts` or its struct's `*b: *Self.Ts`); a
 spread into a homogeneous collector is rejected, as at the pin. It types a
@@ -1909,12 +1909,13 @@ rejects a call of a declared collecting callee that passes none
 storage or the `{ elements, len }` descriptor (`lower_make_tuple`); neither
 collects. A `read` collector's elements are bitwise images of the caller's
 values, never destroyed through the pack, where upstream's
-`VariadicPack[is_owned=False]` holds references (R743). The elaborator
-expands a spread (`show(*args)`) into reads of the bound pack's elements
-and builds the call's collector of them (`expand_pack_spreads`, R1103),
-and passes the elements of a collector as the arguments of a call the
-builtin `print` or the builtin-string writer answers
-(`unpack_builtin_collectors`, R1287, R422).
+`VariadicPack[is_owned=False]` holds references (R743). A spread
+(`show(*args)`, `take(*args^)`) passes the caller's pack itself: Pliron
+binds a `read` collector to the caller's storage in place and an owning one
+to the moved pack (`place_backed_arg_value`). The elaborator passes the
+elements of a collector as the arguments of a call the builtin `print` or
+the builtin-string writer answers (`expand_pack_spreads`,
+`unpack_builtin_collectors`, R1287, R422).
 
 Current Mojo reflection enters through the zero-sized `reflect[T]` compile-time
 handle. Mojito implements `is_struct`, `field_count`, `field_names`,
@@ -5003,9 +5004,9 @@ transfers instead of being released after the call. Three uses stay uses:
 one naming no constructor, which the backends copy or move by type; one of
 a compile-time value parameter's slot, which holds no value and which the
 elaborator materializes at each read; and the read of a variadic collector
-a call spreads, which the elaborator expands into the pack's element
-places (`expand_pack_spreads`, which finds the collector's read in an
-earlier block once a pass has split the call's). The parameter-use
+a call spreads, which the call passes whole (a spread into the builtin
+`print` excepted, whose elements `expand_pack_spreads` reads, finding the
+collector's read in an earlier block once a pass has split the call's). The parameter-use
 analysis reads a call of the constructed type's recorded `__copyinit__`
 or `__moveinit__` as it read the copy or move: the constructed value's
 arguments at the struct parameters the constructor kept
@@ -5846,8 +5847,8 @@ point where a slot declared in a loop is uninitialized again.
   (`show(*args)`, `take(*args^)`) binds the collector as the one argument
   `mojito_ast::call::bind_spread` checks it is: the caller's place for a
   `read` collector, the moved register for an owned one; a spread the
-  inlined body itself keeps, now typed the bound elements' tuple, is left
-  for `expand_pack_spreads` (`verify_pack_spread` admits it, R1103). A
+  inlined body itself keeps, now typed the bound elements' tuple, stays
+  the one operand its call passes (`verify_pack_spread` admits it). A
   forwarded `**kwargs^` (the `**` keyword, `FORWARDED_KWARGS_NAME`) binds
   the keyword collector's slot whole as an owned argument, the matcher
   never seeing it, as the pin binds a forward to another `**kwargs`

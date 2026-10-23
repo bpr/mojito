@@ -202,29 +202,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1274.
   - Model: Opus, Not Planned.
 
-- [ ] **R1103 A whole-pack spread is read element by element into a fresh
-  collector, where upstream passes the pack itself**
-
-  `show(*args)` passes the caller's collector at the call's `spread`
-  position until `expand_pack_spreads` reads each bound element from its
-  place and builds the call's collector of them (`tuple.make`), where
-  upstream's call passes the caller's pack value whole.
-  - A `read` spread copies each element's image into a new pack, and a
-    moved one (`take(*args^)`) moves each element out and in again.
-  - Probe: `verify_pack_spread` admits a `Tuple`-typed spread argument
-    because `inline-parametric` leaves one in an inlined body, its
-    collector bound to its elements' tuple, for the elaborator to expand.
-  - Probe: R1071's `inner(*xs)` over a homogeneous collector is rejected
-    because the checker accepts a spread of a type pack alone.
-  - Probe: a spread into the builtin `print` is passed as its elements
-    (R1287), which stays until `print` is the library function.
-  - Every call now passes its collector as one operand (R1102), so the fix
-    passes the spread register itself: delete the element reads from
-    `expand_pack_spreads` and keep its pack-binding check.
-  - Found while landing R1079 (2026-10-16).
-  - Depends on R1102.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1104 A copy- or move-capturing nested `def` that a sibling
   captures keeps its closure, and every call of it goes through that
   closure**
@@ -8888,6 +8865,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     references, so Pliron's frame-exit backstop (`lower_return`) skips
     pack-storage slots (`VariadicPack`, `Tuple`, `RuntimePack`) rather
     than free an inlined collector's images twice.
+  - Probe: a bound heterogeneous collector is typed the tuple of its
+    elements (`TyKind::Tuple`), where upstream's is the nominal
+    `VariadicPack[..., *Ts]`, so `verify_pack_spread` admits a
+    `Tuple`-typed spread argument, which every bound spread passes.
   - Found while landing R734 (2026-10-13).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -8923,9 +8904,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     slot of its own type (R1088); the nominal `VariadicList` splits too.
   - Probe: the read of a collector a call spreads (`show(*args)`) is a
     `var.use copy` of the collector's slot, which `lower_copies_and_moves`
-    keeps a use for the elaborator to expand (`expand_pack_spreads`),
-    where upstream passes the `VariadicList` by reference and copies
-    nothing (found while landing R1046).
+    keeps a use the call passes whole, so the VM copies the collector's
+    image, where upstream passes the `VariadicList` by reference and
+    copies nothing (found while landing R1046).
   - Found while landing R1040 (2026-10-16).
   - Depends on R743.
   - Model: Opus, Not Planned.
@@ -9983,7 +9964,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     pack and defaults, and `PRINT_COST` is gone.
   - Probe: a spread into the builtin `print` (`print(*args)`) is passed as
     its elements (`expand_pack_spreads`), where every other call passes
-    the collector it builds.
+    the caller's pack itself.
   - Found while landing R1075 (2026-10-22).
   - Depends on R424, R422, R1102.
   - Model: Fable, Not Planned.

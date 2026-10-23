@@ -40,7 +40,7 @@ disappear. Four such gaps were found, and one of them reaches far outside
 |---|---|---|---|
 | A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R890 (R733, R833, R1129, R1106, R829, R1272, R1264, R1113, R1290, and R956 closed; R832 waits on gap D) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1278, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
-| C. Packs are built by the backends | the call builds a library pack value | R743, R1102 (landed) | R1103, R1070, R1073 (R1090 closed) |
+| C. Packs are built by the backends | the call builds a library pack value | R743, R1102, R1103 (landed) | R1070, R1073 (R1090 closed) |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
 
 Each gap's fix also removes a place where a backend looks something up by
@@ -140,9 +140,10 @@ entry's probe is "one instance per `n` where the pin has one".
 
 - R1102 landed (2026-10-23): every call builds its positional collector
   (`tuple.make`) and passes it as one operand, the backends collect
-  nothing, and `inline-parametric`'s `Binding::Collector` is gone. R1103
-  then passes a spread's own pack instead of rebuilding one of its
-  elements.
+  nothing, and `inline-parametric`'s `Binding::Collector` is gone.
+- R1103 landed (2026-10-23): a spread passes the caller's own pack instead
+  of rebuilding one of its elements; only the builtin `print` still takes
+  the elements (R1287).
 - R1070 applies the same fix to the keyword collector.
 - R743 makes the runtime pack the library's `VariadicListMem`. R1073's
   native element code then becomes library code.
@@ -174,10 +175,10 @@ entry's probe is "one instance per `n` where the pin has one".
 
    R832 waits for gap D.
 
-3. **Gap C**. R1102 landed, and R1073 brings in R743:
+3. **Gap C**. R1102 and R1103 landed, and R1073 brings in R743:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1103 --task R1070 --task R1073 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1070 --task R1073 -n 0
    ```
 
 4. **Gap D**. R1252 brings in R1251, and R932 brings in R931:

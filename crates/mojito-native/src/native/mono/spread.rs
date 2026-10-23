@@ -1,24 +1,25 @@
-//! Expanding a whole-pack spread: an instance replaces the collector a call,
-//! a method call, or a nested `def`'s call spreads (`show(*args)`,
-//! `Sink().take(*args)`, `count(*args^)`) with the bound pack's element
-//! places, and retires a value pack spread into a bracket (`f[*vs]()`) once
-//! the call names its instance. The collector a call builds (`tuple.make`)
-//! stays the one operand it passes.
+//! Whole-pack spreads in an instance: a call, a method call, or a nested
+//! `def`'s call that spreads the caller's collector (`show(*args)`,
+//! `Sink().take(*args)`, `count(*args^)`) passes that pack itself once the
+//! bindings close it, as upstream's call passes the `VariadicPack`; the
+//! builtin `print` takes the bound pack's elements instead. A value pack
+//! spread into a bracket (`f[*vs]()`) retires once the call names its
+//! instance. The collector a call builds (`tuple.make`) stays the one
+//! operand it passes.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_mir::mir::Proj;
 use mojito_types::types::TyKind;
 
-/// Expand every whole-pack spread of the instance, as the elaborator does for
-/// upstream's pack expansion: the spread argument's register, typed the
-/// collector's tuple once the pack is bound, is read one element at a time,
-/// each from the collector's element place (or moved out of it, when the
-/// caller transferred the pack), and the call builds its collector of those
-/// elements into the same register (`tuple.make`); a spread into the
-/// builtin `print` passes them as its arguments instead, and clears the
-/// call's `spread`. The collector's own read goes with it. A spread whose
-/// pack the bindings leave open is the instance's unsupported boundary.
+/// Check every whole-pack spread of the instance: the spread argument's
+/// register, the caller's collector read in place or moved, must be typed
+/// the bound pack's tuple, and the call passes it unchanged. A spread whose
+/// pack the bindings leave open is the instance's unsupported boundary. A
+/// spread into the builtin `print` is expanded: each element is read from
+/// the collector's element place (or moved out of it, when the caller
+/// transferred the pack) and passed as one of its arguments, the call's
+/// `spread` cleared and the collector's own read gone.
 pub(super) fn expand_pack_spreads(
     template: &str,
     function: &mut MirFunction,
@@ -143,13 +144,17 @@ fn expand_in_block(
             index += 1;
             continue;
         }
-        let collector = collector_read(&blocks[read_block].instrs[read], pack, tables.var_tys)
-            .ok_or_else(|| tables.error("a spread reads no collector"))?;
-        let block = &mut blocks[at];
         let elements = match tables.reg_types.get(&pack.0).map(Ty::kind) {
             Some(TyKind::Tuple(elements)) => elements.clone(),
             _ => return Err(tables.error("a spread's pack is still a parameter")),
         };
+        // Any callee but the builtin `print` takes the caller's pack itself.
+        if !matches!(&blocks[at].instrs[index], MirInstr::Call { func, .. } if func.0 == "print") {
+            index += 1;
+            continue;
+        }
+        let collector = collector_read(&blocks[read_block].instrs[read], pack, tables.var_tys)
+            .ok_or_else(|| tables.error("a spread reads no collector"))?;
         let span = tables.spans.0.get(&pack.0).cloned();
         let mut loads = Vec::with_capacity(elements.len());
         let mut registers = Vec::with_capacity(elements.len());
@@ -169,36 +174,17 @@ fn expand_in_block(
             });
             registers.push(dest);
         }
-        // The builtin `print` takes its values one by one; any other callee
-        // takes the collector the call builds of the elements.
-        let prints =
-            matches!(&block.instrs[index], MirInstr::Call { func, .. } if func.0 == "print");
-        let mut inserted = loads.len();
-        if prints {
-            let call = spread_operands(&mut block.instrs[index])
-                .expect("the spread call was matched above");
-            let count = registers.len();
-            call.args.splice(position..=position, registers);
-            call.arg_places
-                .splice(position..=position, std::iter::repeat_n(None, count));
-            *call.spread = None;
-            tables.reg_types.remove(&pack.0);
-            tables.spans.0.remove(&pack.0);
-        } else {
-            let element_types = registers
-                .iter()
-                .map(|register| tables.reg_types.get(&register.0).cloned())
-                .collect();
-            loads.push(MirInstr::MakeTuple {
-                dest: pack,
-                elems: registers,
-                element_types,
-            });
-            inserted += 1;
-            if let Some(call) = spread_operands(&mut block.instrs[index]) {
-                call.arg_places[position] = None;
-            }
-        }
+        let block = &mut blocks[at];
+        let call =
+            spread_operands(&mut block.instrs[index]).expect("the spread call was matched above");
+        let count = registers.len();
+        call.args.splice(position..=position, registers);
+        call.arg_places
+            .splice(position..=position, std::iter::repeat_n(None, count));
+        *call.spread = None;
+        tables.reg_types.remove(&pack.0);
+        tables.spans.0.remove(&pack.0);
+        let inserted = loads.len();
         block.instrs.splice(index..index, loads);
         // The collector's whole read is dead once the elements are read.
         blocks[read_block].instrs.remove(read);

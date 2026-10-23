@@ -280,8 +280,10 @@ impl FnLowering<'_> {
         let defaults = decl.defaults.clone();
         // The physical parameter list is the named parameters with the
         // collector inserted at `variadic_index`: the call's one overflow
-        // operand, the pack it builds (`tuple.make`), as upstream's call
-        // passes the `VariadicPack`.
+        // operand, the pack it builds (`tuple.make`) or the caller's own
+        // pack it spreads, as upstream's call passes the `VariadicPack`. A
+        // read pack passes the caller's storage in place; an owning
+        // collector takes the transferred pack.
         let pack = match variadic {
             None => None,
             Some((_, index)) => {
@@ -297,7 +299,21 @@ impl FnLowering<'_> {
                         dest,
                     ));
                 };
-                Some((index, self.reg_value(ctx, args[*collector], ScalarTy::Ptr)?))
+                let Some(expected) = params.get(index).cloned() else {
+                    return Err(self.unsupported_reg(
+                        format!("positional pack of `{name}` lacks a parameter slot"),
+                        dest,
+                    ));
+                };
+                let value = self.place_backed_arg_value(
+                    ctx,
+                    args[*collector],
+                    &expected,
+                    owned.get(index).copied().unwrap_or(false),
+                    arg_places.get(*collector).and_then(Option::as_ref),
+                    dest,
+                )?;
+                Some((index, value))
             }
         };
         let kw_pack = match kw_variadic {

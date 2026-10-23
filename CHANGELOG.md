@@ -756,6 +756,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A whole-pack spread (`show(*args)`, `take(*args^)`) passes the caller's
+  pack itself, as upstream's call passes the `VariadicPack`, instead of
+  reading each bound element into a fresh collector (R1103). The
+  elaborator's `expand_pack_spreads` keeps only its check that the
+  bindings close the pack, and expands a spread into the builtin `print`
+  alone (R1287). Pliron binds a `read` collector to the caller's storage in
+  place and an owning one to the transferred pack, on the native backend
+  as on the VM.
+
 - Every call builds the positional collector its callee's `*xs` takes, as
   upstream's call builds the `VariadicPack` (R1102). MIR's
   `fill_omitted_arguments` pass emits a `tuple.make` of the overflow
