@@ -1016,11 +1016,18 @@ fn verify_error_region(
         ));
         return;
     };
+    // A `finally` copied before the raise that ends its own exit replaces
+    // the raise, as `lowerTryFinally` erases the terminator it pastes over.
+    let hands_on = |term: &MirTerm| match term {
+        MirTerm::Raise { src, .. } => *src == raises.error,
+        MirTerm::Return(_)
+        | MirTerm::Break { .. }
+        | MirTerm::Continue { .. }
+        | MirTerm::Unreachable => true,
+        _ => false,
+    };
     if let MirInstr::If { then, elifs, .. } = &instrs[index + 1 + offset]
-        && (!elifs.is_empty()
-            || !then.first().is_some_and(|block| {
-                crate::mir::terminator_regs(&block.term).contains(&raises.error)
-            }))
+        && (!elifs.is_empty() || !then.first().is_some_and(|block| hands_on(&block.term)))
     {
         errors.push(format!(
             "{prefix}: error region on %r{} does not hand on %r{}",

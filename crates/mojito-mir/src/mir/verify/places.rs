@@ -14,7 +14,7 @@ pub(super) fn verify_terminator(
 ) {
     let prefix = format!("MIR function '{name}' block {block_index}");
     match terminator {
-        MirTerm::Return(value) | MirTerm::ReturnWithCleanup { value, .. } => {
+        MirTerm::Return(value) => {
             // `Return(None)` doubles as the lowering placeholder terminator, so
             // only value-carrying returns are checked.
             if let Some(register) = value
@@ -29,23 +29,27 @@ pub(super) fn verify_terminator(
                     "{prefix}: return of {found} from a function returning {expected}"
                 ));
             }
-            if let MirTerm::ReturnWithCleanup { cleanup, .. } = terminator {
-                for variable in cleanup_slots(cleanup) {
-                    if variable as usize >= function.n_vars {
-                        errors.push(format!(
-                            "{prefix}: return cleanup uses invalid variable {variable}"
-                        ));
-                    }
-                }
-            }
         }
-        MirTerm::Raise(_) => {
-            if !function.raises && !context.protected {
+        MirTerm::Raise { label: None, .. } => {
+            if !function.raises {
                 errors.push(format!(
                     "{prefix}: unprotected raise in nonraising function"
                 ));
             }
         }
+        MirTerm::Raise {
+            label: Some(label), ..
+        } => match context.raise_target(*label) {
+            None => errors.push(format!(
+                "{prefix}: `raise` names try{}, which no enclosing try body carries",
+                label.0
+            )),
+            Some(false) => errors.push(format!(
+                "{prefix}: `raise` names try{}, which has no handler",
+                label.0
+            )),
+            Some(true) => {}
+        },
         MirTerm::TryYield => {
             if !context.is_try_part() {
                 errors.push(format!(

@@ -170,8 +170,8 @@ impl VmBackend {
                         self.frames.push(frame);
                         continue 'frames;
                     }
-                    Flow::Return { value, cleanup } => {
-                        self.run_cleanup(prog, frame.function, &cleanup, &mut frame.variables)?;
+                    Flow::Raise { label, .. } => return Err(unnamed_try(label)),
+                    Flow::Return(value) => {
                         // Re-root returned reference handles exactly as the
                         // terminator return path below does: a `return` leaving
                         // a `try` region otherwise carries refs rooted at this
@@ -205,14 +205,10 @@ impl VmBackend {
                 Transfer::Exit(MirTerm::Return(reg)) => reg
                     .as_ref()
                     .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone()),
-                Transfer::Exit(MirTerm::ReturnWithCleanup { value, cleanup }) => {
-                    let returned = value
-                        .as_ref()
-                        .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone());
-                    self.run_cleanup(prog, frame.function, cleanup, &mut frame.variables)?;
-                    returned
-                }
-                Transfer::Exit(MirTerm::Raise(src)) => {
+                Transfer::Exit(MirTerm::Raise {
+                    label: Some(label), ..
+                }) => return Err(unnamed_try(*label)),
+                Transfer::Exit(MirTerm::Raise { src, label: None }) => {
                     let raised = self.raise_register(prog, frame.function, &frame.registers, *src);
                     match raised {
                         RuntimeError::Raised(error)
@@ -705,6 +701,15 @@ pub(super) fn raise_into_edge(
         }
         Err(other) => Err(other),
     }
+}
+
+/// The error of a raise naming a `try` whose body does not hold it: the
+/// verifier admits only raises naming an enclosing `try`.
+fn unnamed_try(label: TryLabel) -> RuntimeError {
+    RuntimeError::Unsupported(format!(
+        "vm: a raise named try{}, which does not enclose it",
+        label.0
+    ))
 }
 
 /// The error of a region exit naming no op of its function: the verifier

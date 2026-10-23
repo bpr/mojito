@@ -30,8 +30,8 @@
 //!   it already dropped, consumed, or moved.
 
 use super::{
-    CleanupDrop, FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    MirIntrinsicSubscript, MirPlace, MirProgram, MirTerm, Proj, Reg, cleanup_slots,
+    FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
+    MirIntrinsicSubscript, MirPlace, MirProgram, MirTerm, Proj, Reg,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::origin::{Mutability, PointerOrigin};
@@ -113,7 +113,6 @@ mod types;
 use calls::*;
 pub use concrete::concrete_function_findings;
 use concrete::verify_concrete_program;
-pub use drops::cut_try_cleanups;
 use drops::verify_slot_ends;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use instr::*;
@@ -190,7 +189,22 @@ impl RegionContext {
     /// Whether this block is a `try` part's, where `TryYield` is the legal
     /// way to complete.
     fn is_try_part(&self) -> bool {
-        matches!(self.kind(), RegionKind::TryPart)
+        matches!(
+            self.kind(),
+            RegionKind::TryPart | RegionKind::TryBody { .. }
+        )
+    }
+
+    /// Whether the nearest enclosing `try` body carrying `label` has a
+    /// handler; `None` when no enclosing `try` body carries it.
+    fn raise_target(&self, label: super::TryLabel) -> Option<bool> {
+        self.regions.iter().rev().find_map(|kind| match kind {
+            RegionKind::TryBody {
+                label: found,
+                handled,
+            } if *found == label => Some(*handled),
+            _ => None,
+        })
     }
 }
 
@@ -198,6 +212,13 @@ impl RegionContext {
 #[derive(Clone)]
 enum RegionKind {
     Function,
+    /// A `try` body, which a `raise` carrying its label leaves for its
+    /// handler, when it has one.
+    TryBody {
+        label: super::TryLabel,
+        handled: bool,
+    },
+    /// A `try`'s handler or `else`.
     TryPart,
     /// An `if`'s then, elif, or else arm, ended by `Yield` with its
     /// op's results.

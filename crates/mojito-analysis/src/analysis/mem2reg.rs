@@ -48,9 +48,9 @@ use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     Const, MirBlock, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirTerm, Reg,
-    RegionFrame, UseMode, cleanup_slots, count_register_reads, instruction_regions,
-    instruction_regions_mut, instruction_slots, loop_continues_mut, match_nexts_mut, region_exit,
-    renumber_block_slots, retire_slots,
+    RegionFrame, UseMode, count_register_reads, instruction_regions, instruction_regions_mut,
+    instruction_slots, loop_continues_mut, match_nexts_mut, region_exit, renumber_block_slots,
+    retire_slots,
 };
 use mojito_types::types::Ty;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -803,16 +803,9 @@ fn take_census(list: usize, blocks: &[MirBlock], census: &mut HashMap<VarId, Cen
                 }
                 _ => keep(census, slots),
             }
-            if let MirInstr::Try {
-                handler, cleanup, ..
-            } = instruction
-            {
+            if let MirInstr::Try { handler, .. } = instruction {
                 keep(census, handler.iter().filter_map(|(slot, _)| *slot));
-                keep(census, cleanup_slots(cleanup));
             }
-        }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
-            keep(census, cleanup_slots(cleanup));
         }
     }
 }

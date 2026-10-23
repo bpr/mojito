@@ -148,7 +148,6 @@ pub(super) fn verify_instruction(
             destructor.as_deref(),
             errors,
         ),
-        MirInstr::Try { cleanup, .. } => verify_cleanup_drops(&cx, cleanup, errors),
         MirInstr::UseVar {
             var,
             mode,
@@ -246,25 +245,6 @@ fn verify_effect_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
         errors.push(format!(
             "{prefix}: unprotected raising call in nonraising function"
         ));
-    }
-}
-
-/// Each drop of a cleanup list names its slot's destructor as a `drop.var`
-/// does ([`verify_lifecycle_symbol`]).
-pub(super) fn verify_cleanup_drops(
-    cx: &InstrCx<'_>,
-    cleanup: &[CleanupDrop],
-    errors: &mut Vec<String>,
-) {
-    for drop in cleanup {
-        verify_lifecycle_symbol(
-            cx,
-            "cleanup drop",
-            cx.function.var_tys.get(&drop.var),
-            Some("__deinit__"),
-            drop.destructor.as_deref(),
-            errors,
-        );
     }
 }
 

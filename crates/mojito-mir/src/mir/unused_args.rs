@@ -3,8 +3,7 @@
 //! (`identifyUnusedArguments`), before it reads the generator for unused
 //! compile-time parameters with those arguments gone.
 //!
-//! A slot is used by every instruction, handler binding, and cleanup list
-//! that names it, but a drop of a value whose drop runs no code
+//! A slot is used by every instruction and handler binding that names it, but a drop of a value whose drop runs no code
 //! ([`MirDeclarations::drop_runs_no_code`]): upstream counts no such drop as
 //! a user, so an owned `var a: Arr[n]` whose struct only holds a vector is
 //! as unused as a borrowed one.
@@ -13,9 +12,9 @@ use crate::mir::call_defaults::erase_unpassed_defaults;
 use crate::mir::param_uses::{erase_forward_chains, register_reads};
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
-    CleanupDrop, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
-    MirPlace, MirTerm, Reg, SlotParameter, cleanup_slots, instruction_regions,
-    instruction_regions_mut, instruction_slots, retire_parameters, table_member,
+    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, Reg,
+    SlotParameter, instruction_regions, instruction_regions_mut, instruction_slots,
+    retire_parameters, table_member,
 };
 use mojito_ast::call::{ArgSlot, CallVariadics, MatchError, match_call_slots};
 use mojito_hir::hir::VarId;
@@ -79,9 +78,9 @@ pub fn unused_arguments(
         .collect()
 }
 
-/// The slots `function` uses: those its instructions, handler bindings,
-/// and cleanup lists name, in its regions too, but a drop, by a `drop.var`
-/// or a cleanup list, of a slot whose drop runs no code.
+/// The slots `function` uses: those its instructions and handler bindings
+/// name, in its regions too, but a `drop.var` of a slot whose drop runs no
+/// code.
 pub fn used_slots(function: &MirFunction, declarations: &MirDeclarations) -> BTreeSet<VarId> {
     let trivial = |slot: VarId| {
         function
@@ -374,21 +373,13 @@ fn names_a_place(ty: &Ty) -> bool {
 /// Add to `used` each slot `blocks` and their regions use ([`used_slots`]),
 /// where `trivial` answers whether dropping a slot runs no code.
 fn collect_used(blocks: &[MirBlock], trivial: &dyn Fn(VarId) -> bool, used: &mut BTreeSet<VarId>) {
-    let cleanup = |drops: &[CleanupDrop], used: &mut BTreeSet<VarId>| {
-        used.extend(cleanup_slots(drops).filter(|&slot| !trivial(slot)));
-    };
     for block in blocks {
         for instruction in &block.instrs {
             match instruction {
                 MirInstr::DropVar { var, .. } if trivial(*var) => {}
-                MirInstr::Try {
-                    handler,
-                    cleanup: slots,
-                    ..
-                } => {
+                MirInstr::Try { handler, .. } => {
                     used.extend(instruction_slots(instruction));
                     used.extend(handler.iter().filter_map(|(slot, _)| *slot));
-                    cleanup(slots, used);
                 }
                 _ => used.extend(instruction_slots(instruction)),
             }
@@ -396,29 +387,20 @@ fn collect_used(blocks: &[MirBlock], trivial: &dyn Fn(VarId) -> bool, used: &mut
                 collect_used(region, trivial, used);
             }
         }
-        if let MirTerm::ReturnWithCleanup { cleanup: slots, .. } = &block.term {
-            cleanup(slots, used);
-        }
     }
 }
 
 /// Remove from `blocks` and their regions every drop of a `retired` slot,
-/// by a `drop.var` or a cleanup list.
+/// a `drop.var`.
 fn remove_drops(blocks: &mut [MirBlock], retired: &BTreeSet<VarId>) {
     for block in blocks {
         block.instrs.retain(
             |instruction| !matches!(instruction, MirInstr::DropVar { var, .. } if retired.contains(var)),
         );
         for instruction in &mut block.instrs {
-            if let MirInstr::Try { cleanup, .. } = instruction {
-                cleanup.retain(|drop| !retired.contains(&drop.var));
-            }
             for region in instruction_regions_mut(instruction) {
                 remove_drops(region, retired);
             }
-        }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
-            cleanup.retain(|drop| !retired.contains(&drop.var));
         }
     }
 }

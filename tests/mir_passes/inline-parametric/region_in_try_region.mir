@@ -1,4 +1,4 @@
-mojito-mir 1.91
+mojito-mir 1.92
 artifact {
   features: [],
   files: [
@@ -37,7 +37,7 @@ artifact {
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v0, mode: copy },
               binary { op: lt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
-              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: string("negative") }, call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: raise { src: %r5 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: string("negative") }, call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: raise { src: %r5, label: absent } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               var.use { dest: %r6, var: $v0, mode: copy }
             ],
             terminator: return { value: present(%r6) }
@@ -98,7 +98,7 @@ artifact {
         blocks: [
           bb0 {
             instructions: [
-              try { body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, call { dest: %r1, func: may_raise, raises: present(raises { type: Error, flag: %r6, error: %r7 }), args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, if { results: [], condition: %r6, then: [bb0 { instructions: [], terminator: raise { src: %r7 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, call { dest: %r2, func: add_one, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }], handler: present(handler { error_var: absent, blocks: [bb0 { instructions: [const { dest: %r4, value: string("caught") }, call { dest: %r5, func: print, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }] }), orelse: absent, finalbody: absent, cleanup: [] }
+              try { label: try0, body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, call { dest: %r1, func: may_raise, raises: present(raises { type: Error, flag: %r6, error: %r7 }), args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, if { results: [], condition: %r6, then: [bb0 { instructions: [], terminator: raise { src: %r7, label: present(try0) } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, call { dest: %r2, func: add_one, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }], handler: present(handler { error_var: absent, blocks: [bb0 { instructions: [const { dest: %r4, value: string("caught") }, call { dest: %r5, func: print, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }] }), orelse: absent }
             ],
             terminator: return { value: absent }
           }

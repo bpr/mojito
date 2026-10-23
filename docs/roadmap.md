@@ -140,13 +140,13 @@ which names the upstream pass each one follows. Each is measured by the
     `return 0`; `print(down(40))` aborts with a stack overflow in a debug
     build (`down(20)` prints `20`), where `down(100000)` without the `try`
     prints `100000`.
-  - Lever: make each `try` part a cursor level that records the part and
-    the pending outcome `finally` runs under; a raise unwinds
-    `VmBackend::frames` to the innermost frame whose cursor is in a `try`
-    body with a handler, stopping at a synchronous call's target frame.
-    `exec_try`, `run_region`, and their recursion go away.
-  - Related to R884: once each `finally` is copied before its exits, the
-    pending-outcome state goes too.
+  - Lever: make each `try` part a cursor level that records the part; a
+    raise naming a `try` unwinds `VmBackend::frames` to the innermost
+    frame whose cursor is in the body of the `try` carrying its label,
+    stopping at a synchronous call's target frame. `exec_try`,
+    `run_region`, and their recursion go away.
+  - Since R884 no `finally` runs in the VM: each is copied before its
+    exits, so a part records no pending outcome.
   - Depends on R882.
   - Model: Opus, Not Planned.
 
@@ -748,7 +748,8 @@ which names the upstream pass each one follows. Each is measured by the
   - Upstream's `LowerSemanticCF` makes each raise an explicit
     `lit.try.raise` terminator (`emitRaise`), which carries the variant
     values into the except region; Mojito's `raise` terminator, a raising
-    call's in its error region since R831, carries none.
+    call's in its error region since R831, names its `try` by label since
+    R884, as `lit.try.raise` does, but carries no values.
   - The fix gives `Try` results, a `try.yield` with values, and handler
     arguments, and has `variance` stop refusing a store under a `try`.
   - Probe: `tests/mir_passes/mem-2-reg/region_try_store_kept.mir`.
@@ -1505,21 +1506,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R829 A value a `return` holds past an inner `finally` is destroyed
-  after the outermost one**
-
-  Problem: a return crossing `try: try: return i finally: print("inner",
-  s.tag)` inside `try: ... finally: print("outer")` prints `outer` before
-  `drop 2`, where the pin prints `inner`, `drop 2`, `outer`.
-  - A return's cleanup list runs once, after every `finally` it crosses.
-  - The pin destroys the value on the edge after the last `finally` that
-    reads it.
-  - Field drops (`field_drops.rs`) still seed a region's returns with the
-    `finally`'s normal-path liveness.
-  - Found while landing R826 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R828 A `for` loop's iterator outlives its last `__next__` on a
   `return` path**
 
@@ -1534,6 +1520,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     reads a dead `List`.
   - Fix: the loop binding's reference establishes a loan on the iterator's
     roots, then the keep-alives and HIR's loop-owned list go.
+  - Since R884 the `finally` is copied before the return's keep-alives, so
+    its copy can read what the loop yields: the iterator now dies after
+    the `finally` (`returning 2`, `finally 2`, `iter dropped at 3`), where
+    the pin prints `iter dropped at 3` before `returning 2`.
   - Found while landing R826 (2026-10-14).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -10202,36 +10192,6 @@ The entries below close that gap, staged in
 [`docs/structured-control-flow-plan.md`](structured-control-flow-plan.md):
 the CFG lowering point moves down one consumer at a time, and the
 follow-ups the landed producer stages filed come last.
-
-- [ ] **R884 A `finally` is run by the VM on each exit where upstream
-  copies it before each exiting terminator**
-
-  `LowerSemanticCF`'s `lowerTryFinally` copies a `finally` body before every
-  terminator that leaves the `try`, and Mojito keeps one `finalbody` region
-  the VM runs dynamically.
-  - Gap kept open by `docs/structured-control-flow-plan.md`.
-  - Related to R829, without depending on it.
-  - Probe: a `break` out of a `try` whose `finally` reads `s`, where
-    nothing after the loop reads `s`.
-  - The pin destroys `s` once the `finally` has run, before the loop's
-    exit (`finally 2`, `drop 2`, `after`).
-  - The VM never destroys it, and the native build destroys it at the
-    function's exit.
-  - No instruction on the `break` path can host that death until the
-    `finally` is copied before the `break`.
-  - Once `try` parts are single regions, the copy can be made in MIR
-    lowering, before the ownership checks.
-  - `simplify-cf` never elides a `try` with a `finally`, which upstream's
-    `removeTrivialTry` never meets: probe a `try`/`except`/`finally` whose
-    body cannot raise (`--timings`' `simplify-cf.erased_tries`).
-  - A raise past a nested `try`'s `finally` is the one raise no
-    instruction can host a drop on, so `Try::cleanup` survives for it
-    alone and goes with the copy: probe `var s = S(5)` in an outer `try`
-    body, an inner `try: f(1)` / `finally: print(s.tag)`, then
-    `print("after", s.tag)`, where the outer `try` lists `s`.
-  - Depends on R831 (the explicit raise edges a `finally` is copied
-    before).
-  - Model: Fable, Planned.
 
 - [ ] **R1261 The MIR verifier never checks that a register's definition
   dominates its reads, where MLIR's verifier rejects an operand that does

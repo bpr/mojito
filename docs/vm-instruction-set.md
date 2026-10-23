@@ -147,7 +147,7 @@ accessed; the compact notation omits this analysis-only field.
 
 | Mnemonic | MIR operation | Purpose |
 |---|---|---|
-| `try` | `Try` | Execute structured try/except/else/finally regions |
+| `try` | `Try` | Execute structured try/except/else regions, a raise naming the `try` entering its handler |
 | `unsupported` | `Unsupported` | Report an explicitly unsupported operation |
 
 `if`, `loop`, `comptime.if`, and `comptime.for` (`If`, `Loop`, `ComptimeIf`,
@@ -189,9 +189,8 @@ stored handle and operating on its referent.
 | Mnemonic | MIR terminator | Purpose |
 |---|---|---|
 | `return` | `Return` | Return from a function or structured region |
-| `return.cleanup` | `ReturnWithCleanup` | Return after pending `finally` regions, then destroy what the return still holds |
 | `try.yield` | `TryYield` | Complete a try sub-region normally |
-| `raise` | `Raise` | Raise an error value, leaving every region to the nearest `try`'s raise edge or the function |
+| `raise` | `Raise` | Raise an error value to the handler of the `try` its label names, or out of the function |
 
 The structured region terminators — `yield`, `if.elifcond.yield`, `break`,
 `continue`, `match.next`, `match.complete`, `comptime.yield`,
@@ -828,30 +827,27 @@ tests `iter.has_next` first.
 ### `try` — Structured Exception Region
 
 ```text
-try {
+try try0 {
     body      { ... }
     except $error { ... }
     else      { ... }
-    finally   { ... }
-    cleanup   [$v3, $v4]
 }
 ```
 
 Executes structured regions that share the enclosing function's registers
-and variable slots.
+and variable slots. A source `finally` has no region here: MIR lowering
+copied it before every exit of the parts, as upstream's `lowerTryFinally`
+does, so it runs as ordinary instructions on each way out.
 
 Semantics:
 
 1. Execute `body`.
-2. If `body` raises, drop the `cleanup` slots (what the raise still holds;
-   nothing else runs this list), then, when an `except` region exists,
-   optionally bind the error and execute the handler.
+2. If a raise in `body` names this `try`'s label, optionally bind the error
+   and execute the handler. A raise naming another `try`, or none, leaves
+   the `try` untouched, as a `return` or a region exit does.
 3. Execute `else` only if the body completed normally.
-4. Execute `finally` on normal completion, raise, return, break, or continue.
-5. A non-normal result from `finally` overrides the pending result.
 
-The body, handler, else, and finally components are each one block,
-`bb0`.
+The body, handler, and else components are each one block, `bb0`.
 
 ### `unsupported` — Explicit Backend Failure
 
@@ -907,16 +903,14 @@ Terminators appear only as the final operation of a basic block.
 ```text
 return %value
 return.none
-return.cleanup %value, [$v3, $v2]
 ```
 
 Ends the current function and returns a register value or `None`.
 
-Within a try sub-region, `return` becomes a non-normal flow value. It propagates
-through enclosing regions so every pending `finally` executes before the
-function actually returns. `return.cleanup`, which drop elaboration writes on a
-return crossing a `finally`, carries the listed variables through every pending
-`finally`, then destroys them in the recorded order.
+Within a try sub-region, `return` becomes a non-normal flow value that
+propagates through the enclosing regions to the function. Each `finally` it
+crosses already ran before it, copied there by MIR lowering, and drop
+elaboration destroyed before it what it still held.
 
 ### `try.yield` — Complete Region
 
@@ -926,20 +920,21 @@ try.yield
 
 Marks normal completion of a try sub-region. It is not a valid ordinary function
 terminator. The region runner translates it to normal flow and allows the
-surrounding `try` instruction to continue with `else` or `finally` as required.
+surrounding `try` instruction to continue with `else` or complete.
 
 ### `raise` — Raise Error
 
 ```text
-raise %source
+raise %source [try0]
 ```
 
 Raises the value in `%source`. An `Error` or `String` supplies its message;
 another value reports its runtime type. It ends any region, as upstream's
 `raise` ends its block: the exceptional outcome leaves every enclosing
-region for the nearest enclosing `try`'s raise edge, or out of the current
-function. Drop elaboration has already destroyed, before it, what neither
-the handler nor a `finally` reads.
+region for the handler of the nearest `try` carrying its label whose body
+holds it (`lit.try.raise`), or, with no label, out of the current function
+(`lit.error_return`). Drop elaboration has already destroyed, before it,
+what that handler does not read.
 
 ## Call ABI and Function Metadata
 

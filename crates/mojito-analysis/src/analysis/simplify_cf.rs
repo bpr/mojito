@@ -12,14 +12,11 @@
 //!   replaced by its body too, whose terminator then ends the enclosing
 //!   block, and what followed the loop goes. An inlined body is such a
 //!   loop: its `return`s are `break`s.
-//! - **Trivial `try`s** (`removeTrivialTry`). A `try` with a handler whose
-//!   body holds no `raise` terminator (a raising call's raises in its error
-//!   region) is replaced by
-//!   its body and, when the body completes (`try.yield`), its `else`; a part
-//!   that leaves instead ends the enclosing block. A raise in a nested
-//!   `try`'s body is that `try`'s, and one in its other parts the enclosing
-//!   one's. A `try` with a `finally`, which upstream has lowered away before
-//!   this pass, is kept.
+//! - **Trivial `try`s** (`removeTrivialTry`). A `try` no raise names (a
+//!   raising call raises in its error region) is replaced by its body and,
+//!   when the body completes (`try.yield`), its `else`; a part that leaves
+//!   instead ends the enclosing block. A raise names the nearest `try`
+//!   carrying its label whose body holds it.
 //! - **Implied conditions** (`propagateImpliedCondition`). After an `if`
 //!   whose condition is not a constant and whose `then` arm cannot fall
 //!   through (it ends in a `return`, `raise`, `break`, `continue`, or
@@ -33,7 +30,7 @@ use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::{
     Const, LoopLabel, MirBlock, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, RegionFrame,
-    count_register_reads, fresh_register, instruction_regions, instruction_regions_mut,
+    TryLabel, count_register_reads, fresh_register, instruction_regions, instruction_regions_mut,
     replace_register_reads, resolve_replacements,
 };
 use mojito_types::types::Ty;
@@ -92,8 +89,7 @@ const fn exits_early(term: &MirTerm) -> bool {
     matches!(
         term,
         MirTerm::Return(_)
-            | MirTerm::ReturnWithCleanup { .. }
-            | MirTerm::Raise(_)
+            | MirTerm::Raise { .. }
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::Unreachable
@@ -120,8 +116,9 @@ struct Census {
     elidable: Vec<bool>,
     /// The loops enclosing the walk, innermost last, with their numbers.
     parents: Vec<(Option<LoopLabel>, usize)>,
-    /// The `try` whose body holds the walk, which a raise there keeps.
-    last_try: Option<usize>,
+    /// The `try`s whose bodies hold the walk, innermost last, with their
+    /// numbers: a raise naming one keeps it.
+    tries: Vec<(TryLabel, usize)>,
 }
 
 impl Census {
@@ -137,28 +134,17 @@ impl Census {
                         self.parents.pop();
                     }
                     MirInstr::Try {
+                        label,
                         body,
                         handler,
                         orelse,
-                        finalbody,
-                        ..
                     } => {
                         let id = self.elidable.len();
-                        self.elidable.push(handler.is_some() && finalbody.is_none());
-                        // A body no handler protects raises to the
-                        // enclosing `try`.
-                        let outer = self.last_try;
-                        if handler.is_some() {
-                            self.last_try = Some(id);
-                        }
+                        self.elidable.push(true);
+                        self.tries.push((*label, id));
                         self.walk(body);
-                        self.last_try = outer;
-                        let parts = handler
-                            .iter()
-                            .map(|(_, blocks)| blocks)
-                            .chain(orelse)
-                            .chain(finalbody);
-                        for part in parts {
+                        self.tries.pop();
+                        for part in handler.iter().map(|(_, blocks)| blocks).chain(orelse) {
                             self.walk(part);
                         }
                     }
@@ -169,8 +155,10 @@ impl Census {
                     }
                 }
             }
-            if matches!(block.term, MirTerm::Raise(_))
-                && let Some(id) = self.last_try
+            if let MirTerm::Raise {
+                label: Some(label), ..
+            } = block.term
+                && let Some(&(_, id)) = self.tries.iter().rev().find(|(found, _)| *found == label)
             {
                 self.elidable[id] = false;
             }

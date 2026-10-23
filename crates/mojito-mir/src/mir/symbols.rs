@@ -15,8 +15,7 @@
 //! owner, a source location) names no symbol and is skipped.
 
 use crate::mir::{
-    CleanupDrop, Const, MirBlock, MirFunction, MirInstr, MirTerm, instruction_regions,
-    instruction_regions_mut,
+    Const, MirBlock, MirFunction, MirInstr, instruction_regions, instruction_regions_mut,
 };
 use mojito_symbol::symbol::{
     INT_DIGITS_SYMBOL, POW_INT_SYMBOL, UINT_DIGITS_SYMBOL, WRITE_FORMATTED, calls_pow_int,
@@ -316,25 +315,13 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                 MirInstr::VariantSetInitWith { destructors, .. } => {
                     destructors.iter_mut().flatten().for_each(&mut *replace);
                 }
-                MirInstr::Try { cleanup, .. } => replace_cleanup_destructors(cleanup, replace),
                 _ => {}
             }
             for region in instruction_regions_mut(instruction) {
                 replace_symbol_uses(region, replace);
             }
         }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
-            replace_cleanup_destructors(cleanup, replace);
-        }
     }
-}
-
-/// [`replace_symbol_uses`] over the destructors a cleanup list names.
-fn replace_cleanup_destructors(cleanup: &mut [CleanupDrop], replace: &mut dyn FnMut(&mut String)) {
-    cleanup
-        .iter_mut()
-        .filter_map(|drop| drop.destructor.as_mut())
-        .for_each(replace);
 }
 
 /// The bit of [`SymbolTable::lengths`] a name of `name`'s length sets.
@@ -660,7 +647,7 @@ impl ser::SerializeStructVariant for &mut Walker<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::SymbolTable;
-    use crate::mir::{Const, FuncRef, MirBlock, MirFunction, MirInstr, MirTerm, Reg};
+    use crate::mir::{Const, FuncRef, MirBlock, MirFunction, MirInstr, MirTerm, Reg, TryLabel};
     use mojito_types::param_expr::{ParamId, ParamRef};
     use mojito_types::types::{Ty, TyKind};
     use std::collections::HashSet;
@@ -742,6 +729,7 @@ mod tests {
     fn a_struct_named_only_in_a_try_handler_register_type_is_a_use() {
         let mut table = SymbolTable::new(["Box", "Other"]);
         let mut function = body(vec![MirInstr::Try {
+            label: TryLabel(0),
             body: vec![MirBlock {
                 instrs: Vec::new(),
                 term: MirTerm::TryYield,
@@ -757,8 +745,6 @@ mod tests {
                 }],
             )),
             orelse: None,
-            finalbody: None,
-            cleanup: Vec::new(),
         }]);
         function.n_regs = 1;
         assert_eq!(table.function_uses(&function), vec!["Box"]);

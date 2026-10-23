@@ -1,6 +1,6 @@
 //! The `exec_instr` instruction dispatcher plus `try`-region execution
-//! (`exec_try`/`run_cleanup`/`run_region`, the last stepping a region cursor
-//! over a `try` part).
+//! (`exec_try`/`run_region`, the latter stepping a region cursor over a
+//! `try` part).
 //! Extracted from `backend/vm.rs`; see `docs/symbol-map.md`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -2061,23 +2061,22 @@ impl VmBackend {
                 )));
             }
             MirInstr::Try {
+                label,
                 body,
                 handler,
                 orelse,
-                finalbody,
-                cleanup,
             } => {
-                // A `try` may complete with a `return` that crossed its boundary;
-                // propagate that outcome to the block driver.
+                // A `try` may complete with a `return`, a region exit, or a
+                // raise naming an enclosing `try` from inside it; propagate
+                // that outcome to the block driver.
                 return self.exec_try(
                     prog,
                     scope,
                     &TryRegions {
+                        label: *label,
                         body,
                         handler,
                         orelse,
-                        finalbody,
-                        cleanup,
                     },
                     CallerFrame {
                         id: frame_id,
@@ -2096,10 +2095,11 @@ impl VmBackend {
         Ok(Flow::Normal)
     }
 
-    /// Execute a `try`/`except`/`else`/`finally` region. Each sub-part runs as a
-    /// mini-CFG in the current frame; a raise in the body runs the raise-edge
-    /// `cleanup` drops, then unwinds to `handler`, `else` runs on normal
-    /// completion, and `finally` always runs (its raise wins).
+    /// Execute a `try`/`except`/`else` region. Each part runs as a region
+    /// in the current frame; a raise naming this `try` from its body
+    /// unwinds to `handler`, binding the error, and `else` runs on normal
+    /// completion. Every other outcome, a raise naming an enclosing `try`
+    /// included, leaves the `try`.
     pub(super) fn exec_try(
         &mut self,
         prog: &Prog,
@@ -2108,11 +2108,10 @@ impl VmBackend {
         frame: CallerFrame<'_>,
     ) -> Result<Flow, RuntimeError> {
         let TryRegions {
+            label,
             body,
             handler,
             orelse,
-            finalbody,
-            cleanup,
         } = regions;
         let CallerFrame {
             id: _,
@@ -2120,107 +2119,42 @@ impl VmBackend {
             registers: regs,
             variables: vars,
         } = frame;
-        let outcome = match self.run_region(prog, scope, body, regs, vars) {
-            // The body raised: run the raise-edge cleanup (destroy what the raise
-            // still holds), then dispatch to the handler or re-propagate.
-            Err(RuntimeError::Raised(error)) => {
-                self.run_cleanup(prog, scope.function, cleanup, vars)?;
-                match handler {
-                    Some((err_slot, hblocks)) => {
-                        if let Value::Error(message) = &error {
-                            self.record_lifecycle(format!("catch {message}"));
-                        }
-                        if let Some(slot) = err_slot {
-                            vars[*slot as usize] = error;
-                        }
-                        self.run_region(prog, scope, hblocks, regs, vars)
-                    }
-                    None => Err(RuntimeError::Raised(error)),
+        match self.run_region(prog, scope, body, regs, vars)? {
+            Flow::Raise {
+                label: raised,
+                error,
+            } if raised == *label => {
+                let Some((err_slot, hblocks)) = handler else {
+                    return Err(RuntimeError::Unsupported(format!(
+                        "vm: a raise named try{}, which has no handler",
+                        label.0
+                    )));
+                };
+                if let Value::Error(message) = &error {
+                    self.record_lifecycle(format!("catch {message}"));
                 }
+                if let Some(slot) = err_slot {
+                    vars[*slot as usize] = error;
+                }
+                self.run_region(prog, scope, hblocks, regs, vars)
             }
-            // A non-raised runtime error propagates untouched.
-            Err(other) => Err(other),
-            // The body completed (normally, or via a `return` or region exit that
-            // crossed out), having ended its own locals. `else` runs only on
-            // *normal* completion; a `return` from the body skips `else` and
-            // carries out.
-            Ok(Flow::Normal) => match orelse {
+            // `else` runs only on *normal* completion; a `return`, a region
+            // exit, or a raise naming an enclosing `try` carries out.
+            Flow::Normal => match orelse {
                 Some(eblocks) => self.run_region(prog, scope, eblocks, regs, vars),
                 None => Ok(Flow::Normal),
             },
-            Ok(flow) => Ok(flow),
-        };
-        // `finally` always runs; if it raises or itself transfers control
-        // (`return`/`break`/`continue`), that outcome wins over the pending one
-        // (Python/Mojo semantics).
-        if let Some(fblocks) = finalbody {
-            let pending_cleanup = match &outcome {
-                Ok(Flow::Return { cleanup, .. }) => cleanup.clone(),
-                _ => Vec::new(),
-            };
-            match self.run_region(prog, scope, fblocks, regs, vars) {
-                Ok(Flow::Normal) => {}
-                Ok(Flow::Return {
-                    value,
-                    cleanup: mut overriding_cleanup,
-                }) => {
-                    // A return in `finally` wins, but values owned by the return
-                    // it overrides still leave scope. Preserve the overriding
-                    // return's inner-to-outer order and append only distinct
-                    // pending roots.
-                    for drop in pending_cleanup {
-                        if !cleanup_drops(&overriding_cleanup, drop.var) {
-                            overriding_cleanup.push(drop);
-                        }
-                    }
-                    return Ok(Flow::Return {
-                        value,
-                        cleanup: overriding_cleanup,
-                    });
-                }
-                Ok(non_normal) => {
-                    self.run_cleanup(prog, scope.function, &pending_cleanup, vars)?;
-                    return Ok(non_normal);
-                }
-                Err(error) => {
-                    self.run_cleanup(prog, scope.function, &pending_cleanup, vars)?;
-                    return Err(error);
-                }
-            }
+            flow => Ok(flow),
         }
-        outcome
-    }
-
-    /// Run one cleanup list — a `try`'s raise edge or a return's:
-    /// a `DropVar` on each listed slot through the destructor the entry
-    /// names, as upstream's unwind blocks call each `__del__`. Drop
-    /// elaboration lists only slots the edge still holds; a vacated slot is a
-    /// no-op to drop.
-    pub(super) fn run_cleanup(
-        &mut self,
-        prog: &Prog,
-        function: usize,
-        cleanup: &[CleanupDrop],
-        vars: &mut [Value],
-    ) -> Result<(), RuntimeError> {
-        for drop in cleanup {
-            let old = std::mem::replace(&mut vars[drop.var as usize], Value::None);
-            self.drop_named(
-                prog,
-                old,
-                prog.mir.functions[function].1.var_tys.get(&drop.var),
-                drop.destructor.as_deref(),
-            )?;
-        }
-        Ok(())
     }
 
     /// Run a `try` part (block ids local, entry = 0) in the current frame,
     /// stepping a [`RegionCursor`] rooted at it through the region ops it
     /// holds. Returns the control-flow outcome — `Flow::Normal` on normal
     /// completion (`lit.try.yield`), `Flow::Return` when a `return` inside
-    /// the part crosses out, or `Flow::Leave` when a region exit names an op
-    /// around the `try` — and propagates a raise as `RuntimeError::Raised`.
+    /// the part crosses out, `Flow::Leave` when a region exit names an op
+    /// around the `try`, or `Flow::Raise` when a raise names a `try` — and
+    /// propagates a raise out of the function as `RuntimeError::Raised`.
     pub(super) fn run_region(
         &mut self,
         prog: &Prog,
@@ -2247,7 +2181,7 @@ impl VmBackend {
                         Some(leave) => return Ok(Flow::Leave(leave)),
                         None => continue 'region,
                     },
-                    returned @ Flow::Return { .. } => return Ok(returned),
+                    left @ (Flow::Return(_) | Flow::Raise { .. }) => return Ok(left),
                 }
             }
             match cursor.transfer(blocks, &block.term, regs)? {
@@ -2257,22 +2191,17 @@ impl VmBackend {
                     let v = r
                         .as_ref()
                         .map_or(Value::None, |r| regs[r.0 as usize].clone());
-                    return Ok(Flow::Return {
-                        value: v,
-                        cleanup: Vec::new(),
-                    });
+                    return Ok(Flow::Return(v));
                 }
-                Transfer::Exit(MirTerm::ReturnWithCleanup { value, cleanup }) => {
-                    let value = value
-                        .as_ref()
-                        .map_or(Value::None, |register| regs[register.0 as usize].clone());
-                    return Ok(Flow::Return {
-                        value,
-                        cleanup: cleanup.clone(),
-                    });
-                }
-                Transfer::Exit(MirTerm::Raise(src)) => {
-                    return Err(self.raise_register(prog, scope.function, regs, *src));
+                Transfer::Exit(MirTerm::Raise { src, label }) => {
+                    let raised = self.raise_register(prog, scope.function, regs, *src);
+                    return match (raised, label) {
+                        (RuntimeError::Raised(error), Some(label)) => Ok(Flow::Raise {
+                            label: *label,
+                            error,
+                        }),
+                        (raised, _) => Err(raised),
+                    };
                 }
                 Transfer::Exit(_) => return Ok(Flow::Normal),
             }

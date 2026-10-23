@@ -13,8 +13,7 @@
 //! reach field by field.
 
 use crate::mir::{
-    CleanupDrop, MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, instruction_regions,
-    variant_place_alternatives,
+    MirBlock, MirFunction, MirInstr, MirPlace, instruction_regions, variant_place_alternatives,
 };
 use mojito_hir::hir::VarId;
 use mojito_types::types::{Ty, TyKind};
@@ -36,8 +35,7 @@ pub struct Destroyed {
 
 /// What the body `function` destroys without naming a destructor.
 ///
-/// That is a whole value its cleanup lists and its drops naming no
-/// destructor tear down, the fields of a value it consumes, and, through
+/// That is a whole value its drops naming no destructor tear down, the fields of a value it consumes, and, through
 /// `fields`, every field of a struct those reach, since a struct without a
 /// destructor, or a partly moved one, drops its fields one by one.
 /// [`Destroyed::named`] holds the drops naming theirs, whose fields the
@@ -119,9 +117,6 @@ impl Walk<'_> {
                     self.blocks(region);
                 }
             }
-            if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
-                self.cleanup(cleanup);
-            }
         }
     }
 
@@ -134,7 +129,6 @@ impl Walk<'_> {
                 None => self.var(*var, true),
             },
             MirInstr::ConsumeVar { var } => self.var(*var, false),
-            MirInstr::Try { cleanup, .. } => self.cleanup(cleanup),
             MirInstr::DropPlace { place, destructor } => match destructor {
                 Some(destructor) => self.named(place.ty.as_ref(), Some(destructor)),
                 None => self.place(place, true),
@@ -191,17 +185,7 @@ impl Walk<'_> {
         }
     }
 
-    /// A cleanup list's drops: each names its destructor as a `drop.var`
-    /// does, or tears its slot down whole.
-    fn cleanup(&mut self, cleanup: &[CleanupDrop]) {
-        for drop in cleanup {
-            match &drop.destructor {
-                Some(destructor) => self.named(self.var_tys.get(&drop.var), Some(destructor)),
-                None => self.var(drop.var, true),
-            }
-        }
-    }
-
+    /// A teardown of a value of type `ty` naming `destructor`.
     fn named(&mut self, ty: Option<&Ty>, destructor: Option<&str>) {
         if let (Some(ty), Some(destructor)) = (ty, destructor) {
             self.named.push((ty.clone(), destructor.to_owned()));

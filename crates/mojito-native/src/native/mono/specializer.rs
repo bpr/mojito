@@ -3,7 +3,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::{CleanupDrop, MirTerm};
 use mojito_types::types::TyKind;
 use std::collections::BTreeMap;
 
@@ -4373,17 +4372,7 @@ fn for_each_lifecycle_site_mut(
     reg_types: &HashMap<u32, Ty>,
     name: &mut LifecycleNamer<'_>,
 ) -> Result<(), MonoError> {
-    let name_cleanup = |cleanup: &mut [CleanupDrop], name: &mut LifecycleNamer<'_>| {
-        cleanup.iter_mut().try_for_each(|drop| {
-            var_tys
-                .get(&drop.var)
-                .map_or(Ok(()), |ty| name(ty, "__deinit__", &mut drop.destructor))
-        })
-    };
     for block in blocks.iter_mut() {
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
-            name_cleanup(cleanup, name)?;
-        }
         for instruction in &mut block.instrs {
             let site = match instruction {
                 MirInstr::DropVar { var, destructor } => {
@@ -4430,10 +4419,6 @@ fn for_each_lifecycle_site_mut(
                     destructor,
                     ..
                 } => Some((&*element, "__deinit__", destructor)),
-                MirInstr::Try { cleanup, .. } => {
-                    name_cleanup(cleanup, name)?;
-                    None
-                }
                 MirInstr::MakeVariant {
                     alternatives,
                     index,

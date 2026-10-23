@@ -113,10 +113,7 @@ impl RegionCursor {
                     return Ok(Transfer::Leave(leave));
                 }
             }
-            MirTerm::Return(_)
-            | MirTerm::ReturnWithCleanup { .. }
-            | MirTerm::TryYield
-            | MirTerm::Raise(_) => {
+            MirTerm::Return(_) | MirTerm::TryYield | MirTerm::Raise { .. } => {
                 return Ok(Transfer::Exit(term));
             }
             MirTerm::Unreachable => {

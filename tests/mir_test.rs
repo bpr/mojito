@@ -338,22 +338,21 @@ fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
             .position(|name| name.starts_with(prefix))
             .unwrap_or_else(|| panic!("{prefix} slot")) as u32
     };
-    let (x, forwarded) = (slot("x"), slot(mojito::mir::FORWARDED_ARGUMENT_SLOT));
-    let (body, cleanup) = main
+    let slots = [slot("x"), slot(mojito::mir::FORWARDED_ARGUMENT_SLOT)];
+    let body = main
         .blocks
         .iter()
         .flat_map(|block| &block.instrs)
         .find_map(|instr| match instr {
-            MirInstr::Try { body, cleanup, .. } => Some((body, cleanup)),
+            MirInstr::Try { body, .. } => Some(body),
             _ => None,
         })
         .expect("try");
-    assert!(cleanup.is_empty(), "{main:#?}");
     let instrs = body
         .iter()
         .flat_map(|block| &block.instrs)
         .collect::<Vec<_>>();
-    for var in [x, forwarded] {
+    for var in slots {
         let forward_at = instrs
             .iter()
             .position(|instr| {
@@ -4711,7 +4710,6 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
                     body,
                     handler,
                     orelse,
-                    finalbody,
                     ..
                 } = instruction
                 {
@@ -4721,9 +4719,6 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
                     }
                     if let Some(orelse) = orelse {
                         collect_instructions(orelse, out);
-                    }
-                    if let Some(finalbody) = finalbody {
-                        collect_instructions(finalbody, out);
                     }
                 }
                 out.push(instruction);

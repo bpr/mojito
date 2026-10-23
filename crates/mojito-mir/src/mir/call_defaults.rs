@@ -16,8 +16,8 @@
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
     Const, FORWARDED_ARGUMENT_SLOT, FuncRef, LoweredCall, MirBlock, MirDeclarations, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, MirTerm, READ_TEMPORARY_SLOT, Reg,
-    UseMode, callable_targets, calls::literal_materializes_to, calls::owns_droppable_storage,
+    MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, READ_TEMPORARY_SLOT, Reg, UseMode,
+    callable_targets, calls::literal_materializes_to, calls::owns_droppable_storage,
     fresh_register, instruction_regions, instruction_regions_mut, instruction_regs_mut,
     instruction_slots, terminator_regs_mut,
 };
@@ -1200,9 +1200,6 @@ fn erase_slice(
                 for region in instruction_regions_mut(instruction) {
                     erase_slice(region, slots, regs, calls, erased);
                 }
-                if let MirInstr::Try { cleanup, .. } = instruction {
-                    cleanup.retain(|drop| !slots.contains(&drop.var));
-                }
                 return true;
             }
             let mut results = Vec::new();
@@ -1219,8 +1216,5 @@ fn erase_slice(
             }
             !serves
         });
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
-            cleanup.retain(|drop| !slots.contains(&drop.var));
-        }
     }
 }

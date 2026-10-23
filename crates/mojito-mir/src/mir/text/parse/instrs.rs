@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::{CleanupDrop, LoopLabel, MirCase, MirElif, MirResultAdapter};
+use crate::mir::{LoopLabel, MirCase, MirElif, MirResultAdapter, TryLabel};
 use mojito_hir::hir::VarId;
 use mojito_types::types::TyKind;
 
@@ -51,7 +51,11 @@ impl Decoder {
             })
             .collect();
         let spans = self.locations(self.field(fields, "locations").ok()?);
-        let blocks = self.blocks(self.field(fields, "blocks").ok()?, &name);
+        self.unlabelled_tries = false;
+        let mut blocks = self.blocks(self.field(fields, "blocks").ok()?, &name);
+        if std::mem::take(&mut self.unlabelled_tries) {
+            infer_try_labels(&mut blocks, &mut 0, None);
+        }
         let removed_params = self
             .field(fields, "removed_params")
             .ok()
@@ -811,19 +815,18 @@ impl Decoder {
                     self.option_value(Some(field))
                         .map(|v| self.region_blocks(v))
                 };
-                let finalbody = {
-                    let field = self.required(value, fields, "finalbody")?;
-                    self.option_value(Some(field))
-                        .map(|v| self.region_blocks(v))
+                self.no_finally(fields)?;
+                let label = if let Ok(label) = self.field(fields, "label") {
+                    self.try_label(label)?
+                } else {
+                    self.unlabelled_tries = true;
+                    TryLabel(0)
                 };
-                let cleanup =
-                    self.req(value, fields, "cleanup", |d, v| Some(d.cleanup_drops(v)))?;
                 Some(MirInstr::Try {
+                    label,
                     body,
                     handler,
                     orelse,
-                    finalbody,
-                    cleanup,
                 })
             }
             "if" => Some(MirInstr::If {
@@ -939,10 +942,14 @@ impl Decoder {
                 "value",
                 |d, v| Some(d.option_reg(v)),
             )?)),
-            "return.cleanup" => Some(MirTerm::ReturnWithCleanup {
-                value: self.req(value, fields, "value", |d, v| Some(d.option_reg(v)))?,
-                cleanup: self.req(value, fields, "cleanup", |d, v| Some(d.cleanup_drops(v)))?,
-            }),
+            "return.cleanup" => {
+                self.error(
+                    value.span,
+                    "`return.cleanup` is gone since MIR 1.92: MIR lowering copies each \
+                     `finally` before the return that crosses it (R884)",
+                );
+                None
+            }
             "try.yield" => Some(MirTerm::TryYield),
             "yield" => Some(MirTerm::Yield(self.req(
                 value,
@@ -974,35 +981,24 @@ impl Decoder {
             }
             "match.next" => Some(MirTerm::MatchNext(self.added_regs(fields, "values"))),
             "match.complete" => Some(MirTerm::MatchComplete(self.added_regs(fields, "values"))),
-            "raise" => Some(MirTerm::Raise(self.req(value, fields, "src", Self::reg)?)),
+            "raise" => {
+                let src = self.req(value, fields, "src", Self::reg)?;
+                let label = if let Ok(label) = self.field(fields, "label") {
+                    self.option_value(Some(label))
+                        .map(|label| self.try_label(label))
+                        .map_or(Some(None), |label| label.map(Some))?
+                } else {
+                    self.unlabelled_tries = true;
+                    None
+                };
+                Some(MirTerm::Raise { src, label })
+            }
             "unreachable" => Some(MirTerm::Unreachable),
             other => {
                 self.error(value.span, format!("unknown terminator `{other}`"));
                 None
             }
         }
-    }
-
-    /// A cleanup list's `drop` records (schema 1.72): each a `var` and the
-    /// `destructor` it names, absent when it names none. Before 1.72 a list
-    /// held bare slots, read as drops naming no destructor.
-    fn cleanup_drops(&mut self, value: &Value) -> Vec<CleanupDrop> {
-        let Ok(values) = self.list(value) else {
-            return Vec::new();
-        };
-        values
-            .iter()
-            .filter_map(|value| {
-                if !matches!(value.kind, ValueKind::Record(..)) {
-                    return Some(CleanupDrop::unnamed(self.var(value)?));
-                }
-                let fields = self.record(value, "drop").ok()?;
-                let var = self.req(value, fields, "var", Self::var)?;
-                let destructor = self.lifecycle_symbol(fields, "destructor");
-                self.unknown(fields, &["var", "destructor"]);
-                Some(CleanupDrop { var, destructor })
-            })
-            .collect()
     }
 
     /// The lifecycle member a drop (`destructor`, schema 1.67) or a copy or
@@ -1096,6 +1092,38 @@ impl Decoder {
         })
     }
 
+    fn try_label(&mut self, value: &Value) -> Option<TryLabel> {
+        let id = self.identity(Some(value), "try")?;
+        u32::try_from(id).ok().map(TryLabel)
+    }
+
+    /// Reject the `finally` region and raise-edge cleanup list a `try`
+    /// older than MIR 1.92 carries, unless absent and empty: MIR lowering
+    /// now copies each `finally` before the exits that cross it (R884).
+    fn no_finally(&mut self, fields: &[Field]) -> Option<()> {
+        if let Ok(finalbody) = self.field(fields, "finalbody")
+            && self.option_value(Some(finalbody)).is_some()
+        {
+            self.error(
+                finalbody.span,
+                "a `try` holds no `finally` since MIR 1.92: MIR lowering copies it before \
+                 each exit that crosses it (R884)",
+            );
+            return None;
+        }
+        if let Ok(cleanup) = self.field(fields, "cleanup")
+            && !self.list(cleanup).is_ok_and(<[Value]>::is_empty)
+        {
+            self.error(
+                cleanup.span,
+                "a `try` lists no raise-edge cleanup since MIR 1.92: each raise destroys \
+                 what it holds before it leaves (R884)",
+            );
+            return None;
+        }
+        Some(())
+    }
+
     fn loop_label(&mut self, value: &Value) -> Option<LoopLabel> {
         let id = self.identity(Some(value), "loop")?;
         u32::try_from(id).ok().map(LoopLabel)
@@ -1133,5 +1161,43 @@ impl Decoder {
                 Some(MirBlock { instrs, term })
             })
             .collect()
+    }
+}
+
+/// Give the `try`s and `raise`s of `blocks`, read from text older than MIR
+/// 1.92, the labels their old meaning implies: each `try` the next number
+/// in preorder from `next`, and each `raise` the label of the nearest `try`
+/// whose body holds it and which has a handler, `target` here, as the old
+/// raise reached the nearest such handler.
+fn infer_try_labels(blocks: &mut [MirBlock], next: &mut u32, target: Option<TryLabel>) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            if let MirInstr::Try {
+                label,
+                body,
+                handler,
+                orelse,
+            } = instruction
+            {
+                *label = TryLabel(*next);
+                *next += 1;
+                let inner = if handler.is_some() {
+                    Some(*label)
+                } else {
+                    target
+                };
+                infer_try_labels(body, next, inner);
+                for region in handler.iter_mut().map(|(_, blocks)| blocks).chain(orelse) {
+                    infer_try_labels(region, next, target);
+                }
+                continue;
+            }
+            for region in crate::mir::instruction_regions_mut(instruction) {
+                infer_try_labels(region, next, target);
+            }
+        }
+        if let MirTerm::Raise { label, .. } = &mut block.term {
+            *label = target;
+        }
     }
 }

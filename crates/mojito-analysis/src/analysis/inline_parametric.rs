@@ -1726,10 +1726,11 @@ impl ReturnExit {
     /// carrying the returned value when the loop has a result. A
     /// value-less return from a function returning a value is the
     /// checker's unreachable fall-off; a break carrying no value cannot
-    /// leave a loop with a result, so it is unreachable there. A `raise`
-    /// breaks the loop too when the call has a raise edge, carrying its
-    /// error, a string converted to `Error` as the raise converts it, and
-    /// leaves the body as it left the callee when it has none. A value the
+    /// leave a loop with a result, so it is unreachable there. A raise out
+    /// of the callee (`lit.error_return`) breaks the loop too when the call
+    /// has a raise edge, carrying its error, a string converted to `Error`
+    /// as the raise converts it, and leaves the body as it left the callee
+    /// when it has none; a raise naming a `try` of the callee stays. A value the
     /// path does not define is upstream's `#interp.uninitmem`.
     fn rewrite(&self, function: &mut MirFunction, block: &mut MirBlock) {
         let span = function
@@ -1742,7 +1743,7 @@ impl ReturnExit {
             block.instrs.push(MirInstr::Const { dest, k });
             dest
         };
-        let raised = matches!(block.term, MirTerm::Raise(_));
+        let raised = matches!(block.term, MirTerm::Raise { label: None, .. });
         let mut values = match &block.term {
             MirTerm::Return(Some(value)) if self.result == Returned::Value => vec![*value],
             MirTerm::Return(_) if matches!(self.result, Returned::None | Returned::Out) => {
@@ -1752,7 +1753,7 @@ impl ReturnExit {
                 block.term = MirTerm::Unreachable;
                 return;
             }
-            MirTerm::Raise(_) if self.raises.is_some() => {
+            MirTerm::Raise { label: None, .. } if self.raises.is_some() => {
                 if self.result == Returned::Value {
                     let ty = function
                         .reg_types
@@ -1769,17 +1770,22 @@ impl ReturnExit {
         if let Some(raises) = &self.raises {
             values.push(constant(function, block, Ty::bool(), Const::Bool(raised)));
             let error = match block.term {
-                MirTerm::Raise(error)
-                    if function
-                        .reg_types
-                        .get(&error.0)
-                        .is_some_and(|ty| *ty != raises.ty) =>
+                MirTerm::Raise {
+                    src: error,
+                    label: None,
+                } if function
+                    .reg_types
+                    .get(&error.0)
+                    .is_some_and(|ty| *ty != raises.ty) =>
                 {
                     let converted = fresh_register(function, raises.ty.clone(), span.as_ref());
                     block.instrs.push(error_conversion(converted, error));
                     converted
                 }
-                MirTerm::Raise(error) => error,
+                MirTerm::Raise {
+                    src: error,
+                    label: None,
+                } => error,
                 _ => constant(function, block, raises.ty.clone(), Const::UninitMem),
             };
             values.push(error);
@@ -1804,7 +1810,7 @@ impl ReturnExit {
 }
 
 /// Whether a body inlined at a call whose raise edge is `raises` can route
-/// each `raise` of `blocks` into it: one raising a value of the edge's
+/// each raise out of the callee in `blocks` into it: one raising a value of the edge's
 /// error type, or a string the raise converts to `Error`. `reg_types` are
 /// the callee's, whose registers the body numbers from `base`.
 fn routes_raises(
@@ -1815,7 +1821,10 @@ fn routes_raises(
 ) -> bool {
     blocks.iter().all(|block| {
         let routed = match block.term {
-            MirTerm::Raise(error) => error
+            MirTerm::Raise {
+                src: error,
+                label: None,
+            } => error
                 .0
                 .checked_sub(base)
                 .and_then(|callee| reg_types.get(&callee))
@@ -2313,10 +2322,7 @@ fn closed_blocks(blocks: &[MirBlock]) -> bool {
             ) && instruction_regions(instruction)
                 .into_iter()
                 .all(|region| closed_blocks(region))
-        }) && !matches!(
-            block.term,
-            MirTerm::ReturnWithCleanup { .. } | MirTerm::TryYield
-        )
+        }) && !matches!(block.term, MirTerm::TryYield)
     })
 }
 
@@ -3727,7 +3733,13 @@ mod tests {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(Vec::new(), MirTerm::Raise(Reg(0))),
+                body: one(
+                    Vec::new(),
+                    MirTerm::Raise {
+                        src: Reg(0),
+                        label: None,
+                    },
+                ),
             }],
             MirTerm::Unreachable,
         );

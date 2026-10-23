@@ -146,6 +146,10 @@ struct Decoder {
     /// `type.construct` older than schema 1.3 names its binder by spelling,
     /// and constructs the one its destination register is typed by.
     register_binders: HashMap<u32, mojito_types::param_expr::ParamRef>,
+    /// Whether the function being read holds a `try` or `raise` older than
+    /// MIR 1.92, which carries no label: [`infer_try_labels`] gives them
+    /// the labels their old meaning implies.
+    unlabelled_tries: bool,
 }
 
 fn parse_int_literal(value: &str) -> Option<IntLiteral> {

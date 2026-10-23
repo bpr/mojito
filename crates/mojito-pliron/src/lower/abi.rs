@@ -301,12 +301,6 @@ impl FnLowering<'_> {
         } else {
             let err_slot = self.ensure_err_slot(ctx);
             self.mem_copy(ctx, err_slot, err_address, 24, dest);
-            // A propagating call inside a finalbody overrides the pending
-            // outcome, like a raise.
-            let overrides = self.finally_overrides.clone();
-            for idx in overrides.into_iter().rev() {
-                self.emit_pending_resolution(ctx, idx)?;
-            }
             let target = self.raise_edge_target(ctx)?;
             let jump = BrOp::new(ctx, target, vec![]);
             self.append(ctx, jump.get_operation(), None);

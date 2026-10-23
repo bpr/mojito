@@ -1,6 +1,5 @@
 //! Drop elaboration: placing `DropVar`s in the structured body, as
-//! upstream's `DestructorInsertion` places destructors, and the cleanup
-//! lists of a `try`'s raise edge and of a `return` crossing a `finally`.
+//! upstream's `DestructorInsertion` places destructors.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -21,8 +20,9 @@ use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
 /// At a shared death point, variables drop in reverse declaration order
 /// (descending `VarId`), except that an `in_place` binding joins its
 /// producer's death point and its slot drops first (see [`InPlaceDeaths`]).
-/// No block is added: a `try` keeps cleanup lists only where a region has
-/// no place for the drop, its raise edge and a return crossing a `finally`.
+/// No block is added: MIR lowering copied each `finally` before the exits
+/// crossing it, so every death has an instruction to follow or a region
+/// entry to lead, a raise's at its arm's entry or before it.
 pub(super) fn elaborate_drops(
     mut function: MirFunction,
     value_parameters: &HashSet<VarId>,
@@ -63,7 +63,7 @@ pub(super) fn elaborate_drops(
             )
         })
         .unwrap_or_default();
-    splice.region(&mut blocks, &PartCx::default());
+    splice.region(&mut blocks);
     if let Some(entry) = blocks.first_mut() {
         prepend_drops(&mut entry.instrs, entry_dead);
     }
@@ -166,9 +166,6 @@ struct DropPlan {
 struct BlockPlan {
     live_in: DenseSet,
     live_out: DenseSet,
-    /// What a raise in the block leaves live: its handler's (or its
-    /// `finally`'s) live-in. `None` outside every `try`.
-    raise: Option<DenseSet>,
 }
 
 impl BackwardRecorder<DenseSet> for DropPlan {
@@ -184,7 +181,6 @@ impl BackwardRecorder<DenseSet> for DropPlan {
             BlockPlan {
                 live_in: live.live_in.clone(),
                 live_out: live.live_out.clone(),
-                raise: live.raise.cloned(),
             },
         );
     }
@@ -258,32 +254,6 @@ struct Splice<'a> {
     plan: &'a DropPlan,
 }
 
-/// The channels of the `try` part a region sits in, as its `return`s and
-/// nested `try`s see them; empty outside every `try`.
-#[derive(Default)]
-struct PartCx {
-    /// What a `return` here leaves live: the live-in of the `finally`s it
-    /// crosses, and of those beyond them.
-    return_live: HashSet<VarId>,
-    /// The slots of `return_live` those `finally`s end.
-    return_ended: HashSet<VarId>,
-}
-
-impl PartCx {
-    /// What a `return` here destroys once the `finally`s it crosses have
-    /// run, in reverse declaration order.
-    fn return_cleanup(&self, droppable: impl Fn(VarId) -> bool) -> Vec<CleanupDrop> {
-        let mut held: Vec<VarId> = self
-            .return_live
-            .iter()
-            .copied()
-            .filter(|v| droppable(*v) && !self.return_ended.contains(v))
-            .collect();
-        held.sort_unstable_by(|a, b| b.cmp(a));
-        held.into_iter().map(CleanupDrop::unnamed).collect()
-    }
-}
-
 impl Splice<'_> {
     /// Whether the function drops the value in `v` ([`is_droppable_root`]);
     /// a value parameter's slot never.
@@ -308,24 +278,19 @@ impl Splice<'_> {
             .unwrap_or_default()
     }
 
-    /// Place the drops of every block of a region, returning the slots a
-    /// raise leaving it still holds.
-    fn region(&self, blocks: &mut [MirBlock], cx: &PartCx) -> DenseSet {
-        let mut held = DenseSet::default();
+    /// Place the drops of every block of a region.
+    fn region(&self, blocks: &mut [MirBlock]) {
         for block in blocks {
-            held.union(&self.block(block, cx));
+            self.block(block);
         }
-        held
     }
 
-    /// Place the drops of one block: its region ops' first, then its own,
-    /// and list on a `return` what it holds past the `finally`s it crosses.
-    /// Returns the slots a raise leaving the block still holds.
-    fn block(&self, block: &mut MirBlock, cx: &PartCx) -> DenseSet {
+    /// Place the drops of one block: its region ops' first, then its own.
+    fn block(&self, block: &mut MirBlock) {
         let Some(plan) = self.plan.blocks.get(&std::ptr::from_ref(&*block)) else {
-            return DenseSet::default();
+            return;
         };
-        let mut steps: Vec<Step<'_>> = block
+        let steps: Vec<Step<'_>> = block
             .instrs
             .iter()
             .map(|instr| Step {
@@ -333,18 +298,13 @@ impl Splice<'_> {
                 uses: self.facts.uses(instr),
                 op: region_op(instr)
                     .then(|| self.plan.ops.get(&std::ptr::from_ref(instr)))
-                    .flatten()
-                    .map(|live_in| (live_in, DenseSet::default())),
+                    .flatten(),
             })
             .collect();
         let end = self.facts.end(block);
         for (index, instr) in block.instrs.iter_mut().enumerate() {
-            if steps[index].op.is_none() {
-                continue;
-            }
-            let held = self.op(instr, cx);
-            if let Some((_, nested)) = &mut steps[index].op {
-                *nested = held;
+            if steps[index].op.is_some() {
+                self.op(instr);
             }
         }
         let replay = BlockReplay {
@@ -352,36 +312,23 @@ impl Splice<'_> {
             steps,
             end,
             yielded: self.facts.yielded(block),
-            raises: matches!(block.term, MirTerm::Raise(_)),
             deinit_params: &self.f.deinit_params,
             loan_roots: self.loan_roots,
         };
-        let (instrs, held) = replay.elaborate(&plan.live_out, |v| self.droppable(v));
-        block.instrs = instrs;
-        if let MirTerm::Return(value) | MirTerm::ReturnWithCleanup { value, .. } = &mut block.term {
-            let value = value.take();
-            let cleanup = cx.return_cleanup(|v| self.droppable(v));
-            block.term = if cleanup.is_empty() {
-                MirTerm::Return(value)
-            } else {
-                MirTerm::ReturnWithCleanup { value, cleanup }
-            };
-        }
-        held
+        block.instrs = replay.elaborate(&plan.live_out, |v| self.droppable(v));
     }
 
     /// Place the drops of one region op's regions. An `if` or `comptime if`
     /// destroys at each arm's entry what a sibling arm keeps and it does
-    /// not, as `destroyValuesAtEntryIfNeeded` does; a `try` sets its
-    /// raise-edge cleanup. Returns the slots a raise leaving the op still
-    /// holds.
-    fn op(&self, instr: &mut MirInstr, cx: &PartCx) -> DenseSet {
+    /// not, as `destroyValuesAtEntryIfNeeded` does; a `try`'s handler
+    /// destroys its unread error binding on arrival.
+    fn op(&self, instr: &mut MirInstr) {
         if matches!(instr, MirInstr::Try { .. }) {
-            return self.try_op(instr, cx);
+            self.try_op(instr);
+            return;
         }
-        let mut held = DenseSet::default();
         for region in instruction_regions_mut(instr) {
-            held.union(&self.region(region, cx));
+            self.region(region);
         }
         let regions = instruction_regions(instr);
         let entries = match instr {
@@ -396,7 +343,6 @@ impl Splice<'_> {
                 }
             }
         }
-        held
     }
 
     /// The entry drops of an `if`'s regions, listed as `then`, each elif's
@@ -449,58 +395,24 @@ impl Splice<'_> {
         dying
     }
 
-    /// Place the drops of a `try`'s four parts and set its raise-edge
-    /// cleanup: the `finally` under the enclosing part's channels, the
-    /// others under the `try`'s own. A return crossing the `finally` holds
-    /// what the `finally` reads on the return path, less what the `finally`
-    /// ends on the way through. The handler's unread error binding dies on
-    /// arrival. A `raise` in the body, a raising call's in its error region
-    /// included, has destroyed what its observers (the handler, else the
-    /// `finally` and the enclosing raise's) do not read at its arm's entry,
-    /// as the entry destructors of upstream's error arm do; the raise edge
-    /// destroys what a raise leaving a nested `try` through its handler,
-    /// `else`, or `finally` still holds that they do not read, which no
-    /// instruction on that path can host until the `finally` is copied
-    /// before each exit (R884). Returns the slots a raise leaving the `try`
-    /// still holds: an uncaught body raise past the raise edge, a raise out
-    /// of the handler or `else`, each past what the `finally` ends, and a
-    /// raise out of the `finally` itself.
-    fn try_op(&self, instr: &mut MirInstr, cx: &PartCx) -> DenseSet {
+    /// Place the drops of a `try`'s parts. The caught error arrives as the
+    /// handler entry's block argument, so the binding's pre-raise content
+    /// is never observable, and an unread binding dies on arrival.
+    fn try_op(&self, instr: &mut MirInstr) {
         let Some(channels) = self.plan.tries.get(&std::ptr::from_ref(&*instr)) else {
-            return DenseSet::default();
+            return;
         };
         let MirInstr::Try {
             body,
             handler,
             orelse,
-            finalbody,
-            cleanup,
+            ..
         } = instr
         else {
-            return DenseSet::default();
+            return;
         };
-        let after_live: HashSet<VarId> = channels.after.iter().collect();
-        // The `finally` ends, on every path through it, what it holds live
-        // that its fall-off does not need.
-        let fin_ended: HashSet<VarId> = if finalbody.is_some() {
-            channels
-                .fin
-                .iter()
-                .filter(|v| !after_live.contains(v) && self.droppable(*v))
-                .collect()
-        } else {
-            HashSet::new()
-        };
-        let fin_held = finalbody.as_mut().map(|fb| self.region(fb, cx));
-        let inner = PartCx {
-            return_live: channels.returns.iter().collect(),
-            return_ended: cx.return_ended.union(&fin_ended).copied().collect(),
-        };
-        let handler_held = handler.as_mut().map(|(binding, h)| {
-            let held = self.region(h, &inner);
-            // The caught error arrives as the handler entry's block argument,
-            // so the binding's pre-raise content is never observable, and an
-            // unread binding dies on arrival.
+        if let Some((binding, h)) = handler {
+            self.region(h);
             if let Some(bound) = binding
                 && self.droppable(*bound)
                 && !channels
@@ -511,41 +423,11 @@ impl Splice<'_> {
             {
                 entry.instrs.insert(0, drop_var(*bound));
             }
-            held
-        });
-        let orelse_held = orelse.as_mut().map(|e| self.region(e, &inner));
-        let observed = body
-            .first()
-            .and_then(|block| self.plan.blocks.get(&std::ptr::from_ref(block)))
-            .and_then(|plan| plan.raise.clone())
-            .unwrap_or_default();
-        let body_held = self.region(body, &inner);
-
-        // A slot consumed in place (a `ConsumeVar`, a whole-root move
-        // capture) stays the body's to end: an explicit destructor that
-        // raises leaves its receiver live for the handler's fallback.
-        let consumed = consumed_in_place(body);
-        let mut listed: Vec<VarId> = body_held
-            .iter()
-            .filter(|v| !observed.contains(*v) && !consumed.contains(v) && self.droppable(*v))
-            .collect();
-        listed.sort_unstable_by(|a, b| b.cmp(a));
-        *cleanup = listed.into_iter().map(CleanupDrop::unnamed).collect();
-
-        let mut raise_held = DenseSet::default();
-        if handler_held.is_none() {
-            raise_held.extend(body_held.iter().filter(|v| !cleanup_drops(cleanup, *v)));
         }
-        for held in [handler_held, orelse_held].into_iter().flatten() {
-            raise_held.union(&held);
+        if let Some(e) = orelse {
+            self.region(e);
         }
-        for v in &fin_ended {
-            raise_held.remove(*v);
-        }
-        if let Some(held) = fin_held {
-            raise_held.union(&held);
-        }
-        raise_held
+        self.region(body);
     }
 }
 
@@ -555,8 +437,8 @@ struct Step<'a> {
     generations: &'a LoanGenerationState,
     /// The roots it consumes through its operand registers.
     uses: &'a RegisterUses,
-    /// For a region op: its live-in, and the slots a raise leaving it holds.
-    op: Option<(&'a DenseSet, DenseSet)>,
+    /// For a region op: its live-in.
+    op: Option<&'a DenseSet>,
 }
 
 /// One block's instructions with the analysis facts their drop elaboration
@@ -568,8 +450,6 @@ struct BlockReplay<'a> {
     end: Option<&'a LoanGenerationState>,
     /// The roots the values the terminator hands on consume.
     yielded: &'a RegisterUses,
-    /// Whether the terminator is a `raise`, which holds what it leaves live.
-    raises: bool,
     /// The function's `deinit` parameters, whose fields
     /// [`refine_deinit_fields`] destroys one by one: the variable's own
     /// teardown stays after the instruction.
@@ -579,10 +459,7 @@ struct BlockReplay<'a> {
 
 impl BlockReplay<'_> {
     /// The block's instructions with a `DropVar` after each one for every
-    /// variable that dies there, in one backward walk from `live_out`, and
-    /// the slots a raise out of the block still holds: what its `raise`
-    /// terminator leaves live, and what a raise leaving each region op
-    /// holds.
+    /// variable that dies there, in one backward walk from `live_out`.
     ///
     /// A variable dies at an instruction when it is live (loan-aware) before
     /// it, or the instruction touches it, or a loan generation keeping it
@@ -590,20 +467,9 @@ impl BlockReplay<'_> {
     /// raises through its error region, an `if` whose arm's entry destroys
     /// what the raise does not read. A region op is no death point: its
     /// regions end what it uses, and its live-in is the walk's.
-    fn elaborate(
-        self,
-        live_out: &DenseSet,
-        droppable: impl Fn(VarId) -> bool,
-    ) -> (Vec<MirInstr>, DenseSet) {
+    fn elaborate(self, live_out: &DenseSet, droppable: impl Fn(VarId) -> bool) -> Vec<MirInstr> {
         let mut live = live_out.clone();
         let mut reversed = Vec::with_capacity(self.instrs.len());
-        let mut raise_held = DenseSet::default();
-        if self.raises {
-            raise_held.union(&live);
-            if let Some(end) = self.end {
-                raise_held.union(&loan_extras(&live, end, self.loan_roots));
-            }
-        }
         // The terminator reads the values it yields: an owner whose last use
         // that is dies before it.
         if let Some(end) = self.end
@@ -634,12 +500,11 @@ impl BlockReplay<'_> {
         for (i, instr) in self.instrs.into_iter().enumerate().rev() {
             let step = &self.steps[i];
             let generation_before = step.generations;
-            if let Some((live_in, held)) = &step.op {
+            if let Some(live_in) = step.op {
                 if let Some(binding) = pending.take() {
                     binding.splice(&mut reversed, Vec::new());
                 }
-                raise_held.union(held);
-                live = (*live_in).clone();
+                live = live_in.clone();
                 reversed.push(instr);
                 continue;
             }
@@ -753,7 +618,7 @@ impl BlockReplay<'_> {
             held.splice(&mut reversed, Vec::new());
         }
         reversed.reverse();
-        (reversed, raise_held)
+        reversed
     }
 }
 

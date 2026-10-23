@@ -798,12 +798,7 @@ fn materialize_named_result_exits(blocks: &mut [MirBlock], slot: VarId, n_regs: 
                 }
             }
         }
-        if matches!(
-            block.term,
-            MirTerm::Return(None)
-                | MirTerm::ReturnWithCleanup { value: None, .. }
-                | MirTerm::TryYield
-        ) {
+        if matches!(block.term, MirTerm::Return(None) | MirTerm::TryYield) {
             let register = Reg(*n_regs);
             *n_regs += 1;
             block.instrs.push(MirInstr::UseVar {
@@ -812,10 +807,7 @@ fn materialize_named_result_exits(blocks: &mut [MirBlock], slot: VarId, n_regs: 
                 mode: UseMode::Move,
                 constructor: None,
             });
-            match &mut block.term {
-                MirTerm::ReturnWithCleanup { value, .. } => *value = Some(register),
-                _ => block.term = MirTerm::Return(Some(register)),
-            }
+            block.term = MirTerm::Return(Some(register));
         }
     }
 }

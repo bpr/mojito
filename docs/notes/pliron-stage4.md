@@ -71,6 +71,11 @@ allocas for the same reason).
 
 ## `finally`: single instance, pending-outcome dispatch
 
+*Superseded by R884 (2026-10-22): MIR lowering now copies each `finally`
+before every exit of its `try`, as upstream's `lowerTryFinally` does, so a
+`try` reaches Pliron with no `finally` and none of the machinery below
+remains. The section records the design it replaced.*
+
 Each `finally`-bearing try lowers its finalbody **once**, with a per-try
 `i32` pending-kind slot (0 normal, 1 error, `2 + site` for a function-exit
 site) and per-try pending-error storage (the shared staging slot may be

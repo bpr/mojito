@@ -603,8 +603,9 @@ IR, bitcode, an object, or an executable plus structured diagnostics;
 `run --backend pliron` executes only the advertised subset natively and
 rejects everything else with a contextual diagnostic — never a silent VM
 fallback. Origin and ownership facts erase after validation, while explicit
-drop and cleanup instructions remain executable behavior. Errors and
-`try`/`finally` lower as tagged outcomes and explicit CFG edges; platform
+drop instructions remain executable behavior. Errors and `try` lower as
+tagged outcomes and explicit CFG edges, each `finally` already copied
+before the exits crossing it by MIR lowering; platform
 unwinding stays out until it has its own semantic, ABI, and portability
 specification.
 
@@ -617,9 +618,10 @@ is a block argument; an aggregate is copied into the entered block's staging
 storage and out into storage of the block's own, so a `continue` permuting
 a loop's arguments stays a parallel copy. A `break`, `continue`,
 `match.next`, or `match.complete` resolves to the innermost region op it
-names (`mir::region_exit`, `RegionFrame::names`); one leaving a `try` part
-for an op outside it pends on each `finally` it crosses as a return does,
-its values staged at the site. `hlcf.unreachable` is `llvm.unreachable`.
+names (`mir::region_exit`, `RegionFrame::names`), a `try` part's exit
+too, and a raise to the landing block of the `try` its label names, or
+to the function's propagate block. `hlcf.unreachable` is
+`llvm.unreachable`.
 Concrete MIR reaches `compile` structured, every region one block, as
 `mir::verify` requires. Owned register
 temporaries follow the region tree: one is released in the block defining
@@ -3094,13 +3096,14 @@ for i in range(10):
 ```
 
 The `break` targets a loop outside the `try` region. A seeded try-region CFG
-lowers it to `Terminator::Break(label)` naming that loop, and
-the VM's region cursor resolves it to that loop: the part ends with
-`Flow::Leave`, which propagates out of each `try`, running its `finally`, until
-the cursor of a list inside the loop resolves it, so a loop inside an
-enclosing `try` part is reached too. Pliron resolves it by the same rule
-while lowering region ops: the exit pends on each `finally` it crosses and
-then branches to the loop's exit block, wherever the loop sits.
+lowers it to `Terminator::Break(label)` naming that loop, and MIR lowering
+copies the `finally` before it (`try_finally.rs`, as upstream's
+`lowerTryFinally` pastes it). The VM's region cursor resolves the `break`
+to that loop: the part ends with `Flow::Leave`, which propagates out of
+each `try` until the cursor of a list inside the loop resolves it, so a
+loop inside an enclosing `try` part is reached too. Pliron resolves it by
+the same rule while lowering region ops, branching to the loop's exit
+block, wherever the loop sits.
 
 ## Stage 5: MIR Lowering
 
@@ -3198,28 +3201,30 @@ Besides the `hlcf` region terminators (below), the terminators are:
 ```rust
 pub enum MirTerm {
     Return(Option<Reg>),
-    ReturnWithCleanup { value: Option<Reg>, cleanup: Vec<CleanupDrop> },
     TryYield,
-    Raise(Reg),
+    Raise { src: Reg, label: Option<TryLabel> },
     // Yield, ElifCond, Break, Continue, ComptimeYield, ComptimeBreak,
     // ComptimeContinue, MatchNext, MatchComplete, Unreachable
 }
 ```
 
-A cleanup list is a `Vec<CleanupDrop>`: each entry names its slot and the
-destructor the drop runs, as a `DropVar` does, so the backends call it
-without looking it up from the slot's type.
-
 `TryYield` (`lit.try.yield`) completes a `try` part and never ends a function
 body. `Raise` (MIR text 1.90) raises its register and may end any region:
-it leaves every enclosing region for the nearest `try`'s raise edge, or the
-function, as upstream's `LowerSemanticCF` lowers a `raise` to
-`lit.try.raise` or `lit.error.return`. The ownership walks read the raise
-channel after it (`region_walk.rs`: a forward walk joins its state into the
-region's raises, a backward walk's live-out is the handler's or `finally`'s
-live-in, nothing outside every `try`), so drop elaboration destroys before
-it, or at the entry of the arm holding it, what the handler does not read,
-as upstream's `DestructorInsertion` does at each raise exit. A raising
+with a label (MIR text 1.92), it leaves every enclosing region for the
+handler of the nearest `try` carrying that label whose body holds it, and
+without one it leaves the function, as upstream's `LowerSemanticCF` lowers
+a `raise` to `lit.try.raise "<label>"` or `lit.error_return`. MIR lowering
+labels each `try` with the function's next `try` number
+(`Flatten::next_try`, upstream's `tryCounter`) and lowers a raise in its
+body naming it (`Flatten::raise_target`), and one in its handler, `else`,
+or `finally` naming the enclosing `try`, or none. The ownership walks
+treat a labelled raise as an exit to its `try`'s body frame
+(`RegionFrame::Try`, `region_walk.rs`: a forward walk joins its state into
+the frame's leave set, the handler's entry; a backward walk's live-out is
+the handler's live-in), and an unlabelled one as the function's exit, so
+drop elaboration destroys before it, or at the entry of the arm holding
+it, what the handler does not read, as upstream's `DestructorInsertion`
+does at each raise exit. A raising
 instruction (a call, method or indirect call, operator, or subscript whose
 callee raises) carries its error contract as `Raises { ty, flag, error }`
 (MIR text 1.91): its error flag and error are results of the instruction,
@@ -3235,14 +3240,36 @@ between them reading the instruction's results, its `then` region handing
 the error on. The VM sets the flag and error when the instruction raises,
 a child frame's `raise` popping into its caller's call; Pliron joins the
 callee's outcome branch after the instruction and branches on the flag;
-`inline-parametric` routes an inlined body's raises into the call's flag
-and error through the wrapper loop's results. A `try`'s cleanup list keeps
-only what a raise past a nested `try`'s handler, `else`, or `finally`
-holds (R884). Drop elaboration writes
-`ReturnWithCleanup` on a return that crosses a `finally`, listing what the
-return still holds once the crossed `finally` blocks have run; the VM runs
-every pending `finally` before destroying those values and completing the
-return.
+`inline-parametric` routes an inlined body's raises out of the callee into
+the call's flag and error through the wrapper loop's results, a raise
+naming a `try` of the callee staying.
+
+A `try` holds no `finally`: at the end of `Flatten::emit_try`, MIR lowering
+copies the lowered `finally` before every terminator of the body, handler,
+and `else` that leaves the `try`, and at the handler's and the `else`'s own
+`try.yield` (`mir/try_finally.rs`, `Flatten::lower_try_finally`, after
+upstream's `lowerTryFinally`). A terminator leaves the `try` when it is a
+`return`, a raise naming no `try` entered on the way down (the `try`
+itself counts in its body), or a region exit naming no op entered on the
+way down. Nested `try`s are emitted while their parent's parts lower, so
+their copies stand first, as upstream's post-order walk pastes them. Each
+copy but the first renumbers the registers it defines
+(`mir::{defined_registers, for_each_register}`), as `IRMapping` clones and
+upstream mangles every clone's names but the first's; slots stay shared,
+copies lying on disjoint paths. A copy goes before a `return`'s trailing
+`lifetime.keep_alive` run, so a loop's element outlives it. A `finally`
+ending in its own exit replaces the exit it is copied before, the replaced
+`return`'s owned value bound to a `$discard_r` slot
+(`Flatten::discard_binding`) so it dies at its definition, as upstream's
+`CheckLifetimes` destroys it. A raising body without an `except` gets the
+handler upstream's parser synthesizes in a raising context
+(`Flatten::reraising_handler`): it binds the error to a `$try_error` slot
+and raises it on to the enclosing `try`, the `finally` copied before that
+raise; an absent `else` becomes one holding only `try.yield`, as the
+parser stubs it. So every exit is an ordinary terminator preceded by real
+instructions, and drop elaboration needs no side channel: each death has
+an instruction to follow or a region entry to lead. HIR keeps the
+`finally` region, as LIT does until `LowerSemanticCF`.
 
 The continuation-driven VM frame path binds reference parameters directly to
 caller frame/slot handles. Structured `try` sub-regions execute calls
@@ -3354,10 +3381,12 @@ results or its body's arguments, whose operands and results agree as
 The slot-ends check walks the structured body as upstream's
 `CheckLifetimes` walks `hlcf` (`verify/drops.rs`): an `if` or `match` joins
 its arms, a loop iterates its body to a fixpoint and leaves in the join of
-its `break`s, and a `break`, `continue`, or `match` exit resolves through
-`RegionFrame` and `region_exit`, running each `finally` it crosses. A body
-that ends no slot (no `drop.var`, `var.consume`, or
-cleanup list), as every pre-drop body is but for explicit destroys, has no
+its `break`s, a `break`, `continue`, or `match` exit resolves through
+`RegionFrame` and `region_exit`, and a `try`'s handler enters as the raises
+naming it join. A labelled raise must name an enclosing `try` body with a
+handler, and an unlabelled one sit in a raising function
+(`verify/places.rs`). A body that ends no slot (no `drop.var` or
+`var.consume`), as every pre-drop body is but for explicit destroys, has no
 finding without one. Every mode requires upstream's structured shape:
 every region, the body included, one block (a "body holds N blocks" or
 "region holds N blocks" finding), as `SizedRegion<1>` is an op verifier's
@@ -4057,11 +4086,10 @@ result—not permission for compatibility APIs to guess from unchecked input.
 
 ```rust
 Try {
+    label: TryLabel,
     body: Vec<MirBlock>,
     handler: Option<(Option<VarId>, Vec<MirBlock>)>,
     orelse: Option<Vec<MirBlock>>,
-    finalbody: Option<Vec<MirBlock>>,
-    cleanup: Vec<CleanupDrop>,
 }
 ```
 
@@ -4069,14 +4097,16 @@ Those regions share the enclosing function's register and variable spaces.
 Each block is its region's `bb0`, but its instructions address the same
 `regs` and `vars` vectors as the outer function frame.
 
-The structure mirrors source-level exception semantics:
+The structure is upstream's `lit.try` once `lowerTryFinally` has run:
 
 - body runs first
-- `except` handles a raised error
+- `except` handles an error a raise naming the `try`'s label raises from
+  the body
 - `else` runs only when the body completes normally
-- `finally` runs on every path
-- `return`, `break`, and `continue` crossing the region are represented as
-  non-normal flows so `finally` can run before control leaves
+- a source `finally` has no region: MIR lowering copied it before each
+  exit of the parts (*Stage 5*)
+- `return`, `break`, `continue`, and a raise naming an enclosing `try`
+  leave the region as non-normal flows
 
 ### Structured Region Ops
 
@@ -4146,8 +4176,8 @@ the move scan walks its regions (`analysis/moves.rs`, upstream's
 `UninitializedValueScan`): an `if` joins its arms, a `match` case starts
 from its predecessors' `match.next` states, a loop iterates its body until
 its continue set stops changing, its break set being the live-out, and a
-`break`/`continue` joins its state into the loop it names, through any
-`finally` it crosses. The interior-origin check is part of that scan, and
+`break`/`continue` joins its state into the loop it names, after the
+`finally` copies MIR lowering put before it. The interior-origin check is part of that scan, and
 the loan check reads the same regions (`analysis/region_walk.rs`).
 Every analysis after the ownership check, the elaborator, and
 the VM read the same structured MIR; `lower_checked_program` and its
@@ -4517,9 +4547,9 @@ generation an error; the diagnostic identifies the canonical origin and points
 both to the stale use and the invalidating operation. Prefix matching is
 field-sensitive, so mutating `pair.left` cannot invalidate
 `pair.right["element"]`. Structured `try` regions carry distinct normal,
-raising, and return/escape channels: handlers join only actual raising sites,
-`finally` is checked on every channel, and only normal fallthrough reaches the
-instruction after the region. This generation analysis is deliberately
+raising, and return/escape channels: handlers join only the raises naming
+their `try`, and only normal fallthrough reaches the instruction after the
+region. This generation analysis is deliberately
 separate from ordinary shared/exclusive loans: interior invalidation governs
 storage identity, while ordinary loans continue to govern direct place access.
 
@@ -4686,12 +4716,12 @@ distinguish element 0 from element 1. This lets `Tuple(*args^)` and
 runtime-varying indexed transfers remain rejected.
 
 `try` regions are walked with three channels per region (normal fall-off,
-raise points, `return`/escape exits), the interior-origin analysis's shape:
-the `except` arm starts from the join of the states at every `raise` of the
-body, a raising call's in its error region, after the call's effects and its
-tail, a named destructor's `ConsumeVar` among them, since the receiver is
-consumed at the call, `else` from the body's completion, and a `finally` is
-checked from the join of all three and re-summarized per entering channel.
+raises out of the function, `return`/escape exits), the interior-origin
+analysis's shape: the `except` arm starts from the join of the states at
+every raise naming its `try`, a raising call's in its error region, after
+the call's effects and its tail, a named destructor's `ConsumeVar` among
+them, since the receiver is consumed at the call, and `else` from the
+body's completion.
 The states after the `try` are the join of the handler's and `else`/body's
 completions, so a value consumed before a raising call is uninitialized in
 the handler and after the `try`, while one consumed after the body's last
@@ -4765,14 +4795,12 @@ followed through each region op as upstream's `CheckLifetimes` walks it: an
 its arms' yields join; a loop (or `comptime for`) entering its body joined
 with its `continue` states until stable and completing as its `break`s
 join; a `match` entering each case as the previous case's `match.next`s
-leave it; and a `try` with the body entered as the op is, the handler in
-the states the body's raise points leave (through the raise edge's cleanup,
-its error slot bound whole), the `try` raising in any state inside it, the
-`else` as the body completes, the `finally` on every way out of them, and
-the op completing as its `else` (or body) and handler do. Region exits
-resolve by the rule the VM and Pliron share (`mir::RegionFrame`,
-`mir::region_exit`); one leaving a `try` part arrives as it leaves, or
-partial past a `finally`. A `var.store`, a
+leave it; and a `try` with the body entered as the op is under the frame
+its raises name, the handler in the states those raises leave (its error
+slot bound whole), the `else` as the body completes, and the op completing
+as its `else` (or body) and handler do. Region exits resolve by the rule
+the VM and Pliron share (`mir::RegionFrame`, `mir::region_exit`). A
+`var.store`, a
 whole-slot `mark_initialized`, or a `for` loop's iterator fills the slot;
 a declaration, a drop, a consume, a moving use, or an owned `iter.init`
 consuming it into an iterator slot of its own empties it; a move,
@@ -4790,10 +4818,7 @@ the states upstream's lifetime checker makes definite; the move and
 initialization scan walks regions, but its state is pre-drop and
 per-template, and upstream decides a drop's shape in the walk that places
 it (R1251).
-A cleanup list's entries name their destructor as a `DropVar` does
-(`CleanupDrop`), named by the same `name_destructors` and respelled by the
-same `name_lifecycle_calls`, so the VM's `run_cleanup` and Pliron's
-`lower_cleanup_drops` call it. A storage destroy, a variant store (one
+A storage destroy, a variant store (one
 `destructors` entry per alternative, the `__deinit__` the replaced payload
 runs under that tag, as upstream's `Variant.__del__` names each under its
 tag test), and an owned closure capture (released at the closure's death)
@@ -4947,8 +4972,7 @@ current Mojo:
   temporary such a parameter takes; when `y` dies there and nothing from
   `y`'s death to the call can raise or names `y` (`forwarding_use`), the
   load, construction, binding, and `DropVar` go and the call forwards `y`
-  itself, so no move initializer runs, as at Mojo, and the slot leaves
-  every cleanup list. A raising argument evaluated after the construction
+  itself, so no move initializer runs, as at Mojo. A raising argument evaluated after the construction
   keeps `y`'s move into the slot, as at the pin. A copy construction a read parameter, read
   receiver, or read operator operand takes (`show(M(copy=a))`,
   `M(copy=a).show()`) is bound to its
@@ -4956,9 +4980,8 @@ current Mojo:
   there, nothing from the binding to the call can raise, and only the
   binding and one whole load name the slot (`lending_use`), the load,
   construction, binding, and `a`'s `DropVar` go and the slot's load reads
-  `a` itself (`lend`). Every death of the slot — its `DropVar`, a `try`
-  body's `cleanup`, an exit's `ReturnWithCleanup` cleanup — is
-  then renamed to `a` function-wide, so `a` dies when the call returns, or
+  `a` itself (`lend`). Every death of the slot, its `DropVar`, is then
+  renamed to `a` function-wide, so `a` dies when the call returns, or
   on its raise before the handler, as Mojo binds the borrowed temporary to
   the dead source's storage. A raising argument evaluated after the
   construction keeps the move, as at the pin. A type parameter's
@@ -5176,12 +5199,11 @@ channels. A splice places `DropPlace` (a whole-value destruction of one field
 that tombstones it) after each field's last use, at the function's entry for
 the unused, at the entry of an `if`/`comptime if` arm that leaves out a field
 a sibling keeps (`destroyValuesAtEntryIfNeeded`), a raising call's error
-region among them, and at a handler's entry for what a nested `try` the
-body holds passes on that the handler does not read. A raise keeps live only
+region among them. A raise keeps live only
 what its handler reads, so a field the handler reads dies right after the
 body's last raising call, as on the pin.
-The receiver's existing `ConsumeVar` (in-block, cleanup lists, and the native
-exit backstop) then skips the tombstoned fields, so raise edges stay sound.
+The receiver's existing `ConsumeVar` (in-block, and the native exit
+backstop) then skips the tombstoned fields, so raise edges stay sound.
 Fields that root a loan, are moved below depth one, or need no destructor
 work are left to the `ConsumeVar`. A field read only inside a loop dies after
 the loop, as on the pin; in the recorded `deinit_body_field_loop_read` shape
@@ -5277,10 +5299,12 @@ transfers) once they all ran, and only then raises, so a raising callee has
 consumed its operands while a later operand's raise abandons them. At a
 raise point every value still owned must already be consumed: with no
 enclosing `try`, all of them; inside one, those declared in the region,
-while the rest flow to its target. An `except` arm, or with none the
-`finally` body, starts from the join of the states its raise points reach
-it with; an arm no raise point reaches is unreachable and unchecked, and a
-raise through `finally` continues from its end to the enclosing target.
+while the rest flow to its target. An `except` arm, the one MIR lowering
+synthesizes for a `try`/`finally` without one included, starts from the
+join of the states the raises naming its `try` reach it with; an arm no
+raise point reaches is unreachable and unchecked, and the raise the
+synthesized arm ends in, after its copy of the `finally`, continues to the
+enclosing target.
 
 ### Explicit-Destruction Partial Moves
 
@@ -5336,78 +5360,43 @@ generations are joined where paths meet and added to the liveness per point
 
 ### Try Region Drops
 
-The backward walk enters a `try` as `checkTryOp` walks it, keeping Mojito's
-`finally` (upstream's `lowerTryFinally` has copied it out by then). The
-`finally` is walked from the `try`'s live-out under the enclosing channels;
-the handler and `else` from the `finally`'s live-in; the body from the
-`else`'s live-in, or the `finally`'s. Each part's live-in is taken as the `try`
-sees it, its loan-generation owners added at the part's entry. Three channels
-stand in for edges the structured `try` does not spell:
+The backward walk enters a `try` as `checkTryOp` walks it: the handler and
+`else` from the `try`'s live-out, then the body from the `else`'s live-in,
+or the live-out, under a frame whose leave set is the handler's live-in less
+its error binding. Each part's live-in is taken as the `try` sees it, its
+loan-generation owners added at the part's entry. MIR lowering copied each
+`finally` before the exits that cross it (*Stage 5*), so every exit is an
+ordinary terminator preceded by real instructions:
 
-- A **raise channel**: a `raise` — a `raise` statement's, or the one ending
-  a raising call's error region, an operator's or subscript's whose dunder
-  raises included — keeps live what the raise's observer reads: the
-  handler's live-in less its error binding, or with no handler the
-  `finally`'s and the enclosing raise's. A nested `try` a walk does not
-  enter (`scan::raises_to_handler`) does too. The error region's `if`
-  destroys at its `then` arm's entry what the normal path keeps and the
-  raise does not read, so a handler never observes a vacated slot, a value
-  whose last use is the raising call dies after it on both paths, and an
-  outer variable rebound in the body runs the overwritten value's
-  destructor after the constructing call's error region, skipped exactly
-  when that call raises.
-- A **return channel**: a `return` in the body, handler, or `else` keeps live
-  the `finally` walked from the enclosing return set, empty at the function's
-  top level.
-- **Frames seen through the `finally`**: a `break`, `continue`, or `match` exit
-  leaving a part keeps live the `finally` walked from its frame's set, as the
-  copy of the `finally` before the exit would. What neither the `finally` nor
-  the target reads dies before the exit, in the part.
+- A raise naming the `try` — a `raise` statement's, or the one ending a
+  raising call's error region, an operator's or subscript's whose dunder
+  raises included — keeps live what the handler reads. A raise out of the
+  function keeps nothing. A nested `try` a walk does not enter
+  (`scan::raises_to_handler`) keeps live what the innermost enclosing
+  handler reads. The error region's `if` destroys at its `then` arm's
+  entry what the normal path keeps and the raise does not read, so a
+  handler never observes a vacated slot, a value whose last use is the
+  raising call dies after it on both paths, and an outer variable rebound
+  in the body runs the overwritten value's destructor after the
+  constructing call's error region, skipped exactly when that call raises.
+- A `return` keeps nothing live; a `break`, `continue`, or `match` exit
+  keeps live its frame's set. What the target does not read dies before the
+  exit, in the part, after the `finally` copied there reads it.
 
 The handler's unread error binding dies at the handler's entry, where the
 caught error arrives. A `try` is no death point in its block: its parts end
-what it uses.
-
-Per-instruction drops own all normal-flow deaths inside parts, and a return's
-too: a value nothing after the return reads dies before it. A cleanup list
-stays only where a structured region has no place for the drop, and names only
-what is still held where it runs. A `return` crossing a `finally` lists what
-it holds once those `finally` blocks have run: its live-out less what each
-crossed `finally` ends on every path through it; a return that crosses none
-lists nothing and is a plain `return`. The
-verifier rejects a `drop.var` or `var.consume` of a slot every path reaching
-it already ended, and a cleanup list naming one (`mir::verify`'s slot-end
-rule), so no pass may emit either. A `for` loop's yielded slot is in no
-cleanup list, since the binding always consumes it.
-
-### Try Cleanup
-
-Every raise point of a body is a `raise` terminator, a raising call's in its
-error region included, and destroys at its arm's entry what it holds and its
-observers do not read, as the entry destructors of upstream's error arm do,
-so each raise point destroys only what it holds. Drop elaboration fills
-`MirInstr::Try.cleanup` with what is left: what a raise leaving a nested
-region past its own list and `finally` (or its handler or `else`) still
-holds, less the body's raise channel, which no instruction on that path can
-host while the VM runs one `finally` for every exit (R884). A variable a `UseVar` moves
-stays listed, since the move empties its slot (the VM's slot is `Moved`, the
-native drop flag clear) and the cleanup skips it; only a variable consumed in
-place (`consumed_in_place`: a `ConsumeVar`, a whole-root move capture) is left
-out. The list is stored in descending `VarId` order — reverse declaration
-order, the order of every shared death point — and both backends run it front
-to back, so a raise destroys the body's live values newest declaration first,
-as Mojo does.
-
-A `break`/`continue` leaving a `try` part carries no cleanup list: what dies
-on the exit died before it, in the part.
+what it uses. Per-instruction drops own every death, a return's and a
+raise's too. The verifier rejects a `drop.var` or `var.consume` of a slot
+every path reaching it already ended (`mir::verify`'s slot-end rule), so no
+pass may emit either.
 
 Iterator-driven loops also place an explicit drop at their common exhaustion or
 `break` exit. A `return` cannot reach that block, so HIR lists its current
 binding and iterator owners on `ReturnWithCleanup`, and MIR keeps each alive
 into the return's block (`KeepAlive`) after the return value is evaluated;
-drop elaboration then ends them there, or lists them on the return when a
-`finally` it crosses reads them (R828 moves their death to the last
-`__next__`).
+drop elaboration then ends them there, after any `finally` copied before
+the return, which goes before the `KeepAlive` run (R828 moves their death
+to the last `__next__`).
 
 ### Pre-Elaboration Pipeline
 
@@ -5528,7 +5517,7 @@ point where a slot declared in a loop is uninitialized again.
   (`checkTrivialBlocks`) and decides one on a constant `Bool`, hoisting
   its live arm's instructions up to a `comptime for` and keeping the op as
   a parameter scope with an `unreachable` dead arm when they do not all
-  hoist. A `return` with a cleanup list is no `return` to the hoists. Each
+  hoist. Each
   pattern has its own `--timings` counter (`removed_static_conditions`,
   `propagated_conditions`, `hoisted_unconditional_exits`,
   `hoisted_conditional_returns`, `hoisted_yield_results`,
@@ -5536,13 +5525,7 @@ point where a slot declared in a loop is uninitialized again.
   `removed_unused_loop_results`, `removed_unused_loop_args`,
   `folded_comptime_ifs`).
   Every body is structured, so these patterns are the production path, as
-  Mojo has no `cf` dialect. It then
-  cuts each `try`'s raise-edge cleanup to the slots a remaining raise path
-  still holds (`verify::cut_try_cleanups`, over the slot-ends walk of
-  `verify/drops.rs`, which walks the structured body and finds each list
-  by its buffer), as erasing a raise point erases the
-  destructors on its edge. It
-  then folds each `value.copy` that is the identity to its operand (R780,
+  Mojo has no `cf` dialect. It then folds each `value.copy` that is the identity to its operand (R780,
   `MirInstr::forwarded_operand`, MLIR's `fold` returning an operand): when
   source and destination are typed alike by a type
   `MirDeclarations::copy_is_identity` accepts, the copy is removed and every
@@ -5881,7 +5864,7 @@ point where a slot declared in a loop is uninitialized again.
   `Mem2Reg` runs).
   A destructor or copy constructor takes the slot's address, so its type is
   never one, as upstream's never is; a borrow, capture, loan, projection,
-  iterator, or cleanup list keeps the slot. A slot every store of which is
+  or iterator keeps the slot. A slot every store of which is
   a `closure.make` of reference captures is promoted at any type: that
   closure is a struct of pointers, trivially register-passable as
   upstream's is, and a `call.indirect` through the slot keeps it;
@@ -6161,8 +6144,8 @@ point where a slot declared in a loop is uninitialized again.
   (R996), and reports a removed parameter the body reads.
   Before the parameters, the pass removes the runtime arguments the body
   never uses (R997), upstream's `identifyUnusedArguments`: it records as
-  `MirFunction::removed_args` each parameter slot that no instruction,
-  handler binding, or cleanup list names but to drop a value whose drop
+  `MirFunction::removed_args` each parameter slot that no instruction or
+  handler binding names but to drop a value whose drop
   runs no code (`mir::used_slots`, `MirDeclarations::drop_runs_no_code`,
   upstream's `IsTriviallyDeinitable`), and reads the body and declaration
   with them gone (`mir::without_removed_arguments`,
@@ -6414,10 +6397,10 @@ one's). Then, in reverse preorder, a loop whose body ends in its one
 results by the break's values, and a loop nothing jumps to is replaced by
 its body, whose terminator ends the enclosing block (`tryRemovingLoop`):
 every `inlined_cf_scope` loop an inlined body leaves goes, so `cse` sees
-the inlined values in one scope. Each such `try` is then replaced by its
-body and, when the body completes, its `else` (`removeTrivialTry`); one
-with a `finally`, which upstream has lowered away by then (R884), is
-kept. Last, after an `if` whose `then` arm cannot fall through, the
+the inlined values in one scope. Each `try` no raise names is then
+replaced by its body and, when the body completes, its `else`
+(`removeTrivialTry`), a `try` whose `finally` MIR lowering copied out
+among them. Last, after an `if` whose `then` arm cannot fall through, the
 condition reads `false` in the rest of its block, and `true` after one
 with no elifs whose `else` arm cannot
 (`propagateImpliedCondition`). Its `--timings` counters are
@@ -6521,7 +6504,7 @@ concrete verifier rejects a reference slot read as its handle.
   declarations, and copies and drops of a register-passable
   trivial value that run no code (which upstream does not emit), a region op counting
   through what its regions hold, as MLIR's recursive memory effects do, a
-  `try` always, and a terminator when it runs a cleanup list; a read that
+  `try` always; a read that
   misses shadows the entry it matched for the rest of its scope. Only a
   result of a register-passable trivial type
   (`MirDeclarations::copy_is_identity`: a scalar, pointer, SIMD vector of
@@ -6751,20 +6734,21 @@ a cursor of its own; R1272), and a part ends with a control-flow enum:
 
 ```rust
 Normal
-Return { value, cleanup }
-Leave(Leave)      // a region exit naming an op around the `try`
-Jump(MirBlockId)  // a lowered `escape`, until R883
+Return(Value)
+Raise { label, error } // a raise naming a `try`, which that `try` catches
+Leave(Leave)           // a region exit naming an op around the `try`
 ```
 
-This lets `return`, `break`, and `continue` cross a `try` boundary while still
-running cleanup and `finally`.
+This lets `return`, `break`, `continue`, and a raise naming an enclosing
+`try` cross a `try` boundary; each `finally` they cross already ran before
+them, copied there by MIR lowering. A raise out of the function propagates
+as `RuntimeError::Raised`, untouched by every `try`.
 
 The rule is:
 
-- body raise goes to `except`, if present
+- a body raise naming the `try` goes to its `except`
 - `else` runs only after normal body completion
-- `finally` always runs
-- non-normal flow from `finally` overrides the pending body/handler/else outcome
+- every other outcome leaves the `try` as it is
 
 ## Runtime Values And Builtins
 

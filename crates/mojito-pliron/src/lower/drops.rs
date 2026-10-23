@@ -47,19 +47,6 @@ impl<'a> FnLowering<'a> {
         candidates.resolve(method, argc)
     }
 
-    /// A cleanup list's drops, each through the destructor its entry names,
-    /// as upstream's unwind blocks call each `__del__`.
-    pub(super) fn lower_cleanup_drops(
-        &mut self,
-        ctx: &mut Context,
-        cleanup: &[CleanupDrop],
-    ) -> Result<(), PlironError> {
-        for drop in cleanup {
-            self.lower_drop_var(ctx, drop.var, drop.destructor.as_deref())?;
-        }
-        Ok(())
-    }
-
     /// `DropVar` — the VM's `drop_named`: nothing for scalars; for aggregates
     /// call `destructor`, the compiled `__deinit__` the drop names (its body
     /// consumes the receiver's fields), else destroy the fields in

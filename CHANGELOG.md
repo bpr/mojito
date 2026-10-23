@@ -494,6 +494,30 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `finally` is copied before every exit of its `try` in MIR lowering, as
+  upstream's `lowerTryFinally` pastes it, instead of running once in the VM
+  on each exit: before each `return`, `break`, `continue`, and raise that
+  leaves the `try`, and at the end of its handler and `else`. Each `try`
+  carries a label and each raise names the `try` it reaches, as
+  `lit.try.raise` does, so a raise in a `finally` copied into a protected
+  body skips that body's handler; a raising body without an `except` gets
+  the parser's re-raising handler; a `finally` that returns replaces the
+  exit it is copied before, destroying the replaced return's value. A value
+  an exit holds now dies after the copy reads it, so a `break`'s value read
+  only on the fall-through path (VM: never destroyed; native: at the
+  function's exit), a raise out of the function past a `finally`, and a
+  return overridden by its `finally` destroy what they hold as the pin does
+  (`assets/ok/try_finally_break_value_read_after.mojo`,
+  `try_nested_finally_break_destroys.mojo`,
+  `try_finally_raise_out_of_function_destroys.mojo`,
+  `try_handler_raise_crosses_finally.mojo`,
+  `try_else_raise_crosses_finally.mojo`,
+  `try_finally_return_overrides_owned_value.mojo`). `simplify-cf` now
+  elides a `try` whose `finally` was copied out when no raise names it. The
+  `try` cleanup lists, `return.cleanup`, the VM's `finally` run, and
+  Pliron's pending-outcome dispatch are gone. The MIR text format is 1.92
+  and the package format 82. This closes R884 and R829.
+
 - Each raising call is its own raise edge, as upstream's `addErrorRegions`
   makes every throwing call: a raising call, method or indirect call,
   operator, or subscript defines an error flag and an error

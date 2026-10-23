@@ -58,9 +58,9 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::SourceSpan;
 use mojito_mir::mir::{
-    CleanupDrop, Const as MirConst, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations,
-    MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj,
-    Raises, Reg, RegionFrame, UseMode,
+    Const as MirConst, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction,
+    MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj, Raises, Reg,
+    RegionFrame, TryLabel, UseMode,
 };
 use mojito_types::types::{Ty, TyArg, canonical_simd_ty, scalar_simd_dtype};
 
@@ -285,10 +285,6 @@ pub fn lower_body(
         carriers: Vec::new(),
         region_targets: Vec::new(),
         try_frames: Vec::new(),
-        finally_states: Vec::new(),
-        exit_sites: Vec::new(),
-        finally_overrides: Vec::new(),
-        pending_ret: None,
         trap_blocks: HashMap::new(),
         region: None,
         entry: None,
@@ -364,84 +360,12 @@ struct RuntimeStr {
     owned: bool,
 }
 
-/// One enclosing `try` during lowering: the landing block its raise edge
-/// jumps to (which runs the `try`'s raise-edge cleanup), and the
-/// pending-outcome state when the try has a `finally` region. Handler and
-/// `else` regions lower under a pseudo-frame so their raises and returns
-/// still route through the `finally`.
+/// One enclosing `try` body during lowering: its label, which a raise
+/// naming it carries, and the landing block such a raise jumps to, which
+/// binds the error for the handler.
 struct TryFrame {
+    label: TryLabel,
     landing: Ptr<BasicBlock>,
-    /// Index into `FnLowering::finally_states` when this try has `finally`.
-    finally: Option<usize>,
-    /// Whether a raise landing on this frame pends an error on its
-    /// finalbody (a handler-less `try`/`finally` body, or a handler/orelse
-    /// pseudo-frame) — recorded on demand so a raise-free body emits no
-    /// error dispatch.
-    pends_error: bool,
-}
-
-/// The pending-outcome machinery of one `finally`-bearing try. The finalbody
-/// lowers once; every incoming edge records what was pending in `kind_slot`
-/// (0 normal, 1 error, `2 + site` for an exit site) and the post-finalbody
-/// dispatch forwards the outcome — a finalbody-internal raise, return, or
-/// escape simply never reaches the dispatch, which is the VM's "finally
-/// outcome wins".
-struct FinallyState {
-    /// Forwarding block every pending edge jumps to (branches to the lowered
-    /// finalbody entry).
-    entry: Ptr<BasicBlock>,
-    /// The post-finalbody dispatch block (the finalbody's `TryYield` target).
-    dispatch: Ptr<BasicBlock>,
-    /// Stages a raise into this finally: copies the staged error into
-    /// `pending_err`, tags `kind_slot` 1, and enters the finalbody.
-    error_entry: Ptr<BasicBlock>,
-    /// `i32` pending-kind alloca.
-    kind_slot: Value,
-    /// Per-try pending `MjError` storage (the shared staging slot may be
-    /// clobbered by a raise handled inside the finalbody itself).
-    pending_err: Value,
-    /// Exit-site codes that can pend on this frame (registered as sites
-    /// cross it; complete before the finalbody lowers, since every setter
-    /// sits in the body/handler/orelse regions lowered first).
-    codes: Vec<u32>,
-    /// Whether any edge can pend an error here (a handler-less raise edge,
-    /// or a raise inside the handler/orelse). When false the dispatch and
-    /// resolutions skip the error case — nonraising functions have no
-    /// propagation path to re-raise into.
-    error_possible: bool,
-    /// The try's continuation for the dispatch's normal case.
-    after: Ptr<BasicBlock>,
-}
-
-/// One exit site that may cross `finally` regions: a return terminator (its
-/// value staged at the site, its carried cleanup run at the terminal after
-/// every pending finalbody) or a region exit (`break`, `continue`,
-/// `match.next`, `match.complete`) leaving a `try` part for a region op
-/// outside it.
-struct ExitSiteInfo {
-    action: ExitAction,
-    /// `finally_states` indices whose pending outcome this site overrides
-    /// (the site sits inside those finalbodies); resolved at the terminal
-    /// for returns — the VM merges the overridden return's cleanup roots
-    /// into the overriding return's frame-end cleanup.
-    overrides: Vec<usize>,
-    /// How many `try` frames enclose the site's destination: the crossing
-    /// stops at the frames outside it (0 for a return).
-    depth: usize,
-    /// Lazily created terminal block (dispatch chains target it).
-    terminal: Option<Ptr<BasicBlock>>,
-}
-
-enum ExitAction {
-    Return {
-        cleanup: Vec<CleanupDrop>,
-    },
-    /// Branch to `target`, passing the scalar values the site staged in
-    /// `staged` (its aggregates sit in the target's staging storage).
-    Leave {
-        target: Ptr<BasicBlock>,
-        staged: Vec<(Value, TypeHandle)>,
-    },
 }
 
 struct FnLowering<'a> {
@@ -564,21 +488,9 @@ struct FnLowering<'a> {
     /// `continue`, `match.next`, or `match.complete` may leave, innermost
     /// last.
     region_targets: Vec<RegionTarget>,
-    /// Enclosing `try` frames, innermost last: a raise edge jumps to the
-    /// innermost landing block.
+    /// Enclosing `try` bodies, innermost last: a raise naming one jumps to
+    /// its landing block.
     try_frames: Vec<TryFrame>,
-    /// Pending-outcome state of each `finally`-bearing try (arena — frames
-    /// and sites refer by index).
-    finally_states: Vec<FinallyState>,
-    /// Exit sites that cross `finally` regions.
-    exit_sites: Vec<ExitSiteInfo>,
-    /// `finally_states` indices whose finalbody is lexically being lowered,
-    /// innermost last: a raise, return, or region exit leaving a finalbody
-    /// overrides that pending outcome and must resolve it (drop the pending
-    /// return's carried roots, free a pending error).
-    finally_overrides: Vec<usize>,
-    /// Staging slot for a scalar return value crossing `finally` regions.
-    pending_ret: Option<Value>,
     /// Lazily created per-category trap blocks of this function.
     trap_blocks: HashMap<u8, Ptr<BasicBlock>>,
     /// The function's body region (for appending guard/trap blocks).

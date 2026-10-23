@@ -1,7 +1,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::text::write;
-use crate::mir::{CleanupDrop, MirResultAdapter, Raises};
+use crate::mir::{MirResultAdapter, Raises, TryLabel};
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, LaneMask, VariantIndex};
 
@@ -1250,10 +1250,7 @@ fn instruction_families_reprint_byte_identically() {
         },
     ];
     let mut function = function_with(vec![Ty::int(); 43], instrs);
-    function.blocks[0].term = MirTerm::ReturnWithCleanup {
-        value: Some(Reg(0)),
-        cleanup: vec![CleanupDrop::unnamed(1), CleanupDrop::unnamed(2)],
-    };
+    function.blocks[0].term = MirTerm::Return(Some(Reg(0)));
     let program = program_with(vec![("instructions".into(), function)]);
     assert_reprints(&program);
 }
@@ -1261,10 +1258,13 @@ fn instruction_families_reprint_byte_identically() {
 #[test]
 fn raise_terminator_reprints() {
     let mut function = function_with(vec![Ty::int()], Vec::new());
-    function.blocks[0].term = MirTerm::Raise(Reg(0));
+    function.blocks[0].term = MirTerm::Raise {
+        src: Reg(0),
+        label: None,
+    };
     let program = program_with(vec![("raising".into(), function)]);
     assert_reprints(&program);
-    assert!(write::program(&program).contains("terminator: raise { src: %r0 }"));
+    assert!(write::program(&program).contains("terminator: raise { src: %r0, label: absent }"));
 }
 
 #[test]
@@ -1274,21 +1274,22 @@ fn nested_try_regions_reprint_without_region_source_marks() {
         term,
     };
     let inner_try = MirInstr::Try {
-        body: vec![region_block(MirTerm::TryYield)],
+        label: TryLabel(1),
+        body: vec![region_block(MirTerm::Raise {
+            src: Reg(0),
+            label: Some(TryLabel(0)),
+        })],
         handler: None,
         orelse: None,
-        finalbody: None,
-        cleanup: Vec::new(),
     };
     let outer_try = MirInstr::Try {
+        label: TryLabel(0),
         body: vec![MirBlock {
             instrs: vec![inner_try],
             term: MirTerm::TryYield,
         }],
         handler: Some((Some(3), vec![region_block(MirTerm::TryYield)])),
         orelse: Some(vec![region_block(MirTerm::TryYield)]),
-        finalbody: Some(vec![region_block(MirTerm::TryYield)]),
-        cleanup: vec![CleanupDrop::unnamed(4), CleanupDrop::unnamed(5)],
     };
     let program = program_with(vec![(
         "regions".into(),
@@ -1354,6 +1355,84 @@ fn artifact_with_instruction(instruction_text: &str) -> String {
 }
 
 #[test]
+fn tries_older_than_1_92_take_the_labels_their_raises_meant() {
+    // An outer `try` with a handler holds a handler-less `try`; a raise in
+    // the inner body reached the outer handler, and one in the outer
+    // handler left the function.
+    let text = artifact_with_instruction(
+        "try { body: [bb0 { instructions: [try { body: [bb0 { instructions: [], \
+         terminator: raise { src: %r0 } }], handler: absent, orelse: absent, \
+         finalbody: absent, cleanup: [] }], terminator: try.yield {} }], \
+         handler: present(handler { error_var: absent, blocks: [bb0 { instructions: [], \
+         terminator: raise { src: %r0 } }] }), orelse: absent, finalbody: absent, cleanup: [] }",
+    );
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("older text reads");
+    let MirInstr::Try {
+        label,
+        body,
+        handler: Some((_, handler)),
+        ..
+    } = &parsed.program.functions[0].1.blocks[0].instrs[0]
+    else {
+        panic!("the outer try reads");
+    };
+    assert_eq!(*label, TryLabel(0));
+    let MirInstr::Try {
+        label: inner,
+        body: inner_body,
+        ..
+    } = &body[0].instrs[0]
+    else {
+        panic!("the inner try reads");
+    };
+    assert_eq!(*inner, TryLabel(1));
+    assert!(matches!(
+        inner_body[0].term,
+        MirTerm::Raise {
+            label: Some(TryLabel(0)),
+            ..
+        }
+    ));
+    assert!(matches!(
+        handler[0].term,
+        MirTerm::Raise { label: None, .. }
+    ));
+}
+
+#[test]
+fn a_finally_and_cleanup_lists_older_than_1_92_are_rejected() {
+    let finally = artifact_with_instruction(
+        "try { body: [bb0 { instructions: [], terminator: try.yield {} }], handler: absent, \
+         orelse: absent, finalbody: present([bb0 { instructions: [], terminator: try.yield {} }]), \
+         cleanup: [] }",
+    );
+    assert!(
+        diagnostics(&finally)
+            .iter()
+            .any(|message| message.contains("holds no `finally` since MIR 1.92"))
+    );
+    let cleanup = artifact_with_instruction(
+        "try { body: [bb0 { instructions: [], terminator: try.yield {} }], handler: absent, \
+         orelse: absent, finalbody: absent, cleanup: [$v0] }",
+    );
+    assert!(
+        diagnostics(&cleanup)
+            .iter()
+            .any(|message| message.contains("lists no raise-edge cleanup since MIR 1.92"))
+    );
+    let returned = artifact_with_instruction(
+        "try { label: try0, body: [bb0 { instructions: [], \
+         terminator: return.cleanup { value: absent, cleanup: [] } }], handler: absent, \
+         orelse: absent }",
+    );
+    assert!(
+        diagnostics(&returned)
+            .iter()
+            .any(|message| message.contains("`return.cleanup` is gone since MIR 1.92"))
+    );
+}
+
+#[test]
 fn malformed_instruction_payloads_are_diagnosed() {
     assert!(
         diagnostics(&artifact_with_instruction("ref.make { dest: %r0 }"))
@@ -1367,8 +1446,8 @@ fn malformed_instruction_payloads_are_diagnosed() {
     );
     assert!(
         diagnostics(&artifact_with_instruction(
-            "try { body: [bb1 { instructions: [], terminator: try.yield {} }], \
-             handler: absent, orelse: absent, finalbody: absent, cleanup: [] }"
+            "try { label: try0, body: [bb1 { instructions: [], terminator: try.yield {} }], \
+             handler: absent, orelse: absent }"
         ))
         .iter()
         .any(|message| message.contains("expected `bb0` record, found `bb1`"))

@@ -1893,8 +1893,14 @@ impl<'a> Flatten<'a> {
     /// (a call result, a literal, …) instead of panicking — used at a method-call
     /// receiver, which may be a temporary. Only evaluates subscript indices when
     /// the whole chain is a place.
-    /// Lower a `try`'s parts and emit the [`MirInstr::Try`]. The handler's
-    /// slot is typed by the error its body raises.
+    /// Lower a `try`'s parts and emit the [`MirInstr::Try`], labelled
+    /// with the function's next `try` number as `LowerSemanticCF` labels
+    /// it. The body lowers under that label, so a raise in it names this
+    /// `try`; the handler, `else`, and `finally` lower in the enclosing
+    /// context. The handler's slot is typed by the error the body raises.
+    /// A `finally` is copied before each exit of the parts
+    /// ([`Self::lower_try_finally`]), after a raising body without an
+    /// `except` gets the handler that re-raises its error.
     fn emit_try(
         &mut self,
         body: &'a hir::HirRegion,
@@ -1902,13 +1908,19 @@ impl<'a> Flatten<'a> {
         orelse: Option<&'a hir::HirRegion>,
         finalbody: Option<&'a hir::HirRegion>,
     ) {
-        let body = self.try_part(body);
-        let handler = except.map(|except| {
+        let label = TryLabel(self.next_try);
+        self.next_try += 1;
+        let enclosing = self.raise_target.replace(label);
+        let mut body = self.try_part(body);
+        self.raise_target = enclosing;
+        let mut handler = except.map(|except| {
             if let Some(slot) = except.slot {
                 // The checker rejects a try whose body can raise more than
-                // one error type, so copying the first propagating raising
-                // fact types the handler binding without re-inference.
-                let error = region_error_type(&body, &self.f.reg_types).unwrap_or_else(Ty::error);
+                // one error type, so the first raise naming this `try` types
+                // the handler binding without re-inference.
+                let error = first_raised_error(&body, label)
+                    .and_then(|error| self.f.reg_types.get(&error.0).cloned())
+                    .unwrap_or_else(Ty::error);
                 self.var_types.entry(slot).or_insert(error);
                 if let Some(binding) = except.binding {
                     self.owner_vars.insert(binding, slot);
@@ -1916,14 +1928,35 @@ impl<'a> Flatten<'a> {
             }
             (except.slot, self.try_part(&except.body))
         });
-        let orelse = orelse.map(|part| self.try_part(part));
-        let finalbody = finalbody.map(|part| self.try_part(part));
+        let mut orelse = orelse.map(|part| self.try_part(part));
+        if let Some(finalbody) = finalbody {
+            let finalbody = self.try_part(finalbody);
+            if handler.is_none()
+                && let Some(error) = first_raised_error(&body, label)
+            {
+                handler = Some(self.reraising_handler(error));
+            }
+            let orelse = orelse.get_or_insert_with(|| {
+                vec![MirBlock {
+                    instrs: Vec::new(),
+                    term: MirTerm::TryYield,
+                }]
+            });
+            self.lower_try_finally(
+                label,
+                &finalbody,
+                TryParts {
+                    body: &mut body,
+                    handler: handler.as_mut().map(|(_, blocks)| blocks),
+                    orelse,
+                },
+            );
+        }
         self.emit(MirInstr::Try {
+            label,
             body,
             handler,
             orelse,
-            finalbody,
-            cleanup: Vec::new(),
         });
     }
 
@@ -3755,8 +3788,8 @@ impl<'a> Flatten<'a> {
                     // Without this marker, edge-based last-use elaboration can
                     // destroy a loop iterator at block entry (before the return
                     // value and the current yielded element have been handled).
-                    // Drop elaboration ends it after the marker, and lists on
-                    // the return only what it holds past a crossed `finally`.
+                    // Drop elaboration ends it after the marker, and a
+                    // `finally` copied before this return runs before it.
                     self.emit(MirInstr::KeepAlive { var: *var });
                 }
                 MirTerm::Return(value)
@@ -3787,7 +3820,10 @@ impl<'a> Flatten<'a> {
             Terminator::Raise(value) => {
                 let src = self.expr_hir(value);
                 self.flush_argument_anchors();
-                MirTerm::Raise(src)
+                MirTerm::Raise {
+                    src,
+                    label: self.raise_target,
+                }
             }
             Terminator::Unreachable => MirTerm::Unreachable,
         }

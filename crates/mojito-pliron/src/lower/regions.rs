@@ -41,10 +41,6 @@ pub(super) struct RegionTarget {
     resume: usize,
     /// Where a leaving terminator goes: the block after the op.
     exit: usize,
-    /// The `try` frames open at the op.
-    try_depth: usize,
-    /// The finalbodies being lowered at the op.
-    overrides: usize,
     /// The blocks open at the op: an exit leaves the rest.
     open: usize,
 }
@@ -222,9 +218,6 @@ impl FnLowering<'_> {
     /// A `break`, `continue`, `match.next`, or `match.complete`: the
     /// innermost enclosing region op it names, entered with `values` at its
     /// exit, or at its body or next case when the terminator resumes it.
-    /// Leaving a `try` part for an op outside it crosses each `finally` on
-    /// the way, as a return does, and leaving a finalbody resolves the
-    /// outcome pending on it.
     pub(super) fn lower_region_exit(
         &mut self,
         ctx: &mut Context,
@@ -249,48 +242,9 @@ impl FnLowering<'_> {
         };
         let target = &self.region_targets[target];
         let carrier = if resume { target.resume } else { target.exit };
-        let (depth, overrides_from, open) = (target.try_depth, target.overrides, target.open);
+        let open = target.open;
         self.release_leaving_temps(ctx, open, term)?;
-        let crosses_finally = self
-            .try_frames
-            .get(depth..)
-            .unwrap_or_default()
-            .iter()
-            .any(|frame| frame.finally.is_some());
-        let overrides = self
-            .finally_overrides
-            .get(overrides_from..)
-            .unwrap_or_default()
-            .to_vec();
-        if !crosses_finally && overrides.is_empty() {
-            return self.branch_carrying(ctx, carrier, values);
-        }
-        for idx in overrides.into_iter().rev() {
-            self.emit_pending_resolution(ctx, idx)?;
-        }
-        // The values wait at the site while the finalbodies run: each scalar
-        // in a slot of its own, each aggregate in the target's staging.
-        let operands = self.carry(ctx, carrier, values)?;
-        self.transfer(values);
-        let mut staged = Vec::with_capacity(operands.len());
-        for operand in operands {
-            let handle = operand.get_type(ctx);
-            let slot = self.entry_typed_alloca(ctx, handle);
-            let store = StoreOp::new(ctx, operand, slot);
-            self.append(ctx, store.get_operation(), None);
-            staged.push((slot, handle));
-        }
-        let code = 2 + self.exit_sites.len() as u32;
-        self.exit_sites.push(ExitSiteInfo {
-            action: ExitAction::Leave {
-                target: self.carriers[carrier].block,
-                staged,
-            },
-            overrides: Vec::new(),
-            depth,
-            terminal: None,
-        });
-        self.emit_exit_crossing(ctx, code)
+        self.branch_carrying(ctx, carrier, values)
     }
 
     /// A block of its own for the region `blocks`, entered from `entry`'s
@@ -500,8 +454,6 @@ impl FnLowering<'_> {
             frame,
             resume,
             exit,
-            try_depth: self.try_frames.len(),
-            overrides: self.finally_overrides.len(),
             open: self.open_blocks.len(),
         });
     }

@@ -50,10 +50,9 @@ use crate::mir::struct_reads::{LayoutReads, StructReads};
 use crate::mir::verify::{instruction_operand_regs, instruction_places, instruction_result_regs};
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirPlace, MirSubscriptArg, MirTerm, Proj, Reg, TyArg, UseMode, cleanup_slots,
-    count_register_reads, destroyed_structs, instruction_regions, instruction_regions_mut,
-    instruction_slots, instruction_subscript_call, matched_parameter_arguments,
-    supplied_parameter_arguments,
+    MirPlace, MirSubscriptArg, Proj, Reg, TyArg, UseMode, count_register_reads, destroyed_structs,
+    instruction_regions, instruction_regions_mut, instruction_slots, instruction_subscript_call,
+    matched_parameter_arguments, supplied_parameter_arguments,
 };
 use mojito_ast::ast::InfixOp;
 use mojito_hir::hir::VarId;
@@ -1124,9 +1123,6 @@ impl SlotReads<'_> {
                     self.blocks(region);
                 }
             }
-            if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
-                self.drops(cleanup_slots(cleanup));
-            }
         }
     }
 
@@ -1136,13 +1132,9 @@ impl SlotReads<'_> {
             | MirInstr::ConsumeVar { var }
             | MirInstr::DeclareVar { var } => self.drops([*var]),
             MirInstr::Try {
-                handler, cleanup, ..
-            } => {
-                if let Some((Some(binding), _)) = handler {
-                    self.read(*binding);
-                }
-                self.drops(cleanup_slots(cleanup));
-            }
+                handler: Some((Some(binding), _)),
+                ..
+            } => self.read(*binding),
             _ => {
                 for slot in instruction_slots(instruction) {
                     self.read(slot);

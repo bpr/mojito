@@ -20,9 +20,8 @@ use mojito_checked::checked::CheckedConst;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    CleanupDrop, ConcreteMir, Const, MirBlock, MirCaptureMode, MirFunction, MirInstr,
-    MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
-    cleanup_drops,
+    ConcreteMir, Const, MirBlock, MirCaptureMode, MirFunction, MirInstr, MirIntrinsicSubscript,
+    MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Raises, Reg, TryLabel,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::types::Ty;
@@ -1425,15 +1424,19 @@ fn navigate_reference_mut<'a>(
 }
 
 /// The control-flow outcome of executing an instruction or a `try` sub-region.
-/// Most execution is `Normal`; a `return` that crosses a `try` boundary surfaces
-/// as `Return`, so `finally` can run before control leaves the function, and a
-/// `break`/`continue` that leaves a `try` part to a loop around the `try` as
-/// `Leave`. (A `raise` propagates separately as `RuntimeError::Raised`.)
+/// Most execution is `Normal`; a `return` inside a `try` part surfaces as
+/// `Return`, a `break`/`continue` that leaves a `try` part to a loop around
+/// the `try` as `Leave`, and a raise naming a `try` as `Raise`, which the
+/// `try` it names intercepts. (A raise out of the function propagates as
+/// `RuntimeError::Raised`.)
 enum Flow {
     Normal,
-    Return {
-        value: Value,
-        cleanup: Vec<CleanupDrop>,
+    Return(Value),
+    /// `lit.try.raise`: the error a raise names the `try` labelled `label`
+    /// with, unwinding every `try` part up to that `try`'s body.
+    Raise {
+        label: TryLabel,
+        error: Value,
     },
     /// A region exit naming an op outside the `try` part it left. Propagates
     /// out of the `try` (running each `finally`) until the cursor of a list
@@ -1442,11 +1445,10 @@ enum Flow {
 }
 
 struct TryRegions<'a> {
+    label: TryLabel,
     body: &'a [MirBlock],
     handler: &'a Option<(Option<VarId>, Vec<MirBlock>)>,
     orelse: &'a Option<Vec<MirBlock>>,
-    finalbody: &'a Option<Vec<MirBlock>>,
-    cleanup: &'a [CleanupDrop],
 }
 
 struct ReferencePointerBoundary<'a> {

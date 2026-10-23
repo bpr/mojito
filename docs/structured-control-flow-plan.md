@@ -526,9 +526,11 @@ Mojito-only shape.
 
 ## Gaps kept open
 
-- **`finally` placement.** The VM runs a `finally` dynamically on each exit,
-  where upstream copies it before each exiting terminator
-  (`lowerTryFinally`). Filed on the roadmap beside the stages.
+- **`finally` placement.** Closed by R884 (2026-10-22): MIR lowering copies
+  each `finally` before every terminator leaving its `try`
+  (`mir/try_finally.rs`, upstream's `lowerTryFinally`), each raise naming
+  its `try` by label as `lit.try.raise` does, so the VM no longer runs a
+  `finally` dynamically and the `try` holds none.
 - **HIR as a layer.** Upstream has no HIR between its parser's ops and
   `CheckLifetimes`, only `LowerSemanticCF`. Whether HIR's remaining job
   (name-to-slot resolution) folds into MIR lowering is a later question,

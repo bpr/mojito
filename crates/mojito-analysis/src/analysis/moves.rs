@@ -581,10 +581,10 @@ pub(super) fn join_states(a: &[Node], b: &[Node]) -> Vec<Node> {
 /// predecessors' `match.next` left, and a loop iterates its body until the
 /// state its `continue`s carry back stops changing, the states at its
 /// `break`s being its live-out. A `break`/`continue` reaches the loop it
-/// names through any `finally` it crosses. `try` regions are walked with
-/// the precise raise-point rule: an `except` arm starts from the join of
-/// the states at every `raise` of the body, each raising call's in its
-/// error region included, so a value consumed before a raising call is
+/// names after the `finally` copies MIR lowering put before it. `try`
+/// regions are walked with the precise raise-point rule: an `except` arm
+/// starts from the join of the states at every raise naming its `try`,
+/// each raising call's in its error region included, so a value consumed before a raising call is
 /// uninitialized there while one consumed after the last raise is not.
 ///
 /// A field moved out of a value must be written back before any other part

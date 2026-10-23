@@ -5,14 +5,14 @@
 //! test its iterator takes; `simplifyParamForLoop` then folds the loops the
 //! clones leave trivial.
 
-use super::select::{Decided, defined_registers, splice_comptime_arm};
+use super::select::{Decided, splice_comptime_arm};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    LoopLabel, MirTerm, SpanTable, instruction_regions_mut, instruction_regs_mut, loop_breaks_mut,
-    renumber_block_slots, replace_register_reads, resolve_replacements, terminator_regs_mut,
+    LoopLabel, MirTerm, SpanTable, defined_registers, for_each_register, instruction_regions_mut,
+    loop_breaks_mut, renumber_block_slots, replace_register_reads, resolve_replacements,
 };
 
 impl Specializer<'_> {
@@ -773,23 +773,6 @@ fn simplify_param_for_loop(instruction: MirInstr, folded: &mut HashMap<u32, Reg>
             results,
             body,
         })),
-    }
-}
-
-/// Visit every register `blocks` define or read, at any depth.
-fn for_each_register(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut Reg)) {
-    for block in blocks {
-        for instruction in &mut block.instrs {
-            instruction_regs_mut(instruction)
-                .into_iter()
-                .for_each(&mut *visit);
-            for region in instruction_regions_mut(instruction) {
-                for_each_register(region, visit);
-            }
-        }
-        terminator_regs_mut(&mut block.term)
-            .into_iter()
-            .for_each(&mut *visit);
     }
 }
 

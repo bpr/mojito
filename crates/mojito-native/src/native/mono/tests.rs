@@ -29,7 +29,6 @@ fn instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
                 body,
                 handler,
                 orelse,
-                finalbody,
                 ..
             } = instruction
             {
@@ -38,9 +37,6 @@ fn instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
                     result.extend(instructions(blocks));
                 }
                 if let Some(blocks) = orelse {
-                    result.extend(instructions(blocks));
-                }
-                if let Some(blocks) = finalbody {
                     result.extend(instructions(blocks));
                 }
             } else {

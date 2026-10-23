@@ -18,11 +18,7 @@ impl FnLowering<'_> {
         match term {
             MirTerm::Return(value) => {
                 self.release_leaving_temps(ctx, 0, term)?;
-                self.lower_return_edge(ctx, value.as_ref().copied(), &[])
-            }
-            MirTerm::ReturnWithCleanup { value, cleanup } => {
-                self.release_leaving_temps(ctx, 0, term)?;
-                self.lower_return_edge(ctx, value.as_ref().copied(), cleanup)
+                self.lower_return(ctx, value.as_ref().copied())
             }
             MirTerm::Yield(_) | MirTerm::ElifCond { .. } | MirTerm::TryYield => {
                 self.lower_region_end(ctx, term, end)
@@ -31,7 +27,7 @@ impl FnLowering<'_> {
             | MirTerm::Continue { values, .. }
             | MirTerm::MatchNext(values)
             | MirTerm::MatchComplete(values) => self.lower_region_exit(ctx, term, values),
-            MirTerm::Raise(src) => self.lower_raise(ctx, *src),
+            MirTerm::Raise { src, label } => self.lower_raise(ctx, *src, *label),
             // `hlcf.unreachable`.
             MirTerm::Unreachable => {
                 let unreachable = UnreachableOp::new(ctx);
@@ -52,48 +48,8 @@ impl FnLowering<'_> {
         }
     }
 
-    /// A return terminator: with no finalbody in the way, the return's own
-    /// carried roots drop, then the value returns. Crossing a finalbody (or overriding
-    /// one's pending outcome) instead stages the value, registers an exit
-    /// site, and routes outward through the pending machinery.
-    pub(super) fn lower_return_edge(
-        &mut self,
-        ctx: &mut Context,
-        value: Option<Reg>,
-        cleanup: &[CleanupDrop],
-    ) -> Result<(), PlironError> {
-        let crosses_finally = self.try_frames.iter().any(|frame| frame.finally.is_some());
-        if !crosses_finally && self.finally_overrides.is_empty() {
-            self.emit_scope_exit_cleanups(ctx, cleanup)?;
-            return self.lower_return(ctx, value);
-        }
-        // A value-less return inside a value-returning function is
-        // checker-guaranteed unreachable fall-off scaffolding.
-        let signature = &self.signatures[self.name];
-        let value_returning = match &signature.outcome {
-            Some(outcome) => !matches!(outcome.ok, LowerTy::ZeroSized),
-            None => signature.returns_value || signature.sret.is_some(),
-        };
-        if value.is_none() && value_returning {
-            let unreachable = UnreachableOp::new(ctx);
-            self.append(ctx, unreachable.get_operation(), None);
-            return Ok(());
-        }
-        self.stage_return_value(ctx, value)?;
-        let code = 2 + self.exit_sites.len() as u32;
-        self.exit_sites.push(ExitSiteInfo {
-            action: ExitAction::Return {
-                cleanup: cleanup.to_vec(),
-            },
-            overrides: self.finally_overrides.clone(),
-            depth: 0,
-            terminal: None,
-        });
-        self.emit_exit_crossing(ctx, code)
-    }
-
-    /// The function-exit half of a return terminator (scope-exit cleanups
-    /// already ran): store/copy the value per the return ABI and return.
+    /// A return terminator: store/copy the value per the return ABI and
+    /// return.
     pub(super) fn lower_return(
         &mut self,
         ctx: &mut Context,

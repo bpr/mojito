@@ -95,17 +95,10 @@ impl FnLowering<'_> {
         &mut self,
         ctx: &mut Context,
     ) -> Result<Ptr<BasicBlock>, PlironError> {
-        if let Some(frame) = self.try_frames.last() {
-            // A raise landing on a handler-less `try`/`finally` body or a
-            // handler/orelse pseudo-frame pends an error on the finalbody.
-            if let Some(idx) = frame.finally
-                && frame.pends_error
-            {
-                self.finally_states[idx].error_possible = true;
-            }
-            return Ok(frame.landing);
+        match self.try_frames.last() {
+            Some(frame) => Ok(frame.landing),
+            None => self.ensure_propagate_block(ctx),
         }
-        self.ensure_propagate_block(ctx)
     }
 
     /// The per-function propagate block of a raising function: free the heap
@@ -309,11 +302,16 @@ impl FnLowering<'_> {
     }
 
     /// A `raise` terminator: materialize the raised value as an owned error
-    /// in the staging slot and jump to the innermost raise-edge target (a
-    /// `try` landing block once regions lower; the raising function's
-    /// propagate block otherwise). A raise edge's error is the error its
-    /// call raised, staged whole and traced once, where it was raised.
-    pub(super) fn lower_raise(&mut self, ctx: &mut Context, src: Reg) -> Result<(), PlironError> {
+    /// in the staging slot and jump to the landing block of the `try` it
+    /// names, or, naming none, to the raising function's propagate block.
+    /// A raise edge's error is the error its call raised, staged whole and
+    /// traced once, where it was raised.
+    pub(super) fn lower_raise(
+        &mut self,
+        ctx: &mut Context,
+        src: Reg,
+        label: Option<TryLabel>,
+    ) -> Result<(), PlironError> {
         let err_slot = self.ensure_err_slot(ctx);
         if self.edge_errors.contains(&src.0) {
             let storage = self.reg_ptr(ctx, src)?;
@@ -329,15 +327,29 @@ impl FnLowering<'_> {
                 self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_RAISE);
             }
         }
-        // A raise inside a finalbody overrides the pending outcome; the VM
-        // runs a pending return's roots before propagating.
-        let overrides = self.finally_overrides.clone();
-        for idx in overrides.into_iter().rev() {
-            self.emit_pending_resolution(ctx, idx)?;
-        }
-        let target = self.raise_edge_target(ctx)?;
+        let target = match label {
+            Some(label) => self.raise_target(label)?,
+            None => self.ensure_propagate_block(ctx)?,
+        };
         let jump = BrOp::new(ctx, target, vec![]);
         self.append(ctx, jump.get_operation(), Some(src));
         Ok(())
+    }
+
+    /// The landing block of the nearest enclosing `try` body carrying
+    /// `label`, which a raise naming it jumps to, as `lit.try.raise`
+    /// branches to its `try`'s handler.
+    fn raise_target(&self, label: TryLabel) -> Result<Ptr<BasicBlock>, PlironError> {
+        self.try_frames
+            .iter()
+            .rev()
+            .find(|frame| frame.label == label)
+            .map(|frame| frame.landing)
+            .ok_or_else(|| {
+                self.unsupported(
+                    format!("a raise naming try{}, which does not enclose it", label.0),
+                    None,
+                )
+            })
     }
 }

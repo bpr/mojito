@@ -190,3 +190,16 @@ runs where the pin rejects (`c2`, `c4`, `c5`, `l1`, `l3`) are also
 | `rebind_assignment_without_deinitable_bound.mojo` | Is `rebind[S](x) = S(9)` accepted when `x: T` is bound by `Copyable` alone? | **differs**: the pin prints `9`, destroying the old value as an `S`; Mojito rewrites it to `x = S(9)` and rejects it at `T` ("abandoned without being explicitly destroyed"). Roadmap R515. |
 | `loop_never_breaks_mut_parameter.mojo` | Is a `mut` parameter moved before `while True: pass` uninitialized at the function's exit? | **differs**: the pin prints `x`, the loop's exit being dead; Mojito rejects ("'s' is uninitialized at return from this function"). Roadmap R1242. |
 | `abort_after_mut_parameter_move.mojo` | Is a `mut` parameter moved before `abort(...)` uninitialized at the function's exit? | **differs**: the pin prints `x`; Mojito rejects ("'s' is uninitialized at return from this function"). Roadmap R50. |
+
+## `finally` copies (2026-10-22, re-run at every re-pin)
+
+Found while landing R884, which copies each `finally` before every exit
+of its `try` in MIR lowering, as upstream's `lowerTryFinally` does. The
+pin's own copies go wrong in three shapes Mojito runs as written; each is
+an upstream bug, not semantics to match.
+
+| Probe | Question | Answer |
+| --- | --- | --- |
+| `finally_copy_comptime_for.mojo` | Does a `comptime for` in a `finally` copied before two exits compile? | **differs**: the pin rejects ("use of uninitialized value '(expression temporary)'"), Mojito prints `k 0`, `k 1` twice and `end`. |
+| `finally_copy_nested_try.mojo` | Does a `try` nested in a `finally` copied before two exits compile? | **differs**: the pin rejects with the same error, Mojito runs it. |
+| `finally_copy_double_destroy.mojo` | Is a value a `finally` copied before a `break` out of an inner `while True` reads destroyed once? | **differs**: the pin destroys it twice per iteration, once before its first read; Mojito once, after its last read. |

@@ -208,19 +208,6 @@ pub(super) fn place_loan_uses(place: &MirPlace, reg: Reg) -> Vec<(VarId, Reg)> {
     uses
 }
 
-/// The variables a region moves out other than by a `UseVar` (which
-/// empties its slot), deep through `try` regions: a `ConsumeVar` or a
-/// whole-root move capture, which a cleanup must not destroy again.
-pub(super) fn consumed_in_place(blocks: &[MirBlock]) -> HashSet<VarId> {
-    let mut consumed = HashSet::new();
-    for_each_instr_deep(blocks, &mut |instruction| {
-        if !matches!(instruction, MirInstr::UseVar { .. }) {
-            consumed.extend(vars_moved(instruction));
-        }
-    });
-    consumed
-}
-
 /// The variable a MIR instruction writes (a `DefVar`, or the iterator a
 /// `GetIter` derives), if any.
 pub(super) const fn var_def(i: &MirInstr) -> Option<VarId> {
@@ -296,7 +283,7 @@ pub(super) const fn raises_to_handler(instr: &MirInstr) -> bool {
 pub(super) fn handed_values(term: &MirTerm) -> &[Reg] {
     match term {
         MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => values,
-        MirTerm::Raise(src) => std::slice::from_ref(src),
+        MirTerm::Raise { src, .. } => std::slice::from_ref(src),
         _ => &[],
     }
 }

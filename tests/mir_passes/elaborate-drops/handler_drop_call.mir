@@ -1,4 +1,4 @@
-mojito-mir 1.91
+mojito-mir 1.92
 artifact {
   features: [],
   files: [
@@ -121,7 +121,7 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              if { results: [], condition: %r0, then: [bb0 { instructions: [const { dest: %r1, value: string("boom") }, call { dest: %r2, func: Error, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: raise { src: %r2 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }
+              if { results: [], condition: %r0, then: [bb0 { instructions: [const { dest: %r1, value: string("boom") }, call { dest: %r2, func: Error, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: raise { src: %r2, label: absent } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }
             ],
             terminator: return { value: absent }
           }
@@ -150,7 +150,7 @@ artifact {
               var.use { dest: %r0, var: $v0, mode: copy },
               call { dest: %r1, func: "D.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(1))], spread: absent },
               var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: D, arguments: [value_arg(ct_int(1))] }), in_place: true },
-              try { body: [bb0 { instructions: [const { dest: %r2, value: bool(true) }, call { dest: %r3, func: may_raise, raises: present(raises { type: Error, flag: %r12, error: %r13 }), args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, if { results: [], condition: %r12, then: [bb0 { instructions: [], terminator: raise { src: %r13 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }], terminator: try.yield {} }], handler: present(handler { error_var: present($v2), blocks: [bb0 { instructions: [const { dest: %r4, value: int_literal(0) }, literal.materialize { dest: %r5, value: %r4, target: Int }, place.load { dest: %r6, place: place { root: $v1, root_type: present(struct_type { name: D, arguments: [value_arg(ct_int(1))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } }, call { dest: %r7, func: note, raises: absent, args: [%r5, %r6], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }] }), orelse: absent, finalbody: absent, cleanup: [] }
+              try { label: try0, body: [bb0 { instructions: [const { dest: %r2, value: bool(true) }, call { dest: %r3, func: may_raise, raises: present(raises { type: Error, flag: %r12, error: %r13 }), args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, if { results: [], condition: %r12, then: [bb0 { instructions: [], terminator: raise { src: %r13, label: present(try0) } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }], terminator: try.yield {} }], handler: present(handler { error_var: present($v2), blocks: [bb0 { instructions: [const { dest: %r4, value: int_literal(0) }, literal.materialize { dest: %r5, value: %r4, target: Int }, place.load { dest: %r6, place: place { root: $v1, root_type: present(struct_type { name: D, arguments: [value_arg(ct_int(1))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } }, call { dest: %r7, func: note, raises: absent, args: [%r5, %r6], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }] }), orelse: absent }
             ],
             terminator: return { value: absent }
           }

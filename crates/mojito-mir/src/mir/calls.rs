@@ -1886,18 +1886,33 @@ impl<'a> Flatten<'a> {
         else {
             return;
         };
-        if !owns_droppable_storage(&ty) {
-            return;
-        }
         let in_place = self.produced_in_place(value, self.handle(expression).raises().is_none());
+        if let Some(binding) = self.discard_binding(value, ty, in_place) {
+            self.emit(binding);
+        }
+    }
+
+    /// The binding of `value`, an owned value of type `ty` nothing reads, to
+    /// a hidden `$discard_r` slot, dead at its definition, so drop
+    /// elaboration destroys it there; `in_place` when it is its producer's
+    /// result storage. `None` when `ty` owns no droppable storage.
+    pub(super) fn discard_binding(
+        &mut self,
+        value: Reg,
+        ty: Ty,
+        in_place: bool,
+    ) -> Option<MirInstr> {
+        if !owns_droppable_storage(&ty) {
+            return None;
+        }
         let variable = self.var(&format!("$discard_r{}", value.0));
         self.var_types.insert(variable, ty.clone());
-        self.emit(MirInstr::DefVar {
+        Some(MirInstr::DefVar {
             var: variable,
             src: value,
             binding_ty: Some(ty),
             in_place,
-        });
+        })
     }
 
     /// Whether the current block's last instruction is a non-raising call

@@ -8,46 +8,17 @@
 //! upstream's `CheckLifetimes` walks `hlcf`: an `if` or `match` joins its
 //! arms, a loop or `comptime for` iterates its body to a fixpoint and
 //! leaves in the join of its `break`s, a `match` case enters the next as
-//! its `match.next`s join, and a `try` is walked as the ownership analysis
-//! walks it. A `break`, `continue`, or `match` exit resolves to its region
-//! op through [`RegionFrame`] and [`region_exit`], running each `finally`
-//! it crosses. Anything that names a slot revives it: over-reviving hides
-//! a finding, never invents one.
-//!
-//! The two cleanup lists end what they name where they run, and a listed
-//! slot every path has already ended is the same finding. A `try`'s list
-//! runs on its body's raise edge, before the handler or the `finally`; a
-//! return's runs after the last `finally` it crosses, as the function is
-//! left. A `finally` that returns itself overrides a pending return, whose
-//! list it then runs unchecked here.
-//!
-//! The same walk cuts a `try`'s list once its body's raise points change
-//! ([`cut_try_cleanups`]): an entry every raise path has already ended is
-//! one only an erased raise point held.
+//! its `match.next`s join, and a `try`'s handler enters as the raises
+//! naming it join. A `break`, `continue`, or `match` exit resolves to its
+//! region op through [`RegionFrame`] and [`region_exit`], and a labelled
+//! `raise` to its `try`'s body frame. Anything that names a slot revives
+//! it: over-reviving hides a finding, never invents one.
 
 use super::{MirBlock, MirFunction, MirInstr, MirTerm};
 use crate::mir::{
-    CleanupDrop, MirCaptureMode, RegionFrame, VarId, cleanup_slots, instruction_regions,
-    instruction_regions_mut, instruction_slots, region_exit,
+    MirCaptureMode, RegionFrame, VarId, instruction_regions, instruction_slots, region_exit,
 };
 use std::collections::HashMap;
-
-/// Remove from each `try`'s raise-edge cleanup in `function` the slots
-/// every path to its body's raise points has already ended, as erasing a
-/// raise point erases the destructors on its edge.
-pub fn cut_try_cleanups(function: &mut MirFunction) {
-    if !function
-        .blocks
-        .iter()
-        .any(|block| holds_cleanup(&block.instrs))
-    {
-        return;
-    }
-    let ended = Walk::new("", function).ended_cleanups();
-    if !ended.is_empty() {
-        cut_listed(&mut function.blocks, &ended);
-    }
-}
 
 /// Report every `drop.var` or `var.consume` in `function` whose slot every
 /// path reaching it has already ended. A finding names the block of the
@@ -57,37 +28,32 @@ pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut 
         return;
     }
     let mut walk = Walk::new(name, function);
-    let flow = walk.region(&vec![false; function.n_vars], &function.blocks, true);
-    for (index, cleanup, state) in flow.returns {
-        walk.end_listed(index, "return.cleanup", &mut state.clone(), cleanup, true);
-    }
+    walk.region(&vec![false; function.n_vars], &function.blocks, true);
     errors.extend(walk.findings);
 }
 
 /// One bit per slot: whether every path reaching this point ended it.
 type Ended = Vec<bool>;
 
-/// The states a region (or one block) leaves by: falling off, raising,
-/// leaving the function, and leaving or resuming an enclosing region op. A return carrying a cleanup list is
-/// also kept apart, with its block and list, until it leaves the function.
+/// The states a region (or one block) leaves by: falling off, raising out
+/// of the function, leaving the function, and leaving or resuming an
+/// enclosing region op (a raise to a `try` leaves its body's frame).
 #[derive(Default, Clone)]
-struct Flow<'a> {
+struct Flow {
     normal: Option<Ended>,
     raises: Option<Ended>,
     exits: Option<Ended>,
-    returns: Vec<(usize, &'a [CleanupDrop], Ended)>,
     /// The enclosing frames this flow leaves or resumes: the frame's depth
     /// in [`Walk::frames`], whether it resumes it, and the states joined
     /// there.
     frame_exits: Vec<(usize, bool, Ended)>,
 }
 
-impl Flow<'_> {
+impl Flow {
     /// Join `other`'s abnormal channels into this flow.
     fn absorb(&mut self, other: Self) {
         meet(&mut self.raises, other.raises.as_ref());
         meet(&mut self.exits, other.exits.as_ref());
-        self.returns.extend(other.returns);
         for (depth, resume, state) in other.frame_exits {
             self.leave(depth, resume, &state);
         }
@@ -129,7 +95,7 @@ impl Flow<'_> {
 /// The non-reporting flows of the region ops one walk computed, by op (its
 /// address in the body, which the walk does not change), entry state, and
 /// the depth of the frames around it.
-type Memo<'a> = HashMap<(*const MirInstr, Ended, usize), Flow<'a>>;
+type Memo = HashMap<(*const MirInstr, Ended, usize), Flow>;
 
 struct Walk<'a> {
     name: &'a str,
@@ -138,15 +104,12 @@ struct Walk<'a> {
     /// stores into that slot again.
     refills: HashMap<u32, VarId>,
     findings: Vec<String>,
-    /// Each `try`'s cleanup list, by its buffer, and a slot it lists that
-    /// every path to its raise edge has already ended.
-    ended_cleanups: Vec<(*const CleanupDrop, VarId)>,
     /// The region ops enclosing the region being walked, innermost last.
     frames: Vec<RegionFrame>,
     /// A loop's fixpoint walks its body again, and each walk reaches the
     /// region ops nested in it, so without the memo the walks multiply
     /// with each loop of the nest.
-    memo: Memo<'a>,
+    memo: Memo,
 }
 
 impl<'a> Walk<'a> {
@@ -158,23 +121,14 @@ impl<'a> Walk<'a> {
             function,
             refills,
             findings: Vec::new(),
-            ended_cleanups: Vec::new(),
             frames: Vec::new(),
             memo: HashMap::new(),
         }
     }
 
-    /// The cleanup entries of `function`, each by its list, that every path
-    /// to their `try`'s raise edge has already ended.
-    fn ended_cleanups(mut self) -> Vec<(*const CleanupDrop, VarId)> {
-        let function = self.function;
-        self.region(&vec![false; function.n_vars], &function.blocks, true);
-        self.ended_cleanups
-    }
-
     /// Walk `blocks`, a region's one block, from `entry`, reporting when
     /// `report`, and sort how it leaves by its terminator.
-    fn region(&mut self, entry: &Ended, blocks: &'a [MirBlock], report: bool) -> Flow<'a> {
+    fn region(&mut self, entry: &Ended, blocks: &'a [MirBlock], report: bool) -> Flow {
         let mut flow = Flow::default();
         let Some(block) = blocks.first() else {
             return flow;
@@ -188,14 +142,22 @@ impl<'a> Walk<'a> {
                 | MirTerm::ElifCond { .. },
                 normal,
             ) => meet(&mut flow.normal, normal),
-            (MirTerm::ReturnWithCleanup { cleanup, .. }, Some(state)) if !cleanup.is_empty() => {
-                meet(&mut flow.exits, Some(state));
-                flow.returns.push((0, cleanup, state.clone()));
+            (MirTerm::Return(_), exits) => meet(&mut flow.exits, exits),
+            (MirTerm::Raise { label: None, .. }, raises) => meet(&mut flow.raises, raises),
+            (
+                MirTerm::Raise {
+                    label: Some(label), ..
+                },
+                Some(state),
+            ) => {
+                if let Some(depth) = self
+                    .frames
+                    .iter()
+                    .rposition(|&frame| RegionFrame::Try(*label).names(frame))
+                {
+                    flow.leave(depth, false, state);
+                }
             }
-            (MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. }, exits) => {
-                meet(&mut flow.exits, exits);
-            }
-            (MirTerm::Raise(_), raises) => meet(&mut flow.raises, raises),
             (term, Some(state)) => {
                 if let Some((target, resume)) = region_exit(term)
                     && let Some(depth) = self.frames.iter().rposition(|&frame| target.names(frame))
@@ -212,17 +174,11 @@ impl<'a> Walk<'a> {
     /// One block from `state`: its normal channel is the state after its
     /// terminator's own effect, and its other channels are those of its
     /// regions, a raising call's error region among them.
-    fn block(
-        &mut self,
-        index: usize,
-        mut state: Ended,
-        block: &'a MirBlock,
-        report: bool,
-    ) -> Flow<'a> {
+    fn block(&mut self, index: usize, mut state: Ended, block: &'a MirBlock, report: bool) -> Flow {
         let mut flow = Flow::default();
         for instruction in &block.instrs {
             if !instruction_regions(instruction).is_empty() {
-                let mut regions = self.region_op(index, state, instruction, report);
+                let mut regions = self.region_op(state, instruction, report);
                 let normal = regions.normal.take();
                 flow.absorb(regions);
                 match normal {
@@ -240,21 +196,15 @@ impl<'a> Walk<'a> {
     /// [`Self::region_op_unmemoized`], computed once per op, entry state,
     /// and frame depth while not reporting. A reporting walk is made once
     /// per region, from the join of every state entering it.
-    fn region_op(
-        &mut self,
-        index: usize,
-        state: Ended,
-        instruction: &'a MirInstr,
-        report: bool,
-    ) -> Flow<'a> {
+    fn region_op(&mut self, state: Ended, instruction: &'a MirInstr, report: bool) -> Flow {
         if report {
-            return self.region_op_unmemoized(index, state, instruction, true);
+            return self.region_op_unmemoized(state, instruction, true);
         }
         let key = (std::ptr::from_ref(instruction), state, self.frames.len());
         if let Some(known) = self.memo.get(&key) {
             return known.clone();
         }
-        let flow = self.region_op_unmemoized(index, key.1.clone(), instruction, false);
+        let flow = self.region_op_unmemoized(key.1.clone(), instruction, false);
         self.memo.insert(key, flow.clone());
         flow
     }
@@ -277,11 +227,10 @@ impl<'a> Walk<'a> {
     /// - A `try` is [`Self::try_regions`].
     fn region_op_unmemoized(
         &mut self,
-        index: usize,
         state: Ended,
         instruction: &'a MirInstr,
         report: bool,
-    ) -> Flow<'a> {
+    ) -> Flow {
         let mut flow = Flow::default();
         match instruction {
             MirInstr::If {
@@ -341,7 +290,7 @@ impl<'a> Walk<'a> {
                     meet(&mut flow.normal, arm.as_ref());
                 }
             }
-            MirInstr::Try { .. } => return self.try_regions(index, state, instruction, report),
+            MirInstr::Try { .. } => return self.try_regions(state, instruction, report),
             _ => flow.normal = Some(state),
         }
         flow
@@ -351,7 +300,7 @@ impl<'a> Walk<'a> {
     /// into `flow`; the state it completes in.
     fn enter(
         &mut self,
-        flow: &mut Flow<'a>,
+        flow: &mut Flow,
         entry: &Ended,
         blocks: &'a [MirBlock],
         report: bool,
@@ -372,7 +321,7 @@ impl<'a> Walk<'a> {
         frame: RegionFrame,
         body: &'a [MirBlock],
         report: bool,
-    ) -> Flow<'a> {
+    ) -> Flow {
         let depth = self.frames.len();
         self.frames.push(frame);
         let mut resume = state;
@@ -396,24 +345,17 @@ impl<'a> Walk<'a> {
         flow
     }
 
-    /// A `try` from `entry`, as the ownership analysis walks it: the handler
-    /// starts from the body's raises past the raise-edge cleanup, `orelse`
-    /// from its normal fall-off, and `finally` runs on every channel. A
-    /// region exit or a return leaves through the normal fall-off of the
-    /// `finally` it crosses.
-    fn try_regions(
-        &mut self,
-        index: usize,
-        entry: Ended,
-        instruction: &'a MirInstr,
-        report: bool,
-    ) -> Flow<'a> {
+    /// A `try` from `entry`, as `checkTryOp` walks it: the body under its
+    /// own frame, the handler from the raises naming it, its binding
+    /// refilled, and `orelse` from the body's fall-off; the `try`
+    /// completes as the handler's and `orelse`'s (or the body's) fall-offs
+    /// join.
+    fn try_regions(&mut self, entry: Ended, instruction: &'a MirInstr, report: bool) -> Flow {
         let MirInstr::Try {
+            label,
             body,
             handler,
             orelse,
-            finalbody,
-            cleanup,
         } = instruction
         else {
             return Flow {
@@ -421,111 +363,30 @@ impl<'a> Walk<'a> {
                 ..Flow::default()
             };
         };
+        let depth = self.frames.len();
+        self.frames.push(RegionFrame::Try(*label));
         let mut body_flow = self.region(&entry, body, report);
+        self.frames.pop();
+        let (body_raises, _) = body_flow.take_frame(depth);
         let body_normal = body_flow.normal.take();
-        let body_raises = body_flow.raises.take().map(|mut state| {
-            if report {
-                self.ended_cleanups.extend(
-                    cleanup_slots(cleanup)
-                        .filter(|&var| state.get(var as usize) == Some(&true))
-                        .map(|var| (cleanup.as_ptr(), var)),
-                );
-            }
-            self.end_listed(index, "try.cleanup", &mut state, cleanup, report);
-            state
-        });
-        let mut flow = Flow {
-            exits: body_flow.exits,
-            returns: body_flow.returns,
-            frame_exits: body_flow.frame_exits,
-            ..Flow::default()
-        };
+        let mut flow = body_flow;
         match orelse {
             Some(orelse) => {
                 if let Some(start) = body_normal {
-                    let mut else_flow = self.region(&start, orelse, report);
-                    meet(&mut flow.normal, else_flow.normal.take().as_ref());
-                    flow.absorb(else_flow);
+                    let arm = self.enter(&mut flow, &start, orelse, report);
+                    meet(&mut flow.normal, arm.as_ref());
                 }
             }
             None => meet(&mut flow.normal, body_normal.as_ref()),
         }
-        match handler {
-            Some((binding, handler)) => {
-                if let Some(mut start) = body_raises {
-                    if let Some(binding) = binding {
-                        set(&mut start, *binding, false);
-                    }
-                    let mut handler_flow = self.region(&start, handler, report);
-                    meet(&mut flow.normal, handler_flow.normal.take().as_ref());
-                    flow.absorb(handler_flow);
-                }
+        if let (Some((binding, handler)), Some(mut start)) = (handler, body_raises) {
+            if let Some(binding) = binding {
+                set(&mut start, *binding, false);
             }
-            None => meet(&mut flow.raises, body_raises.as_ref()),
+            let arm = self.enter(&mut flow, &start, handler, report);
+            meet(&mut flow.normal, arm.as_ref());
         }
-        let Some(finalbody) = finalbody else {
-            return flow;
-        };
-        if report {
-            let mut all = flow.normal.clone();
-            meet(&mut all, flow.raises.as_ref());
-            meet(&mut all, flow.exits.as_ref());
-            let returns = flow.returns.iter().map(|(.., state)| state);
-            for state in returns.chain(flow.frame_exits.iter().map(|(.., state)| state)) {
-                meet(&mut all, Some(state));
-            }
-            if let Some(all) = all {
-                self.region(&all, finalbody, true);
-            }
-        }
-        let mut out = Flow::default();
-        let mut through = |walk: &mut Self, state: Option<Ended>| {
-            let mut finally = walk.region(&state?, finalbody, false);
-            let normal = finally.normal.take();
-            out.absorb(finally);
-            normal
-        };
-        let normal = through(self, flow.normal);
-        let raises = through(self, flow.raises);
-        let exits = through(self, flow.exits);
-        let returns: Vec<_> = flow
-            .returns
-            .into_iter()
-            .filter_map(|(block, cleanup, state)| {
-                Some((block, cleanup, through(self, Some(state))?))
-            })
-            .collect();
-        let frame_exits: Vec<_> = flow
-            .frame_exits
-            .into_iter()
-            .filter_map(|(depth, resume, state)| Some((depth, resume, through(self, Some(state))?)))
-            .collect();
-        out.normal = normal;
-        meet(&mut out.raises, raises.as_ref());
-        meet(&mut out.exits, exits.as_ref());
-        out.returns.extend(returns);
-        for (depth, resume, state) in frame_exits {
-            out.leave(depth, resume, &state);
-        }
-        out
-    }
-
-    /// A cleanup list's run: each listed slot ends, and one every path has
-    /// already ended is reported when `report`.
-    fn end_listed(
-        &mut self,
-        index: usize,
-        list: &str,
-        state: &mut Ended,
-        cleanup: &[CleanupDrop],
-        report: bool,
-    ) {
-        for var in cleanup_slots(cleanup) {
-            if report && state.get(var as usize) == Some(&true) {
-                self.report(index, list, var);
-            }
-            set(state, var, true);
-        }
+        flow
     }
 
     /// Record one finding: `what` ends slot `var`, which every path reaching
@@ -612,47 +473,19 @@ fn set(state: &mut Ended, slot: VarId, ended: bool) {
     }
 }
 
-/// Whether some block of `blocks`, at any depth, ends a slot: a `drop.var`,
-/// a `var.consume`, or a cleanup list naming one.
+/// Whether some block of `blocks`, at any depth, ends a slot: a `drop.var`
+/// or a `var.consume`.
 fn ends_slots(blocks: &[MirBlock]) -> bool {
     blocks.iter().any(|block| {
-        matches!(&block.term, MirTerm::ReturnWithCleanup { cleanup, .. } if !cleanup.is_empty())
-            || block.instrs.iter().any(|instruction| {
-                matches!(
-                    instruction,
-                    MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. }
-                ) || matches!(instruction, MirInstr::Try { cleanup, .. } if !cleanup.is_empty())
-                    || instruction_regions(instruction)
-                        .into_iter()
-                        .any(|region| ends_slots(region))
-            })
-    })
-}
-
-/// Whether `instructions` hold a `try` with a raise-edge cleanup, at any
-/// depth.
-fn holds_cleanup(instructions: &[MirInstr]) -> bool {
-    instructions.iter().any(|instruction| {
-        matches!(instruction, MirInstr::Try { cleanup, .. } if !cleanup.is_empty())
-            || instruction_regions(instruction)
+        block.instrs.iter().any(|instruction| {
+            matches!(
+                instruction,
+                MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. }
+            ) || instruction_regions(instruction)
                 .into_iter()
-                .flatten()
-                .any(|block| holds_cleanup(&block.instrs))
+                .any(|region| ends_slots(region))
+        })
     })
-}
-
-/// Drop from each `try` of `blocks`, at any depth, the cleanup entries
-/// `ended` names for its list.
-fn cut_listed(blocks: &mut [MirBlock], ended: &[(*const CleanupDrop, VarId)]) {
-    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
-        if let MirInstr::Try { cleanup, .. } = instruction {
-            let list = cleanup.as_ptr();
-            cleanup.retain(|drop| !ended.contains(&(list, drop.var)));
-        }
-        for region in instruction_regions_mut(instruction) {
-            cut_listed(region, ended);
-        }
-    }
 }
 
 /// The slot each reference register of `blocks`, at any depth, was made

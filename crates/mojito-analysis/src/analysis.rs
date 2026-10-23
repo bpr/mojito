@@ -42,10 +42,9 @@ use mojito_common::error::OwnershipError;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    CleanupDrop, MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirFunctionDeclaration,
-    MirInstr, MirInteriorOrigin, MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg,
-    MirTerm, Proj, Reg, binder_scope, cleanup_drops, lower_copies_and_moves,
-    materialized_parameter_slots,
+    MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
+    MirInteriorOrigin, MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj,
+    Reg, binder_scope, lower_copies_and_moves, materialized_parameter_slots,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;
@@ -398,7 +397,7 @@ mod constant_tuple_place_tests {
 mod interior_origin_tests {
     use super::*;
     use mojito_common::token::SourceSpan;
-    use mojito_mir::mir::{LoopLabel, MirLoan, SpanTable, UseMode};
+    use mojito_mir::mir::{LoopLabel, MirLoan, SpanTable, TryLabel, UseMode};
     use mojito_types::origin::OriginSeg;
     use mojito_types::types::Ty;
     use std::collections::HashMap;
@@ -603,11 +602,10 @@ mod interior_origin_tests {
     #[test]
     fn invalidation_before_a_break_from_a_try_reaches_the_loop_exit() {
         let body = MirInstr::Try {
+            label: TryLabel(0),
             body: region(vec![invalidate(1)], BREAK),
             handler: None,
             orelse: None,
-            finalbody: None,
-            cleanup: Vec::new(),
         };
         let f = function(
             vec![block(
@@ -804,11 +802,10 @@ mod interior_origin_tests {
             src: Reg(4),
         };
         let guarded = MirInstr::Try {
+            label: TryLabel(0),
             body: region(vec![write], MirTerm::TryYield),
             handler: None,
             orelse: None,
-            finalbody: None,
-            cleanup: Vec::new(),
         };
         let f = function(
             vec![block(
@@ -823,14 +820,19 @@ mod interior_origin_tests {
     #[test]
     fn stale_uses_inside_try_handlers_are_checked() {
         let try_instr = MirInstr::Try {
-            body: vec![block(vec![invalidate(1)], MirTerm::Raise(Reg(2)))],
+            label: TryLabel(0),
+            body: vec![block(
+                vec![invalidate(1)],
+                MirTerm::Raise {
+                    src: Reg(2),
+                    label: Some(TryLabel(0)),
+                },
+            )],
             handler: Some((
                 None,
                 vec![block(vec![use_reference(1, 3)], MirTerm::TryYield)],
             )),
             orelse: None,
-            finalbody: None,
-            cleanup: Vec::new(),
         };
         let f = function(
             vec![block(
@@ -899,7 +901,7 @@ mod interior_origin_tests {
 #[cfg(test)]
 mod structured_move_tests {
     use super::*;
-    use mojito_mir::mir::{LoopLabel, UseMode};
+    use mojito_mir::mir::{LoopLabel, TryLabel, UseMode};
     use mojito_types::types::Ty;
 
     const X: VarId = 0;
@@ -979,13 +981,12 @@ mod structured_move_tests {
         }
     }
 
-    fn try_part(body: Vec<MirBlock>, finalbody: Option<Vec<MirBlock>>) -> MirInstr {
+    fn try_part(body: Vec<MirBlock>) -> MirInstr {
         MirInstr::Try {
+            label: TryLabel(0),
             body,
             handler: None,
             orelse: None,
-            finalbody,
-            cleanup: Vec::new(),
         }
     }
 
@@ -1031,7 +1032,7 @@ mod structured_move_tests {
 
     #[test]
     fn structured_break_from_a_try_reaches_its_loop() {
-        let body = try_part(block(vec![take(X, 1)], BREAK), None);
+        let body = try_part(block(vec![take(X, 1)], BREAK));
         let f = function(
             vec![labelled(block(vec![body], CONTINUE)), read(X, 2)],
             MirTerm::Return(None),
@@ -1048,7 +1049,7 @@ mod structured_move_tests {
             dest: Reg(1),
             place: field_a(),
         };
-        let body = try_part(block(vec![moved], BREAK), None);
+        let body = try_part(block(vec![moved], BREAK));
         let store = MirInstr::Store {
             place: field_a(),
             src: Reg(2),
@@ -1061,11 +1062,8 @@ mod structured_move_tests {
     }
 
     #[test]
-    fn structured_break_runs_the_finally_it_crosses() {
-        let body = try_part(
-            block(vec![take(X, 1)], BREAK),
-            Some(block(vec![refill(X, 2)], MirTerm::TryYield)),
-        );
+    fn structured_break_after_its_copied_finally_is_accepted() {
+        let body = try_part(block(vec![take(X, 1), refill(X, 2)], BREAK));
         let f = function(
             vec![labelled(block(vec![body], CONTINUE)), read(X, 3)],
             MirTerm::Return(None),

@@ -9,7 +9,7 @@ has them.
 
 Entries are cited by stable ID and the order is computed, so every command
 below stays valid as entries are filed and landed. Before a run, preview it
-with `--dry-run` or `scripts/roadmap.py deps R884`. Every command runs on
+with `--dry-run` or `scripts/roadmap.py deps R1264`. Every command runs on
 Opus, with a plan pass for each entry whose `Model:` bullet says Fable.
 
 ## Where things stand (2026-10-21)
@@ -22,20 +22,22 @@ remains, outside the gaps below.
 
 The two leftovers this note listed both landed 10-22: R1266 (`sroa` and
 `mem-2-reg` take generic slots) and R1270 (`cse` merges built-in
-operators).
+operators). So did gap A's last core entry, R884 (10-22): MIR lowering
+copies each `finally` before every exit of its `try`, and each raise names
+its `try` by label.
 
 The 48 open `pmir` entries are not 48 problems. As in the pass that closed
 the four representation gaps (10-16/17), most of them trace to a few places
 where Mojito's representation differs from upstream's. Fix the
 representation and the entries built on it shrink to a deletion or
-disappear. Four such gaps remain, and one of them reaches far outside
-`pmir`.
+disappear. Four such gaps were found, and one of them reaches far outside
+`pmir`; gap A's core has landed, its last column still to re-check.
 
 ## The four gaps
 
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
-| A. Raises are implicit | every raise point ends a region | R884 (R831 and R20 landed) | R1264, R1272, R1113, R832, R733, R956, R890, likely R829 (R833, R1129, and R1106 closed) |
+| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R1264, R1272, R1113, R832, R733, R956, R890 (R833, R1129, R1106, and R829 closed) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1283, R1278, R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
@@ -63,15 +65,18 @@ This gap blocks about 14 entries across four tracks (`pmir`,
   instruction defines its error flag and error and is followed by its
   error region, an `if` on the flag ending in a `raise` (MIR text 1.91),
   so drop elaboration destroys on each exit what that exit holds, out of
-  the function too (R20 closed with it), as upstream does. A `try`'s
-  cleanup list serves only a raise past a nested `try`'s `finally`, since
-  the VM runs `finally` dynamically (R884).
+  the function too (R20 closed with it), as upstream does. Since R884
+  (landed 2026-10-22) MIR lowering copies each `finally` before every exit
+  of its `try` (`mir/try_finally.rs`), each raise names its `try` by label
+  (MIR text 1.92), and the `try` cleanup lists and `return.cleanup` are
+  gone.
 - **What follows** once raises are explicit exits:
   - R833 (drop order on a raise) closed with R831, and R1129, the same
     ledger row, with it. R733's shape as its entry spells it matched the
     pin before R831 already; re-probe it before planning it.
   - R956 is R20 applied to an initializer's fields.
-  - R1264 is `try.raise` carrying values, as `lit.try.raise` does.
+  - R1264 is `try.raise` carrying values, as `lit.try.raise` does; the
+    label it already carries.
   - R1106 closed with R831: the explicit destroy's consume precedes the
     raise edge, so a raising callee binds the part.
   - R1113 is `release_leaving_temps` treating the raise as an exit like
@@ -79,11 +84,12 @@ This gap blocks about 14 entries across four tracks (`pmir`,
   - R1272 is the VM transferring to the handler on the terminator.
   - R890 is a `try` whose handler breaks.
   - R832 loses its flags with gap D.
-  - R829 is very likely the `return` case of R884.
+  - R829 closed with R884: its probe matched the pin by then, and the
+    return cleanup list it named is gone.
 - **Cost**: generators grow by one `if` per raising call. That is
   upstream's shape. Expect the instruction counters to rise slightly.
-- **Order**: R884 is what is left (R906, R831, and R20 landed). It is
-  Fable, Planned.
+- **Order**: the core is done (R906, R831, R20, and R884 landed); what
+  remains is the last column.
 
 ### B. Construction and witnesses are not calls: the biggest size lever
 
@@ -147,19 +153,15 @@ entry's probe is "one instance per `n` where the pin has one".
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1283 -n 0
    ```
 
-2. **Gap A**, for leverage. R906, R831, and R20 have landed:
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R884 -n 0
-   ```
-
-   After that, re-check each entry in gap A's last column: close the ones
-   that no longer reproduce, and reword the rest to what remains. Then run
-   what is left, dropping from the command any ID the re-check closed:
+2. **Gap A**, for leverage. Its core has landed (R906, R831, R20, R884).
+   Re-check each entry in its last column: close the ones that no longer
+   reproduce (R733's probe matched the pin on 10-22), and reword the rest
+   to what remains. Then run what is left, dropping from the command any
+   ID the re-check closed:
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R733 --only R956 --only R1264 \
-     --only R1113 --only R1272 --only R890 --only R829 -n 0
+     --only R1113 --only R1272 --only R890 -n 0
    ```
 
    R832 waits for gap D.

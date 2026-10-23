@@ -29,7 +29,7 @@ pub(super) use hlcf::erased_results;
 use super::fold;
 use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
-use mojito_mir::mir::verify::{cut_try_cleanups, instruction_result_regs};
+use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
     MirBlock, MirDeclarations, MirFunction, MirInstr, Reg, count_register_reads,
     instruction_regions_mut, instruction_regs_mut, terminator_regs_mut,
@@ -71,7 +71,6 @@ pub fn canonicalize(
         patterns += rewritten;
     }
     timing::count("folded_constants", folded_constants as u64);
-    cut_try_cleanups(function);
     // A fold can expose another, as a struct copy whose fields were copies
     // does once they are forwarded: the greedy driver folds to a fixpoint.
     let mut forwarded_copies = 0;
@@ -94,7 +93,6 @@ pub fn canonicalize(
             break;
         }
         patterns += rewritten;
-        cut_try_cleanups(function);
     }
     function.reg_types.retain(|reg, _| !erased.contains(reg));
     function.spans.0.retain(|reg, _| !erased.contains(reg));

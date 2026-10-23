@@ -25,8 +25,7 @@
 
 use super::{
     MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, Proj, RegionFrame, UseMode, VarId,
-    cleanup_drops, fresh_register, instruction_regions, instruction_regions_mut, instruction_slots,
-    region_exit,
+    fresh_register, instruction_regions, instruction_regions_mut, instruction_slots, region_exit,
 };
 use mojito_common::token::SourceSpan;
 use mojito_types::types::TyKind;
@@ -415,7 +414,8 @@ fn death_span(function: &MirFunction, var: VarId) -> Option<SourceSpan> {
 
 /// The state of the slot `var` through the block list `list`, its one
 /// block entered in `entry`, under the enclosing `frames`: a block ending in
-/// a region terminator joins its end state into the frame it names.
+/// a region terminator, or a raise naming a `try`, joins its end state into
+/// the frame it names.
 fn flow(
     list: &[MirBlock],
     entry: State,
@@ -432,7 +432,13 @@ fn flow(
         let (states, raising, inside) = through(block, input, var, frames, memo);
         raised = join(raised, raising);
         let end = states.last().cloned().flatten();
-        if let Some((target, resume)) = region_exit(&block.term) {
+        let exit = match block.term {
+            MirTerm::Raise {
+                label: Some(label), ..
+            } => Some((RegionFrame::Try(label), false)),
+            ref term => region_exit(term),
+        };
+        if let Some((target, resume)) = exit {
             if let Some(frame) = frames
                 .iter_mut()
                 .rev()
@@ -453,7 +459,7 @@ fn flow(
                 | MirTerm::ElifCond { .. }
         ) {
             yielded = join(yielded, end);
-        } else if matches!(block.term, MirTerm::Raise(_)) {
+        } else if matches!(block.term, MirTerm::Raise { label: None, .. }) {
             raised = join(raised, end);
         }
         anywhere = join(anywhere, inside);
@@ -469,12 +475,9 @@ fn flow(
 
 /// The state of the slot `var` before each instruction of `block` and
 /// after its last, entered in `input`; joined over the points the block
-/// raises from; and joined over every point of the block, its regions
-/// included.
-///
-/// A `try` raises in any state inside it once a `raise` lies anywhere in
-/// it; every other region op raises as its regions do, a raising call
-/// through its error region's `raise`.
+/// raises out of the function from; and joined over every point of the
+/// block, its regions included. A region op raises as its regions do, a
+/// raising call through its error region's `raise`.
 fn through(
     block: &MirBlock,
     input: State,
@@ -491,11 +494,7 @@ fn through(
             None => (None, None),
             Some(_) if !instruction_regions(instruction).is_empty() => {
                 let region = memoized_region_flow(instruction, state, var, frames, memo);
-                if !matches!(instruction, MirInstr::Try { .. }) {
-                    raised = join(raised, region.raised);
-                } else if raises_inside(instruction) {
-                    raised = join(raised, region.anywhere.clone());
-                }
+                raised = join(raised, region.raised);
                 (region.after, region.anywhere)
             }
             Some(held) => (Some(held_after(held, instruction, var)), None),
@@ -504,17 +503,6 @@ fn through(
         states.push(after);
     }
     (states, raised, anywhere)
-}
-
-/// Whether a `raise` terminator lies anywhere in the regions of
-/// `instruction`.
-fn raises_inside(instruction: &MirInstr) -> bool {
-    instruction_regions(instruction)
-        .into_iter()
-        .flatten()
-        .any(|block| {
-            matches!(block.term, MirTerm::Raise(_)) || block.instrs.iter().any(raises_inside)
-        })
 }
 
 /// The region flows one block list's walk computed, by op (its address in
@@ -571,13 +559,10 @@ fn memoized_region_flow(
 /// - A `match` enters its first case as the op is, each later case and the
 ///   else region as the previous case's `match.next`s join, and completes
 ///   as its `match.complete`s and the else region's yield join.
-/// - A `try`'s body is entered as the op is; its handler as the body's
-///   raises leave it, through the raise edge's cleanup; its `else`
-///   as the body completes; its `finally` on every way out of the others.
-///   The op completes as its `else`, or its body without one, and its
-///   handler complete, through the `finally`. A `break`, `continue`, or
-///   `match` exit leaving one of its parts arrives in the state it leaves
-///   in, or, past a `finally`, holding no whole value.
+/// - A `try`'s body is entered as the op is, under the frame its raises
+///   name; its handler as those raises join; its `else` as the body
+///   completes. The op completes as its `else`, or its body without one,
+///   and its handler complete.
 fn region_flow(
     instruction: &MirInstr,
     state: State,
@@ -671,15 +656,14 @@ fn try_flow(
     instruction: &MirInstr,
     state: State,
     var: VarId,
-    frames: &mut [Frame],
+    frames: &mut Vec<Frame>,
     memo: &mut Memo,
 ) -> RegionFlow {
     let MirInstr::Try {
+        label,
         body,
         handler,
         orelse,
-        finalbody,
-        cleanup,
     } = instruction
     else {
         return RegionFlow {
@@ -689,64 +673,39 @@ fn try_flow(
             anywhere: None,
         };
     };
-    let enclosing: Vec<(State, State)> = frames
-        .iter_mut()
-        .map(|frame| (frame.leave.take(), frame.resume.take()))
-        .collect();
+    let frame = RegionFrame::Try(*label);
+    frames.push(Frame::new(frame));
     let body = flow(body, state.clone(), var, frames, memo);
-    let raised = if cleanup_drops(cleanup, var) {
-        body.raised.as_ref().map(|_| Held::Partial)
-    } else {
-        body.raised.clone()
-    };
+    let caught = frames.pop().unwrap_or_else(|| Frame::new(frame)).leave;
     let mut entries = vec![state];
-    let mut anywhere = join(body.anywhere.clone(), raised.clone());
+    let mut raised = body.raised;
+    let mut anywhere = body.anywhere;
     let handled = handler.as_ref().and_then(|(error_var, blocks)| {
         let caught = if *error_var == Some(var) {
-            raised.as_ref().map(|_| Held::Whole)
+            caught.as_ref().map(|_| Held::Whole)
         } else {
-            raised
+            caught
         };
         entries.push(caught.clone());
         let handler = flow(blocks, caught, var, frames, memo);
-        anywhere = join(anywhere.clone(), handler.anywhere);
+        raised = join(raised.take(), handler.raised);
+        anywhere = join(anywhere.take(), handler.anywhere);
         handler.yielded
     });
     let completed = match orelse {
         Some(blocks) => {
             entries.push(body.yielded.clone());
             let orelse = flow(blocks, body.yielded, var, frames, memo);
-            anywhere = join(anywhere.clone(), orelse.anywhere);
+            raised = join(raised.take(), orelse.raised);
+            anywhere = join(anywhere.take(), orelse.anywhere);
             orelse.yielded
         }
         None => body.yielded,
     };
-    let normal = join(completed, handled);
-    let after = match finalbody {
-        Some(blocks) => {
-            let entered = join(normal.clone(), anywhere.clone());
-            entries.push(entered.clone());
-            anywhere = join(anywhere, flow(blocks, entered, var, frames, memo).anywhere);
-            flow(blocks, normal, var, frames, memo).yielded
-        }
-        None => normal,
-    };
-    // A `finally` runs between a part's exit and the frame it reaches.
-    let arrived = |state: State| {
-        if finalbody.is_some() {
-            state.map(|_| Held::Partial)
-        } else {
-            state
-        }
-    };
-    for (frame, (leave, resume)) in frames.iter_mut().zip(enclosing) {
-        frame.leave = join(leave, arrived(frame.leave.take()));
-        frame.resume = join(resume, arrived(frame.resume.take()));
-    }
     RegionFlow {
         entries,
-        after,
-        raised: None,
+        after: join(completed, handled),
+        raised,
         anywhere,
     }
 }

@@ -3,8 +3,8 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::LoopLabel;
 use crate::mir::text::{instruction_mnemonic, terminator_mnemonic};
-use crate::mir::{LoopLabel, instruction_regions};
 use mojito_types::types::TyKind;
 
 /// Verify each region a region op holds, under the region's kind and its
@@ -13,10 +13,19 @@ use mojito_types::types::TyKind;
 pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<String>) {
     let protected = cx.context.protected;
     match instruction {
-        MirInstr::Try { handler, .. } => {
-            for (index, region) in instruction_regions(instruction).into_iter().enumerate() {
-                let region_protected = protected || (index == 0 && handler.is_some());
-                verify_region(cx, RegionKind::TryPart, region_protected, region, errors);
+        MirInstr::Try {
+            label,
+            body,
+            handler,
+            orelse,
+        } => {
+            let kind = RegionKind::TryBody {
+                label: *label,
+                handled: handler.is_some(),
+            };
+            verify_region(cx, kind, protected || handler.is_some(), body, errors);
+            for region in handler.iter().map(|(_, blocks)| blocks).chain(orelse) {
+                verify_region(cx, RegionKind::TryPart, protected, region, errors);
             }
         }
         MirInstr::If {
@@ -1361,7 +1370,13 @@ mod tests {
         MirInstr::If {
             results: Vec::new(),
             cond: Reg(3),
-            then: one(Vec::new(), MirTerm::Raise(error)),
+            then: one(
+                Vec::new(),
+                MirTerm::Raise {
+                    src: error,
+                    label: None,
+                },
+            ),
             elifs: Vec::new(),
             else_args: Vec::new(),
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
@@ -1390,6 +1405,33 @@ mod tests {
     fn an_error_region_raising_another_value_is_a_finding() {
         let found = findings(&raising_with(vec![error_region(Reg(2))]));
         assert_finding(&found, "error region on %r3 does not hand on %r4");
+    }
+
+    #[test]
+    fn a_raise_naming_no_enclosing_try_is_a_finding() {
+        let raising = |label| {
+            function_with(vec![MirInstr::Try {
+                label: crate::mir::TryLabel(0),
+                body: one(
+                    Vec::new(),
+                    MirTerm::Raise {
+                        src: Reg(1),
+                        label: Some(crate::mir::TryLabel(label)),
+                    },
+                ),
+                handler: Some((None, one(Vec::new(), MirTerm::TryYield))),
+                orelse: None,
+            }])
+        };
+        assert!(
+            !findings(&raising(0))
+                .iter()
+                .any(|finding| finding.contains("names try"))
+        );
+        assert_finding(
+            &findings(&raising(1)),
+            "`raise` names try1, which no enclosing try body carries",
+        );
     }
 
     #[test]

@@ -19,14 +19,14 @@
 
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
-    CleanupDrop, MirBlock, MirDeclarations, MirFunction, MirInstr, MirTerm,
-    instruction_regions_mut, lower_whole_drops, name_teardown_destructors,
+    MirBlock, MirDeclarations, MirFunction, MirInstr, instruction_regions_mut, lower_whole_drops,
+    name_teardown_destructors,
 };
 use mojito_types::types::Ty;
 use std::collections::HashMap;
 
-/// Name the destructor of every drop in `function`, regions and cleanup
-/// lists included, and lower each named drop of a whole slot to the call
+/// Name the destructor of every drop in `function`, regions included, and
+/// lower each named drop of a whole slot to the call
 /// of its destructor.
 pub fn name_destructors(function: &mut MirFunction, declarations: &MirDeclarations) {
     name_in_blocks(&mut function.blocks, &function.var_tys, declarations);
@@ -47,25 +47,16 @@ fn name_in_blocks(
         ty.and_then(|ty| declarations.destructor(ty))
             .map(str::to_owned)
     };
-    let name_cleanup = |cleanup: &mut [CleanupDrop]| {
-        for drop in cleanup {
-            drop.destructor = named(var_tys.get(&drop.var));
-        }
-    };
     for block in blocks {
         for instruction in &mut block.instrs {
             match instruction {
                 MirInstr::DropVar { var, destructor } => *destructor = named(var_tys.get(var)),
                 MirInstr::DropPlace { place, destructor } => *destructor = named(place.ty.as_ref()),
-                MirInstr::Try { cleanup, .. } => name_cleanup(cleanup),
                 _ => {}
             }
             for region in instruction_regions_mut(instruction) {
                 name_in_blocks(region, var_tys, declarations);
             }
-        }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &mut block.term {
-            name_cleanup(cleanup);
         }
     }
 }

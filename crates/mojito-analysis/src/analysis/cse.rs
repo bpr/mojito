@@ -29,8 +29,7 @@
 //! effects, a read, a declaration, or a copy or drop of a register-passable
 //! trivial value that runs no constructor or destructor (which upstream does
 //! not emit), where an instruction holding regions writes when its own kind
-//! does (a `try`) or what its regions hold does, and a terminator writes
-//! when it runs a cleanup list. A read that misses becomes the one later
+//! does (a `try`) or what its regions hold does. A read that misses becomes the one later
 //! reads match.
 //!
 //! Only a result of a register-passable trivial type
@@ -51,7 +50,7 @@ use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirInstr, MirTerm, Reg, UseMode, instruction_regions,
+    MirBlock, MirDeclarations, MirFunction, MirInstr, Reg, UseMode, instruction_regions,
     instruction_regs_mut,
 };
 use mojito_types::types::{Ty, TyKind, trivially_register_passable_leaf};
@@ -157,9 +156,6 @@ impl Table<'_> {
             instruction_result_regs(instruction, &mut results);
             results.retain(|reg| !arguments.iter().any(|args| args.contains(reg)));
             self.define(results);
-        }
-        if matches!(block.term, MirTerm::ReturnWithCleanup { .. }) {
-            self.writes += 1;
         }
     }
 

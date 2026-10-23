@@ -412,24 +412,10 @@ impl ForwardObserver<Carry> for FieldFactsObserver<'_> {
 
 /// Backward field liveness: a field is live from a use, through its places
 /// or through the registers an instruction consumes, back to the entry. A
-/// `yield` reads what its values carry, and a `return` whose cleanup
-/// consumes the receiver every field.
+/// `yield` reads what its values carry.
 struct FieldLiveness<'a> {
     root: &'a DeinitRoot<'a>,
     facts: &'a FieldFacts,
-}
-
-impl FieldLiveness<'_> {
-    /// The fields `block`'s terminator destroys with the receiver: every
-    /// one at an exit whose cleanup consumes it.
-    fn cleaned(&self, block: &MirBlock) -> Option<&FieldSet> {
-        match &block.term {
-            MirTerm::ReturnWithCleanup { cleanup, .. } if cleanup_drops(cleanup, self.root.var) => {
-                Some(&self.root.all)
-            }
-            _ => None,
-        }
-    }
 }
 
 impl BackwardScan for FieldLiveness<'_> {
@@ -451,12 +437,7 @@ impl BackwardScan for FieldLiveness<'_> {
     fn define(&self, _live: &mut FieldSet, _var: VarId) {}
 
     fn terminate(&self, live: &mut FieldSet, block: &MirBlock) {
-        let read = self
-            .facts
-            .yielded(block)
-            .into_iter()
-            .chain(self.cleaned(block));
-        live.extend(read.flatten().copied());
+        live.extend(self.facts.yielded(block).into_iter().flatten().copied());
     }
 }
 
@@ -469,8 +450,6 @@ struct FieldPlan {
     /// The fields live just before each instruction, region ops included.
     instrs: HashMap<*const MirInstr, FieldSet>,
     blocks: HashMap<*const MirBlock, FieldBlock>,
-    /// The handler live-in of each `try` with a handler.
-    handlers: HashMap<*const MirInstr, FieldSet>,
 }
 
 /// The field liveness around one block.
@@ -492,13 +471,6 @@ impl BackwardRecorder<FieldSet> for FieldPlan {
                 live_out: live.live_out.clone(),
             },
         );
-    }
-
-    fn try_op(&mut self, op: &MirInstr, channels: &TryChannels<FieldSet>) {
-        if let Some(handler) = &channels.handler {
-            self.handlers
-                .insert(std::ptr::from_ref(op), handler.clone());
-        }
     }
 }
 
@@ -560,8 +532,7 @@ impl FieldSplice<'_> {
                 self.op(instr);
             }
         }
-        let mut end = plan.live_out.clone();
-        end.extend(self.liveness.cleaned(block).into_iter().flatten().copied());
+        let end = plan.live_out.clone();
         let mut live_after_last = end.clone();
         self.liveness.terminate(&mut live_after_last, block);
 
@@ -617,16 +588,13 @@ impl FieldSplice<'_> {
 
     /// Place the field drops of one region op's regions. An `if` or
     /// `comptime if` destroys at each arm's entry what a sibling arm keeps
-    /// and it does not, as `destroyValuesAtEntryIfNeeded` does; a `try`'s
-    /// handler destroys on entry what the body's raise points hold that it
-    /// does not read.
+    /// and it does not, as `destroyValuesAtEntryIfNeeded` does.
     fn op(&self, instr: &mut MirInstr) {
         let entries = {
             let regions = instruction_regions(instr);
             match &*instr {
                 MirInstr::If { .. } => self.if_entry_drops(&regions),
                 MirInstr::ComptimeIf { .. } => self.comptime_if_entry_drops(&regions),
-                MirInstr::Try { body, .. } => self.handler_entry_drops(instr, body),
                 _ => Vec::new(),
             }
         };
@@ -677,42 +645,6 @@ impl FieldSplice<'_> {
             }
         }
         drops
-    }
-
-    /// The entry drops of a `try`'s regions: its handler's are the fields
-    /// some raise point of the body holds, at any depth, a nested `try`
-    /// counted by its live-in, that the handler does not read.
-    fn handler_entry_drops(&self, op: &MirInstr, body: &[MirBlock]) -> Vec<Vec<usize>> {
-        let Some(handler) = self.plan.handlers.get(&std::ptr::from_ref(op)) else {
-            return Vec::new();
-        };
-        let mut present = FieldSet::new();
-        self.raise_points(body, &mut present);
-        vec![Vec::new(), present.difference(handler).copied().collect()]
-    }
-
-    /// Collect into `present` the fields live at each raise point of
-    /// `blocks`, a `raise` terminator included, entering every region op
-    /// but a `try`.
-    fn raise_points(&self, blocks: &[MirBlock], present: &mut FieldSet) {
-        for block in blocks {
-            for instr in &block.instrs {
-                if region_op(instr) && !matches!(instr, MirInstr::Try { .. }) {
-                    for region in instruction_regions(instr) {
-                        self.raise_points(region, present);
-                    }
-                } else if raises_to_handler(instr)
-                    && let Some(live) = self.plan.instrs.get(&std::ptr::from_ref(instr))
-                {
-                    present.extend(live.iter().copied());
-                }
-            }
-            if matches!(block.term, MirTerm::Raise(_))
-                && let Some(plan) = self.plan.blocks.get(&std::ptr::from_ref(block))
-            {
-                present.extend(plan.live_out.iter().copied());
-            }
-        }
     }
 }
 

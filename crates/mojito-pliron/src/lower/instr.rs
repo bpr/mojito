@@ -981,19 +981,11 @@ impl FnLowering<'_> {
                 None,
             )),
             MirInstr::Try {
+                label,
                 body,
                 handler,
                 orelse,
-                finalbody,
-                cleanup,
-            } => self.lower_try(
-                ctx,
-                body,
-                handler.as_ref(),
-                orelse.as_deref(),
-                finalbody.as_deref(),
-                cleanup,
-            ),
+            } => self.lower_try(ctx, *label, body, handler.as_ref(), orelse.as_deref()),
             MirInstr::GetIter {
                 source,
                 dest,

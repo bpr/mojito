@@ -12,6 +12,7 @@ impl Decoder {
             context: ParamContext::new(),
             legacy_binders: legacy.then(HashMap::new),
             register_binders: HashMap::new(),
+            unlabelled_tries: false,
         }
     }
 

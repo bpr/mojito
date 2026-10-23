@@ -27,7 +27,7 @@
 //!   field slot splits in the next round.
 //!
 //! Any other mention keeps the slot whole: a borrow, a capture, a loan
-//! interior, a cleanup, a `through` place, or a whole read that names a
+//! interior, a `through` place, or a whole read that names a
 //! constructor, as any other user of upstream's allocation does. Each field
 //! slot is typed at the slot type's arguments, as upstream's element
 //! allocation has the `!kgen.struct` element type, so a generic body splits
@@ -44,9 +44,8 @@ use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::{instruction_places, instruction_places_mut};
 use mojito_mir::mir::{
-    MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirInstr, MirPlace, MirTerm, Proj, Reg,
-    UseMode, cleanup_slots, fresh_register, instruction_regions, instruction_regions_mut,
-    instruction_slots, retire_slots,
+    MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirInstr, MirPlace, Proj, Reg, UseMode,
+    fresh_register, instruction_regions, instruction_regions_mut, instruction_slots, retire_slots,
 };
 use mojito_types::types::{SliceKind, Ty, TyKind};
 use std::borrow::Cow;
@@ -279,16 +278,9 @@ fn take_census(
                         .map(String::from),
                 );
             }
-            if let MirInstr::Try {
-                handler, cleanup, ..
-            } = instruction
-            {
+            if let MirInstr::Try { handler, .. } = instruction {
                 keep(census, handler.iter().filter_map(|(slot, _)| *slot));
-                keep(census, cleanup_slots(cleanup));
             }
-        }
-        if let MirTerm::ReturnWithCleanup { cleanup, .. } = &block.term {
-            keep(census, cleanup_slots(cleanup));
         }
     }
 }

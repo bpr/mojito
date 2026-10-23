@@ -91,6 +91,8 @@ pub use struct_reads::{
 };
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};
+mod try_finally;
+use try_finally::TryParts;
 mod type_construction;
 pub use type_construction::{ConstructionTypes, TypeConstructionError, construct_type_parameters};
 mod unused_args;
@@ -2951,6 +2953,13 @@ struct Flatten<'a> {
     /// whole live range, so deref sites may substitute that place.
     reassigned_names: std::collections::HashSet<String>,
     returns_reference: bool,
+    /// The number of the next `try` this function lowers, its label:
+    /// `LowerSemanticCF`'s `tryCounter`.
+    next_try: u32,
+    /// The `try` a raise lowered here names: the nearest whose body
+    /// encloses it, as `emitRaise` builds `lit.try.raise` to it; `None`
+    /// outside every `try` body, where a raise leaves the function.
+    raise_target: Option<TryLabel>,
 }
 
 /// A borrowed loop's in-place cursor over a runtime pack: upstream's
@@ -3618,7 +3627,7 @@ impl<'a> Flatten<'a> {
     /// (keep-alives, transferred loans, a consumed receiver) is in place:
     /// an `if` on its flag whose `then` region raises its error, as
     /// upstream's `addErrorRegions` follows each throwing call. The raise
-    /// reaches the nearest enclosing `try`, or leaves the function; drop
+    /// names the `try` whose body encloses it, or leaves the function; drop
     /// elaboration destroys at the arm's entry what that raise holds.
     fn error_region(&mut self, raises: Option<Raises>) {
         let Some(raises) = raises else {
@@ -3629,7 +3638,10 @@ impl<'a> Flatten<'a> {
             cond: raises.flag,
             then: vec![MirBlock {
                 instrs: Vec::new(),
-                term: MirTerm::Raise(raises.error),
+                term: MirTerm::Raise {
+                    src: raises.error,
+                    label: self.raise_target,
+                },
             }],
             elifs: Vec::new(),
             else_args: Vec::new(),
@@ -4435,6 +4447,8 @@ fn lower_cfg_nested(
             transfer_domain_loans: HashMap::new(),
             reassigned_names: reassigned_names(cfg, nested),
             returns_reference,
+            next_try: 0,
+            raise_target: None,
         };
         fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
         fl.f.blocks = fl.hir_region(&cfg.root);
@@ -4551,49 +4565,25 @@ fn name_spelling(
     }
 }
 
-/// The error type that can propagate out of a lowered `try`-body region: the
-/// first raising fact that would reach this region's handler. Nested regions
-/// with their own handler consume their body's raises, so only their
-/// handler/orelse/finalbody blocks (and handlerless bodies) propagate.
-fn region_error_type(blocks: &[MirBlock], reg_types: &HashMap<u32, Ty>) -> Option<Ty> {
-    for block in blocks {
-        for instr in &block.instrs {
-            match instr {
-                instr if let Some(ty) = instr.call_error() => {
-                    return Some(ty.clone());
-                }
-                MirInstr::Try {
-                    body,
-                    handler,
-                    orelse,
-                    finalbody,
-                    ..
-                } => {
-                    let mut nested = Vec::new();
-                    if handler.is_none() {
-                        nested.push(body.as_slice());
-                    }
-                    if let Some((_, handler_blocks)) = handler {
-                        nested.push(handler_blocks.as_slice());
-                    }
-                    nested.extend(orelse.as_deref());
-                    nested.extend(finalbody.as_deref());
-                    for region in nested {
-                        if let Some(ty) = region_error_type(region, reg_types) {
-                            return Some(ty);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-        if let MirTerm::Raise(src) = block.term
-            && let Some(ty) = reg_types.get(&src.0)
-        {
-            return Some(ty.clone());
-        }
-    }
-    None
+/// The error the first raise naming the `try` labelled `label` raises in
+/// its lowered body `blocks`, at any depth: its type is the error type the
+/// `try` catches, as each raising instruction's error region raises its
+/// checked error type.
+fn first_raised_error(blocks: &[MirBlock], label: TryLabel) -> Option<Reg> {
+    blocks.iter().find_map(|block| {
+        block
+            .instrs
+            .iter()
+            .flat_map(instruction_regions)
+            .find_map(|region| first_raised_error(region, label))
+            .or_else(|| match block.term {
+                MirTerm::Raise {
+                    src,
+                    label: Some(found),
+                } if found == label => Some(src),
+                _ => None,
+            })
+    })
 }
 
 /// Fill remaining register types by copying facts already present in the

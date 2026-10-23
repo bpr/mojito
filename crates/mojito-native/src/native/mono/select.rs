@@ -7,8 +7,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::verify::instruction_result_regs;
-use mojito_mir::mir::{MirTerm, SpanTable, resolve_replacements};
+use mojito_mir::mir::{MirTerm, SpanTable, defined_registers, resolve_replacements};
 
 impl Specializer<'_> {
     /// Decide every `comptime if` of the instance under its bindings and
@@ -166,14 +165,6 @@ pub(super) fn splice_comptime_arm(
         }
     }
     Ok(())
-}
-
-/// Every register an instruction of `blocks` defines, at any depth: its
-/// results, and a region op's results and region arguments.
-pub(super) fn defined_registers(blocks: &[MirBlock], out: &mut Vec<Reg>) {
-    for instruction in mojito_mir::mir::nested_instructions(blocks) {
-        instruction_result_regs(instruction, out);
-    }
 }
 
 /// A failed assertion's decided condition: `False`, keeping its message.

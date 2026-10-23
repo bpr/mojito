@@ -535,7 +535,7 @@ fn visit_vector_slots<V: MutTypeVisitor + ?Sized>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mir::{MirTerm, Reg};
+    use crate::mir::{MirTerm, Reg, TryLabel};
 
     /// Counts each hook's visits and the sites its types sit at.
     #[derive(Default)]
@@ -638,11 +638,10 @@ mod tests {
                         place,
                     },
                     MirInstr::Try {
+                        label: TryLabel(0),
                         body: region,
                         handler: None,
                         orelse: None,
-                        finalbody: None,
-                        cleanup: Vec::new(),
                     },
                     MirInstr::ComptimeIf {
                         results: Vec::new(),
