@@ -324,8 +324,9 @@ folds the operators over it (R840);
       slot of a type with no destructor and an identity copy carries no
       ownership effect, so no ownership state is rewritten.
     - A slot whose reads merge two stores is carried through region
-      values on a structured body, as `processRegion` carries it (R927); a
-      store inside a `try` part still keeps its slot (R1264).
+      values on a structured body, as `processRegion` carries it (R927),
+      a `try` included, through `lit.try`'s results and its handler's and
+      `else`'s arguments (R1264).
     - `SROA` landed as `sroa` (R928) before each `Mem2Reg`, at both seams,
       with `struct.create` as its value-level construction and upstream's
       `kgen.struct` folds in `canonicalize`. It splits a struct whose drop

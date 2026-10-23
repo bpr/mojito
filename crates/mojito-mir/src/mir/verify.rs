@@ -186,23 +186,16 @@ impl RegionContext {
         self.regions.last().unwrap_or(&RegionKind::Function)
     }
 
-    /// Whether this block is a `try` part's, where `TryYield` is the legal
-    /// way to complete.
-    fn is_try_part(&self) -> bool {
-        matches!(
-            self.kind(),
-            RegionKind::TryPart | RegionKind::TryBody { .. }
-        )
-    }
-
-    /// Whether the nearest enclosing `try` body carrying `label` has a
-    /// handler; `None` when no enclosing `try` body carries it.
-    fn raise_target(&self, label: super::TryLabel) -> Option<bool> {
+    /// The `handled` of the nearest enclosing `try` body carrying `label`:
+    /// its handler's arguments, when it has a handler; `None` when no
+    /// enclosing `try` body carries it.
+    fn raise_target(&self, label: super::TryLabel) -> Option<&Option<Vec<Reg>>> {
         self.regions.iter().rev().find_map(|kind| match kind {
             RegionKind::TryBody {
                 label: found,
                 handled,
-            } if *found == label => Some(*handled),
+                ..
+            } if *found == label => Some(handled),
             _ => None,
         })
     }
@@ -213,13 +206,18 @@ impl RegionContext {
 enum RegionKind {
     Function,
     /// A `try` body, which a `raise` carrying its label leaves for its
-    /// handler, when it has one.
+    /// handler, when it has one, carrying the handler's arguments
+    /// (`handled`), and whose `TryYield` carries `completes`: the `else`'s
+    /// arguments, or the op's results when it has no `else`.
     TryBody {
         label: super::TryLabel,
-        handled: bool,
+        handled: Option<Vec<Reg>>,
+        completes: Vec<Reg>,
+        into_else: bool,
     },
-    /// A `try`'s handler or `else`.
-    TryPart,
+    /// A `try`'s handler or `else`, whose `TryYield` carries its op's
+    /// results.
+    TryPart(Vec<Reg>),
     /// An `if`'s then, elif, or else arm, ended by `Yield` with its
     /// op's results.
     IfArm(Vec<Reg>),

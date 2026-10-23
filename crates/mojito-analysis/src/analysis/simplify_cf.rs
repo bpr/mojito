@@ -14,9 +14,10 @@
 //!   loop: its `return`s are `break`s.
 //! - **Trivial `try`s** (`removeTrivialTry`). A `try` no raise names (a
 //!   raising call raises in its error region) is replaced by its body and,
-//!   when the body completes (`try.yield`), its `else`; a part that leaves
-//!   instead ends the enclosing block. A raise names the nearest `try`
-//!   carrying its label whose body holds it.
+//!   when the body completes (`try.yield`), its `else`, each `try.yield`'s
+//!   values replacing the `else`'s arguments or the `try`'s results; a part
+//!   that leaves instead ends the enclosing block. A raise names the
+//!   nearest `try` carrying its label whose body holds it.
 //! - **Implied conditions** (`propagateImpliedCondition`). After an `if`
 //!   whose condition is not a constant and whose `then` arm cannot fall
 //!   through (it ends in a `return`, `raise`, `break`, `continue`, or
@@ -138,6 +139,7 @@ impl Census {
                         body,
                         handler,
                         orelse,
+                        ..
                     } => {
                         let id = self.elidable.len();
                         self.elidable.push(true);
@@ -296,12 +298,16 @@ impl Removal {
     }
 
     /// Replace the `try` at `at` of `block` by its body and, when the body
-    /// completes, its `else`.
+    /// completes, its `else`: each `try.yield`'s values replace the `else`'s
+    /// arguments or the `try`'s results they define.
     fn remove_trivial_try(&mut self, block: &mut MirBlock, at: usize) {
         let instruction = block.instrs.remove(at);
         let MirInstr::Try {
+            results,
             mut body,
+            handler_args,
             handler,
+            else_args,
             orelse,
             ..
         } = instruction
@@ -309,21 +315,34 @@ impl Removal {
             block.instrs.insert(at, instruction);
             return;
         };
+        self.erased.extend(handler_args.iter().map(|arg| arg.0));
         for handled in handler.iter().flat_map(|(_, blocks)| blocks) {
             for instruction in &handled.instrs {
                 erased_results(instruction, &mut self.erased);
             }
         }
         self.erased_tries_count += 1;
+        let completes = if orelse.is_some() {
+            else_args
+        } else {
+            results.clone()
+        };
+        let parts = std::iter::once((body.pop(), completes))
+            .chain(orelse.map(|mut part| (part.pop(), results.clone())));
         let mut end = at;
-        for part in std::iter::once(body.pop()).chain(orelse.map(|mut part| part.pop())) {
+        for (part, defined) in parts {
             let Some(MirBlock { instrs, term }) = part else {
                 return;
             };
             let inlined = instrs.len();
             block.instrs.splice(end..end, instrs);
             end += inlined;
-            if !matches!(term, MirTerm::TryYield) {
+            if let MirTerm::TryYield(values) = term {
+                self.replaced
+                    .extend(defined.iter().map(|defined| defined.0).zip(values));
+            } else {
+                let dead = defined.iter().chain(&results).map(|defined| defined.0);
+                self.erased.extend(dead);
                 end_block_at(block, end, term, &mut self.erased);
                 return;
             }

@@ -15,17 +15,39 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
     match instruction {
         MirInstr::Try {
             label,
+            results,
             body,
+            handler_args,
             handler,
+            else_args,
             orelse,
         } => {
+            for (args, region, part) in [
+                (handler_args, handler.is_some(), "handler"),
+                (else_args, orelse.is_some(), "else"),
+            ] {
+                if !region && !args.is_empty() {
+                    errors.push(format!(
+                        "{}: `try` has {} {part} arguments but no {part}",
+                        cx.prefix,
+                        args.len()
+                    ));
+                }
+            }
             let kind = RegionKind::TryBody {
                 label: *label,
-                handled: handler.is_some(),
+                handled: handler.as_ref().map(|_| handler_args.clone()),
+                completes: if orelse.is_some() {
+                    else_args.clone()
+                } else {
+                    results.clone()
+                },
+                into_else: orelse.is_some(),
             };
             verify_region(cx, kind, protected || handler.is_some(), body, errors);
             for region in handler.iter().map(|(_, blocks)| blocks).chain(orelse) {
-                verify_region(cx, RegionKind::TryPart, protected, region, errors);
+                let kind = RegionKind::TryPart(results.clone());
+                verify_region(cx, kind, protected, region, errors);
             }
         }
         MirInstr::If {
@@ -188,7 +210,11 @@ pub(super) fn verify_regions(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &
 /// `comptime for`, with values for its results or its body's arguments;
 /// `match.next`/`match.complete` inside a `match` case, a `match.next` with
 /// values for the next region's arguments and a `match.complete` with the
-/// op's results; a `match`'s else region's `yield` with those results too.
+/// op's results; a `match`'s else region's `yield` with those results too;
+/// `try.yield` in a `try` part, a body's with the `else`'s arguments (the
+/// op's results without one) and a handler's or `else`'s with the op's
+/// results; a labelled `raise` inside the body of the `try` it names, with
+/// values for its handler's arguments, and an unlabelled one with none.
 /// `unreachable`
 /// ends any region. Values are checked against each region they enter, as
 /// upstream's `verifyTerminator` checks each target, stopping at the first
@@ -226,7 +252,69 @@ pub(super) fn verify_region_terminator(
                 );
             }
         }
-        (MirTerm::Yield(_) | MirTerm::ComptimeYield(_) | MirTerm::ElifCond { .. }, _) => {
+        (
+            MirTerm::TryYield(values),
+            RegionKind::TryBody {
+                completes,
+                into_else,
+                ..
+            },
+        ) => {
+            let target = if *into_else {
+                YieldTarget::Arguments
+            } else {
+                YieldTarget::Results
+            };
+            yielded_values(
+                prefix, function, mnemonic, values, completes, target, errors,
+            );
+        }
+        (MirTerm::TryYield(values), RegionKind::TryPart(results)) => {
+            let target = YieldTarget::Results;
+            yielded_values(prefix, function, mnemonic, values, results, target, errors);
+        }
+        (
+            MirTerm::Raise {
+                label: None,
+                values,
+                ..
+            },
+            _,
+        ) => {
+            if !values.is_empty() {
+                errors.push(format!(
+                    "{prefix}: `{mnemonic}` out of the function carries values"
+                ));
+            }
+        }
+        (
+            MirTerm::Raise {
+                label: Some(label),
+                values,
+                ..
+            },
+            _,
+        ) => match context.raise_target(*label) {
+            None => errors.push(format!(
+                "{prefix}: `raise` names try{}, which no enclosing try body carries",
+                label.0
+            )),
+            Some(None) => errors.push(format!(
+                "{prefix}: `raise` names try{}, which has no handler",
+                label.0
+            )),
+            Some(Some(args)) => {
+                let target = YieldTarget::Arguments;
+                yielded_values(prefix, function, mnemonic, values, args, target, errors);
+            }
+        },
+        (
+            MirTerm::Yield(_)
+            | MirTerm::ComptimeYield(_)
+            | MirTerm::ElifCond { .. }
+            | MirTerm::TryYield(_),
+            _,
+        ) => {
             errors.push(format!("{prefix}: `{mnemonic}` outside the region it ends"));
         }
         (MirTerm::Break { label, values } | MirTerm::Continue { label, values }, _) => {
@@ -1375,6 +1463,7 @@ mod tests {
                 MirTerm::Raise {
                     src: error,
                     label: None,
+                    values: Vec::new(),
                 },
             ),
             elifs: Vec::new(),
@@ -1412,14 +1501,18 @@ mod tests {
         let raising = |label| {
             function_with(vec![MirInstr::Try {
                 label: crate::mir::TryLabel(0),
+                results: Vec::new(),
                 body: one(
                     Vec::new(),
                     MirTerm::Raise {
                         src: Reg(1),
                         label: Some(crate::mir::TryLabel(label)),
+                        values: Vec::new(),
                     },
                 ),
-                handler: Some((None, one(Vec::new(), MirTerm::TryYield))),
+                handler_args: Vec::new(),
+                handler: Some((None, one(Vec::new(), MirTerm::TryYield(Vec::new())))),
+                else_args: Vec::new(),
                 orelse: None,
             }])
         };
@@ -1431,6 +1524,121 @@ mod tests {
         assert_finding(
             &findings(&raising(1)),
             "`raise` names try1, which no enclosing try body carries",
+        );
+    }
+
+    /// A `try` labelled `try0` over [`function_with`]'s registers, plus
+    /// `Int` registers `%r3` to `%r5` and the `Error` `%r6`: its body raises
+    /// `%r6` with `raised` from an `if` on `%r0`, then yields `yielded` to
+    /// its `else`, which takes `%r3` and yields `%r3` to the result `%r4`;
+    /// its handler takes `handler_args` and yields `%r5`.
+    fn valued_try(raised: Vec<Reg>, yielded: Vec<Reg>, handler_args: Vec<Reg>) -> MirFunction {
+        let label = crate::mir::TryLabel(0);
+        let raise = MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(0),
+            then: one(
+                Vec::new(),
+                MirTerm::Raise {
+                    src: Reg(6),
+                    label: Some(label),
+                    values: raised,
+                },
+            ),
+            elifs: Vec::new(),
+            else_args: Vec::new(),
+            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+        };
+        let mut function = function_with(vec![MirInstr::Try {
+            label,
+            results: vec![Reg(4)],
+            body: one(vec![raise], MirTerm::TryYield(yielded)),
+            handler_args,
+            handler: Some((None, one(Vec::new(), MirTerm::TryYield(vec![Reg(5)])))),
+            else_args: vec![Reg(3)],
+            orelse: Some(one(Vec::new(), MirTerm::TryYield(vec![Reg(3)]))),
+        }]);
+        function.n_regs = 7;
+        function.reg_types.extend([
+            (3, Ty::int()),
+            (4, Ty::int()),
+            (5, Ty::int()),
+            (6, Ty::error()),
+        ]);
+        function
+    }
+
+    /// The findings of `function` about the values of a `try`'s edges.
+    fn try_value_findings(function: &MirFunction) -> Vec<String> {
+        findings(function)
+            .into_iter()
+            .filter(|finding| {
+                ["yields", "`raise`", "`try` has", "carries values"]
+                    .iter()
+                    .any(|topic| finding.contains(topic))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_valued_try_verifies() {
+        let function = valued_try(vec![Reg(1)], vec![Reg(2)], vec![Reg(5)]);
+        assert_eq!(try_value_findings(&function), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_try_yield_carrying_the_wrong_values_is_a_finding() {
+        let missing = valued_try(vec![Reg(1)], Vec::new(), vec![Reg(5)]);
+        assert_finding(
+            &try_value_findings(&missing),
+            "`try.yield` yields 0 values for 1 arguments",
+        );
+        let mistyped = valued_try(vec![Reg(1)], vec![Reg(6)], vec![Reg(5)]);
+        assert_finding(
+            &try_value_findings(&mistyped),
+            "`try.yield` yields Error for an argument of type Int",
+        );
+    }
+
+    #[test]
+    fn a_raise_carrying_the_wrong_values_is_a_finding() {
+        let function = valued_try(vec![Reg(1), Reg(2)], vec![Reg(2)], vec![Reg(5)]);
+        assert_finding(
+            &try_value_findings(&function),
+            "`raise` yields 2 values for 1 arguments",
+        );
+    }
+
+    #[test]
+    fn an_unlabelled_raise_carrying_values_is_a_finding() {
+        let mut function = function_with(Vec::new());
+        function.n_regs = 7;
+        function.reg_types.insert(6, Ty::error());
+        function.raises = true;
+        function.error_ty = Some(Ty::error());
+        function.blocks = one(
+            Vec::new(),
+            MirTerm::Raise {
+                src: Reg(6),
+                label: None,
+                values: vec![Reg(1)],
+            },
+        );
+        assert_finding(
+            &findings(&function),
+            "`raise` out of the function carries values",
+        );
+    }
+
+    #[test]
+    fn a_try_without_a_handler_taking_arguments_is_a_finding() {
+        let mut function = valued_try(Vec::new(), vec![Reg(2)], vec![Reg(5)]);
+        if let MirInstr::Try { handler, .. } = &mut function.blocks[0].instrs[0] {
+            *handler = None;
+        }
+        assert_finding(
+            &try_value_findings(&function),
+            "`try` has 1 handler arguments but no handler",
         );
     }
 

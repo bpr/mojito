@@ -158,8 +158,10 @@ pub fn for_each_register(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut Re
 pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
     match term {
         MirTerm::ElifCond { cond, values } => std::iter::once(cond).chain(values).collect(),
-        MirTerm::Return(Some(reg)) | MirTerm::Raise { src: reg, .. } => vec![reg],
+        MirTerm::Return(Some(reg)) => vec![reg],
+        MirTerm::Raise { src, values, .. } => std::iter::once(src).chain(values).collect(),
         MirTerm::Yield(values)
+        | MirTerm::TryYield(values)
         | MirTerm::ComptimeYield(values)
         | MirTerm::MatchNext(values)
         | MirTerm::MatchComplete(values)
@@ -167,7 +169,7 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         | MirTerm::ComptimeContinue(values)
         | MirTerm::Break { values, .. }
         | MirTerm::Continue { values, .. } => values.iter_mut().collect(),
-        MirTerm::Return(None) | MirTerm::TryYield | MirTerm::Unreachable => Vec::new(),
+        MirTerm::Return(None) | MirTerm::Unreachable => Vec::new(),
     }
 }
 
@@ -177,8 +179,12 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
         MirTerm::ElifCond { cond, values } => std::iter::once(*cond)
             .chain(values.iter().copied())
             .collect(),
-        MirTerm::Return(Some(reg)) | MirTerm::Raise { src: reg, .. } => vec![*reg],
+        MirTerm::Return(Some(reg)) => vec![*reg],
+        MirTerm::Raise { src, values, .. } => std::iter::once(*src)
+            .chain(values.iter().copied())
+            .collect(),
         MirTerm::Yield(values)
+        | MirTerm::TryYield(values)
         | MirTerm::ComptimeYield(values)
         | MirTerm::MatchNext(values)
         | MirTerm::MatchComplete(values)
@@ -186,7 +192,7 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
         | MirTerm::ComptimeContinue(values)
         | MirTerm::Break { values, .. }
         | MirTerm::Continue { values, .. } => values.clone(),
-        MirTerm::Return(None) | MirTerm::TryYield | MirTerm::Unreachable => Vec::new(),
+        MirTerm::Return(None) | MirTerm::Unreachable => Vec::new(),
     }
 }
 
@@ -302,6 +308,50 @@ pub fn match_completes_mut(
     visit: &mut impl FnMut(&mut Vec<Reg>, BreakSite),
 ) {
     case_exits_in(case, false, BreakSite::default(), visit);
+}
+
+/// Visit the `values` of every `raise` that enters the handler of the
+/// `try` labelled `label` whose body is `body`.
+///
+/// A raise resolves as `TryRaiseOp`'s label does: it names the nearest
+/// enclosing `try` carrying its label whose body holds it, so a nested
+/// `try` carrying the same label captures its body's raises, and its
+/// handler's and `else`'s reach this one.
+pub fn try_raises_mut(
+    body: &mut [MirBlock],
+    label: TryLabel,
+    visit: &mut impl FnMut(&mut Vec<Reg>),
+) {
+    for block in body {
+        for instruction in &mut block.instrs {
+            match instruction {
+                MirInstr::Try {
+                    label: inner,
+                    handler,
+                    orelse,
+                    ..
+                } if *inner == label => {
+                    for region in handler.iter_mut().map(|(_, blocks)| blocks).chain(orelse) {
+                        try_raises_mut(region, label, visit);
+                    }
+                }
+                _ => {
+                    for region in instruction_regions_mut(instruction) {
+                        try_raises_mut(region, label, visit);
+                    }
+                }
+            }
+        }
+        if let MirTerm::Raise {
+            label: Some(found),
+            values,
+            ..
+        } = &mut block.term
+            && *found == label
+        {
+            visit(values);
+        }
+    }
 }
 
 /// Visit the `values` of every `comptime.for.break` that leaves the
@@ -574,13 +624,13 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::ConsumeVar { .. }
         | MirInstr::GetIter { .. }
         | MirInstr::Unsupported(_)
-        | MirInstr::Try { .. }
         | MirInstr::ComptimeAssert { .. } => {}
-        MirInstr::If { .. } | MirInstr::Match { .. } => out.extend(branch_op_regs_mut(instruction)),
-        MirInstr::ComptimeIf { results, .. } => out.extend(results.iter_mut()),
-        MirInstr::Loop { .. } | MirInstr::ComptimeFor { .. } => {
-            out.extend(loop_op_regs_mut(instruction));
-        }
+        MirInstr::If { .. }
+        | MirInstr::Match { .. }
+        | MirInstr::Try { .. }
+        | MirInstr::ComptimeIf { .. }
+        | MirInstr::Loop { .. }
+        | MirInstr::ComptimeFor { .. } => out.extend(region_op_regs_mut(instruction)),
         MirInstr::ConstructTypeParam {
             dest,
             kwargs,
@@ -2324,10 +2374,21 @@ pub enum MirInstr {
     /// error); a [`MirTerm::Raise`] in `body` naming `label` enters it.
     /// `label` is upstream's `try<N>`, numbered per function; labels need
     /// not be unique, as a raise names the nearest `try` carrying its label.
+    ///
+    /// The values are `lit.try`'s, which only `mem-2-reg` gives it, as
+    /// upstream's `Mem2Reg` does: `body` takes no arguments
+    /// (`TryOp::getEntryTargets`); `handler_args` are the handler's, which
+    /// every raise naming `label` defines; `else_args` are `orelse`'s,
+    /// which the body's [`MirTerm::TryYield`] defines; and `results` are
+    /// the op's, which the handler's and `orelse`'s `try.yield`s define, or
+    /// the body's when there is no `orelse`.
     Try {
         label: TryLabel,
+        results: Vec<Reg>,
         body: Vec<MirBlock>,
+        handler_args: Vec<Reg>,
         handler: Option<(Option<VarId>, Vec<MirBlock>)>,
+        else_args: Vec<Reg>,
         orelse: Option<Vec<MirBlock>>,
     },
     /// `hlcf.if`: run `then` when `cond` holds; otherwise try each `elifs`
@@ -2978,8 +3039,9 @@ pub enum MirTerm {
     Return(Option<Reg>),
     /// `lit.try.yield`: a `try` part completed (see
     /// [`hir::Terminator::TryYield`]), so the `try` goes on to its `else`
-    /// or completes. Never appears in a function body's blocks.
-    TryYield,
+    /// or completes, its values defining the `else`'s arguments or the
+    /// op's results. Never appears in a function body's blocks.
+    TryYield(Vec<Reg>),
     /// `hlcf.yield`: end an [`MirInstr::If`] arm, its values defining the
     /// op's results.
     Yield(Vec<Reg>),
@@ -3027,10 +3089,13 @@ pub enum MirTerm {
     /// nearest enclosing [`MirInstr::Try`] carrying `label`, whose body
     /// holds the raise, leaving every region in between; `lit.error_return`
     /// out of the function when `label` is `None`. A `raise` statement and
-    /// a raising instruction's error region both end in one.
+    /// a raising instruction's error region both end in one. `values`
+    /// define the handler's arguments, as `lit.try.raise`'s operands do;
+    /// a `lit.error_return` carries none.
     Raise {
         src: Reg,
         label: Option<TryLabel>,
+        values: Vec<Reg>,
     },
     /// `hlcf.unreachable`: control never reaches here.
     Unreachable,
@@ -3344,9 +3409,10 @@ fn exits_in(
     }
 }
 
-/// The registers of an `if` or a `match` [`instruction_regs_mut`] lists:
-/// the results, every region argument, and an `if`'s condition.
-fn branch_op_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
+/// The registers of a region op [`instruction_regs_mut`] lists: the
+/// results, every region argument, a loop's or `comptime for`'s operands,
+/// and an `if`'s condition.
+fn region_op_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
     match instruction {
         MirInstr::If {
             results,
@@ -3374,14 +3440,17 @@ fn branch_op_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             .chain(cases.iter_mut().flat_map(|case| &mut case.args))
             .chain(else_args)
             .collect(),
-        _ => Vec::new(),
-    }
-}
-
-/// The registers of a `loop` or a `comptime for` [`instruction_regs_mut`]
-/// lists: the results, the body's arguments, and the operands.
-fn loop_op_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
-    match instruction {
+        MirInstr::Try {
+            results,
+            handler_args,
+            else_args,
+            ..
+        } => results
+            .iter_mut()
+            .chain(handler_args)
+            .chain(else_args)
+            .collect(),
+        MirInstr::ComptimeIf { results, .. } => results.iter_mut().collect(),
         MirInstr::Loop {
             operands,
             args,

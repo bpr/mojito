@@ -89,6 +89,12 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
                 .chain(else_args)
                 .copied(),
         ),
+        MirInstr::Try {
+            results,
+            handler_args,
+            else_args,
+            ..
+        } => out.extend(results.iter().chain(handler_args).chain(else_args).copied()),
         MirInstr::ComptimeIf { results, .. } => out.extend(results.iter().copied()),
         MirInstr::Loop { results, args, .. } | MirInstr::ComptimeFor { results, args, .. } => {
             out.extend(results.iter().chain(args).copied());

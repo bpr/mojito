@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.92
+# Mojito Textual MIR Format, Version 1.93
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.92 is implemented end to end for inspection and loading: canonical
+Version 1.93 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.92
+mojito-mir 1.93
 ```
 
-The writer emits 1.92. The reader accepts 1.0 through 1.92; *Schema 1.0*
+The writer emits 1.93. The reader accepts 1.0 through 1.93; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -407,6 +407,15 @@ it numbers its `try`s in preorder and gives each `raise` the label of the
 nearest `try` with a handler whose body holds it, what the older raise
 reached; it accepts `finalbody: absent` and an empty `cleanup`, and
 rejects a `finally` region, a non-empty `cleanup`, and `return.cleanup`.
+
+Minor version 93 gives a `try` `lit.try`'s region values, which
+`mem-2-reg` carries a slot stored inside a `try` part through, as
+upstream's `Mem2Reg` does (R1264): a `try` carries `results`,
+`handler_arguments`, and `else_arguments` register lists, a `try.yield`
+`values`, defining the `else`'s arguments or the `try`'s results, and a
+`raise` `values`, defining the handler's arguments of the `try` it names,
+as `lit.try.raise`'s operands do. The reader accepts an older minor's
+`try`, `try.yield {}`, and `raise` as carrying no values.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1110,7 +1119,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeVariant` / `VariantIs` / `VariantGet` / `VariantSet` | `variant.make` / `variant.is` / `variant.get` / `variant.set` (schema 1.71: `variant.make` and `variant.set` carry `constructor: "<symbol>"` after their operands when the payload copy names the `__copyinit__` it runs, as `value.copy` does; schema 1.73: `variant.set` carries `destructors: [present("<symbol>") | absent, ...]`, one entry per alternative, naming the `__deinit__` the replaced payload runs under that tag, omitted while it names none) |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.73: `variant.set_init_with` carries `destructors` as `variant.set` does) |
 | `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_shuffle { lanes: [<param_expr>, ...] }`, `lane_slice { offset: <param_expr>, width: <width> }`, or `lane_join {}`, which elaboration closes (schema 1.26) |
-| `Try` | `try { label: tryN, body, handler, orelse }` — `lit.try` after `lowerTryFinally`: `label` names it for the raises in its body (schema 1.92; before, a `try` named nothing and held `finalbody` and `cleanup`, see *Compatibility*) |
+| `Try` | `try { label: tryN, results: [%rN...], body, handler_arguments: [%rN...], handler, else_arguments: [%rN...], orelse }` — `lit.try` after `lowerTryFinally`: `label` names it for the raises in its body (schema 1.92; before, a `try` named nothing and held `finalbody` and `cleanup`, see *Compatibility*); `results` are the op's, `handler_arguments` the handler's, which every raise naming it defines, and `else_arguments` the `else`'s, which the body's `try.yield` defines (schema 1.93) |
 | `DeclareVar` | `var.declare` (schema 1.50: a `var x: T` slot's declaration point; no def, no use, a no-op on both backends, counted as a def site by region locality; unlike the lifetime markers it survives `lower-lit`, as upstream lowers `lit.var.decl` to an allocation) |
 | `Drop` / `DropVar` / `DropPlace` | `drop.reg` / `drop.var { var }` / `drop.place { place }` — a `drop.var` or `drop.place` carries `destructor: "<symbol>"` after its operand when it names the `__deinit__` it runs on the whole value, as upstream's destructor insertion names the `__del__` at each death: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the drop names none, the reader takes an absent field as none, and the verifier reports a drop naming an undeclared function or other than the destructor its struct's member table records (schema 1.67) |
 | `ConsumeVar` / `ConsumePlace` | `consume.var` / `consume.place` |
@@ -1146,14 +1155,14 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 | MIR variant | Canonical record |
 |---|---|
 | `Return` | `return { value: option<reg> }` |
-| `TryYield` | `try.yield {}` — `lit.try.yield`: completes a `try` part, which goes on to its `else` or completes the `try` (schema 1.59; before, `falloff {}`, which the reader now rejects) |
+| `TryYield` | `try.yield { values: [%rN...] }` — `lit.try.yield`: completes a `try` part, which goes on to its `else` or completes the `try`, its values defining the `else`'s arguments or the `try`'s results (schema 1.59; before, `falloff {}`, which the reader now rejects; schema 1.93 adds `values`, before which `try.yield {}` carried none) |
 | `Yield` | `yield { values: [reg...] }` — `hlcf.yield`: ends an `if` arm, its values defining the op's results (schema 1.54) |
 | `ElifCond` | `if.elifcond.yield { condition: %rN, values: [reg...] }` — ends an elif condition region with its `Bool` (schema 1.54); its `values` (schema 1.84) define the arguments of its arm and of the next region, one per argument |
 | `Break` / `Continue` | `break { label: option<loopN>, values: [reg...] }` / `continue { label: option<loopN>, values: [reg...] }` — `hlcf.break`/`hlcf.continue`: the nearest enclosing `loop`, or the nearest carrying the label (schema 1.54); a break's `values` (schema 1.82) define the results of the loop it leaves, one per result, and a continue's (schema 1.83) the arguments of its next iteration, one per argument |
 | `ComptimeYield` | `comptime.yield { values: [reg...] }` — ends a `comptime.if` arm (schema 1.54) |
 | `ComptimeBreak` / `ComptimeContinue` | `comptime.for.break { values: [reg...] }` / `comptime.for.continue { values: [reg...] }` — the nearest enclosing `comptime.for` (schema 1.54); a break's `values` define its results and a continue's its body's arguments for the next iteration, one per register (schema 1.85) |
 | `MatchNext` / `MatchComplete` | `match.next { values: [reg...] }` / `match.complete { values: [reg...] }` — `hlcf.match.next`/`hlcf.match.complete`: leave the nearest enclosing `match` case for the next case or for the op's end (schema 1.74); a `match.next`'s `values` (schema 1.84) define the next region's arguments, one per argument, and a `match.complete`'s (schema 1.85) the op's results, one per result |
-| `Raise` | `raise { src: %rN, label: option<tryN> }` — raise the error in `src`, leaving every enclosing region for the handler of the nearest `try` carrying `label` whose body holds it (`lit.try.raise`), or the function when `label` is absent (`lit.error_return`); it ends any region (schema 1.90; before, an instruction; schema 1.92 adds `label`, before which a raise reached the nearest `try` with a handler) |
+| `Raise` | `raise { src: %rN, label: option<tryN>, values: [%rN...] }` — raise the error in `src`, leaving every enclosing region for the handler of the nearest `try` carrying `label` whose body holds it (`lit.try.raise`), its values defining that handler's arguments, or the function when `label` is absent (`lit.error_return`), carrying no values; it ends any region (schema 1.90; before, an instruction; schema 1.92 adds `label`, before which a raise reached the nearest `try` with a handler; schema 1.93 adds `values`) |
 | `Unreachable` | `unreachable {}` — `hlcf.unreachable` (schema 1.54) |
 
 The structured terminators end only the region of their op; the verifier

@@ -267,7 +267,7 @@ where
         return Ok(flow);
     };
     match block.term {
-        MirTerm::TryYield
+        MirTerm::TryYield(_)
         | MirTerm::Yield(_)
         | MirTerm::ComptimeYield(_)
         | MirTerm::ElifCond { .. } => add_state(scan, &mut flow.normal, Some(&state)),
@@ -605,6 +605,7 @@ where
         body,
         handler,
         orelse,
+        ..
     } = instr
     else {
         return Ok(Flow::falls_off(entry));
@@ -712,7 +713,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
     /// `try`, its handler's live-in.
     fn live_out(&self, term: &MirTerm, exit: &S::State) -> S::State {
         match term {
-            MirTerm::TryYield
+            MirTerm::TryYield(_)
             | MirTerm::Yield(_)
             | MirTerm::ComptimeYield(_)
             | MirTerm::ElifCond { .. } => exit.clone(),
@@ -884,6 +885,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             body,
             handler,
             orelse,
+            ..
         } = instr
         else {
             return exit.clone();

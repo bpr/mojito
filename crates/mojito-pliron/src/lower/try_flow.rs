@@ -8,37 +8,37 @@ use mojito_types::types::TyKind;
 impl FnLowering<'_> {
     /// `lit.try`, a control-flow node like `hlcf`'s: each part is a block of
     /// its own, entered and left by explicit edges. The body lowers with a
-    /// fresh landing block as the target of the raises naming `label`; the
-    /// landing block binds the staged error and enters the handler;
-    /// `orelse` runs only on normal completion. MIR lowering copied the
-    /// `finally` before each exit, so none remains here.
+    /// landing block taking the handler's arguments as the target of the
+    /// raises naming `label`; the landing block binds the staged error and
+    /// enters the handler. The body's `lit.try.yield` enters `orelse` with
+    /// its arguments, or the exit with the results without one, and the
+    /// handler's and `orelse`'s enter the exit with the results. MIR
+    /// lowering copied the `finally` before each exit, so none remains
+    /// here.
     pub(super) fn lower_try(
         &mut self,
         ctx: &mut Context,
-        label: TryLabel,
-        body: &[MirBlock],
-        handler: Option<&(Option<u32>, Vec<MirBlock>)>,
-        orelse: Option<&[MirBlock]>,
+        (label, results, body): (TryLabel, &[Reg], &[MirBlock]),
+        (handler_args, handler): (&[Reg], Option<&Handler>),
+        (else_args, orelse): (&[Reg], Option<&[MirBlock]>),
     ) -> Result<(), PlironError> {
-        let region = self.region.expect("lowering is inside a function");
-        let after = BasicBlock::new(ctx, None, vec![]);
-        after.insert_at_back(region, ctx);
-        let landing = BasicBlock::new(ctx, None, vec![]);
-        landing.insert_at_back(region, ctx);
-        let normal_exit = BasicBlock::new(ctx, None, vec![]);
-        normal_exit.insert_at_back(region, ctx);
+        let exit = self.carrier(ctx, results)?;
+        let landing = self.carrier(ctx, handler_args)?;
+        let else_entry = orelse.map(|_| self.carrier(ctx, else_args)).transpose()?;
 
         // Body: raises naming this `try` land on its landing block.
         self.try_frames.push(TryFrame { label, landing });
-        let body_entry = self.lower_part(ctx, body, normal_exit)?;
+        let body_entry = self.lower_part(ctx, body, else_entry.unwrap_or(exit));
         self.try_frames.pop();
+        let body_entry = body_entry?;
         // Enter the try from the enclosing block.
         let enter = BrOp::new(ctx, body_entry, vec![]);
         self.append(ctx, enter.get_operation(), None);
 
-        // Landing: the handler binds the staged error. A `try` no raise
-        // names has no handler, and its landing block no predecessor.
-        self.current = Some(landing);
+        // Landing: the handler's arguments, then the staged error bound. A
+        // `try` no raise names has no handler, and its landing block no
+        // predecessor.
+        self.enter_exit(ctx, landing)?;
         if let Some((error_var, handler_blocks)) = handler {
             if self.trace_lifecycle {
                 self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_CATCH);
@@ -63,7 +63,7 @@ impl FnLowering<'_> {
                 // No binder: the caught error is dropped on entry.
                 self.emit_release_storage(ctx, err_slot, &Ty::error())?;
             }
-            let handler_entry = self.lower_part(ctx, handler_blocks, after)?;
+            let handler_entry = self.lower_part(ctx, handler_blocks, exit)?;
             let jump = BrOp::new(ctx, handler_entry, vec![]);
             self.append(ctx, jump.get_operation(), None);
         } else {
@@ -71,27 +71,21 @@ impl FnLowering<'_> {
             self.append(ctx, unreachable.get_operation(), None);
         }
 
-        // Normal completion: `orelse` (only here), then the continuation.
-        self.current = Some(normal_exit);
-        let normal_target = match orelse {
-            Some(orelse_blocks) => self.lower_part(ctx, orelse_blocks, after)?,
-            None => after,
-        };
-        let jump = BrOp::new(ctx, normal_target, vec![]);
-        self.append(ctx, jump.get_operation(), None);
-
-        self.current = Some(after);
-        Ok(())
+        // Normal completion: `orelse`, entered only from the body.
+        if let (Some(orelse_blocks), Some(entry)) = (orelse, else_entry) {
+            self.lower_region(ctx, orelse_blocks, entry, RegionEnd::TryPart(exit))?;
+        }
+        self.enter_exit(ctx, exit)
     }
 
-    /// Lower the `try` part `blocks` into a block of its own, whose
-    /// `lit.try.yield` branches to `completed`; returns that block.
-    /// `self.current` is restored.
+    /// Lower the `try` part `blocks` into a block of its own, entered with
+    /// no values, whose `lit.try.yield` enters the carrier `completed`;
+    /// returns that block. `self.current` is restored.
     pub(super) fn lower_part(
         &mut self,
         ctx: &mut Context,
         blocks: &[MirBlock],
-        completed: Ptr<BasicBlock>,
+        completed: usize,
     ) -> Result<Ptr<BasicBlock>, PlironError> {
         let entry = self.region_entry(ctx)?;
         self.lower_region(ctx, blocks, entry, RegionEnd::TryPart(completed))?;
@@ -135,3 +129,6 @@ impl FnLowering<'_> {
         }
     }
 }
+
+/// A `try`'s handler: the slot it binds the caught error to, and its region.
+type Handler = (Option<u32>, Vec<MirBlock>);

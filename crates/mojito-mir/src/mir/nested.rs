@@ -798,7 +798,7 @@ fn materialize_named_result_exits(blocks: &mut [MirBlock], slot: VarId, n_regs: 
                 }
             }
         }
-        if matches!(block.term, MirTerm::Return(None) | MirTerm::TryYield) {
+        if matches!(block.term, MirTerm::Return(None) | MirTerm::TryYield(_)) {
             let register = Reg(*n_regs);
             *n_regs += 1;
             block.instrs.push(MirInstr::UseVar {

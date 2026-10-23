@@ -361,11 +361,11 @@ struct RuntimeStr {
 }
 
 /// One enclosing `try` body during lowering: its label, which a raise
-/// naming it carries, and the landing block such a raise jumps to, which
-/// binds the error for the handler.
+/// naming it carries, and the landing carrier such a raise enters with the
+/// handler's arguments, whose block binds the error for the handler.
 struct TryFrame {
     label: TryLabel,
-    landing: Ptr<BasicBlock>,
+    landing: usize,
 }
 
 struct FnLowering<'a> {

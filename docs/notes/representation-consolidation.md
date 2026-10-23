@@ -9,7 +9,7 @@ has them.
 
 Entries are cited by stable ID and the order is computed, so every command
 below stays valid as entries are filed and landed. Before a run, preview it
-with `--dry-run` or `scripts/roadmap.py deps R1264`. Every command runs on
+with `--dry-run` or `scripts/roadmap.py deps R1290`. Every command runs on
 Opus, with a plan pass for each entry whose `Model:` bullet says Fable.
 
 ## Where things stand (2026-10-21)
@@ -38,7 +38,7 @@ disappear. Four such gaps were found, and one of them reaches far outside
 
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
-| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R956, R1264, R1290, R1113, R890 (R733, R833, R1129, R1106, R829, and R1272 closed; R832 waits on gap D) |
+| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R956, R1290, R1113, R890 (R733, R833, R1129, R1106, R829, R1272, and R1264 closed; R832 waits on gap D) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1278, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
@@ -78,8 +78,11 @@ This gap blocks about 14 entries across four tracks (`pmir`,
     `assets/ok/try_outer_value_dies_on_raise_edge.mojo` pins it.
   - R956 is R20 applied to an initializer's fields. Still reproduces on
     both backends (10-23): the pin prints `del a` before `caught boom`.
-  - R1264 is `try.raise` carrying values, as `lit.try.raise` does; the
-    label it already carries. Its pass case still keeps the slot (10-23).
+  - R1264 closed 10-23: a `try` has results and handler and `else`
+    arguments, and `try.yield` and a labelled `raise` carry values, as
+    `lit.try.raise` does, so `mem-2-reg` promotes a slot stored in a `try`
+    part. It filed R1292 (the absent `except`/`else` stubs) and R1293 (the
+    error as an operand rather than `$err`).
   - R1290 (filed by R831) is the one raising call left without a raise
     edge: a raising `__iter__` runs inside `iter.init`.
   - R1106 closed with R831: the explicit destroy's consume precedes the
@@ -159,7 +162,7 @@ entry's probe is "one instance per `n` where the pin has one".
    Run what is left:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R956 --only R1264 --only R1290 \
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R956 --only R1290 \
      --only R1113 --only R890 -n 0
    ```
 

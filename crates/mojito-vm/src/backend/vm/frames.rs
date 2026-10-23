@@ -174,13 +174,16 @@ impl VmBackend {
                 Transfer::Raise {
                     src,
                     label: Some(label),
+                    values,
                 } => {
                     let error =
                         match self.raise_register(prog, frame.function, &frame.registers, src) {
                             RuntimeError::Raised(error) => error,
                             raised => return Err(raised),
                         };
-                    let slot = frame.cursor.catch(blocks, label)?;
+                    let slot = frame
+                        .cursor
+                        .catch(blocks, label, values, &mut frame.registers)?;
                     if let Value::Error(message) = &error {
                         self.record_lifecycle(format!("catch {message}"));
                     }
@@ -190,7 +193,9 @@ impl VmBackend {
                     self.frames.push(frame);
                     continue;
                 }
-                Transfer::Raise { src, label: None } => {
+                Transfer::Raise {
+                    src, label: None, ..
+                } => {
                     let raised = self.raise_register(prog, frame.function, &frame.registers, src);
                     match raised {
                         RuntimeError::Raised(error)

@@ -90,13 +90,21 @@ impl FnLowering<'_> {
 
     /// The innermost raise-edge target: the innermost enclosing `try`'s
     /// landing block, else the raising function's propagate block. The staged
-    /// error must already sit in the err slot when jumping here.
+    /// error must already sit in the err slot when jumping here. Such an
+    /// edge is no MIR `raise`, so it carries no values, and a landing block
+    /// taking the handler's arguments refuses it.
     pub(super) fn raise_edge_target(
         &mut self,
         ctx: &mut Context,
     ) -> Result<Ptr<BasicBlock>, PlironError> {
         match self.try_frames.last() {
-            Some(frame) => Ok(frame.landing),
+            Some(frame) if self.carrier_takes_values(frame.landing) => Err(self.unsupported(
+                "a raise inside an instruction's lowering entering a handler that takes \
+                 arguments"
+                    .into(),
+                None,
+            )),
+            Some(frame) => Ok(self.carrier_block(frame.landing)),
             None => self.ensure_propagate_block(ctx),
         }
     }
@@ -303,14 +311,16 @@ impl FnLowering<'_> {
 
     /// A `raise` terminator: materialize the raised value as an owned error
     /// in the staging slot and jump to the landing block of the `try` it
-    /// names, or, naming none, to the raising function's propagate block.
-    /// A raise edge's error is the error its call raised, staged whole and
-    /// traced once, where it was raised.
+    /// names, carrying `values` into the handler's arguments, or, naming
+    /// none, to the raising function's propagate block. A raise edge's
+    /// error is the error its call raised, staged whole and traced once,
+    /// where it was raised.
     pub(super) fn lower_raise(
         &mut self,
         ctx: &mut Context,
         src: Reg,
         label: Option<TryLabel>,
+        values: &[Reg],
     ) -> Result<(), PlironError> {
         let err_slot = self.ensure_err_slot(ctx);
         if self.edge_errors.contains(&src.0) {
@@ -327,19 +337,24 @@ impl FnLowering<'_> {
                 self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_RAISE);
             }
         }
-        let target = match label {
-            Some(label) => self.raise_target(label)?,
-            None => self.ensure_propagate_block(ctx)?,
+        let (target, operands) = match label {
+            Some(label) => {
+                let landing = self.raise_target(label)?;
+                let operands = self.carry(ctx, landing, values)?;
+                self.transfer(values);
+                (self.carrier_block(landing), operands)
+            }
+            None => (self.ensure_propagate_block(ctx)?, Vec::new()),
         };
-        let jump = BrOp::new(ctx, target, vec![]);
+        let jump = BrOp::new(ctx, target, operands);
         self.append(ctx, jump.get_operation(), Some(src));
         Ok(())
     }
 
-    /// The landing block of the nearest enclosing `try` body carrying
-    /// `label`, which a raise naming it jumps to, as `lit.try.raise`
+    /// The landing carrier of the nearest enclosing `try` body carrying
+    /// `label`, which a raise naming it enters, as `lit.try.raise`
     /// branches to its `try`'s handler.
-    fn raise_target(&self, label: TryLabel) -> Result<Ptr<BasicBlock>, PlironError> {
+    fn raise_target(&self, label: TryLabel) -> Result<usize, PlironError> {
         self.try_frames
             .iter()
             .rev()

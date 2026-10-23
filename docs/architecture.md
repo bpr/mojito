@@ -620,8 +620,12 @@ a loop's arguments stays a parallel copy. A `break`, `continue`,
 `match.next`, or `match.complete` resolves to the innermost region op it
 names (`mir::region_exit`, `RegionFrame::names`), a `try` part's exit
 too, and a raise to the landing block of the `try` its label names, or
-to the function's propagate block. `hlcf.unreachable` is
-`llvm.unreachable`.
+to the function's propagate block. A `try`'s exit, landing block, and
+`else` each take its values as an `if`'s exit does: a labelled raise
+carries the handler's arguments, the body's `try.yield` the `else`'s (the
+results without one), and the handler's and `else`'s the results; the
+landing block binds them before it binds the staged error.
+`hlcf.unreachable` is `llvm.unreachable`.
 Concrete MIR reaches `compile` structured, every region one block, as
 `mir::verify` requires. Owned register
 temporaries follow the region tree: one is released in the block defining
@@ -3213,7 +3217,8 @@ pub enum MirTerm {
 ```
 
 `TryYield` (`lit.try.yield`) completes a `try` part and never ends a function
-body. `Raise` (MIR text 1.90) raises its register and may end any region:
+body; its values (MIR text 1.93) define the `else`'s arguments or the
+`try`'s results. `Raise` (MIR text 1.90) raises its register and may end any region:
 with a label (MIR text 1.92), it leaves every enclosing region for the
 handler of the nearest `try` carrying that label whose body holds it, and
 without one it leaves the function, as upstream's `LowerSemanticCF` lowers
@@ -4091,8 +4096,11 @@ result—not permission for compatibility APIs to guess from unchecked input.
 ```rust
 Try {
     label: TryLabel,
+    results: Vec<Reg>,
     body: Vec<MirBlock>,
+    handler_args: Vec<Reg>,
     handler: Option<(Option<VarId>, Vec<MirBlock>)>,
+    else_args: Vec<Reg>,
     orelse: Option<Vec<MirBlock>>,
 }
 ```
@@ -4111,6 +4119,13 @@ The structure is upstream's `lit.try` once `lowerTryFinally` has run:
   exit of the parts (*Stage 5*)
 - `return`, `break`, `continue`, and a raise naming an enclosing `try`
   leave the region as non-normal flows
+- its values (MIR text 1.93) are `lit.try`'s, which only `mem-2-reg`
+  gives it: the body takes none (`TryOp::getEntryTargets`); every raise
+  naming the `try` carries its handler's arguments, `handler_args`, as
+  `lit.try.raise`'s operands do (`mir::try_raises_mut` finds them); the
+  body's `try.yield` carries the `else`'s, `else_args`; and the handler's
+  and `else`'s `try.yield`s carry the `results`, which the body's carries
+  instead when there is no `else` (R1292)
 
 ### Structured Region Ops
 
@@ -5892,21 +5907,20 @@ point where a slot declared in a loop is uninitialized again.
   variant slot for each region a terminator enters (a loop body with a
   `continue`, a `comptime for` body, an elif's arm, each later elif
   condition, the else region after elifs, a `match` case after one a
-  `match.next` leaves, and the else region after the last), init operands
-  for a body the op enters too, and one result per variant slot, bound as
-  the slot's value after the op; each region terminator appends the
+  `match.next` leaves, the else region after the last, a `try`'s handler
+  when a raise names the `try`, and its `else` when its body completes),
+  init operands for a body the op enters too, and one result per variant
+  slot, bound as the slot's value after the op; each region terminator
+  (a labelled `raise` included, as `lit.try.raise`) appends the
   current values its target needs (`insertVariants`). Where a slot holds
   nothing on an edge, the edge carries a `uninitmem` constant
   (`Const::UninitMem`, upstream's `currValueOrUndef`), which the VM reads
   as uninitialized storage and the native backend as `llvm.undef`. A read
   needs no carrying, so one inside a `try` part or a `comptime for` body
   of a value stored outside it is promoted (the elaborator renumbers only
-  the registers each clone of a body defines). A `try` carries no values,
-  so a slot stored inside a `try` part and allocated outside it keeps its
-  slot (R1264), where upstream's `lit.try` carries it through its results
-  and except arguments; and a slot nothing stores or declares is a
-  compile-time parameter's binding the elaborator substitutes by name
-  (R950), and keeps its slot. The other mentions go and the slot leaves
+  the registers each clone of a body defines). A slot nothing stores or
+  declares is a compile-time parameter's binding the elaborator
+  substitutes by name (R950), and keeps its slot. The other mentions go and the slot leaves
   the function (`mir::retire_slots`).
   Its `--timings` counters are `promoted_slots` and
   `erased_slot_instructions`.
@@ -6741,9 +6755,11 @@ the host stack. Reaching `hlcf.unreachable` is a runtime error.
 A `try`, as upstream's `TryOp::interpret`, enters its body as one more
 cursor level. `lit.try.yield` ends a part: the body moves to the `else`
 region when there is one, and otherwise, like the end of `except` or
-`else`, leaves the `try`. A raise naming a `try` (`lit.try.raise`)
-unwinds the cursor to that `try`'s body, enters its `except`, and binds
-the error to the handler's variable; the label names a `try` of the same
+`else`, leaves the `try`, binding the values it carries to the `else`'s
+arguments or the `try`'s results. A raise naming a `try`
+(`lit.try.raise`) unwinds the cursor to that `try`'s body, enters its
+`except`, binds the values it carries to the handler's arguments, and
+binds the error to the handler's variable; the label names a `try` of the same
 function, so the frame stack is untouched. A `return`, `break`, or
 `continue` crosses `try` levels as it crosses any other, and each
 `finally` it crosses already ran before it, copied there by MIR lowering.

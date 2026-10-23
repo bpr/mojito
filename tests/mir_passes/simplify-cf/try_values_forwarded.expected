@@ -1,0 +1,37 @@
+  functions: [
+      fn {
+        name: forwarded,
+        registers: 17,
+        vars: 1,
+        var_names: [c],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: IntLiteral }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r14, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }, reg_loc { reg: %r14, location: absent }, reg_loc { reg: %r15, location: absent }, reg_loc { reg: %r16, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              const { dest: %r2, value: int_literal(1) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              value.copy { dest: %r1, value: %r0 },
+              binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent },
+              const { dest: %r10, value: int_literal(3) },
+              literal.materialize { dest: %r11, value: %r10, target: Int },
+              value.copy { dest: %r9, value: %r4 },
+              binary { op: mul, dest: %r12, a: %r9, b: %r11, resolved: absent, raises: absent },
+              value.copy { dest: %r14, value: %r12 }
+            ],
+            terminator: return { value: present(%r14) }
+          }
+        ]
+      }
+  ]

@@ -1773,6 +1773,7 @@ impl ReturnExit {
                 MirTerm::Raise {
                     src: error,
                     label: None,
+                    ..
                 } if function
                     .reg_types
                     .get(&error.0)
@@ -1785,6 +1786,7 @@ impl ReturnExit {
                 MirTerm::Raise {
                     src: error,
                     label: None,
+                    ..
                 } => error,
                 _ => constant(function, block, raises.ty.clone(), Const::UninitMem),
             };
@@ -1824,6 +1826,7 @@ fn routes_raises(
             MirTerm::Raise {
                 src: error,
                 label: None,
+                ..
             } => error
                 .0
                 .checked_sub(base)
@@ -2322,7 +2325,7 @@ fn closed_blocks(blocks: &[MirBlock]) -> bool {
             ) && instruction_regions(instruction)
                 .into_iter()
                 .all(|region| closed_blocks(region))
-        }) && !matches!(block.term, MirTerm::TryYield)
+        }) && !matches!(block.term, MirTerm::TryYield(_))
     })
 }
 
@@ -3739,6 +3742,7 @@ mod tests {
                     MirTerm::Raise {
                         src: Reg(0),
                         label: None,
+                        values: Vec::new(),
                     },
                 ),
             }],

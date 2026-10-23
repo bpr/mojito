@@ -1096,8 +1096,12 @@ fn verifier_rejects_an_undeclared_lifted_closure_target() {
 
 #[test]
 fn verifier_rejects_a_top_level_try_yield() {
-    let f = function(vec![block(Vec::new(), MirTerm::TryYield)], 0, &[]);
-    expect_finding(&program(f), "TryYield terminator outside a try region");
+    let f = function(
+        vec![block(Vec::new(), MirTerm::TryYield(Vec::new()))],
+        0,
+        &[],
+    );
+    expect_finding(&program(f), "`try.yield` outside the region it ends");
 }
 
 #[test]
@@ -1182,6 +1186,7 @@ fn verifier_rejects_unprotected_raises_in_nonraising_functions() {
             MirTerm::Raise {
                 src: Reg(0),
                 label: None,
+                values: Vec::new(),
             },
         )],
         1,
@@ -2124,6 +2129,7 @@ fn raising_call() -> Vec<MirInstr> {
                 MirTerm::Raise {
                     src: Reg(4),
                     label: Some(TRY),
+                    values: Vec::new(),
                 },
             )],
             elifs: Vec::new(),
@@ -2140,8 +2146,11 @@ const TRY: TryLabel = TryLabel(0);
 fn try_region(body: Vec<MirBlock>, handler: Option<Vec<MirBlock>>) -> MirInstr {
     MirInstr::Try {
         label: TRY,
+        results: Vec::new(),
         body,
+        handler_args: Vec::new(),
         handler: handler.map(|blocks| (None, blocks)),
+        else_args: Vec::new(),
         orelse: None,
     }
 }
@@ -2210,9 +2219,9 @@ fn verifier_accepts_a_drop_of_a_slot_some_path_left_live() {
     // The body moves `x` after its last raise, so its handler still owns it.
     let body = vec![block(
         [raising_call(), vec![move_x()]].concat(),
-        MirTerm::TryYield,
+        MirTerm::TryYield(Vec::new()),
     )];
-    let handler = vec![block(vec![DROP_X], MirTerm::TryYield)];
+    let handler = vec![block(vec![DROP_X], MirTerm::TryYield(Vec::new()))];
     let raising = vec![block(
         [define_x(), vec![try_region(body, Some(handler))]].concat(),
         MirTerm::Return(None),
@@ -2313,8 +2322,11 @@ fn verifier_rejects_a_drop_of_a_slot_a_region_op_ended() {
         1
     );
     let handled = try_region(
-        region([vec![DROP_X], raising_call()].concat(), MirTerm::TryYield),
-        Some(region(vec![DROP_X], MirTerm::TryYield)),
+        region(
+            [vec![DROP_X], raising_call()].concat(),
+            MirTerm::TryYield(Vec::new()),
+        ),
+        Some(region(vec![DROP_X], MirTerm::TryYield(Vec::new()))),
     );
     let in_arm = if_region(yields(vec![handled]), yields(Vec::new()));
     let findings = slot_end_findings(vec![block(

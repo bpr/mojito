@@ -73,7 +73,10 @@ fn representative_instruction_and_terminator_mappings_are_pinned() {
         "unsupported"
     );
     assert_eq!(terminator_mnemonic(&MirTerm::Unreachable), "unreachable");
-    assert_eq!(terminator_mnemonic(&MirTerm::TryYield), "try.yield");
+    assert_eq!(
+        terminator_mnemonic(&MirTerm::TryYield(Vec::new())),
+        "try.yield"
+    );
 }
 
 #[test]

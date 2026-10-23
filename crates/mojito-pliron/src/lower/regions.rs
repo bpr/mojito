@@ -28,8 +28,9 @@ pub(super) enum RegionEnd {
     /// An elif condition: `if.elifcond.yield` branches to its arm, carrier
     /// `then`, or on to carrier `next`, carrying its values to both.
     ElifCond { then: usize, next: usize },
-    /// A `try` part: `lit.try.yield` branches to the block given.
-    TryPart(Ptr<BasicBlock>),
+    /// A `try` part: `lit.try.yield` enters carrier `0`, the `else`'s
+    /// arguments or the op's results, with its values.
+    TryPart(usize),
 }
 
 /// A region op a `break`, `continue`, `match.next`, or `match.complete`
@@ -199,11 +200,9 @@ impl FnLowering<'_> {
                 self.append(ctx, branch.get_operation(), Some(*cond));
                 Ok(())
             }
-            (MirTerm::TryYield, RegionEnd::TryPart(completed)) => {
+            (MirTerm::TryYield(values), RegionEnd::TryPart(completed)) => {
                 self.release_leaving_temps(ctx, open, term)?;
-                let jump = BrOp::new(ctx, completed, vec![]);
-                self.append(ctx, jump.get_operation(), None);
-                Ok(())
+                self.branch_carrying(ctx, completed, values)
             }
             _ => Err(self.unsupported(
                 format!(
@@ -268,9 +267,18 @@ impl FnLowering<'_> {
         self.carriers[carrier].block
     }
 
+    /// Whether an edge entering `carrier` must carry values.
+    pub(super) fn carrier_takes_values(&self, carrier: usize) -> bool {
+        !self.carriers[carrier].regs.is_empty()
+    }
+
     /// A fresh block entered with values for `regs`: one argument per
     /// scalar, staging storage per aggregate.
-    fn carrier(&mut self, ctx: &mut Context, regs: &[Reg]) -> Result<usize, PlironError> {
+    pub(super) fn carrier(
+        &mut self,
+        ctx: &mut Context,
+        regs: &[Reg],
+    ) -> Result<usize, PlironError> {
         let mut slots = Vec::with_capacity(regs.len());
         let mut arguments = Vec::new();
         for reg in regs {
@@ -325,7 +333,7 @@ impl FnLowering<'_> {
     /// copied into the target's staging storage. Ownership moves with the
     /// value; [`Self::transfer`] gives it up once every edge carrying it is
     /// lowered.
-    fn carry(
+    pub(super) fn carry(
         &mut self,
         ctx: &mut Context,
         carrier: usize,
@@ -379,14 +387,14 @@ impl FnLowering<'_> {
 
     /// The edge carrying `values` is lowered: owned temporaries among them
     /// belong to the block it enters now.
-    fn transfer(&mut self, values: &[Reg]) {
+    pub(super) fn transfer(&mut self, values: &[Reg]) {
         for value in values {
             self.owned_temps.remove(&value.0);
         }
     }
 
     /// Continue in `exit`'s block after a region op, its results bound.
-    fn enter_exit(&mut self, ctx: &mut Context, exit: usize) -> Result<(), PlironError> {
+    pub(super) fn enter_exit(&mut self, ctx: &mut Context, exit: usize) -> Result<(), PlironError> {
         self.current = Some(self.carriers[exit].block);
         self.bind_carried(ctx, exit, true)
     }

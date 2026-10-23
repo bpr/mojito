@@ -107,12 +107,16 @@ impl RegionCursor {
                 let values = read(regs, values);
                 self.resolve_leave(root, frame, resume, values, regs)?;
             }
-            MirTerm::TryYield => self.try_yield(root)?,
+            MirTerm::TryYield(values) => {
+                let values = read(regs, values);
+                self.try_yield(root, values, regs)?;
+            }
             MirTerm::Return(value) => return Ok(Transfer::Return(*value)),
-            MirTerm::Raise { src, label } => {
+            MirTerm::Raise { src, label, values } => {
                 return Ok(Transfer::Raise {
                     src: *src,
                     label: *label,
+                    values: read(regs, values),
                 });
             }
             MirTerm::Unreachable => {
@@ -133,12 +137,15 @@ impl RegionCursor {
     }
 
     /// `lit.try.raise`: unwind to the body of the `try` labelled `label`
-    /// around the cursor and enter its `except` region, returning the
-    /// variable that region binds the error to.
+    /// around the cursor and enter its `except` region, `values` defining
+    /// its arguments, returning the variable that region binds the error
+    /// to.
     pub(super) fn catch(
         &mut self,
         root: &[MirBlock],
         label: TryLabel,
+        values: Vec<Value>,
+        regs: &mut [Value],
     ) -> Result<Option<VarId>, RuntimeError> {
         let depth = (1..self.levels.len())
             .rev()
@@ -149,7 +156,12 @@ impl RegionCursor {
                     label.0
                 ))
             })?;
-        let MirInstr::Try { handler, .. } = self.op(root, depth)? else {
+        let MirInstr::Try {
+            handler,
+            handler_args,
+            ..
+        } = self.op(root, depth)?
+        else {
             return Err(lost_position());
         };
         let (slot, _) = handler.as_ref().ok_or_else(|| {
@@ -160,6 +172,7 @@ impl RegionCursor {
         })?;
         self.levels.truncate(depth + 1);
         self.levels[depth] = RegionLevel::entry(RegionRef::TryHandler);
+        store(regs, handler_args, values);
         Ok(*slot)
     }
 
@@ -214,18 +227,32 @@ impl RegionCursor {
     }
 
     /// `lit.try.yield`: end the innermost `try` part, entering the `try`'s
-    /// `else` region from its body when it has one, else leaving the `try`.
-    fn try_yield(&mut self, root: &[MirBlock]) -> Result<(), RuntimeError> {
+    /// `else` region from its body when it has one, else leaving the `try`,
+    /// `values` defining the `else`'s arguments or the `try`'s results.
+    fn try_yield(
+        &mut self,
+        root: &[MirBlock],
+        values: Vec<Value>,
+        regs: &mut [Value],
+    ) -> Result<(), RuntimeError> {
         let depth = self.levels.len() - 1;
-        let MirInstr::Try { orelse, .. } = self.op(root, depth)? else {
+        let MirInstr::Try {
+            results,
+            else_args,
+            orelse,
+            ..
+        } = self.op(root, depth)?
+        else {
             return Err(lost_position());
         };
         match self.levels[depth].region {
             RegionRef::TryBody(_) if orelse.is_some() => {
                 self.levels[depth] = RegionLevel::entry(RegionRef::TryElse);
+                store(regs, else_args, values);
             }
             RegionRef::TryBody(_) | RegionRef::TryHandler | RegionRef::TryElse => {
                 self.levels.pop();
+                store(regs, results, values);
                 self.advance();
             }
             _ => return Err(lost_position()),
@@ -309,8 +336,13 @@ pub(super) enum Transfer {
     /// A `return` of the register it names: the driver's to run.
     Return(Option<Reg>),
     /// A `raise` of `src`, naming the `try` it reaches or none when it
-    /// leaves the function: the driver's to run.
-    Raise { src: Reg, label: Option<TryLabel> },
+    /// leaves the function, with the values it carries into that `try`'s
+    /// handler: the driver's to run.
+    Raise {
+        src: Reg,
+        label: Option<TryLabel>,
+        values: Vec<Value>,
+    },
 }
 
 /// One list's position: a block and an instruction in it, and which region
@@ -428,7 +460,8 @@ fn results(op: &MirInstr) -> Result<&[Reg], RuntimeError> {
     match op {
         MirInstr::If { results, .. }
         | MirInstr::Loop { results, .. }
-        | MirInstr::Match { results, .. } => Ok(results),
+        | MirInstr::Match { results, .. }
+        | MirInstr::Try { results, .. } => Ok(results),
         _ => Err(lost_position()),
     }
 }

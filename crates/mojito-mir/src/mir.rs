@@ -3676,6 +3676,7 @@ impl<'a> Flatten<'a> {
                 term: MirTerm::Raise {
                     src: raises.error,
                     label: self.raise_target,
+                    values: Vec::new(),
                 },
             }],
             elifs: Vec::new(),
@@ -4615,6 +4616,7 @@ fn first_raised_error(blocks: &[MirBlock], label: TryLabel) -> Option<Reg> {
                 MirTerm::Raise {
                     src,
                     label: Some(found),
+                    ..
                 } if found == label => Some(src),
                 _ => None,
             })

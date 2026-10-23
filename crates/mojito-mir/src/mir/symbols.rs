@@ -730,10 +730,12 @@ mod tests {
         let mut table = SymbolTable::new(["Box", "Other"]);
         let mut function = body(vec![MirInstr::Try {
             label: TryLabel(0),
+            results: Vec::new(),
             body: vec![MirBlock {
                 instrs: Vec::new(),
-                term: MirTerm::TryYield,
+                term: MirTerm::TryYield(Vec::new()),
             }],
+            handler_args: Vec::new(),
             handler: Some((
                 None,
                 vec![MirBlock {
@@ -741,9 +743,10 @@ mod tests {
                         dest: Reg(0),
                         ty: Ty::new(TyKind::Struct("Box".to_string(), Vec::new())),
                     }],
-                    term: MirTerm::TryYield,
+                    term: MirTerm::TryYield(Vec::new()),
                 }],
             )),
+            else_args: Vec::new(),
             orelse: None,
         }]);
         function.n_regs = 1;

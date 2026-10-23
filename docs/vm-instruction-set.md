@@ -915,24 +915,26 @@ elaboration destroyed before it what it still held.
 ### `try.yield` — Complete Region
 
 ```text
-try.yield
+try.yield [%values...]
 ```
 
 Marks normal completion of a try sub-region. It is not a valid ordinary function
 terminator. The region runner translates it to normal flow and allows the
-surrounding `try` instruction to continue with `else` or complete.
+surrounding `try` instruction to continue with `else` or complete, binding
+its values to the `else`'s arguments or the `try`'s results.
 
 ### `raise` — Raise Error
 
 ```text
-raise %source [try0]
+raise %source [try0] [%values...]
 ```
 
 Raises the value in `%source`. An `Error` or `String` supplies its message;
 another value reports its runtime type. It ends any region, as upstream's
 `raise` ends its block: the exceptional outcome leaves every enclosing
 region for the handler of the nearest `try` carrying its label whose body
-holds it (`lit.try.raise`), or, with no label, out of the current function
+holds it (`lit.try.raise`), binding its values to that handler's
+arguments, or, with no label, out of the current function
 (`lit.error_return`). Drop elaboration has already destroyed, before it,
 what that handler does not read.
 

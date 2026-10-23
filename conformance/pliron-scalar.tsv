@@ -1089,6 +1089,7 @@ assets/ok/try_region_local_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_region_shadowed_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_return_destroys_held_values.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/try_slot_carried_through_results.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tstring_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tstring_generic_interpolation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tstring_lazy.mojo	-	ineligible	no-scalar-entry-shape

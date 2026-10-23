@@ -453,7 +453,7 @@ fn flow(
             }
         } else if matches!(
             block.term,
-            MirTerm::TryYield
+            MirTerm::TryYield(_)
                 | MirTerm::Yield(_)
                 | MirTerm::ComptimeYield(_)
                 | MirTerm::ElifCond { .. }
@@ -664,6 +664,7 @@ fn try_flow(
         body,
         handler,
         orelse,
+        ..
     } = instruction
     else {
         return RegionFlow {

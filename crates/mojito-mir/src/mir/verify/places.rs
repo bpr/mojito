@@ -30,34 +30,14 @@ pub(super) fn verify_terminator(
                 ));
             }
         }
-        MirTerm::Raise { label: None, .. } => {
-            if !function.raises {
-                errors.push(format!(
-                    "{prefix}: unprotected raise in nonraising function"
-                ));
-            }
+        MirTerm::Raise { label: None, .. } if !function.raises => {
+            errors.push(format!(
+                "{prefix}: unprotected raise in nonraising function"
+            ));
         }
-        MirTerm::Raise {
-            label: Some(label), ..
-        } => match context.raise_target(*label) {
-            None => errors.push(format!(
-                "{prefix}: `raise` names try{}, which no enclosing try body carries",
-                label.0
-            )),
-            Some(false) => errors.push(format!(
-                "{prefix}: `raise` names try{}, which has no handler",
-                label.0
-            )),
-            Some(true) => {}
-        },
-        MirTerm::TryYield => {
-            if !context.is_try_part() {
-                errors.push(format!(
-                    "{prefix}: TryYield terminator outside a try region"
-                ));
-            }
-        }
-        MirTerm::Yield(_)
+        MirTerm::Raise { .. }
+        | MirTerm::TryYield(_)
+        | MirTerm::Yield(_)
         | MirTerm::ElifCond { .. }
         | MirTerm::Break { .. }
         | MirTerm::Continue { .. }

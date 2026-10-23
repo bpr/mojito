@@ -724,6 +724,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `mem-2-reg` promotes a trivially copyable local stored inside a `try`
+  part and declared outside it, as upstream's `Mem2Reg` carries it through
+  `lit.try`'s region values (R1264). A `try` has results and handler and
+  `else` arguments, a `try.yield` carries the values entering the `else`
+  or leaving the `try`, and a labelled `raise` carries the values entering
+  its handler, as `lit.try.raise`'s operands do; the VM binds them on each
+  edge, Pliron lowers the `try`'s exit, landing block, and `else` as block
+  carriers, and `simplify-cf` forwards a removed `try`'s values. A local
+  assigned in a `try` inside a loop is now carried through the loop too
+  (`assets/ok/try_slot_carried_through_results.mojo`). Every corpus
+  fixture's output is unchanged. The MIR text format is 1.93 and the
+  package format 83.
+
 - `inline_cost`, the size a plain `@always_inline` callee is measured by,
   prices a `for` loop by its operations rather than at the whole bound:
   the bodies of the `__iter__` and `__next__` its protocol calls, the

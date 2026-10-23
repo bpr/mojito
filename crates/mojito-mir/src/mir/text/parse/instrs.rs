@@ -824,8 +824,11 @@ impl Decoder {
                 };
                 Some(MirInstr::Try {
                     label,
+                    results: self.added_regs(fields, "results"),
                     body,
+                    handler_args: self.added_regs(fields, "handler_arguments"),
                     handler,
+                    else_args: self.added_regs(fields, "else_arguments"),
                     orelse,
                 })
             }
@@ -950,7 +953,7 @@ impl Decoder {
                 );
                 None
             }
-            "try.yield" => Some(MirTerm::TryYield),
+            "try.yield" => Some(MirTerm::TryYield(self.added_regs(fields, "values"))),
             "yield" => Some(MirTerm::Yield(self.req(
                 value,
                 fields,
@@ -991,7 +994,11 @@ impl Decoder {
                     self.unlabelled_tries = true;
                     None
                 };
-                Some(MirTerm::Raise { src, label })
+                Some(MirTerm::Raise {
+                    src,
+                    label,
+                    values: self.added_regs(fields, "values"),
+                })
             }
             "unreachable" => Some(MirTerm::Unreachable),
             other => {
@@ -1177,6 +1184,7 @@ fn infer_try_labels(blocks: &mut [MirBlock], next: &mut u32, target: Option<TryL
                 body,
                 handler,
                 orelse,
+                ..
             } = instruction
             {
                 *label = TryLabel(*next);

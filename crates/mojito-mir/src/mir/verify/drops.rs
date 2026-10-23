@@ -136,7 +136,7 @@ impl<'a> Walk<'a> {
         let out = self.block(0, entry.clone(), block, report);
         match (&block.term, out.normal.as_ref()) {
             (
-                MirTerm::TryYield
+                MirTerm::TryYield(_)
                 | MirTerm::Yield(_)
                 | MirTerm::ComptimeYield(_)
                 | MirTerm::ElifCond { .. },
@@ -356,6 +356,7 @@ impl<'a> Walk<'a> {
             body,
             handler,
             orelse,
+            ..
         } = instruction
         else {
             return Flow {

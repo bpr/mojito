@@ -70,7 +70,7 @@ fn verifier_findings_locate_terminator_blocks() {
         .find(|diagnostic| {
             diagnostic
                 .message
-                .contains("TryYield terminator outside a try region")
+                .contains("`try.yield` outside the region it ends")
         })
         .expect("misplaced try.yield finding");
     assert_eq!(diagnostic.context, ["function/identity/bb0"]);

@@ -34,7 +34,7 @@ impl Flatten<'_> {
         parts: TryParts<'_>,
     ) {
         let Some(finally) = finalbody.first().filter(|finally| {
-            !finally.instrs.is_empty() || !matches!(finally.term, MirTerm::TryYield)
+            !finally.instrs.is_empty() || !matches!(finally.term, MirTerm::TryYield(_))
         }) else {
             return;
         };
@@ -45,7 +45,7 @@ impl Flatten<'_> {
             self.paste_before_exits(&mut paste, part, &mut Vec::new());
             if let Some(block) = part
                 .first_mut()
-                .filter(|block| matches!(block.term, MirTerm::TryYield))
+                .filter(|block| matches!(block.term, MirTerm::TryYield(_)))
             {
                 self.paste_finally(&mut paste, block);
             }
@@ -82,6 +82,7 @@ impl Flatten<'_> {
             term: MirTerm::Raise {
                 src: caught,
                 label: self.raise_target,
+                values: Vec::new(),
             },
         }];
         (Some(slot), blocks)
@@ -137,7 +138,7 @@ impl Flatten<'_> {
             block.instrs.len()
         };
         let mut pasted = Vec::new();
-        if !matches!(copy.term, MirTerm::TryYield) {
+        if !matches!(copy.term, MirTerm::TryYield(_)) {
             if let MirTerm::Return(Some(value)) = block.term
                 && !self.returns_reference
                 && let Some(ty) = self.f.reg_types.get(&value.0).cloned()
@@ -222,6 +223,7 @@ fn framed_regions_mut(
             body,
             handler,
             orelse,
+            ..
         } => std::iter::once((Some(RegionFrame::Try(*label)), body))
             .chain(handler.iter_mut().map(|(_, blocks)| (None, blocks)))
             .chain(orelse.iter_mut().map(|blocks| (None, blocks)))

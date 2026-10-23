@@ -31,15 +31,13 @@
 //! argument per variant slot for each region a terminator enters (a loop's
 //! or `comptime for`'s body, an elif's arm and later conditions, the else
 //! region after elifs, a `match` case after one a `match.next` leaves, and
-//! its else region), init operands for a body the op enters too, and one
-//! result per variant slot, which the region terminators define. Where the
-//! slot holds nothing on an edge, the edge carries an `uninitmem` constant,
-//! upstream's `currValueOrUndef`. A `try` carries no values, so a slot
-//! stored inside a `try` part and allocated outside it keeps its slot,
-//! where upstream carries it through `lit.try`'s results and except
-//! arguments. A slot nothing stores or declares is a compile-time
-//! parameter's binding, which the elaborator substitutes, and keeps its
-//! slot.
+//! its else region, a `try`'s handler when a raise names the `try`, and its
+//! `else` when its body completes), init operands for a body the op enters
+//! too, and one result per variant slot, which the region terminators
+//! define. Where the slot holds nothing on an edge, the edge carries an
+//! `uninitmem` constant, upstream's `currValueOrUndef`. A slot nothing
+//! stores or declares is a compile-time parameter's binding, which the
+//! elaborator substitutes, and keeps its slot.
 
 use super::canonicalize::definition_counts;
 use super::pre_elaboration::BodyPass;
@@ -50,7 +48,7 @@ use mojito_mir::mir::{
     Const, MirBlock, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirTerm, Reg,
     RegionFrame, UseMode, count_register_reads, instruction_regions, instruction_regions_mut,
     instruction_slots, loop_continues_mut, match_nexts_mut, region_exit, renumber_block_slots,
-    retire_slots,
+    retire_slots, try_raises_mut,
 };
 use mojito_types::types::Ty;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -300,10 +298,9 @@ fn promote_in_regions(
 /// A slot is allocated in the innermost region holding every mention of it,
 /// where its declaration sits, as upstream's `pop.stack_allocation` does.
 /// Its stores and declarations make it variant across each op between them
-/// and that region (`userCrossesFunctionCFG`'s `enclosingNodes`); a store in
-/// a `try` part of a slot allocated outside it keeps the slot, since a `try`
-/// carries no values. Each of the `entry_stored` parameters counts as
-/// stored at the entry, as [`promotable`] counts one.
+/// and that region (`userCrossesFunctionCFG`'s `enclosingNodes`), a `try`
+/// as any other. Each of the `entry_stored` parameters counts as stored at
+/// the entry, as [`promotable`] counts one.
 fn variance(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
@@ -311,8 +308,7 @@ fn variance(
 ) -> (BTreeSet<VarId>, HashMap<usize, Vec<VarId>>) {
     let facts = Facts::of(function);
     let mut regions = Vec::new();
-    let mut tries = Vec::new();
-    collect_regions(&function.blocks, None, &mut regions, &mut tries);
+    collect_regions(&function.blocks, None, &mut regions, &mut 0);
     let mut census: HashMap<VarId, Census> = HashMap::new();
     for (list, region) in regions.iter().enumerate() {
         take_census(list, region.blocks, &mut census);
@@ -360,9 +356,6 @@ fn variance(
                 at = holder;
             }
         }
-        if crossed.iter().any(|&op| tries[op]) {
-            continue;
-        }
         slots.insert(var);
         for op in crossed {
             variants.entry(op).or_default().push(var);
@@ -380,13 +373,13 @@ struct RegionInfo<'a> {
 }
 
 /// Every region of `blocks` in preorder, `blocks` first, numbered as
-/// [`collect_lists`] numbers them; `tries` records, for each region op in
-/// preorder, whether it is a `try`.
+/// [`collect_lists`] numbers them; `ops` counts the region ops numbered so
+/// far, in preorder.
 fn collect_regions<'a>(
     blocks: &'a [MirBlock],
     parent: Option<(usize, usize)>,
     regions: &mut Vec<RegionInfo<'a>>,
-    tries: &mut Vec<bool>,
+    ops: &mut usize,
 ) {
     let list = regions.len();
     regions.push(RegionInfo { blocks, parent });
@@ -395,10 +388,10 @@ fn collect_regions<'a>(
         if held.is_empty() {
             continue;
         }
-        let op = tries.len();
-        tries.push(matches!(instruction, MirInstr::Try { .. }));
+        let op = *ops;
+        *ops += 1;
         for region in held {
-            collect_regions(region, Some((list, op)), regions, tries);
+            collect_regions(region, Some((list, op)), regions, ops);
         }
     }
 }
@@ -591,6 +584,34 @@ impl Promoter<'_> {
                 self.walk_match(&variant, cases, else_args, orelse);
                 results
             }
+            MirInstr::Try {
+                label,
+                results,
+                body,
+                handler_args,
+                handler,
+                else_args,
+                orelse,
+            } => {
+                let carried = !variant.is_empty();
+                let raised = carried && {
+                    let mut found = false;
+                    try_raises_mut(body, *label, &mut |_| found = true);
+                    found
+                };
+                let completes = carried
+                    && matches!(&body[..], [.., last] if matches!(last.term, MirTerm::TryYield(_)));
+                self.walk_region(body, Some(RegionFrame::Try(*label)), &variant, &[]);
+                if let Some((_, blocks)) = handler {
+                    let args = self.arguments(&variant, raised, handler_args);
+                    self.walk_region(blocks, None, &variant, &args);
+                }
+                if let Some(blocks) = orelse {
+                    let args = self.arguments(&variant, completes, else_args);
+                    self.walk_region(blocks, None, &variant, &args);
+                }
+                results
+            }
             _ => {
                 for region in instruction_regions_mut(instruction) {
                     self.walk_region(region, None, &variant, &[]);
@@ -685,17 +706,27 @@ impl Promoter<'_> {
     }
 
     /// Append the current value of each variant slot of the op a region
-    /// terminator enters or leaves to its values (`insertVariants`).
+    /// terminator enters or leaves to its values (`insertVariants`): a
+    /// labelled `raise` enters the handler of the `try` it names.
     fn carry(&mut self, term: &mut MirTerm, out: &mut Vec<MirInstr>) {
-        let frame = match region_exit(term) {
-            Some((target, _)) => self
+        let target = match term {
+            MirTerm::Raise {
+                label: Some(label), ..
+            } => Some(RegionFrame::Try(*label)),
+            _ => region_exit(term).map(|(target, _)| target),
+        };
+        let frame = match target {
+            Some(target) => self
                 .frames
                 .iter()
                 .rev()
                 .find(|frame| frame.kind.is_some_and(|kind| target.names(kind))),
             None if matches!(
                 term,
-                MirTerm::Yield(_) | MirTerm::ElifCond { .. } | MirTerm::ComptimeYield(_)
+                MirTerm::Yield(_)
+                    | MirTerm::ElifCond { .. }
+                    | MirTerm::ComptimeYield(_)
+                    | MirTerm::TryYield(_)
             ) =>
             {
                 self.frames.last()
@@ -759,6 +790,8 @@ impl Promoter<'_> {
 const fn edge_values_mut(term: &mut MirTerm) -> Option<&mut Vec<Reg>> {
     match term {
         MirTerm::Yield(values)
+        | MirTerm::TryYield(values)
+        | MirTerm::Raise { values, .. }
         | MirTerm::ComptimeYield(values)
         | MirTerm::MatchNext(values)
         | MirTerm::MatchComplete(values)

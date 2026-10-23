@@ -40,7 +40,7 @@ fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
     MirFunction {
         blocks: vec![MirBlock {
             instrs,
-            term: MirTerm::TryYield,
+            term: MirTerm::TryYield(Vec::new()),
         }],
         n_regs: reg_types.len() as u32,
         n_vars: 0,
@@ -1261,6 +1261,7 @@ fn raise_terminator_reprints() {
     function.blocks[0].term = MirTerm::Raise {
         src: Reg(0),
         label: None,
+        values: Vec::new(),
     };
     let program = program_with(vec![("raising".into(), function)]);
     assert_reprints(&program);
@@ -1275,21 +1276,28 @@ fn nested_try_regions_reprint_without_region_source_marks() {
     };
     let inner_try = MirInstr::Try {
         label: TryLabel(1),
+        results: Vec::new(),
         body: vec![region_block(MirTerm::Raise {
             src: Reg(0),
             label: Some(TryLabel(0)),
+            values: Vec::new(),
         })],
+        handler_args: Vec::new(),
         handler: None,
+        else_args: Vec::new(),
         orelse: None,
     };
     let outer_try = MirInstr::Try {
         label: TryLabel(0),
+        results: Vec::new(),
         body: vec![MirBlock {
             instrs: vec![inner_try],
-            term: MirTerm::TryYield,
+            term: MirTerm::TryYield(Vec::new()),
         }],
-        handler: Some((Some(3), vec![region_block(MirTerm::TryYield)])),
-        orelse: Some(vec![region_block(MirTerm::TryYield)]),
+        handler_args: Vec::new(),
+        handler: Some((Some(3), vec![region_block(MirTerm::TryYield(Vec::new()))])),
+        else_args: Vec::new(),
+        orelse: Some(vec![region_block(MirTerm::TryYield(Vec::new()))]),
     };
     let program = program_with(vec![(
         "regions".into(),
@@ -1327,9 +1335,9 @@ fn a_cfg_terminator_is_an_unknown_terminator() {
         crate::mir::text::VERSION_MAJOR,
         crate::mir::text::VERSION_MINOR
     );
-    assert!(text.contains("terminator: try.yield {}"));
+    assert!(text.contains("terminator: try.yield { values: [] }"));
     let lowered = text.replacen(&header, "mojito-mir 1.87", 1).replace(
-        "terminator: try.yield {}",
+        "terminator: try.yield { values: [] }",
         "terminator: jump { target: bb0 }",
     );
     let found = diagnostics(&lowered);

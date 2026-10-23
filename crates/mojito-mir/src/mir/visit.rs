@@ -602,7 +602,7 @@ mod tests {
                 dest: Reg(5),
                 ty: int(),
             }],
-            term: MirTerm::TryYield,
+            term: MirTerm::TryYield(Vec::new()),
         }];
         let mut function = MirFunction {
             param_types: vec![int()],
@@ -639,8 +639,11 @@ mod tests {
                     },
                     MirInstr::Try {
                         label: TryLabel(0),
+                        results: Vec::new(),
                         body: region,
+                        handler_args: Vec::new(),
                         handler: None,
+                        else_args: Vec::new(),
                         orelse: None,
                     },
                     MirInstr::ComptimeIf {

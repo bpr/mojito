@@ -1939,7 +1939,7 @@ impl<'a> Flatten<'a> {
             let orelse = orelse.get_or_insert_with(|| {
                 vec![MirBlock {
                     instrs: Vec::new(),
-                    term: MirTerm::TryYield,
+                    term: MirTerm::TryYield(Vec::new()),
                 }]
             });
             self.lower_try_finally(
@@ -1954,8 +1954,11 @@ impl<'a> Flatten<'a> {
         }
         self.emit(MirInstr::Try {
             label,
+            results: Vec::new(),
             body,
+            handler_args: Vec::new(),
             handler,
+            else_args: Vec::new(),
             orelse,
         });
     }
@@ -3756,10 +3759,10 @@ impl<'a> Flatten<'a> {
             for instr in &block.instrs {
                 self.lower_instr(instr);
             }
-            let term = block
-                .term
-                .as_ref()
-                .map_or(MirTerm::TryYield, |term| self.lower_term(term));
+            let term = block.term.as_ref().map_or_else(
+                || MirTerm::TryYield(Vec::new()),
+                |term| self.lower_term(term),
+            );
             self.f.blocks[self.cur].term = term;
         }
         self.setup_reference = reference;
@@ -3794,7 +3797,7 @@ impl<'a> Flatten<'a> {
                 }
                 MirTerm::Return(value)
             }
-            Terminator::TryYield => MirTerm::TryYield,
+            Terminator::TryYield => MirTerm::TryYield(Vec::new()),
             Terminator::Yield => MirTerm::Yield(Vec::new()),
             Terminator::ComptimeYield => MirTerm::ComptimeYield(Vec::new()),
             Terminator::ElifCond(cond) => {
@@ -3823,6 +3826,7 @@ impl<'a> Flatten<'a> {
                 MirTerm::Raise {
                     src,
                     label: self.raise_target,
+                    values: Vec::new(),
                 }
             }
             Terminator::Unreachable => MirTerm::Unreachable,

@@ -371,6 +371,16 @@ fn region_arguments(instruction: &MirInstr) -> Vec<&[Reg]> {
             .map(|case| &case.args[..])
             .chain(std::iter::once(&else_args[..]))
             .collect(),
+        MirInstr::Try {
+            handler_args,
+            handler,
+            else_args,
+            orelse,
+            ..
+        } => std::iter::once(&[][..])
+            .chain(handler.as_ref().map(|_| &handler_args[..]))
+            .chain(orelse.as_ref().map(|_| &else_args[..]))
+            .collect(),
         _ => vec![&[]; instruction_regions(instruction).len()],
     }
 }

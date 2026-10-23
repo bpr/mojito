@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1292**.
+Next free ID: **R1294**.
 
 ## Ordered Work
 
@@ -705,26 +705,6 @@ which names the upstream pass each one follows. Each is measured by the
     uncalled parameter as it does for a called one.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1264 A slot stored inside a `try` part keeps its slot, where
-  upstream's `Mem2Reg` carries it through `lit.try`'s results**
-
-  `mem-2-reg` keeps a slot one of whose stores sits in a `try` part when
-  the slot is allocated outside it, because MIR's `try` carries no values.
-  - Upstream's `lit.try` is a `ControlFlowNode` with variadic results and
-    except-region arguments (`LITOps.td`), so `processRegion` makes the
-    allocation variant across it.
-  - Upstream's `LowerSemanticCF` makes each raise an explicit
-    `lit.try.raise` terminator (`emitRaise`), which carries the variant
-    values into the except region; Mojito's `raise` terminator, a raising
-    call's in its error region since R831, names its `try` by label since
-    R884, as `lit.try.raise` does, but carries no values.
-  - The fix gives `Try` results, a `try.yield` with values, and handler
-    arguments, and has `variance` stop refusing a store under a `try`.
-  - Probe: `tests/mir_passes/mem-2-reg/region_try_store_kept.mir`.
-  - Found while landing R927 (2026-10-21).
-  - Depends on R831 (an explicit raise edge per raising instruction).
-  - Model: Fable, Not Planned.
 
 - [ ] **R1105 `mem-2-reg` keeps a slot that a body reads through a
   reference the same block makes**
@@ -9016,6 +8996,41 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Done when MIR builds no HIR CFG and VM and `--backend pliron` output
     is unchanged.
   - Found while landing R636 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1292 A MIR `try` may lack its `except` or `else` region, where
+  upstream's `lit.try` always holds both**
+
+  `MirInstr::Try` keeps `handler` and `orelse` optional, where
+  `parseTryStmt` creates both regions for every `try`.
+  - Upstream stubs an `except` holding `hlcf.unreachable` outside a
+    raising context, and an `else` holding a lone `lit.try.yield`.
+  - So the body's `try.yield` enters the `else` there, and only the
+    `else`'s and handler's define the results.
+  - Mojito's absent `else` makes the body's `try.yield` define the results
+    instead, a special case in the VM cursor, Pliron's `lower_try`,
+    `simplify-cf`'s `remove_trivial_try`, the verifier's `TryBody`, and
+    `mem-2-reg`.
+  - Fix: MIR lowering emits both stubs, `handler` and `orelse` stop being
+    `Option`, and those special cases go.
+  - Found while landing R1264 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1293 A `raise` carries its error as an operand, where
+  `lit.try.raise` leaves it in the `try`'s error slot**
+
+  `MirTerm::Raise { src, .. }` hands the error to the handler as a
+  register, where upstream writes it to the `__try_error__` declaration
+  `parseTryStmt` makes, which `lit.try` takes as its `$err` operand.
+  - Upstream's `lit.try.raise` carries only `Mem2Reg`'s variants, and its
+    handler reads the error from `$err`.
+  - The VM passes the error value through `Transfer::Raise`; Pliron
+    already stages it through an `err_slot`.
+  - Fix: a `Try` names its error slot, each raise naming it stores the
+    error there first, and the handler's `error_var` reads it.
+  - Found while landing R1264 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

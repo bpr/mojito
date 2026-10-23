@@ -515,7 +515,7 @@ mod tests {
         MirFunction {
             blocks: vec![MirBlock {
                 instrs: vec![instruction],
-                term: MirTerm::TryYield,
+                term: MirTerm::TryYield(Vec::new()),
             }],
             n_regs: 1,
             n_vars: 1,
