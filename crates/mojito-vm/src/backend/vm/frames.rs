@@ -147,7 +147,7 @@ impl VmBackend {
                     self.frames.push(child);
                     continue 'frames;
                 }
-                match self.exec_instr(
+                let outcome = self.exec_instr(
                     prog,
                     instruction,
                     FrameScope {
@@ -156,7 +156,8 @@ impl VmBackend {
                     },
                     &mut frame.registers,
                     &mut frame.variables,
-                )? {
+                );
+                match raise_into_edge(instruction, outcome, &mut frame.registers)? {
                     Flow::Normal => {}
                     Flow::Leave(leave) => {
                         if frame
@@ -212,7 +213,20 @@ impl VmBackend {
                     returned
                 }
                 Transfer::Exit(MirTerm::Raise(src)) => {
-                    return Err(self.raise(&frame.registers[src.0 as usize]));
+                    let raised = self.raise_register(prog, frame.function, &frame.registers, *src);
+                    match raised {
+                        RuntimeError::Raised(error)
+                            if frame.id != target
+                                && frame
+                                    .continuation
+                                    .as_ref()
+                                    .is_some_and(|continuation| continuation.raises.is_some()) =>
+                        {
+                            self.raise_into_caller(frame, error)?;
+                            continue;
+                        }
+                        raised => return Err(raised),
+                    }
                 }
                 Transfer::Exit(_) => Value::None,
             };
@@ -269,6 +283,9 @@ impl VmBackend {
             RuntimeError::Unsupported("vm: returning child has no caller frame".to_string())
         })?;
         caller.registers[continuation.dest.0 as usize] = value;
+        if let Some(raises) = &continuation.raises {
+            caller.registers[raises.flag.0 as usize] = Value::Bool(false);
+        }
         for (place, written) in writebacks {
             *nav_mut(&mut caller.variables, &caller.registers, &place)? = written;
         }
@@ -438,6 +455,7 @@ impl VmBackend {
                     Some(ReturnContinuation {
                         dest: *dest,
                         writebacks: Vec::new(),
+                        raises: instruction.raise_edge().cloned(),
                     }),
                 )
                 .map(Some);
@@ -547,6 +565,7 @@ impl VmBackend {
                     Some(ReturnContinuation {
                         dest: *dest,
                         writebacks: Vec::new(),
+                        raises: instruction.raise_edge().cloned(),
                     }),
                 )
                 .map(Some);
@@ -625,9 +644,66 @@ impl VmBackend {
             Some(ReturnContinuation {
                 dest: *dest,
                 writebacks: Vec::new(),
+                raises: instruction.raise_edge().cloned(),
             }),
         )
         .map(Some)
+    }
+
+    /// Pop a child frame a `raise` leaves into its caller, whose call has
+    /// a raise edge: set the edge's flag and error, as upstream's throwing
+    /// call returns its error flag, and apply the call's write-backs, so
+    /// the caller goes on to its error region.
+    fn raise_into_caller(&mut self, frame: Frame, error: Value) -> Result<(), RuntimeError> {
+        let continuation = frame.continuation.ok_or_else(|| {
+            RuntimeError::Unsupported("vm: child frame has no return continuation".to_string())
+        })?;
+        let writebacks: Vec<_> = continuation
+            .writebacks
+            .into_iter()
+            .map(|(parameter, place)| {
+                let mut written = frame.variables[parameter].clone();
+                self.canonicalize_value_references(frame.id, &frame.variables, &mut written);
+                (place, written)
+            })
+            .collect();
+        let caller = self.frames.last_mut().ok_or_else(|| {
+            RuntimeError::Unsupported("vm: raising child has no caller frame".to_string())
+        })?;
+        if let Some(raises) = &continuation.raises {
+            caller.registers[raises.flag.0 as usize] = Value::Bool(true);
+            caller.registers[raises.error.0 as usize] = error;
+        }
+        for (place, written) in writebacks {
+            *nav_mut(&mut caller.variables, &caller.registers, &place)? = written;
+        }
+        Ok(())
+    }
+}
+
+/// The outcome of `instruction` once its raise edge has taken a raise: a
+/// raise sets its error flag and error, as upstream's throwing call returns
+/// its flag, and completion clears the flag. An instruction with no raise
+/// edge, and an error that is no raise, pass through.
+pub(super) fn raise_into_edge(
+    instruction: &MirInstr,
+    outcome: Result<Flow, RuntimeError>,
+    registers: &mut [Value],
+) -> Result<Flow, RuntimeError> {
+    let Some(raises) = instruction.raise_edge() else {
+        return outcome;
+    };
+    match outcome {
+        Err(RuntimeError::Raised(error)) => {
+            registers[raises.flag.0 as usize] = Value::Bool(true);
+            registers[raises.error.0 as usize] = error;
+            Ok(Flow::Normal)
+        }
+        Ok(flow) => {
+            registers[raises.flag.0 as usize] = Value::Bool(false);
+            Ok(flow)
+        }
+        Err(other) => Err(other),
     }
 }
 

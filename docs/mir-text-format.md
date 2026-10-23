@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.90
+# Mojito Textual MIR Format, Version 1.91
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.90 is implemented end to end for inspection and loading: canonical
+Version 1.91 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.90
+mojito-mir 1.91
 ```
 
-The writer emits 1.90. The reader accepts 1.0 through 1.90; *Schema 1.0*
+The writer emits 1.91. The reader accepts 1.0 through 1.91; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -379,6 +379,20 @@ upstream's `raise` ends its block, it ends any region, leaving every
 enclosing one for the nearest `try`'s raise edge or the function. The
 reader still accepts an older minor that spells no `raise`, and names one
 it meets as an unknown instruction.
+
+Minor version 91 gives each raising instruction its raise edge: the
+`raises` field of a `call`, `call.indirect`, `call.method`, `unary`,
+`binary`, and `subscript_call` is `absent` or
+`present(raises { type: <type>, flag: %rN, error: %rM })`, the error
+type beside the instruction's error flag and error, which are results of
+the instruction, as upstream's throwing `lit.call` returns an `i1` error
+flag and writes its error out. The instruction is followed in its block by
+its error region, an `if` on the flag whose `then` region hands the error
+on (a `raise` of it until inlining makes it a break), nothing between them
+reading the instruction's results. An `iterator_call`'s `raises` stays
+`option<type>`. The reader still accepts an older minor whose instructions
+raise nothing, and names a `present(<type>)` it meets as an expected
+`raises` record.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1069,8 +1083,8 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |
 | `UseVar` / `DefVar` | `var.use` / `var.store` (schema 1.49: `var.store` adds `in_place`, true when the slot is the preceding non-raising call's result storage; schema 1.68: a copying or moving `var.use` carries `constructor: "<symbol>"` after its `mode` when it names the `__copyinit__` or `__moveinit__` it runs, as upstream's copy/move insertion names the constructor at each site: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the use names none, the reader takes an absent field as none, and the verifier reports a use naming an undeclared function, a borrow or forward naming any, or a copy or move naming other than the constructor its struct's member table records) |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
-| `UnOp` / `BinOp` | `unary` / `binary` (schema 1.53: both add `raises: option<type>`, the error type of the operator method's call, as a call's `raises`) |
-| `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` (schema 1.71: a `call.method` with a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands when the adapter's copy of the referent names the `__copyinit__` it runs, as `value.copy` does) |
+| `UnOp` / `BinOp` | `unary` / `binary` (schema 1.53: both add `raises: option<type>`, the error type of the operator method's call, as a call's `raises`; schema 1.91: `raises` is `option<raises { type, flag, error }>`, as a call's) |
+| `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` (schema 1.71: a `call.method` with a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands when the adapter's copy of the referent names the `__copyinit__` it runs, as `value.copy` does; schema 1.91: `raises` is `absent` or `present(raises { type, flag: %rN, error: %rM })`, the error type and the instruction's error flag and error, which its error region tests and raises) |
 | `PointerStorageTake` / `PointerStorageDestroy` | `pointer.take` / `pointer.destroy` — a `pointer.destroy` carries `destructor: "<symbol>"` after `element` when it names the element's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `UninitStorage` / `UninitStorageTake` / `UninitStorageDestroy` | `uninit.make` / `uninit.take` / `uninit.destroy` — an `uninit.destroy` carries `destructor: "<symbol>"` after `element` when it names the payload's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `MarkInitialized` | `ownership.mark_initialized` (schema 1.28: `{ place }`, upstream's `lit.ownership.mark_initialized`) |
@@ -1188,10 +1202,10 @@ lowering unit, one record per library declaration, and one module table
 holding each module's link record, one file per package. The bundled library's is the
 only producer today (`src/package.rs`). No part of a package is MIR text:
 it is a header followed by bytecode records, as upstream's package is
-MLIR bytecode throughout. The format line is `mojito-package 79`.
+MLIR bytecode throughout. The format line is `mojito-package 81`.
 
 ```text
-mojito-package 79
+mojito-package 81
 <the header's length, 8 bytes little-endian>
 <the header, as bytecode>
 <the payload: every record, as bytecode, then the type section>

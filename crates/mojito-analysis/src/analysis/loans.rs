@@ -819,11 +819,7 @@ impl ForwardScan for LoanScan {
         transfer_loan_generation(state, instr, &self.dests);
     }
 
-    fn raise_seed(
-        &self,
-        state: &LoanGenerationState,
-        _next: Option<&MirInstr>,
-    ) -> LoanGenerationState {
+    fn raise_seed(&self, state: &LoanGenerationState) -> LoanGenerationState {
         state.clone()
     }
 

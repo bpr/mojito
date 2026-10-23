@@ -348,7 +348,11 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             spread,
             ..
         } => {
-            for ty in raises.iter().chain(receiver.iter()) {
+            for ty in raises
+                .iter()
+                .map(|raises| &raises.ty)
+                .chain(receiver.iter())
+            {
                 require_concrete(head, "instruction", ty, errors);
             }
             for argument in instantiated_args {
@@ -381,7 +385,11 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             instantiated_args,
             ..
         } => {
-            for ty in raises.iter().chain(instantiated_contract.iter()) {
+            for ty in raises
+                .iter()
+                .map(|raises| &raises.ty)
+                .chain(instantiated_contract.iter())
+            {
                 require_concrete(head, "callable contract", ty, errors);
             }
             for argument in instantiated_args {
@@ -400,8 +408,8 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             spread,
             ..
         } => {
-            if let Some(ty) = raises {
-                require_concrete(head, "error contract", ty, errors);
+            if let Some(raises) = raises {
+                require_concrete(head, "error contract", &raises.ty, errors);
             }
             for argument in instantiated_args {
                 if let TyArg::Ty(ty) = argument {
@@ -431,7 +439,12 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
 }
 
 fn concrete_subscript(head: &str, call: &MirSubscriptCall, errors: &mut Vec<String>) {
-    for ty in call.raises.iter().chain(std::iter::once(&call.result_ty)) {
+    for ty in call
+        .raises
+        .iter()
+        .map(|raises| &raises.ty)
+        .chain(std::iter::once(&call.result_ty))
+    {
         require_concrete(head, "subscript contract", ty, errors);
     }
     require_no_parameters(head, &call.param_decls, errors);

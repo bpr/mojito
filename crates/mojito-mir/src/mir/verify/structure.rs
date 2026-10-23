@@ -1328,4 +1328,82 @@ mod tests {
             "keeps the region terminator `comptime.yield` in elaborated MIR",
         );
     }
+
+    /// A raising `+` of the two `Int` registers into `%r1`, its flag `%r3`
+    /// and error `%r4`, then `after`, in a raising body.
+    fn raising_with(after: Vec<MirInstr>) -> MirFunction {
+        let raises = crate::mir::Raises {
+            ty: Ty::error(),
+            flag: Reg(3),
+            error: Reg(4),
+        };
+        let mut instrs = vec![MirInstr::BinOp {
+            op: mojito_ast::ast::InfixOp::Add,
+            dest: Reg(1),
+            a: Reg(2),
+            b: Reg(2),
+            resolved: None,
+            raises: Some(raises),
+        }];
+        instrs.extend(after);
+        let mut function = function_with(instrs);
+        function.n_regs = 5;
+        function
+            .reg_types
+            .extend([(3, Ty::bool()), (4, Ty::error())]);
+        function.raises = true;
+        function.error_ty = Some(Ty::error());
+        function
+    }
+
+    /// The error region on `%r3`, its `then` region raising `error`.
+    fn error_region(error: Reg) -> MirInstr {
+        MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(3),
+            then: one(Vec::new(), MirTerm::Raise(error)),
+            elifs: Vec::new(),
+            else_args: Vec::new(),
+            orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),
+        }
+    }
+
+    #[test]
+    fn a_raising_instruction_followed_by_its_error_region_verifies() {
+        let found = findings(&raising_with(vec![error_region(Reg(4))]));
+        assert!(
+            !found.iter().any(|finding| finding.contains("error region")),
+            "{found:?}"
+        );
+    }
+
+    #[test]
+    fn a_raising_instruction_without_its_error_region_is_a_finding() {
+        let found = findings(&raising_with(Vec::new()));
+        assert_finding(
+            &found,
+            "raising instruction has no error region on its flag %r3",
+        );
+    }
+
+    #[test]
+    fn an_error_region_raising_another_value_is_a_finding() {
+        let found = findings(&raising_with(vec![error_region(Reg(2))]));
+        assert_finding(&found, "error region on %r3 does not hand on %r4");
+    }
+
+    #[test]
+    fn a_result_read_before_the_error_region_is_a_finding() {
+        let read = MirInstr::DefVar {
+            var: 0,
+            src: Reg(1),
+            binding_ty: None,
+            in_place: false,
+        };
+        let found = findings(&raising_with(vec![read, error_region(Reg(4))]));
+        assert_finding(
+            &found,
+            "%r1 is read before the error region decides it is defined",
+        );
+    }
 }

@@ -49,10 +49,11 @@ impl<'a> Flatten<'a> {
         let dest = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
         self.record_call(dest, Some(contract.target.clone()), 0);
-        self.emit(MirInstr::Call {
+        let raises = self.raises(call.raises(), call.location());
+        self.emit_call(MirInstr::Call {
             dest,
             func: FuncRef::named(&contract.target),
-            raises: call.raises(),
+            raises: raises.clone(),
             args: regs,
             kwargs: kw,
             arg_places,
@@ -64,6 +65,7 @@ impl<'a> Flatten<'a> {
             spread: Self::spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.error_region(raises);
         Some(dest)
     }
 
@@ -119,11 +121,12 @@ impl<'a> Flatten<'a> {
         let transfer_arg_places = arg_places.clone();
         let transfer_recv_place = callee_place.clone();
         self.record_call(dest, resolved.clone(), 0);
-        self.emit(MirInstr::CallIndirect {
+        let raises = self.raises(raises, call.location());
+        self.emit_call(MirInstr::CallIndirect {
             dest,
             callee,
             resolved,
-            raises,
+            raises: raises.clone(),
             args: arg_regs,
             kwargs: kw_regs,
             callee_place: callee_place.map(Box::new),
@@ -138,6 +141,7 @@ impl<'a> Flatten<'a> {
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
+        self.error_region(raises);
         dest
     }
 
@@ -177,7 +181,8 @@ impl<'a> Flatten<'a> {
             .iter()
             .map(|register| MirSubscriptArg::Index(*register))
             .collect::<Vec<_>>();
-        let getter = Some(self.mir_subscript_call_contract(plan.getter, &operands));
+        let getter =
+            Some(self.mir_subscript_call_contract(plan.getter, &operands, call.location()));
         let element_ty = getter
             .as_ref()
             .map(|contract| contract.result_ty.clone())
@@ -351,7 +356,8 @@ impl<'a> Flatten<'a> {
                 (Some(contract), arguments)
             });
         self.record_call(d, Some(info.mangled.clone()), info.captures.len());
-        self.emit(MirInstr::CallIndirect {
+        let raises = self.raises(call.raises(), call.location());
+        self.emit_call(MirInstr::CallIndirect {
             dest: d,
             callee,
             // The checked owner already selects this exact lifted closure.
@@ -359,7 +365,7 @@ impl<'a> Flatten<'a> {
             // attaching that abstract target here can disagree with an erased
             // variadic closure ABI even though execution never consults it.
             resolved: None,
-            raises: call.raises(),
+            raises: raises.clone(),
             args: arg_regs,
             kwargs: kw_regs,
             callee_place: callee_place.map(Box::new),
@@ -375,6 +381,7 @@ impl<'a> Flatten<'a> {
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(call, None, &transfer_arg_places);
         self.emit_capture_keepalives(info);
+        self.error_region(raises);
         d
     }
 
@@ -458,10 +465,11 @@ impl<'a> Flatten<'a> {
         let mut all_places: Vec<Option<MirPlace>> =
             captured.into_iter().map(|(_, place)| Some(place)).collect();
         all_places.extend(arg_places);
-        self.emit(MirInstr::Call {
+        let raises = self.raises(call.raises(), call.location());
+        self.emit_call(MirInstr::Call {
             dest: d,
             func: FuncRef::named(&info.mangled),
-            raises: call.raises(),
+            raises: raises.clone(),
             args: all_args,
             kwargs: kw_regs,
             arg_places: all_places,
@@ -475,6 +483,7 @@ impl<'a> Flatten<'a> {
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(call, None, &transfer_arg_places);
         self.emit_capture_keepalives(info);
+        self.error_region(raises);
         d
     }
 

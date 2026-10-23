@@ -311,16 +311,23 @@ impl FnLowering<'_> {
     /// A `raise` terminator: materialize the raised value as an owned error
     /// in the staging slot and jump to the innermost raise-edge target (a
     /// `try` landing block once regions lower; the raising function's
-    /// propagate block otherwise).
+    /// propagate block otherwise). A raise edge's error is the error its
+    /// call raised, staged whole and traced once, where it was raised.
     pub(super) fn lower_raise(&mut self, ctx: &mut Context, src: Reg) -> Result<(), PlironError> {
         let err_slot = self.ensure_err_slot(ctx);
-        self.store_error_into(ctx, err_slot, src)?;
-        // The VM's lifecycle log records only `Value::Error` raises; a raised
-        // error struct (`raise StopIteration()`) stays silent there.
-        let struct_raise = matches!(self.func.reg_types.get(&src.0).map(Ty::kind), Some(TyKind::Struct(name, _))
-            if !mojito_symbol::symbol::is_stdlib_string_struct(name));
-        if self.trace_lifecycle && !struct_raise {
-            self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_RAISE);
+        if self.edge_errors.contains(&src.0) {
+            let storage = self.reg_ptr(ctx, src)?;
+            self.mem_copy(ctx, err_slot, storage, 24, src);
+        } else {
+            self.store_error_into(ctx, err_slot, src)?;
+            // The VM's lifecycle log records only `Value::Error` raises; a
+            // raised error struct (`raise StopIteration()`) stays silent
+            // there.
+            let struct_raise = matches!(self.func.reg_types.get(&src.0).map(Ty::kind), Some(TyKind::Struct(name, _))
+                if !mojito_symbol::symbol::is_stdlib_string_struct(name));
+            if self.trace_lifecycle && !struct_raise {
+                self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_RAISE);
+            }
         }
         // A raise inside a finalbody overrides the pending outcome; the VM
         // runs a pending return's roots before propagating.

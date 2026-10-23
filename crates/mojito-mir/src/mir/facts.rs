@@ -875,12 +875,12 @@ impl<'a> Flatten<'a> {
     }
 
     pub(super) fn subscript_call_contract(
-        &self,
+        &mut self,
         node: Node<'a>,
         operands: &[MirSubscriptArg],
     ) -> Option<MirSubscriptCall> {
         let contract = node.call_contract()?;
-        let mut call = self.mir_subscript_call_contract(contract, operands);
+        let mut call = self.mir_subscript_call_contract(contract, operands, node.location());
         // A compile-time index built from the enclosing binders
         // (`self[Self.Ts.length - 1 - i]`) is recorded as the expression the
         // checker solved it to, which the elaborator evaluates per instance.
@@ -898,10 +898,13 @@ impl<'a> Flatten<'a> {
         Some(call)
     }
 
+    /// The subscript call of `contract` over `operands`, its raise edge's
+    /// registers fresh at `span`.
     pub(super) fn mir_subscript_call_contract(
-        &self,
+        &mut self,
         contract: mojito_checked::checked::CheckedCallContract,
         operands: &[MirSubscriptArg],
+        span: SourceSpan,
     ) -> MirSubscriptCall {
         let capture_accesses = contract
             .captures
@@ -934,9 +937,10 @@ impl<'a> Flatten<'a> {
                 expr: None,
             })
             .collect();
+        let raises = self.raises(contract.raises, span);
         MirSubscriptCall {
             target: contract.target,
-            raises: contract.raises,
+            raises,
             result_ty: contract.result_ty,
             receiver_requires_place: contract.receiver_requires_place,
             receiver_convention: contract.receiver_convention,

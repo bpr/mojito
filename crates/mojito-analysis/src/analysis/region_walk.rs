@@ -9,8 +9,10 @@
 //! backward walk is `DestructorInsertion`'s shape: a `break` reads its loop's
 //! break set, a `continue` its continue set, a loop is dry-run until
 //! stable, then replayed once, and a `try` walks its parts from its
-//! `finally` back to its body (`checkTryOp`), a raising instruction keeping
-//! live what its handler reads. Every region is one block.
+//! `finally` back to its body (`checkTryOp`), a `raise` keeping live what
+//! its handler reads. A raising call raises through its error region's
+//! `raise`, as upstream's `addErrorRegions` makes it. Every region is one
+//! block.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -24,9 +26,8 @@ pub(super) trait ForwardScan {
     fn join(&self, state: &Self::State, other: &Self::State) -> Self::State;
     /// Apply `instr`'s effects (a region op the walk enters is walked instead).
     fn transfer(&self, state: &mut Self::State, instr: &MirInstr);
-    /// The state a raise at the instruction just transferred hands the
-    /// handler; `next` is the instruction after it.
-    fn raise_seed(&self, state: &Self::State, next: Option<&MirInstr>) -> Self::State;
+    /// The state a `raise` hands the handler.
+    fn raise_seed(&self, state: &Self::State) -> Self::State;
     /// Whether the walk enters `instr`'s regions. A region op it does not
     /// enter is observed and transferred as one instruction.
     fn enters(&self, instr: &MirInstr) -> bool;
@@ -149,9 +150,9 @@ pub(super) struct TryChannels<T> {
 /// Walk a function body backward from its exits, handing `recorder` each
 /// instruction with the state live just before it, each block with the
 /// states around it, and each `try` with its channels, exactly once. The
-/// walk enters every region op `scan` enters: a raising instruction inside
-/// a `try` keeps live what the raise's handler (or `finally`) reads, and a
-/// `return` what the `finally`s it crosses read.
+/// walk enters every region op `scan` enters: a `raise` inside a `try`
+/// keeps live what its handler (or `finally`) reads, and a `return` what
+/// the `finally`s it crosses read.
 pub(super) fn walk_backward<S, R>(scan: &S, blocks: &[MirBlock], recorder: &mut R) -> S::State
 where
     S: BackwardScan,
@@ -282,7 +283,7 @@ where
             add_state(scan, &mut flow.exits, Some(&state));
         }
         MirTerm::Raise(_) => {
-            let seed = scan.raise_seed(&state, None);
+            let seed = scan.raise_seed(&state);
             add_state(scan, &mut flow.raises, Some(&seed));
         }
         MirTerm::Break { .. }
@@ -319,7 +320,7 @@ where
 {
     let entry = observer.is_some().then(|| state.clone());
     let mut current = Some(state);
-    for (i, instr) in block.instrs.iter().enumerate() {
+    for instr in &block.instrs {
         let Some(mut state) = current.take() else {
             break;
         };
@@ -336,10 +337,6 @@ where
             observer.instr(&state, instr)?;
         }
         scan.transfer(&mut state, instr);
-        if instr.is_raise_point() {
-            let seed = scan.raise_seed(&state, block.instrs.get(i + 1));
-            add_state(scan, &mut flow.raises, Some(&seed));
-        }
         current = Some(state);
     }
     if let (Some(observer), Some(entry)) = (observer, &entry) {
@@ -592,7 +589,7 @@ where
 }
 
 /// Walk the four regions of one `try`: the body from `entry`, `else` from the
-/// body's normal completion, the handler from the body's raise points, and
+/// body's normal completion, the handler from the body's raises, and
 /// `finally` from every channel (checked once from their join; its own
 /// channels compose per entering channel, as the runtime runs it).
 ///
@@ -735,8 +732,8 @@ struct BackFrame<T> {
 struct BackWalk<'s, S: BackwardScan> {
     scan: &'s S,
     frames: Vec<BackFrame<S::State>>,
-    /// What a raising instruction keeps live: the live-in of the handler
-    /// (or the `finally`) a raise there reaches. `None` outside every `try`.
+    /// What a `raise` keeps live: the live-in of the handler (or the
+    /// `finally`) it reaches. `None` outside every `try`.
     raise: Option<S::State>,
     /// What a `return` leaves live: the live-in of the `finally`s it
     /// crosses on the return path.

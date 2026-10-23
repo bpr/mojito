@@ -99,11 +99,12 @@ impl<'a> Flatten<'a> {
             // `__call__` transfer effects; its place is the callee's.
             let transfer_recv_place = callee_place.clone();
             self.record_call(dest, callable_target(&node.adjustments), 0);
-            self.emit(MirInstr::CallIndirect {
+            let raises = self.raises(call.raises(), call.location());
+            self.emit_call(MirInstr::CallIndirect {
                 dest,
                 callee,
                 resolved: callable_target(&node.adjustments),
-                raises: call.raises(),
+                raises: raises.clone(),
                 args: regs,
                 kwargs: kw,
                 callee_place: callee_place.map(Box::new),
@@ -117,6 +118,7 @@ impl<'a> Flatten<'a> {
                 spread: Self::spread_position(args),
             });
             self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
+            self.error_region(raises);
             return dest;
         }
         // `__RuntimeTuple` is the compiler-private heterogeneous pack
@@ -650,10 +652,11 @@ impl<'a> Flatten<'a> {
         let transfer_arg_places = arg_places.clone();
         let instantiated_args = call.instantiated_args();
         self.record_call(d, Some(target.clone()), 0);
-        self.emit(MirInstr::Call {
+        let raises = self.raises(call.raises(), call.location());
+        self.emit_call(MirInstr::Call {
             dest: d,
             func: FuncRef::named(&target),
-            raises: call.raises(),
+            raises: raises.clone(),
             args: regs,
             kwargs: kw,
             arg_places,
@@ -666,6 +669,7 @@ impl<'a> Flatten<'a> {
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(call, None, &transfer_arg_places);
+        self.error_region(raises);
         d
     }
 
@@ -861,10 +865,11 @@ impl<'a> Flatten<'a> {
             self.emit_call_invalidations(call, args, kwargs);
             let receiver = Self::static_receiver(object);
             self.record_call(dest, Some(target.clone()), 0);
-            self.emit(MirInstr::Call {
+            let raises = self.raises(call.raises(), call.location());
+            self.emit_call(MirInstr::Call {
                 dest,
                 func: FuncRef::named(&target),
-                raises: call.raises(),
+                raises: raises.clone(),
                 args: regs,
                 kwargs: kw,
                 arg_places,
@@ -876,6 +881,7 @@ impl<'a> Flatten<'a> {
                 spread: Self::spread_position(args),
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
+            self.error_region(raises);
             return dest;
         }
         // Keep this as a direct method invocation. In particular,
@@ -910,12 +916,13 @@ impl<'a> Flatten<'a> {
         self.emit_interior_invalidations(object, None);
         self.emit_call_invalidations(call, args, kwargs);
         self.record_call(dest, callable_target(&node.adjustments), 0);
-        self.emit(MirInstr::MethodCall {
+        let raises = self.raises(call.raises(), call.location());
+        self.emit_call(MirInstr::MethodCall {
             dest,
             recv,
             method: field,
             resolved: callable_target(&node.adjustments),
-            raises: call.raises(),
+            raises: raises.clone(),
             reference_result: (call
                 .call_contract()
                 .and_then(|contract| contract.reference_result))
@@ -941,6 +948,7 @@ impl<'a> Flatten<'a> {
             spread: Self::spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.error_region(raises);
         dest
     }
 }

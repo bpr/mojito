@@ -245,10 +245,13 @@ impl FnLowering<'_> {
     }
 
     /// Call a raising function through its prepended outcome out-pointer and
-    /// branch on the tag: the error edge stages the callee's error and jumps
-    /// to the innermost raise-edge target; lowering continues in the ok
-    /// block with the payload bound (so post-call effects like receiver
-    /// write-back run only on success, matching the VM).
+    /// branch on the tag: the error path lands the callee's error in the
+    /// instruction's raise-edge storage and stays open for its error region
+    /// ([`OpenEdge`]); lowering continues in the ok block with the payload
+    /// bound (so post-call effects like receiver write-back run only on
+    /// success, matching the VM). A call with no raise edge of its own, one
+    /// inside another instruction's lowering, stages the error and jumps to
+    /// the innermost raise-edge target.
     pub(super) fn emit_raising_call(
         &mut self,
         ctx: &mut Context,
@@ -286,18 +289,28 @@ impl FnLowering<'_> {
         );
         self.append(ctx, branch.get_operation(), Some(dest));
         self.current = Some(err_block);
-        let err_slot = self.ensure_err_slot(ctx);
         let err_address = self.offset_address(ctx, storage, outcome.err_offset);
-        self.mem_copy(ctx, err_slot, err_address, 24, dest);
-        // A propagating call inside a finalbody overrides the pending
-        // outcome, like a raise.
-        let overrides = self.finally_overrides.clone();
-        for idx in overrides.into_iter().rev() {
-            self.emit_pending_resolution(ctx, idx)?;
+        if let Some(edge) = self
+            .open_edge
+            .as_mut()
+            .filter(|edge| edge.error_block.is_none())
+        {
+            edge.error_block = Some(err_block);
+            let edge_storage = edge.storage;
+            self.mem_copy(ctx, edge_storage, err_address, 24, dest);
+        } else {
+            let err_slot = self.ensure_err_slot(ctx);
+            self.mem_copy(ctx, err_slot, err_address, 24, dest);
+            // A propagating call inside a finalbody overrides the pending
+            // outcome, like a raise.
+            let overrides = self.finally_overrides.clone();
+            for idx in overrides.into_iter().rev() {
+                self.emit_pending_resolution(ctx, idx)?;
+            }
+            let target = self.raise_edge_target(ctx)?;
+            let jump = BrOp::new(ctx, target, vec![]);
+            self.append(ctx, jump.get_operation(), None);
         }
-        let target = self.raise_edge_target(ctx)?;
-        let jump = BrOp::new(ctx, target, vec![]);
-        self.append(ctx, jump.get_operation(), None);
         self.current = Some(ok_block);
         match outcome.ok {
             LowerTy::Scalar(scalar) => {

@@ -259,6 +259,7 @@ impl<'a> Flatten<'a> {
                     _ => None,
                 })
                 .cloned();
+            let raises = self.raises(raises, e.location());
             let instantiated_args = e
                 .adjustments()
                 .iter()

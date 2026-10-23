@@ -168,10 +168,11 @@ impl<'a> Flatten<'a> {
             (Vec::new(), Vec::new())
         };
         self.record_call(dest, Some(target.to_string()), 0);
-        self.emit(MirInstr::Call {
+        let raises = self.raises(call.raises(), call.location());
+        self.emit_call(MirInstr::Call {
             dest,
             func: FuncRef::named(target),
-            raises: call.raises(),
+            raises: raises.clone(),
             args: regs,
             kwargs: kw,
             arg_places,
@@ -184,6 +185,7 @@ impl<'a> Flatten<'a> {
                 .map(|position| position + usize::from(leading.is_some())),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.error_region(raises);
         dest
     }
 
@@ -808,12 +810,13 @@ impl<'a> Flatten<'a> {
             (Vec::new(), call.instantiated_args())
         };
         self.record_call(d, callable_target(&node.adjustments), 0);
-        self.emit(MirInstr::MethodCall {
+        let raises = self.raises(call.raises(), call.location());
+        self.emit_call(MirInstr::MethodCall {
             dest: d,
             recv,
             method: method.to_owned(),
             resolved: callable_target(&node.adjustments),
-            raises: call.raises(),
+            raises: raises.clone(),
             reference_result: (call
                 .call_contract()
                 .and_then(|contract| contract.reference_result))
@@ -858,6 +861,7 @@ impl<'a> Flatten<'a> {
                 });
             }
         }
+        self.error_region(raises);
         d
     }
 }

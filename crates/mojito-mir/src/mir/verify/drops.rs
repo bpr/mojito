@@ -211,7 +211,7 @@ impl<'a> Walk<'a> {
 
     /// One block from `state`: its normal channel is the state after its
     /// terminator's own effect, and its other channels are those of its
-    /// raise points and the regions it holds.
+    /// regions, a raising call's error region among them.
     fn block(
         &mut self,
         index: usize,
@@ -232,9 +232,6 @@ impl<'a> Walk<'a> {
                 continue;
             }
             self.step(index, &mut state, instruction, report);
-            if instruction.is_raise_point() {
-                meet(&mut flow.raises, Some(&state));
-            }
         }
         flow.normal = Some(state);
         flow

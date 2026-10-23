@@ -1,7 +1,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::text::write;
-use crate::mir::{CleanupDrop, MirResultAdapter};
+use crate::mir::{CleanupDrop, MirResultAdapter, Raises};
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, LaneMask, VariantIndex};
 
@@ -666,7 +666,11 @@ fn sample_place(root: u32) -> MirPlace {
 fn sample_subscript_call() -> MirSubscriptCall {
     MirSubscriptCall {
         target: "List::__getitem__".into(),
-        raises: Some(Ty::error()),
+        raises: Some(Raises {
+            ty: Ty::error(),
+            flag: Reg(60),
+            error: Reg(61),
+        }),
         result_ty: Ty::int(),
         receiver_requires_place: true,
         receiver_convention: Some(ArgConvention::Mut),
@@ -841,7 +845,11 @@ fn instruction_families_reprint_byte_identically() {
             op: PrefixOp::Neg,
             dest: Reg(7),
             a: Reg(6),
-            raises: Some(Ty::error()),
+            raises: Some(Raises {
+                ty: Ty::error(),
+                flag: Reg(64),
+                error: Reg(65),
+            }),
         },
         MirInstr::UnOp {
             op: PrefixOp::Not,
@@ -855,12 +863,20 @@ fn instruction_families_reprint_byte_identically() {
             a: Reg(7),
             b: Reg(8),
             resolved: Some("Tuple::__contains__".into()),
-            raises: Some(Ty::error()),
+            raises: Some(Raises {
+                ty: Ty::error(),
+                flag: Reg(66),
+                error: Reg(67),
+            }),
         },
         MirInstr::Call {
             dest: Reg(10),
             func: FuncRef("std::print".into()),
-            raises: Some(Ty::error()),
+            raises: Some(Raises {
+                ty: Ty::error(),
+                flag: Reg(68),
+                error: Reg(69),
+            }),
             args: vec![Reg(1), Reg(2)],
             kwargs: vec![("sep".into(), Reg(3))],
             arg_places: vec![None, Some(place(1))],

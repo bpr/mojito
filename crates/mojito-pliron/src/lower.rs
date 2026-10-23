@@ -60,7 +60,7 @@ use mojito_common::token::SourceSpan;
 use mojito_mir::mir::{
     CleanupDrop, Const as MirConst, MirBlock, MirCaptureMode, MirClosureCapture, MirDeclarations,
     MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, MirStructDeclaration, MirTerm, Proj,
-    Reg, RegionFrame, UseMode,
+    Raises, Reg, RegionFrame, UseMode,
 };
 use mojito_types::types::{Ty, TyArg, canonical_simd_ty, scalar_simd_dtype};
 
@@ -297,6 +297,8 @@ pub fn lower_body(
         outcome_ptr: None,
         err_slot: None,
         propagate_block: None,
+        edge_errors: edge_errors(&func.blocks),
+        open_edge: None,
         current: None,
     };
     lowering.run(ctx, func_op)
@@ -600,5 +602,40 @@ struct FnLowering<'a> {
     /// destructor — the VM abandons raising frames), and returns. Created
     /// lazily.
     propagate_block: Option<Ptr<BasicBlock>>,
+    /// The error registers of the function's raise edges: a `raise` of one
+    /// hands on, whole, the error its instruction raised, and traces no new
+    /// raise.
+    edge_errors: HashSet<u32>,
+    /// The raise edge of the instruction being lowered ([`OpenEdge`]).
+    open_edge: Option<OpenEdge>,
     current: Option<Ptr<BasicBlock>>,
+}
+
+/// The raise edge of a raising instruction while it lowers: its flag and
+/// error registers, the storage its error lands in, and, once its call has
+/// branched on the callee's outcome, the block the error path continues
+/// in.
+struct OpenEdge {
+    raises: Raises,
+    storage: Value,
+    error_block: Option<Ptr<BasicBlock>>,
+}
+
+/// The error register of every raise edge in `blocks`, at any depth.
+fn edge_errors(blocks: &[MirBlock]) -> HashSet<u32> {
+    let mut errors = HashSet::new();
+    let mut pending: Vec<&[MirBlock]> = vec![blocks];
+    while let Some(blocks) = pending.pop() {
+        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+            if let Some(raises) = instruction.raise_edge() {
+                errors.insert(raises.error.0);
+            }
+            pending.extend(
+                mojito_mir::mir::instruction_regions(instruction)
+                    .into_iter()
+                    .map(Vec::as_slice),
+            );
+        }
+    }
+    errors
 }

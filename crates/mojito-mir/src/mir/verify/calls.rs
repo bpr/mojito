@@ -31,6 +31,9 @@ pub(super) fn verify_blocks(
                 instruction,
                 errors,
             );
+            if let Some(raises) = instruction.raise_edge() {
+                verify_error_region(name, block_index, &block.instrs, index, raises, errors);
+            }
         }
         verify_terminator(name, function, block_index, &block.term, context, errors);
     }
@@ -866,7 +869,7 @@ fn verify_indirect_call(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut V
             prefix,
             cx.function,
             contract,
-            raises.as_ref(),
+            raises.as_ref().map(|raises| &raises.ty),
             *dest,
             args,
             kwargs,
@@ -986,5 +989,55 @@ fn verify_in_place_binding(
             "MIR function '{name}' block {block_index}: in-place binding of r{} does not follow the call producing it",
             src.0
         ));
+    }
+}
+
+/// A raising instruction is followed, in its block, by its error region,
+/// as upstream's `addErrorRegions` follows each throwing call: an `if` on
+/// its flag whose `then` region hands its error on, by a `raise`, or, once
+/// inlining has made the raise a break of the inlined body, by the values
+/// it leaves with. Nothing between the two reads its results, which the
+/// raise path leaves undefined.
+fn verify_error_region(
+    name: &str,
+    block_index: usize,
+    instrs: &[MirInstr],
+    index: usize,
+    raises: &crate::mir::Raises,
+    errors: &mut Vec<String>,
+) {
+    let prefix = format!("{name}: block {block_index} instruction {index}");
+    let Some(offset) = instrs[index + 1..].iter().position(
+        |instruction| matches!(instruction, MirInstr::If { cond, .. } if *cond == raises.flag),
+    ) else {
+        errors.push(format!(
+            "{prefix}: raising instruction has no error region on its flag %r{}",
+            raises.flag.0
+        ));
+        return;
+    };
+    if let MirInstr::If { then, elifs, .. } = &instrs[index + 1 + offset]
+        && (!elifs.is_empty()
+            || !then.first().is_some_and(|block| {
+                crate::mir::terminator_regs(&block.term).contains(&raises.error)
+            }))
+    {
+        errors.push(format!(
+            "{prefix}: error region on %r{} does not hand on %r{}",
+            raises.flag.0, raises.error.0
+        ));
+    }
+    let mut results = Vec::new();
+    instruction_result_regs(&instrs[index], &mut results);
+    let mut reads = Vec::new();
+    for between in &instrs[index + 1..index + 1 + offset] {
+        reads.clear();
+        instruction_operand_regs(between, &mut reads);
+        if let Some(read) = reads.iter().find(|read| results.contains(read)) {
+            errors.push(format!(
+                "{prefix}: %r{} is read before the error region decides it is defined",
+                read.0
+            ));
+        }
     }
 }

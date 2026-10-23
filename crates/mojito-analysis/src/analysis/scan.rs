@@ -284,12 +284,11 @@ pub(super) const fn may_raise(instr: &MirInstr) -> bool {
     )
 }
 
-/// Whether this instruction is a checked raise point
-/// ([`MirInstr::is_raise_point`]) or a nested `try` whose regions may raise
-/// outward. Drop elaboration seeds a handler's live set only here, as
-/// upstream's CFG has raise edges only at raising operations.
-pub(super) fn raises_to_handler(instr: &MirInstr) -> bool {
-    matches!(instr, MirInstr::Try { .. }) || instr.is_raise_point()
+/// Whether this instruction is a nested `try`, whose regions may raise
+/// outward: a walk that does not enter it seeds the raise channel here. A
+/// raising call raises through its error region's `raise` terminator.
+pub(super) const fn raises_to_handler(instr: &MirInstr) -> bool {
+    matches!(instr, MirInstr::Try { .. })
 }
 
 /// The values a block's terminator hands on: those an arm yields, and the

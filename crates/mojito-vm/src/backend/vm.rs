@@ -21,14 +21,14 @@ use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     CleanupDrop, ConcreteMir, Const, MirBlock, MirCaptureMode, MirFunction, MirInstr,
-    MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Reg,
+    MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
     cleanup_drops,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::types::Ty;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use places::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A verified concrete fragment prepared for compile-time calls, its struct
 /// and signature registries built once for every call into it.
@@ -39,11 +39,7 @@ impl ConcreteProgram {
     /// stands.
     pub fn new(mir: &ConcreteMir) -> Self {
         let mir: MirProgram = (**mir).clone();
-        Self(Prog {
-            structs: build_structs(&mir.declarations),
-            sigs: build_sigs(&mir.declarations),
-            mir,
-        })
+        Self(Prog::new(mir))
     }
 }
 
@@ -446,9 +442,7 @@ impl VmBackend {
         }
         let prog = {
             let _registry = timing::span("registry_build");
-            let structs = build_structs(&mir.declarations);
-            let sigs = build_sigs(&mir.declarations);
-            Prog { mir, structs, sigs }
+            Prog::new(mir)
         };
         let _run = timing::span("execute");
         self.run_prog(&prog)
@@ -679,6 +673,11 @@ struct Prog {
     mir: MirProgram,
     structs: HashMap<String, StructDef>,
     sigs: HashMap<String, FnSig>,
+    /// Per function, the error registers of its raise edges: a `raise` of
+    /// one propagates the error its instruction raised, as upstream's
+    /// `lit.try.raise` carries no new error, so the trace records no second
+    /// raise.
+    edge_errors: Vec<HashSet<u32>>,
 }
 
 /// A static type with its reference layers removed: a place or parameter
@@ -692,6 +691,24 @@ fn peel_references(ty: &mojito_types::types::Ty) -> &mojito_types::types::Ty {
 }
 
 impl Prog {
+    fn new(mir: MirProgram) -> Self {
+        let edge_errors = mir
+            .functions
+            .iter()
+            .map(|(_, function)| {
+                let mut errors = HashSet::new();
+                edge_errors(&function.blocks, &mut errors);
+                errors
+            })
+            .collect();
+        Self {
+            structs: build_structs(&mir.declarations),
+            sigs: build_sigs(&mir.declarations),
+            mir,
+            edge_errors,
+        }
+    }
+
     fn index_of(&self, name: &str) -> Option<usize> {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
@@ -1233,6 +1250,24 @@ struct HeapAllocation {
 struct ReturnContinuation {
     dest: Reg,
     writebacks: Vec<(usize, MirPlace)>,
+    /// The raise edge of the call: a `raise` leaving the child sets its
+    /// flag and error in the caller, which goes on to its error region.
+    raises: Option<Raises>,
+}
+
+/// Add to `errors` the error register of every raise edge in `blocks`, at
+/// any depth.
+fn edge_errors(blocks: &[MirBlock], errors: &mut HashSet<u32>) {
+    for block in blocks {
+        for instruction in &block.instrs {
+            if let Some(raises) = instruction.raise_edge() {
+                errors.insert(raises.error.0);
+            }
+            for region in mojito_mir::mir::instruction_regions(instruction) {
+                edge_errors(region, errors);
+            }
+        }
+    }
 }
 
 /// Build the VM registry from declaration metadata carried by MIR.
@@ -1543,6 +1578,7 @@ mod calls;
 mod exec;
 
 mod frames;
+use frames::raise_into_edge;
 
 mod references;
 
@@ -1554,6 +1590,7 @@ use regions::{RegionCursor, Transfer};
 #[cfg(test)]
 mod pointer_storage_tests {
     use super::*;
+    use mojito_types::types::TyKind;
 
     fn empty_program() -> Prog {
         Prog {
@@ -1564,6 +1601,7 @@ mod pointer_storage_tests {
             },
             structs: HashMap::new(),
             sigs: HashMap::new(),
+            edge_errors: Vec::new(),
         }
     }
 

@@ -220,12 +220,13 @@ impl<'a> Flatten<'a> {
         };
         self.emit_interior_invalidations(container, None);
         self.emit_call_invalidations(node, &[value], &[]);
-        self.emit(MirInstr::MethodCall {
+        let raises = self.raises(node.raises(), node.location());
+        self.emit_call(MirInstr::MethodCall {
             dest: contains,
             recv,
             method: "__contains__".to_string(),
             resolved: node.resolved_callable(),
-            raises: node.raises(),
+            raises: raises.clone(),
             reference_result: None,
             result_adapter: None,
             args: vec![argument],
@@ -241,6 +242,7 @@ impl<'a> Flatten<'a> {
             spread: None,
         });
         self.emit_nested_closure_argument_keepalives(&[value], &[]);
+        self.error_region(raises);
         if matches!(op, InfixOp::NotIn) {
             let dest = self.fresh_typed(node.location(), None, Ty::bool());
             self.emit(MirInstr::UnOp {
@@ -309,6 +311,7 @@ impl<'a> Flatten<'a> {
             raises,
             negated_equality,
         } = dispatch;
+        let raises = self.raises(raises, location.clone());
         if op == InfixOp::Ne && negated_equality {
             let equal = self.fresh_typed(location.clone(), None, Ty::bool());
             self.emit(MirInstr::BinOp {
@@ -718,6 +721,7 @@ impl<'a> Flatten<'a> {
             ra
         };
         let d = self.fresh(node.location(), None);
+        let raises = self.raises(node.raises(), node.location());
         // `-x` and `~x` on a struct call the dunder the check selected, as
         // upstream's `x.__neg__()` does.
         let instruction = match node.resolved_callable() {
@@ -726,7 +730,7 @@ impl<'a> Flatten<'a> {
                 recv: ra,
                 method: op.dunder().to_string(),
                 resolved: Some(resolved),
-                raises: node.raises(),
+                raises,
                 reference_result: None,
                 result_adapter: None,
                 args: Vec::new(),
@@ -745,7 +749,7 @@ impl<'a> Flatten<'a> {
                 op,
                 dest: d,
                 a: ra,
-                raises: node.raises(),
+                raises,
             },
         };
         self.emit(instruction);

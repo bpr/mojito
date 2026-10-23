@@ -195,6 +195,7 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
             types.extend(
                 raises
                     .as_ref()
+                    .map(|raises| &raises.ty)
                     .into_iter()
                     .chain(receiver.as_ref())
                     .map(|ty| ("instruction", ty)),
@@ -228,6 +229,7 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
             types.extend(
                 raises
                     .as_ref()
+                    .map(|raises| &raises.ty)
                     .into_iter()
                     .chain(instantiated_contract.as_ref())
                     .map(|ty| ("callable contract", ty)),
@@ -246,7 +248,7 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
             instantiated_args,
             ..
         } => {
-            types.extend(raises.as_ref().map(|ty| ("error contract", ty)));
+            types.extend(raises.as_ref().map(|raises| ("error contract", &raises.ty)));
             types.extend(
                 instantiated_args
                     .iter()
@@ -269,6 +271,7 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
             types.extend(
                 call.raises
                     .iter()
+                    .map(|raises| &raises.ty)
                     .chain(std::iter::once(&call.result_ty))
                     .map(|ty| ("subscript contract", ty)),
             );

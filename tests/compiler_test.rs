@@ -132,9 +132,9 @@ fn checked_hir_and_mir_retain_selected_trait_call_effects() {
                     instruction,
                     mojito::mir::MirInstr::MethodCall {
                         method,
-                        raises: Some(error),
+                        raises: Some(raises),
                         ..
-                    } if method == "run" && error.to_string() == "Error"
+                    } if method == "run" && raises.ty.to_string() == "Error"
                 )
             })
     }));

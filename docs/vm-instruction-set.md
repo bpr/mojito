@@ -440,7 +440,17 @@ The encoded operation carries more information than the compact spelling shows:
   argument
 - optional compile-time value-parameter registers
 - the checker-resolved lowered symbol for overloaded calls
-- an optional checker-selected concrete error type for a raising call
+- for a raising call, its raise edge: the checker-selected concrete error
+  type, and the error flag and error registers the call defines
+
+A raising call does not raise itself: as upstream's throwing call returns
+its error flag, it sets its flag to `True` and its error to the raised
+value when the callee raises, and the flag to `False` when it returns, its
+result then defined. Its error region follows it in the block, an `if` on
+the flag whose `then` region raises the error; a child frame's `raise`
+pops into the caller's call so. Every raising instruction — `call.indirect`,
+`call.method`, an operator whose dunder raises, a subscript whose accessor
+does — has a raise edge the same way.
 
 Caller places bind `mut` and `ref` parameters to frame/slot handles. Keyword
 places remain aligned with their source arguments and are selected by parameter

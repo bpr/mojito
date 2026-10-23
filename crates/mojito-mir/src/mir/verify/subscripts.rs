@@ -541,9 +541,10 @@ pub(super) fn verify_subscript_call(
                     "{prefix}: subscript raising metadata does not match '{}'",
                     call.target
                 ));
-            } else if let (Some(found), Some(expected)) =
-                (&call.raises, declaration.error_ty.as_ref())
-                && !types_compatible(found, expected)
+            } else if let (Some(found), Some(expected)) = (
+                call.raises.as_ref().map(|raises| &raises.ty),
+                declaration.error_ty.as_ref(),
+            ) && !types_compatible(found, expected)
             {
                 errors.push(format!(
                     "{prefix}: subscript error type {found} does not match '{}' contract {expected}",

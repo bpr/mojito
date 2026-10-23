@@ -1,10 +1,9 @@
-# A raise inside a `try` destroys the body's live values in reverse
-# declaration order: an infix or prefix operator, method, free, or
+# A raise inside a `try` destroys on its own raise edge what that edge
+# holds, as the pin does: an infix or prefix operator, method, free, or
 # constructor call over temporaries, a named local beside them, and a local
-# declared before it is initialized. The last case differs from the pin,
-# which destroys a late-initialized local in reverse *initialization* order
-# (`del 1` before `del 2` where Mojito prints `del 2`, `del 1`):
-# conformance/assets-mojo-output-diffs.tsv, roadmap R1129.
+# declared before it is initialized. A local whose last use is the raising
+# call dies at it, before the values still live past it (`a + S(9)`
+# destroys `a`, then `b`).
 
 
 struct S(Movable):

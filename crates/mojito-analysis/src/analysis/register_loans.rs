@@ -1062,7 +1062,7 @@ impl ForwardScan for DropFactsScan<'_> {
         transfer_loan_generation(&mut state.generations, instr, self.generation_dests);
     }
 
-    fn raise_seed(&self, state: &DropFactsState, _next: Option<&MirInstr>) -> DropFactsState {
+    fn raise_seed(&self, state: &DropFactsState) -> DropFactsState {
         DropFactsState {
             generations: state.generations.clone(),
             registers: RegisterLoanState::default(),

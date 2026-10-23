@@ -368,6 +368,20 @@ pub fn replace_register_reads<S: std::hash::BuildHasher>(
     }
 }
 
+/// The position past the instruction at `index` of `instrs` and, when it
+/// raises, past its error region: where an instruction reading its results
+/// goes, on the normal path alone.
+pub fn past_error_region(instrs: &[MirInstr], index: usize) -> usize {
+    instrs[index]
+        .raise_edge()
+        .and_then(|raises| {
+            instrs[index + 1..].iter().position(
+                |instruction| matches!(instruction, MirInstr::If { cond, .. } if *cond == raises.flag),
+            )
+        })
+        .map_or(index + 1, |offset| index + offset + 2)
+}
+
 /// Every compile-time argument slot an instruction carries, mutably.
 ///
 /// They are a call's bracket arguments, a subscript call's, and a
@@ -519,20 +533,6 @@ pub fn supplied_parameter_arguments<'a>(
 /// none of a region's blocks, which the caller walks itself.
 /// Renumbering a copied block rewrites them all.
 pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
-    fn subscript_arg<'a>(arg: &'a mut MirSubscriptArg, out: &mut Vec<&'a mut Reg>) {
-        match arg {
-            MirSubscriptArg::Index(reg) => out.push(reg),
-            MirSubscriptArg::Slice {
-                lower, upper, step, ..
-            } => out.extend([lower, upper, step].into_iter().flatten()),
-        }
-    }
-    fn param_args<'a>(args: &'a mut [MirParamArg], out: &mut Vec<&'a mut Reg>) {
-        out.extend(args.iter_mut().filter_map(|arg| arg.value.as_mut()));
-    }
-    fn subscript_call<'a>(call: &'a mut MirSubscriptCall, out: &mut Vec<&'a mut Reg>) {
-        param_args(&mut call.param_arg_regs, out);
-    }
     let mut out = Vec::new();
     match instruction {
         MirInstr::EstablishLoans { loans, marker, .. } => {
@@ -580,7 +580,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.push(dest);
             keyword_regs_mut(kwargs, kwarg_places, &mut out);
-            param_args(element.as_mut_slice(), &mut out);
+            param_arg_regs_mut(element.as_mut_slice(), &mut out);
         }
         MirInstr::Const { dest, .. }
         | MirInstr::ConstructType { dest, .. }
@@ -593,10 +593,21 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         MirInstr::StoreToMem { dest, src } => out.extend([dest, src]),
         MirInstr::UseVar { dest, .. } => out.push(dest),
         MirInstr::DefVar { src, .. } => out.push(src),
-        MirInstr::UnOp { dest, a, .. } => out.extend([dest, a]),
-        MirInstr::BinOp { dest, a, b, .. } => out.extend([dest, a, b]),
+        MirInstr::UnOp {
+            dest, a, raises, ..
+        } => {
+            out.extend([dest, a]);
+            raise_edge_regs_mut(raises, &mut out);
+        }
+        MirInstr::BinOp {
+            dest, a, b, raises, ..
+        } => {
+            out.extend([dest, a, b]);
+            raise_edge_regs_mut(raises, &mut out);
+        }
         MirInstr::Call {
             dest,
+            raises,
             args,
             kwargs,
             arg_places,
@@ -605,14 +616,16 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             ..
         } => {
             out.push(dest);
+            raise_edge_regs_mut(raises, &mut out);
             out.extend(args.iter_mut());
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             keyword_regs_mut(kwargs, kwarg_places, &mut out);
-            param_args(param_arg_regs, &mut out);
+            param_arg_regs_mut(param_arg_regs, &mut out);
         }
         MirInstr::CallIndirect {
             dest,
             callee,
+            raises,
             args,
             kwargs,
             callee_place,
@@ -622,15 +635,17 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             ..
         } => {
             out.extend([dest, callee]);
+            raise_edge_regs_mut(raises, &mut out);
             out.extend(args.iter_mut());
             places_regs_mut(callee_place.as_deref_mut(), &mut out);
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             keyword_regs_mut(kwargs, kwarg_places, &mut out);
-            param_args(param_arg_regs, &mut out);
+            param_arg_regs_mut(param_arg_regs, &mut out);
         }
         MirInstr::MethodCall {
             dest,
             recv,
+            raises,
             args,
             kwargs,
             recv_place,
@@ -640,11 +655,12 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             ..
         } => {
             out.extend([dest, recv]);
+            raise_edge_regs_mut(raises, &mut out);
             out.extend(args.iter_mut());
             places_regs_mut(recv_place.as_deref_mut(), &mut out);
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             keyword_regs_mut(kwargs, kwarg_places, &mut out);
-            param_args(param_arg_regs, &mut out);
+            param_arg_regs_mut(param_arg_regs, &mut out);
         }
         MirInstr::PointerStorageTake {
             dest,
@@ -678,7 +694,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             places_regs_mut(base_place.as_deref_mut(), &mut out);
             places_regs_mut(index_place.as_deref_mut(), &mut out);
             if let Some(call) = call {
-                subscript_call(call, &mut out);
+                subscript_call_regs_mut(call, &mut out);
             }
         }
         MirInstr::Slice {
@@ -697,7 +713,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             places_regs_mut(object_place.as_deref_mut(), &mut out);
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             if let Some(call) = call {
-                subscript_call(call, &mut out);
+                subscript_call_regs_mut(call, &mut out);
             }
         }
         MirInstr::MultiIndex {
@@ -712,13 +728,13 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.extend([dest, object]);
             for arg in args.iter_mut().chain(kwargs.iter_mut().map(|(_, arg)| arg)) {
-                subscript_arg(arg, &mut out);
+                subscript_arg_regs_mut(arg, &mut out);
             }
             places_regs_mut(object_place.as_deref_mut(), &mut out);
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             places_regs_mut(kwarg_places.iter_mut().flatten(), &mut out);
             if let Some(call) = call {
-                subscript_call(call, &mut out);
+                subscript_call_regs_mut(call, &mut out);
             }
         }
         MirInstr::MultiSet {
@@ -733,12 +749,12 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         } => {
             out.extend([receiver, value]);
             for arg in args {
-                subscript_arg(arg, &mut out);
+                subscript_arg_regs_mut(arg, &mut out);
             }
             places_regs_mut(receiver_place.as_deref_mut(), &mut out);
             places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             places_regs_mut(value_place.as_deref_mut(), &mut out);
-            subscript_call(call, &mut out);
+            subscript_call_regs_mut(call, &mut out);
         }
         MirInstr::Store { place: target, src } => {
             place_regs_mut(target, &mut out);
@@ -1127,6 +1143,35 @@ fn capture_accesses_mut(instruction: &mut MirInstr) -> &mut [MirCaptureAccess] {
         | MirInstr::MultiSet { call, .. } => &mut call.capture_accesses,
         _ => &mut [],
     }
+}
+
+/// The registers of a subscript argument, mutably.
+fn subscript_arg_regs_mut<'a>(arg: &'a mut MirSubscriptArg, out: &mut Vec<&'a mut Reg>) {
+    match arg {
+        MirSubscriptArg::Index(reg) => out.push(reg),
+        MirSubscriptArg::Slice {
+            lower, upper, step, ..
+        } => out.extend([lower, upper, step].into_iter().flatten()),
+    }
+}
+
+/// The run-time registers of compile-time arguments, mutably.
+fn param_arg_regs_mut<'a>(args: &'a mut [MirParamArg], out: &mut Vec<&'a mut Reg>) {
+    out.extend(args.iter_mut().filter_map(|arg| arg.value.as_mut()));
+}
+
+/// A raise edge's flag and error, mutably.
+fn raise_edge_regs_mut<'a>(raises: &'a mut Option<Raises>, out: &mut Vec<&'a mut Reg>) {
+    if let Some(Raises { flag, error, .. }) = raises {
+        out.extend([flag, error]);
+    }
+}
+
+/// A subscript call's compile-time argument registers and raise edge,
+/// mutably.
+fn subscript_call_regs_mut<'a>(call: &'a mut MirSubscriptCall, out: &mut Vec<&'a mut Reg>) {
+    param_arg_regs_mut(&mut call.param_arg_regs, out);
+    raise_edge_regs_mut(&mut call.raises, out);
 }
 
 /// The index registers of a place's projections.
@@ -1565,7 +1610,7 @@ pub struct MirLoan {
 pub struct MirSubscriptCall {
     #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
     pub target: String,
-    pub raises: Option<Ty>,
+    pub raises: Option<Raises>,
     /// Checker-selected executable result type, including the instantiated
     /// origin and mutability of a reference result.
     pub result_ty: Ty,
@@ -1576,6 +1621,25 @@ pub struct MirSubscriptCall {
     pub reference_result: Option<mojito_types::origin::RefTy>,
     pub param_arg_regs: Vec<MirParamArg>,
     pub param_decls: Vec<mojito_types::types::ParamDecl>,
+}
+
+/// A raising instruction's error contract and its raise edge.
+///
+/// Upstream's throwing `lit.call` returns an `i1` error flag as its result
+/// 0 and writes the error into an out-memory operand. MIR lowering follows the
+/// instruction with an `if` on `flag` whose `then` region ends in a
+/// `raise` of `error` (`addErrorRegions`), so each raise point is its own
+/// region exit; `flag` and `error` are results of the instruction, read
+/// only by that `if`. On the normal path `error` is undefined, and on the
+/// raise path the instruction's other results are.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Raises {
+    /// The checked error type.
+    pub ty: Ty,
+    /// The `Bool` that is true when the instruction raised.
+    pub flag: Reg,
+    /// The raised error, of type `ty`.
+    pub error: Reg,
 }
 
 /// A single three-address instruction. Each value-producing instruction writes a
@@ -1789,9 +1853,9 @@ pub enum MirInstr {
         op: PrefixOp,
         dest: Reg,
         a: Reg,
-        /// The checked error type the operator method's call raises, as a
-        /// call's `raises`; `None` for a built-in or non-raising operator.
-        raises: Option<Ty>,
+        /// The error contract of the operator method's call, as a call's
+        /// `raises`; `None` for a built-in or non-raising operator.
+        raises: Option<Raises>,
     },
     BinOp {
         op: InfixOp,
@@ -1803,9 +1867,9 @@ pub enum MirInstr {
         /// overload). Backends must not reselect it by name/arity.
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
         resolved: Option<String>,
-        /// The checked error type the operator call raises, as a call's
-        /// `raises`; `None` for a built-in or non-raising operator.
-        raises: Option<Ty>,
+        /// The error contract of the operator call, as a call's `raises`;
+        /// `None` for a built-in or non-raising operator.
+        raises: Option<Raises>,
     },
     /// A free-function / constructor / builtin call. `args` are the flattened
     /// positional arguments; `kwargs` the keyword arguments (`name = value`). The
@@ -1823,7 +1887,7 @@ pub enum MirInstr {
         dest: Reg,
         func: FuncRef,
         /// Checker-selected error contract for this call, if it may raise.
-        raises: Option<Ty>,
+        raises: Option<Raises>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         arg_places: Vec<Option<MirPlace>>,
@@ -1870,7 +1934,7 @@ pub enum MirInstr {
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
         resolved: Option<String>,
         /// Checker-selected error contract of the callable value.
-        raises: Option<Ty>,
+        raises: Option<Raises>,
         args: Vec<Reg>,
         kwargs: Vec<(String, Reg)>,
         /// The callable value's caller place, when it has one. This is needed
@@ -1919,7 +1983,7 @@ pub enum MirInstr {
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
         resolved: Option<String>,
         /// Checker-selected concrete or trait-requirement error contract.
-        raises: Option<Ty>,
+        raises: Option<Raises>,
         /// Reference-return ABI retained independently from the destination
         /// value type. A value-returning method may itself produce a
         /// reference-valued element, so the verifier must not infer ABI from
@@ -2261,9 +2325,13 @@ pub enum MirInstr {
     /// `Vec<MirBlock>` with local block ids, entry = block 0) that **shares this
     /// function's register and variable space** — so it addresses the same slots.
     /// `handler` is `Some((error_var, body))` when there is an `except` clause (the
-    /// optional slot binds the caught error). `cleanup` lists the drops of
-    /// the body-local variables the body unwinding runs (the
-    /// exceptional-edge cleanup), each naming its destructor.
+    /// optional slot binds the caught error). `cleanup` lists the drops a
+    /// raise leaving the body runs before the handler, each naming its
+    /// destructor: what a raise past a nested `try`'s handler, `else`, or
+    /// `finally` still holds, which no instruction on that path can host
+    /// while the VM runs one `finally` for every exit (R884). A raise in the
+    /// body itself, a raising call's in its error region included, has
+    /// destroyed what it holds at its arm's entry.
     Try {
         body: Vec<MirBlock>,
         handler: Option<(Option<VarId>, Vec<MirBlock>)>,
@@ -2483,7 +2551,7 @@ pub enum MirInstr {
 /// An instruction is sized for its common variants: the places and subscript
 /// calls only a few call variants carry sit behind boxes, and a type is one
 /// handle. The call variants' argument lists set this bound.
-const _: () = assert!(std::mem::size_of::<MirInstr>() <= 304);
+const _: () = assert!(std::mem::size_of::<MirInstr>() <= 312);
 
 impl MirInstr {
     /// The slot an owned `GetIter` consumes into an iterator slot of its
@@ -2502,23 +2570,41 @@ impl MirInstr {
 
     /// The checked error type a call instruction raises, if it raises.
     pub fn call_error(&self) -> Option<&Ty> {
+        self.raise_edge().map(|raises| &raises.ty)
+    }
+
+    /// A raising instruction's error contract and raise edge: a call
+    /// declared `raises`. A `raise` statement is a terminator,
+    /// [`MirTerm::Raise`].
+    pub fn raise_edge(&self) -> Option<&Raises> {
         match self {
             Self::Call { raises, .. }
             | Self::CallIndirect { raises, .. }
-            | Self::MethodCall { raises, .. } => raises.as_ref(),
+            | Self::MethodCall { raises, .. }
+            | Self::UnOp { raises, .. }
+            | Self::BinOp { raises, .. } => raises.as_ref(),
             Self::Index { call, .. } | Self::Slice { call, .. } | Self::MultiIndex { call, .. } => {
                 call.as_ref().and_then(|call| call.raises.as_ref())
             }
             Self::MultiSet { call, .. } => call.raises.as_ref(),
-            Self::UnOp { raises, .. } | Self::BinOp { raises, .. } => raises.as_ref(),
             _ => None,
         }
     }
 
-    /// Whether the instruction is a raise point: a call declared
-    /// `raises`. A `raise` statement is a terminator, [`MirTerm::Raise`].
-    pub fn is_raise_point(&self) -> bool {
-        self.call_error().is_some()
+    /// [`Self::raise_edge`], mutably.
+    pub fn raise_edge_mut(&mut self) -> Option<&mut Raises> {
+        match self {
+            Self::Call { raises, .. }
+            | Self::CallIndirect { raises, .. }
+            | Self::MethodCall { raises, .. }
+            | Self::UnOp { raises, .. }
+            | Self::BinOp { raises, .. } => raises.as_mut(),
+            Self::Index { call, .. } | Self::Slice { call, .. } | Self::MultiIndex { call, .. } => {
+                call.as_mut().and_then(|call| call.raises.as_mut())
+            }
+            Self::MultiSet { call, .. } => call.raises.as_mut(),
+            _ => None,
+        }
     }
 
     /// Whether the instruction has no effect but reading, so it can be
@@ -3824,7 +3910,11 @@ mod tests {
             a: Reg(0),
             b: Reg(1),
             resolved: None,
-            raises: Some(ty(TyKind::Int)),
+            raises: Some(Raises {
+                ty: ty(TyKind::Int),
+                flag: Reg(3),
+                error: Reg(4),
+            }),
         };
         assert!(raising.folded_constant(ones, &reg_types, &none).is_none());
         let dunder = MirInstr::BinOp {

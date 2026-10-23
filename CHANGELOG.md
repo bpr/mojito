@@ -494,6 +494,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Each raising call is its own raise edge, as upstream's `addErrorRegions`
+  makes every throwing call: a raising call, method or indirect call,
+  operator, or subscript defines an error flag and an error
+  (`Raises { ty, flag, error }`), and MIR lowering follows it with its
+  error region, an `if` on the flag whose `then` region raises the error,
+  which the verifier requires. Drop elaboration destroys at that arm's
+  entry what the edge holds, so a value ended before the call is no longer
+  listed on a `try` body's one shared cleanup list, a value whose last use
+  is the raising call dies before the values still live past it, and a
+  raising call that leaves the function destroys what its frame holds,
+  through every frame between, where it was never destroyed
+  (`assets/ok/raising_call_edge_destroys_held_values.mojo`,
+  `assets/ok/try_raise_edge_drop_order.mojo`, which now matches the pin).
+  The VM sets the flag where the call raises, a child frame's `raise`
+  popping into its caller; Pliron joins the callee's outcome branch after
+  the instruction; `inline-parametric` routes an inlined body's raises into
+  the call's flag through its wrapper loop, and binds a raising `deinit`
+  callee's field in place. A `try`'s cleanup list keeps only what a raise
+  past a nested `try`'s `finally` holds (R884). The MIR text format is 1.91
+  and the package format 81. This closes R831, R20, R833, R1129, and R1106.
+
 - A `raise` statement is now a MIR terminator (`MirTerm::Raise`, HIR
   `Terminator::Raise`), as upstream's `raise` ends its block, where it was
   an instruction followed by its region's normal terminator. Drop

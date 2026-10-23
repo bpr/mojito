@@ -583,9 +583,9 @@ pub(super) fn join_states(a: &[Node], b: &[Node]) -> Vec<Node> {
 /// `break`s being its live-out. A `break`/`continue` reaches the loop it
 /// names through any `finally` it crosses. `try` regions are walked with
 /// the precise raise-point rule: an `except` arm starts from the join of
-/// the states at every potentially-raising instruction of the body, so a
-/// value consumed before a raising call is uninitialized there while one
-/// consumed after the last raise is not.
+/// the states at every `raise` of the body, each raising call's in its
+/// error region included, so a value consumed before a raising call is
+/// uninitialized there while one consumed after the last raise is not.
 ///
 /// A field moved out of a value must be written back before any other part
 /// of the value is used, before the variable is redefined, and before the
@@ -699,15 +699,8 @@ impl ForwardScan for LifetimeScan<'_> {
         }
     }
 
-    /// A named destructor's receiver is consumed at the call itself: the
-    /// MIR emits the receiver's `ConsumeVar` right after the call, so fold
-    /// it into the seed.
-    fn raise_seed(&self, state: &LifetimeState, next: Option<&MirInstr>) -> LifetimeState {
-        let mut seed = state.clone();
-        if let Some(MirInstr::ConsumeVar { var }) = next {
-            seed.moves[*var as usize].do_move(&[]);
-        }
-        seed
+    fn raise_seed(&self, state: &LifetimeState) -> LifetimeState {
+        state.clone()
     }
 
     fn enters(&self, _instr: &MirInstr) -> bool {

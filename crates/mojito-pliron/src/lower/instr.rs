@@ -199,12 +199,109 @@ impl FnLowering<'_> {
         self.lower_body_block(ctx, body_block)
     }
 
-    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
+    /// Lower `instr` and, when it raises, its raise edge: its call's
+    /// outcome branch lands the callee's error in the edge's storage, and
+    /// both paths join, the flag telling them apart, once the instruction's
+    /// post-call effects have run on the normal one, as upstream's throwing
+    /// call returns its error flag. What follows the instruction, up to its
+    /// error region's `if`, runs on both paths, as in MIR.
     pub(super) fn lower_instr(
         &mut self,
         ctx: &mut Context,
         instr: &MirInstr,
     ) -> Result<(), PlironError> {
+        let Some(raises) = instr.raise_edge() else {
+            return self.lower_instr_body(ctx, instr);
+        };
+        let storage = self.entry_alloca(ctx, 24, 8);
+        self.open_edge = Some(OpenEdge {
+            raises: raises.clone(),
+            storage,
+            error_block: None,
+        });
+        let lowered = self.lower_instr_body(ctx, instr);
+        let edge = self.open_edge.take();
+        lowered?;
+        let mut results = Vec::new();
+        mojito_mir::mir::verify::instruction_result_regs(instr, &mut results);
+        edge.map_or(Ok(()), |edge| self.close_edge(ctx, edge, &results))
+    }
+
+    /// Join the paths of `edge`'s instruction, whose result registers are
+    /// `results`. The normal path first releases the temporaries due after
+    /// the instruction, its result among them, which the raise path never
+    /// defined; the values it defined for the results cross the join, the
+    /// raise path passing poison, and the join's first argument is the
+    /// flag. The error register is the edge's storage. A callee with no
+    /// outcome never raises, so its flag is false.
+    fn close_edge(
+        &mut self,
+        ctx: &mut Context,
+        edge: OpenEdge,
+        results: &[Reg],
+    ) -> Result<(), PlironError> {
+        let OpenEdge {
+            raises,
+            storage,
+            error_block,
+        } = edge;
+        self.reg_values.insert(raises.error.0, storage);
+        let Some(error_block) = error_block else {
+            let flag = self.bool_constant(ctx, false);
+            self.reg_values.insert(raises.flag.0, flag);
+            return Ok(());
+        };
+        self.flush_owned_temps(ctx)?;
+        let results: Vec<Reg> = results
+            .iter()
+            .copied()
+            .filter(|result| *result != raises.flag && *result != raises.error)
+            .collect();
+        let mut normal = vec![self.bool_constant(ctx, false)];
+        for result in &results {
+            normal.extend(self.reg_values.get(&result.0).copied());
+            if let Some(string) = self.str_runtime.get(&result.0).copied() {
+                normal.extend([string.data, string.len]);
+            }
+        }
+        let types: Vec<TypeHandle> = normal.iter().map(|value| value.get_type(ctx)).collect();
+        let region = self.region.expect("lowering is inside a function");
+        let join = BasicBlock::new(ctx, None, types.clone());
+        join.insert_at_back(region, ctx);
+        let completed = BrOp::new(ctx, join, normal);
+        self.append(ctx, completed.get_operation(), Some(raises.flag));
+        self.current = Some(error_block);
+        let mut raised = vec![self.bool_constant(ctx, true)];
+        for ty in &types[1..] {
+            let poison = PoisonOp::new(ctx, *ty);
+            self.append(ctx, poison.get_operation(), Some(raises.flag));
+            raised.push(poison.get_result(ctx));
+        }
+        let jump = BrOp::new(ctx, join, raised);
+        self.append(ctx, jump.get_operation(), Some(raises.flag));
+        self.current = Some(join);
+        let mut arguments = (0..types.len()).map(|index| join.deref(ctx).get_argument(index));
+        if let Some(flag) = arguments.next() {
+            self.reg_values.insert(raises.flag.0, flag);
+        }
+        for result in &results {
+            if self.reg_values.contains_key(&result.0)
+                && let Some(value) = arguments.next()
+            {
+                self.reg_values.insert(result.0, value);
+            }
+            if let Some(string) = self.str_runtime.get_mut(&result.0)
+                && let (Some(data), Some(len)) = (arguments.next(), arguments.next())
+            {
+                string.data = data;
+                string.len = len;
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
+    fn lower_instr_body(&mut self, ctx: &mut Context, instr: &MirInstr) -> Result<(), PlironError> {
         match instr {
             MirInstr::Const { dest, k } => self.lower_const(ctx, *dest, k),
             MirInstr::ConstructTypeParam { dest, param, .. } => Err(self.unsupported_reg(

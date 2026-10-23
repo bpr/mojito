@@ -371,7 +371,7 @@ impl ForwardScan for FieldCarryScan<'_> {
         }
     }
 
-    fn raise_seed(&self, state: &Carry, _next: Option<&MirInstr>) -> Carry {
+    fn raise_seed(&self, state: &Carry) -> Carry {
         state.clone()
     }
 
@@ -477,8 +477,6 @@ struct FieldPlan {
 struct FieldBlock {
     live_in: FieldSet,
     live_out: FieldSet,
-    /// What a raise in the block keeps live; `None` outside every `try`.
-    raise: Option<FieldSet>,
 }
 
 impl BackwardRecorder<FieldSet> for FieldPlan {
@@ -492,7 +490,6 @@ impl BackwardRecorder<FieldSet> for FieldPlan {
             FieldBlock {
                 live_in: live.live_in.clone(),
                 live_out: live.live_out.clone(),
-                raise: live.raise.cloned(),
             },
         );
     }
@@ -586,17 +583,11 @@ impl FieldSplice<'_> {
                 .filter(|position| !moved.contains(position))
                 .collect();
             // A field whose last use is a scalar the instruction loads by
-            // value dies at that load, before the instruction runs, unless
-            // the raise leaving it still observes the field.
-            let raise = plan.raise.as_ref().filter(|_| raises_to_handler(&instr));
+            // value dies at that load, before the instruction runs.
             let before: Vec<usize> = loaded
                 .iter()
                 .copied()
-                .filter(|position| {
-                    dying.contains(position)
-                        && !direct.contains(position)
-                        && !raise.is_some_and(|raise| raise.contains(position))
-                })
+                .filter(|position| dying.contains(position) && !direct.contains(position))
                 .collect();
             dying.retain(|position| !before.contains(position));
             let at = rebuilt.len();

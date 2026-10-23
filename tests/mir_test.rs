@@ -5,8 +5,8 @@
 use mojito::hir::Cfg;
 use mojito::mir::{
     LoopLabel, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, MirProgram,
-    MirSubscriptArg, MirTerm, Proj, Reg, SpanTable, UseMode, cleanup_drops, lower_cfg,
-    lower_program, nested_instructions,
+    MirSubscriptArg, MirTerm, Proj, Reg, SpanTable, UseMode, lower_cfg, lower_program,
+    nested_instructions,
 };
 use mojito::types::TyKind;
 use mojito::{Compiler, SemanticAdjustment, Ty, parse};
@@ -324,8 +324,9 @@ fn dying_copy_receiver_forwards_its_source() {
 fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
     // `two(x^, boom(1))` forwards `x` after `boom` runs, right before `two`,
     // and `two(M(7), boom(1))` binds the temporary to a forwarding slot it
-    // forwards there too. Inside a `try`, the slot and the outer `x` are in
-    // the scope-exit cleanup, so a raise in `boom` destroys both.
+    // forwards there too. Inside a `try`, each `boom` call's error region
+    // destroys the slot it holds, so a raise in `boom` destroys both, and
+    // the `try` lists nothing.
     let source = "struct M(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __deinit__(deinit self):\n        pass\n\ndef two(var a: M, n: Int):\n    pass\n\ndef boom(n: Int) raises -> Int:\n    raise Error(\"boom\")\n\ndef main():\n    var x = M(5)\n    try:\n        two(x^, boom(1))\n        two(M(7), boom(1))\n    except:\n        pass\n";
     let compiled = Compiler::default()
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -347,10 +348,7 @@ fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
             _ => None,
         })
         .expect("try");
-    assert!(
-        cleanup_drops(cleanup, x) && cleanup_drops(cleanup, forwarded),
-        "{main:#?}"
-    );
+    assert!(cleanup.is_empty(), "{main:#?}");
     let instrs = body
         .iter()
         .flat_map(|block| &block.instrs)
@@ -365,8 +363,20 @@ fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
                 )
             })
             .expect("forward");
+        let destroys = |then: &[MirBlock]| {
+            then.iter().flat_map(|block| &block.instrs).any(|instr| {
+                matches!(
+                    instr,
+                    MirInstr::UseVar { var: used, mode: UseMode::Forward, .. } if *used == var
+                )
+            })
+        };
         assert!(
-            matches!(&instrs[forward_at - 1], MirInstr::Call { func, .. } if func.0 == "boom"),
+            matches!(&instrs[forward_at - 1], MirInstr::If { then, .. } if destroys(then)),
+            "{main:#?}"
+        );
+        assert!(
+            matches!(&instrs[forward_at - 2], MirInstr::Call { func, .. } if func.0 == "boom"),
             "{main:#?}"
         );
         assert!(
@@ -2241,7 +2251,7 @@ fn bounded_trait_calls_carry_the_requirement_error_contract_into_mir() {
                     method,
                     raises: Some(raises),
                     ..
-                } if method == "run" && **raises == mojito::TyKind::Error
+                } if method == "run" && *raises.ty == mojito::TyKind::Error
             ))
     );
 }

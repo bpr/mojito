@@ -13,8 +13,8 @@
 //!   block, and what followed the loop goes. An inlined body is such a
 //!   loop: its `return`s are `break`s.
 //! - **Trivial `try`s** (`removeTrivialTry`). A `try` with a handler whose
-//!   body holds no raise point ([`MirInstr::is_raise_point`], or a `raise`
-//!   terminator) is replaced by
+//!   body holds no `raise` terminator (a raising call's raises in its error
+//!   region) is replaced by
 //!   its body and, when the body completes (`try.yield`), its `else`; a part
 //!   that leaves instead ends the enclosing block. A raise in a nested
 //!   `try`'s body is that `try`'s, and one in its other parts the enclosing
@@ -163,11 +163,6 @@ impl Census {
                         }
                     }
                     _ => {
-                        if instruction.is_raise_point()
-                            && let Some(id) = self.last_try
-                        {
-                            self.elidable[id] = false;
-                        }
                         for region in instruction_regions(instruction) {
                             self.walk(region);
                         }

@@ -16,7 +16,7 @@ use std::path::Path;
 use mojito::mir::{
     CleanupDrop, Const, FuncRef, LoopLabel, MirBlock, MirCase, MirDeclarations, MirFunction,
     MirInstr, MirInteriorOrigin, MirIntrinsicSubscript, MirLoan, MirParamArg, MirPlace, MirProgram,
-    MirTerm, Proj, Reg, SpanTable, UseMode,
+    MirTerm, Proj, Raises, Reg, SpanTable, UseMode,
 };
 use mojito::param_expr::{MetaTy, ParamContext, ParamId};
 use mojito::types::DependentType;
@@ -2043,8 +2043,14 @@ fn verifier_rejects_in_place_binding_without_its_producer() {
 fn slot_end_findings(blocks: Vec<MirBlock>) -> Vec<String> {
     let f = function(
         blocks,
-        3,
-        &[(0, Ty::int()), (1, Ty::bool()), (2, Ty::int())],
+        5,
+        &[
+            (0, Ty::int()),
+            (1, Ty::bool()),
+            (2, Ty::int()),
+            (3, Ty::bool()),
+            (4, Ty::int()),
+        ],
     );
     verify(&program(f))
         .into_iter()
@@ -2085,21 +2091,37 @@ const DROP_X: MirInstr = MirInstr::DropVar {
     destructor: None,
 };
 
-fn raising_call() -> MirInstr {
-    MirInstr::Call {
-        dest: Reg(2),
-        func: FuncRef::named("boom"),
-        raises: Some(Ty::int()),
-        args: Vec::new(),
-        kwargs: Vec::new(),
-        arg_places: Vec::new(),
-        kwarg_places: Vec::new(),
-        param_arg_regs: Vec::new(),
-        capture_accesses: Vec::new(),
-        receiver: None,
-        instantiated_args: Vec::new(),
-        spread: None,
-    }
+/// A raise point: a raising call and its error region, whose `then`
+/// region raises the call's error.
+fn raising_call() -> Vec<MirInstr> {
+    vec![
+        MirInstr::Call {
+            dest: Reg(2),
+            func: FuncRef::named("boom"),
+            raises: Some(Raises {
+                ty: Ty::int(),
+                flag: Reg(3),
+                error: Reg(4),
+            }),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            arg_places: Vec::new(),
+            kwarg_places: Vec::new(),
+            param_arg_regs: Vec::new(),
+            capture_accesses: Vec::new(),
+            receiver: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        },
+        MirInstr::If {
+            results: Vec::new(),
+            cond: Reg(3),
+            then: vec![block(Vec::new(), MirTerm::Raise(Reg(4)))],
+            elifs: Vec::new(),
+            else_args: Vec::new(),
+            orelse: vec![block(Vec::new(), MirTerm::Yield(Vec::new()))],
+        },
+    ]
 }
 
 /// A `try` around `body`, with an empty handler when `handler` holds.
@@ -2166,7 +2188,10 @@ fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
             MirTerm::Return(None),
         )]
     };
-    let body = vec![block(vec![DROP_X, raising_call()], MirTerm::TryYield)];
+    let body = vec![block(
+        [vec![DROP_X], raising_call()].concat(),
+        MirTerm::TryYield,
+    )];
     let raised = top(listed_try(body, Some(Vec::new()), None));
     assert_eq!(
         slot_end_findings(raised),
@@ -2174,7 +2199,7 @@ fn verifier_rejects_a_cleanup_list_naming_an_ended_slot() {
             "MIR function 'test' block 0: try.cleanup of slot $v0 ('x') that every path has already ended"
         ]
     );
-    let body = vec![block(vec![raising_call()], MirTerm::TryYield)];
+    let body = vec![block(raising_call(), MirTerm::TryYield)];
     let handler = vec![block(vec![DROP_X], MirTerm::TryYield)];
     let findings = slot_end_findings(top(listed_try(body, Some(handler), None)));
     assert!(findings[0].contains("drop.var of slot $v0"), "{findings:?}");
@@ -2217,7 +2242,7 @@ fn verifier_accepts_a_cleanup_list_naming_a_held_slot() {
         )]
     };
     let body = vec![block(
-        vec![raising_call(), DROP_X, raising_call()],
+        [raising_call(), vec![DROP_X], raising_call()].concat(),
         MirTerm::TryYield,
     )];
     let raised = top(listed_try(body, Some(Vec::new()), None));
@@ -2284,7 +2309,10 @@ fn verifier_accepts_a_drop_of_a_slot_some_path_left_live() {
     let restored = vec![block(restored, MirTerm::Return(None))];
     assert_eq!(slot_end_findings(restored), Vec::<String>::new());
     // The body moves `x` after its last raise, so its handler still owns it.
-    let body = vec![block(vec![raising_call(), move_x()], MirTerm::TryYield)];
+    let body = vec![block(
+        [raising_call(), vec![move_x()]].concat(),
+        MirTerm::TryYield,
+    )];
     let handler = vec![block(vec![DROP_X], MirTerm::TryYield)];
     let raising = vec![block(
         [define_x(), vec![try_region(body, Some(handler))]].concat(),
@@ -2387,7 +2415,7 @@ fn verifier_rejects_a_drop_of_a_slot_a_region_op_ended() {
         1
     );
     let listed = listed_try(
-        region(vec![DROP_X, raising_call()], MirTerm::TryYield),
+        region([vec![DROP_X], raising_call()].concat(), MirTerm::TryYield),
         Some(Vec::new()),
         None,
     );

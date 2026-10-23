@@ -1,7 +1,7 @@
   functions: [
       fn {
         name: erased_raise,
-        registers: 5,
+        registers: 9,
         vars: 3,
         var_names: [x, s, e],
         params: 1,
@@ -14,12 +14,12 @@
         return_type: absent,
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }, reg_type { reg: %r4, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        register_types: [reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Bool }, reg_type { reg: %r6, type: Error }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }],
         blocks: [
           bb0 {
             instructions: [
-              try { body: [bb0 { instructions: [var.use { dest: %r1, var: $v0, mode: copy }, var.store { var: $v1, src: %r1, binding_type: absent, in_place: false }, drop.var { var: $v1 }, call { dest: %r2, func: fail, raises: present(Error), args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield {} }], handler: present(handler { error_var: present($v2), blocks: [bb0 { instructions: [var.use { dest: %r4, var: $v2, mode: copy }, drop.var { var: $v2 }], terminator: try.yield {} }] }), orelse: absent, finalbody: absent, cleanup: [] }
+              try { body: [bb0 { instructions: [var.use { dest: %r1, var: $v0, mode: copy }, var.store { var: $v1, src: %r1, binding_type: absent, in_place: false }, drop.var { var: $v1 }, call { dest: %r2, func: fail, raises: present(raises { type: Error, flag: %r5, error: %r6 }), args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, if { results: [], condition: %r5, then: [bb0 { instructions: [], terminator: raise { src: %r6 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }], terminator: try.yield {} }], handler: present(handler { error_var: present($v2), blocks: [bb0 { instructions: [var.use { dest: %r4, var: $v2, mode: copy }, drop.var { var: $v2 }], terminator: try.yield {} }] }), orelse: absent, finalbody: absent, cleanup: [] }
             ],
             terminator: return { value: absent }
           }

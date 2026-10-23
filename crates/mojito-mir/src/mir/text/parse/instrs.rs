@@ -400,7 +400,7 @@ impl Decoder {
                 op: self.req(value, fields, "op", Self::prefix_op)?,
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 a: self.req(value, fields, "a", Self::reg)?,
-                raises: self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?,
+                raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
             }),
             "binary" => Some(MirInstr::BinOp {
                 op: self.req(value, fields, "op", Self::infix_op)?,
@@ -408,12 +408,12 @@ impl Decoder {
                 a: self.req(value, fields, "a", Self::reg)?,
                 b: self.req(value, fields, "b", Self::reg)?,
                 resolved: self.req(value, fields, "resolved", |d, v| Some(d.option_symbol(v)))?,
-                raises: self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?,
+                raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
             }),
             "call" => Some(MirInstr::Call {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 func: FuncRef(self.req(value, fields, "func", Self::symbol)?),
-                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?),
+                raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
                 args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
                 arg_places: self
@@ -452,7 +452,7 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 callee: self.req(value, fields, "callee", Self::reg)?,
                 resolved: self.req(value, fields, "resolved", |d, v| Some(d.option_symbol(v)))?,
-                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?),
+                raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
                 args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
                 kwargs: self.req(value, fields, "kwargs", |d, v| Some(d.kwargs(v)))?,
                 callee_place: (self.req(value, fields, "callee_place", |d, v| {
@@ -494,7 +494,7 @@ impl Decoder {
                 recv: self.req(value, fields, "recv", Self::reg)?,
                 method: self.req(value, fields, "method", Self::symbol)?,
                 resolved: self.req(value, fields, "resolved", |d, v| Some(d.option_symbol(v)))?,
-                raises: (self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?),
+                raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
                 reference_result: (self.req(value, fields, "reference_result", |d, v| {
                     Some(d.option_value(Some(v)).and_then(|v| d.ref_ty(v)))
                 })?)

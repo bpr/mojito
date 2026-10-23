@@ -911,7 +911,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("op", prefix(*op).into()),
                 ("dest", reg_value(*dest)),
                 ("a", reg_value(*a)),
-                ("raises", option(raises.as_ref().map(ty_value))),
+                ("raises", option(raises.as_ref().map(raises_value))),
             ],
         ),
         MirInstr::BinOp {
@@ -929,7 +929,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("a", reg_value(*a)),
                 ("b", reg_value(*b)),
                 ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
-                ("raises", option(raises.as_ref().map(ty_value))),
+                ("raises", option(raises.as_ref().map(raises_value))),
             ],
         ),
         MirInstr::Call {
@@ -950,7 +950,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             &[
                 ("dest", reg_value(*dest)),
                 ("func", symbol(&func.0)),
-                ("raises", option(raises.as_ref().map(ty_value))),
+                ("raises", option(raises.as_ref().map(raises_value))),
                 ("args", regs(args)),
                 ("kwargs", kwargs_value(kwargs)),
                 ("arg_places", places_option(arg_places)),
@@ -993,7 +993,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("dest", reg_value(*dest)),
                 ("callee", reg_value(*callee)),
                 ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
-                ("raises", option(raises.as_ref().map(ty_value))),
+                ("raises", option(raises.as_ref().map(raises_value))),
                 ("args", regs(args)),
                 ("kwargs", kwargs_value(kwargs)),
                 (
@@ -1049,7 +1049,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                     ("recv", reg_value(*recv)),
                     ("method", symbol(method)),
                     ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
-                    ("raises", option(raises.as_ref().map(ty_value))),
+                    ("raises", option(raises.as_ref().map(raises_value))),
                     (
                         "reference_result",
                         option(reference_result.as_deref().map(ref_ty)),
@@ -1983,7 +1983,7 @@ fn subscript_call(value: &MirSubscriptCall) -> String {
         "subscript_call",
         &[
             ("target", symbol(&value.target)),
-            ("raises", option(value.raises.as_ref().map(ty_value))),
+            ("raises", option(value.raises.as_ref().map(raises_value))),
             ("result_type", ty_value(&value.result_ty)),
             (
                 "receiver_requires_place",
@@ -2030,6 +2030,16 @@ fn call_argument(value: &CheckedCallArgument) -> String {
             ("parameter_type", ty_value(&value.parameter_ty)),
             ("requires_place", value.requires_place.to_string()),
             ("convention", option(value.convention.map(convention))),
+        ],
+    )
+}
+fn raises_value(value: &Raises) -> String {
+    record(
+        "raises",
+        &[
+            ("type", ty_value(&value.ty)),
+            ("flag", reg_value(value.flag)),
+            ("error", reg_value(value.error)),
         ],
     )
 }

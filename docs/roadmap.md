@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1290**.
+Next free ID: **R1291**.
 
 ## Ordered Work
 
@@ -285,24 +285,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1080 (2026-10-17).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1106 `inline-parametric` copies a field into a fresh slot for a
-  raising `deinit` callee, where upstream passes the field's address**
-
-  An explicit `self.d^.finish()` whose `nodebug` `finish` raises inlines
-  with `self.d` copied into a fresh `self$inline` slot, where a
-  non-raising one binds `self.d` itself (`Binding::Part`).
-  - The caller's `consume.place` after the call ends a part-bound body's
-    receiver, and a raise edge skips it.
-  - A raise-edge cleanup list names only whole slots (`CleanupDrop` has a
-    `var`, no place), so it cannot end the part the body left on that edge.
-  - Probe: `S.close(deinit self) raises` calling `self.d^.finish()` over
-    `D.finish(deinit self) raises`, `@always_inline("nodebug")`; it prints
-    `finish 4`, `done` on the pin and the VM, and `S.close` holds a
-    `var.store` of the loaded `self.d`.
-  - Found while landing R1081 (2026-10-17).
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R1096 `conforms_to(T, Trait)` over a concrete binding keeps its
   call inlined**
@@ -765,8 +747,8 @@ which names the upstream pass each one follows. Each is measured by the
     allocation variant across it.
   - Upstream's `LowerSemanticCF` makes each raise an explicit
     `lit.try.raise` terminator (`emitRaise`), which carries the variant
-    values into the except region; Mojito's raise points are implicit
-    raising instructions.
+    values into the except region; Mojito's `raise` terminator, a raising
+    call's in its error region since R831, carries none.
   - The fix gives `Try` results, a `try.yield` with values, and handler
     arguments, and has `variance` stop refusing a store under a `try`.
   - Probe: `tests/mir_passes/mem-2-reg/region_try_store_kept.mir`.
@@ -1488,6 +1470,28 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1290 A raising `__iter__` runs inside `iter.init`, which has no
+  raise edge, where upstream's `emitForStmt` calls it as a throwing call**
+
+  Problem: a `for` over an iterable whose `__iter__` raises raises from an
+  instruction no ownership walk or pass takes for a raise point.
+  - `MirInstr::GetIter` calls `__iter__` through its `prepare` list, and
+    only an instruction with a `Raises` gets an error region (R831).
+  - Upstream's `emitForStmt` emits `__iter__` as an ordinary `lit.call`,
+    which `addErrorRegions` follows with its error region.
+  - Probe: `try: var k = S(1); for x in Bad(): print(x)` /
+    `except e: print("caught", e)`, over `def __iter__(ref self) raises
+    -> It` raising `Error("bad iter")`; the pin prints `del 1`,
+    `caught bad iter`, and Mojito fails with `unhandled error: bad iter`,
+    since `simplify-cf` erases the `try` as one whose body cannot raise.
+  - Probe: the same loop in a `def walk() raises` called in a `try`
+    prints `caught bad iter`, where the pin destroys `k` first.
+  - Fix: lower a raising `__iter__` as a raising `call.method` whose
+    result `iter.init` takes, so it has its raise edge as any call.
+  - Found while landing R831 (2026-10-22).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R733 An outer value last used after a raise in a `try` body is
   destroyed after the handler on the raise path**
 
@@ -1499,21 +1503,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Values declared inside the body already die on the raise edge.
   - Found while landing R723 (2026-10-13).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R833 A raising operator destroys its left operand after values
-  declared later**
-
-  Problem: in `assets/ok/try_raise_edge_drop_order.mojo`, `var x = a +
-  S(9)` raising in a body that declared `a`, then `b`, prints `del 9`,
-  `del 2`, `del 1`, where the pin prints `del 9`, `del 1`, `del 2`.
-  - `a`'s last use is the raising `+`, and the pin destroys it on that
-    raise edge before the slots still live past it.
-  - Mojito's raise-edge cleanup list drops every held slot in reverse
-    declaration order.
-  - Found while landing R826 (2026-10-14).
-  - Depends on R831 (a raise edge per raising instruction orders its own
-    drops).
   - Model: Opus, Not Planned.
 
 - [ ] **R829 A value a `return` holds past an inner `finally` is destroyed
@@ -1547,25 +1536,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     roots, then the keep-alives and HIR's loop-owned list go.
   - Found while landing R826 (2026-10-14).
   - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R831 A `try`'s raise-edge cleanup list serves every raise point of
-  its body**
-
-  Problem: a slot ended before one raising call but held at another stays
-  listed, and the VM's empty-slot no-op or the native drop flag absorbs its
-  teardown when the first call raises.
-  - Upstream destroys on each raise edge what that edge holds.
-  - The MIR verifier accepts the list, since some raise path holds each
-    entry.
-  - Lever: an explicit raise edge per raising instruction in a `try` body.
-  - Upstream's `emitRaise` ends each raise in `lit.try.raise`, naming its
-    `try`'s label, or in `lit.error.return` out of the function; MIR's one
-    `raise` terminator (R906) serves both, its `try` found by the
-    ownership walks' raise channel and by the backends as they run.
-  - Found while landing R826 (2026-10-14).
-  - Depends on R906 (a `raise` ends its region, as each explicit raise
-    edge will).
   - Model: Fable, Planned.
 
 - [ ] **R718 A struct prefix operator's operand lives as long as its
@@ -1754,44 +1724,22 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R20 A value live after a raising call is never destroyed when the
-  call raises out of the function**
-
-  Problem: `var b = Thing(); if cond: fail(); look(b)` never runs `b`'s
-  destructor when `fail()` raises out of the function, where the pin
-  destroys `b` on the raise edge.
-  - A `raise` statement has destroyed it since R906: it is a terminator
-    whose live-out is the raise channel, so drop elaboration destroys at
-    the raising arm's entry what no handler reads, in a loop, an `else`
-    arm, and a `comptime if` arm alike.
-  - A raising call's raise edge is implicit, so no instruction on it can
-    host the drop, and a raise that leaves the function has no cleanup
-    list.
-  - Upstream's `addErrorRegions` gives each raising call an error region
-    ending in a raise, which R831's explicit raise edges bring.
-  - Probe: `conformance/probes/raise_path_live_value_leaks.mojo` (`v6`;
-    the other cases match the pin since R906).
-  - Depends on R831 (the explicit raise edges whose drops a raise out of
-    the function needs too).
-  - Model: Fable, Planned.
-
 - [ ] **R956 A raising initializer's initialized fields are not destroyed
   when it raises**
 
   Problem: `self.a = Tracer("a")` then `raise` in a raising `__init__`
   leaks `a`, where the pin destroys each field initialized before the
   raise.
-  - Inlined into a `try`'s body (`inline-parametric`), the `out self` slot
-    stays off the raise-edge cleanup, since a slot list cannot end part of
-    a value.
+  - Inlined (`inline-parametric`), the body's raise breaks out with the
+    call's error flag, and neither the body's error region nor the
+    caller's ends the partly initialized `out self` slot.
   - Kept as a call, the `raise` terminator (R906) is an exit drop
     elaboration places drops before, but it never ends part of the
     `out self` slot: only a `deinit` receiver's fields get field drops
     (`field_drops.rs`), where upstream's `DestructorInsertion` destroys a
     partially initialized `self` field by field.
   - Fix: end the fields the raise holds, one `DropPlace` each, before the
-    `raise`; a raising call in the initializer needs the same on its raise
-    edge once R20 lands.
+    `raise`, a raising call's in its error region too.
   - Probe: a `Pair.__init__` setting `a`, raising, then setting `b`,
     called in a `try` (found while landing R919, 2026-10-14); the pin
     prints `del a`, `caught boom`, Mojito only `caught boom`.
@@ -2830,15 +2778,14 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 
   `copy_elision.rs`'s `cannot_raise` accepts only a few silent
   instructions and non-raising calls, where drop elaboration and field
-  drops seed a handler only at checked raise points
-  (`scan::raises_to_handler`).
+  drops seed a handler only at a `raise`, a raising instruction's in its
+  error region (`MirInstr::raise_edge`, R831).
   - A non-raising operator, subscript, or other instruction between a
     dying copy and the call that takes it keeps the copy as a move instead
     of a forward or a loan.
-  - Field drops switched to `raises_to_handler` with R878.
-  - Fix: build `cannot_raise` on `raises_to_handler`, and compare
-    `mojito run` output on the copy-elision fixtures against the old
-    binary.
+  - Fix: build `cannot_raise` on `MirInstr::raise_edge` and on region ops
+    holding a `raise`, and compare `mojito run` output on the copy-elision
+    fixtures against the old binary.
   - Found while landing R825 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7305,19 +7252,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1129 A late-initialized local dies in reverse initialization order**
-
-  Problem: after `var a: S`, `var b = S(2)`, `a = S(1)`, a raise destroys
-  `a` then `b` at the pin (`del 1`, `del 2`), where Mojito destroys `b`
-  then `a`, in reverse declaration order.
-  - Ledger name: `assets/ok/try_raise_edge_drop_order.mojo` in
-    `conformance/assets-mojo-output-diffs.tsv` (`drop-timing`); the
-    fixture's header describes Mojito's order.
-  - Both pins behave alike, so this is an unoracled Mojito divergence, not a
-    window change.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1130 A t-string reads its interpolations when it is written**
 
   Problem: `var t = t"x={x}"` then `x = 2` then `print(t)` prints `x=1` in
@@ -10290,6 +10224,11 @@ follow-ups the landed producer stages filed come last.
   - `simplify-cf` never elides a `try` with a `finally`, which upstream's
     `removeTrivialTry` never meets: probe a `try`/`except`/`finally` whose
     body cannot raise (`--timings`' `simplify-cf.erased_tries`).
+  - A raise past a nested `try`'s `finally` is the one raise no
+    instruction can host a drop on, so `Try::cleanup` survives for it
+    alone and goes with the copy: probe `var s = S(5)` in an outer `try`
+    body, an inner `try: f(1)` / `finally: print(s.tag)`, then
+    `print("after", s.tag)`, where the outer `try` lists `s`.
   - Depends on R831 (the explicit raise edges a `finally` is copied
     before).
   - Model: Fable, Planned.

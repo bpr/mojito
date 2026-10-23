@@ -2240,7 +2240,8 @@ impl VmBackend {
                 // A non-`Normal` outcome from a nested `try` (a `return`, or
                 // a region exit naming an op this part does not hold) leaves
                 // this part carrying it.
-                match self.exec_instr(prog, instruction, scope, regs, vars)? {
+                let outcome = self.exec_instr(prog, instruction, scope, regs, vars);
+                match raise_into_edge(instruction, outcome, regs)? {
                     Flow::Normal => {}
                     Flow::Leave(leave) => match cursor.resolve_leave(blocks, leave, regs)? {
                         Some(leave) => return Ok(Flow::Leave(leave)),
@@ -2271,10 +2272,28 @@ impl VmBackend {
                     });
                 }
                 Transfer::Exit(MirTerm::Raise(src)) => {
-                    return Err(self.raise(&regs[src.0 as usize]));
+                    return Err(self.raise_register(prog, scope.function, regs, *src));
                 }
                 Transfer::Exit(_) => return Ok(Flow::Normal),
             }
+        }
+    }
+
+    /// The error a `raise` of register `src` of `function` propagates as:
+    /// a raise edge's error as it was raised, any other value as
+    /// [`Self::raise`] makes it.
+    pub(super) fn raise_register(
+        &mut self,
+        prog: &Prog,
+        function: usize,
+        registers: &[Value],
+        src: Reg,
+    ) -> RuntimeError {
+        let value = &registers[src.0 as usize];
+        if prog.edge_errors[function].contains(&src.0) {
+            RuntimeError::Raised(value.clone())
+        } else {
+            self.raise(value)
         }
     }
 

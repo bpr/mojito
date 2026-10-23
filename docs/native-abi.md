@@ -233,13 +233,16 @@ Rules:
   stderr, trap category 5 (exit 69); the CLI re-renders that stderr text as
   its diagnostic for byte parity with the VM's `RuntimeError::Raised`
   display.
-- **The propagation path abandons locals**: matching the VM (which truncates
-  raising frames without running destructors — its arena reclaims the memory
-  invisibly), no user destructor runs on the error-propagation path out of a
-  function beyond the explicit `try` cleanup lists in the MIR. Generated code
-  frees the *buffers* of still-initialized releasable locals (the String and
-  built-in-error family) on that path without running user code; abandoned
-  locals of other droppable types are a recorded leak residue.
+- **The propagation path destroys what it holds**: each raise point is a
+  MIR `raise`, a raising call's in its error region, and drop elaboration
+  has destroyed at its arm's entry what the raise holds, into a handler or
+  out of the function alike, as upstream's error arm does. A raising call
+  branches on its callee's outcome tag; both paths join after the
+  instruction, its error flag the join's argument, and the error region's
+  `if` branches on it. The propagate block then byte-copies the error out
+  and frees the *buffers* of still-initialized releasable locals (the
+  String and built-in-error family) without running user code, a backstop
+  the drop flags keep (R832).
 
 ### Retained callables
 

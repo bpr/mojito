@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::Raises;
 
 impl Decoder {
     pub(super) fn use_mode(&mut self, value: &Value) -> Option<UseMode> {
@@ -335,7 +336,7 @@ impl Decoder {
     pub(super) fn subscript_call(&mut self, value: &Value) -> Option<MirSubscriptCall> {
         let fields = self.record(value, "subscript_call").ok()?;
         let target = self.req(value, fields, "target", Self::symbol)?;
-        let raises = self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?;
+        let raises = self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?;
         let result_ty = self.req(value, fields, "result_type", Self::ty)?;
         let receiver_requires_place =
             self.req(value, fields, "receiver_requires_place", Self::boolean)?;
@@ -432,6 +433,22 @@ impl Decoder {
                 None
             }
         }
+    }
+
+    /// A raising instruction's `raises` field: `absent`, or
+    /// `present(raises { type, flag, error })`.
+    pub(super) fn option_raises(&mut self, value: &Value) -> Option<Raises> {
+        let value = self.option_value(Some(value))?;
+        let fields = self.record(value, "raises").ok()?;
+        let ty = self.req(value, fields, "type", Self::ty);
+        let flag = self.req(value, fields, "flag", Self::reg);
+        let error = self.req(value, fields, "error", Self::reg);
+        self.unknown(fields, &["type", "flag", "error"]);
+        Some(Raises {
+            ty: ty?,
+            flag: flag?,
+            error: error?,
+        })
     }
 
     pub(super) fn iterator_call(&mut self, value: &Value) -> Option<CheckedIteratorCall> {

@@ -86,8 +86,8 @@ Two findings beside the rule:
 - `c7` is not about regions. A value live after a region and unused in the
   arm that raises was never destroyed when the raise left the function.
   Since R906 (2026-10-22) a `raise` is a terminator, and drop elaboration
-  destroys `b` at the arm's entry, as the pin does; the same leak after a
-  raising call stays on the roadmap as R20
+  destroys `b` at the arm's entry, as the pin does; since R831 (2026-10-22)
+  a raising call's error region does the same, which closed R20
   (`conformance/probes/raise_path_live_value_leaks.mojo`, `v6`).
 
 ## What landed (2026-10-03)

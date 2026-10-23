@@ -3,8 +3,9 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 
-/// The result registers an instruction defines (call/operation destinations
-/// and loan/consumption markers).
+/// The result registers an instruction defines (call/operation destinations,
+/// a raising instruction's error flag and error, and loan/consumption
+/// markers).
 pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
     match instruction {
         MirInstr::MakeRef { dest, .. }
@@ -93,6 +94,9 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             out.extend(results.iter().chain(args).copied());
         }
         _ => {}
+    }
+    if let Some(raises) = instruction.raise_edge() {
+        out.extend([raises.flag, raises.error]);
     }
 }
 

@@ -118,7 +118,7 @@ pub(super) fn dunder_method_call(
     recv: Reg,
     method: &str,
     resolved: Option<String>,
-    raises: Option<Ty>,
+    raises: Option<mojito_mir::mir::Raises>,
     args: Vec<Reg>,
 ) -> MirInstr {
     let arg_places = vec![None; args.len()];

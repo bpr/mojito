@@ -3589,8 +3589,55 @@ impl<'a> Flatten<'a> {
         r
     }
 
+    /// Emit `i`, followed by its error region ([`Self::error_region`])
+    /// when it raises.
     fn emit(&mut self, i: MirInstr) {
+        let raises = i.raise_edge().cloned();
         self.f.blocks[self.cur].instrs.push(i);
+        self.error_region(raises);
+    }
+
+    /// Emit a raising call whose error region the caller emits once the
+    /// call's tail is in place.
+    fn emit_call(&mut self, i: MirInstr) {
+        self.f.blocks[self.cur].instrs.push(i);
+    }
+
+    /// The raise edge of a raising instruction about to be lowered, from its
+    /// checked error type: fresh `flag` and `error` registers the
+    /// instruction defines, as upstream's throwing call returns its error
+    /// flag and writes its error out. `None` for a non-raising instruction.
+    fn raises(&mut self, ty: Option<Ty>, span: SourceSpan) -> Option<Raises> {
+        let ty = ty?;
+        let flag = self.fresh_typed(span.clone(), None, Ty::bool());
+        let error = self.fresh_typed(span, None, ty.clone());
+        Some(Raises { ty, flag, error })
+    }
+
+    /// Emit a raising instruction's error region once its call tail
+    /// (keep-alives, transferred loans, a consumed receiver) is in place:
+    /// an `if` on its flag whose `then` region raises its error, as
+    /// upstream's `addErrorRegions` follows each throwing call. The raise
+    /// reaches the nearest enclosing `try`, or leaves the function; drop
+    /// elaboration destroys at the arm's entry what that raise holds.
+    fn error_region(&mut self, raises: Option<Raises>) {
+        let Some(raises) = raises else {
+            return;
+        };
+        self.emit(MirInstr::If {
+            results: Vec::new(),
+            cond: raises.flag,
+            then: vec![MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::Raise(raises.error),
+            }],
+            elifs: Vec::new(),
+            else_args: Vec::new(),
+            orelse: vec![MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::Yield(Vec::new()),
+            }],
+        });
     }
 
     /// The callee for a free call the checker recorded no exact target for: the

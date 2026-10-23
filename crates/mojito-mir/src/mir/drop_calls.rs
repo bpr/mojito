@@ -10,7 +10,7 @@
 //! follows each region op as upstream's `CheckLifetimes` walks it (an `if`
 //! joining its arms, a loop its `break`s once its `continue`s are stable,
 //! a `match` case entered from the previous case's `match.next`s, a `try`'s
-//! handler from the body's raise points), decides where the state is
+//! handler from the body's raises), decides where the state is
 //! definite. Where the slot holds a whole value on every path to a
 //! `drop.var`, the drop is the call: a forwarding use of the slot, which
 //! ends it and hands its storage to the callee as Mojo's owned argument
@@ -472,10 +472,9 @@ fn flow(
 /// raises from; and joined over every point of the block, its regions
 /// included.
 ///
-/// A raise point raises in the state before it, as the raise edge leaves
-/// it before the point's own effects. A `try` raises in any state inside
-/// it once a raise point lies anywhere in it; every other region op raises
-/// as its regions do.
+/// A `try` raises in any state inside it once a `raise` lies anywhere in
+/// it; every other region op raises as its regions do, a raising call
+/// through its error region's `raise`.
 fn through(
     block: &MirBlock,
     input: State,
@@ -499,10 +498,6 @@ fn through(
                 }
                 (region.after, region.anywhere)
             }
-            Some(_) if instruction.is_raise_point() => {
-                raised = join(raised, state.clone());
-                (state.map(|held| held_after(held, instruction, var)), None)
-            }
             Some(held) => (Some(held_after(held, instruction, var)), None),
         };
         anywhere = join(join(anywhere, inside), after.clone());
@@ -511,18 +506,14 @@ fn through(
     (states, raised, anywhere)
 }
 
-/// Whether a raise point, or a `raise` terminator, lies anywhere in the
-/// regions of `instruction`.
+/// Whether a `raise` terminator lies anywhere in the regions of
+/// `instruction`.
 fn raises_inside(instruction: &MirInstr) -> bool {
     instruction_regions(instruction)
         .into_iter()
         .flatten()
         .any(|block| {
-            matches!(block.term, MirTerm::Raise(_))
-                || block
-                    .instrs
-                    .iter()
-                    .any(|instruction| instruction.is_raise_point() || raises_inside(instruction))
+            matches!(block.term, MirTerm::Raise(_)) || block.instrs.iter().any(raises_inside)
         })
 }
 
@@ -581,7 +572,7 @@ fn memoized_region_flow(
 ///   else region as the previous case's `match.next`s join, and completes
 ///   as its `match.complete`s and the else region's yield join.
 /// - A `try`'s body is entered as the op is; its handler as the body's
-///   raise points leave it, through the raise edge's cleanup; its `else`
+///   raises leave it, through the raise edge's cleanup; its `else`
 ///   as the body completes; its `finally` on every way out of the others.
 ///   The op completes as its `else`, or its body without one, and its
 ///   handler complete, through the `finally`. A `break`, `continue`, or

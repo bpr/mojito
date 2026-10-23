@@ -264,12 +264,13 @@ impl<'a> Flatten<'a> {
             let (recv, recv_place) = self.lower_call_receiver(object);
             let dest = self.fresh(e.location(), None);
             self.emit_interior_invalidations(object, None);
+            let raises = self.raises(e.raises(), e.location());
             self.emit(MirInstr::MethodCall {
                 dest,
                 recv,
                 method: "__getitem_param__".to_string(),
                 resolved: Some(contract.target),
-                raises: e.raises(),
+                raises,
                 reference_result: contract.reference_result.map(Box::new),
                 result_adapter: contract.result_adapter.map(MirResultAdapter::new),
                 args: Vec::new(),

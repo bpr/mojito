@@ -353,7 +353,6 @@ impl Splice<'_> {
             end,
             yielded: self.facts.yielded(block),
             raises: matches!(block.term, MirTerm::Raise(_)),
-            raise: plan.raise.as_ref(),
             deinit_params: &self.f.deinit_params,
             loan_roots: self.loan_roots,
         };
@@ -455,10 +454,14 @@ impl Splice<'_> {
     /// others under the `try`'s own. A return crossing the `finally` holds
     /// what the `finally` reads on the return path, less what the `finally`
     /// ends on the way through. The handler's unread error binding dies on
-    /// arrival, and the raise edge destroys what a raise in the body holds
-    /// that the raise's observers (the handler, else the `finally` and the
-    /// enclosing raise's) do not read, as the entry destructors of
-    /// upstream's error arm do. Returns the slots a raise leaving the `try`
+    /// arrival. A `raise` in the body, a raising call's in its error region
+    /// included, has destroyed what its observers (the handler, else the
+    /// `finally` and the enclosing raise's) do not read at its arm's entry,
+    /// as the entry destructors of upstream's error arm do; the raise edge
+    /// destroys what a raise leaving a nested `try` through its handler,
+    /// `else`, or `finally` still holds that they do not read, which no
+    /// instruction on that path can host until the `finally` is copied
+    /// before each exit (R884). Returns the slots a raise leaving the `try`
     /// still holds: an uncaught body raise past the raise edge, a raise out
     /// of the handler or `else`, each past what the `finally` ends, and a
     /// raise out of the `finally` itself.
@@ -567,8 +570,6 @@ struct BlockReplay<'a> {
     yielded: &'a RegisterUses,
     /// Whether the terminator is a `raise`, which holds what it leaves live.
     raises: bool,
-    /// What a raising instruction keeps live: the raise channel.
-    raise: Option<&'a DenseSet>,
     /// The function's `deinit` parameters, whose fields
     /// [`refine_deinit_fields`] destroys one by one: the variable's own
     /// teardown stays after the instruction.
@@ -579,14 +580,15 @@ struct BlockReplay<'a> {
 impl BlockReplay<'_> {
     /// The block's instructions with a `DropVar` after each one for every
     /// variable that dies there, in one backward walk from `live_out`, and
-    /// the slots a raise out of the block still holds: the effective
-    /// liveness entering each raising instruction, which the elaboration
-    /// leaves held, and what a raise leaving each region op holds.
+    /// the slots a raise out of the block still holds: what its `raise`
+    /// terminator leaves live, and what a raise leaving each region op
+    /// holds.
     ///
     /// A variable dies at an instruction when it is live (loan-aware) before
     /// it, or the instruction touches it, or a loan generation keeping it
     /// alive retires there, and it is dead after it. A raising instruction
-    /// keeps the raise channel live. A region op is no death point: its
+    /// raises through its error region, an `if` whose arm's entry destroys
+    /// what the raise does not read. A region op is no death point: its
     /// regions end what it uses, and its live-in is the walk's.
     fn elaborate(
         self,
@@ -654,9 +656,6 @@ impl BlockReplay<'_> {
             let removed_def = def.is_some_and(|d| live.remove(d));
             entering.clear();
             entering.extend(&uses);
-            if let Some(raise) = self.raise.filter(|_| raises_to_handler(&instr)) {
-                entering.extend(raise.iter());
-            }
             // A pending teardown keeps its variable live until then.
             entering.extend(teardown(&instr));
             // What the instruction itself, or a raise leaving it, still reads.
@@ -722,14 +721,6 @@ impl BlockReplay<'_> {
                 })
                 .collect();
             dying.retain(|v| !loaded.contains(v));
-            if instr.is_raise_point() {
-                let mut held = live.clone();
-                held.union(&extra_before);
-                for v in vars_moved(&instr).into_iter().chain(loaded.iter().copied()) {
-                    held.remove(v);
-                }
-                raise_held.union(&held);
-            }
             if let Some(held) = pending.take() {
                 // The slot's previous value dying at the producer must drop
                 // before the binding overwrites it, so that death point stays.

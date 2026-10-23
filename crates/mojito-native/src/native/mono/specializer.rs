@@ -3372,11 +3372,15 @@ impl<'a> Specializer<'a> {
                 }
             }
             block.instrs.iter_mut().for_each(drop_parameter_slots);
-            // A conversion follows instruction `index` and a prelude precedes
-            // it, so at one position the conversion comes first.
+            // A conversion follows instruction `index`, past its error region
+            // when it raises, and a prelude precedes it, so at one position
+            // the conversion comes first.
             let mut insertions: Vec<(usize, bool, Vec<MirInstr>)> = conversions
                 .into_iter()
-                .map(|(index, conversion)| (index + 1, false, vec![conversion]))
+                .map(|(index, conversion)| {
+                    let position = mojito_mir::mir::past_error_region(&block.instrs, index);
+                    (position, false, vec![conversion])
+                })
                 .chain(
                     preludes
                         .into_iter()

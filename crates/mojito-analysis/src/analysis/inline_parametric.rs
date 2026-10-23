@@ -26,8 +26,8 @@
 //! copied receiver's move or another argument initializes, and returns a
 //! value or a reference. A part-bound body's places compose with the
 //! part, and the caller's consume of it after the call is the body's end
-//! of its receiver; a raising callee, whose raise edge would skip that
-//! consume, takes a fresh slot instead (R1106). A positional collector is a fresh slot the call's block
+//! of its receiver, on the raise path too, since the call's error region
+//! follows it. A positional collector is a fresh slot the call's block
 //! initializes from a `tuple.make` of the overflow arguments, as
 //! upstream's call builds the pack it passes; a spread binds the caller's
 //! collector whole; a forwarded `**kwargs^` binds the keyword collector's
@@ -117,12 +117,15 @@
 //! outside such a loop, and a call through a closure the caller does not
 //! make, keep the call. A call of any other shape stays a call.
 //!
-//! A raising callee's raises propagate from the inlined body as from the
-//! call. Each raise point of a body inlined into a `try`'s body adds the
-//! inlined slots it may hold to that `try`'s raise-edge cleanup, so they
-//! end on the raise edge, as the callee's own frame ends them at the pin;
-//! one outside any `try` leaves the function holding them, as every raise
-//! leaving a function does (R20).
+//! A raising callee's raises leave the inlined body as its returns do, as
+//! upstream's inlined `lit.error_return` does: each `raise` breaks the
+//! wrapper loop, whose results after the call's value are the call's error
+//! flag and error, set by the raise and cleared by a return, and the
+//! call's error region after the loop destroys what the caller holds and
+//! raises on. The body's own error regions have already destroyed what it
+//! holds, as the callee's frame does at the pin. A raise of a string
+//! converts to `Error` as the raise does; a body raising any other value
+//! of another type than the call's error keeps the call.
 //!
 //! Every body is placed as upstream's `inlineGeneratorCall` places it: in
 //! a loop labelled [`LoopLabel::INLINED_CF_SCOPE`], its returns, at any
@@ -145,7 +148,7 @@
 //! run time what the slot still holds.
 
 use super::pre_elaboration::{CallGraphPass, Callees};
-use super::region_walk::{ForwardScan, region_op, walk_forward};
+use super::region_walk::region_op;
 use mojito_ast::ast::{ArgConvention, Dtype, FORWARDED_KWARGS_NAME};
 use mojito_ast::call::{ArgSlot, CallSlots, CallVariadics, bind_spread, match_call_slots};
 use mojito_checked::checked::CheckedConst;
@@ -158,16 +161,16 @@ use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_function_mut,
 };
 use mojito_mir::mir::{
-    CleanupDrop, Const, ConstructionTypes, FuncRef, LoopLabel, MirBlock, MirCaptureAccess,
-    MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration,
-    MirInstr, MirParamArg, MirPlace, MirSubscriptCall, MirTerm, Proj, Reg, RegionFrame,
-    TypeConstructionError, UseMode, callable_targets, cleanup_slots, construct_type_parameters,
-    count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
-    instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
-    instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
-    loop_continues_mut, lower_copies_and_moves, member_receiver_ty, name_constructors, region_exit,
-    removed_argument_operands, renumber_block_slots, terminator_regs_mut,
-    with_removed_argument_forwards_erased, without_removed_arguments,
+    Const, ConstructionTypes, FuncRef, LoopLabel, MirBlock, MirCaptureAccess, MirCaptureMode,
+    MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
+    MirPlace, MirSubscriptCall, MirTerm, Proj, Raises, Reg, RegionFrame, TypeConstructionError,
+    UseMode, callable_targets, construct_type_parameters, count_register_reads,
+    erase_removed_operands, fresh_register, has_no_destructor, instruction_regions,
+    instruction_regions_mut, instruction_regs_mut, instruction_slots, instruction_subscript_call,
+    instruction_subscript_call_mut, loop_breaks_mut, loop_continues_mut, lower_copies_and_moves,
+    member_receiver_ty, name_constructors, region_exit, removed_argument_operands,
+    renumber_block_slots, terminator_regs_mut, with_removed_argument_forwards_erased,
+    without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
@@ -259,7 +262,6 @@ pub fn inline_parametric(
         closures,
         function_values,
         caller: name,
-        raise_held: Vec::new(),
         dropped_operands: false,
         loop_binders: Vec::new(),
     };
@@ -307,9 +309,6 @@ struct Inliner<'f, 'c> {
     function_values: HashMap<u32, (String, bool)>,
     /// The caller's name: a member's body spells its own struct bare.
     caller: &'c str,
-    /// The inlined slots a raise leaving the block list being inlined into
-    /// may hold, for the nearest enclosing `try`'s raise-edge cleanup.
-    raise_held: Vec<VarId>,
     /// Whether an inlined call passed an operand its inlined body does not
     /// take: one for a removed argument, or the run-time register of a
     /// compile-time argument, which the instantiated body reads as a
@@ -320,11 +319,12 @@ struct Inliner<'f, 'c> {
     loop_binders: Vec<ParamId>,
 }
 
-/// Where an inlined call stands: its index in the caller's block, and the
-/// register it defines.
+/// Where an inlined call stands: its index in the caller's block, the
+/// register it defines, and its raise edge.
 struct CallSite {
     index: usize,
     dest: Reg,
+    raises: Option<Raises>,
 }
 
 /// A call [`Inliner::inlinable`] inlines: the register it defines, its
@@ -751,23 +751,23 @@ impl<'c> Inliner<'_, 'c> {
                                 .then(|| self.inlined_blocks(callee.to_mut(), &bindings))
                                 .flatten()
                         })
+                    && let raises = caller.instrs[index].raise_edge().cloned()
+                    && raises.as_ref().is_none_or(|raises| {
+                        routes_raises(&blocks, raises, &callee.reg_types, self.function.n_regs)
+                    })
                 {
                     self.dropped_operands |=
                         dropped || passes_value_arguments(&caller.instrs[index]);
-                    if callee.raises {
-                        self.raise_held.extend(raise_held(
-                            &blocks,
-                            &callee,
-                            &bindings,
-                            self.function.n_vars,
-                        ));
-                    }
                     changed = true;
                     // The body's loop is scanned next, its regions as any
                     // region op's.
                     index = self.splice(
                         caller,
-                        &CallSite { index, dest },
+                        &CallSite {
+                            index,
+                            dest,
+                            raises,
+                        },
                         &callee,
                         (&bindings, &closures),
                         blocks,
@@ -822,9 +822,7 @@ impl<'c> Inliner<'_, 'c> {
     }
 
     /// Inline into the regions `instruction` holds; returns whether it
-    /// inlined a call. A `try`'s raise-edge cleanup takes the inlined slots
-    /// a raise in its body may hold, which its handler, `else`, and
-    /// `finally` raise past.
+    /// inlined a call.
     fn instruction_regions(&mut self, instruction: &mut MirInstr) -> bool {
         if let MirInstr::ComptimeFor {
             binder,
@@ -838,39 +836,9 @@ impl<'c> Inliner<'_, 'c> {
             self.loop_binders.pop();
             return self.block_list(orelse) | changed;
         }
-        let MirInstr::Try {
-            body,
-            handler,
-            orelse,
-            finalbody,
-            cleanup,
-        } = instruction
-        else {
-            return instruction_regions_mut(instruction)
-                .into_iter()
-                .fold(false, |changed, region| self.block_list(region) | changed);
-        };
-        let outer = std::mem::take(&mut self.raise_held);
-        let mut changed = self.block_list(body);
-        let held = std::mem::replace(&mut self.raise_held, outer);
-        if !held.is_empty() {
-            let listed: Vec<VarId> = cleanup_slots(cleanup).collect();
-            cleanup.extend(
-                held.into_iter()
-                    .filter(|var| !listed.contains(var))
-                    .map(CleanupDrop::unnamed),
-            );
-            cleanup.sort_unstable_by_key(|drop| std::cmp::Reverse(drop.var));
-        }
-        for region in handler
-            .iter_mut()
-            .map(|(_, blocks)| blocks)
-            .chain(orelse.iter_mut())
-            .chain(finalbody.iter_mut())
-        {
-            changed |= self.block_list(region);
-        }
-        changed
+        instruction_regions_mut(instruction)
+            .into_iter()
+            .fold(false, |changed, region| self.block_list(region) | changed)
     }
 
     /// The generator of `full`, so declared, without its `removed`
@@ -1495,7 +1463,11 @@ impl<'c> Inliner<'_, 'c> {
             &mut function.callee_removed_params,
             &callee.callee_removed_params,
         );
-        let CallSite { index, dest } = *site;
+        let CallSite {
+            index,
+            dest,
+            ref raises,
+        } = *site;
         let mut after = caller.instrs.split_off(index + 1);
         caller.instrs.truncate(index);
         // A slot the body takes in place keeps its value until the body
@@ -1527,7 +1499,11 @@ impl<'c> Inliner<'_, 'c> {
         } else {
             result_of(callee)
         };
-        let exit = ReturnExit { result, dest };
+        let exit = ReturnExit {
+            result,
+            dest,
+            raises: raises.clone(),
+        };
 
         let call_span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
         for reg in 0..callee.n_regs {
@@ -1578,12 +1554,25 @@ impl<'c> Inliner<'_, 'c> {
                 dest,
                 k: Const::None,
             }),
-            Returned::Out => resumed.push(MirInstr::UseVar {
-                dest,
-                var: var_base,
-                mode: UseMode::Forward,
-                constructor: None,
-            }),
+            // The initialized `out self` is the call's result on the normal
+            // path alone: past the call's error region.
+            Returned::Out => {
+                let forward = MirInstr::UseVar {
+                    dest,
+                    var: var_base,
+                    mode: UseMode::Forward,
+                    constructor: None,
+                };
+                let edge = raises.as_ref().and_then(|raises| {
+                    after.iter().position(|instruction| {
+                        matches!(instruction, MirInstr::If { cond, .. } if *cond == raises.flag)
+                    })
+                });
+                match edge {
+                    Some(edge) => after.insert(edge + 1, forward),
+                    None => resumed.push(forward),
+                }
+            }
             Returned::Value => {}
         }
         resumed.extend(bindings.iter().enumerate().filter_map(|(param, binding)| {
@@ -1673,22 +1662,24 @@ impl<'c> Inliner<'_, 'c> {
             });
             self.closures.slots.insert(var, closure.0);
         }
-        splice_region(caller, blocks, resumed, &exit)
+        splice_region(function, caller, blocks, resumed, &exit)
     }
 }
 
 /// Place `blocks`, an inlined body, as upstream's `inlineGeneratorCall`
 /// places every one: in a loop labelled [`LoopLabel::INLINED_CF_SCOPE`]
-/// appended to `caller`, the call's block, whose every return, at any
-/// depth, breaks that loop as `exit` rewrites it; `resumed` follows the
-/// loop. Returns the loop's position.
+/// appended to `caller`, the call's block, whose every return, and every
+/// raise when the call has a raise edge, at any depth, breaks that loop as
+/// `exit` rewrites it; `resumed` follows the loop. Returns the loop's
+/// position.
 fn splice_region(
+    function: &mut MirFunction,
     caller: &mut MirBlock,
     mut blocks: Vec<MirBlock>,
     resumed: Vec<MirInstr>,
     exit: &ReturnExit,
 ) -> usize {
-    exit.break_returns(&mut blocks);
+    exit.break_returns(function, &mut blocks);
     let at = caller.instrs.len();
     caller.instrs.push(MirInstr::Loop {
         label: Some(LoopLabel::INLINED_CF_SCOPE),
@@ -1703,21 +1694,32 @@ fn splice_region(
 
 /// How an inlined body's returns leave it: through what it returns, and
 /// `dest`, the call's register, which a [`Returned::Value`] makes the
-/// wrapper loop's result.
+/// wrapper loop's result, and how its raises do when the call has a raise
+/// edge.
 struct ReturnExit {
     result: Returned,
     dest: Reg,
+    /// The call's raise edge, whose flag and error the wrapper loop's
+    /// results define after the call's register, as upstream's inlined
+    /// `lit.error_return` returns the error flag: a return breaks with the
+    /// flag false, a `raise` with it true and its error, and the call's
+    /// error region after the loop destroys what the caller holds.
+    raises: Option<Raises>,
 }
 
 impl ReturnExit {
     /// The wrapper loop's results: the call's register when the body
-    /// returns a value.
+    /// returns a value, then the raise edge's flag and error.
     fn results(&self) -> Vec<Reg> {
-        if self.result == Returned::Value {
+        let mut results = if self.result == Returned::Value {
             vec![self.dest]
         } else {
             Vec::new()
+        };
+        if let Some(raises) = &self.raises {
+            results.extend([raises.flag, raises.error]);
         }
+        results
     }
 
     /// Rewrite a return ending `block` into a break of the wrapper loop,
@@ -1725,32 +1727,137 @@ impl ReturnExit {
     /// value-less return from a function returning a value is the
     /// checker's unreachable fall-off; a break carrying no value cannot
     /// leave a loop with a result, so it is unreachable there. A `raise`
-    /// stays, leaving the body as it left the callee.
-    fn rewrite(&self, block: &mut MirBlock) {
-        let leave = |values| MirTerm::Break {
+    /// breaks the loop too when the call has a raise edge, carrying its
+    /// error, a string converted to `Error` as the raise converts it, and
+    /// leaves the body as it left the callee when it has none. A value the
+    /// path does not define is upstream's `#interp.uninitmem`.
+    fn rewrite(&self, function: &mut MirFunction, block: &mut MirBlock) {
+        let span = function
+            .spans
+            .0
+            .get(&self.dest.0)
+            .map(|(span, _)| span.clone());
+        let constant = |function: &mut MirFunction, block: &mut MirBlock, ty: Ty, k| {
+            let dest = fresh_register(function, ty, span.as_ref());
+            block.instrs.push(MirInstr::Const { dest, k });
+            dest
+        };
+        let raised = matches!(block.term, MirTerm::Raise(_));
+        let mut values = match &block.term {
+            MirTerm::Return(Some(value)) if self.result == Returned::Value => vec![*value],
+            MirTerm::Return(_) if matches!(self.result, Returned::None | Returned::Out) => {
+                Vec::new()
+            }
+            MirTerm::Return(_) => {
+                block.term = MirTerm::Unreachable;
+                return;
+            }
+            MirTerm::Raise(_) if self.raises.is_some() => {
+                if self.result == Returned::Value {
+                    let ty = function
+                        .reg_types
+                        .get(&self.dest.0)
+                        .cloned()
+                        .unwrap_or_else(Ty::none);
+                    vec![constant(function, block, ty, Const::UninitMem)]
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => return,
+        };
+        if let Some(raises) = &self.raises {
+            values.push(constant(function, block, Ty::bool(), Const::Bool(raised)));
+            let error = match block.term {
+                MirTerm::Raise(error)
+                    if function
+                        .reg_types
+                        .get(&error.0)
+                        .is_some_and(|ty| *ty != raises.ty) =>
+                {
+                    let converted = fresh_register(function, raises.ty.clone(), span.as_ref());
+                    block.instrs.push(error_conversion(converted, error));
+                    converted
+                }
+                MirTerm::Raise(error) => error,
+                _ => constant(function, block, raises.ty.clone(), Const::UninitMem),
+            };
+            values.push(error);
+        }
+        block.term = MirTerm::Break {
             label: Some(LoopLabel::INLINED_CF_SCOPE),
             values,
         };
-        block.term = match std::mem::replace(&mut block.term, MirTerm::Unreachable) {
-            MirTerm::Return(Some(value)) if self.result == Returned::Value => leave(vec![value]),
-            MirTerm::Return(_) if matches!(self.result, Returned::None | Returned::Out) => {
-                leave(Vec::new())
-            }
-            MirTerm::Return(_) => MirTerm::Unreachable,
-            term => term,
-        };
     }
 
-    /// [`Self::rewrite`] every return of `blocks` and their regions into a
-    /// break of the [`LoopLabel::INLINED_CF_SCOPE`] loop, upstream's
-    /// `hlcf.break` of `inlined_cf_scope`.
-    fn break_returns(&self, blocks: &mut [MirBlock]) {
+    /// [`Self::rewrite`] every return, and every raise, of `blocks` and
+    /// their regions into a break of the [`LoopLabel::INLINED_CF_SCOPE`]
+    /// loop, upstream's `hlcf.break` of `inlined_cf_scope`.
+    fn break_returns(&self, function: &mut MirFunction, blocks: &mut [MirBlock]) {
         for block in blocks {
             for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
-                self.break_returns(region);
+                self.break_returns(function, region);
             }
-            self.rewrite(block);
+            self.rewrite(function, block);
         }
+    }
+}
+
+/// Whether a body inlined at a call whose raise edge is `raises` can route
+/// each `raise` of `blocks` into it: one raising a value of the edge's
+/// error type, or a string the raise converts to `Error`. `reg_types` are
+/// the callee's, whose registers the body numbers from `base`.
+fn routes_raises(
+    blocks: &[MirBlock],
+    raises: &Raises,
+    reg_types: &HashMap<u32, Ty>,
+    base: u32,
+) -> bool {
+    blocks.iter().all(|block| {
+        let routed = match block.term {
+            MirTerm::Raise(error) => error
+                .0
+                .checked_sub(base)
+                .and_then(|callee| reg_types.get(&callee))
+                .is_some_and(|ty| *ty == raises.ty || converts_to_error(ty, &raises.ty)),
+            _ => true,
+        };
+        routed
+            && block
+                .instrs
+                .iter()
+                .flat_map(instruction_regions)
+                .all(|region| routes_raises(region, raises, reg_types, base))
+    })
+}
+
+/// Whether a raised value of type `ty` is a string a raise converts to the
+/// error type `error`, `Error`.
+fn converts_to_error(ty: &Ty, error: &Ty) -> bool {
+    matches!(error.kind(), TyKind::Error)
+        && match ty.kind() {
+            TyKind::StringLiteral => true,
+            TyKind::Struct(name, _) => mojito_symbol::symbol::is_stdlib_string_struct(name),
+            _ => false,
+        }
+}
+
+/// The conversion of the string in `message` to the `Error` in `dest`, as a
+/// raise converts it.
+fn error_conversion(dest: Reg, message: Reg) -> MirInstr {
+    MirInstr::Call {
+        dest,
+        func: FuncRef::named("Error"),
+        raises: None,
+        args: vec![message],
+        kwargs: Vec::new(),
+        arg_places: vec![None],
+        kwarg_places: Vec::new(),
+        capture_accesses: Vec::new(),
+        param_arg_regs: Vec::new(),
+        receiver: None,
+        instantiated_args: Vec::new(),
+        spread: None,
     }
 }
 
@@ -1929,8 +2036,7 @@ fn argument_binding(
         return Some(match loaded {
             Some(place) if place.is_whole_root() => Binding::Slot(place.root),
             Some(place)
-                if !callee.raises
-                    && is_owned_part(&place)
+                if is_owned_part(&place)
                     && matches!(
                         block.instrs.get(index + 1),
                         Some(MirInstr::ConsumePlace { place: consumed, marker })
@@ -2212,115 +2318,6 @@ fn closed_blocks(blocks: &[MirBlock]) -> bool {
             MirTerm::ReturnWithCleanup { .. } | MirTerm::TryYield
         )
     })
-}
-
-/// The slots of `blocks`, `callee`'s body moved past the caller's first
-/// `base` slots with its parameters bound by `bindings`, that some raise
-/// point of it may hold with a destructor to run: a parameter's fresh slot
-/// from the entry on, a local from an instruction naming it, until one ends
-/// it. An `out self` is left out, since a raise leaves it partly
-/// initialized.
-fn raise_held(
-    blocks: &[MirBlock],
-    callee: &MirFunction,
-    bindings: &[Binding],
-    base: usize,
-) -> Vec<VarId> {
-    let owned = |param: usize| callee.owned_params.get(param).copied().unwrap_or(false);
-    // A fresh slot holds its argument from the entry; a `read` collector's
-    // elements are the caller's, which it never ends.
-    let fresh = |param: usize, binding: &Binding| match binding {
-        Binding::Value(_) | Binding::Default { .. } => true,
-        Binding::Collector { .. } => owned(param),
-        Binding::Place(_) | Binding::Slot(_) | Binding::Part { .. } | Binding::Out => false,
-    };
-    let mut entry = vec![false; callee.n_vars];
-    for (param, binding) in bindings.iter().enumerate() {
-        if let (true, Some(held)) = (fresh(param, binding), entry.get_mut(param)) {
-            *held = true;
-        }
-    }
-    let scan = RaiseHeldScan {
-        base,
-        n_vars: callee.n_vars,
-    };
-    let held = walk_forward(&scan, entry, blocks, &mut |_: &Vec<bool>, _: &MirInstr| {
-        Ok(())
-    })
-    .ok()
-    .and_then(|flow| flow.raises)
-    .unwrap_or_else(|| vec![false; callee.n_vars]);
-    held.iter()
-        .enumerate()
-        .filter(|&(var, &held)| {
-            held && bindings.get(var).is_none_or(|binding| fresh(var, binding))
-                && callee
-                    .var_tys
-                    .get(&(var as VarId))
-                    .is_none_or(|ty| !has_no_destructor(ty))
-        })
-        .map(|(var, _)| (var + base) as VarId)
-        .collect()
-}
-
-/// The forward scan [`raise_held`] walks an inlined body with: which of
-/// its `n_vars` slots, moved past the caller's first `base`, each point
-/// holds, a raise point's state being what it may hold.
-struct RaiseHeldScan {
-    base: usize,
-    n_vars: usize,
-}
-
-impl ForwardScan for RaiseHeldScan {
-    type State = Vec<bool>;
-
-    fn join(&self, state: &Vec<bool>, other: &Vec<bool>) -> Vec<bool> {
-        state
-            .iter()
-            .zip(other)
-            .map(|(&one, &two)| one || two)
-            .collect()
-    }
-
-    fn transfer(&self, state: &mut Vec<bool>, instruction: &MirInstr) {
-        let mut set = |var: VarId, value: bool| {
-            if let Some(bit) = (var as usize)
-                .checked_sub(self.base)
-                .filter(|&local| local < self.n_vars)
-                .and_then(|local| state.get_mut(local))
-            {
-                *bit = value;
-            }
-        };
-        match instruction {
-            MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } => set(*var, false),
-            _ => {
-                for var in instruction_slots(instruction) {
-                    set(var, true);
-                }
-                match instruction {
-                    MirInstr::UseVar { var, mode, .. } if mode.moves() => set(*var, false),
-                    MirInstr::MovePlace { place, .. }
-                    | MirInstr::ConsumePlace { place, .. }
-                    | MirInstr::DropPlace { place, .. }
-                    | MirInstr::MarkDestroyed { place }
-                        if place.is_whole_root() =>
-                    {
-                        set(place.root, false);
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
-    fn raise_seed(&self, state: &Vec<bool>, _: Option<&MirInstr>) -> Vec<bool> {
-        state.clone()
-    }
-
-    fn enters(&self, instruction: &MirInstr) -> bool {
-        region_op(instruction)
-    }
 }
 
 /// The place the register `argument` was loaded from in `block` before the

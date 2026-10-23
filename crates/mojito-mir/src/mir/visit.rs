@@ -242,7 +242,11 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             instantiated_args,
             ..
         } => {
-            visit_opt_ty(visitor, raises.as_mut(), TySite::Contract)?;
+            visit_opt_ty(
+                visitor,
+                raises.as_mut().map(|raises| &mut raises.ty),
+                TySite::Contract,
+            )?;
             visit_places(visitor, arg_places)?;
             visit_places(visitor, kwarg_places)?;
             visit_opt_ty(visitor, receiver.as_mut(), TySite::Receiver)?;
@@ -260,7 +264,11 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             instantiated_args,
             ..
         } => {
-            visit_opt_ty(visitor, raises.as_mut(), TySite::Contract)?;
+            visit_opt_ty(
+                visitor,
+                raises.as_mut().map(|raises| &mut raises.ty),
+                TySite::Contract,
+            )?;
             visit_opt_place(visitor, callee_place.as_deref_mut())?;
             visit_places(visitor, arg_places)?;
             visit_places(visitor, kwarg_places)?;
@@ -280,7 +288,11 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             instantiated_args,
             ..
         } => {
-            visit_opt_ty(visitor, raises.as_mut(), TySite::Contract)?;
+            visit_opt_ty(
+                visitor,
+                raises.as_mut().map(|raises| &mut raises.ty),
+                TySite::Contract,
+            )?;
             if let Some(reference) = reference_result {
                 visitor.visit_ty(&mut reference.referent, TySite::Result)?;
             }
@@ -291,9 +303,11 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             visit_param_args(visitor, param_arg_regs, ParamArgSite::Call)?;
             visitor.visit_param_decls(param_decls, ParamDeclSite::MethodContract)
         }
-        I::UnOp { raises, .. } | I::BinOp { raises, .. } => {
-            visit_opt_ty(visitor, raises.as_mut(), TySite::Contract)
-        }
+        I::UnOp { raises, .. } | I::BinOp { raises, .. } => visit_opt_ty(
+            visitor,
+            raises.as_mut().map(|raises| &mut raises.ty),
+            TySite::Contract,
+        ),
         I::Index {
             base_place,
             index_place,
@@ -471,7 +485,11 @@ fn walk_subscript_call<V: MutTypeVisitor + ?Sized>(
     visitor: &mut V,
     call: &mut MirSubscriptCall,
 ) -> Result<(), V::Error> {
-    visit_opt_ty(visitor, call.raises.as_mut(), TySite::Contract)?;
+    visit_opt_ty(
+        visitor,
+        call.raises.as_mut().map(|raises| &mut raises.ty),
+        TySite::Contract,
+    )?;
     visitor.visit_ty(&mut call.result_ty, TySite::Result)?;
     for argument in &mut call.arguments {
         visitor.visit_ty(&mut argument.parameter_ty, TySite::SubscriptParameter)?;
