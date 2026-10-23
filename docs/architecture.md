@@ -3670,9 +3670,9 @@ Public collection displays and comprehensions use ordinary `Call` and
 heterogeneous pack behind `__RuntimeTuple`; constructing the public nominal
 `Tuple` uses an ordinary constructor call. `MakeStruct` (`struct.create`,
 upstream's `kgen.struct.create`) builds a declared struct's value from one
-register per field and runs no constructor: only `sroa` emits it, for a
-whole read of a slot it split, so its type's drop runs no code and it is
-free of effects.
+register per field and runs no constructor: `sroa` emits one for a whole
+read of a slot it split. Its type's drop may run code, but the op itself
+runs none, so it is free of effects.
 
 Every method-dispatched nominal subscript carries a `MirSubscriptCall`
 containing the exact target,
@@ -5942,12 +5942,12 @@ point where a slot declared in a loop is uninitialized again.
   `analysis/sroa.rs`, R928), upstream's `SROA` (`ReplaceStructs`), which
   replaces a struct allocation by one allocation per element when every
   user is a constant `struct_gep`, a load, a store, or a lifetime marker.
-  A slot is split when it is a local of a declared struct whose drop runs
-  no code (`MirDeclarations::drop_runs_no_code`) and whose every field type
-  at the slot type's arguments (`MirDeclarations::field_types`, over
-  `types::struct_field_types`) is not a pointer, and trivially
-  register-passable or itself such a struct, and every mention of it is a
-  whole store
+  A slot is split when it is a local of a declared struct whose fields
+  its type's arguments resolve (`MirDeclarations::field_types`, over
+  `types::struct_field_types`), none of them a pointer, whatever the
+  fields' types and whatever its drop runs, as upstream's only type test
+  is that `getElementTypes` resolves, and every mention of it is a whole
+  store
   (`var.store`, or `place.store` of the whole slot), which becomes a
   `field.get` and a `var.store` per field, as upstream's store becomes a
   `kgen.struct.extract` and a store per element; a whole read that names
@@ -5962,24 +5962,45 @@ point where a slot declared in a loop is uninitialized again.
   that field's slot, as upstream replaces a `struct_gep` by its element's
   allocation whatever its users, so a borrowed field keeps only its own
   slot (a `place.store` left on a whole field slot becomes a
-  `var.store`, a `consume.place` a `consume.var`, and a `drop.place` a
-  `drop.var`, so a nested struct's field slot splits the next round). Each
+  `var.store`, a `consume.place` a `consume.var`, a `drop.place` a
+  `drop.var`, and a `place.move` a `forward` read, which runs no move
+  initializer either and vacates the slot, so a nested struct's field
+  slot splits the next round). Each
   field slot is typed at the slot type's arguments, as upstream's element
   allocation has the `!kgen.struct` element type, so a generic body splits
   a slot of its own application (`Arr[n]`'s field slot is a
-  `SIMD[DType.int64, n]` over the body's `n`), and a `P[Int]` over a field
-  `T` splits at `Int`: its destructor is the synthesized one, which its
-  `IsTriviallyDeinitable` conformance conditions on the fields, so its drop
-  runs no code where the fields at the arguments run none. A field its
-  arguments leave open (`P[T]`'s `T`) keeps the slot. A borrow, capture, loan interior, `through` place, cleanup
-  list, or a whole read naming a constructor keeps the slot, as does a
-  slot nothing stores, declares, or marks, which is a compile-time
+  `SIMD[DType.int64, n]` over the body's `n`), and `P[T]` over a field
+  `T` splits into a `T` slot. A memory-only slot (one whose type
+  `MirDeclarations::register_passable`, upstream's
+  `getRegisterPassability`, does not answer for: anything that declares
+  neither `RegisterPassable` nor `TrivialRegisterPassable`
+  unconditionally) also stays whole under an address user, as upstream
+  passes a memory-only value to and from a call by address (`OwnedMem`,
+  `ImmMem`, `DeinitMem`, `ByRefResult`): a whole store of a register
+  anything but a constructor-less whole read, a `struct.create`, or a
+  `field.get` defines (a call's result, an operator's, a region's); a
+  whole read some instruction or terminator takes other than as a store's
+  source, a `struct.create` field, a `field.get` base, or a `yield`,
+  `break`, `continue`, or `return` value (a call argument, a destructor's
+  `deinit self`, which `emitDestructorCall` passes by reference); and,
+  within a round until nothing more is kept, a whole store of a whole
+  read of a slot the round keeps. That last rule is no upstream one: an
+  inlined initializer's `out self` is a slot of its own the caller
+  forwards (R1308), and Pliron releases the forwarded value, which a
+  `field.get` only borrows (R1309). So `var s = S(1, String("a"))` keeps
+  `s` in the first round, where its whole drop is a `S.__deinit__` call
+  taking it, and splits it in the second, once `inline-parametric` has
+  inlined the synthesized initializer and destructor (`AlwaysNoDebug`
+  upstream), as at the pin; a written destructor the inliner keeps keeps
+  the slot there too. A borrow, capture, loan interior, `through` place,
+  cleanup list, or a whole read naming a constructor keeps the slot, as
+  does a slot nothing stores, declares, or marks, which is a compile-time
   parameter's binding. The pass reads no control flow, so it splits
   structured and lowered bodies alike, and repeats until nothing splits,
   at most ten rounds (upstream's `loopLimit`), so a nested struct splits a
-  level a round. A drop that runs code keeps the slot (R1267), as do a
-  pointer field, which the VM reads through when it is a
-  slot's whole value (R1269), and a slice descriptor, which both backends
+  level a round. A pointer field keeps the slot, as the VM reads through
+  it when it is a
+  slot's whole value (R1269), and so does a slice descriptor, which both backends
   build as their own value (R1158). The `--timings` counters are `split_slots`
   and `split_field_slots`.
 - **`mem-2-reg` runs before each round's `canonicalize`**

@@ -356,16 +356,22 @@ impl VmBackend {
         Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
     }
 
-    /// The unwritten skeleton of the struct `name`, as an initializer's
-    /// receiver enters with: the storage a named result marked initialized
-    /// whole has before pointer writes fill it. `None` for a struct MIR does
-    /// not declare.
-    pub(super) fn uninitialized_struct(prog: &Prog, name: &str) -> Option<Value> {
-        let def = prog.structs.get(name)?;
-        Some(Value::Struct {
-            name: name.to_string(),
-            fields: uninitialized_fields(&def.fields),
-        })
+    /// The unwritten storage of a value of `ty`: a struct's skeleton, as an
+    /// initializer's receiver enters with, the storage a named result marked
+    /// initialized whole has before pointer writes fill it, or the
+    /// placeholder that skeleton holds for a field of compiler-private tuple
+    /// storage ([`uninitialized_field`]), which a split struct's field slot
+    /// holds whole. `None` for a struct MIR does not declare and any other
+    /// type.
+    pub(super) fn uninitialized_value(prog: &Prog, ty: &Ty) -> Option<Value> {
+        match ty.kind() {
+            TyKind::Struct(name, _) => Some(Value::Struct {
+                name: name.clone(),
+                fields: uninitialized_fields(&prog.structs.get(name)?.fields),
+            }),
+            TyKind::Tuple(_) => Some(uninitialized_field(ty)),
+            _ => None,
+        }
     }
 
     /// `input()` under [`Self::set_input_override`]: append the prompt to the

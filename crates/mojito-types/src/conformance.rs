@@ -96,13 +96,32 @@ pub fn struct_trait_rule(trait_name: &str, declared_by_program: bool) -> StructT
     }
     match trait_name {
         "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => StructTraitRule::Lifecycle,
-        "Writable" | "Hasher" | "Hashable" | "Defaultable" | "Indexer" | "Equatable"
-        | "Comparable" | "Intable" | "Floatable" => StructTraitRule::Declared,
+        "Writable"
+        | "Hasher"
+        | "Hashable"
+        | "Defaultable"
+        | "Indexer"
+        | "Equatable"
+        | "Comparable"
+        | "Intable"
+        | "Floatable"
+        | "RegisterPassable"
+        | "TrivialRegisterPassable" => StructTraitRule::Declared,
         "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
         | "Divisible" | "FloorDivisible" | "Modable" | "ShiftLeftable" | "ShiftRightable"
         | "Andable" | "Orable" | "Xorable" | "Negatable" => StructTraitRule::Never,
         _ => StructTraitRule::Shallow,
     }
+}
+
+/// Whether the compiler-known trait `candidate` refines the compiler-known
+/// `required`, as upstream declares `TrivialRegisterPassable` a refinement
+/// of `RegisterPassable`, where no program declares either.
+pub fn compiler_trait_refines(candidate: &str, required: &str) -> bool {
+    matches!(
+        (candidate, required),
+        ("TrivialRegisterPassable", "RegisterPassable")
+    )
 }
 
 /// Whether the trait `candidate` refines `required`, directly or through
@@ -167,13 +186,15 @@ pub fn leaf_conforms(
         return None;
     }
     Some(match trait_name {
-        "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => match ty.kind() {
-            TyKind::ComptimeList(item) => element(item, trait_name),
-            TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
-                items.iter().all(|item| element(item, trait_name))
+        "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" | "RegisterPassable" => {
+            match ty.kind() {
+                TyKind::ComptimeList(item) => element(item, trait_name),
+                TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
+                    items.iter().all(|item| element(item, trait_name))
+                }
+                _ => true,
             }
-            _ => true,
-        },
+        }
         "Hashable" => builtin_hashable_ty(ty),
         "Writable" => !matches!(
             ty.kind(),

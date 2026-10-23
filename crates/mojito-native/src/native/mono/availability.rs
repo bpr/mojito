@@ -10,7 +10,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::StructConformance;
-use mojito_types::conformance::{StructTraitRule, struct_trait_rule};
+use mojito_types::conformance::{StructTraitRule, compiler_trait_refines, struct_trait_rule};
 use mojito_types::param_expr::fold::integer_value;
 use mojito_types::types::TyKind;
 use mojito_types::types::{
@@ -300,6 +300,7 @@ impl Specializer<'_> {
                     .filter(|declared| {
                         declared.trait_name == trait_name
                             || declarations.trait_refines(&declared.trait_name, trait_name)
+                            || compiler_trait_refines(&declared.trait_name, trait_name)
                     })
                     .flat_map(|declared| &declared.conditions)
                     .collect(),

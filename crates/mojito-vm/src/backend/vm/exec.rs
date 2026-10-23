@@ -1981,12 +1981,15 @@ impl VmBackend {
             // present and unwritten, which the pointer writes that follow
             // fill. A named result marked whole, or an inlined
             // initializer's receiver, has no storage yet, or only what a
-            // move left: it gets the same unwritten skeleton here.
+            // move left: it gets the same unwritten skeleton here, as does a
+            // split struct's whole field slot of tuple storage.
             MirInstr::MarkInitialized { place } => {
                 if place.is_whole_root()
                     && matches!(vars[place.root as usize], Value::None | Value::Moved)
-                    && let Some(TyKind::Struct(name, _)) = place.ty.as_ref().map(Ty::kind)
-                    && let Some(skeleton) = Self::uninitialized_struct(prog, name)
+                    && let Some(skeleton) = place
+                        .ty
+                        .as_ref()
+                        .and_then(|ty| Self::uninitialized_value(prog, ty))
                 {
                     vars[place.root as usize] = skeleton;
                 }

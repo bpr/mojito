@@ -789,6 +789,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `sroa` splits a struct slot whatever its fields' types and whatever its
+  drop runs, as upstream's `SROA` tests only that the element types
+  resolve (R1267). A memory-only slot, one whose type declares neither
+  `RegisterPassable` nor `TrivialRegisterPassable`
+  (`MirDeclarations::register_passable`, upstream's
+  `getRegisterPassability`), stays whole while a call takes it by address:
+  a stored call result, or a whole read a call takes, such as its
+  destructor's `deinit self`. So `var s = S(1, String("a")); s.n += 1`
+  keeps `s` in the first round and splits it once the second round's
+  `inline-parametric` has inlined the synthesized initializer and
+  destructor, as at the pin, and its concrete instructions fall from 108
+  to 99. A `place.move` left on a whole field slot becomes a `forward`
+  read, and the VM gives a split struct's whole field slot of tuple
+  storage its placeholder when it is marked initialized. The elaborator
+  now decides a struct's `RegisterPassable` and `TrivialRegisterPassable`
+  conformances by its declarations, where it answered yes for every
+  struct, so `Tuple[String, Int]` is no longer `RegisterPassable`. Files
+  R1308 and R1309.
 - A `VariadicList`'s field is upstream's `Span[Pointer[T, origin],
   ImmUntrackedOrigin]` over an array of element pointers, which every call
   builds in MIR as upstream's call builds its `!pop.array`

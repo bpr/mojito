@@ -444,6 +444,39 @@ impl MirDeclarations {
         })
     }
 
+    /// Whether a value of `ty` is register-passable, as upstream's
+    /// `getRegisterPassability` answers anything but `MemoryOnly`: a type
+    /// whose copy is the value itself ([`Self::copy_is_identity`]), a
+    /// `StringLiteral` or `None`, a tuple or pack of register-passable
+    /// elements, or a struct declaring `RegisterPassable` or
+    /// `TrivialRegisterPassable` unconditionally, directly or through a
+    /// refining trait. Anything else is memory-only, which upstream passes
+    /// to and returns from a call by address: a conditional conformance and
+    /// a type parameter included, as `MemoryOnly` is upstream's default.
+    pub fn register_passable(&self, ty: &Ty) -> bool {
+        if self.copy_is_identity(ty) {
+            return true;
+        }
+        match ty.kind() {
+            TyKind::StringLiteral | TyKind::None => true,
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
+                items.iter().all(|item| self.register_passable(item))
+            }
+            TyKind::Struct(name, _) => self.structure(name).is_some_and(|declaration| {
+                declaration.declared.iter().any(|row| {
+                    ["RegisterPassable", "TrivialRegisterPassable"]
+                        .iter()
+                        .any(|required| {
+                            row.trait_name == *required
+                                || self.trait_refines(&row.trait_name, required)
+                        })
+                        && matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
+                })
+            }),
+            _ => false,
+        }
+    }
+
     /// Whether dropping a value of `ty` runs no code, as upstream's
     /// `IsTriviallyDeinitable` answers: a compiler-known scalar
     /// ([`has_no_destructor`]), a pointer, a tuple or pack of such types,

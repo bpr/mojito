@@ -3760,6 +3760,70 @@ mod tests {
         assert!(!declarations.copy_is_identity(&param()));
     }
 
+    #[test]
+    fn register_passable_answers_memory_only_by_default() {
+        use mojito_checked::checked::StructConformance;
+        let structure = |name: &str, trait_name: &str, conditions| MirStructDeclaration {
+            name: name.into(),
+            fields: vec![(
+                "f0".into(),
+                Ty::new(TyKind::Struct("String".into(), Vec::new())),
+            )],
+            mut_self_methods: HashSet::new(),
+            fieldwise_init: true,
+            param_decls: Vec::new(),
+            explicit_destructors: HashMap::new(),
+            explicit_destroy: None,
+            conformances: Vec::new(),
+            declared: vec![StructConformance {
+                trait_name: trait_name.into(),
+                conditions,
+            }],
+            associated_types: Vec::new(),
+            parameterized_associated_types: Vec::new(),
+            associated_values: Vec::new(),
+            parameterized_associated_values: Vec::new(),
+            witness_tables: Vec::new(),
+            members: vec![MirStructMember {
+                member: "__deinit__".into(),
+                symbol: format!("{name}.__deinit__"),
+            }],
+        };
+        let unconditional = || vec![GenericConstraint::Bool(true)];
+        let declarations = MirDeclarations {
+            structs: vec![
+                structure("Passed", "RegisterPassable", unconditional()),
+                structure(
+                    "Conditional",
+                    "RegisterPassable",
+                    vec![GenericConstraint::Conforms {
+                        param: mojito_types::param_expr::ParamRef::unbound("T"),
+                        trait_name: "RegisterPassable".into(),
+                    }],
+                ),
+                structure("Movable", "Movable", unconditional()),
+            ],
+            ..MirDeclarations::default()
+        };
+        let struct_ty = |name: &str| Ty::new(TyKind::Struct(name.into(), Vec::new()));
+        assert!(declarations.register_passable(&struct_ty("Passed")));
+        assert!(!declarations.copy_is_identity(&struct_ty("Passed")));
+        assert!(declarations.register_passable(&Ty::new(TyKind::Tuple(vec![
+            struct_ty("Passed"),
+            Ty::new(TyKind::Int),
+        ]))));
+        assert!(declarations.register_passable(&Ty::new(TyKind::StringLiteral)));
+        for memory_only in ["Conditional", "Movable", "String"] {
+            assert!(
+                !declarations.register_passable(&struct_ty(memory_only)),
+                "{memory_only}"
+            );
+        }
+        assert!(
+            !declarations.register_passable(&Ty::new(TyKind::Tuple(vec![struct_ty("Movable")])))
+        );
+    }
+
     fn fold_binary(
         op: InfixOp,
         a: Const,

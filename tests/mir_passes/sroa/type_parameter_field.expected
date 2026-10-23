@@ -1,0 +1,38 @@
+  functions: [
+      fn {
+        name: kept,
+        registers: 10,
+        vars: 5,
+        var_names: [x, "x$inline2", "self$inline4", "p.x", "self$inline2.x"],
+        params: 1,
+        param_types: [param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }, var_type { var: $v1, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }, var_type { var: $v2, type: struct_type { name: P, arguments: [type_arg(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent })] } }, var_type { var: $v3, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }, var_type { var: $v4, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }],
+        return_type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r1, type: struct_type { name: P, arguments: [type_arg(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent })] } }, reg_type { reg: %r2, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r3, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r4, type: struct_type { name: P, arguments: [type_arg(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent })] } }, reg_type { reg: %r5, type: None }, reg_type { reg: %r6, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r7, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r8, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }, reg_type { reg: %r9, type: param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), projections: [], type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), through: absent } },
+              ownership.mark_initialized { place: place { root: $v4, root_type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), projections: [], type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), through: absent } },
+              loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r6, place: place { root: $v0, root_type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), projections: [], type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), through: absent } }, call.method { dest: %r7, recv: %r6, method: copy, resolved: present("__trait_dispatch.copy$ov$"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), projections: [], type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }, var.store { var: $v4, src: %r7, binding_type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), in_place: false }], terminator: break { label: present(loop4294967295), values: [] } }] },
+              var.use { dest: %r8, var: $v4, mode: forward },
+              struct.create { dest: %r1, fields: [%r8] },
+              field.get { dest: %r9, base: %r1, field: x },
+              var.store { var: $v3, src: %r9, binding_type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), in_place: false },
+              place.load { dest: %r2, place: place { root: $v3, root_type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), projections: [], type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), through: absent } },
+              call.method { dest: %r3, recv: %r2, method: copy, resolved: present("__trait_dispatch.copy$ov$"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v3, root_type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), projections: [], type: present(param { owner: "kept", slot: 0, name: T, bounds: [Copyable, Deinitable], callable_bound: absent }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [drop.var { var: $v3 }], terminator: break { label: present(loop4294967295), values: [] } }] },
+              const { dest: %r5, value: none }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      }
+  ]

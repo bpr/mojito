@@ -328,10 +328,11 @@ folds the operators over it (R840);
       `else`'s arguments (R1264).
     - `SROA` landed as `sroa` (R928) before each `Mem2Reg`, at both seams,
       with `struct.create` as its value-level construction and upstream's
-      `kgen.struct` folds in `canonicalize`. It splits a struct whose drop
-      runs no code and whose fields, at the slot type's arguments, are
-      register-passable (R1266); destructors (R1267), struct arguments
-      (R1268), and pointer fields (R1269) still keep the slot.
+      `kgen.struct` folds in `canonicalize`. It splits a struct whose
+      fields the slot type's arguments resolve (R1266), whatever its drop
+      runs, a memory-only slot once the calls taking it by address are
+      inlined (R1267); struct arguments (R1268) and pointer fields (R1269)
+      still keep the slot.
 12. **Generator CSE** (`CSEPass`) *(done, R926)*. The fourth round ends
     with the post-elaboration `cse`, which walks a structured body's
     regions with MLIR's scoping, so `PIPELINE` now holds every pass of the

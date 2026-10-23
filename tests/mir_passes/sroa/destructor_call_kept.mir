@@ -1,0 +1,58 @@
+mojito-mir 1.96
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+    struct { name: S, fields: [field { name: n, type: Int }, field { name: t, type: struct_type { name: "__module$std$string$String", arguments: [] } }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [] }, conformance { trait: IsTriviallyDeinitable, conditions: [] }], declared: [conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __deinit__, symbol: "S.__deinit__" }, member { name: __moveinit__, symbol: "S.__moveinit__" }] }
+  ],
+  decls: [
+    decl { lowered_name: "S.__deinit__", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(deinit), param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug, synthesized: true },
+    decl { lowered_name: compute, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: compute,
+        registers: 15,
+        vars: 2,
+        var_names: [s, "$fwd_arg_r3"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }, var_type { var: $v1, type: struct_type { name: "__module$std$string$String", arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: StringLiteral }, reg_type { reg: %r3, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: "__module$std$string$String", arguments: [] } }, reg_type { reg: %r5, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: IntLiteral }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r13, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r14, type: None }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }, reg_loc { reg: %r14, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(1) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              const { dest: %r2, value: string("a") },
+              call { dest: %r3, func: "__module$std$string$String.__init__$ov$StringLiteral", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v1, src: %r3, binding_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), in_place: true },
+              var.use { dest: %r4, var: $v1, mode: forward },
+              struct.create { dest: %r5, fields: [%r1, %r4] },
+              var.store { var: $v0, src: %r5, binding_type: present(struct_type { name: S, arguments: [] }), in_place: false },
+              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
+              const { dest: %r7, value: int_literal(1) },
+              literal.materialize { dest: %r8, value: %r7, target: Int },
+              binary { op: add, dest: %r9, a: %r6, b: %r8, resolved: absent, raises: absent },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r9 },
+              place.load { dest: %r11, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
+              var.use { dest: %r13, var: $v0, mode: forward },
+              call.method { dest: %r14, recv: %r13, method: __deinit__, resolved: present("S.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              value.copy { dest: %r12, value: %r11 }
+            ],
+            terminator: return { value: present(%r12) }
+          }
+        ]
+      }
+  ]
+}

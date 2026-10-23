@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1308**.
+Next free ID: **R1310**.
 
 ## Ordered Work
 
@@ -650,26 +650,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1266 (2026-10-22).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1267 `sroa` keeps a struct slot whose drop runs code**
-
-  A struct slot read and written through its fields stays whole when the
-  struct or one of its fields has a destructor, where upstream's `SROA`
-  splits any struct allocation whose users are field addresses, loads, and
-  stores.
-  - Splitting would turn the slot's `drop.var` into one drop per remaining
-    field, each naming its field type's destructor
-    (`MirDeclarations::destructor`), in reverse declaration order.
-  - First establish whether upstream's destructor insertion destroys such a
-    struct through a whole `__del__` call that takes its address, which
-    keeps it whole on the pin too; if so, move this entry to
-    `docs/non-goals.md`. Read `CheckLifetimes.cpp` and
-    `DestructorInsertion`: the pin cannot print its IR.
-  - Probe: `var s = S(1, String("a")); s.n += 1; return s.n` over
-    `@fieldwise_init struct S(Movable): var n: Int; var t: String` keeps
-    `s` in memory.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1268 `lower-arg-conventions` stores only the arguments `mem-2-reg`
   promotes whole, so `sroa` never splits a struct argument**
@@ -8566,6 +8546,45 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     "use of variable slot 0 after it was moved": the split `Box[Pointer]`
     field's `drop.place` takes `xs` through the handle.
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1308 An inlined initializer's `out self` is a slot of its own the
+  caller forwards, where upstream binds the caller's destination**
+
+  `inline-parametric` gives a constructed receiver (`Binding::Out`) a fresh
+  slot and forwards it into the caller's `var.store` (`Returned::Out`),
+  where upstream's inliner initializes the caller's allocation in place.
+  - Two allocations where the pin has one make `sroa` keep a memory-only
+    slot stored from a slot it keeps, a rule upstream's `SROA` lacks
+    (`keep_address_users`, `crates/mojito-analysis/src/analysis/sroa.rs`).
+  - Removing it removes one of that rule's two reasons. R1309 is the
+    other.
+  - Probe: `tests/mir_passes/sroa/forwarded_from_kept_slot.mir`, from
+    `var w = W(3)` over an `@always_inline` initializer that calls
+    `self.show()`, keeps both `self$inline1` and `w`, where the pin has
+    one allocation.
+  - Found while landing R1267 (2026-10-23).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1309 Pliron releases an owned temporary that `field.get` only
+  borrows**
+
+  A whole store of a forwarded struct into a split slot becomes one
+  `field.get` per field, which Pliron lowers as a borrow of the base
+  (`borrowed_operands`, `crates/mojito-pliron/src/lower/support.rs`), so it
+  also releases the base as an owned temporary and frees each field twice.
+  - Upstream's SSA values carry no ownership once `LowerLIT` has run: a
+    `kgen.struct.extract` of a value moves its element out.
+  - `sroa` works around it by keeping a memory-only slot stored from a slot
+    it keeps (`keep_address_users`,
+    `crates/mojito-analysis/src/analysis/sroa.rs`), with R1308.
+  - Probe: dropping that fixpoint makes `w2` (an `@always_inline`
+    `W.__init__(out self, n)` that sets `self.t = String("x") + String(n)`
+    and calls `self.show()`, then `var w = W(3); w.n += 1; print(w.t)`)
+    double-free under `--backend pliron`.
+  - Depends on R932, which decides drops statically so no backend tracks
+    an owned temporary.
   - Model: Fable, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
