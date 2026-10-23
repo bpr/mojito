@@ -36,13 +36,13 @@ disappear. Four such gaps remain, and one of them reaches far outside
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
 | A. Raises are implicit | every raise point ends a region | R906, R831, R20, R884 | R1264, R1106, R1272, R1113, R832, R833, R733, R956, R890, likely R829 |
-| B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 | R1029, R1283, R1021, R1075 |
+| B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 | R1283, R1278, R1021, R1075 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
 
 Each gap's fix also removes a place where a backend looks something up by
-type instead of reading a name from MIR: the constructor by arity (R1029),
-the collector at binding (R1102, R1070), each tuple element's destructor
+type instead of reading a name from MIR: the struct-named construction
+(R1283, R1278; R1029 removed the by-arity lookup), the collector at binding (R1102, R1070), each tuple element's destructor
 (R1090), and the flag sweep at return (R832). R1031 → R1109 is the one
 remaining lookup of that kind outside the four gaps.
 
@@ -89,9 +89,10 @@ entry's probe is "one instance per `n` where the pin has one".
   reading `Fw[n]` whole.
 - R1050 makes a copy constructor restate its struct's parameters, as
   `__init__` does.
-- Together they remove both paths still reaching R1029's by-arity arms (a
-  fieldwise struct with no `__init__`, and `T(copy=x)`). That leaves
-  R1029 a deletion. R1097 moved `T()`/`T(copy=x)` into the shared
+- Together they left R1029 a deletion, and it landed: neither backend
+  resolves a constructor by arity. A call naming a struct remains only for
+  a fieldwise struct with a `ref` field (R1278) and `T(copy=x)` (R1283).
+  R1097 moved `T()`/`T(copy=x)` into the shared
   `mir::construct_type_parameters`; R1283 makes its struct arm name the
   witnessed constructor rather than the struct.
 - R1052 records each conformance's witness table on the declaration, so
@@ -130,11 +131,11 @@ entry's probe is "one instance per `n` where the pin has one".
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1049 --only R1050 --only R1052 -n 0
    ```
 
-   Then R1029 and R1283, which carry no Depends bullets, so run them only
-   after the three above:
+   Then R1283 (R1029 has landed), which carries no Depends bullet, so run
+   it only after the three above:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1029 --only R1283 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1283 -n 0
    ```
 
    Then R988 → R1021 → R1075 (R1021 also waits on R1052):

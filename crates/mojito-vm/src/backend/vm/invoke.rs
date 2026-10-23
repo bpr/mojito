@@ -242,8 +242,7 @@ impl VmBackend {
                 RuntimeError::Unsupported(format!("vm: kwargs {collector} has no __init__"))
             })?;
         let init = prog.mir.functions[init].0.clone();
-        let mut dict =
-            self.construct_via_init(prog, collector, Some(&init), Vec::new(), Vec::new())?;
+        let mut dict = self.construct_via_init(prog, collector, &init, Vec::new(), Vec::new())?;
         let fidx = prog
             .struct_member(collector, "__setitem__", 2)
             .ok_or_else(|| {

@@ -347,7 +347,7 @@ impl VmBackend {
                     arguments.len()
                 ))
             })?;
-        self.construct_via_init(prog, name, Some(constructor), arguments, Vec::new())
+        self.construct_via_init(prog, name, constructor, arguments, Vec::new())
     }
 
     /// Normalize an `Indexer` to the VM's signed index representation. Int-like
@@ -402,7 +402,7 @@ impl VmBackend {
         if let Some((struct_name, "__init__" | "__copyinit__" | "__moveinit__")) =
             prog.lifecycle_constructor(name, constructed)
         {
-            return self.construct_via_init(prog, struct_name, Some(name), args, kwargs);
+            return self.construct_via_init(prog, struct_name, name, args, kwargs);
         }
         match name {
             // Unlinked VM-CTFE programs have the checker-known `range` builtin
@@ -676,34 +676,14 @@ impl VmBackend {
                 }
                 builtin_error(argument)
             }
-            // A struct constructor. A hand-written `def __init__(out self, …)`
-            // takes precedence over the fieldwise constructor: build an uninitialized
-            // `self` skeleton, run `__init__`, and return the initialized value.
+            // A call naming a struct names no constructor: `T(copy=x)` at a
+            // struct copies through the copy constructor its member table
+            // records, and any other builds the fieldwise struct value.
             _ if prog.structs.contains_key(name) => {
-                let constructor = prog.constructor_name(name, args.len());
-                if (!args.is_empty() || kwargs.len() != 1 || kwargs[0].0 != "copy")
-                    && prog.index_of(&constructor).is_some()
-                {
-                    return self.construct_via_init(
-                        prog,
-                        name,
-                        None,
-                        args,
-                        kwargs,
-                    );
-                }
-                if !kwargs.is_empty() {
-                    self.construct_via_copy(prog, name, &args, &kwargs)
-                } else if prog.index_of(&constructor).is_some() {
-                    self.construct_via_init(
-                        prog,
-                        name,
-                        None,
-                        args,
-                        Vec::new(),
-                    )
-                } else {
+                if kwargs.is_empty() {
                     construct(&prog.structs[name], name, args)
+                } else {
+                    self.construct_via_copy(prog, name, &args, &kwargs)
                 }
             }
             // `UnsafePointer[T].alloc(n)` — reserve `n` slots in the heap arena and

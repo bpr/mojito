@@ -635,6 +635,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The VM and the Pliron backend no longer resolve a call naming a struct to
+  an `__init__` overload by arity (R1029): every constructor call runs the
+  symbol it names, as upstream's backends take the call's symbol. A call
+  naming the struct itself now only builds a fieldwise struct with a `ref`
+  field (R1278) or copies through `T(copy=x)` (R1283), and a converting
+  default runs the constructor its target names. The VM's
+  `constructor_name` and `overload_name` and Pliron's `constructor_init`
+  and `constructor_init_target` are gone.
 - A `nodebug` callee constructing its type binder (`T()`, `Ts[0]()`,
   `T(copy=x)`) now inlines at a concrete binding (R1097): the inlined body
   holds the bound type's own construction, a scalar's zero, a vector's

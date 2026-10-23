@@ -310,8 +310,8 @@ impl VmBackend {
         self.write_reference(&handle, frame_id, vars, value)
     }
 
-    /// Construct a struct via a hand-written `def __init__(out self, …)`: build an
-    /// uninitialized `self` skeleton (fields = `None` placeholders, value parameters
+    /// Construct a struct through the compiled `constructor` a call names:
+    /// build an uninitialized `self` skeleton (fields = `None` placeholders, value parameters
     /// reified), run `__init__(self, args…)`, and return the initialized `self`
     /// (frame slot 0). The checker's definite-init check guarantees every field is
     /// assigned in the body, so no placeholder survives. Arguments are coerced to the
@@ -320,7 +320,7 @@ impl VmBackend {
         &mut self,
         prog: &Prog,
         name: &str,
-        target: Option<&str>,
+        constructor: &str,
         args: Vec<Value>,
         kwargs: Vec<(String, Value)>,
     ) -> Result<Value, RuntimeError> {
@@ -333,16 +333,14 @@ impl VmBackend {
             name: name.to_string(),
             fields: uninitialized_fields(&def.fields),
         };
-        let constructor =
-            target.map_or_else(|| prog.constructor_name(name, args.len()), str::to_string);
-        let fidx = prog.index_of(&constructor).ok_or_else(|| {
+        let fidx = prog.index_of(constructor).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
                 "vm: checked constructor '{constructor}' is missing from MIR"
             ))
         })?;
-        let user_args = match prog.sigs.get(&constructor) {
+        let user_args = match prog.sigs.get(constructor) {
             Some(signature) => {
-                self.bind_for_call(prog, &constructor, signature, &args, kwargs)?
+                self.bind_for_call(prog, constructor, signature, &args, kwargs)?
                     .0
             }
             None => args,

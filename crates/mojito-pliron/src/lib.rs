@@ -30,7 +30,7 @@ use pliron::printable::Printable;
 use std::path::Path;
 
 use mojito_common::token::SourceSpan;
-use mojito_mir::mir::{MirFunction, MirInstr, MirProgram, MirStructDeclaration, Reg};
+use mojito_mir::mir::{MirFunction, MirInstr, MirProgram, MirStructDeclaration};
 use mojito_native::native::mono::SpecializedProgram;
 use mojito_types::types::{Ty, TyArg};
 
@@ -827,9 +827,8 @@ impl fmt::Display for PlironErrorKind {
 }
 
 /// The transitive call-graph closure of `entries`: direct `MirInstr::Call`
-/// edges, checker-resolved `MethodCall` targets, constructor calls to a
-/// declared struct (the exact `__init__` or its unique arity overload — the
-/// VM's `overload_name` policy), and lifecycle edges — every struct type a
+/// edges (a constructor call names its `__init__`), checker-resolved
+/// `MethodCall` targets, and lifecycle edges — every struct type a
 /// reachable function mentions (transitively through declared field types)
 /// contributes its compiled `__deinit__`/`__copyinit__`, because drops and
 /// copies execute those bodies without any call instruction naming them.
@@ -1064,22 +1063,11 @@ impl<'p> CallEdges<'p, '_> {
                     }
                 }
             }
-            MirInstr::Call {
-                func, args, kwargs, ..
-            } => match self.functions.get_key_value(func.0.as_str()) {
-                Some((callee, _)) => self.targets.push(*callee),
-                None => {
-                    if let Some(callee) = constructor_init_target(
-                        self.functions,
-                        self.structs,
-                        &func.0,
-                        args.len(),
-                        kwargs,
-                    ) {
-                        self.targets.push(callee);
-                    }
+            MirInstr::Call { func, .. } => {
+                if let Some((callee, _)) = self.functions.get_key_value(func.0.as_str()) {
+                    self.targets.push(*callee);
                 }
-            },
+            }
             // Pointer-receiver methods dispatch to runtime
             // intrinsics, never to compiled stdlib bodies.
             MirInstr::MethodCall {
@@ -1419,51 +1407,6 @@ impl<'p> CallEdges<'p, '_> {
     }
 }
 
-/// The `__init__` a constructor call to struct `name` executes: the exact
-/// name when compiled, else the unique overload taking `argc + 1` parameters
-/// (counting `out self`) — the VM's `overload_name` policy. The
-/// `Type(copy=value)` form runs the fieldwise copy path, not `__init__`.
-fn constructor_init_target<'p>(
-    functions: &HashMap<&'p str, &'p MirFunction>,
-    structs: &HashMap<&str, &MirStructDeclaration>,
-    name: &str,
-    argc: usize,
-    kwargs: &[(String, Reg)],
-) -> Option<&'p str> {
-    if !structs.contains_key(name) {
-        return None;
-    }
-    if argc == 0 && kwargs.len() == 1 && kwargs[0].0 == "copy" {
-        return None;
-    }
-    let init = format!("{name}.__init__");
-    if let Some((callee, _)) = functions.get_key_value(init.as_str()) {
-        return Some(*callee);
-    }
-    let mut matches = functions.iter().filter(|(fname, function)| {
-        mojito_symbol::symbol::is_overload_of(fname, &init) && function.n_params == argc + 1
-    });
-    if let Some((first, _)) = matches.next() {
-        let first = *first;
-        return matches.next().is_none().then_some(first);
-    }
-    // The unique variadic overload whose runtime-pack collector binds any
-    // element count (current Tuple's `*args: *Ts` constructor beside its
-    // nullary one), the `constructor_init` selection lowering makes. The
-    // compiled function binds the collector as its one parameter after
-    // `out self`, typed as the private pack storage.
-    let mut packs = functions.iter().filter(|(fname, function)| {
-        mojito_symbol::symbol::is_overload_of(fname, &init)
-            && function.n_params == 2
-            && matches!(
-                function.param_types.get(1).map(Ty::kind),
-                Some(TyKind::Tuple(_) | TyKind::RuntimePack(_))
-            )
-    });
-    let first = *packs.next()?.0;
-    packs.next().is_none().then_some(first)
-}
-
 /// Record every declared struct name `ty` mentions — transitively through
 /// declared field types — that `seen` has not recorded yet, appending fresh
 /// names to `discovered`.
@@ -1564,6 +1507,7 @@ fn string_structs<'s>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mojito_mir::mir::Reg;
 
     /// "Invalid IR fails verification": a value-returning function whose body
     /// returns nothing is rejected by the pliron verifier as a
@@ -1638,7 +1582,7 @@ mod tests {
         );
         let constructor_call = MirInstr::Call {
             dest: Reg(0),
-            func: FuncRef("Point".to_string()),
+            func: FuncRef(init_symbol.clone()),
             raises: None,
             args: vec![Reg(1)],
             kwargs: Vec::new(),
@@ -1712,7 +1656,7 @@ mod tests {
         assert!(reachable.contains("main"));
         assert!(
             reachable.contains(init_symbol.as_str()),
-            "the unique arity overload of the constructor is a call edge"
+            "the constructor a call names is a call edge"
         );
         assert!(
             reachable.contains("Point.__deinit__"),

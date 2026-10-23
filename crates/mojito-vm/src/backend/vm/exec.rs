@@ -443,14 +443,9 @@ impl VmBackend {
                 // Its synthetic `self` occupies parameter slot zero.
                 let constructed =
                     prog.declared_struct(prog.mir.functions[function].1.reg_types.get(&dest.0));
-                let constructor_index =
-                    if prog.lifecycle_constructor(&func.0, constructed).is_some() {
-                        prog.index_of(&func.0)
-                    } else if prog.structs.contains_key(&func.0) {
-                        prog.index_of(&prog.constructor_name(&func.0, args.len()))
-                    } else {
-                        None
-                    };
+                let constructor_index = prog
+                    .lifecycle_constructor(&func.0, constructed)
+                    .and_then(|_| prog.index_of(&func.0));
                 if let Some(index) = constructor_index {
                     let reference_parameters = &prog.mir.functions[index].1.ref_params;
                     for (argument, value) in argv.iter_mut().enumerate() {

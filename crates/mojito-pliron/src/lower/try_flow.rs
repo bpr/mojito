@@ -634,39 +634,4 @@ impl FnLowering<'_> {
             _ => Err(self.unsupported_reg(format!("string value in register %r{}", reg.0), dest)),
         }
     }
-
-    /// The compiled `__init__` a constructor call executes: the exact name,
-    /// else the unique overload taking `argc + 1` parameters (counting
-    /// `out self`) — the VM's `overload_name` policy over the compiled set.
-    pub(super) fn constructor_init(&self, name: &str, argc: usize) -> Option<String> {
-        let init = format!("{name}.__init__");
-        if self.signatures.contains_key(&init) {
-            return Some(init);
-        }
-        let mut matches = self.signatures.iter().filter(|(fname, signature)| {
-            mojito_symbol::symbol::is_overload_of(fname, &init)
-                && signature.params.len() == argc + 1
-        });
-        if let Some((first, _)) = matches.next() {
-            let first = first.clone();
-            return matches.next().is_none().then_some(first);
-        }
-        // The unique variadic overload whose runtime-pack collector binds
-        // any element count (current Tuple's `*args: *Ts` constructor beside
-        // its nullary one), as the VM's `constructor_name` selects.
-        let mut packs = self.signatures.keys().filter(|fname| {
-            mojito_symbol::symbol::is_overload_of(fname, &init)
-                && self
-                    .declarations
-                    .get(fname.as_str())
-                    .is_some_and(|declaration| {
-                        matches!(
-                            declaration.variadic.as_ref().map(Ty::kind),
-                            Some(mojito_types::types::TyKind::RuntimePack(_))
-                        )
-                    })
-        });
-        let first = packs.next()?.clone();
-        packs.next().is_none().then_some(first)
-    }
 }

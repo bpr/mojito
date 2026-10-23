@@ -2239,8 +2239,7 @@ impl<'a> Specializer<'a> {
     /// The compiled constructor a default's conversion target names. The
     /// checker records the selected constructor's symbol; a bare struct name,
     /// which only hand-written MIR spells, resolves through the shared
-    /// callable-symbol policy over the single wrapped literal, as the VM's
-    /// `constructor_name` resolves it.
+    /// callable-symbol policy over the single wrapped literal.
     fn constructed_default_target(&self, target: &str) -> Option<String> {
         if self.functions.contains_key(target) {
             return Some(target.to_string());
@@ -3935,8 +3934,7 @@ impl<'a> Specializer<'a> {
     /// The unique `__init__` overload of `init_base`'s struct whose
     /// runtime-pack collector binds any element count (current Tuple's
     /// `__init__(out self, var *args: *Ts)` beside its nullary constructor),
-    /// which arity-keyed selection cannot see — the VM's `constructor_name`
-    /// fallback.
+    /// which arity-keyed selection cannot see.
     fn runtime_pack_constructor(&self, init_base: &str) -> Option<String> {
         let mut packs = self.functions.overloads(init_base).filter(|candidate| {
             self.declarations

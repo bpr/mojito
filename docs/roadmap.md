@@ -350,7 +350,10 @@ which names the upstream pass each one follows. Each is measured by the
     direct `S()` / `S(copy=x)` lowers.
   - A struct with no `__copyinit__` member (a trivial synthesized copy)
     copies by `value.copy`, which fixes R724's `T(copy=x)` half.
-  - This removes the type-parameter route into R1029's by-arity arms.
+  - Once it lands, the struct-named copy path goes: the VM's
+    `construct_via_copy` arm in `vm/dispatch.rs` and the copy form of
+    Pliron's `lower_constructor` (`lower/ctors.rs`), which copies
+    bitwise or by fork rather than through the member it would name.
   - Probe: `tests/mir_passes/inline-parametric/construct_type_param.mir`
     and `copy_type_param.mir` show `call Counter`; done when they name
     `Counter.__init__` and `Counter.__copyinit__`, and
@@ -404,24 +407,6 @@ which names the upstream pass each one follows. Each is measured by the
     reference admitted when its register's origin is static.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R1029 The backends still resolve a call naming a struct to an
-  `__init__` overload by arity**
-
-  The concrete program names every compiled constructor a call reaches,
-  yet the VM's `Call` arms (`exec.rs`, `dispatch.rs`) and Pliron's
-  `constructor_init`/`constructor_init_target` still look one up by arity
-  for a call naming a struct, where upstream's backends take the symbol
-  the call names.
-  - Only a fieldwise struct with no `__init__` and `T(copy=x)` reach
-    those arms now.
-  - Drop the by-arity lookup there, keeping the VM-synthesized
-    constructions (`construct_via_init` with no target) that name no call.
-  - Done when neither backend's `Call` lowering resolves a constructor by
-    arity and the HEAD differential is clean.
-  - Found while landing R1007 (2026-10-15).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1070 A keyword collector's constructor stays as long as its
   struct does**
@@ -10161,13 +10146,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 - [ ] **R583 The VM resolves a callee by name at run time, scanning every
   concrete function**
 
-  Problem: `Prog::{overload_name, runtime_method_name, constructor_name,
-  index_of}` (`mojito-vm/src/backend/vm.rs`) walk the whole concrete
-  program for each dispatch they resolve, while upstream resolves every
-  call at compile time and the VM runs concrete MIR the elaborator already
-  resolved.
-  - The VM's `CallableLookup` implementation scans `mir.functions` for both
-    the exact name and the overload family.
+  Problem: `Prog::{runtime_method_name, index_of}`
+  (`mojito-vm/src/backend/vm.rs`) walk the whole concrete program for each
+  dispatch they resolve, while upstream resolves every call at compile
+  time and the VM runs concrete MIR the elaborator already resolved.
+  - `index_of` scans `mir.functions` for the exact name on every call.
   - The lever is to have the elaborator record each concrete call's
     target, so the VM resolves no name; failing that, an index by name.
   - Found while landing R580 (2026-10-10), which moved the elaborator's

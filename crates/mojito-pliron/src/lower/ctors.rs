@@ -6,10 +6,9 @@ use super::*;
 use mojito_types::types::{TyKind, erase_origin_arguments};
 
 impl FnLowering<'_> {
-    /// A constructor call to declared struct `name`: the fieldwise copy form
-    /// (`Type(copy=value)`), the compiled `__init__` overload with fresh
-    /// storage as its `out self`, or fieldwise per-field stores — the VM's
-    /// dispatch order.
+    /// A call naming the declared struct `name`, which names no constructor:
+    /// the copy form (`Type(copy=value)`), or fieldwise per-field stores —
+    /// the VM's dispatch order.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_constructor(
         &mut self,
@@ -18,7 +17,6 @@ impl FnLowering<'_> {
         name: &str,
         args: &[Reg],
         kwargs: &[(String, Reg)],
-        arg_places: &[Option<MirPlace>],
         kwarg_places: &[Option<MirPlace>],
     ) -> Result<(), PlironError> {
         let struct_ty = match self.func.reg_types.get(&dest.0) {
@@ -43,80 +41,10 @@ impl FnLowering<'_> {
             };
             return self.copy_aggregate(ctx, dest, &ty, layout, src);
         }
-        if let Some(init) = self.constructor_init(name, args.len()) {
-            let params = self.signatures[&init].params.clone();
-            let owned = self.signatures[&init].owned_params.clone();
-            let by_reference = self.signatures[&init].ref_params.clone();
-            if params.is_empty() {
-                return Err(
-                    self.unsupported_reg(format!("`{init}` without an `out self` parameter"), dest)
-                );
-            }
-            let storage = self.entry_alloca(ctx, layout.size, layout.align);
-            let rest = &params[1..];
-            let rest_owned = if owned.len() > 1 { &owned[1..] } else { &[] };
-            let rest_by_reference = if by_reference.len() > 1 {
-                &by_reference[1..]
-            } else {
-                &[]
-            };
-            let mut lowered = vec![storage];
-            if kwargs.is_empty()
-                && args.len() == rest.len()
-                && !rest_by_reference.iter().any(|&by_ref| by_ref)
-                && !self.variadic_callee(&init)
-            {
-                for (i, (arg, expected)) in args.iter().zip(rest).enumerate() {
-                    // A zero-sized argument (the `NoneType` of an `@implicit`
-                    // `Optional.__init__(out self, value: NoneType)`) has no
-                    // physical operand: the compiled signature erased its slot.
-                    if matches!(expected, LowerTy::ZeroSized) {
-                        continue;
-                    }
-                    let owned = rest_owned.get(i).copied().unwrap_or(false);
-                    lowered.push(self.place_backed_arg_value(
-                        ctx,
-                        *arg,
-                        expected,
-                        owned,
-                        arg_places.get(i).and_then(Option::as_ref),
-                        dest,
-                    )?);
-                }
-            } else {
-                lowered.extend(self.bind_call_slots(
-                    ctx,
-                    dest,
-                    &init,
-                    rest,
-                    rest_owned,
-                    rest_by_reference,
-                    args,
-                    kwargs,
-                    arg_places,
-                    kwarg_places,
-                )?);
-            }
-            self.emit_bound_call(ctx, dest, &init, lowered)?;
-            // `__init__` returns nothing; the constructed value is the
-            // storage its `out self` wrote through.
-            self.erased.remove(&dest.0);
-            self.reg_values.insert(dest.0, storage);
-            // The constructed value owns its heap: consumers relocate it
-            // (`DefVar`, stores) and a discarded result releases invisibly.
-            // Without the mark, a store forks the value and the original's
-            // buffers lose their releasing owner. A lifetime the release
-            // cannot follow keeps the shared-bytes behavior instead of
-            // rejecting.
-            if self.owns_heap(&ty) {
-                self.mark_tracked_owned_temp(dest, ty.clone())?;
-            }
-            return Ok(());
-        }
         let decl = self.struct_decls[name];
         if !decl.fieldwise_init {
             return Err(self.unsupported_reg(
-                format!("constructor for `{name}` without a compiled `__init__`"),
+                format!("a call naming `{name}`, which names no constructor and is not fieldwise"),
                 dest,
             ));
         }

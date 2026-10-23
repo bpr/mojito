@@ -26,7 +26,6 @@ use mojito_mir::mir::{
 };
 use mojito_types::ct::CtValue;
 use mojito_types::types::Ty;
-use mojito_types::types::TyKind;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use places::*;
 use std::collections::HashMap;
@@ -884,41 +883,6 @@ impl Prog {
         self.index_of(symbol)
     }
 
-    /// The compiled `__init__` a construction of `struct_name` with `argc`
-    /// positional arguments executes: the exact name, else the unique
-    /// same-arity overload, else the unique variadic overload whose
-    /// runtime-pack collector binds any element count (current Tuple's
-    /// `__init__(out self, var *args: *Ts)` beside its nullary constructor,
-    /// which arity-keyed selection cannot see).
-    fn constructor_name(&self, struct_name: &str, argc: usize) -> String {
-        let init = format!("{struct_name}.__init__");
-        let resolved = self.overload_name(&init, argc);
-        if self.index_of(&resolved).is_some() {
-            return resolved;
-        }
-        let mut packs = self.mir.functions.iter().filter(|(fname, _)| {
-            mojito_symbol::symbol::is_overload_of(fname, &init)
-                && self.sigs.get(fname.as_str()).is_some_and(|signature| {
-                    signature.variadic.as_ref().is_some_and(|element| {
-                        matches!(element.kind(), TyKind::RuntimePack(_))
-                            || mojito_types::types::pack_spread(std::slice::from_ref(element))
-                                .is_some()
-                    })
-                })
-        });
-        match (packs.next(), packs.next()) {
-            (Some((fname, _)), None) => fname.clone(),
-            _ => resolved,
-        }
-    }
-
-    /// Arity-based overload fallback: the lowered function a *source* name
-    /// with `argc` arguments means, for a construction reached without a
-    /// recorded target.
-    fn overload_name(&self, name: &str, argc: usize) -> String {
-        mojito_symbol::symbol::resolve_callable_symbol(self, name, argc)
-    }
-
     /// Resolve a selected method signature against the receiver's concrete
     /// runtime type. Bounded generic calls carry an abstract checker symbol;
     /// retargeting its suffix preserves overload selection even when every
@@ -953,28 +917,6 @@ impl Prog {
             .or_else(|| self.struct_member(receiver_type, method, argc))
             .map(|index| self.mir.functions[index].0.clone())
             .or_else(|| defined.map(str::to_string))
-    }
-}
-
-impl mojito_symbol::symbol::CallableLookup for Prog {
-    fn contains(&self, name: &str) -> bool {
-        self.index_of(name).is_some()
-    }
-
-    fn overloads(
-        &self,
-        base: &str,
-    ) -> impl Iterator<Item = mojito_symbol::symbol::CallableCandidate<'_>> {
-        self.mir
-            .functions
-            .iter()
-            .filter(move |(name, _)| mojito_symbol::symbol::is_overload_of(name, base))
-            .map(
-                |(name, function)| mojito_symbol::symbol::CallableCandidate {
-                    name,
-                    n_params: function.n_params,
-                },
-            )
     }
 }
 

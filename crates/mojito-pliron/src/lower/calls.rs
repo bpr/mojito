@@ -51,15 +51,7 @@ impl FnLowering<'_> {
                 return self.lower_slice_constructor(ctx, dest, name, args);
             }
             if self.struct_decls.contains_key(name) {
-                return self.lower_constructor(
-                    ctx,
-                    dest,
-                    name,
-                    args,
-                    kwargs,
-                    arg_places,
-                    kwarg_places,
-                );
+                return self.lower_constructor(ctx, dest, name, args, kwargs, kwarg_places);
             }
             // The numeric/IO builtins the VM's `call_named` implements
             // directly. Nominal-receiver `len`/`abs`/`round` were rewritten
@@ -633,15 +625,8 @@ impl FnLowering<'_> {
                 dest,
             ));
         }
-        // The checker records the conversion target as the compiled overload
-        // or, for a hand-written `@implicit` constructor, as the bare struct
-        // name — the VM's `call_named` resolves both, and so does this.
-        let Some(resolved) = self
-            .signatures
-            .contains_key(target)
-            .then(|| target.to_string())
-            .or_else(|| self.constructor_init(target, 1))
-        else {
+        // The conversion target names the compiled constructor overload.
+        let Some(signature) = self.signatures.get(target) else {
             return Err(self.unsupported_reg(
                 format!(
                     "converting-constructor default `{target}` of `{callee}` has no compiled body"
@@ -651,7 +636,6 @@ impl FnLowering<'_> {
         };
         // Parameter 0 is the `out self` storage; the recorded literal fills the
         // single remaining slot. A zero-sized one (`NoneType`) has no operand.
-        let signature = &self.signatures[&resolved];
         let params = signature.params.clone();
         let owned_params = signature.owned_params.clone();
         let filled: Vec<usize> = (1..params.len())
@@ -660,7 +644,7 @@ impl FnLowering<'_> {
         if filled.len() > 1 {
             return Err(self.unsupported_reg(
                 format!(
-                    "converting-constructor default `{resolved}` of `{callee}` takes more than one argument"
+                    "converting-constructor default `{target}` of `{callee}` takes more than one argument"
                 ),
                 dest,
             ));
@@ -670,10 +654,10 @@ impl FnLowering<'_> {
         for index in filled {
             let owned = owned_params.get(index).copied().unwrap_or(false);
             let value =
-                self.default_argument_value(ctx, arg, &params[index], owned, &resolved, dest)?;
+                self.default_argument_value(ctx, arg, &params[index], owned, target, dest)?;
             operands.push(value);
         }
-        self.emit_bound_call(ctx, dest, &resolved, operands)?;
+        self.emit_bound_call(ctx, dest, target, operands)?;
         Ok(storage)
     }
 
