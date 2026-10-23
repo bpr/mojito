@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1279**.
+Next free ID: **R1280**.
 
 ## Ordered Work
 
@@ -55,6 +55,30 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
+
+- [ ] **R1279 A generic struct with a `String` field does not compile:
+  `inline-parametric` leaves its copy constructor reading the struct's
+  parameter**
+
+  `struct S[n: Int](Copyable, Movable)` holding `var s: String`, built
+  once in `main`, stops with "after pre-elaboration pass
+  `inline-parametric`: MIR function 'S.__copyinit__' removes parameter
+  slot 0 of `S`, which it reads", where the pin runs it.
+  - `remove-unused-params` removes `n` from the synthesized
+    `S.__copyinit__`, which reads none of it.
+  - Inlining `String.__copyinit__` splices places rooted at the bare
+    receiver `S` (`$v1.s.size`, `$v1.s.data`, an `index.get` over it).
+  - The parameter-use walker (`mir::unread_parameters_of`) then counts
+    `n` as read.
+  - Suspect: a bare self spelling with no struct arguments reads every
+    slot (`Walker::serialize_seq`).
+  - Probes: the same over `T: AnyType`, an `@always_inline("nodebug")`
+    written copy constructor, and `S[n](copy=c)` in a generic `dup[n]`.
+  - A `Movable`-only `S` runs.
+  - Fails at `b93e0128`, before R1050.
+  - Found while landing R1050 (2026-10-22).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1251 `mir::lower_whole_drops` decides a drop's shape by a forward
   fold of its own, where `DestructorInsertion` decides it in the backward
@@ -643,22 +667,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Found while landing R1049 (2026-10-22).
   - Depends on R1277, R1082.
   - Model: Fable, Not Planned.
-
-- [ ] **R1050 A copy constructor's declaration does not restate its
-  struct's parameters, as an `__init__`'s does**
-
-  `T(copy=x)` calls `T.__copyinit__` with the spelled `T[n]` as its
-  `receiver`, where upstream's copy constructor is an `__init__` overload
-  whose generator lists the struct's parameters.
-  - `lower_method` prepends the struct's `param_decls` only when the
-    method is named `__init__`, and the lifecycle rename has already made
-    it `__copyinit__` or `__moveinit__`.
-  - Restate them for both, then pass a copy construction's struct
-    arguments as `instantiated_args`, as any construction does, and drop
-    its `receiver`.
-  - Found while landing R1020 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1052 An inlined call through a bound still names the trait
   dispatch after its receiver is concrete**

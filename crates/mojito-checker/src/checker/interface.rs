@@ -1463,7 +1463,7 @@ fn method_projection_differs(
             "parameters",
             own_decls(method, owner_decls.len(), declaration)
                 .is_some_and(|own| same_bytes(&sig.decls, &own))
-                && (method != "__init__"
+                && (!mojito_symbol::symbol::is_initializer_member(method)
                     || declaration
                         .param_decls
                         .get(..owner_decls.len())
@@ -1778,15 +1778,15 @@ fn lowered_struct<'a>(
         .map(|position| &lowered.structs[position])
 }
 
-/// The parameters `method`'s lowered `declaration` declares itself: a
-/// constructor's declaration declares its struct's `owner_decls` first, as
+/// The parameters `method`'s lowered `declaration` declares itself: an
+/// initializer's declaration declares its struct's `owner_decls` first, as
 /// MIR lowers one.
 fn own_decls<'a>(
     method: &str,
     owner_decls: usize,
     declaration: &'a FunctionDeclaration,
 ) -> Option<&'a [ParamDecl]> {
-    if method == "__init__" {
+    if mojito_symbol::symbol::is_initializer_member(method) {
         declaration.param_decls.get(owner_decls..)
     } else {
         Some(&declaration.param_decls)

@@ -2381,6 +2381,54 @@ fn a_copy_constructor_that_reads_no_struct_parameter_is_one_instance() {
     );
 }
 
+/// A `CBox[n]` whose copy constructor adds `Self.n` when `reads_n`, and
+/// whose `dup[n]` copy-constructs one explicitly.
+fn copy_constructed_box_source(reads_n: bool) -> String {
+    let added = if reads_n { " + Self.n" } else { "" };
+    format!(
+        "struct CBox[n: Int](Copyable, Movable):\n\
+         \x20   var v: Int\n\
+         \x20   def __init__(out self, v: Int):\n\
+         \x20       self.v = v\n\
+         \x20   def __init__(out self, *, copy: Self):\n\
+         \x20       self.v = copy.v{added}\n\
+         def dup[n: Int](b: CBox[n]) -> Int:\n\
+         \x20   return CBox[n](copy=b).v\n\
+         def main():\n\
+         \x20   print(dup(CBox[1](1)), dup(CBox[2](2)))\n"
+    )
+}
+
+/// `CBox[n](copy=b)` passes the struct's parameters as its copy
+/// constructor's, which restates them as an `__init__` does, so a copy
+/// constructor that reads none is one instance.
+#[test]
+fn a_copy_construction_whose_constructor_reads_no_struct_parameter_is_one_instance() {
+    assert_one_instance_tabled(
+        &copy_constructed_box_source(false),
+        "CBox",
+        "__copyinit__",
+        "CBox.__copyinit__$mono",
+        &[],
+    );
+}
+
+#[test]
+fn a_copy_construction_whose_constructor_reads_its_struct_parameter_keeps_one_instance_each() {
+    let specialized =
+        specialized_with_removed(&copy_constructed_box_source(true), &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let mut instances = member_instances(&specialized, "CBox", "__copyinit__");
+    instances.sort_unstable();
+    assert_eq!(
+        instances,
+        ["CBox$mono$V1.__copyinit__", "CBox$mono$V2.__copyinit__"]
+    );
+}
+
 /// A `WBox[n]` whose display and equality members read no struct
 /// parameter.
 const WBOX_SOURCE: &str = "@fieldwise_init\n\
@@ -2572,7 +2620,7 @@ fn a_constructor_that_reads_its_struct_parameter_keeps_one_instance_per_struct_i
             .into_iter()
             .filter(|callee| callee.starts_with("Box"))
             .collect::<Vec<_>>(),
-        ["Box$mono$V1", "Box$mono$V2"]
+        ["Box$mono$V1.__init__", "Box$mono$V2.__init__"]
     );
 }
 

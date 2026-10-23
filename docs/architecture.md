@@ -4797,8 +4797,10 @@ synthesizes_move_constructor}` where the struct's `IsTriviallyCopyable` or
 `IsTriviallyMovable` conformance is possible but not unconditional; the
 checker folds a field's conjunct no binder decides, so a generic struct
 over `Int` and pointer fields gets none), marked `nodebug` and
-`synthesized`, whose body stores each field of the source into `self`'s
-through a `value.copy` naming the field's constructor or a `place.move`, as
+`synthesized`, whose declaration restates the struct's parameters as a
+written copy or move constructor's does, and whose body stores each field
+of the source into `self`'s through a `value.copy` naming the field's
+constructor or a `place.move`, as
 upstream synthesizes a fieldwise `__copyinit__` and `__moveinit__` for
 every struct that declares none; a copy or move of the struct names it and
 reaches its fields' constructors through its body. A `ref` field's copy and
@@ -4843,8 +4845,11 @@ as Mojo's owned-argument convention does, and a `Call` of the named
 `__moveinit__` passing it as the `deinit` argument; a `value.copy` becomes
 the call alone over its register. The constructor's declaration decides
 whether the one parameter after `out self` passes positionally or by
-keyword (`__init__(out self, *, copy: Self)`); a constructor taking
-anything else, or raising, keeps the use. It runs where `lower_whole_drops`
+keyword (`__init__(out self, *, copy: Self)`), and the call passes the
+value type's arguments for the struct parameters the declaration
+restates as its instantiated arguments, as a construction does; a
+constructor taking anything else, or raising, or a value type applying
+fewer arguments than it restates, keeps the use. It runs where `lower_whole_drops`
 runs: at the end of drop elaboration, after `name_constructors`; in
 `inline-parametric` after a splice names the copies it substitutes; and
 in the elaborator once `name_lifecycle_calls` has named an instance's
@@ -6045,8 +6050,9 @@ point where a slot declared in a loop is uninitialized again.
   removed `n` leaves a construction that passes none; an `@implicit`
   conversion passes them the same way (`ConversionInstantiatedArguments`),
   and `T(copy=x)` over an explicit copy constructor calls
-  `T.__copyinit__` with the spelled `T[n]` as its receiver, as a static
-  call carries it. The elaborator respells each to the instance it
+  `T.__copyinit__` with the struct's arguments the same way, since a copy
+  or move constructor's declaration restates the struct's parameters too,
+  each an `__init__` overload upstream (R1050). The elaborator respells each to the instance it
   reaches, and also every call it makes itself that names a struct,
   `make[String]()`'s `T()` included, so no backend resolves an overload by
   arity for it; a fieldwise construction calls the struct's synthesized

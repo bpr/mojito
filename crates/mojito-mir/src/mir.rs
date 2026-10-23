@@ -847,8 +847,14 @@ pub fn lower_unit(
                     LoweringUnit::MoveConstructor { .. } => SynthesizedMember::Move,
                     _ => SynthesizedMember::Destroy,
                 };
+                let parameters = checked
+                    .generic_parameters_at(&GenericSite::Struct {
+                        module: node.module.clone(),
+                        declaration: declaration.name.clone(),
+                    })
+                    .unwrap_or(&[]);
                 lower_synthesized_member(
-                    &declaration.name,
+                    (&declaration.name, parameters),
                     &fields,
                     member,
                     functions,
@@ -1089,9 +1095,11 @@ enum SynthesizedMember {
 /// [`name_constructors`] names on the field's `value.copy`, so a copy, move,
 /// or drop of the struct names the synthesized member and reaches its
 /// fields' through its body. A field whose copy is the value itself
-/// (`types::trivially_register_passable_leaf`) is stored as read.
+/// (`types::trivially_register_passable_leaf`) is stored as read. The copy
+/// and move constructors restate the struct's `parameters` as a written
+/// one does, each an `__init__` overload upstream.
 fn lower_synthesized_member(
-    name: &str,
+    (name, parameters): (&str, &[ParamDecl]),
     fields: &[(String, Ty)],
     member: SynthesizedMember,
     functions: &mut Vec<(String, MirFunction)>,
@@ -1214,7 +1222,11 @@ fn lower_synthesized_member(
         kw_variadic_index: None,
         positional_only: None,
         keyword_only,
-        param_decls: Vec::new(),
+        param_decls: if member == SynthesizedMember::Destroy {
+            Vec::new()
+        } else {
+            parameters.to_vec()
+        },
         has_receiver: true,
         receiver_convention: Some(receiver_convention),
         param_conventions: param_convention.into_iter().collect(),
@@ -1787,12 +1799,13 @@ fn lower_struct_member<P: DeclaredParam>(
         invariant_errors,
     );
     let mut param_decls = signature.parameters.clone();
-    if method_name == "__init__" {
+    if mojito_symbol::symbol::is_initializer_member(method_name) {
         // A constructor's compile-time interface is the struct's
-        // parameter list: an explicit `Array[Int, 3](fill=7)`
-        // call supplies the struct arguments, and the VM reifies
-        // the constructed value's `value_params` in this
-        // declaration order.
+        // parameter list, a copy or move constructor's too, as each is
+        // an `__init__` overload upstream: an explicit
+        // `Array[Int, 3](fill=7)` call supplies the struct arguments,
+        // and the VM reifies the constructed value's `value_params` in
+        // this declaration order.
         let struct_decls = checked
             .generic_parameters_at(&GenericSite::Struct {
                 module: module.clone(),

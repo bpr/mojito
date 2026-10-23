@@ -12,6 +12,9 @@
 //! move forwards the slot, which ends it and hands its storage to the
 //! callee as Mojo's owned argument convention does, and passes it as the
 //! constructor's `deinit` argument; a register copy passes its register.
+//! The call passes the value's struct arguments as the constructor's
+//! compile-time arguments, which its declaration restates, as a
+//! construction does.
 //! A use naming none, a symbolic type's until the elaborator names its
 //! instance's, stays a use, which the backends copy or move by type. So
 //! does a use of a compile-time value parameter's slot, which holds no
@@ -24,6 +27,7 @@ use super::{
     VarId, binder_scope, fresh_register, instruction_regions_mut, materialized_parameter_slots,
 };
 use mojito_ast::ast::ArgConvention;
+use mojito_types::types::{Ty, TyArg, TyKind};
 use std::collections::HashSet;
 
 /// A function's declaration, by the function's name.
@@ -112,7 +116,8 @@ fn call_of(
             mode: mode @ (UseMode::Copy | UseMode::Move),
             constructor: Some(constructor),
         } => {
-            let argument = constructor_argument(constructor, declarations)?;
+            let argument =
+                constructor_argument(constructor, declarations, function.var_tys.get(var)?)?;
             let ty = function.var_tys.get(var)?.clone();
             let source = source_register(function, *dest, *var);
             let read = if *mode == UseMode::Copy {
@@ -138,20 +143,25 @@ fn call_of(
             value,
             constructor: Some(constructor),
         } => {
-            let argument = constructor_argument(constructor, declarations)?;
+            let argument =
+                constructor_argument(constructor, declarations, function.reg_types.get(&value.0)?)?;
             Some((None, constructor_call(*dest, constructor, *value, argument)))
         }
         _ => None,
     }
 }
 
-/// How the constructor `symbol` takes the value it copies or moves: by the
-/// one parameter its declaration has after `out self`, positional or
-/// keyword-only. `None` for a constructor whose declaration is not at
-/// hand, which raises, or which takes anything else, whose use stays a use.
+/// How the constructor `symbol` takes the value of type `ty` it copies or
+/// moves: by the one parameter its declaration has after `out self`,
+/// positional or keyword-only, beside `ty`'s arguments for the struct
+/// parameters the declaration restates. `None` for a constructor whose
+/// declaration is not at hand, which raises, or which takes anything else,
+/// or for a `ty` that applies fewer arguments than it restates, whose use
+/// stays a use.
 fn constructor_argument(
     symbol: &str,
     declarations: &FunctionDeclarations<'_>,
+    ty: &Ty,
 ) -> Option<ConstructorArgument> {
     let declaration = declarations(symbol)?;
     let initializer = declaration.has_receiver
@@ -162,9 +172,20 @@ fn constructor_argument(
     let [name] = declaration.param_names.as_slice() else {
         return None;
     };
-    initializer.then(|| ConstructorArgument {
+    let restated = declaration.param_decls.len();
+    let struct_arguments = match ty.kind() {
+        TyKind::Struct(_, arguments) => arguments
+            .iter()
+            .take_while(|argument| !matches!(argument, TyArg::Origin(_)))
+            .take(restated)
+            .cloned()
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+    (initializer && struct_arguments.len() == restated).then(|| ConstructorArgument {
         name: name.clone(),
         keyword: declaration.keyword_only == Some(0),
+        struct_arguments,
     })
 }
 
@@ -207,14 +228,16 @@ fn constructor_call(
         capture_accesses: Vec::new(),
         param_arg_regs: Vec::new(),
         receiver: None,
-        instantiated_args: Vec::new(),
+        instantiated_args: argument.struct_arguments,
         spread: None,
     }
 }
 
-/// The one parameter of a copy or move constructor after `out self`, and
-/// whether a call passes it by keyword.
+/// The one parameter of a copy or move constructor after `out self`,
+/// whether a call passes it by keyword, and the struct arguments the call
+/// passes for the parameters the constructor restates.
 struct ConstructorArgument {
     name: String,
     keyword: bool,
+    struct_arguments: Vec<TyArg>,
 }

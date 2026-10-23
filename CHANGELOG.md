@@ -646,6 +646,18 @@ to evolve under the `0.x` compatibility rules.
   over its parameter keeps one instance (`fieldwise_constructor_instances.mojo`),
   and `sroa` splits a fieldwise-built slot through its stores. A struct
   with a `ref` field keeps the struct-named call for now (R1278).
+- A copy or move constructor's declaration restates its struct's
+  parameters ahead of its own, as an `__init__`'s does, since upstream's
+  copy and move constructors are `__init__` overloads in the struct's
+  generator (R1050). `C[n](copy=c)` passes `n` as the constructor's
+  compile-time argument, as any construction does, rather than naming
+  `C[n]` as the call's receiver, so a copy constructor that reads no
+  struct parameter is one instance for every `n`
+  (`assets/ok/construction_unread_struct_parameter_instances.mojo`). The
+  synthesized copy and move constructors restate them too, and each copy
+  or move that copy insertion lowers to a constructor call
+  (`mir::lower_copies_and_moves`) passes the value's struct arguments, as
+  upstream's copy insertion calls the `__init__` generator.
 - MIR has no CFG terminator (R1274): `Jump`, `Branch`, `ComptimeBranch`,
   the `ComptimeFor` terminator, and `EscapeJump` left `MirTerm`, as Mojo
   has no CFG above LLVM, and MIR text 1.88 withdraws their spellings

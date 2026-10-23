@@ -649,13 +649,6 @@ impl<'a> Flatten<'a> {
         let capture_accesses = self.call_capture_accesses(call);
         let transfer_arg_places = arg_places.clone();
         let instantiated_args = call.instantiated_args();
-        // A copy constructor does not restate its struct's parameters, so
-        // the spelled instance (`C[n]`) is its receiver, as a static call's.
-        let (param_arg_regs, receiver) = match mojito_symbol::symbol::lifecycle_constructor(&target)
-        {
-            Some((_, "__copyinit__")) => (Vec::new(), Self::static_receiver(call)),
-            _ => (param_arg_regs, None),
-        };
         self.record_call(d, Some(target.clone()), 0);
         self.emit(MirInstr::Call {
             dest: d,
@@ -667,7 +660,7 @@ impl<'a> Flatten<'a> {
             kwarg_places,
             capture_accesses,
             param_arg_regs,
-            receiver,
+            receiver: None,
             instantiated_args,
             spread: Self::spread_position(args),
         });

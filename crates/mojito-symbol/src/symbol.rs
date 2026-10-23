@@ -1378,6 +1378,13 @@ pub fn lifecycle_constructor(symbol: &str) -> Option<(&str, &str)> {
         })
 }
 
+/// Whether the member `method` is an initializer: `__init__`, or the copy
+/// or move constructor, each an `__init__` overload upstream, whose
+/// declaration restates its struct's parameters ahead of its own.
+pub fn is_initializer_member(method: &str) -> bool {
+    matches!(method, "__init__" | "__copyinit__" | "__moveinit__")
+}
+
 /// Whether `symbol` names a lifecycle initializer, whose receiver is `out self`.
 ///
 /// Recognizes `Type.__init__`, `Type.__copyinit__`, and `Type.__moveinit__`,

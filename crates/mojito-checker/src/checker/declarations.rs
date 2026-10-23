@@ -4041,6 +4041,7 @@ impl Checker {
             std::slice::from_ref(&arg_ty),
         )?;
         self.record_bracket_attributes(span.clone(), partitioned.brackets.scatter(attributes));
+        let own_arguments = constructor_own_arguments(sig, &subst);
         let expected = if let Some(parameter) = params.first() {
             substitute_assoc(
                 parameter,
@@ -4068,6 +4069,13 @@ impl Checker {
             sig,
             self.self_instance_ty(name).as_ref(),
         ));
+        self.record_construction_instantiation(
+            span,
+            name,
+            (&decls, param_args),
+            &sig.names,
+            tyargs.iter().cloned().chain(own_arguments).collect(),
+        );
         // A copy keeps the source's origin tail.
         let mut arguments = tyargs;
         match arg_ty.kind() {
