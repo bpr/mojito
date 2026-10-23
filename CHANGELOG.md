@@ -494,6 +494,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The VM's `consume.var` destroys the elements of tuple storage, as the
+  Pliron backend's already did. Since R931 erased `loans.establish`, `sroa`
+  splits a consumed `Tuple` into its storage slot, and the VM leaked its
+  elements: `var t = (pc[0], 1)` in
+  `assets/ok/pointer_subscript_reads_in_place.mojo` never printed `del C 15`.
+
 - A `deinit` parameter's fields now die in drop elaboration's one
   field-sensitive walk, as upstream's `DestructorInsertion` destroys them,
   replacing the second walk after it: every exit marks the parameter
