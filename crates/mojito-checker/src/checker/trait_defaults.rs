@@ -7,7 +7,6 @@
 //! inside its trait; the check checks the member after every module
 //! declaration is bound, and builds the wrapper.
 
-use mojito_types::types::TyKind;
 use std::collections::{HashMap, HashSet};
 
 use mojito_ast::ast::{
@@ -753,11 +752,8 @@ impl Checker {
             for param in &wrapper.shape.params {
                 let pty = match param.kind {
                     ParamKind::Regular => regular.next().cloned(),
-                    ParamKind::Variadic => signature.variadic.clone().map(|element| match element
-                        .kind()
-                    {
-                        TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
-                        _ => TyKind::VariadicPack(element).into(),
+                    ParamKind::Variadic => signature.variadic.clone().map(|element| {
+                        mojito_types::types::variadic_collector_type(element, param.convention)
                     }),
                     ParamKind::KwVariadic => signature
                         .kw_variadic

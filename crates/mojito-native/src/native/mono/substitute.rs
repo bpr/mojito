@@ -816,11 +816,14 @@ pub(super) fn array_display_construction(
             let constructor = decls
                 .list_literal_constructor(mojito_types::types::ARRAY_TYPE_NAME)
                 .ok_or_else(unsupported)?;
+            let owned = decls.functions.get(constructor).is_some_and(|declaration| {
+                declaration.variadic_convention == Some(mojito_ast::ast::ArgConvention::Var)
+            });
             let parts = elements.iter().map(|value| (value, element.clone()));
             let (mut instrs, args) = constructed_parts(parts, n_regs, reg_types, decls)?;
             instrs.extend(array_literal_construction(
                 dest,
-                constructor,
+                (constructor, owned),
                 element,
                 args,
                 length,
@@ -1194,20 +1197,26 @@ fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
 }
 
 /// The list-literal initializer call over `elements` of type `element`, as
-/// MIR lowers a display: the call builds the collector of the elements and
-/// passes it, `__list_literal__` selects the overload, and the `length`
+/// MIR lowers a display: the call builds the collector of the elements (a
+/// `VariadicList` over their storage, `owned` for the initializer's `var`
+/// collector) and passes it, `__list_literal__` selects the overload, and the `length`
 /// parameter argument reifies the constructed value's length.
 fn array_literal_construction(
     dest: Reg,
-    constructor: &str,
+    (constructor, owned): (&str, bool),
     element: &Ty,
     elements: Vec<Reg>,
     length: i64,
     n_regs: &mut u32,
     reg_types: &mut HashMap<u32, Ty>,
 ) -> Vec<MirInstr> {
-    let collector = fresh_register(
+    let storage = fresh_register(
         TyKind::VariadicPack(element.clone()).into(),
+        n_regs,
+        reg_types,
+    );
+    let collector = fresh_register(
+        mojito_types::types::variadic_list_type(element.clone(), owned),
         n_regs,
         reg_types,
     );
@@ -1221,9 +1230,13 @@ fn array_literal_construction(
     };
     vec![
         MirInstr::MakeTuple {
-            dest: collector,
+            dest: storage,
             elems: elements,
             element_types: Some(element_types),
+        },
+        MirInstr::MakeStruct {
+            dest: collector,
+            fields: vec![storage],
         },
         MirInstr::Const {
             dest: none,

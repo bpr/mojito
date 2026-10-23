@@ -1622,13 +1622,9 @@ impl Checker {
             self.resolving_parameter_annotation.set(false);
             let mut pty = resolved?;
             pty = match p.kind {
-                // A specialized heterogeneous pack (`$pack` → RuntimePack)
-                // binds as the tuple itself; an ordinary variadic collects into
-                // source-inexpressible homogeneous pack storage.
-                mojito_ast::ast::ParamKind::Variadic => match pty.kind() {
-                    TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
-                    _ => TyKind::VariadicPack(pty).into(),
-                },
+                mojito_ast::ast::ParamKind::Variadic => {
+                    mojito_types::types::variadic_collector_type(pty, p.convention)
+                }
                 mojito_ast::ast::ParamKind::KwVariadic => {
                     self.kwargs_collector_ty(pty, &format!("keyword collector '{}'", p.name))?
                 }

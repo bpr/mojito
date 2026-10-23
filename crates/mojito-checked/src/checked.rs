@@ -417,22 +417,6 @@ pub struct IterationProtocol {
     pub exhaustion: Option<Ty>,
 }
 
-impl IterationProtocol {
-    /// Whether the loop indexes a borrowed runtime pack in place, yielding a
-    /// reference to each element, rather than advancing an iterator: the
-    /// shape of upstream's `_VariadicListMemIter`, a cursor over the
-    /// borrowed list.
-    pub fn indexes_pack(&self) -> bool {
-        self.mode == IterationMode::Borrowed
-            && self.next.is_none()
-            && self.borrowed_origin.is_some()
-            && matches!(
-                self.iterator_ty.kind(),
-                mojito_types::types::TyKind::VariadicPack(_)
-            )
-    }
-}
-
 /// A checked mutation of an origin that owns interior storage.
 ///
 /// `except` names the reference through which the mutation occurs, when there

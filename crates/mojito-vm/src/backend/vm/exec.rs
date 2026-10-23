@@ -844,9 +844,15 @@ impl VmBackend {
                             destructor.as_deref(),
                         )?;
                     }
-                    // A place pointer's element is trivially destructible
-                    // (checker-proved): destroying it has no effect.
-                    Value::Ref { .. } if index == 0 => {}
+                    // A place pointer (`Pointer(to=x)`) designates one value:
+                    // destroying it runs the pointee's destructor, which only
+                    // a bundled module that then ends its storage
+                    // (`lit.ownership.mark_destroyed`) names for a value that
+                    // is not trivially destructible.
+                    ref handle @ Value::Ref { .. } if index == 0 => {
+                        let pointee = self.read_reference(&handle.clone(), frame_id, vars)?;
+                        self.drop_named(prog, pointee, Some(element), destructor.as_deref())?;
+                    }
                     _ => {
                         return Err(RuntimeError::TypeError(
                             "vm: compiler-private storage destroy requires Pointer".to_string(),
@@ -1854,61 +1860,48 @@ impl VmBackend {
             }
             MirInstr::HasNext { dest, iter } => {
                 // Only compiler-private runtime-pack storage (a method-free
-                // tuple) and a CTFE compile-time list iterate without a nominal
-                // `__next__`; public Tuple values are nominal structs and cannot
-                // reach this fallback.
-                let has = match &vars[*iter as usize] {
-                    Value::ComptimeList(items) if self.ctfe_fuel.is_some() => !items.is_empty(),
-                    Value::Tuple(items) => !items.is_empty(),
-                    other => {
-                        return Err(RuntimeError::Unsupported(format!(
-                            "vm: native iterator fallback reached {}; runtime collections must use nominal __iter__",
-                            crate::runtime::type_name(other)
-                        )));
-                    }
+                // tuple, or an owned `VariadicList`'s, which `for var v in
+                // xs^` consumes) and a CTFE compile-time list iterate without
+                // a nominal `__next__`; public Tuple values are nominal structs
+                // and cannot reach this fallback.
+                let value = &mut vars[*iter as usize];
+                let items = match value {
+                    Value::ComptimeList(items) if self.ctfe_fuel.is_some() => Some(items),
+                    _ => pack_storage(value),
                 };
-                regs[dest.0 as usize] = Value::Bool(has);
+                let Some(items) = items else {
+                    return Err(RuntimeError::Unsupported(format!(
+                        "vm: native iterator fallback reached {}; runtime collections must use nominal __iter__",
+                        crate::runtime::type_name(&vars[*iter as usize])
+                    )));
+                };
+                regs[dest.0 as usize] = Value::Bool(!items.is_empty());
             }
-            MirInstr::Next { dest, iter } => match &mut vars[*iter as usize] {
-                Value::ComptimeList(items) if self.ctfe_fuel.is_some() => {
-                    regs[dest.0 as usize] = items.remove(0);
-                }
-                Value::Tuple(items) => {
-                    regs[dest.0 as usize] = items.remove(0);
-                }
-                ref other => {
+            MirInstr::Next { dest, iter } => {
+                let value = &mut vars[*iter as usize];
+                let items = match value {
+                    Value::ComptimeList(items) if self.ctfe_fuel.is_some() => Some(items),
+                    _ => pack_storage(value),
+                };
+                let Some(items) = items else {
                     return Err(RuntimeError::Unsupported(format!(
                         "vm: native iterator fallback reached {}; runtime collections must use nominal __next__",
-                        crate::runtime::type_name(other)
+                        crate::runtime::type_name(&vars[*iter as usize])
                     )));
-                }
-            },
+                };
+                regs[dest.0 as usize] = items.remove(0);
+            }
             MirInstr::DeclareVar { .. } => {}
             // ASAP destruction: drop the value at the variable's last use,
             // running the destructor the drop names.
             MirInstr::DropVar { var, destructor } => {
                 let v = std::mem::replace(&mut vars[*var as usize], Value::None);
-                let body = &prog.mir.functions[function].1;
-                // A homogeneous run-time collector, the owned pack or an
-                // iterator over its remainder, destroys last to first, as
-                // the pin's `VariadicList.__deinit__` does; elaboration
-                // refines a heterogeneous one's drop per element.
-                match v {
-                    Value::Tuple(items)
-                        if matches!(
-                            body.var_tys.get(var).map(Ty::kind),
-                            Some(TyKind::VariadicPack(_))
-                        ) =>
-                    {
-                        self.drop_owned_pack(prog, items)?;
-                    }
-                    v => self.drop_named(
-                        prog,
-                        v,
-                        prog.mir.functions[function].1.var_tys.get(var),
-                        destructor.as_deref(),
-                    )?,
-                }
+                self.drop_named(
+                    prog,
+                    v,
+                    prog.mir.functions[function].1.var_tys.get(var),
+                    destructor.as_deref(),
+                )?;
             }
             MirInstr::ConsumeVar { var } => {
                 let value = std::mem::replace(&mut vars[*var as usize], Value::Moved);
@@ -2066,5 +2059,24 @@ fn concrete_simd_slots(
         _ => Err(RuntimeError::Unsupported(format!(
             "a SIMD instruction over the symbolic slots `SIMD[{dtype}, {width}]` reached the VM"
         ))),
+    }
+}
+
+/// The elements of compiler-private pack storage the builtin `HasNext`/
+/// `Next` step: a method-free tuple, or the storage field of the
+/// `VariadicList` an owned loop over a `var` collector consumes.
+fn pack_storage(value: &mut Value) -> Option<&mut Vec<Value>> {
+    match value {
+        Value::Tuple(items) => Some(items),
+        Value::Struct { name, fields }
+            if mojito_types::types::struct_template(name)
+                == mojito_types::types::VARIADIC_LIST_TYPE_NAME =>
+        {
+            match fields.as_mut_slice() {
+                [(_, Value::Tuple(items))] => Some(items),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }

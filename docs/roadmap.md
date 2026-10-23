@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1298**.
+Next free ID: **R1304**.
 
 ## Ordered Work
 
@@ -1628,6 +1628,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Over an implicitly copyable element (`var *values: Int`) both run.
   - The bundled `List`, `Set`, and `Array` literal initializers use this
     spelling; upstream's consume the pack with `consume_elements`.
+  - The builtin owned protocol it keeps runs over the bundled
+    `VariadicList`: `checker/iteration.rs::iteration_protocol`, the VM's
+    `pack_storage`, and Pliron's `runtime_pack_element`; upstream's
+    `consume_elements(deinit self, elt_handler)` is not declared yet.
   - Pinned by `conformance/probes/variadic_pack_owned_iteration.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -1787,20 +1791,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     reads run, and a getter on the anchor itself (`$match<id>[0]`) runs.
   - Probe: `conformance/probes/match_field_getter_read_anchor.mojo`.
   - Found while landing R1133 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R742 An indexed element of a `var` collector cannot be mutated**
-
-  Problem: `xs[0].v += 7` over `def refs(var *xs: M)` is rejected with
-  `type '$variadic[M]' cannot be indexed here`.
-  - Upstream's owned `VariadicListMem` hands out mutable element
-    references, so the pin is expected to run it; observe the pin first,
-    since its environment was missing when this was filed.
-  - `for ref x in xs: x.v += 10` over the same collector already runs.
-  - The rejection comes from the checker's pack-index place rule
-    (`crates/mojito-checker/src/checker/indexing.rs`).
-  - Found while landing R734 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2378,6 +2368,52 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     origin of the whole tuple should admit.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R1298 A pointer to an element a runtime index reaches through
+  `__getitem__` fails MIR verification**
+
+  Problem: `Pointer(to=l[i])` over a `List[Int]` or a `Span` fails with
+  "dynamic element projection requires checked indexed storage, got
+  List[Int]", where the pin prints the element.
+  - The checker takes the syntactic `l[i]` as an index projection of the
+    struct itself rather than the place the selected `__getitem__`'s
+    reference names; a constant index into compiler-private storage
+    (`Tuple`'s `self[i]`) is the only shape that works.
+  - Probe: `conformance/probes/pointer_to_runtime_subscript.mojo`.
+  - Probe: the bundled `VariadicList.__deinit__` reaches each element as
+    `self._value[i]` where upstream writes `Pointer(to=self[i])`.
+  - Related: R1221 (a `ref` binding over an owned subscript result).
+  - Found while landing R743 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1299 A result origin built from an origin union and
+  `unsafe_mut_cast` is rejected**
+
+  Problem: `-> ref[origin_of(Self.origin, self_origin).unsafe_mut_cast[
+  Self.mut]()] Int` stops with "unsupported origin contract"
+  (`checker/origins/sig.rs`), where the pin prints the element.
+  - It is upstream's `VariadicList.__getitem__` result, so the bundled one
+    returns `ref[origin_of(self)]`.
+  - Probe: `conformance/probes/variadic_list_getitem_origin.mojo`.
+  - Found while landing R743 (2026-10-23).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1300 A method's origin parameter bound by `ref[o] self` is not
+  the receiver's origin inside the body**
+
+  Problem: `def it[o: ImmOrigin](ref[o] self) -> It[o]: return It[o](0,
+  self)`, where `It.__init__` takes `ref[Self.o] src`, is rejected ("expected
+  a reference whose origin lies within the supplied 'o' argument, found a
+  reference of origin Place(...)"), where the pin prints `0`.
+  - The checker gives `self` its place's origin, not the bound parameter.
+  - Probe: the bundled `VariadicList.__iter__` takes `ref self` and passes
+    `origin_of(self)`, where upstream's is `__iter__[self_origin:
+    ImmOrigin](ref[self_origin] self)`.
+  - Found while landing R743 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R354 A `deinit self` method reading a `Tuple` field's element beside
   a second `deinit` parameter traps in the VM**
@@ -4003,6 +4039,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     {}` fail with "cannot emit initializer list for 'TypeList[AnyType,
     ...]'", where the pin prints `len(x)`: a raw-list argument has no
     source spelling either.
+  - Probe: the bundled `VariadicList.__iter__` spells
+    `_VariadicListIter[...](0, self)` where upstream writes `{0, self}`.
   - Found while landing R325 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6940,8 +6978,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Upstream forwards the caller's `VariadicList` whole; since R1040 the
     pack is one run-time value on both backends, so the forward can pass the
     caller's pack, natively its descriptor, unchanged.
+  - The callee's collector is the bundled `VariadicList` since R743, and
+    `verify_pack_spread` and the elaborator already pass a
+    `VariadicList`-typed spread operand whole.
   - Found while landing R1040 (2026-10-16).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1303 A `mut *xs` collector is a parse error**
+
+  Problem: `def mutate(mut *xs: Int)` stops with "Expected a parameter
+  name after the convention", where the pin types the collector
+  `VariadicList[True, ..., Int, False]` and `for ref x in xs: x += 1`
+  mutates the caller's values (`mutate(a, b)` prints `2 3`).
+  - `docs/grammar.md` spells `[convention] '*' NAME`, which the parser
+    does not take for `mut`.
+  - The collector would be a `read`-shaped `VariadicList` whose elements
+    are the caller's places, which needs R1073's element pointers to write
+    back natively.
+  - Found while planning R743 (2026-10-23).
+  - Depends on R1073.
   - Model: Opus, Not Planned.
 
 - [ ] **R436 A struct's `comptime` value member read through the type name
@@ -7041,6 +7097,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R793 (2026-10-14).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1301 A struct alias applying a keyword argument to an infer-only
+  parameter does not resolve**
+
+  Problem: the bundled `_VariadicListIter` spelling upstream's `comptime
+  variadic_list_type = VariadicList[origin=Self.elt_origin, Self.elt_type,
+  Self.is_owned]` makes the library fail to check ("type
+  '_VariadicListIter[elt_type, is_owned]' has no associated type
+  'variadic_list_type'"), so it names no `origin`.
+  - The keyword names `VariadicList`'s infer-only `origin`, which the
+    associated-alias resolution does not bind.
+  - Found while landing R743 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
@@ -8803,72 +8873,68 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R743 A runtime variadic pack is a builtin type, where upstream's is
-  the library's `VariadicListMem`**
+- [ ] **R1302 A bound heterogeneous collector is typed the tuple of its
+  elements, where upstream's is the nominal `VariadicPack`**
 
-  A `*xs: T` collector is the compiler's `$variadic[T]`
-  (`TyKind::VariadicPack`), while upstream lowers it to the nominal
-  `VariadicListMem[T, origin, is_owned]` with its `_VariadicListMemIter`.
-  - A borrowed loop over a pack is upstream's iterator inlined in MIR: the
-    `PackCursor` in `crates/mojito-mir/src/mir/lower_stmt.rs`
-    (`normalize_iterator`, `emit_has_next`, `emit_next`).
-  - Owned iteration (`for var v in xs^`) keeps the builtin consuming
-    `iter.next` on the VM and natively.
-  - Closing it declares the pack in the bundled
-    `stdlib/std/builtin/variadics.mojo`, beside `ParameterList`, and deletes
-    the cursor and the pack arms of `HasNext`/`Next`.
-  - Upstream's `_MLIR.POPArrayType` (`!pop.array<size, T>`) is not in the
-    bundled `_MLIR`: its one upstream use is the compiler-built
-    constructor of that nominal pack.
-  - Probe: a `read` collector the call builds holds bitwise images of the
-    caller's values, where upstream's `VariadicPack[is_owned=False]` holds
-    references, so Pliron's frame-exit backstop (`lower_return`) skips
-    pack-storage slots (`VariadicPack`, `Tuple`, `RuntimePack`) rather
-    than free an inlined collector's images twice.
-  - Probe: a bound heterogeneous collector is typed the tuple of its
-    elements (`TyKind::Tuple`), where upstream's is the nominal
-    `VariadicPack[..., *Ts]`, so `verify_pack_spread` admits a
-    `Tuple`-typed spread argument, which every bound spread passes.
-  - Found while landing R734 (2026-10-13).
+  `*args: *Ts` binds `Tuple[...]` (`TyKind::Tuple`) in its specialized
+  body, and `TyKind::VariadicPack` over the pack before it, where the pin
+  types it `VariadicPack[elt_is_mutable, origin, Trait, *Ts]`, declared in
+  `std/builtin/variadics.mojo` beside `VariadicList`.
+  - Probe: `verify_pack_spread` admits a `Tuple`-typed spread argument,
+    which every bound spread passes.
+  - `mojito_types::types::variadic_collector_type` decides the body type;
+    its heterogeneous arms are the ones to make nominal.
+  - The homogeneous collector took upstream's `VariadicList` in R743.
+  - Found while planning R743 (2026-10-23).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1072 Writing a homogeneous collector is rejected**
 
-  Problem: `print(xs)` over `*xs: Int` reports that "an element of
-  'values' with type '$variadic[Int]' does not conform to trait
-  'Writable'", where the pin prints `(1, 2, 3)`.
+  Problem: `print(xs)` over `*xs: Int` reports that the collector does not
+  conform to trait 'Writable', where the pin prints `(1, 2, 3)`.
   - Upstream's `VariadicList` is `Writable` when its element is, through
     its `write_to` and `write_repr_to`.
-  - Once R743 makes the collector the nominal `VariadicList`, this is
-    declaring those two methods on it.
+  - The bundled `VariadicList` (`stdlib/std/builtin/variadics.mojo`)
+    declares neither yet, nor its `Writable where ...` conformance.
   - Found while planning R1040 (2026-10-16).
   - Depends on R743.
   - Model: Opus, Not Planned.
 
-- [ ] **R1073 A run-time pack's element reads and destruction are native
-  backend code**
+- [ ] **R1073 A `VariadicList` holds its elements' images in private
+  storage, where upstream's holds a `Span` of element pointers**
 
-  The native backend reads a `VariadicPack` through its `{ elements, len }`
-  descriptor and destroys an owned one in a backend-emitted loop, where
-  upstream runs `VariadicList.__len__`, `__getitem__`, and `__deinit__`.
-  - The code lives in `crates/mojito-pliron/src/lower/iter.rs`
-    (`pack_length`, `pack_element_address`, `advance_variadic_list`) and
-    `lower/drops.rs` (`emit_variadic_list_drop`); the VM's
-    `drop_owned_pack` is its counterpart.
-  - Once R743 declares the nominal `VariadicList` over the same layout,
-    these become calls of its library methods and the backend arms go.
+  The bundled `VariadicList`'s field is the compiler-private
+  `__VariadicStorage[T]` (`TyKind::VariadicPack`), where upstream's is
+  `Span[Pointer[element_type, origin], ImmUntrackedOrigin]` built by its
+  `@implicit` constructor from the call's `!pop.array` of element pointers.
+  - The call would build the element-pointer array (`_MLIR.POPArrayType`)
+    and call that constructor, replacing the `struct.create` over a
+    `tuple.make` in `mir/call_defaults.rs::build_collector` and the
+    elaborator's `array_literal_construction`.
+  - `__len__`/`__getitem__` would then read the span, `__deinit__` would
+    need no `lit.ownership.mark_destroyed`, and the storage paths go:
+    `pack_length`, `pack_element_address`, `advance_variadic_list`
+    (`crates/mojito-pliron/src/lower/iter.rs`), `build_variadic_list`
+    (`lower/places.rs`), and the `VariadicPack` layout and index arms.
+  - Probe: a `read` collector the call builds holds bitwise images of the
+    caller's values (natively too: `collect_pack_elements` copies each
+    element), where upstream's `VariadicList[is_owned=False]` holds
+    references, so Pliron's frame-exit backstop (`lower_return`) skips
+    pack-storage slots.
   - Probe: an owned `for v in xs^` over a run-time pack normalizes the
-    pack in place (`iter.init` with no `prepare`), its slot holding a
-    backend cursor, where every nominal `__iter__` now makes an iterator
-    slot of its own type (R1088); the nominal `VariadicList` splits too.
+    list in place (`iter.init` with no `prepare`), its slot holding a
+    backend cursor, where every nominal `__iter__` makes an iterator slot
+    of its own type (R1088).
   - Probe: the read of a collector a call spreads (`show(*args)`) is a
     `var.use copy` of the collector's slot, which `lower_copies_and_moves`
     keeps a use the call passes whole, so the VM copies the collector's
     image, where upstream passes the `VariadicList` by reference and
     copies nothing (found while landing R1046).
+  - May need its own split when planned: the call side and the library
+    side can land apart.
   - Found while landing R1040 (2026-10-16).
-  - Depends on R743.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R662 A value binder read is a frame slot, not a parameter
@@ -9131,6 +9197,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     position.
   - Split into a checker half and a mono/verify half if it does not fit
     one session.
+  - Probe: `It[Self.element_type, Self.origin, origin_of(self),
+    Self.is_owned](0, self)` over `struct It[m: Bool, //, T: AnyType, o:
+    Origin[mut=m], l: ImmOrigin, owned: Bool]` fails MIR verification
+    ("value parameter 'is_owned' has no runtime register"): MIR aligns a
+    call's compile-time slots positionally against `ParamDecl`s that hold
+    no origins (`verify/subscripts.rs`), so the bundled
+    `VariadicList.__iter__` names the iterator's origin arguments by
+    keyword.
   - Found while landing R631 (2026-10-13).
   - Depends on R761.
   - Model: Fable, Not Planned.
@@ -10771,6 +10845,8 @@ residue found inside a task moves to the task that owns its fix.
   - The synthesized `S.__init__`
     (`CheckedProgram::synthesizes_fieldwise_constructor`) is the overload
     to add; its symbol must then be overload-qualified.
+  - Probe: the bundled `_VariadicListIter` writes its constructor out
+    where upstream's declares `@fieldwise_init` beside one.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -16,7 +16,7 @@ from std.collections.optional import Optional, OptionalReg
 from std.builtin.len import Sized, SizedRaising, len
 from std.builtin.enum_like import EnumLike
 from std.builtin.tuple import Tuple
-from std.builtin.variadics import ParameterList, TypeList
+from std.builtin.variadics import ParameterList, TypeList, VariadicList
 from std.range import range
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration, next
 from std.builtin.reversed import reversed

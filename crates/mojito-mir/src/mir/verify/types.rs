@@ -539,6 +539,7 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Dependent(_) => true,
         TyKind::ComptimeList(inner)
         | TyKind::ParamList(inner)
+        | TyKind::VariadicPack(inner)
         | TyKind::Pointer { element: inner, .. } => contains_type_param(inner),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().any(contains_type_param)

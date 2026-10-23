@@ -737,7 +737,10 @@ impl<'a> Flatten<'a> {
         location: SourceSpan,
     ) {
         let has_next = self.fresh(location.clone(), Some(iter));
-        self.emit_has_next(has_next, iter);
+        self.emit(MirInstr::HasNext {
+            dest: has_next,
+            iter,
+        });
         self.emit(MirInstr::If {
             results: Vec::new(),
             cond: has_next,
@@ -756,7 +759,10 @@ impl<'a> Flatten<'a> {
             }],
         });
         let element = self.fresh_typed(location, Some(iter), raw_ty.clone());
-        self.emit_next(element, iter);
+        self.emit(MirInstr::Next {
+            dest: element,
+            iter,
+        });
         self.emit(MirInstr::DefVar {
             var: raw,
             src: element,

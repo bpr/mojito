@@ -4,8 +4,8 @@
 //! bindings close it, as upstream's call passes the `VariadicPack`; the
 //! builtin `print` takes the bound pack's elements instead. A value pack
 //! spread into a bracket (`f[*vs]()`) retires once the call names its
-//! instance. The collector a call builds (`tuple.make`) stays the one
-//! operand it passes.
+//! instance. The collector a call builds (`tuple.make`, wrapped in a
+//! homogeneous collector's `VariadicList`) stays the one operand it passes.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -139,8 +139,14 @@ fn expand_in_block(
             index += 1;
             continue;
         };
-        // The collector the call builds is the one operand it passes.
-        if matches!(blocks[read_block].instrs[read], MirInstr::MakeTuple { .. }) {
+        // The collector the call builds is the one operand it passes, as
+        // is a homogeneous collector's `VariadicList`.
+        if matches!(blocks[read_block].instrs[read], MirInstr::MakeTuple { .. })
+            || tables
+                .reg_types
+                .get(&pack.0)
+                .is_some_and(|ty| mojito_types::types::variadic_list_element(ty).is_some())
+        {
             index += 1;
             continue;
         }

@@ -763,6 +763,13 @@ impl Decoder {
                             .field(row_fields, "kw_variadic")
                             .ok()
                             .and_then(|value| self.option_ty(Some(value)));
+                        // A record before schema 1.96 spells no collector
+                        // convention.
+                        let variadic_convention = self
+                            .field(row_fields, "variadic_convention")
+                            .ok()
+                            .and_then(|value| self.option_value(Some(value)))
+                            .and_then(|value| self.convention(value));
                         self.unknown(
                             row_fields,
                             &[
@@ -778,6 +785,7 @@ impl Decoder {
                                 "keyword_only",
                                 "variadic",
                                 "kw_variadic",
+                                "variadic_convention",
                             ],
                         );
                         Some(TraitRequirement {
@@ -793,6 +801,7 @@ impl Decoder {
                             keyword_only,
                             variadic,
                             kw_variadic,
+                            variadic_convention,
                         })
                     })
                     .collect()

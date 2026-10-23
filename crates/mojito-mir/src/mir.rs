@@ -2922,12 +2922,8 @@ struct Flatten<'a> {
     /// Local reference slot to its frozen owner place and permission.
     aliases: HashMap<VarId, MirLoan>,
     /// A borrowed loop's retained-source slot to the place it borrows, until
-    /// `GetIter` reads it: a runtime pack opens a cursor over the place, and
-    /// a raising `__iter__` is called on it.
+    /// `GetIter` reads it: a raising `__iter__` is called on it.
     iteration_sources: HashMap<VarId, MirPlace>,
-    /// A borrowed loop's iterator slot over a runtime pack to its
-    /// [`PackCursor`].
-    pack_cursors: HashMap<VarId, PackCursor>,
     runtime_aliases: std::collections::HashSet<VarId>,
     /// The frame slot holding each copied or moved capture of a nested
     /// `def` that holds its environment ([`NestedInfo::holds_environment`]),
@@ -3008,19 +3004,6 @@ struct Flatten<'a> {
     /// encloses it, as `emitRaise` builds `lit.try.raise` to it; `None`
     /// outside every `try` body, where a raise leaves the function.
     raise_target: Option<TryLabel>,
-}
-
-/// A borrowed loop's in-place cursor over a runtime pack: upstream's
-/// `_VariadicListMemIter` inlined. The loop's iterator slot holds the pack's
-/// handle and its loans; `index` holds the next element's position.
-#[derive(Clone)]
-struct PackCursor {
-    /// The pack's owner place.
-    pack: MirPlace,
-    /// The pack's element type.
-    element: Ty,
-    /// The `Int` slot counting the elements yielded.
-    index: VarId,
 }
 
 /// A `comptime for` index in scope: the binder the checker recorded on the
@@ -4476,7 +4459,6 @@ fn lower_cfg_nested(
             slots: cfg.slots.clone(),
             aliases: HashMap::new(),
             iteration_sources: HashMap::new(),
-            pack_cursors: HashMap::new(),
             runtime_aliases: reference_parameters
                 .iter()
                 .take(cfg.n_params)
@@ -4553,17 +4535,14 @@ fn runtime_variadic_index<P: DeclaredParam>(params: &[P], marker: Option<usize>)
 /// Translate a declaration-side parameter type into the type of the single
 /// runtime slot visible in the function body. Variadic element types are ABI
 /// descriptors: the call matcher uses them per supplied argument, then binds a
-/// single aggregate in the callee. Positional packs use private pack storage;
-/// keyword packs use the public owning `StringDict`. Keeping the positional
-/// discriminator out of `MirFunction` prevents ordinary tuple operations,
-/// ownership, and place typing from having to understand an artificial
-/// source-inexpressible aggregate kind.
+/// single aggregate in the callee
+/// ([`mojito_types::types::variadic_collector_type`] for a positional one,
+/// the owning `StringDict` for a keyword one).
 fn body_parameter_ty<P: DeclaredParam>(parameter: &P, ty: Ty) -> Ty {
     match (parameter.kind(), ty.kind()) {
-        (ParamKind::Variadic, TyKind::RuntimePack(elements)) => {
-            TyKind::Tuple(elements.clone()).into()
+        (ParamKind::Variadic, _) => {
+            mojito_types::types::variadic_collector_type(ty, parameter.convention())
         }
-        (ParamKind::Variadic, _) => TyKind::VariadicPack(ty).into(),
         (ParamKind::KwVariadic, _) => TyKind::Struct(
             "StringDict".to_string(),
             vec![mojito_types::types::TyArg::Ty(ty)],

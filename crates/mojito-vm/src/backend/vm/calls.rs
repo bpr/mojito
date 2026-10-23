@@ -58,8 +58,9 @@ pub(super) fn bind_args(
         };
         regular_values.push(crate::runtime::coerce_checked(value, &sig.param_types[i]));
     }
-    // The call passes the collector it builds (`tuple.make`) as its one
-    // overflow operand, as upstream's call passes the pack.
+    // The call passes the collector it builds (`tuple.make`, a homogeneous
+    // one's wrapped in its `VariadicList`) as its one overflow operand, as
+    // upstream's call passes the pack.
     let (out, frame_slots) = if let Some(elem_ty) = &sig.variadic {
         let packed = match (overflow.as_slice(), elem_ty.kind()) {
             ([collector], TyKind::RuntimePack(element_types)) => match &argv[*collector] {
@@ -73,7 +74,9 @@ pub(super) fn bind_args(
                 collected @ Value::Tuple(_) => collected.clone(),
                 _ => return Err(no_collector(name)),
             },
-            ([collector], _) if matches!(argv[*collector], Value::Tuple(_)) => {
+            ([collector], _)
+                if matches!(argv[*collector], Value::Tuple(_) | Value::Struct { .. }) =>
+            {
                 argv[*collector].clone()
             }
             _ => return Err(no_collector(name)),

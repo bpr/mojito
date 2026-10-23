@@ -223,9 +223,10 @@ pub(super) fn verify_call_instruction(
 /// pack the call builds for it (`total(1, 2)`, a `tuple.make` of the
 /// overflow), or the caller's collector spread whole (`show(*args)`,
 /// `Sink().take(*args)`). The position names an argument whose register
-/// holds a `VariadicPack`, homogeneous or over a pack still a parameter, or
-/// the tuple of a bound pack's elements, and a declared callee collects a
-/// positional pack. `print` is undeclared and collects.
+/// holds a homogeneous collector's `VariadicList`, a `VariadicPack` over a
+/// pack still a parameter, or the tuple of a bound pack's elements, and a
+/// declared callee collects a positional pack. `print` is undeclared and
+/// collects.
 fn verify_pack_spread(
     prefix: &str,
     function: &MirFunction,
@@ -243,6 +244,7 @@ fn verify_pack_spread(
     };
     match function.reg_types.get(&argument.0).map(Ty::kind) {
         Some(TyKind::VariadicPack(_) | TyKind::Tuple(_) | TyKind::RuntimePack(_)) => {}
+        Some(found) if mojito_types::types::variadic_list_element(found).is_some() => {}
         Some(found) => errors.push(format!(
             "{prefix}: spread argument {position} has type {found}, not a pack collector"
         )),

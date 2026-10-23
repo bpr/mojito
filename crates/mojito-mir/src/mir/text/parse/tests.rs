@@ -1734,6 +1734,7 @@ fn declaration_metadata_reprints_byte_identically() {
                         keyword_only: None,
                         variadic: None,
                         kw_variadic: None,
+                        variadic_convention: None,
                     },
                     TraitRequirement {
                         name: "area".into(),
@@ -1748,6 +1749,7 @@ fn declaration_metadata_reprints_byte_identically() {
                         keyword_only: Some(2),
                         variadic: Some(Ty::int()),
                         kw_variadic: None,
+                        variadic_convention: Some(ArgConvention::Var),
                     },
                 ],
             },

@@ -289,7 +289,7 @@ reference_binding: 'ref' NAME '=' expression
 
 Every parameter is typed; omitting `-> type` means the function returns `None`. The
 full Mojo parameter grammar is **parsed**. **Default values** (`b: Int = 2`) and a
-trailing **`*args` homogeneous variadic** (`*values: Int`, a `List[T]` in the body)
+trailing **`*args` homogeneous variadic** (`*values: Int`, a `VariadicList[T, is_owned]` in the body)
 are *implemented* for non-generic free `def`s. Generic
 `[*Types: Bound](var *values: *Types)` declarations also accept heterogeneous
 values, check each value against `Bound`, and support pack length queries and

@@ -154,6 +154,10 @@ fn write_artifact_head(
                                         "kw_variadic",
                                         option(requirement.kw_variadic.as_ref().map(ty_value)),
                                     ),
+                                    (
+                                        "variadic_convention",
+                                        option(requirement.variadic_convention.map(convention)),
+                                    ),
                                 ],
                             )
                         })),

@@ -64,9 +64,11 @@ impl FnLowering<'_> {
         // source-level `DropVar`, but native allocations still need recursive
         // frame cleanup. Explicit drops and moves have already cleared the
         // same flags, so this closes only still-live local slots. A
-        // collector slot an inlined callee's call built, typed the pack
-        // storage, is left out: a `read` collector's elements are the
-        // caller's, and an owned one's drop is the body's own.
+        // heterogeneous collector slot an inlined callee's call built, typed
+        // the pack storage, is left out: a `read` collector's elements are
+        // the caller's, and an owned one's drop is the body's own. A
+        // homogeneous one's `VariadicList` is not: a `read` list's
+        // `__deinit__` destroys nothing.
         for var in (self.func.n_params..self.func.n_vars).rev() {
             let collector = matches!(
                 self.func.var_tys.get(&(var as u32)).map(Ty::kind),

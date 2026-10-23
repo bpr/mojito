@@ -196,6 +196,35 @@ impl Checker {
                     }
                     return Ok(alternative);
                 }
+                // Without any `__setitem__`, a mutable-reference-returning
+                // `__getitem__` (upstream's `Span`, `VariadicList`) is the
+                // place: its result handle is written through, as a call
+                // returning a mutable reference is.
+                if let TyKind::Struct(name, _) = obj_ty.kind()
+                    && self.structs.get(name).is_some_and(|info| {
+                        info.methods.contains_key("__getitem__")
+                            && !info.methods.contains_key("__setitem__")
+                    })
+                {
+                    let referent = self.infer(place)?;
+                    let span = place.source_span();
+                    let mutability = self
+                        .fact(&span, |facts| facts.selected_call.as_deref())
+                        .and_then(|contract| contract.reference_result)
+                        .map(|reference| reference.mutability);
+                    return match mutability {
+                        Some(mutability)
+                            if mutability != mojito_types::origin::Mutability::Immutable =>
+                        {
+                            self.record_at(span).reference_value_use = Some(true);
+                            Ok(referent)
+                        }
+                        Some(_) => Err(TypeError::ImmutableBinding(
+                            "immutable reference returned by '__getitem__'".to_string(),
+                        )),
+                        None => Err(TypeError::NotIndexable(obj_ty.to_string())),
+                    };
+                }
                 self.prepare_index_argument(&obj_ty, index, "__setitem__", 0)?;
                 if let TyKind::Struct(name, _) = obj_ty.kind()
                     && !self.structs.contains_key(name)

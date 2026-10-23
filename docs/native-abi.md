@@ -150,14 +150,16 @@ Rules:
   pointers are aligned sentinels, never null.
 - `Tuple`/`RuntimePack`/nominal structs are ordinary aggregates of their
   element/field types.
-- A homogeneous run-time collector (`VariadicPack(T)`) is upstream's
-  `VariadicList`: `{ elements: ptr to [len x ptr], len: Int }` (16/8),
-  passed as an aggregate parameter. Each element lives in its own caller
-  slot; `elements` points at an array of their addresses, a non-null
+- A homogeneous run-time collector is the bundled `VariadicList[T,
+  is_owned]`, whose one field, at offset zero, is the compiler-private
+  storage (`VariadicPack(T)`): `{ elements: ptr to [len x ptr], len: Int }`
+  (16/8), passed as an aggregate parameter. Each element lives in its own
+  caller slot; `elements` points at an array of their addresses, a non-null
   dangling slot when `len == 0`. An index traps outside `0..len`. An owned
-  pack's callee owns the elements: a consuming iterator narrows its copy of
-  the descriptor past each element it moves out, and a drop destroys the
-  elements the descriptor still spans, last to first.
+  list's callee owns the elements: a consuming iterator narrows its copy of
+  the descriptor past each element it moves out, and the list's
+  `__deinit__` destroys the elements the descriptor still spans, last to
+  first, through the storage's element addresses.
 - `Variant[T1..Tn]` is a `u32` tag at offset 0 (the alternative's index in
   the type — the ordering is part of the type) with every payload overlaid at
   the first offset aligned to the widest alternative; size pads to

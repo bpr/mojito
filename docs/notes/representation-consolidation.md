@@ -145,8 +145,10 @@ entry's probe is "one instance per `n` where the pin has one".
   of rebuilding one of its elements; only the builtin `print` still takes
   the elements (R1287).
 - R1070 applies the same fix to the keyword collector.
-- R743 makes the runtime pack the library's `VariadicListMem`. R1073's
-  native element code then becomes library code.
+- R743 landed (2026-10-23): a homogeneous collector is the library's
+  `VariadicList`, its field the compiler-private pack storage. R1073
+  makes that field upstream's `Span` of element pointers, and the native
+  element code then becomes library code.
 
 ### D. Drops are decided after the fact
 

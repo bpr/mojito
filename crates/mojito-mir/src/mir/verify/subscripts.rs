@@ -593,7 +593,15 @@ pub(super) fn verify_subscript_call(
                         argument.convention, call.target, declared_convention
                     ));
                 }
-                if !types_compatible(&argument.parameter_ty, expected) {
+                // An elaborated instance names its own `VariadicList`.
+                let list_elements = (
+                    mojito_types::types::variadic_list_element(&argument.parameter_ty),
+                    mojito_types::types::variadic_list_element(expected),
+                );
+                if !types_compatible(&argument.parameter_ty, expected)
+                    && !matches!(list_elements, (Some(found), Some(declared))
+                        if types_compatible(found, declared))
+                {
                     errors.push(format!(
                         "{prefix}: selected subscript parameter type {} does not match '{}' declaration {expected}",
                         argument.parameter_ty, call.target
@@ -640,13 +648,12 @@ pub(super) fn verify_subscript_call(
                     call.target
                 ));
             }
-            let collector = declaration
-                .variadic
-                .as_ref()
-                .map(|variadic| match variadic.kind() {
-                    TyKind::RuntimePack(elements) => Ty::new(TyKind::Tuple(elements.clone())),
-                    _ => Ty::new(TyKind::VariadicPack(variadic.clone())),
-                });
+            let collector = declaration.variadic.clone().map(|variadic| {
+                mojito_types::types::variadic_collector_type(
+                    variadic,
+                    declaration.variadic_convention,
+                )
+            });
             for argument in overflow {
                 let expected = match argument.source {
                     mojito_checked::checked::CheckedCallArgumentSource::Positional(_) => {
@@ -674,7 +681,15 @@ pub(super) fn verify_subscript_call(
                     }
                     continue;
                 };
-                if !types_compatible(&argument.parameter_ty, expected) {
+                // An elaborated instance names its own `VariadicList`.
+                let list_elements = (
+                    mojito_types::types::variadic_list_element(&argument.parameter_ty),
+                    mojito_types::types::variadic_list_element(expected),
+                );
+                if !types_compatible(&argument.parameter_ty, expected)
+                    && !matches!(list_elements, (Some(found), Some(declared))
+                        if types_compatible(found, declared))
+                {
                     errors.push(format!(
                         "{prefix}: selected subscript overflow type {} does not match '{}' collector {expected}",
                         argument.parameter_ty, call.target

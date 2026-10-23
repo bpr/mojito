@@ -1118,6 +1118,13 @@ pub const UNINIT_STORAGE_TYPE_NAME: &str = "__UninitStorage";
 /// only (`var _storage: __VariantStorage[*Ts]`).
 pub const VARIANT_STORAGE_TYPE_NAME: &str = "__VariantStorage";
 
+/// Compiler-private homogeneous pack storage, the field type of the bundled
+/// `VariadicList`.
+///
+/// The intrinsic `TyKind::VariadicPack` spelled from bundled standard-library
+/// sources only (`var _value: __VariadicStorage[Self.element_type]`).
+pub const VARIADIC_STORAGE_TYPE_NAME: &str = "__VariadicStorage";
+
 /// Construct a nominal standard-library type from ordinary type arguments.
 pub fn nominal_type(name: impl Into<String>, arguments: Vec<Ty>) -> Ty {
     TyKind::Struct(name.into(), arguments.into_iter().map(TyArg::Ty).collect()).into()
@@ -1208,6 +1215,52 @@ pub fn uninit_storage_element(ty: &Ty) -> Option<&Ty> {
         return None;
     };
     Some(element)
+}
+
+/// The bundled `VariadicList`, the struct a run-time homogeneous collector
+/// (`*xs: T`) is, as upstream's.
+pub const VARIADIC_LIST_TYPE_NAME: &str = "VariadicList";
+
+/// `VariadicList[element, is_owned]`, the type a `*xs: element` collector
+/// has in its callee's body: owned for a `var` collector.
+pub fn variadic_list_type(element: Ty, is_owned: bool) -> Ty {
+    TyKind::Struct(
+        VARIADIC_LIST_TYPE_NAME.to_string(),
+        vec![TyArg::Ty(element), TyArg::Val(CtValue::Bool(is_owned))],
+    )
+    .into()
+}
+
+/// The type a positional collector of `element`s (`*xs: element`) has in
+/// its callee's body.
+///
+/// A specialized heterogeneous one (`$pack`) is the tuple
+/// of its elements, an unspecialized one (`*args: *Ts`) the compiler's pack
+/// storage, and a homogeneous one upstream's `VariadicList[element,
+/// is_owned]`, owned for a `var` collector.
+pub fn variadic_collector_type(element: Ty, convention: Option<ArgConvention>) -> Ty {
+    match element.kind() {
+        TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
+        _ if pack_spread(std::slice::from_ref(&element)).is_some() => {
+            TyKind::VariadicPack(element).into()
+        }
+        _ => variadic_list_type(element, matches!(convention, Some(ArgConvention::Var))),
+    }
+}
+
+/// The element type of a `VariadicList[T, is_owned]`, an elaborated
+/// instance included.
+pub fn variadic_list_element(ty: &TyKind) -> Option<&Ty> {
+    let TyKind::Struct(name, arguments) = ty else {
+        return None;
+    };
+    if struct_template(name) != VARIADIC_LIST_TYPE_NAME {
+        return None;
+    }
+    match arguments.first() {
+        Some(TyArg::Ty(element)) => Some(element),
+        _ => None,
+    }
 }
 
 pub fn list_element(ty: &TyKind) -> Option<&Ty> {

@@ -1156,6 +1156,7 @@ assets/ok/variadic_args.mojo	main	exe-differential	sanitized
 assets/ok/variadic_collector_forwarded_and_borrowed.mojo	main	exe-differential	sanitized
 assets/ok/variadic_collector_len.mojo	main	exe-differential	sanitized
 assets/ok/variadic_element_value_read.mojo	main	exe-differential	sanitized
+assets/ok/variadic_list_members.mojo	main	exe-differential	sanitized
 assets/ok/variadic_method_type_params.mojo	main	exe-differential	sanitized
 assets/ok/variadic_overload_collector_position.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_forwarding_generic_def.mojo	main	exe-differential	sanitized

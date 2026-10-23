@@ -198,11 +198,13 @@ impl FnLowering<'_> {
     }
 
     /// The element type of `var`, when it holds a run-time homogeneous pack
-    /// (a `VariadicList` descriptor).
+    /// descriptor: the storage itself, or the owned `VariadicList` whose one
+    /// field it is, at offset zero, which `for var v in xs^` consumes.
     pub(super) fn runtime_pack_element(&self, var: u32) -> Option<Ty> {
         match self.func.var_tys.get(&var).map(Ty::kind) {
             Some(TyKind::VariadicPack(element)) => Some(element.clone()),
-            _ => None,
+            Some(list) => mojito_types::types::variadic_list_element(list).cloned(),
+            None => None,
         }
     }
 

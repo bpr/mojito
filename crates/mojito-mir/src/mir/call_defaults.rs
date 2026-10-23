@@ -14,8 +14,10 @@
 //! ([`erase_unpassed_defaults`]).
 //!
 //! The same binding builds the positional collector a callee's `*xs`
-//! takes, as upstream's call builds the `VariadicPack` it passes: a
-//! `tuple.make` of the call's overflow operands, passed as one operand. It
+//! takes, as upstream's call builds the `VariadicPack` or `VariadicList` it
+//! passes: a `tuple.make` of the call's overflow operands, a homogeneous
+//! collector's wrapped in its `VariadicList` by a `struct.create`, passed as
+//! one operand. It
 //! builds the keyword collector a callee's `**kwargs` takes as upstream's
 //! call builds the dictionary: the collector's empty constructor, one
 //! `_insert` per collected keyword, and the filled collector passed as the
@@ -475,6 +477,7 @@ struct CallShape<'a> {
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
     variadic: Option<&'a Ty>,
+    variadic_convention: Option<ArgConvention>,
     kw_variadic: Option<&'a Ty>,
     /// The callee's own compile-time parameters.
     param_decls: &'a [ParamDecl],
@@ -488,6 +491,7 @@ impl<'a> From<&'a MirFunctionDeclaration> for CallShape<'a> {
             positional_only: declaration.positional_only,
             keyword_only: declaration.keyword_only,
             variadic: declaration.variadic.as_ref(),
+            variadic_convention: declaration.variadic_convention,
             kw_variadic: declaration.kw_variadic.as_ref(),
             param_decls: &declaration.param_decls,
         }
@@ -537,6 +541,7 @@ fn collect_through_requirement(
         positional_only: requirement.positional_only,
         keyword_only: requirement.keyword_only,
         variadic: requirement.variadic.as_ref(),
+        variadic_convention: requirement.variadic_convention,
         kw_variadic: requirement.kw_variadic.as_ref(),
         param_decls,
     };
@@ -606,6 +611,7 @@ fn collect_through_contract(
         positional_only: contract.positional_only,
         keyword_only: contract.keyword_only,
         variadic: contract.variadic.as_ref(),
+        variadic_convention: None,
         kw_variadic: contract.kw_variadic.as_ref(),
         param_decls: &[],
     };
@@ -805,10 +811,14 @@ fn keyword_collector_type(
 }
 
 /// Pass the positional collector a call's `shape` declares as the one
-/// operand the call builds, as upstream's call builds the `VariadicPack`
-/// its callee's `*xs` takes: a `tuple.make` of the overflow operands, typed
-/// the collector's slot under the call's bindings ([`collector_type`]),
-/// emitted onto `prelude` and passed after every regular positional
+/// operand the call builds, as upstream's call builds the `VariadicPack` or
+/// `VariadicList` its callee's `*xs` takes: a `tuple.make` of the overflow
+/// operands, typed the collector's storage under the call's bindings
+/// ([`collector_type`]), a homogeneous one's then wrapped in its
+/// `VariadicList[T, is_owned]` by a `struct.create`, which stands for
+/// upstream's constructor from the `!pop.array` of element pointers and,
+/// being no call, keeps the loans of the reads it holds, all emitted onto
+/// `prelude` and passed after every regular positional
 /// operand, its position the call's `spread`. A regular slot before the
 /// collector that a keyword fills moves to its position, so the shared
 /// matcher binds the collector operand alone
@@ -886,11 +896,31 @@ fn build_collector(
         TyKind::VariadicPack(element) => Some(vec![element.clone(); elements.len()]),
         _ => return,
     };
-    let collector = fresh_register(function, ty, location);
+    let homogeneous = match ty.kind() {
+        TyKind::VariadicPack(element)
+            if mojito_types::types::pack_spread(std::slice::from_ref(element)).is_none() =>
+        {
+            Some(element.clone())
+        }
+        _ => None,
+    };
+    let storage = fresh_register(function, ty, location);
     prelude.push(MirInstr::MakeTuple {
-        dest: collector,
+        dest: storage,
         elems: elements,
         element_types,
+    });
+    let collector = homogeneous.map_or(storage, |element| {
+        let list = mojito_types::types::variadic_list_type(
+            element,
+            shape.variadic_convention == Some(ArgConvention::Var),
+        );
+        let collector = fresh_register(function, list, location);
+        prelude.push(MirInstr::MakeStruct {
+            dest: collector,
+            fields: vec![storage],
+        });
+        collector
     });
     site.spread = Some(args.len());
     args.push(collector);
@@ -909,9 +939,9 @@ fn build_collector(
     });
 }
 
-/// The type of the collector a call of a callee collecting `element`s
-/// builds from `elements`, in the caller's binder scope: the callee's slot
-/// type, `VariadicPack(element)`, under the call's bindings, which a bound
+/// The type of the collector storage a call of a callee collecting
+/// `element`s builds from `elements`, in the caller's binder scope:
+/// `VariadicPack(element)` under the call's bindings, which a bound
 /// type pack turns into its elements' tuple. A binder of the callee's own
 /// `param_decls` the call binds no argument for, or one of the trait a
 /// requirement is spelled over, is read off the operands instead, as the

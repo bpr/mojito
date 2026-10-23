@@ -74,19 +74,6 @@ impl VmBackend {
         Ok(())
     }
 
-    /// Destroy the elements of an owning positional collector, last to
-    /// first — the order Mojo destroys a `var *args` pack in.
-    pub(super) fn drop_owned_pack(
-        &mut self,
-        prog: &Prog,
-        items: Vec<Value>,
-    ) -> Result<(), RuntimeError> {
-        for item in items.into_iter().rev() {
-            self.drop_value(prog, item)?;
-        }
-        Ok(())
-    }
-
     /// Destroy `value`, which a `drop.var` or `drop.place` of the static
     /// type `ty` ends, by running `destructor`, the `__deinit__` the drop
     /// names, on the whole value, else by dropping its fields. A partial
@@ -267,8 +254,8 @@ impl VmBackend {
             }
             // Pack storage a teardown reaches by type, left to right: a
             // drop of it names each element's destructor instead
-            // (`mir::refine_pack_drops`), and a homogeneous owning
-            // collector goes through `drop_owned_pack`.
+            // (`mir::refine_pack_drops`), and a homogeneous collector's
+            // `VariadicList.__deinit__` ends its storage itself.
             Value::Tuple(items) => {
                 for item in items {
                     self.drop_value(prog, item)?;

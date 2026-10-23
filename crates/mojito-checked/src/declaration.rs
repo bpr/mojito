@@ -290,6 +290,7 @@ pub fn compiler_trait_declaration(name: &str) -> Option<&'static TraitDeclaratio
                             keyword_only: None,
                             variadic: None,
                             kw_variadic: None,
+                            variadic_convention: None,
                         })
                         .collect(),
                 }
@@ -338,6 +339,9 @@ pub struct TraitRequirement {
     pub keyword_only: Option<usize>,
     pub variadic: Option<Ty>,
     pub kw_variadic: Option<Ty>,
+    /// The positional collector's convention, which makes it an owned
+    /// `VariadicList` when `var`.
+    pub variadic_convention: Option<ArgConvention>,
 }
 
 /// A struct's explicit-destruction obligation, apart from its destructors,

@@ -28,8 +28,9 @@
 //! part, and the caller's consume of it after the call is the body's end
 //! of its receiver, on the raise path too, since the call's error region
 //! follows it. A positional collector is a fresh slot the call's block
-//! initializes from a `tuple.make` of the overflow arguments, as
-//! upstream's call builds the pack it passes; a spread binds the caller's
+//! initializes from a `tuple.make` of the overflow arguments, a homogeneous
+//! one's wrapped in its `VariadicList`, as upstream's call builds the pack
+//! it passes; a spread binds the caller's
 //! collector whole; the keyword collector the call passes as its `**`
 //! operand, the dictionary it builds or a forwarded `**kwargs^`, binds the
 //! callee's collector slot whole, as upstream's call passes it. The call's
@@ -2205,11 +2206,17 @@ fn names_slot(instruction: &MirInstr, slot: VarId) -> bool {
 }
 
 /// Whether `collector` is the positional collector the call at `index` of
-/// `block` builds: a `tuple.make` in the straight-line run before it.
+/// `block` builds: a `tuple.make` in the straight-line run before it, or the
+/// `struct.create` of a homogeneous collector's `VariadicList` over one.
 fn builds_collector(block: &MirBlock, index: usize, collector: Reg) -> bool {
-    block.instrs[run_start(block, index)..index].iter().any(
-        |instruction| matches!(instruction, MirInstr::MakeTuple { dest, .. } if *dest == collector),
-    )
+    block.instrs[run_start(block, index)..index]
+        .iter()
+        .any(|instruction| match instruction {
+            MirInstr::MakeTuple { dest, .. } | MirInstr::MakeStruct { dest, .. } => {
+                *dest == collector
+            }
+            _ => false,
+        })
 }
 
 /// Whether the callee's parameter `param` is a `mut` or `ref` one, whose

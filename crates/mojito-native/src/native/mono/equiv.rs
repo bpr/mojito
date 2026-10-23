@@ -66,6 +66,7 @@ pub(super) fn ty_equivalent(a: &Ty, b: &Ty) -> bool {
         (TyKind::Tuple(a), TyKind::Tuple(b)) | (TyKind::RuntimePack(a), TyKind::RuntimePack(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| ty_equivalent(a, b))
         }
+        (TyKind::VariadicPack(a), TyKind::VariadicPack(b)) => ty_equivalent(a, b),
         _ => a == b,
     }
 }

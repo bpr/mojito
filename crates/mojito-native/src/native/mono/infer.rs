@@ -444,6 +444,11 @@ impl Specializer<'_> {
                 match reg_ty(caller, args[position], owner)?.kind() {
                     TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
                     TyKind::VariadicPack(element) => vec![element.clone()],
+                    list if let Some(element) =
+                        mojito_types::types::variadic_list_element(list) =>
+                    {
+                        vec![element.clone()]
+                    }
                     _ => {
                         return Err(self.error(
                             Some(owner),
@@ -1019,7 +1024,7 @@ impl Specializer<'_> {
 fn parameter_patterns<'a>(patterns: &[&'a Ty], parameters: &[&'a Ty]) -> Vec<(&'a Ty, &'a Ty)> {
     let collector = patterns
         .iter()
-        .position(|pattern| matches!(pattern.kind(), TyKind::VariadicPack(_)));
+        .position(|pattern| collector_element(pattern).is_some());
     if let Some(collector) = collector
         && patterns.len() == parameters.len()
     {
@@ -1033,15 +1038,9 @@ fn parameter_patterns<'a>(patterns: &[&'a Ty], parameters: &[&'a Ty]) -> Vec<(&'
             .chain(std::iter::once((patterns[collector], built[0])))
             .collect();
     }
-    let Some((variadic, element)) =
-        patterns
-            .iter()
-            .enumerate()
-            .find_map(|(position, pattern)| match pattern.kind() {
-                TyKind::VariadicPack(element) => Some((position, element)),
-                _ => None,
-            })
-    else {
+    let Some((variadic, element)) = patterns.iter().enumerate().find_map(|(position, pattern)| {
+        collector_element(pattern).map(|element| (position, element))
+    }) else {
         return patterns
             .iter()
             .copied()
@@ -1066,4 +1065,13 @@ fn parameter_patterns<'a>(patterns: &[&'a Ty], parameters: &[&'a Ty]) -> Vec<(&'
                 .zip(after.iter().copied()),
         )
         .collect()
+}
+
+/// The element of a collector slot's pattern: a homogeneous collector's
+/// `VariadicList`, or the pack storage of one over a pack still a parameter.
+fn collector_element(pattern: &Ty) -> Option<&Ty> {
+    match pattern.kind() {
+        TyKind::VariadicPack(element) => Some(element),
+        list => mojito_types::types::variadic_list_element(list),
+    }
 }

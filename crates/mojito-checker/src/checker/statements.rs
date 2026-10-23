@@ -2963,13 +2963,13 @@ impl Checker {
             }
             if result.is_ok() {
                 for ((param, ty), opaque) in params.iter().zip(&param_tys).zip(&opaque_params) {
-                    // A `*args` parameter is compiler pack storage inside the
-                    // body; it must not impersonate the nominal stdlib List.
                     let bind_ty = match param.kind {
-                        mojito_ast::ast::ParamKind::Variadic => match ty.kind() {
-                            TyKind::RuntimePack(elements) => TyKind::Tuple(elements.clone()).into(),
-                            _ => TyKind::VariadicPack(ty.clone()).into(),
-                        },
+                        mojito_ast::ast::ParamKind::Variadic => {
+                            mojito_types::types::variadic_collector_type(
+                                ty.clone(),
+                                param.convention,
+                            )
+                        }
                         mojito_ast::ast::ParamKind::KwVariadic => self.kwargs_collector_ty(
                             ty.clone(),
                             &format!("keyword collector '{}'", param.name),

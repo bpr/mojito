@@ -766,6 +766,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A homogeneous collector (`*xs: T`, `var *xs: T`) is the bundled
+  `VariadicList[T, is_owned]` in its callee's body, declared beside
+  `ParameterList` in `stdlib/std/builtin/variadics.mojo` with upstream's
+  `__len__`, `__getitem__`, `__iter__` (`_VariadicListIter`), and
+  `__deinit__`, and exported from the prelude (R743). `xs.__len__()` runs,
+  `var l = xs` is rejected as at the pin, a borrowed loop is the library
+  iterator, so MIR's `PackCursor` and `IterationProtocol::indexes_pack` are
+  gone, and an owned list is destroyed by its `__deinit__`, last to first.
+  The call builds the storage (`tuple.make`) and the list over it
+  (`struct.create`); the field is still the compiler-private
+  `__VariadicStorage[T]`, where upstream's is a `Span` of element pointers
+  (R1073). An element reached through a mutable-reference `__getitem__`
+  with no `__setitem__` is now an assignment place, so `xs[0].v += 7` over
+  a `var` collector runs and prints the pin's `18 12` (closes R742), as
+  `s[1].v = 5` over a `Span` does. MIR text is 1.96 (a trait
+  requirement records its collector's convention); the package format
+  is 86.
+
 - Every call builds the keyword collector its callee's `var **kwargs`
   takes, as upstream's call emission builds the dictionary (R1070):
   `fill_omitted_arguments` emits `StringDict[T]`'s empty constructor into a

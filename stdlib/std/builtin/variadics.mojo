@@ -2,7 +2,8 @@
 # `_MLIR`'s raw parameter list type, `TypeList`, the compile-time list a
 # variadic type pack (`*Ts: Movable`) is, `ParameterList`, the zero-sized
 # runtime value a homogeneous value pack (`*values: Int`) is when it is read
-# at run time, and its iterator.
+# at run time, and its iterator, and `VariadicList`, the run-time
+# homogeneous argument collector, and its iterator.
 #
 # A pack's `Ts.length` and `Ts[i]` read `TypeList`'s `length` and
 # `__getitem_param__`. Its members stand in for upstream's
@@ -19,13 +20,34 @@
 # aliases.
 #
 # `ParameterList`'s `values` is upstream's one raw `KGENParamListType[type]`
-# parameter, and a pack's `vs.values` is that list. `_MLIR` declares no
-# `POPArrayType`, whose one upstream use is `VariadicList`'s compiler-built
-# constructor.
+# parameter, and a pack's `vs.values` is that list.
+#
+# `VariadicList`, the run-time homogeneous collector a `*xs: T` parameter is
+# in its body, and its `_VariadicListIter` are upstream's, except:
+# - its field is the compiler-private pack storage `__VariadicStorage[T]`,
+#   where upstream's is a `Span` of element pointers, so its `__len__` and
+#   `__getitem__` read that storage and its `__deinit__` ends it
+#   (`lit.ownership.mark_destroyed`), and `__getitem__` returns
+#   `ref[origin_of(self)]` rather than upstream's union of the elements' and
+#   the list's origins;
+# - the call builds it over the storage (`struct.create`), standing for
+#   upstream's `@implicit` constructor from the compiler-built array of
+#   element pointers, so `_MLIR` declares no `POPArrayType`, that
+#   constructor's one use;
+# - `_VariadicListIter` writes its constructor out (no `@fieldwise_init`
+#   beside it), its `variadic_list_type` names no `origin` (an alias's
+#   keyword argument for an infer-only parameter does not resolve yet), and
+#   `__iter__` takes `ref self` and names the iterator's origin arguments,
+#   which a positional origin argument before a value one cannot be yet;
+# - `__deinit__` reaches each element through the storage (`self._value[i]`)
+#   where upstream's goes through `self[i]`;
+# - `consume_elements`, `_annihilate`, `write_to`, and `write_repr_to` are
+#   not declared yet.
 # `get_span` addresses the elements through the compiler-private
 # `__param_list_address[values]()`, which stands for upstream's
 # `global_constant` over `#pop.variadic_to_array`. `write_repr_to` writes
 # the text upstream's `FormatStruct` builder writes, directly.
+from std.builtin.reversed import reversed
 from std.collections.optional import Optional
 from std.iter import Iterable, Iterator, StopIteration
 from std.range import range
@@ -279,3 +301,146 @@ struct ParameterList[type: AnyType, //, values: _MLIR.KGENParamListType[type]](
             An iterator to the start of the list.
         """
         return _ParameterListIter[*ParameterList[Self.values]()](0)
+
+
+# ===-----------------------------------------------------------------------===#
+# VariadicList
+# ===-----------------------------------------------------------------------===#
+
+
+struct _VariadicListIter[
+    elt_is_mutable: Bool,
+    //,
+    elt_type: AnyType,
+    elt_origin: Origin[mut=elt_is_mutable],
+    list_origin: ImmOrigin,
+    is_owned: Bool,
+](RegisterPassable):
+    """Iterator for VariadicList.
+
+    Parameters:
+        elt_is_mutable: Whether the elements in the list are mutable.
+        elt_type: The type of the elements in the list.
+        elt_origin: The origin of the elements.
+        list_origin: The origin of the VariadicList.
+        is_owned: Whether the elements are owned by the list because they are
+                  passed as an 'var' argument.
+    """
+
+    comptime variadic_list_type = VariadicList[Self.elt_type, Self.is_owned]
+
+    comptime Element = Self.elt_type
+
+    var index: Int
+    var src: Pointer[Self.variadic_list_type, Self.list_origin]
+
+    def __init__(
+        out self,
+        index: Int,
+        ref[Self.list_origin] list: Self.variadic_list_type,
+    ):
+        self.index = index
+        self.src = Pointer(to=list)
+
+    @inline(.always)
+    def __next__(
+        mut self,
+    ) raises StopIteration -> ref[self.src[][0]] Self.elt_type:
+        var index = self.index
+        if index == len(self.src[]):
+            raise StopIteration()
+        self.index = index + 1
+        return self.src[][index]
+
+
+struct VariadicList[
+    elt_is_mutable: Bool,
+    origin: Origin[mut=elt_is_mutable],
+    //,
+    element_type: AnyType,
+    is_owned: Bool,
+](RegisterPassable, Sized):
+    """A utility class to access variadic function arguments of memory-only
+    types that may have ownership. It exposes references to the elements in a
+    way that can be enumerated.  Each element may be accessed with `elt[]`.
+
+    Parameters:
+        elt_is_mutable: True if the elements of the list are mutable for an
+                        mut or owned argument.
+        origin: The origin of the underlying elements.
+        element_type: The type of the elements in the list.
+        is_owned: Whether the elements are owned by the list because they are
+                  passed as an 'var' argument.
+    """
+
+    var _value: __VariadicStorage[Self.element_type]
+
+    # ===-------------------------------------------------------------------===#
+    # Life cycle methods
+    # ===-------------------------------------------------------------------===#
+
+    @inline(.always)
+    def __deinit__(deinit self):
+        """Destructor that releases elements if owned."""
+
+        # Destroy each element if this variadic has owned elements, destroy
+        # them.  We destroy in backwards order to match how arguments are
+        # normally torn down when CheckLifetimes is left to its own devices.
+        comptime if Self.is_owned:
+            comptime assert conforms_to(Self.element_type, Deinitable)
+
+            for i in reversed(range(len(self))):
+                # Safety: We own the elements in this list.
+                Pointer(to=self._value[i]).unsafe_mut_cast[
+                    True
+                ]().unsafe_deinit_pointee()
+        __mlir_op.`lit.ownership.mark_destroyed`(
+            __get_mvalue_as_litref(self._value)
+        )
+
+    # ===-------------------------------------------------------------------===#
+    # Trait implementations
+    # ===-------------------------------------------------------------------===#
+
+    @inline(.always)
+    def __len__(self) -> Int:
+        """Gets the size of the list.
+
+        Returns:
+            The number of elements on the variadic list.
+        """
+        return len(self._value)
+
+    # ===-------------------------------------------------------------------===#
+    # Operator dunders
+    # ===-------------------------------------------------------------------===#
+
+    @inline(.always)
+    def __getitem__(ref self, idx: Int) -> ref[origin_of(self)] Self.element_type:
+        """Gets a single element on the variadic list.
+
+        Args:
+            idx: The index of the element to access on the list.
+
+        Returns:
+            A low-level pointer to the element on the list corresponding to the
+            given index.
+        """
+        return self._value[idx]
+
+    def __iter__(
+        ref self,
+    ) -> _VariadicListIter[
+        Self.element_type, Self.origin, origin_of(self), Self.is_owned
+    ]:
+        """Iterate over the list.
+
+        Returns:
+            An iterator to the start of the list.
+        """
+        return _VariadicListIter[
+            Self.element_type,
+            elt_origin = Self.origin,
+            list_origin = origin_of(self),
+            is_owned = Self.is_owned,
+        ](0, self)

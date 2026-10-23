@@ -2158,6 +2158,7 @@ impl Checker {
                                 keyword_only: sig.keyword_only,
                                 variadic: sig.variadic.clone(),
                                 kw_variadic: sig.kw_variadic.clone(),
+                                variadic_convention: sig.variadic_convention,
                             }
                         })
                         .collect(),
