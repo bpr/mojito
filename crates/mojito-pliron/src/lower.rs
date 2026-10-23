@@ -361,11 +361,13 @@ struct RuntimeStr {
 }
 
 /// One enclosing `try` body during lowering: its label, which a raise
-/// naming it carries, and the landing carrier such a raise enters with the
-/// handler's arguments, whose block binds the error for the handler.
+/// naming it carries, the landing carrier such a raise enters with the
+/// handler's arguments, whose block binds the error for the handler, and
+/// the blocks open at the op, which such a raise stays inside.
 struct TryFrame {
     label: TryLabel,
     landing: usize,
+    open: usize,
 }
 
 struct FnLowering<'a> {
@@ -514,10 +516,11 @@ struct FnLowering<'a> {
     /// destructor — the VM abandons raising frames), and returns. Created
     /// lazily.
     propagate_block: Option<Ptr<BasicBlock>>,
-    /// The error registers of the function's raise edges: a `raise` of one
-    /// hands on, whole, the error its instruction raised, and traces no new
-    /// raise.
-    edge_errors: HashSet<u32>,
+    /// The error registers of the function's raise edges, each with the
+    /// results its instruction defines, which only its normal path sees: a
+    /// `raise` of one hands on, whole, the error its instruction raised,
+    /// traces no new raise, and releases none of those results.
+    edge_errors: HashMap<u32, Vec<Reg>>,
     /// The raise edge of the instruction being lowered ([`OpenEdge`]).
     open_edge: Option<OpenEdge>,
     current: Option<Ptr<BasicBlock>>,
@@ -533,14 +536,17 @@ struct OpenEdge {
     error_block: Option<Ptr<BasicBlock>>,
 }
 
-/// The error register of every raise edge in `blocks`, at any depth.
-fn edge_errors(blocks: &[MirBlock]) -> HashSet<u32> {
-    let mut errors = HashSet::new();
+/// The error register of every raise edge in `blocks`, at any depth, with
+/// the results of its instruction.
+fn edge_errors(blocks: &[MirBlock]) -> HashMap<u32, Vec<Reg>> {
+    let mut errors = HashMap::new();
     let mut pending: Vec<&[MirBlock]> = vec![blocks];
     while let Some(blocks) = pending.pop() {
         for instruction in blocks.iter().flat_map(|block| &block.instrs) {
             if let Some(raises) = instruction.raise_edge() {
-                errors.insert(raises.error.0);
+                let mut results = Vec::new();
+                mojito_mir::mir::verify::instruction_result_regs(instruction, &mut results);
+                errors.insert(raises.error.0, results);
             }
             pending.extend(
                 mojito_mir::mir::instruction_regions(instruction)

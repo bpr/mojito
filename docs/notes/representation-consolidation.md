@@ -38,7 +38,7 @@ disappear. Four such gaps were found, and one of them reaches far outside
 
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
-| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R956, R1290, R1113, R890 (R733, R833, R1129, R1106, R829, R1272, and R1264 closed; R832 waits on gap D) |
+| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R956, R1290, R890 (R733, R833, R1129, R1106, R829, R1272, R1264, and R1113 closed; R832 waits on gap D) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1278, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
@@ -87,9 +87,9 @@ This gap blocks about 14 entries across four tracks (`pmir`,
     edge: a raising `__iter__` runs inside `iter.init`.
   - R1106 closed with R831: the explicit destroy's consume precedes the
     raise edge, so a raising callee binds the part.
-  - R1113 is `lower_raise` releasing temporaries as
-    `release_leaving_temps` does for the other exits; still no program
-    reproduces it, since inlining stores the temporaries in slots.
+  - R1113 closed 10-23: `lower_raise` releases the temporaries of the
+    blocks a raise leaves, as the other exits do; a tuple element computed
+    before a raising call reproduced it.
   - R1272 closed 10-23: a `try` part is a VM cursor level, and its probe
     recurses 100 000 deep.
   - R890 is a `try` whose handler breaks; `TryNext` is still there, and
@@ -163,7 +163,7 @@ entry's probe is "one instance per `n` where the pin has one".
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R956 --only R1290 \
-     --only R1113 --only R890 -n 0
+     --only R890 -n 0
    ```
 
    R832 waits for gap D.

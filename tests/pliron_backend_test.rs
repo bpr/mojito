@@ -760,6 +760,68 @@ def main():
     );
 }
 
+/// A raise edge releases the owned temporaries of the blocks it leaves: a
+/// tuple element computed before a raising call that the tuple reads after
+/// it, whether the raise lands on a `try` inside the function, propagates
+/// out of it, or leaves a loop on the way. `LeakSanitizer` misses these, so
+/// the runtime's allocation log is balanced instead.
+#[test]
+fn raise_edge_releases_the_temporaries_it_leaves() {
+    let src = "\
+def may(x: Int) raises -> Int:
+    if x > 0:
+        raise Error(\"boom\")
+    return x
+
+def f(s: String, n: Int) raises -> Int:
+    var t = (s + \"!\", may(n))
+    return t[1]
+
+def g(s: String) raises -> Int:
+    var total = 0
+    for i in range(3):
+        try:
+            var t = (s + \"?\", may(i))
+            total += t[1]
+        except e:
+            var u = (s + \"#\", may(i - 1))
+            total += u[1]
+    return total
+
+def main():
+    try:
+        print(f(String(\"ab\"), 1))
+    except e:
+        print(\"caught\", e)
+    try:
+        print(g(String(\"cd\")))
+    except e:
+        print(\"caught\", e)
+";
+    let mut module = native_compile(src, &["main"]);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let exe = dir.path().join("raise-edge-temps");
+    module
+        .write_executable(&exe, OptLevel::O0, DebugInfo::Lines)
+        .unwrap_or_else(|error| panic!("executable emission: {error}"));
+    let run = std::process::Command::new(&exe)
+        .env("MOJITO_RT_DBG_POINTERS", "1")
+        .output()
+        .expect("executable runs");
+    assert_eq!(run.status.code(), Some(0), "executable must exit 0");
+    assert_eq!(
+        String::from_utf8_lossy(&run.stdout),
+        "caught boom\ncaught boom\n"
+    );
+    let log = String::from_utf8_lossy(&run.stderr);
+    let count = |event: &str| log.lines().filter(|line| line.starts_with(event)).count();
+    assert_eq!(
+        count("mjrt alloc "),
+        count("mjrt free "),
+        "every allocation must be freed:\n{log}"
+    );
+}
+
 /// String literals intern into private `mjstr_<n>` constant-pool globals on
 /// use — deduplicated by content in deterministic first-use order — and the
 /// literal-only `+`/`==` operators fold at compile time (fold-only literals

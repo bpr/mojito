@@ -494,6 +494,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Natively, a `raise` releases the owned register temporaries of the
+  blocks it leaves, up to the `try` it names or out of the function, as
+  every other exit does: `(s + "!", may(n))` no longer leaks the string
+  when `may` raises. The raising call's own results, which its error path
+  never defined, are kept, and its error path releases the temporaries its
+  arguments end, as its normal path does
+  (`tests/pliron_backend_test.rs`
+  `raise_edge_releases_the_temporaries_it_leaves`, which balances the
+  runtime's `MOJITO_RT_DBG_POINTERS` allocation log). This closes R1113.
 - A `try` on the VM is a level of its frame's region cursor, as upstream's
   `TryOp::interpret` transfers into the try region (R1272): `lit.try.yield`
   moves to the `else` region or past the op, and a raise naming a `try`

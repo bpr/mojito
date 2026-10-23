@@ -947,35 +947,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1113 Natively, an owned temporary is not released when a raising
-  call between its definition and its final read propagates**
-
-  The raise edge leaves past the temporary without freeing it.
-  - Since R883 the native release follows the region tree: a temporary is
-    released in its defining block after the instruction there that reads
-    it last (a region op reads what its regions read), and on each
-    terminator leaving that block before then.
-  - Since R831 a raising call's raise edge is a `raise` terminator in the
-    call's error region, and since R884 it names the `try` it reaches.
-  - `FnLowering::lower_raise` (`crates/mojito-pliron/src/lower/errors.rs`)
-    is the one terminator lowering that does not call
-    `release_leaving_temps`, and the propagate block frees only flagged
-    variables' buffers.
-  - The lever is to have `lower_raise` release the owned temporaries of
-    the blocks the raise leaves, up to its `try`'s landing block or out of
-    the function, as `release_leaving_temps` does for the other exits.
-  - No program reproduces it yet. A probe must hold a register
-    temporary, not a slot, across a raising call in one block; a
-    `join(s + "!", may(x))` argument list does not, since inlining stores
-    the temporary in a slot (re-checked 2026-10-23).
-  - LeakSanitizer misses even a deliberate `unsafe_alloc` leak in the
-    `clang -fsanitize=address` recipe, so a probe reads
-    `MOJITO_PLIRON_DBG_TEMPS=1`, which lists each temporary's mark and
-    release.
-  - Found while landing R1091 (2026-10-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1069 Natively, a place's type carries an origin that varies from
   run to run**
 
@@ -1448,6 +1419,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     prints `caught bad iter`, where the pin destroys `k` first.
   - Fix: lower a raising `__iter__` as a raising `call.method` whose
     result `iter.init` takes, so it has its raise edge as any call.
+  - Natively, such a call is the one raise that does not reach
+    `FnLowering::lower_raise`: `raise_edge_target` jumps from its outcome
+    branch to the landing or propagate block without releasing the owned
+    temporaries of the blocks it leaves. The fix retires that path.
   - Found while landing R831 (2026-10-22).
   - Depends on nothing.
   - Model: Opus, Not Planned.

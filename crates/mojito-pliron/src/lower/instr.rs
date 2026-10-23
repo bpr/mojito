@@ -228,11 +228,11 @@ impl FnLowering<'_> {
     }
 
     /// Join the paths of `edge`'s instruction, whose result registers are
-    /// `results`. The normal path first releases the temporaries due after
-    /// the instruction, its result among them, which the raise path never
-    /// defined; the values it defined for the results cross the join, the
-    /// raise path passing poison, and the join's first argument is the
-    /// flag. The error register is the edge's storage. A callee with no
+    /// `results`. Both paths first release the temporaries due after the
+    /// instruction, the normal path its result among them, which the raise
+    /// path never defined; the values the normal path defined for the
+    /// results cross the join, the raise path passing poison, and the
+    /// join's first argument is the flag. The error register is the edge's storage. A callee with no
     /// outcome never raises, so its flag is false.
     fn close_edge(
         &mut self,
@@ -251,6 +251,7 @@ impl FnLowering<'_> {
             self.reg_values.insert(raises.flag.0, flag);
             return Ok(());
         };
+        let due = self.due_owned_temps();
         self.flush_owned_temps(ctx)?;
         let results: Vec<Reg> = results
             .iter()
@@ -271,6 +272,9 @@ impl FnLowering<'_> {
         let completed = BrOp::new(ctx, join, normal);
         self.append(ctx, completed.get_operation(), Some(raises.flag));
         self.current = Some(error_block);
+        for (reg, ty) in due.iter().filter(|(reg, _)| !results.contains(&Reg(*reg))) {
+            self.emit_release_reg(ctx, *reg, ty)?;
+        }
         let mut raised = vec![self.bool_constant(ctx, true)];
         for ty in &types[1..] {
             let poison = PoisonOp::new(ctx, *ty);

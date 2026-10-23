@@ -310,8 +310,10 @@ impl FnLowering<'_> {
     }
 
     /// A `raise` terminator: materialize the raised value as an owned error
-    /// in the staging slot and jump to the landing block of the `try` it
-    /// names, carrying `values` into the handler's arguments, or, naming
+    /// in the staging slot, release the owned temporaries of the blocks it
+    /// leaves but the results of a raise edge's instruction, which its
+    /// error path never defined, and jump to the landing block of the `try`
+    /// it names, carrying `values` into the handler's arguments, or, naming
     /// none, to the raising function's propagate block. A raise edge's
     /// error is the error its call raised, staged whole and traced once,
     /// where it was raised.
@@ -322,8 +324,11 @@ impl FnLowering<'_> {
         label: Option<TryLabel>,
         values: &[Reg],
     ) -> Result<(), PlironError> {
+        let frame = label.map(|label| self.raise_target(label)).transpose()?;
         let err_slot = self.ensure_err_slot(ctx);
-        if self.edge_errors.contains(&src.0) {
+        let mut kept: Vec<Reg> = std::iter::once(src).chain(values.iter().copied()).collect();
+        if let Some(results) = self.edge_errors.get(&src.0) {
+            kept.extend(results);
             let storage = self.reg_ptr(ctx, src)?;
             self.mem_copy(ctx, err_slot, storage, 24, src);
         } else {
@@ -337,9 +342,9 @@ impl FnLowering<'_> {
                 self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_RAISE);
             }
         }
-        let (target, operands) = match label {
-            Some(label) => {
-                let landing = self.raise_target(label)?;
+        self.release_temps_leaving(ctx, frame.map_or(0, |(_, open)| open), &kept)?;
+        let (target, operands) = match frame {
+            Some((landing, _)) => {
                 let operands = self.carry(ctx, landing, values)?;
                 self.transfer(values);
                 (self.carrier_block(landing), operands)
@@ -353,13 +358,14 @@ impl FnLowering<'_> {
 
     /// The landing carrier of the nearest enclosing `try` body carrying
     /// `label`, which a raise naming it enters, as `lit.try.raise`
-    /// branches to its `try`'s handler.
-    fn raise_target(&self, label: TryLabel) -> Result<usize, PlironError> {
+    /// branches to its `try`'s handler, and the blocks open at that `try`,
+    /// which the raise stays inside.
+    fn raise_target(&self, label: TryLabel) -> Result<(usize, usize), PlironError> {
         self.try_frames
             .iter()
             .rev()
             .find(|frame| frame.label == label)
-            .map(|frame| frame.landing)
+            .map(|frame| (frame.landing, frame.open))
             .ok_or_else(|| {
                 self.unsupported(
                     format!("a raise naming try{}, which does not enclose it", label.0),

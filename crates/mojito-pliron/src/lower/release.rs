@@ -93,7 +93,17 @@ impl FnLowering<'_> {
         open: usize,
         term: &MirTerm,
     ) -> Result<(), PlironError> {
-        let read = mojito_mir::mir::terminator_regs(term);
+        self.release_temps_leaving(ctx, open, &mojito_mir::mir::terminator_regs(term))
+    }
+
+    /// Release the owned temporaries defined in `open_blocks[open..]` but
+    /// those in `kept`.
+    pub(super) fn release_temps_leaving(
+        &mut self,
+        ctx: &mut Context,
+        open: usize,
+        kept: &[Reg],
+    ) -> Result<(), PlironError> {
         let left: Vec<BlockKey> = self
             .open_blocks
             .get(open..)
@@ -105,7 +115,7 @@ impl FnLowering<'_> {
             .owned_temps
             .iter()
             .filter(|(reg, _)| {
-                !read.contains(&Reg(**reg))
+                !kept.contains(&Reg(**reg))
                     && self
                         .temp_releases
                         .get(reg)
@@ -115,6 +125,9 @@ impl FnLowering<'_> {
             .collect();
         due.sort_by_key(|(reg, _)| *reg);
         for (reg, ty) in due {
+            if std::env::var_os("MOJITO_PLIRON_DBG_TEMPS").is_some() {
+                eprintln!("TEMP-DBG {} release-leaving %r{} {ty}", self.name, reg);
+            }
             self.emit_release_reg(ctx, reg, &ty)?;
         }
         Ok(())
@@ -123,8 +136,21 @@ impl FnLowering<'_> {
     /// Release every owned temporary whose final read was the instruction
     /// just lowered (or that nothing reads).
     pub(super) fn flush_owned_temps(&mut self, ctx: &mut Context) -> Result<(), PlironError> {
+        for (reg, ty) in self.due_owned_temps() {
+            self.owned_temps.remove(&reg);
+            if std::env::var_os("MOJITO_PLIRON_DBG_TEMPS").is_some() {
+                eprintln!("TEMP-DBG {} release %r{} {ty}", self.name, reg);
+            }
+            self.emit_release_reg(ctx, reg, &ty)?;
+        }
+        Ok(())
+    }
+
+    /// The owned temporaries whose final read is the instruction just
+    /// lowered (or that nothing reads), in register order.
+    pub(super) fn due_owned_temps(&self) -> Vec<(u32, Ty)> {
         let Some(position) = self.open_blocks.last().copied() else {
-            return Ok(());
+            return Vec::new();
         };
         let mut due: Vec<(u32, Ty)> = self
             .owned_temps
@@ -138,14 +164,7 @@ impl FnLowering<'_> {
             .map(|(reg, ty)| (*reg, ty.clone()))
             .collect();
         due.sort_by_key(|(reg, _)| *reg);
-        for (reg, ty) in due {
-            self.owned_temps.remove(&reg);
-            if std::env::var_os("MOJITO_PLIRON_DBG_TEMPS").is_some() {
-                eprintln!("TEMP-DBG {} release %r{} {ty}", self.name, reg);
-            }
-            self.emit_release_reg(ctx, reg, &ty)?;
-        }
-        Ok(())
+        due
     }
 
     /// Free the heap buffers register `reg` (an owned temporary) carries,

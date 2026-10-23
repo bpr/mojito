@@ -27,7 +27,11 @@ impl FnLowering<'_> {
         let else_entry = orelse.map(|_| self.carrier(ctx, else_args)).transpose()?;
 
         // Body: raises naming this `try` land on its landing block.
-        self.try_frames.push(TryFrame { label, landing });
+        self.try_frames.push(TryFrame {
+            label,
+            landing,
+            open: self.open_blocks.len(),
+        });
         let body_entry = self.lower_part(ctx, body, else_entry.unwrap_or(exit));
         self.try_frames.pop();
         let body_entry = body_entry?;
