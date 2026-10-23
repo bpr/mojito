@@ -1080,6 +1080,7 @@ assets/ok/try_handler_raise_crosses_finally.mojo	main	exe-differential	sanitized
 assets/ok/try_in_loop_temporary_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/try_nested_finally_break_destroys.mojo	main	exe-differential	sanitized
 assets/ok/try_nested_loop_exit_crosses_finally.mojo	main	exe-differential	sanitized
+assets/ok/try_outer_value_dies_on_raise_edge.mojo	main	exe-differential	sanitized
 assets/ok/try_raise_edge_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/try_reassign_outer.mojo	main	exe-differential	sanitized
 assets/ok/try_region_drop_timing.mojo	main	exe-differential	sanitized

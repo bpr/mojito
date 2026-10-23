@@ -1080,6 +1080,7 @@ assets/ok/try_handler_raise_crosses_finally.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/try_in_loop_temporary_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_nested_finally_break_destroys.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_nested_loop_exit_crosses_finally.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/try_outer_value_dies_on_raise_edge.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_raise_edge_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_reassign_outer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/try_region_drop_timing.mojo	-	ineligible	no-scalar-entry-shape

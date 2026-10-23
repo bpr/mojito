@@ -31,13 +31,14 @@ the four representation gaps (10-16/17), most of them trace to a few places
 where Mojito's representation differs from upstream's. Fix the
 representation and the entries built on it shrink to a deletion or
 disappear. Four such gaps were found, and one of them reaches far outside
-`pmir`; gap A's core has landed, its last column still to re-check.
+`pmir`; gap A's core has landed, and its last column was re-checked
+10-23.
 
 ## The four gaps
 
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
-| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R1264, R1272, R1113, R832, R733, R956, R890 (R833, R1129, R1106, and R829 closed) |
+| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R956, R1264, R1290, R1113, R1272, R890 (R733, R833, R1129, R1106, and R829 closed; R832 waits on gap D) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1283, R1278, R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
@@ -72,24 +73,32 @@ This gap blocks about 14 entries across four tracks (`pmir`,
   gone.
 - **What follows** once raises are explicit exits:
   - R833 (drop order on a raise) closed with R831, and R1129, the same
-    ledger row, with it. R733's shape as its entry spells it matched the
-    pin before R831 already; re-probe it before planning it.
-  - R956 is R20 applied to an initializer's fields.
+    ledger row, with it. R733 (an outer value last used after the raise)
+    matched the pin on both backends at the 10-23 re-check and closed;
+    `assets/ok/try_outer_value_dies_on_raise_edge.mojo` pins it.
+  - R956 is R20 applied to an initializer's fields. Still reproduces on
+    both backends (10-23): the pin prints `del a` before `caught boom`.
   - R1264 is `try.raise` carrying values, as `lit.try.raise` does; the
-    label it already carries.
+    label it already carries. Its pass case still keeps the slot (10-23).
+  - R1290 (filed by R831) is the one raising call left without a raise
+    edge: a raising `__iter__` runs inside `iter.init`.
   - R1106 closed with R831: the explicit destroy's consume precedes the
     raise edge, so a raising callee binds the part.
-  - R1113 is `release_leaving_temps` treating the raise as an exit like
-    the others.
-  - R1272 is the VM transferring to the handler on the terminator.
-  - R890 is a `try` whose handler breaks.
-  - R832 loses its flags with gap D.
+  - R1113 is `lower_raise` releasing temporaries as
+    `release_leaving_temps` does for the other exits; still no program
+    reproduces it, since inlining stores the temporaries in slots.
+  - R1272 is the VM transferring to the handler on the terminator; its
+    probe still overflows the stack at `down(40)` (10-23).
+  - R890 is a `try` whose handler breaks; `TryNext` is still there, and
+    its R874 prerequisite has landed.
+  - R832 needs no flag for raise edges any more; its remaining flags go
+    with gap D, so it now depends on R932.
   - R829 closed with R884: its probe matched the pin by then, and the
     return cleanup list it named is gone.
 - **Cost**: generators grow by one `if` per raising call. That is
   upstream's shape. Expect the instruction counters to rise slightly.
 - **Order**: the core is done (R906, R831, R20, and R884 landed); what
-  remains is the last column.
+  remains is the last column, all independent.
 
 ### B. Construction and witnesses are not calls: the biggest size lever
 
@@ -140,27 +149,19 @@ entry's probe is "one instance per `n` where the pin has one".
 
 ## Recommended order
 
-1. **Gap B**, for size. The entries are independent:
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1049 --only R1050 --only R1052 -n 0
-   ```
-
-   Then R1283 (R1029 has landed), which carries no Depends bullet, so run
-   it only after the three above:
+1. **Gap B**, for size. R1049, R1050, R1052, R1029, R1097, R988, and
+   R1075 landed 10-22; R1283 remains:
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1283 -n 0
    ```
 
-2. **Gap A**, for leverage. Its core has landed (R906, R831, R20, R884).
-   Re-check each entry in its last column: close the ones that no longer
-   reproduce (R733's probe matched the pin on 10-22), and reword the rest
-   to what remains. Then run what is left, dropping from the command any
-   ID the re-check closed:
+2. **Gap A**, for leverage. Its core has landed (R906, R831, R20, R884),
+   and the 10-23 re-check closed R733 and reworded R1113, R832, and R890.
+   Run what is left:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R733 --only R956 --only R1264 \
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R956 --only R1264 --only R1290 \
      --only R1113 --only R1272 --only R890 -n 0
    ```
 
@@ -193,10 +194,11 @@ None of these unblocks another entry. Run them whenever they are useful.
   ```
 
 - **Bugs**: R1112 (an elaboration failure the pin runs), R983 (hidden by
-  the pre-elaboration pipeline), R1035, R933.
+  the pre-elaboration pipeline), R1035, R933, and R1289 (a closed
+  `comptime if`'s dead arm keeps values alive, filed by R906).
 
   ```sh
-  scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1112 --only R983 --only R1035 --only R933 -n 0
+  scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1112 --only R983 --only R1035 --only R933 --only R1289 -n 0
   ```
 
 - **Hygiene**: R934 → R935 (typed symbol references), R944, R868, and

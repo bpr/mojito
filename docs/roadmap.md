@@ -1001,20 +1001,24 @@ change that needs a new `MJRT_ABI_VERSION`.
 - [ ] **R1113 Natively, an owned temporary is not released when a raising
   call between its definition and its final read propagates**
 
-  The raise edge leaves past the temporary without freeing it, since a
-  raise edge's cleanup list names variables only.
+  The raise edge leaves past the temporary without freeing it.
   - Since R883 the native release follows the region tree: a temporary is
     released in its defining block after the instruction there that reads
     it last (a region op reads what its regions read), and on each
     terminator leaving that block before then.
-  - A raise is the one exit that releases nothing, as the propagate block
-    frees only variables' buffers.
-  - The lever is `FnLowering::raise_edge_target` and the propagate block
-    (`crates/mojito-pliron/src/lower/errors.rs`), which could release the
-    owned temporaries of the blocks a raise leaves, as
-    `release_leaving_temps` does for the other exits.
+  - Since R831 a raising call's raise edge is a `raise` terminator in the
+    call's error region, and since R884 it names the `try` it reaches.
+  - `FnLowering::lower_raise` (`crates/mojito-pliron/src/lower/errors.rs`)
+    is the one terminator lowering that does not call
+    `release_leaving_temps`, and the propagate block frees only flagged
+    variables' buffers.
+  - The lever is to have `lower_raise` release the owned temporaries of
+    the blocks the raise leaves, up to its `try`'s landing block or out of
+    the function, as `release_leaving_temps` does for the other exits.
   - No program reproduces it yet. A probe must hold a register
-    temporary, not a slot, across a raising call in one block.
+    temporary, not a slot, across a raising call in one block; a
+    `join(s + "!", may(x))` argument list does not, since inlining stores
+    the temporary in a slot (re-checked 2026-10-23).
   - LeakSanitizer misses even a deliberate `unsafe_alloc` leak in the
     `clang -fsanitize=address` recipe, so a probe reads
     `MOJITO_PLIRON_DBG_TEMPS=1`, which lists each temporary's mark and
@@ -1230,19 +1234,25 @@ change that needs a new `MJRT_ABI_VERSION`.
   inserts static destructors with no flags.
   - `lower_drop_var` (`lower/drops.rs`) checks the flag, and
     `lower_return` (`lower/term.rs`) sweeps the flagged slots.
-  - The MIR verifier holds every drop and every cleanup list to a slot
-    some path still holds, so a slot's state is static wherever no two
-    paths disagree.
+  - The MIR verifier holds every drop to a slot some path still holds, so
+    a slot's state is static wherever no two paths disagree.
+  - Since R831 each raise point is its own raise edge whose drops name
+    what it holds, so no cleanup list over several raise points needs a
+    flag any more.
+  - The propagate block (`ensure_propagate_block`, `lower/errors.rs`)
+    also frees each flagged releasable variable's buffer, a second sweep
+    with no destructor call.
   - Fix: drop the flag where the slot's state is static, and file what
     remains (the sweep's comment names compiler-private `StringDict`
     shells).
   - The sweep is the one drop no MIR instruction names: it finds each
     slot's destructor by type (`FnLowering::type_destructor`), where every
-    `drop.var` and cleanup-list entry names its own since R1016 and R1042.
+    `drop.var` names its own since R1016 and R1042.
     A slot the sweep still has to drop is one drop elaboration left no
     `drop.var` for; once each has one, the lookup goes with the sweep.
   - Found while landing R826 (2026-10-14).
-  - Depends on R831 (one list over several raise points needs the flag).
+  - Depends on R932 (drops decided statically, so `lower-lit` erases the
+    ownership markers).
   - Model: Fable, Planned.
 
 - [ ] **R987 Native code drops every function's inline level**
@@ -1490,19 +1500,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Fix: lower a raising `__iter__` as a raising `call.method` whose
     result `iter.init` takes, so it has its raise edge as any call.
   - Found while landing R831 (2026-10-22).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R733 An outer value last used after a raise in a `try` body is
-  destroyed after the handler on the raise path**
-
-  Problem: `var m = M(2)` then `try: _ = may(-1); var d = M(copy=m)`
-  prints `caught2`, then `mdel 2`, where the pin destroys `m` on the raise
-  edge and prints `mdel 2` first.
-  - The raise happens before `m`'s last use, so the pin treats `m` as
-    dead from the raise edge on.
-  - Values declared inside the body already die on the raise edge.
-  - Found while landing R723 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10246,10 +10243,11 @@ follow-ups the landed producer stages filed come last.
   - Upstream's `emitForStmt` wraps the `__next__` call in an error region
     that leaves through the loop's `else` (`lit.loop.break.else`).
   - Comprehension loops (`lower_expr/ctrl.rs`) share the shape.
-  - With single-block `try` parts the call can be a `Try` whose handler
+  - Every `try` part is one block since R1274, and a raising call has its
+    own error region since R831, so the call can be a `Try` whose handler
     breaks, and `TryNext` can go.
   - Found while landing R872 (2026-10-14).
-  - Depends on R874.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1227 A comprehension lowers in MIR as an expression, so its
