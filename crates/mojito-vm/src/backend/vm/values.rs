@@ -322,7 +322,7 @@ impl VmBackend {
         name: &str,
         constructor: &str,
         args: Vec<Value>,
-        kwargs: Vec<(String, Value)>,
+        kwargs: &[(String, Value)],
     ) -> Result<Value, RuntimeError> {
         let def = prog.structs.get(name).ok_or_else(|| {
             RuntimeError::Unsupported(format!(

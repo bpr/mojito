@@ -297,11 +297,12 @@ compile-time iteration/indexing for statically evident call arguments.
 Specialization exposes the concrete type at each pack index. A transferred pack
 can round-trip through `Tuple[*Types](*values^)`; this is a Tuple construction
 rule, not general spreading into fixed-arity calls. Homogeneous `var **kwargs: T` is
-also implemented: unmatched ordered keyword pairs are transported by the call
-ABI and materialized as an owned self-hosted `StringDict[T]` local. Free,
+also implemented: the call builds an owned self-hosted `StringDict[T]` of the
+unmatched keyword pairs, in call order, and passes it to the collector. Free,
 generic, instance, static, and bounded-trait calls share this binder. A collector
 can be consumed and forwarded as the final call argument with `**kwargs^`; the
-callee must also declare a compatible collector. The declaration-side `var` is
+callee must also declare a compatible collector, and no keyword the callee's
+named parameters leave over may join the forward. The declaration-side `var` is
 required; bare `**kwargs: T` is rejected, while call-site forwarding keeps the
 `**kwargs^` spelling. A single `out result: T` is a caller-transparent named
 result, on a function or a method (`def flip(deinit self, out result:

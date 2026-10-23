@@ -558,8 +558,7 @@ impl<'a> Specializer<'a> {
     /// spelling, overload qualifier included (`__eq__$ov$Self`), as
     /// upstream's struct nests these members and its conformances' witness
     /// tables name them. `None` for any other function, and for a
-    /// constructor, which only the keyword collector's construction, which
-    /// no call names, records ([`constructed_member`]).
+    /// constructor, which is the instance its construction names.
     fn table_key(&mut self, template: &str) -> Option<String> {
         if let Some(key) = self.table_keys.get(template) {
             return key.clone();
@@ -567,7 +566,7 @@ impl<'a> Specializer<'a> {
         let key =
             mojito_symbol::symbol::split_method_symbol(template).and_then(|(owner, method)| {
                 let base = method.split('$').next().unwrap_or(method);
-                if mojito_mir::mir::CONSTRUCTED_MEMBERS.contains(&base) {
+                if base == "__init__" {
                     return None;
                 }
                 if mojito_mir::mir::LIFECYCLE_MEMBERS.contains(&base) {
@@ -1091,7 +1090,6 @@ impl<'a> Specializer<'a> {
                 }
             }
             self.instantiate_constructed_defaults(&key.template, &mut declaration)?;
-            self.enqueue_keyword_collector(&key.template, &declaration)?;
             owned_pack = mojito_mir::mir::owned_pack_slot(&declaration);
             self.output_function_decls.push(declaration);
         }
@@ -2191,45 +2189,6 @@ impl<'a> Specializer<'a> {
             })
             .collect::<Result<_, _>>()?;
         Ok((bindings, arguments))
-    }
-
-    /// A `**kwargs: element` parameter binds a `StringDict[element]` the
-    /// caller builds without a MIR call: the backends run the instance's
-    /// empty constructor and one `__setitem__` per collected keyword, so
-    /// enqueue both for a callee that only ever reads the collector, and
-    /// record both in the collector's member table.
-    fn enqueue_keyword_collector(
-        &mut self,
-        owner: &str,
-        declaration: &MirFunctionDeclaration,
-    ) -> Result<(), MonoError> {
-        let Some(element) = declaration.kw_variadic.as_ref() else {
-            return Ok(());
-        };
-        if is_symbolic(element) {
-            return Ok(());
-        }
-        let collector = Ty::new(TyKind::Struct(
-            mojito_symbol::symbol::instance_symbol(
-                "StringDict",
-                &[InstanceArg::Ty(element.clone())],
-            ),
-            vec![mojito_types::types::TyArg::Ty(element.clone())],
-        ));
-        let template = mojito_symbol::symbol::resolve_method_symbol(
-            &self.functions,
-            "StringDict",
-            "__init__",
-            None,
-            0,
-        );
-        if let Some(instance) =
-            self.nominal_method_instance(owner, &collector, "__init__", 0, &[], &[])?
-            && let TyKind::Struct(name, _) = collector.kind()
-        {
-            self.record_struct_member(constructed_member(name, &template).as_ref(), &instance);
-        }
-        self.enqueue_nominal_method_instance(owner, &collector, "__setitem__", 2, &[])
     }
 
     /// The compiled constructor a default's conversion target names. The
@@ -4288,13 +4247,6 @@ fn elaboration_counts(
     };
     counts.recount(program);
     counts
-}
-
-/// The member table key a constructor `template` of the struct `name` is
-/// recorded under: its template's method spelling (`__init__$ov$`).
-fn constructed_member(name: &str, template: &str) -> Option<(String, String)> {
-    let (_, method) = mojito_symbol::symbol::split_method_symbol(template)?;
-    Some((name.to_string(), method.to_string()))
 }
 
 /// What [`for_each_lifecycle_site_mut`] calls on each site: its value's

@@ -50,12 +50,13 @@ semantics already expressed by the library implementation.
 
 ## Implemented decision
 
-The ordered pair vector remains the internal ABI. The linker injects the bundled
-`StringDict` implementation for programs declaring a collector, the checker
-exposes the local as `StringDict[T]`, and the VM constructs it directly in the
-callee frame. For `**kwargs^`, the parser requires the transfer sigil and the VM
-moves each entry out of the consumed dictionary before applying the shared call
-binder. Generic specialization infers from collected values, and instance,
+The linker injects the bundled `StringDict` implementation for programs
+declaring a collector, and the checker exposes the local as `StringDict[T]`.
+As upstream's call emission does, the call builds the dictionary: its empty
+constructor, one `_insert` per collected keyword, and the filled dictionary
+passed as the call's one `**` operand (R1070). For `**kwargs^`, the parser
+requires the transfer sigil, and the forwarded dictionary is that operand
+itself; a keyword no named parameter claims may not join it. Generic specialization infers from collected values, and instance,
 static, and bounded-trait methods use the same element coercion, ownership,
 origin, duplicate, and selected-effect checks as ordinary calls. A forwarded
 dictionary is a move and cannot be reused by the caller.

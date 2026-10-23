@@ -616,7 +616,7 @@ impl VmBackend {
                     args.iter()
                         .map(|register| regs[register.0 as usize].clone()),
                 );
-                let keywords = kwargs
+                let keywords: Vec<(String, Value)> = kwargs
                     .iter()
                     .map(|(name, register)| (name.clone(), regs[register.0 as usize].clone()))
                     .collect();
@@ -627,7 +627,7 @@ impl VmBackend {
                     .ok_or_else(|| RuntimeError::NotCallable(function.clone()))?;
                 let (mut bound, slots) = match prog.sigs.get(&function) {
                     Some(signature) => {
-                        self.bind_for_call(prog, &function, signature, &positional, keywords)?
+                        self.bind_for_call(prog, &function, signature, &positional, &keywords)?
                     }
                     None => (
                         positional,

@@ -120,8 +120,9 @@ point, as upstream's toolchain does.
   `DictEntry`, and value-semantic copying. A missing subscript raises
   `Error("missing key")`.
 - `std/collections/string_dict.mojo` — the insertion-ordered owning
-  `StringDict[V]` used for homogeneous `**kwargs`; the VM constructs it in the
-  callee frame and consumes it for `**kwargs^` forwarding.
+  `StringDict[V]` used for homogeneous `**kwargs`; a call builds it through
+  its empty constructor and one `_insert` per collected keyword, as upstream's
+  call does, and passes it, or the dictionary a `**kwargs^` forwards, whole.
 - `std/algorithms.mojo` — small generic helpers that exercise comptime-guided library
   code: type predicates, CTFE-computed constants, value parameters, and associated
   compile-time facts. It includes `first_or[C: Iterable]`, which consumes

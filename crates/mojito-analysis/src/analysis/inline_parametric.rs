@@ -30,9 +30,9 @@
 //! follows it. A positional collector is a fresh slot the call's block
 //! initializes from a `tuple.make` of the overflow arguments, as
 //! upstream's call builds the pack it passes; a spread binds the caller's
-//! collector whole; a forwarded `**kwargs^` binds the keyword collector's
-//! slot whole, as the pin binds a forward to another `**kwargs` alone,
-//! and keywords collected afresh keep the call (R1070). The call's
+//! collector whole; the keyword collector the call passes as its `**`
+//! operand, the dictionary it builds or a forwarded `**kwargs^`, binds the
+//! callee's collector slot whole, as upstream's call passes it. The call's
 //! positional and keyword arguments bind to the callee's parameters
 //! through `mojito_ast::call`'s matcher, as the VM binds them, and an
 //! omitted argument takes its default, materialized at
@@ -1130,9 +1130,9 @@ impl<'c> Inliner<'_, 'c> {
             return None;
         }
         let matched = call.slots(declaration, captures.len())?;
-        // Keywords collected afresh into `**kwargs` are the dictionary the
-        // call builds (R1070); a keyword collector binds only a forwarded
-        // one, which is its whole argument, as the pin binds a forward.
+        // A keyword collector binds only the `**` operand the call passes,
+        // the dictionary it builds or forwards, which is its whole
+        // argument.
         if !matched.keyword_overflow.is_empty()
             || declaration.kw_variadic.is_some() != forwarded.is_some()
         {

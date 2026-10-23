@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	751
+# swept-count	752
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -425,6 +425,7 @@ assets/type_error/instantiated_generic_abandoned_binding.mojo	compile-reject	agr
 assets/type_error/is_operator_missing_dunder.mojo	compile-reject	agree	error: 'Plain' does not implement the '__is__' method
 assets/type_error/is_operator_non_struct.mojo	compile-reject	agree	error: 'Int' does not implement the '__is__' method
 assets/type_error/is_same_type_removed.mojo	compile-reject	agree	error: use of unknown declaration 'is_same_type'
+assets/type_error/keyword_forward_beside_keywords.mojo	compile-reject	agree	error: invalid call to 'inner': combining a '**' unpack with other keyword arguments for '**kwargs' is not supported
 assets/type_error/keyword_only_by_position.mojo	compile-reject	agree	error: invalid call to 'kw_only': missing required argument: 'b'
 assets/type_error/keyword_parameter_already_bound.mojo	compile-reject	agree	error: unexpected keyword parameter 'a'
 assets/type_error/keyword_slice_assignment_rejected.mojo	compile-reject	agree	error: expression must be mutable in assignment

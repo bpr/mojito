@@ -24,8 +24,8 @@ pub(super) fn checked_const_value(value: &CheckedConst) -> Value {
 
 /// Match positional + keyword arguments to a function's parameter slots, producing
 /// the ordered argument values the frame binds — filling defaults and binding the
-/// positional collector the call passes whole, according to the shared call
-/// contract.
+/// positional and keyword collectors the call passes whole, according to the
+/// shared call contract.
 pub(super) fn bind_args(
     name: &str,
     sig: &FnSig,
@@ -92,8 +92,18 @@ pub(super) fn bind_args(
         (regular_values, slots)
     };
     let (mut out, mut frame_slots) = (out, frame_slots);
+    // The call passes the keyword collector it builds (`StringDict[V]()`
+    // filled by `_insert`), or the one it forwards (`**kwargs^`), as its one
+    // keyword overflow operand, as upstream's call passes the dictionary.
     if let Some(index) = sig.kw_variadic_index {
-        out.insert(index, Value::None);
+        let [collector] = matched.keyword_overflow.as_slice() else {
+            return Err(no_keyword_collector(name));
+        };
+        let (keyword, value) = &kwargs[*collector];
+        if keyword != mojito_ast::ast::FORWARDED_KWARGS_NAME {
+            return Err(no_keyword_collector(name));
+        }
+        out.insert(index, value.clone());
         frame_slots.insert(index, ArgSlot::Default);
     }
     Ok((out, frame_slots))
@@ -148,6 +158,12 @@ fn no_collector(function: &str) -> RuntimeError {
     ))
 }
 
+fn no_keyword_collector(function: &str) -> RuntimeError {
+    RuntimeError::TypeError(format!(
+        "a call of '{function}' passes no keyword collector"
+    ))
+}
+
 fn runtime_match_error(error: mojito_ast::call::MatchError, function: &str) -> RuntimeError {
     use mojito_ast::call::MatchError;
     match error {
@@ -168,10 +184,12 @@ fn runtime_match_error(error: mojito_ast::call::MatchError, function: &str) -> R
         MatchError::Missing(parameter) => RuntimeError::TypeError(format!(
             "'{function}' missing required argument '{parameter}'"
         )),
-        // The elaborator expands every spread before a call reaches the VM.
+        // The checker rejects each of these shapes before a call reaches
+        // the VM.
         spread @ (MatchError::RepeatedSpread
         | MatchError::PositionalAfterSpread
-        | MatchError::SpreadOutsideVariadic) => {
+        | MatchError::SpreadOutsideVariadic
+        | MatchError::KeywordsBesideForward) => {
             RuntimeError::TypeError(spread.into_type_error(function).to_string())
         }
     }

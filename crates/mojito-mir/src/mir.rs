@@ -88,8 +88,8 @@ pub use param_uses::{
 };
 mod struct_reads;
 pub use struct_reads::{
-    CONSTRUCTED_MEMBERS, DISPATCHED_MEMBERS, LIFECYCLE_MEMBERS, LayoutReads, StructReads,
-    struct_layout_reads, table_member,
+    DISPATCHED_MEMBERS, LIFECYCLE_MEMBERS, LayoutReads, StructReads, struct_layout_reads,
+    table_member,
 };
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};

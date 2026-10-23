@@ -459,8 +459,9 @@ Calls may dispatch to builtins, user functions, fieldwise constructors,
 hand-written `__init__`, or copy constructors. Argument binding handles required,
 default, positional-only, keyword-only, and variadic parameters. Homogeneous
 keyword collectors use the same ABI for free, generic, instance, static, and
-bounded-trait calls; a `**kwargs^` entry expands an owned `StringDict` before
-structural binding.
+bounded-trait calls: the call passes the owned `StringDict` it builds, or the
+one a `**kwargs^` forwards, as its one `**` keyword operand, which binds the
+collector slot whole.
 
 A specialized heterogeneous `*args^` forwarding call may carry one private
 heterogeneous-pack register after its fixed positional prefix. The target specialization

@@ -1211,6 +1211,8 @@ impl Checker {
             },
         )
         .map_err(|error| error.into_type_error(name))?;
+        mojito_ast::call::bind_keyword_forward(&matched, forwarded_element.is_some())
+            .map_err(|error| error.into_type_error(name))?;
         if let Some((position, _)) = &forwarded_pack {
             mojito_ast::call::bind_spread(&matched, *position)
                 .map_err(|error| error.into_type_error(name))?;

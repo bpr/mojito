@@ -494,6 +494,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A forwarded `**kwargs^` now runs natively: Pliron bound the forwarded
+  dictionary as one keyword of a fresh collector and failed IR
+  verification, so `assets/ok/trait_default_wrapper_conventions.mojo`, a
+  relay through `inner(**kwargs^)`, and a bounded `target.count(**options^)`
+  only ran on the VM (R591). A keyword no named parameter claims beside a
+  forward (`inner(c=3, **kwargs^)`) is rejected, as at the pin ("combining
+  a '**' unpack with other keyword arguments for '**kwargs' is not
+  supported", `assets/type_error/keyword_forward_beside_keywords.mojo`),
+  where the VM merged the two.
+
 - A raising initializer destroys the `self` it has partly built when a
   raise leaves it, as upstream's `DestructorInsertion` destroys a partially
   initialized `self`: `self.a = Tracer("a")` then `raise` now prints
@@ -755,6 +765,23 @@ to evolve under the `0.x` compatibility rules.
   the referent is not a conflict.
 
 ### Changed
+
+- Every call builds the keyword collector its callee's `var **kwargs`
+  takes, as upstream's call emission builds the dictionary (R1070):
+  `fill_omitted_arguments` emits `StringDict[T]`'s empty constructor into a
+  forwarding slot and one `_insert` per collected keyword, keyed by the
+  keyword's `StringLiteral` (the bundled `StringDict` gains upstream's two
+  `_insert` overloads), and passes the slot as the call's one `**` operand,
+  the shape a forwarded `**kwargs^` already had; calls through a bound and
+  through a function value build theirs from the requirement's or the
+  function type's call shape. The VM's `bind_args`, Pliron's
+  `bind_call_slots`/`bind_contract_slots`, and `inline-parametric` bind
+  that operand whole, so `named(a=1, b=2)` over a `nodebug` callee now
+  inlines, and the VM's `make_kwargs_dict`/`take_forwarded_kwargs`, Pliron's
+  `build_keyword_collector`, the elaborator's member-table record of the
+  collector's constructor, and `mir::CONSTRUCTED_MEMBERS` are gone; no
+  member table records a constructor. The verifier rejects a call of a
+  keyword-collecting callee that passes no collector.
 
 - A whole-pack spread (`show(*args)`, `take(*args^)`) passes the caller's
   pack itself, as upstream's call passes the `VariadicPack`, instead of

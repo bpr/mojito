@@ -67,8 +67,9 @@ pub const LIFECYCLE_MEMBERS: [&str; 3] = ["__deinit__", "__copyinit__", "__movei
 /// lifecycle members: display (`write_to`, `write_repr_to`, a
 /// writer's `write_string`), hashing (`__hash__`, a hasher's
 /// `_update_with_simd`), equality (`__eq__`, and `__ne__` through it), the
-/// `__int__` a scalar construction converts through, a keyword collector's
-/// `__setitem__`, and the `__call__` a callable value dispatches.
+/// `__int__` a scalar construction converts through, the `__setitem__` the
+/// VM's store through an indexed place dispatches, and the `__call__` a
+/// callable value dispatches.
 pub const DISPATCHED_MEMBERS: [&str; 10] = [
     "write_to",
     "write_repr_to",
@@ -82,21 +83,17 @@ pub const DISPATCHED_MEMBERS: [&str; 10] = [
     "__call__",
 ];
 
-/// The constructors a backend runs from a type with no call naming them.
-///
-/// That is a keyword collector's empty one. A constructor a call or a slice
-/// bound's read reaches is the instance it names, never a table entry.
-pub const CONSTRUCTED_MEMBERS: [&str; 1] = ["__init__"];
-
 /// The member a struct's member table records the method `method` under
-/// (its spelling before any `$` qualifier), when it is a lifecycle,
-/// dispatched, or constructed member.
+/// (its spelling before any `$` qualifier), when it is a lifecycle or
+/// dispatched member.
+///
+/// A constructor, which a call or a slice bound's read reaches, is the
+/// instance it names, never a table entry.
 pub fn table_member(method: &str) -> Option<&'static str> {
     let base = method.split('$').next().unwrap_or(method);
     LIFECYCLE_MEMBERS
         .into_iter()
         .chain(DISPATCHED_MEMBERS)
-        .chain(CONSTRUCTED_MEMBERS)
         .find(|member| *member == base)
 }
 

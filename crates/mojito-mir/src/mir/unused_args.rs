@@ -407,7 +407,9 @@ fn reducible(name: &str, function: &MirFunction, declaration: &MirFunctionDeclar
     name != "__toplevel__"
         && (declaration.enclosing.is_some()
             || mojito_symbol::symbol::split_method_symbol(name).is_none_or(|(_, method)| {
-                table_member(method).is_none() && !PROTOCOL_MEMBERS.contains(&member_base(method))
+                !mojito_symbol::symbol::is_initializer_member(member_base(method))
+                    && table_member(method).is_none()
+                    && !PROTOCOL_MEMBERS.contains(&member_base(method))
             }))
         && !declaration.returns_reference
         && usize::from(declaration.has_receiver)

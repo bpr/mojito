@@ -37,6 +37,9 @@ pub enum MatchError {
     /// it filled a regular slot, or shares the collector with another
     /// argument.
     SpreadOutsideVariadic,
+    /// A forwarded `**kwargs^` shares the callee's keyword collector with
+    /// a keyword argument no named parameter claims.
+    KeywordsBesideForward,
 }
 
 #[derive(Clone, Copy)]
@@ -82,6 +85,12 @@ impl MatchError {
             Self::SpreadOutsideVariadic => TypeError::BadCall {
                 func: func.to_string(),
                 reason: "unpack is only supported when the callee accepts a variadic pack"
+                    .to_string(),
+            },
+            Self::KeywordsBesideForward => TypeError::BadCall {
+                func: func.to_string(),
+                reason: "combining a '**' unpack with other keyword arguments for '**kwargs' \
+                         is not supported"
                     .to_string(),
             },
         }
@@ -167,6 +176,19 @@ pub fn bind_spread(matched: &CallSlots, spread: usize) -> Result<(), MatchError>
         Ok(())
     } else {
         Err(MatchError::SpreadOutsideVariadic)
+    }
+}
+
+/// Whether a forwarded `**kwargs^` bound the callee's keyword collector alone.
+///
+/// `forwarded` says whether the call forwards one: as upstream's call passes
+/// the forwarded dictionary whole, no keyword argument may share the
+/// collector with it.
+pub const fn bind_keyword_forward(matched: &CallSlots, forwarded: bool) -> Result<(), MatchError> {
+    if forwarded && !matched.keyword_overflow.is_empty() {
+        Err(MatchError::KeywordsBesideForward)
+    } else {
+        Ok(())
     }
 }
 

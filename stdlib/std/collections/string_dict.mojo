@@ -87,6 +87,19 @@ struct StringDict[V: Movable](
         if self.count == self.nbuckets:
             self.rehash(self.nbuckets * 2)
 
+    # The insertion a `**kwargs` call emits per collected keyword, as
+    # upstream's call fills its collector.
+    def _insert(mut self, var key: String, var value: Self.V) where conforms_to(
+        Self.V, Deinitable
+    ):
+        self[key] = value^
+
+    @inline(.always)
+    def _insert(mut self, key: StringLiteral, var value: Self.V) where conforms_to(
+        Self.V, Deinitable
+    ):
+        self._insert(String(key), value^)
+
     def rehash(mut self, new_bucket_count: Int):
         var new_index: List[List[Int]] = List[List[Int]]()
         var i: Int = 0

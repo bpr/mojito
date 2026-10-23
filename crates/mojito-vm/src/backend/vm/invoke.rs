@@ -33,7 +33,7 @@ impl VmBackend {
         // keeping the slot map so each parameter's source argument is known.
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
         let (bound, slots) = if let Some(sig) = prog.sigs.get(name) {
-            self.bind_for_call(prog, name, sig, &argv, kwargs)?
+            self.bind_for_call(prog, name, sig, &argv, &kwargs)?
         } else {
             let slots = (0..argv.len()).map(ArgSlot::Positional).collect();
             (argv, slots)
@@ -159,37 +159,8 @@ impl VmBackend {
         name: &str,
         sig: &FnSig,
         argv: &[Value],
-        kwargs: Vec<(String, Value)>,
+        kwargs: &[(String, Value)],
     ) -> Result<(Vec<Value>, Vec<ArgSlot>), RuntimeError> {
-        // A forwarded `**kwargs^` is the callee's keyword collector's
-        // whole argument: its entries never fill a named parameter, as the
-        // pin binds a forward (`kwargs unpack can only satisfy another
-        // kwargs argument`).
-        let mut named = Vec::new();
-        let mut forwarded = None;
-        for (name, value) in kwargs {
-            if name == mojito_ast::ast::FORWARDED_KWARGS_NAME {
-                if forwarded.is_some() {
-                    return Err(RuntimeError::TypeError(
-                        "a call may forward only one StringDict".to_string(),
-                    ));
-                }
-                forwarded = Some(self.take_forwarded_kwargs(value)?);
-            } else {
-                named.push((name, value));
-            }
-        }
-        let kwargs = named;
-        let mut collected: Vec<(String, Value)> = if sig.kw_variadic.is_some() {
-            kwargs
-                .iter()
-                .filter(|(key, _)| !sig.param_names.contains(key))
-                .cloned()
-                .collect()
-        } else {
-            Vec::new()
-        };
-        collected.extend(forwarded.into_iter().flatten());
         // Materialize omitted defaults. A `Construct` default runs its
         // converting constructor (e.g. the empty `Optional[T]` for a `None`
         // default) through the same path an explicit `f(arg=None)` takes;
@@ -222,117 +193,7 @@ impl VmBackend {
                 ))),
             }
         };
-        let (mut bound, slots) = bind_args(name, sig, argv, &kwargs, make_default)?;
-        if let Some(index) = sig.kw_variadic_index {
-            let collector = kwargs_collector_struct(sig.kw_variadic.as_ref());
-            bound[index] = self.make_kwargs_dict(prog, &collector, collected)?;
-        }
-        Ok((bound, slots))
-    }
-
-    pub(super) fn make_kwargs_dict(
-        &mut self,
-        prog: &Prog,
-        collector: &str,
-        entries: Vec<(String, Value)>,
-    ) -> Result<Value, RuntimeError> {
-        let init = prog
-            .struct_member(collector, "__init__", 0)
-            .ok_or_else(|| {
-                RuntimeError::Unsupported(format!("vm: kwargs {collector} has no __init__"))
-            })?;
-        let init = prog.mir.functions[init].0.clone();
-        let mut dict = self.construct_via_init(prog, collector, &init, Vec::new(), Vec::new())?;
-        let fidx = prog
-            .struct_member(collector, "__setitem__", 2)
-            .ok_or_else(|| {
-                RuntimeError::Unsupported(format!("vm: kwargs {collector} has no __setitem__"))
-            })?;
-        for (key, value) in entries {
-            let key = self.nominal_string_value(prog, &key)?;
-            let (_, frame) = self.call_frame(prog, fidx, vec![dict, key, value])?;
-            dict = frame.into_iter().next().unwrap_or(Value::None);
-        }
-        Ok(dict)
-    }
-
-    /// Consume the self-hosted `StringDict` passed by `**kwargs^` and recover its
-    /// insertion-ordered key/value entries. Its `entries` field is a self-hosted
-    /// `List[DictEntry[String, V]]`, so taking the pointer slots is a true move:
-    /// values are not copied and the transferred dictionary cannot be reused.
-    pub(super) fn take_forwarded_kwargs(
-        &mut self,
-        value: Value,
-    ) -> Result<Vec<(String, Value)>, RuntimeError> {
-        let Value::Struct { name, fields, .. } = value else {
-            return Err(RuntimeError::TypeError(
-                "`**kwargs^` requires a StringDict value".to_string(),
-            ));
-        };
-        if name != KWARGS_COLLECTOR && !name.starts_with(KWARGS_COLLECTOR_INSTANCE) {
-            return Err(RuntimeError::TypeError(format!(
-                "`**kwargs^` requires StringDict, got {name}"
-            )));
-        }
-        let entries = fields
-            .into_iter()
-            .find_map(|(field, value)| (field == "entries").then_some(value))
-            .ok_or_else(|| {
-                RuntimeError::TypeError("StringDict has no entries storage".to_string())
-            })?;
-        let Value::Struct { fields, .. } = entries else {
-            return Err(RuntimeError::TypeError(
-                "StringDict entries storage is not a List".to_string(),
-            ));
-        };
-        let mut data = None;
-        let mut size = None;
-        for (field, value) in fields {
-            match (field.as_str(), value) {
-                ("data", Value::Pointer { allocation, offset }) => {
-                    data = Some((allocation, offset));
-                }
-                ("size", Value::Int(value)) => size = Some(value),
-                _ => {}
-            }
-        }
-        let (allocation, base) = data.ok_or_else(|| {
-            RuntimeError::TypeError("StringDict entry List has no data pointer".to_string())
-        })?;
-        let size = size.ok_or_else(|| {
-            RuntimeError::TypeError("StringDict entry List has no size".to_string())
-        })?;
-        let mut result = Vec::with_capacity(size.max(0) as usize);
-        for offset in 0..size {
-            let entry = self.heap_take(allocation, base, offset)?;
-            let Value::Struct { fields, .. } = entry else {
-                return Err(RuntimeError::TypeError(
-                    "StringDict contains a non-entry value".to_string(),
-                ));
-            };
-            let mut key = None;
-            let mut value = None;
-            for (field, field_value) in fields {
-                match field.as_str() {
-                    "key" => key = Some(field_value),
-                    "value" => value = Some(field_value),
-                    _ => {}
-                }
-            }
-            let Some(key @ Value::Struct { .. }) = key else {
-                return Err(RuntimeError::TypeError(
-                    "StringDict entry key is not a String".to_string(),
-                ));
-            };
-            let Value::Str(key) = self.string_struct_literal(&key)? else {
-                unreachable!("the string read-back yields text");
-            };
-            let value = value.ok_or_else(|| {
-                RuntimeError::TypeError("StringDict entry has no value".to_string())
-            })?;
-            result.push((key, value));
-        }
-        Ok(result)
+        bind_args(name, sig, argv, kwargs, make_default)
     }
 
     /// Dispatch a method call. Nominal values resolve to their mangled
@@ -604,7 +465,7 @@ impl VmBackend {
                 // Bind ordinary arguments through the same signature metadata as
                 // free functions, then prepend `self` in frame slot zero.
                 let (bound, slots) = if let Some(signature) = prog.sigs.get(&fname) {
-                    self.bind_for_call(prog, &fname, signature, &args, kwargs)?
+                    self.bind_for_call(prog, &fname, signature, &args, &kwargs)?
                 } else {
                     let slots = (0..args.len()).map(ArgSlot::Positional).collect();
                     (args, slots)
@@ -741,24 +602,4 @@ impl VmBackend {
             ))),
         }
     }
-}
-
-/// The struct a `**kwargs` parameter collects into.
-const KWARGS_COLLECTOR: &str = "StringDict";
-
-/// The prefix every instance of the collector carries in a specialized program.
-const KWARGS_COLLECTOR_INSTANCE: &str = "StringDict$mono$";
-
-/// The collector a callee's `**kwargs: element` binds: its instance at
-/// `element` (`StringDict$mono$TInt`), which concrete MIR declares.
-fn kwargs_collector_struct(element: Option<&Ty>) -> String {
-    element.map_or_else(
-        || KWARGS_COLLECTOR.to_string(),
-        |element| {
-            mojito_symbol::symbol::instance_symbol(
-                KWARGS_COLLECTOR,
-                &[mojito_symbol::symbol::InstanceArg::Ty(element.clone())],
-            )
-        },
-    )
 }

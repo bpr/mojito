@@ -70,7 +70,7 @@ pub(super) fn verify_call_instruction(
                 );
             }
             if let Some(declaration) = declared(cx.declarations, callee) {
-                verify_collector_passed(prefix, declaration, *spread, errors);
+                verify_collector_passed(prefix, declaration, *spread, kwargs, errors);
                 verify_direct_call(
                     prefix,
                     cx.function,
@@ -155,7 +155,7 @@ pub(super) fn verify_call_instruction(
                 None => {}
             }
             if let Some(declaration) = declared(cx.declarations, callee) {
-                verify_collector_passed(prefix, declaration, *spread, errors);
+                verify_collector_passed(prefix, declaration, *spread, kwargs, errors);
                 verify_direct_call(
                     prefix,
                     cx.function,
@@ -259,17 +259,30 @@ fn verify_pack_spread(
 }
 
 /// A call of a declared callee that collects a positional pack passes it
-/// as one operand ([`verify_pack_spread`]), as upstream's call passes the
-/// pack it builds; no backend collects the overflow itself.
+/// as one operand ([`verify_pack_spread`]), and one that collects keywords
+/// passes its keyword collector as its `**` operand, as upstream's call
+/// passes the pack and the dictionary it builds; no backend collects the
+/// overflow itself.
 fn verify_collector_passed(
     prefix: &str,
     declaration: &MirFunctionDeclaration,
     spread: Option<usize>,
+    kwargs: &[(String, Reg)],
     errors: &mut Vec<String>,
 ) {
     if declaration.variadic.is_some() && spread.is_none() {
         errors.push(format!(
             "{prefix}: a call of '{}' passes no positional collector",
+            declaration.lowered_name
+        ));
+    }
+    if declaration.kw_variadic.is_some()
+        && !kwargs
+            .iter()
+            .any(|(name, _)| name == mojito_ast::ast::FORWARDED_KWARGS_NAME)
+    {
+        errors.push(format!(
+            "{prefix}: a call of '{}' passes no keyword collector",
             declaration.lowered_name
         ));
     }

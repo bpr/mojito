@@ -282,8 +282,7 @@ folds the operators over it (R840);
    clauses and conditional availability dropped as judged at the call. A
    `read` argument binds the caller's place the call retained or loaded,
    through a reference the block made included, or a fresh slot for an
-   owned, scalar, or trivially copied one. What still keeps a call: keywords
-   collected afresh into `**kwargs` (R1070),
+   owned, scalar, or trivially copied one. What still keeps a call:
    a copy- or move-capturing body a sibling captures (R1104), a raising
    `deinit` callee passed a field, which takes a copy of it (R1106),
    `conforms_to` over a concrete binding

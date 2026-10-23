@@ -15,7 +15,11 @@
 //!
 //! The same binding builds the positional collector a callee's `*xs`
 //! takes, as upstream's call builds the `VariadicPack` it passes: a
-//! `tuple.make` of the call's overflow operands, passed as one operand.
+//! `tuple.make` of the call's overflow operands, passed as one operand. It
+//! builds the keyword collector a callee's `**kwargs` takes as upstream's
+//! call builds the dictionary: the collector's empty constructor, one
+//! `_insert` per collected keyword, and the filled collector passed as the
+//! call's one `**` operand.
 
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
@@ -25,7 +29,7 @@ use crate::mir::{
     fresh_register, instruction_regions, instruction_regions_mut, instruction_regs_mut,
     instruction_slots, terminator_regs_mut,
 };
-use mojito_ast::ast::ArgConvention;
+use mojito_ast::ast::{ArgConvention, FORWARDED_KWARGS_NAME};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::{CheckedCallArgumentSource, CheckedConst};
 use mojito_common::token::SourceSpan;
@@ -42,8 +46,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// ([`MirFunction::lowered_calls`]), each argument it leaves out of a
 /// callee `declarations` declares, and clear the records.
 ///
-/// Each such call also builds the positional collector it passes
-/// (the private `build_collector`).
+/// Each such call also builds the positional and keyword collectors it
+/// passes (the private `build_collector` and `build_keyword_collector`).
 ///
 /// The slot takes the callee's default under the arguments the call binds
 /// the callee's binders to: its own `instantiated_args`, for a method its
@@ -215,6 +219,8 @@ fn fill_blocks(
                     &mut filled,
                     invariant_errors,
                 );
+            } else {
+                collect_through_contract(&mut instruction, function, &mut filled);
             }
             filled.push(instruction);
         }
@@ -262,6 +268,7 @@ fn fill_call(
     }
     let Some(mut site) = Site::of(&instruction, record, function, caller) else {
         collect_through_requirement(&mut instruction, function, caller, prelude);
+        collect_through_contract(&mut instruction, function, prelude);
         return instruction;
     };
     let declarations = caller.declarations;
@@ -318,6 +325,20 @@ fn fill_call(
             site.kwargs.push((default.name, argument));
             site.kwarg_places.push(None);
         }
+    }
+    if !matches!(instruction, MirInstr::MultiIndex { .. })
+        && let Err(error) = build_keyword_collector(
+            &mut site,
+            &CallShape::from(callee),
+            function,
+            location.as_ref(),
+            prelude,
+        )
+    {
+        invariant_errors.push(format!(
+            "{}: a call of '{}' builds no keyword collector: {error}",
+            caller.name, site.callee
+        ));
     }
     // A subscript's contract names each operand by its source, which a
     // keyword's move to its position would rename.
@@ -454,7 +475,7 @@ struct CallShape<'a> {
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
     variadic: Option<&'a Ty>,
-    kw_variadic: bool,
+    kw_variadic: Option<&'a Ty>,
     /// The callee's own compile-time parameters.
     param_decls: &'a [ParamDecl],
 }
@@ -467,17 +488,17 @@ impl<'a> From<&'a MirFunctionDeclaration> for CallShape<'a> {
             positional_only: declaration.positional_only,
             keyword_only: declaration.keyword_only,
             variadic: declaration.variadic.as_ref(),
-            kw_variadic: declaration.kw_variadic.is_some(),
+            kw_variadic: declaration.kw_variadic.as_ref(),
             param_decls: &declaration.param_decls,
         }
     }
 }
 
-/// Build the positional collector of a method call through a bound whose
-/// requirement has no body, which no declaration describes, from the
-/// requirement's call shape
+/// Build the positional and keyword collectors of a method call through a
+/// bound whose requirement has no body, which no declaration describes, from
+/// the requirement's call shape
 /// ([`mojito_checked::declaration::TraitRequirement`]), as [`build_collector`]
-/// builds a declared callee's.
+/// and [`build_keyword_collector`] build a declared callee's.
 fn collect_through_requirement(
     instruction: &mut MirInstr,
     function: &mut MirFunction,
@@ -507,16 +528,16 @@ fn collect_through_requirement(
     else {
         return;
     };
-    let Some(variadic) = requirement.variadic.as_ref() else {
+    if requirement.variadic.is_none() && requirement.kw_variadic.is_none() {
         return;
-    };
+    }
     let shape = CallShape {
         param_names: &requirement.param_names,
         required: &requirement.required,
         positional_only: requirement.positional_only,
         keyword_only: requirement.keyword_only,
-        variadic: Some(variadic),
-        kw_variadic: requirement.kw_variadic.is_some(),
+        variadic: requirement.variadic.as_ref(),
+        kw_variadic: requirement.kw_variadic.as_ref(),
         param_decls,
     };
     let mut site = Site {
@@ -535,10 +556,252 @@ fn collect_through_requirement(
         spread: None,
     };
     let location = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
+    let collected =
+        build_keyword_collector(&mut site, &shape, function, location.as_ref(), prelude)
+            .is_ok_and(|built| built);
     build_collector(&mut site, &shape, function, location.as_ref(), prelude);
-    if site.spread.is_some() {
+    if collected || site.spread.is_some() {
         site.store(instruction, &[]);
     }
+}
+
+/// Build the keyword collector of a call through a function value whose
+/// target the body does not statically hold, or that the check named no
+/// callee for, from the call shape of the value's function type, as
+/// [`build_keyword_collector`] builds a declared callee's.
+fn collect_through_contract(
+    instruction: &mut MirInstr,
+    function: &mut MirFunction,
+    prelude: &mut Vec<MirInstr>,
+) {
+    let MirInstr::CallIndirect {
+        dest,
+        callee,
+        callee_place,
+        args,
+        kwargs,
+        arg_places,
+        kwarg_places,
+        spread: None,
+        ..
+    } = &*instruction
+    else {
+        return;
+    };
+    let Some(TyKind::Func(contract)) = function
+        .reg_types
+        .get(&callee.0)
+        .or_else(|| callee_place.as_ref()?.ty.as_ref())
+        .map(Ty::kind)
+    else {
+        return;
+    };
+    if contract.kw_variadic.is_none() {
+        return;
+    }
+    let contract = contract.clone();
+    let shape = CallShape {
+        param_names: &contract.names,
+        required: &contract.required,
+        positional_only: contract.positional_only,
+        keyword_only: contract.keyword_only,
+        variadic: contract.variadic.as_ref(),
+        kw_variadic: contract.kw_variadic.as_ref(),
+        param_decls: &[],
+    };
+    let mut site = Site {
+        dest: *dest,
+        callee: String::new(),
+        leading: 0,
+        args: args.clone(),
+        kwargs: kwargs.clone(),
+        arg_places: arg_places.clone(),
+        kwarg_places: kwarg_places.clone(),
+        bound: Vec::new(),
+        spread: None,
+    };
+    let location = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
+    if build_keyword_collector(&mut site, &shape, function, location.as_ref(), prelude)
+        .is_ok_and(|built| built)
+    {
+        site.store(instruction, &[]);
+    }
+}
+
+/// Pass the keyword collector a call's `shape` declares as the call's one
+/// `**` operand, as upstream's call builds the dictionary its callee's
+/// `**kwargs` takes: the collector's empty constructor
+/// (`StringDict[V]()`, typed as [`keyword_collector_type`] closes it) bound
+/// to a forwarding slot, then one `_insert` per keyword no named parameter
+/// claims, in call order, each keyed by the keyword's literal and taking
+/// its operand, and the slot forwarded to the call. Return whether it built
+/// one: a call forwarding a `**kwargs^` passes that collector already, and
+/// a callee without one takes none. An error says why the call's operands
+/// do not bind or type the collector.
+fn build_keyword_collector(
+    site: &mut Site,
+    shape: &CallShape<'_>,
+    function: &mut MirFunction,
+    location: Option<&SourceSpan>,
+    prelude: &mut Vec<MirInstr>,
+) -> Result<bool, String> {
+    let Some(element) = shape.kw_variadic else {
+        return Ok(false);
+    };
+    let skip = site.leading;
+    let keywords: Vec<&str> = site.kwargs.iter().map(|(name, _)| name.as_str()).collect();
+    let matched = match_call_slots(
+        shape.param_names.get(skip..).unwrap_or_default(),
+        shape.required.get(skip..).unwrap_or_default(),
+        shape
+            .positional_only
+            .and_then(|limit| limit.checked_sub(skip)),
+        shape.keyword_only.and_then(|limit| limit.checked_sub(skip)),
+        site.args.len(),
+        &keywords,
+        CallVariadics {
+            positional: shape.variadic.is_some(),
+            keyword: true,
+        },
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    let collected = matched.keyword_overflow;
+    if collected
+        .iter()
+        .any(|&index| site.kwargs[index].0 == FORWARDED_KWARGS_NAME)
+    {
+        return Ok(false);
+    }
+    let ty = keyword_collector_type(shape.param_decls, element, &collected, site, function)
+        .ok_or_else(|| "its element names a binder the call binds no argument for".to_string())?;
+    let place = MirPlace::root(
+        u32::try_from(function.n_vars).expect("variable count fits a VarId"),
+        Some(ty.clone()),
+    );
+    let collector = fresh_register(function, ty.clone(), location);
+    prelude.push(MirInstr::Call {
+        dest: collector,
+        func: FuncRef::named(&mojito_symbol::symbol::keyword_collector_constructor_symbol()),
+        raises: None,
+        args: Vec::new(),
+        kwargs: Vec::new(),
+        arg_places: Vec::new(),
+        kwarg_places: Vec::new(),
+        capture_accesses: Vec::new(),
+        param_arg_regs: Vec::new(),
+        receiver: None,
+        instantiated_args: match ty.kind() {
+            TyKind::Struct(_, arguments) => arguments.clone(),
+            _ => Vec::new(),
+        },
+        spread: None,
+    });
+    let variable = place.root;
+    function.n_vars += 1;
+    function
+        .var_names
+        .push(format!("{FORWARDED_ARGUMENT_SLOT}{}", collector.0));
+    function.var_tys.insert(variable, ty.clone());
+    prelude.push(MirInstr::DefVar {
+        var: variable,
+        src: collector,
+        binding_ty: Some(ty.clone()),
+        in_place: true,
+    });
+    for &index in &collected {
+        let (keyword, value) = site.kwargs[index].clone();
+        let key = fresh_register(function, Ty::string_literal(), location);
+        prelude.push(MirInstr::Const {
+            dest: key,
+            k: Const::Str(keyword),
+        });
+        let receiver = fresh_register(function, ty.clone(), location);
+        prelude.push(MirInstr::LoadPlace {
+            dest: receiver,
+            place: place.clone(),
+        });
+        prelude.push(MirInstr::MethodCall {
+            dest: fresh_register(function, Ty::none(), location),
+            recv: receiver,
+            method: "_insert".to_string(),
+            resolved: Some(mojito_symbol::symbol::keyword_collector_insert_symbol()),
+            raises: None,
+            reference_result: None,
+            result_adapter: None,
+            args: vec![key, value],
+            kwargs: Vec::new(),
+            recv_place: Some(Box::new(place.clone())),
+            recv_writes: true,
+            arg_places: vec![None, site.kwarg_places.get(index).cloned().flatten()],
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            param_decls: Vec::new(),
+            instantiated_args: Vec::new(),
+            spread: None,
+        });
+    }
+    let passed = fresh_register(function, ty, location);
+    prelude.push(MirInstr::UseVar {
+        dest: passed,
+        var: variable,
+        mode: UseMode::Forward,
+        constructor: None,
+    });
+    site.kwarg_places.resize(site.kwargs.len(), None);
+    let mut index = 0;
+    site.kwargs.retain(|_| {
+        index += 1;
+        !collected.contains(&(index - 1))
+    });
+    let mut index = 0;
+    site.kwarg_places.retain(|_| {
+        index += 1;
+        !collected.contains(&(index - 1))
+    });
+    site.kwargs
+        .push((FORWARDED_KWARGS_NAME.to_string(), passed));
+    site.kwarg_places.push(None);
+    Ok(true)
+}
+
+/// The type of the keyword collector a call of a callee collecting
+/// `element`s builds from the keywords at `collected`, in the caller's
+/// binder scope: `StringDict[element]` under the call's bindings, or, when
+/// they leave the element open, over the first collected operand's type,
+/// its literal materialized, as the elaborator infers it.
+fn keyword_collector_type(
+    param_decls: &[ParamDecl],
+    element: &Ty,
+    collected: &[usize],
+    site: &Site,
+    function: &MirFunction,
+) -> Option<Ty> {
+    let collector = |element: Ty| {
+        Ty::new(TyKind::Struct(
+            mojito_symbol::symbol::KEYWORD_COLLECTOR_STRUCT.to_string(),
+            vec![TyArg::Ty(element)],
+        ))
+    };
+    let unbound = |closed: &Ty| {
+        mojito_types::types::mentions(closed, &|ty| matches!(ty.kind(), TyKind::SelfType))
+            || param_decls.iter().any(|decl| {
+                !site.bound.iter().any(|(own, _)| own.id() == decl.id())
+                    && names_binder(closed, &decl.binder())
+            })
+    };
+    if let Some(closed) = close_parameter_type(element, &site.bound)
+        && !unbound(&closed)
+    {
+        return Some(collector(closed));
+    }
+    let first = collected.first()?;
+    let register = site.kwargs[*first].1;
+    function
+        .reg_types
+        .get(&register.0)
+        .map(default_literal)
+        .map(collector)
 }
 
 /// Pass the positional collector a call's `shape` declares as the one
@@ -576,7 +839,7 @@ fn build_collector(
         &keywords,
         CallVariadics {
             positional: true,
-            keyword: shape.kw_variadic,
+            keyword: shape.kw_variadic.is_some(),
         },
     ) else {
         return;

@@ -390,30 +390,16 @@ impl FnLowering<'_> {
         let mut slots = matched.slots.iter();
         for (index, expected) in abi.params.iter().enumerate() {
             if abi.kw_pack_index == Some(index) {
-                let element = match expected {
-                    LowerTy::Aggregate { ty, .. } => match ty.kind() {
-                        TyKind::Struct(_, args) => match args.as_slice() {
-                            [mojito_types::types::TyArg::Ty(element)] => Some(element.clone()),
-                            _ => None,
-                        },
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                let Some(element) = element else {
+                let Some(passed) =
+                    super::calls::keyword_collector_operand(&matched.keyword_overflow, kwargs)
+                else {
                     return Err(self.unsupported_reg(
-                        "indirect keyword pack is not a StringDict instance".into(),
+                        "an indirect call passes no keyword collector".into(),
                         dest,
                     ));
                 };
-                let keywords = matched
-                    .keyword_overflow
-                    .iter()
-                    .map(|&k| (kwargs[k].0.clone(), kwargs[k].1))
-                    .collect::<Vec<_>>();
-                let storage =
-                    self.build_keyword_collector(ctx, expected, &element, &keywords, dest)?;
-                lowered.push(storage);
+                let owned = abi.owned_params.get(index).copied().unwrap_or(true);
+                lowered.push(self.arg_value(ctx, kwargs[passed].1, expected, owned, dest)?);
                 continue;
             }
             let slot = slots.next().expect("matched named indirect slot");

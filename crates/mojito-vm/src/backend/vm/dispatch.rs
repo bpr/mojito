@@ -348,7 +348,7 @@ impl VmBackend {
                     arguments.len()
                 ))
             })?;
-        self.construct_via_init(prog, name, constructor, arguments, Vec::new())
+        self.construct_via_init(prog, name, constructor, arguments, &[])
     }
 
     /// Normalize an `Indexer` to the VM's signed index representation. Int-like
@@ -403,7 +403,7 @@ impl VmBackend {
         if let Some((struct_name, "__init__" | "__copyinit__" | "__moveinit__")) =
             prog.lifecycle_constructor(name, constructed)
         {
-            return self.construct_via_init(prog, struct_name, name, args, kwargs);
+            return self.construct_via_init(prog, struct_name, name, args, &kwargs);
         }
         match name {
             // Unlinked VM-CTFE programs have the checker-known `range` builtin
@@ -716,7 +716,7 @@ impl VmBackend {
                     // defaults, collect `*args`) when a signature is known; else a
                     // plain positional call.
                     let bound = match prog.sigs.get(name) {
-                        Some(sig) => self.bind_for_call(prog, name, sig, &args, kwargs)?.0,
+                        Some(sig) => self.bind_for_call(prog, name, sig, &args, &kwargs)?.0,
                         None => args,
                     };
                     self.call_function(prog, idx, bound)

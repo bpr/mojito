@@ -580,6 +580,25 @@ pub fn nominal_string_literal_ctor_symbol() -> String {
     format!("{STDLIB_STRING_STRUCT}.__init__$ov$StringLiteral")
 }
 
+/// The struct a `**kwargs` collector is, `StringDict[V]`, as upstream's.
+pub const KEYWORD_COLLECTOR_STRUCT: &str = "StringDict";
+
+/// The keyword collector's empty constructor, which a call building one names.
+///
+/// Upstream's call constructs the dictionary its callee's `**kwargs` takes
+/// the same way.
+pub fn keyword_collector_constructor_symbol() -> String {
+    format!("{KEYWORD_COLLECTOR_STRUCT}.__init__")
+}
+
+/// The `_insert` a call building a keyword collector names per keyword.
+///
+/// It is the overload taking the keyword's literal key, as upstream's call
+/// inserts each keyword under its `StringLiteral`.
+pub fn keyword_collector_insert_symbol() -> String {
+    format!("{KEYWORD_COLLECTOR_STRUCT}._insert$ov$StringLiteral$V$Movable")
+}
+
 /// Whether a constructor declaration is its struct's list-literal
 /// initializer, the one a collection display (`[a, b]`) selects: variadic,
 /// with a `__list_literal__` keyword.

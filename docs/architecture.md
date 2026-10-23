@@ -5825,9 +5825,8 @@ point where a slot declared in a loop is uninitialized again.
   call-graph walk follows a `closure.make` as an edge, so the nested body
   is finished first and a nested `def` that makes its own closure lies on
   a cycle. The callee must have no region binders, a struct receiver if
-  it has one, be called with no keywords collected afresh into
-  `**kwargs` (the dictionary the call builds, R1070) and, unless through
-  a closure, no capture accesses, capture
+  it has one, and, unless through
+  a closure, be called with no capture accesses, capture
   nothing by copy or move, return a value rather than a reference, and
   hold no `try`, closure, or compile-time assertion at any depth; any
   other call stays a call. The call's positional and keyword arguments bind to the
@@ -5849,10 +5848,10 @@ point where a slot declared in a loop is uninitialized again.
   `read` collector, the moved register for an owned one; a spread the
   inlined body itself keeps, now typed the bound elements' tuple, stays
   the one operand its call passes (`verify_pack_spread` admits it). A
-  forwarded `**kwargs^` (the `**` keyword, `FORWARDED_KWARGS_NAME`) binds
-  the keyword collector's slot whole as an owned argument, the matcher
-  never seeing it, as the pin binds a forward to another `**kwargs`
-  alone; keywords collected afresh keep the call (R1070). Each omitted argument
+  keyword collector the call passes (the `**` keyword,
+  `FORWARDED_KWARGS_NAME`), the dictionary it builds or a forwarded
+  `**kwargs^`, binds the callee's collector slot whole as an owned
+  argument, the matcher never seeing it. Each omitted argument
   binds a fresh slot that the call's block initializes from its default
   (the declaration's `CheckedConst`), materialized as upstream's parser
   materializes it in the caller: a literal as a `const`, crossing the
@@ -6158,7 +6157,8 @@ point where a slot declared in a loop is uninitialized again.
   generators. The table names each member a backend reaches from a
   value's type rather than from the instance a call names, too
   (`mir::DISPATCHED_MEMBERS`: display, a writer's `write_string`, hashing,
-  equality, `__int__`, a keyword collector's `__setitem__`, `__call__`),
+  equality, `__int__`, the `__setitem__` the VM's store through an
+  indexed place dispatches, `__call__`),
   keyed by the template's method spelling, overload qualifier included,
   and the backends select among a member's entries with
   `symbol::MemberCandidates`, the overload rules of
@@ -6191,10 +6191,10 @@ point where a slot declared in a loop is uninitialized again.
   (R1278) and a synthesized `T(copy=x)` keep the struct's name. A constructor that removed one of its
   struct's parameters is owner-less like any other method, and the VM builds the call's destination
   type through it (`Prog::lifecycle_constructor`, `CallTypes::constructed`),
-  so `Box[1](1)` and `Box[2](2)` share one `Box.__init__$mono`. The two
-  constructors a backend runs with no call naming them, a keyword
-  collector's empty one and a slice bound's `Optional` ones, are member
-  table entries (`mir::CONSTRUCTED_MEMBERS`) their demand sites record. A static call's spelled receiver `S[n]` is a
+  so `Box[1](1)` and `Box[2](2)` share one `Box.__init__$mono`. No
+  member table records a constructor: a keyword collector's empty one is
+  the instance the call building the collector names (R1070), and a slice
+  bound's `Optional` ones are those its read names. A static call's spelled receiver `S[n]` is a
   forward of `n` to the struct parameter the callee removed; in a body
   that removed `n` it is the erased `S[_REMOVED_ARG]`, which binds nothing
   and names the erased instance (`Specializer::bind_static_receiver`). A body lifted from a compile-time
@@ -6726,14 +6726,18 @@ Calling a function:
 For a homogeneous `var **kwargs: T` collector, the checker leaves explicit parameter
 binding unchanged and type-checks unmatched keyword values as `T`. The same
 logic participates in generic inference and in free, instance, static, and
-bounded-trait method selection. The ABI preserves unmatched pairs in call-site
-order. The VM constructs the implicitly linked, self-hosted `StringDict[T]`
-directly in the collector's callee slot; it is an owned mutable local and never
-participates in caller write-back. The native caller builds the same
-instance in fresh storage through its empty constructor and one `__setitem__`
-per collected keyword, then passes it owned. `callee(**kwargs^)` consumes that dictionary,
-moves its ordered entries back into the shared binder, and retains ordinary
-duplicate/missing-keyword diagnostics and the checker-selected effect contract.
+bounded-trait method selection. As upstream's call emission does, the call
+builds the collector: `mir::fill_omitted_arguments` emits the implicitly
+linked, self-hosted `StringDict[T]`'s empty constructor into a forwarding
+slot, one `_insert` per unmatched keyword in call-site order (keyed by the
+keyword's `StringLiteral`), and passes the slot as the call's one `**`
+keyword operand, the shape a `callee(**kwargs^)` forward already has. A
+forward binds the collector alone: a keyword no named parameter claims
+beside it is rejected, as at the pin
+(`mojito_ast::call::bind_keyword_forward`). The VM and Pliron bind that
+operand to the collector's slot whole, an owned argument that never
+participates in caller write-back, and the verifier rejects a call of a
+keyword-collecting callee that passes none.
 6. binds value parameters into frame locals
 7. runs the callee's block loop
 8. returns the result and, where needed, final variable slots for write-back
@@ -6741,7 +6745,7 @@ duplicate/missing-keyword diagnostics and the checker-selected effect contract.
 `mut` and explicitly mutable `ref[origin]` parameters receive handles to the
 simple caller places retained in MIR. Keyword places are resolved after argument
 binding by the selected parameter name, so reordering and ordinary defaults do
-not lose identity; a value synthesized by `**kwargs^` has no writable source
+not lose identity; a keyword collector the call passes has no writable source
 place. Inside a structured region, a temporary caller-frame mirror makes these
 the same frame/slot handles used by continuation-driven calls and is committed
 on both normal and raising outcomes. Bare `ref` remains parametrically mutable

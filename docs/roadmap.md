@@ -299,31 +299,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R1070 A keyword collector's constructor stays as long as its
-  struct does**
-
-  `StringDict[T].__init__`, which builds a `**kwargs` collector, stays in
-  the concrete program while its struct is live, even once every callee
-  declaring that collector is gone, where upstream's call builds the
-  collector and names its constructor.
-  - The VM's call binding and the native call lowering build the
-    collector with no call naming the constructor, so the elaborator
-    records it in the struct's member table, which
-    `eliminate-dead-symbols` keeps whole.
-  - Fix by having MIR lowering emit the collector's construction and one
-    `__setitem__` per keyword in the caller, passing it as the forwarded
-    `**kwargs^` path already passes one, then drop the table record and
-    `mir::CONSTRUCTED_MEMBERS`.
-  - Done when a program whose only `**kwargs` callee is dead keeps no
-    `StringDict` constructor and the HEAD differential is clean.
-  - Probe: `named(a=1, b=2)` over `@always_inline("nodebug") def
-    named(var **kwargs: Int)` keeps its call inlined, where the pin
-    inlines it: `inline-parametric` binds a forwarded `**kwargs^` whole
-    (R1079) but will not build the dictionary the call builds here.
-  - Found while landing R1030 (2026-10-16), whose slice-bound half landed.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1031 The VM still dispatches an indirect call on a struct value
   by name**
 
@@ -959,21 +934,6 @@ change that needs a new `MJRT_ABI_VERSION`.
     `_FormatCurlyEntry._format`, so native `format` of such a struct is
     wrong too.
   - Found while landing R421 (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R591 Natively, forwarding a keyword collector fails to verify**
-
-  Problem: a call forwarding `**opts` into a callee's own `var **opts`
-  collector stops natively with "Function call has incorrect type:
-  argument 2 type mismatch: expected builtin.integer i64, got llvm.ptr",
-  where the VM and the pin run it.
-  - `assets/ok/trait_default_wrapper_conventions.mojo` hits it through a
-    trait default's wrapper, so its `exe-differential` parity row is
-    stale; HEAD before R551 fails the same way.
-  - The native call lowering builds a fresh collector from the keyword
-    overflow, so the forwarded `**` collector lands as one element.
-  - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

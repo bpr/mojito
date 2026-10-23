@@ -922,28 +922,6 @@ fn reachable_set<'p>(
                     queue.push_back(*callee);
                 }
             }
-            // A `**kwargs` callee's callers build its collector through the
-            // instance's empty constructor and `__setitem__`.
-            if let Some(element) = &declaration.kw_variadic {
-                let collector = mojito_symbol::symbol::instance_symbol(
-                    "StringDict",
-                    &[mojito_symbol::symbol::InstanceArg::Ty(element.clone())],
-                );
-                let members = structs
-                    .get(collector.as_str())
-                    .into_iter()
-                    .flat_map(|declaration| {
-                        declaration
-                            .members_of("__init__")
-                            .chain(declaration.members_of("__setitem__"))
-                    })
-                    .filter_map(|entry| functions.get_key_value(entry.symbol.as_str()));
-                for (callee, _) in members {
-                    if reachable.insert(*callee) {
-                        queue.push_back(*callee);
-                    }
-                }
-            }
         }
         visit_call_edges(
             &function.blocks,

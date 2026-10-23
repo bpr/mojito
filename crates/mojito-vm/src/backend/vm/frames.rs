@@ -329,7 +329,7 @@ impl VmBackend {
                 args.iter()
                     .map(|register| caller.registers[register.0 as usize].clone()),
             );
-            let keywords = kwargs
+            let keywords: Vec<(String, Value)> = kwargs
                 .iter()
                 .map(|(name, register)| {
                     (name.clone(), caller.registers[register.0 as usize].clone())
@@ -338,7 +338,7 @@ impl VmBackend {
             let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
             let (mut bound, slots) = match prog.sigs.get(&function_name) {
                 Some(signature) => {
-                    self.bind_for_call(prog, &function_name, signature, &positional, keywords)?
+                    self.bind_for_call(prog, &function_name, signature, &positional, &keywords)?
                 }
                 None => (
                     positional,
@@ -487,7 +487,7 @@ impl VmBackend {
             let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
             let (mut bound, slots) = match prog.sigs.get(&function_name) {
                 Some(signature) => {
-                    self.bind_for_call(prog, &function_name, signature, &positional, keywords)?
+                    self.bind_for_call(prog, &function_name, signature, &positional, &keywords)?
                 }
                 None => (
                     positional,
@@ -585,7 +585,7 @@ impl VmBackend {
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
         let (mut bound, slots) = match prog.sigs.get(&func.0) {
             Some(signature) => {
-                self.bind_for_call(prog, &func.0, signature, &positional, keywords)?
+                self.bind_for_call(prog, &func.0, signature, &positional, &keywords)?
             }
             None => (
                 positional,

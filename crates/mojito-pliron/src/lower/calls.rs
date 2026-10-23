@@ -316,24 +316,34 @@ impl FnLowering<'_> {
                 Some((index, value))
             }
         };
+        // The keyword collector is the call's one keyword overflow operand:
+        // the dictionary it builds or the one it forwards (`**kwargs^`), as
+        // upstream's call passes it; the callee owns it.
         let kw_pack = match kw_variadic {
             None => None,
-            Some((element, Some(index))) => {
-                let Some(collector) = params.get(index) else {
+            Some((_, Some(index))) => {
+                let Some(collector) = params.get(index).cloned() else {
                     return Err(self.unsupported_reg(
                         format!("keyword pack of `{name}` lacks a parameter slot"),
                         dest,
                     ));
                 };
-                let collector = collector.clone();
-                let keywords = matched
-                    .keyword_overflow
-                    .iter()
-                    .map(|&k| (kwargs[k].0.clone(), kwargs[k].1))
-                    .collect::<Vec<_>>();
-                let storage =
-                    self.build_keyword_collector(ctx, &collector, &element, &keywords, dest)?;
-                Some((index, storage))
+                let Some(passed) = keyword_collector_operand(&matched.keyword_overflow, kwargs)
+                else {
+                    return Err(self.unsupported_reg(
+                        format!("a call of `{name}` passes no keyword collector"),
+                        dest,
+                    ));
+                };
+                let value = self.place_backed_arg_value(
+                    ctx,
+                    kwargs[passed].1,
+                    &collector,
+                    owned.get(index).copied().unwrap_or(true),
+                    kwarg_places.get(passed).and_then(Option::as_ref),
+                    dest,
+                )?;
+                Some((index, value))
             }
             Some((_, None)) => {
                 return Err(self.unsupported_reg(
@@ -434,90 +444,6 @@ impl FnLowering<'_> {
             lowered.push(value);
         }
         Ok(lowered)
-    }
-
-    /// The `**kwargs` collector of one call, built as the VM's
-    /// `make_kwargs_dict` builds it: the collector instance's empty
-    /// constructor into fresh storage, then one `__setitem__` per collected
-    /// keyword in call order. Each value enters the collector owned; the
-    /// callee owns and destroys the collector.
-    pub(super) fn build_keyword_collector(
-        &mut self,
-        ctx: &mut Context,
-        collector: &LowerTy,
-        element: &Ty,
-        keywords: &[(String, Reg)],
-        dest: Reg,
-    ) -> Result<Value, PlironError> {
-        let LowerTy::Aggregate { ty, layout } = collector else {
-            return Err(self.unsupported_reg("keyword pack lacks aggregate storage".into(), dest));
-        };
-        let TyKind::Struct(struct_name, _) = ty.kind() else {
-            return Err(self.unsupported_reg("keyword pack is not a StringDict".into(), dest));
-        };
-        let (Some(init), Some(setitem)) = (
-            self.struct_member(struct_name, "__init__", 0),
-            self.struct_member(struct_name, "__setitem__", 2),
-        ) else {
-            return Err(self.unsupported_reg(
-                format!("keyword pack `{struct_name}` lacks a compiled `__init__`/`__setitem__`"),
-                dest,
-            ));
-        };
-        let storage = self.entry_alloca(ctx, layout.size.max(1), layout.align.max(1));
-        self.emit_void_call(ctx, init, vec![storage], dest)?;
-        let Some(value_param) = self.signatures[setitem].params.get(2).cloned() else {
-            return Err(self.unsupported_reg(format!("`{setitem}` takes no value"), dest));
-        };
-        for (keyword, reg) in keywords {
-            let key = self.entry_alloca(ctx, 24, 8);
-            let len = self.uint_constant(ctx, keyword.len() as u64);
-            let data = self.emit_alloc(ctx, len, 1, dest);
-            let global = self.shared.intern_string(ctx, keyword.as_bytes());
-            let literal = self.global_address(ctx, &global, dest);
-            self.mem_copy(ctx, data, literal, keyword.len() as u64, dest);
-            self.store_string_fields(ctx, key, data, len, len, dest);
-            let value = match &value_param {
-                LowerTy::Scalar(scalar) => self.reg_value(ctx, *reg, *scalar)?,
-                LowerTy::Aggregate { layout, .. } => {
-                    let slot = self.entry_alloca(ctx, layout.size.max(1), layout.align.max(1));
-                    self.store_to(ctx, slot, element, *reg)?;
-                    slot
-                }
-                LowerTy::ZeroSized => {
-                    return Err(
-                        self.unsupported_reg("zero-sized keyword pack element".into(), dest)
-                    );
-                }
-            };
-            self.emit_void_call(ctx, setitem, vec![storage, key, value], dest)?;
-            self.emit_free(ctx, data);
-        }
-        Ok(storage)
-    }
-
-    /// Call compiled `name`, which neither raises nor returns a value, with
-    /// fully bound operands; `anchor` only locates the emitted operations.
-    pub(super) fn emit_void_call(
-        &mut self,
-        ctx: &mut Context,
-        name: &str,
-        operands: Vec<Value>,
-        anchor: Reg,
-    ) -> Result<(), PlironError> {
-        let signature = &self.signatures[name];
-        if signature.returns_value || signature.sret.is_some() || signature.outcome.is_some() {
-            return Err(self.unsupported_reg(format!("`{name}` is not a void call"), anchor));
-        }
-        let func_ty = signature.func_ty;
-        let callee: Identifier = signature
-            .mangled
-            .as_str()
-            .try_into()
-            .expect("mangled names are identifier-safe");
-        let call = CallOp::new(ctx, CallOpCallable::Direct(callee), func_ty, operands);
-        self.append(ctx, call.get_operation(), Some(anchor));
-        Ok(())
     }
 
     /// The omitted-argument value of one parameter: the folded literal at the
@@ -875,6 +801,18 @@ impl FnLowering<'_> {
             }
         }
         Ok(())
+    }
+}
+
+/// The index in `kwargs` of the keyword collector a call passes, its one
+/// keyword overflow operand at `overflow`, spelled `**`.
+pub(super) fn keyword_collector_operand(
+    overflow: &[usize],
+    kwargs: &[(String, Reg)],
+) -> Option<usize> {
+    match overflow {
+        [passed] if kwargs[*passed].0 == mojito_ast::ast::FORWARDED_KWARGS_NAME => Some(*passed),
+        _ => None,
     }
 }
 

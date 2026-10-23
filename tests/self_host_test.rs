@@ -547,15 +547,17 @@ fn method_overloads_distinguish_fixed_and_keyword_collector_shapes() {
 }
 
 #[test]
-fn forwarded_method_kwargs_preserve_duplicate_detection() {
+fn forwarded_method_kwargs_reject_keywords_beside_the_forward() {
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
         "@fieldwise_init\nstruct Relay:\n    var marker: Int\n    def target(self, var **options: Int):\n        pass\n    def forward(self, var **options: Int):\n        self.target(first=0, **options^)\n\ndef main():\n    var relay = Relay(0)\n    relay.forward(first=1)\n",
     );
-    let error = run(&main).expect_err("forwarded duplicate must fail at runtime binding");
+    // The pin rejects a keyword beside a forwarded `**kwargs^`; the method's
+    // only candidate does not serve the call.
+    let error = run(&main).expect_err("a keyword beside a forward must be rejected");
     assert!(
-        error.contains("more than once"),
+        error.contains("no overload matches"),
         "unexpected error: {error}"
     );
 }

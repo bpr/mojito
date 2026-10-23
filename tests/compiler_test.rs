@@ -4884,3 +4884,33 @@ fn comptime_if_false_parameter_is_removed() {
         .expect("`f`");
     assert_eq!(f.removed_params, [mojito::param_expr::ParamId::new("f", 0)]);
 }
+
+#[test]
+fn keyword_collector_construction_is_named_by_the_call() {
+    // The call builds its callee's `**kwargs` collector, the collector's
+    // constructor and one `_insert` per keyword, as upstream's call does,
+    // so an `@always_inline("nodebug")` callee inlines and no member table
+    // records the constructor.
+    let program = Compiler::default()
+        .compile_source(
+            "@always_inline(\"nodebug\")\ndef named(var **kwargs: Int) -> Int:\n    return len(kwargs)\n\ndef main():\n    print(named(a=1, b=2))\n",
+            std::path::Path::new("/tmp/mojito_keyword_collector_construction.mojo"),
+        )
+        .expect("compile the keyword call");
+    let concrete = program.concrete_mir().expect("elaborate");
+    assert!(
+        concrete
+            .program
+            .functions
+            .iter()
+            .all(|(name, _)| name != "named"),
+        "the `**kwargs` callee stays a call"
+    );
+    for declaration in &concrete.program.declarations.structs {
+        assert!(
+            declaration.members_of("__init__").next().is_none(),
+            "`{}` records a constructor in its member table",
+            declaration.name
+        );
+    }
+}
