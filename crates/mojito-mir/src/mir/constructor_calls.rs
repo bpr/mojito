@@ -5,7 +5,9 @@
 //! variant payload store (`variant.make`, `variant.set`, `variant.replace`),
 //! and reference-read method or iterator result (`result_adapter`) names
 //! the constructor its value's struct records as its `constructor`
-//! operand, so the symbol walk, the elaborator's respell, and
+//! operand, and each call naming a struct over one `copy=` keyword
+//! (`S(copy=x)` at a struct whose copy initializer is synthesized) becomes
+//! that struct's copy ([`crate::mir::struct_copy`]), so the symbol walk, the elaborator's respell, and
 //! `eliminate-dead-symbols` follow it as they follow a call's callee, and no
 //! backend looks the constructor up from the value's type again. A site
 //! whose type the member table names no such member for, a symbolic one
@@ -18,8 +20,8 @@ use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, UseMode, instruction_regions_mut,
 };
 use mojito_hir::hir::VarId;
-use mojito_types::types::{Ty, TyKind, VariantIndex};
-use std::collections::HashMap;
+use mojito_types::types::{Ty, TyKind, VariantIndex, struct_template};
+use std::collections::{HashMap, HashSet};
 
 /// Name the constructor of every copy and move in `function`, regions
 /// included.
@@ -83,7 +85,15 @@ fn name_in_blocks(
             .map(str::to_owned)
     };
     let copied = |ty: Option<&Ty>| named(ty, Some("__copyinit__"));
+    // A copy that is no call leaves its binding no longer in place.
+    let mut copied_values = HashSet::new();
     for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        if let Some(copy) = struct_named_copy(instruction, reg_types, declarations) {
+            if let MirInstr::CopyValue { dest, .. } = &copy {
+                copied_values.insert(dest.0);
+            }
+            *instruction = copy;
+        }
         match instruction {
             MirInstr::UseVar {
                 var,
@@ -94,6 +104,9 @@ fn name_in_blocks(
             MirInstr::CopyValue {
                 dest, constructor, ..
             } => *constructor = copied(reg_types.get(&dest.0)),
+            MirInstr::DefVar { src, in_place, .. } if copied_values.contains(&src.0) => {
+                *in_place = false;
+            }
             MirInstr::MakeClosure { captures, .. } => {
                 for capture in captures {
                     capture.constructor = named(
@@ -143,4 +156,43 @@ fn name_in_blocks(
             name_in_blocks(region, var_tys, reg_types, declarations);
         }
     }
+}
+
+/// The copy a call naming the struct it builds over one `copy=` keyword
+/// (`S(copy=x)`) is; `None` for any other instruction.
+fn struct_named_copy(
+    instruction: &MirInstr,
+    reg_types: &HashMap<u32, Ty>,
+    declarations: &MirDeclarations,
+) -> Option<MirInstr> {
+    let MirInstr::Call {
+        dest,
+        func,
+        args,
+        kwargs,
+        kwarg_places,
+        ..
+    } = instruction
+    else {
+        return None;
+    };
+    let [(keyword, source)] = kwargs.as_slice() else {
+        return None;
+    };
+    let ty = reg_types.get(&dest.0)?;
+    let TyKind::Struct(name, _) = ty.kind() else {
+        return None;
+    };
+    (keyword == "copy"
+        && args.is_empty()
+        && struct_template(name) == struct_template(&func.0)
+        && declarations.structure(struct_template(name)).is_some())
+    .then(|| {
+        crate::mir::struct_copy(
+            *dest,
+            ty,
+            (*source, kwarg_places.first().cloned().flatten()),
+            declarations,
+        )
+    })
 }

@@ -263,7 +263,7 @@ pub fn elaborate_drops_function(
     let scope = binder_scope(name, |name| declarations.function(name));
     let slots = materialized_parameter_slots(&function, &scope);
     let mut elaborated = elaborate_drops(function, &slots, declarations);
-    elide_dying_copies(&mut elaborated, declarations);
+    elide_dying_copies(&mut elaborated);
     refine_deinit_fields(&mut elaborated, declarations);
     name_destructors(&mut elaborated, declarations);
     mojito_mir::mir::name_constructors(&mut elaborated, declarations);

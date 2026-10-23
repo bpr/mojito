@@ -107,7 +107,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent } },
-              call { dest: %r1, func: Box, raises: absent, args: [], kwargs: [keyword { name: copy, value: %r0 }], arg_places: [], kwarg_places: [present(place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent })], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: "Box.__copyinit__", raises: absent, args: [], kwargs: [keyword { name: copy, value: %r0 }], arg_places: [], kwarg_places: [present(place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent })], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }

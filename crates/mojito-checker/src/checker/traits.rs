@@ -1341,10 +1341,12 @@ impl Checker {
     }
 
     /// The witness table of struct `name`'s conformance to the
-    /// compiler-declared trait `tr` (`Comparable`).
+    /// compiler-declared trait `tr` (`Defaultable`, `Comparable`).
     ///
     /// It records, its parents' requirements included, each requirement the
-    /// struct declares a method for whose one parameter is the struct.
+    /// struct declares a method for whose parameters are the requirement's,
+    /// `Self` the struct: the nullary `__init__` overload for
+    /// `Defaultable`, a comparison taking the struct for the others.
     fn compiler_trait_witness_table(
         &self,
         name: &str,
@@ -1363,7 +1365,15 @@ impl Checker {
             );
             witnesses.extend(declaration.requirements.iter().filter_map(|requirement| {
                 let got = methods.get(&requirement.name)?.iter().find(|got| {
-                    got.has_self && matches!(got.params.as_slice(), [param] if param == self_ty)
+                    got.has_self
+                        && got.variadic.is_none()
+                        && got.kw_variadic.is_none()
+                        && got.params.len() == requirement.param_types.len()
+                        && got
+                            .params
+                            .iter()
+                            .zip(&requirement.param_types)
+                            .all(|(got, want)| *got == substitute_self(want, self_ty))
                 })?;
                 Some(Witness {
                     requirement: requirement.dispatch.clone(),

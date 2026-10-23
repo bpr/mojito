@@ -2756,6 +2756,7 @@ fn instantiated<'c>(
         &mut function.n_regs,
         &mut function.reg_types,
         &instantiation,
+        declarations,
     )
     .ok()?;
     if constructs_binder(&function.blocks, &instantiation.types) {

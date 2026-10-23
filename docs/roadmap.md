@@ -315,36 +315,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R1283 `T()` and `T(copy=x)` at a struct call the struct by name,
-  not its constructor**
-
-  `mir::construct_type_parameters` writes a struct binding's construction
-  as a call naming the struct (`call Counter`, `call Counter(copy=c)`),
-  which the elaborator resolves to an `__init__` overload by arity and the
-  backends' copy path by lookup, where upstream's substitution folds the
-  `Defaultable`/`Copyable` witness to the member symbol.
-  - The lever: the checker records a `Defaultable` witness table naming
-    the nullary `__init__` overload, which `compiler_trait_witness_table`
-    (`checker/traits.rs`) cannot match today because it requires one
-    `Self` parameter; the copy arm names the member table's
-    `__copyinit__`.
-  - Both calls pass the struct's arguments as `instantiated_args`, as a
-    direct `S()` / `S(copy=x)` lowers.
-  - A struct with no `__copyinit__` member (a trivial synthesized copy)
-    copies by `value.copy`, which fixes R724's `T(copy=x)` half.
-  - Once it lands, the struct-named copy path goes: the VM's
-    `construct_via_copy` arm in `vm/dispatch.rs` and the copy form of
-    Pliron's `lower_constructor` (`lower/ctors.rs`), which copies
-    bitwise or by fork rather than through the member it would name.
-  - Probe: `tests/mir_passes/inline-parametric/construct_type_param.mir`
-    and `copy_type_param.mir` show `call Counter`; done when they name
-    `Counter.__init__` and `Counter.__copyinit__`, and
-    `assets/ok/always_inline_nodebug_type_construction.mojo` prints as
-    before.
-  - Found while landing R1097 (2026-10-22).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1098 `canonicalize` keeps a `call.indirect` whose callee is a
   function constant**
 
@@ -2600,20 +2570,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R724 `S(copy=s)` over a synthesized copy constructor fails at run
-  time**
-
-  Problem: `var d = S(copy=s)` over a `@fieldwise_init struct S(Copyable,
-  Movable)` with no spelled copy constructor stops with "unsupported
-  feature: vm: struct 'S' has no copy constructor", where the pin prints
-  the copy.
-  - A spelled `__init__(out self, *, copy: Self)` runs.
-  - The explicit `copy=` construction does not reach the synthesized
-    copy the implicit copy path uses.
-  - Found while landing R717 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1212 A dereference of a pointer an ordinary call returns is not a
   place**
 
@@ -3056,6 +3012,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: a trait default body for `Defaultable.__init__` over
     `reflect[Self]`'s fields, the way the `Hashable`/`Writable` defaults
     read them.
+  - The synthesized `__init__` must be the member the struct's
+    `Defaultable` witness table records (`compiler_trait_witness_table`
+    in `checker/traits.rs`), since `T()` at a struct names that witness
+    (`MirDeclarations::default_initializer`).
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -7600,8 +7560,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - `TrivialRegisterPassable` refines `ImplicitlyCopyable`, which refines
     `Copyable`, so the struct's copy members should be synthesized as if
     `Copyable` were declared; declaring it makes every case run.
-  - Likely the same missed refinement as R861; R724 is the `copy=`
-    construction half for a declared `Copyable`.
+  - Likely the same missed refinement as R861.
   - Pinned by `conformance/probes/trivial_register_passable_copy_method.mojo`
     and `trivial_register_passable_generic_copy.mojo`; promote them to
     `assets/ok/` when they run.
@@ -10455,6 +10414,14 @@ residue found inside a task moves to the task that owns its fix.
     `assets/ok/hashable_hasher_protocol.mojo`,
     `hasher_upstream_spellings.mojo`, and `hasher_user_conformer.mojo`
     spell `finish(var self)`.
+  - Probe: `hasher_user_conformer.mojo` with `Defaultable` dropped from
+    `SumHasher(Defaultable, Hasher)` passes the check, which lets `Hasher`
+    stand for `Defaultable` (`checker/call_inference.rs`,
+    `method_calls/type_receivers.rs`) under the bundled
+    `hash[HasherType: Hasher]`, where the pin rejects it. Since R1283
+    names the `Defaultable` witness at `HasherType()`, it fails at
+    elaboration ("constructs the type `SumHasher` … after
+    monomorphization") rather than in the check.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
   - Depends on nothing.
   - Model: Opus, Not Planned.

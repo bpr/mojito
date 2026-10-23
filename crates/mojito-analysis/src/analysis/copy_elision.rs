@@ -1,7 +1,8 @@
-//! Copy elision at a dying source: after drop elaboration, a named-struct
-//! copy construction `Name(copy=v)` whose whole owned source `v` dies right
-//! at it becomes `v`'s move, as Mojo's lifetime checker turns a copy
-//! initialization followed by the source's destruction into a move.
+//! Copy elision at a dying source: after drop elaboration, a copy
+//! construction `Name(copy=v)`, a call of the struct's `__copyinit__`, whose
+//! whole owned source `v` dies right at it becomes `v`'s move, as Mojo's
+//! lifetime checker turns a copy initialization followed by the source's
+//! destruction into a move.
 //!
 //! The rewrite keys on the `DropVar` drop elaboration placed directly after
 //! the construction (or after its in-place binding): that drop is the proof
@@ -35,9 +36,8 @@ use super::scan::{for_each_instr_deep, may_raise, var_def, var_uses, vars_moved}
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_operand_regs;
 use mojito_mir::mir::{
-    FORWARDED_ARGUMENT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace,
-    READ_TEMPORARY_SLOT, Reg, UseMode, instruction_regions, instruction_regions_mut,
-    terminator_regs,
+    FORWARDED_ARGUMENT_SLOT, MirBlock, MirFunction, MirInstr, MirPlace, READ_TEMPORARY_SLOT, Reg,
+    UseMode, instruction_regions, instruction_regions_mut, terminator_regs,
 };
 use std::collections::HashMap;
 
@@ -45,12 +45,11 @@ use std::collections::HashMap;
 /// regions included, into a move of its source, into its source's
 /// forwarding when an owned parameter takes it, or into its source's loan
 /// when a read parameter takes it.
-pub(super) fn elide_dying_copies(function: &mut MirFunction, declarations: &MirDeclarations) {
+pub(super) fn elide_dying_copies(function: &mut MirFunction) {
     let mut uses = HashMap::new();
     count_operand_uses(&function.blocks, &mut uses);
     let elision = Elision {
         var_names: &function.var_names,
-        declarations,
         uses,
         mentions: count_slot_mentions(&function.blocks),
     };
@@ -67,7 +66,6 @@ pub(super) fn elide_dying_copies(function: &mut MirFunction, declarations: &MirD
 /// What the rewrite reads of the whole function.
 struct Elision<'a> {
     var_names: &'a [String],
-    declarations: &'a MirDeclarations,
     /// Operand uses of each register.
     uses: HashMap<u32, usize>,
     /// Mentions of each slot outside its `DropVar`s.
@@ -134,7 +132,7 @@ fn rewrite_blocks(blocks: &mut [MirBlock], elision: &Elision, lent: &mut Vec<Loa
         let mut at = 1;
         while at < block.instrs.len() {
             let instrs = &mut block.instrs;
-            let Some(source) = dying_copy(instrs, at, elision.declarations, &elision.uses) else {
+            let Some(source) = dying_copy(instrs, at, &elision.uses) else {
                 at += 1;
                 continue;
             };
@@ -160,12 +158,7 @@ struct DyingCopy {
 /// The source slot and its death of the copy construction at `at`, when the
 /// construction copies a whole slot loaded just before it and that slot's
 /// `DropVar` follows it (or its in-place binding) in the run of drops.
-fn dying_copy(
-    instrs: &[MirInstr],
-    at: usize,
-    declarations: &MirDeclarations,
-    uses: &HashMap<u32, usize>,
-) -> Option<DyingCopy> {
+fn dying_copy(instrs: &[MirInstr], at: usize, uses: &HashMap<u32, usize>) -> Option<DyingCopy> {
     let MirInstr::Call {
         dest,
         func,
@@ -180,11 +173,10 @@ fn dying_copy(
     let [(keyword, operand)] = kwargs.as_slice() else {
         return None;
     };
-    let copy_constructor = declarations.structure(&func.0).is_some()
-        || matches!(
-            mojito_symbol::symbol::lifecycle_constructor(&func.0),
-            Some((_, "__copyinit__"))
-        );
+    let copy_constructor = matches!(
+        mojito_symbol::symbol::lifecycle_constructor(&func.0),
+        Some((_, "__copyinit__"))
+    );
     if keyword != "copy" || !args.is_empty() || !copy_constructor {
         return None;
     }

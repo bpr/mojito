@@ -359,7 +359,13 @@ impl Specializer<'_> {
             &locals,
             &bindings.callables,
         )?;
-        default_construct_parameters(blocks, tables.n_regs, tables.reg_types, iteration)?;
+        default_construct_parameters(
+            blocks,
+            tables.n_regs,
+            tables.reg_types,
+            iteration,
+            &self.source.declarations,
+        )?;
         substitute_blocks_metadata(blocks, iteration)?;
         self.answer_param_constants(
             template,

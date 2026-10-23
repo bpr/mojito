@@ -1184,8 +1184,12 @@ and MIR lowers it as `ConstructTypeParam` with its `element` index (schema
 elaborator's `default_construct_parameters` (`mono/substitute.rs`) wraps
 `mir::construct_type_parameters` (`mojito-mir/src/mir/type_construction.rs`),
 which writes every construction whose type the bindings decide as that
-type's own — a nullary one as its default construction, `T(copy=x)` as the
-value copy or the struct's `copy=` call — before unrolling for a parameter
+type's own — a nullary one as its default construction, at a struct the
+call of the `__init__` its `Defaultable` witness table records
+(`MirDeclarations::default_initializer`), `T(copy=x)` as the value copy or
+`mir::struct_copy`'s, each call passing the struct's arguments as
+`instantiated_args`, as upstream's substitution folds the witness to the
+member symbol — before unrolling for a parameter
 or a literal index, and in each unrolled copy for the loop's index; a
 binding of the element under the loop takes the copy's own slot at its
 element type. `inline-parametric` runs the same rewrite on an inlined
@@ -4839,7 +4843,12 @@ moving `UseVar`, each `CopyValue`, each owned `MakeClosure` capture, each
 `MethodCall` or `TryNext` result adapter's `constructor` to the
 `__copyinit__` or `__moveinit__` the value's struct records
 (`MirDeclarations::struct_member`), as upstream's copy/move insertion leaves
-a call naming the constructor at each site. Lowering runs it on every body once the member tables exist (the
+a call naming the constructor at each site. A call naming a struct over one
+`copy=` keyword (`S(copy=x)` over a synthesized copy, which the check
+resolves to no written constructor) becomes `mir::struct_copy`'s: the call
+of the struct's recorded `__copyinit__` with its arguments as
+`instantiated_args`, or a `CopyValue` where its copy is trivial, which
+leaves the binding no longer in place. Lowering runs it on every body once the member tables exist (the
 `close_register_types` loops of `lower_program` and `lower_package_unit`),
 and each later producer of a copy or move reruns it: drop elaboration after
 copy elision, `inline-parametric` after a splice substitutes a callee's
@@ -5068,8 +5077,8 @@ current Mojo:
   the requirement the bound trait or a parent declares, found by the call's
   `__trait_dispatch.*` symbol (`MirDeclarations::bound_requirement`), as
   upstream binds such a call to the trait's declared requirement. The
-  compiler-known comparison traits, which the bundled library does not yet
-  declare, answer from `compiler_trait_declaration`. A
+  compiler-known `Defaultable` and comparison traits, which the bundled
+  library does not yet declare, answer from `compiler_trait_declaration`. A
   memory-only parameter takes the argument's address: a generic `T`, a
   variadic collector, or a callee with no declaration (`t.n` fed to `print`).
   Its owner then lives through the call, so the owner's `DropVar` follows the

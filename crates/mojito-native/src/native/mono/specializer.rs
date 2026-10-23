@@ -1134,6 +1134,7 @@ impl<'a> Specializer<'a> {
             &mut function.n_regs,
             &mut function.reg_types,
             bindings,
+            &self.source.declarations,
         )?;
         self.unroll_comptime_loops(name, &mut function, scope, bindings)?;
         self.erase_valueless_removed_arguments(&mut function.blocks, bindings);
@@ -2519,28 +2520,6 @@ impl<'a> Specializer<'a> {
                                 && self.structs.contains_key(template.as_str())
                                 && !self.instance_names.contains_key(func.0.as_str())
                             {
-                                // `Type(copy=value)` runs `__copyinit__` (the
-                                // VM's `construct_via_copy`), which struct
-                                // discovery enqueues per instance — never an
-                                // `__init__` contract.
-                                let copy_form =
-                                    args.is_empty() && kwargs.len() == 1 && kwargs[0].0 == "copy";
-                                if copy_form {
-                                    if let Some(TyKind::Struct(concrete, _)) =
-                                        function.reg_types.get(&dest.0).map(Ty::kind)
-                                        && concrete != &func.0
-                                        && nominal_template(concrete) == template
-                                    {
-                                        func.0.clone_from(concrete);
-                                    }
-                                    // The copied value carries the instance's
-                                    // parameters; an explicitly spelled
-                                    // type argument (`Dict[Int, Int,
-                                    // AHasher](copy: self)` in an instance
-                                    // clone) reified no runtime data here.
-                                    param_arg_regs.clear();
-                                    continue;
-                                }
                                 let init_base = format!("{template}.__init__");
                                 let init = mojito_symbol::symbol::resolve_callable_symbol(
                                     &self.functions,

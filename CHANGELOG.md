@@ -494,6 +494,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `T()` and `T(copy=x)` at a struct name the struct's member, as
+  upstream's substitution folds the `Defaultable` and `Copyable`
+  witnesses, rather than a call naming the struct (R1283): `T()` calls
+  the `__init__` the checker now records in the struct's `Defaultable`
+  witness table (`compiler_trait_declaration` declares `Defaultable`),
+  and `T(copy=x)` calls the struct's recorded `__copyinit__`, each
+  passing the struct's arguments as a direct call does. An explicit
+  `S(copy=s)` over a synthesized copy takes the same path in
+  `name_constructors`, and a struct whose copy is trivial copies by
+  `value.copy`, so `var d = S(copy=s)` over a `@fieldwise_init` struct
+  of `Int` fields runs on the VM instead of failing with "struct 'S' has
+  no copy constructor" (R724,
+  `assets/ok/copy_construction_synthesized.mojo`). The VM's
+  `construct_via_copy`, the copy form of Pliron's `lower_constructor`,
+  and the elaborator's struct-named copy respell are gone.
+
 - A `finally` is copied before every exit of its `try` in MIR lowering, as
   upstream's `lowerTryFinally` pastes it, instead of running once in the VM
   on each exit: before each `return`, `break`, `continue`, and raise that

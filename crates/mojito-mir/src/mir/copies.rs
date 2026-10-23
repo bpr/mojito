@@ -4,8 +4,7 @@
 //! `__copyinit__` or `__moveinit__` at each point a value is copied or
 //! moved, so a symbol walk reaches it. Every copy and move site names the
 //! constructor it runs, which a symbol walk follows; a site naming none (a
-//! type recording no such member, a `Type(copy=value)` construction) runs
-//! none by name, and the VM and the native backend find the struct's member
+//! type recording no such member) runs none by name, and the VM and the native backend find the struct's member
 //! from the value's type. This module answers which structs those are: the
 //! types copied and moved without a name, and every field type a copy or a
 //! move of a struct without the member may reach.
@@ -37,10 +36,9 @@ pub struct Relocated {
 /// What the body `function` copies and moves without naming a constructor.
 ///
 /// A copy is a `var.use copy`, a `value.copy`, an owned closure capture, a
-/// variant payload, a `Type(copy=value)` construction, and a method or
-/// iterator result read through its reference: the points the VM and the
-/// native backend copy at. A read out of storage (a load, a field, an
-/// element) and a store copy nothing. A move is a `var.use move` and an
+/// variant payload, and a method or iterator result read through its
+/// reference: the points the VM and the native backend copy at. A read out
+/// of storage (a load, a field, an element) and a store copy nothing. A move is a `var.use move` and an
 /// owned closure capture. Through `structs`, every field of a struct those
 /// reach *without* the member joins, since such a struct copies or moves
 /// its fields one by one; a struct recording its own `__copyinit__` or
@@ -215,13 +213,6 @@ impl Walk<'_> {
                 ..
             } => self.register(*dest),
             MirInstr::TryNext { dest, call, .. } if call.result_adapter.is_some() => {
-                self.register(*dest);
-            }
-            MirInstr::Call {
-                dest, args, kwargs, ..
-            } if args.is_empty()
-                && matches!(kwargs.as_slice(), [(keyword, _)] if keyword == "copy") =>
-            {
                 self.register(*dest);
             }
             MirInstr::CopyValue { dest, .. } => self.register(*dest),

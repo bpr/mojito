@@ -599,26 +599,6 @@ impl VmBackend {
         Ok(value)
     }
 
-    pub(super) fn construct_via_copy(
-        &mut self,
-        prog: &Prog,
-        name: &str,
-        args: &[Value],
-        kwargs: &[(String, Value)],
-    ) -> Result<Value, RuntimeError> {
-        if !args.is_empty() || kwargs.len() != 1 || kwargs[0].0 != "copy" {
-            return Err(RuntimeError::Unsupported(format!(
-                "vm: keyword arguments to '{name}' are not supported"
-            )));
-        }
-        let fidx = prog.lifecycle_member(name, "__copyinit__").ok_or_else(|| {
-            RuntimeError::Unsupported(format!("vm: struct '{name}' has no copy constructor"))
-        })?;
-        let skeleton = Self::struct_skeleton(prog, name);
-        let (_, frame_vars) = self.call_frame(prog, fidx, vec![skeleton, kwargs[0].1.clone()])?;
-        Ok(frame_vars.into_iter().next().unwrap_or(Value::None))
-    }
-
     /// Produce a semantically-correct **copy** of a value (a `UseVar { Copy }` read,
     /// a by-value argument, or a return). For a struct that defines `__copyinit__`,
     /// run it (so a pointer-owning type deep-copies its storage instead of aliasing);

@@ -39,13 +39,13 @@ disappear. Four such gaps were found, and one of them reaches far outside
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
 | A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R956, R1264, R1290, R1113, R1272, R890 (R733, R833, R1129, R1106, and R829 closed; R832 waits on gap D) |
-| B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1283, R1278, R1021 (closed), R1075 (closed), R1287 |
+| B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1278, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
 
 Each gap's fix also removes a place where a backend looks something up by
 type instead of reading a name from MIR: the struct-named construction
-(R1283, R1278; R1029 removed the by-arity lookup), the collector at binding (R1102, R1070), each tuple element's destructor
+(R1278; R1029 removed the by-arity lookup and R1283 the struct-named copy), the collector at binding (R1102, R1070), each tuple element's destructor
 (R1090), and the flag sweep at return (R832). R1031 → R1109 is the one
 remaining lookup of that kind outside the four gaps.
 
@@ -111,10 +111,11 @@ entry's probe is "one instance per `n` where the pin has one".
   `__init__` does.
 - Together they left R1029 a deletion, and it landed: neither backend
   resolves a constructor by arity. A call naming a struct remains only for
-  a fieldwise struct with a `ref` field (R1278) and `T(copy=x)` (R1283).
+  a fieldwise struct with a `ref` field (R1278).
   R1097 moved `T()`/`T(copy=x)` into the shared
-  `mir::construct_type_parameters`; R1283 makes its struct arm name the
-  witnessed constructor rather than the struct.
+  `mir::construct_type_parameters`, and R1283 (10-23) made its struct arm
+  name the `Defaultable` witness and the `__copyinit__` member rather than
+  the struct, closing R724's explicit `S(copy=s)` with it.
 - R1052 records each conformance's witness table on the declaration, so
   substitution folds a trait dispatch to the member. It covers operators,
   subscripts, and iterator steps through a bound as well, not only
@@ -150,11 +151,8 @@ entry's probe is "one instance per `n` where the pin has one".
 ## Recommended order
 
 1. **Gap B**, for size. R1049, R1050, R1052, R1029, R1097, R988, and
-   R1075 landed 10-22; R1283 remains:
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1283 -n 0
-   ```
+   R1075 landed 10-22, and R1283 on 10-23. What remains is R1278, which
+   waits on R1277 and R1082.
 
 2. **Gap A**, for leverage. Its core has landed (R906, R831, R20, R884),
    and the 10-23 re-check closed R733 and reworded R1113, R832, and R890.

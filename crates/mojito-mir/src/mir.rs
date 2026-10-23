@@ -94,7 +94,9 @@ pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};
 mod try_finally;
 use try_finally::TryParts;
 mod type_construction;
-pub use type_construction::{ConstructionTypes, TypeConstructionError, construct_type_parameters};
+pub use type_construction::{
+    ConstructionTypes, TypeConstructionError, construct_type_parameters, struct_copy,
+};
 mod unused_args;
 pub use unused_args::{
     erase_removed_operands, removed_argument_operands, unused_arguments, used_slots,
@@ -305,6 +307,39 @@ impl MirDeclarations {
         match receiver.kind() {
             TyKind::Ref(reference) => self.witness(&reference.referent, requirement),
             TyKind::Struct(name, _) => self.structure(name)?.witness(requirement),
+            _ => None,
+        }
+    }
+
+    /// The initializer a default construction (`T()`) of `ty` runs.
+    ///
+    /// It is the member the struct `ty` names (an instance's template's)
+    /// records in its `Defaultable` witness table, as upstream's
+    /// substitution folds that witness; `None` for any other type, or a
+    /// struct that records none.
+    pub fn default_initializer(&self, ty: &Ty) -> Option<&str> {
+        let TyKind::Struct(name, _) = ty.kind() else {
+            return None;
+        };
+        let requirement = self
+            .trait_declaration("Defaultable")
+            .or_else(|| compiler_trait_declaration("Defaultable"))?
+            .requirements
+            .iter()
+            .find(|requirement| requirement.name == "__init__" && requirement.arity == 0)?;
+        self.structure(mojito_types::types::struct_template(name))?
+            .witness(&requirement.dispatch)
+    }
+
+    /// The copy initializer a copy construction (`T(copy=x)`) of `ty` runs:
+    /// the `__copyinit__` the struct `ty` names (an instance's template's)
+    /// records in its member table. `None` for a struct whose copy is its
+    /// trivial fieldwise copy, and any other type.
+    pub fn copy_initializer(&self, ty: &Ty) -> Option<&str> {
+        match ty.kind() {
+            TyKind::Struct(name, _) => {
+                self.lifecycle_member(mojito_types::types::struct_template(name), "__copyinit__")
+            }
             _ => None,
         }
     }

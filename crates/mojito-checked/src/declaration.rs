@@ -253,41 +253,49 @@ pub struct TraitDeclaration {
     pub requirements: Vec<TraitRequirement>,
 }
 
-/// The declaration of the compiler-known comparison trait `name`
-/// (`Equatable`, `Comparable`), as upstream's `std/builtin/comparable.mojo`
-/// declares it: each requirement's parameter is `Self`.
+/// The declaration of the compiler-known trait `name` a witness table
+/// records the requirements of.
+///
+/// They are `Defaultable`, as upstream's `std/builtin/value.mojo` declares
+/// it, whose `__init__(out self)` takes no parameter, and the comparison
+/// traits `Equatable` and `Comparable`, as its `std/builtin/comparable.mojo`
+/// declares them, whose each requirement's parameter is `Self`.
 ///
 /// Until the bundled library declares them, this is their declaration. A
 /// program or package that declares a trait of the name shadows it.
 pub fn compiler_trait_declaration(name: &str) -> Option<&'static TraitDeclaration> {
-    static DECLARATIONS: LazyLock<[TraitDeclaration; 2]> = LazyLock::new(|| {
+    static DECLARATIONS: LazyLock<[TraitDeclaration; 3]> = LazyLock::new(|| {
         let declaration =
-            |name: &str, refines: &[&str], parameter: &str, methods: &[&str]| TraitDeclaration {
-                name: name.to_string(),
-                refines: refines.iter().map(ToString::to_string).collect(),
-                requirements: methods
-                    .iter()
-                    .map(|method| TraitRequirement {
-                        name: (*method).to_string(),
-                        arity: 1,
-                        dispatch: method_symbol(
-                            TRAIT_DISPATCH,
-                            method,
-                            &SignatureKey::from_tys_with_self([&Ty::self_type()], None),
-                        ),
-                        param_names: vec![parameter.to_string()],
-                        param_types: vec![Ty::self_type()],
-                        param_conventions: vec![None],
-                        variadic_index: None,
-                    })
-                    .collect(),
+            |name: &str, refines: &[&str], parameter: Option<&str>, methods: &[&str]| {
+                let param_types: Vec<Ty> = parameter.iter().map(|_| Ty::self_type()).collect();
+                TraitDeclaration {
+                    name: name.to_string(),
+                    refines: refines.iter().map(ToString::to_string).collect(),
+                    requirements: methods
+                        .iter()
+                        .map(|method| TraitRequirement {
+                            name: (*method).to_string(),
+                            arity: param_types.len(),
+                            dispatch: method_symbol(
+                                TRAIT_DISPATCH,
+                                method,
+                                &SignatureKey::from_tys_with_self(&param_types, None),
+                            ),
+                            param_names: parameter.iter().map(ToString::to_string).collect(),
+                            param_types: param_types.clone(),
+                            param_conventions: vec![None; param_types.len()],
+                            variadic_index: None,
+                        })
+                        .collect(),
+                }
             };
         [
-            declaration("Equatable", &[], "other", &["__eq__", "__ne__"]),
+            declaration("Defaultable", &[], None, &["__init__"]),
+            declaration("Equatable", &[], Some("other"), &["__eq__", "__ne__"]),
             declaration(
                 "Comparable",
                 &["Equatable"],
-                "rhs",
+                Some("rhs"),
                 &["__lt__", "__gt__", "__le__", "__ge__"],
             ),
         ]

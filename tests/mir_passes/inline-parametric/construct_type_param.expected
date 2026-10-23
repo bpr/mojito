@@ -76,7 +76,7 @@
               loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r2, value: int(0) }], terminator: break { label: present(loop4294967295), values: [%r2] } }] },
               var.store { var: $v0, src: %r0, binding_type: present(Int), in_place: false },
               drop.var { var: $v0 },
-              loop { results: [%r1], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [call { dest: %r3, func: Counter, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r3] } }] },
+              loop { results: [%r1], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [call { dest: %r3, func: "Counter.__init__", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r3] } }] },
               var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: Counter, arguments: [] }), in_place: false },
               drop.var { var: $v1 }
             ],

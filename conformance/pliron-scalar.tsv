@@ -183,6 +183,7 @@ assets/ok/copy_construction_last_use_moves.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/copy_construction_owned_receiver_forwards.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_construction_read_argument_lends.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_construction_read_receiver_lends.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/copy_construction_synthesized.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_return.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copyable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copyable_iterator_reference_aggregate.mojo	-	ineligible	no-scalar-entry-shape

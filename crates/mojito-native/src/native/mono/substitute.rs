@@ -48,8 +48,9 @@ pub(super) fn default_construct_parameters(
     n_regs: &mut u32,
     reg_types: &mut HashMap<u32, Ty>,
     bindings: &Bindings,
+    declarations: &MirDeclarations,
 ) -> Result<(), MonoError> {
-    mojito_mir::mir::construct_type_parameters(blocks, n_regs, reg_types, bindings)
+    mojito_mir::mir::construct_type_parameters(blocks, n_regs, reg_types, bindings, declarations)
 }
 
 /// Substitute `bindings` through `function`, whose declaration declares the

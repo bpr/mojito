@@ -667,14 +667,15 @@ impl VmBackend {
                 }
                 builtin_error(argument)
             }
-            // A call naming a struct names no constructor: `T(copy=x)` at a
-            // struct copies through the copy constructor its member table
-            // records, and any other builds the fieldwise struct value.
+            // A call naming a struct names no constructor: it builds the
+            // fieldwise struct value from its positional arguments.
             _ if prog.structs.contains_key(name) => {
                 if kwargs.is_empty() {
                     construct(&prog.structs[name], name, args)
                 } else {
-                    self.construct_via_copy(prog, name, &args, &kwargs)
+                    Err(RuntimeError::Unsupported(format!(
+                        "vm: keyword arguments to '{name}' are not supported"
+                    )))
                 }
             }
             // `UnsafePointer[T].alloc(n)` — reserve `n` slots in the heap arena and

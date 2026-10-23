@@ -51,7 +51,7 @@ impl FnLowering<'_> {
                 return self.lower_slice_constructor(ctx, dest, name, args);
             }
             if self.struct_decls.contains_key(name) {
-                return self.lower_constructor(ctx, dest, name, args, kwargs, kwarg_places);
+                return self.lower_constructor(ctx, dest, name, args, kwargs);
             }
             // The numeric/IO builtins the VM's `call_named` implements
             // directly. Nominal-receiver `len`/`abs`/`round` were rewritten

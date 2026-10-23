@@ -1598,9 +1598,11 @@ fn reflected_field_type_construction_closes_per_unrolled_copy() {
     assert!(
         body.iter().any(|instruction| matches!(
             instruction,
-            MirInstr::Call { func, .. } if func.0 == "Zero"
+            MirInstr::Call { func, .. }
+                if mojito_symbol::symbol::lifecycle_constructor(&func.0)
+                    == Some(("Zero", "__init__"))
         )),
-        "the `Zero` field constructs through its nullary initializer"
+        "the `Zero` field constructs through the `__init__` its `Defaultable` witness names"
     );
     assert!(
         body.iter().any(|instruction| matches!(

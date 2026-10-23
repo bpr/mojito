@@ -124,7 +124,7 @@ artifact {
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent } },
-              call { dest: %r1, func: Box, raises: absent, args: [], kwargs: [keyword { name: copy, value: %r0 }], arg_places: [], kwarg_places: [present(place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent })], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              call { dest: %r1, func: "Box.__copyinit__", raises: absent, args: [], kwargs: [keyword { name: copy, value: %r0 }], arg_places: [], kwarg_places: [present(place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent })], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -182,7 +182,7 @@ artifact {
               call { dest: %r2, func: Box, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v0, src: %r2, binding_type: present(struct_type { name: Box, arguments: [] }), in_place: true },
               place.load { dest: %r3, place: place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent } },
-              call { dest: %r4, func: Box, raises: absent, args: [], kwargs: [keyword { name: copy, value: %r3 }], arg_places: [], kwarg_places: [present(place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent })], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              call { dest: %r4, func: "Box.__copyinit__", raises: absent, args: [], kwargs: [keyword { name: copy, value: %r3 }], arg_places: [], kwarg_places: [present(place { root: $v0, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent })], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v1, src: %r4, binding_type: present(struct_type { name: Box, arguments: [] }), in_place: true },
               var.use { dest: %r5, var: $v1, mode: forward },
               call { dest: %r6, func: take, raises: absent, args: [%r5], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },

@@ -7,9 +7,7 @@ use mojito_types::types::{TyKind, erase_origin_arguments};
 
 impl FnLowering<'_> {
     /// A call naming the declared struct `name`, which names no constructor:
-    /// the copy form (`Type(copy=value)`), or fieldwise per-field stores —
-    /// the VM's dispatch order.
-    #[allow(clippy::too_many_arguments)]
+    /// fieldwise per-field stores, as the VM builds it.
     pub(super) fn lower_constructor(
         &mut self,
         ctx: &mut Context,
@@ -17,30 +15,15 @@ impl FnLowering<'_> {
         name: &str,
         args: &[Reg],
         kwargs: &[(String, Reg)],
-        kwarg_places: &[Option<MirPlace>],
     ) -> Result<(), PlironError> {
         let struct_ty = match self.func.reg_types.get(&dest.0) {
             Some(ty) if matches!(ty.kind(), TyKind::Struct(..)) => ty.clone(),
             _ => TyKind::Struct(name.to_string(), Vec::new()).into(),
         };
         let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
-        let LowerTy::Aggregate { ty, layout } = lowered else {
+        let LowerTy::Aggregate { layout, .. } = lowered else {
             return Err(self.unsupported_reg(format!("constructor for `{name}`"), dest));
         };
-        if args.is_empty() && kwargs.len() == 1 && kwargs[0].0 == "copy" {
-            let source_reg = kwargs[0].1;
-            let source_place = kwarg_places
-                .first()
-                .and_then(Option::as_ref)
-                .cloned()
-                .or_else(|| self.loaded_places.get(&source_reg.0).cloned());
-            let src = if let Some(place) = source_place {
-                self.place_address(ctx, &place, dest)?.0
-            } else {
-                self.reg_ptr(ctx, source_reg)?
-            };
-            return self.copy_aggregate(ctx, dest, &ty, layout, src);
-        }
         let decl = self.struct_decls[name];
         if !decl.fieldwise_init {
             return Err(self.unsupported_reg(
