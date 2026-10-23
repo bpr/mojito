@@ -249,9 +249,9 @@ impl FnLowering<'_> {
     /// instruction's raise-edge storage and stays open for its error region
     /// ([`OpenEdge`]); lowering continues in the ok block with the payload
     /// bound (so post-call effects like receiver write-back run only on
-    /// success, matching the VM). A call with no raise edge of its own, one
-    /// inside another instruction's lowering, stages the error and jumps to
-    /// the innermost raise-edge target.
+    /// success, matching the VM). Every raise leaves through a raise edge,
+    /// so a raising call with none of its own, one inside another
+    /// instruction's lowering, is unsupported.
     pub(super) fn emit_raising_call(
         &mut self,
         ctx: &mut Context,
@@ -290,21 +290,18 @@ impl FnLowering<'_> {
         self.append(ctx, branch.get_operation(), Some(dest));
         self.current = Some(err_block);
         let err_address = self.offset_address(ctx, storage, outcome.err_offset);
-        if let Some(edge) = self
+        let Some(edge) = self
             .open_edge
             .as_mut()
             .filter(|edge| edge.error_block.is_none())
-        {
-            edge.error_block = Some(err_block);
-            let edge_storage = edge.storage;
-            self.mem_copy(ctx, edge_storage, err_address, 24, dest);
-        } else {
-            let err_slot = self.ensure_err_slot(ctx);
-            self.mem_copy(ctx, err_slot, err_address, 24, dest);
-            let target = self.raise_edge_target(ctx)?;
-            let jump = BrOp::new(ctx, target, vec![]);
-            self.append(ctx, jump.get_operation(), None);
-        }
+        else {
+            return Err(
+                self.unsupported("a raising call with no raise edge of its own".into(), None)
+            );
+        };
+        edge.error_block = Some(err_block);
+        let edge_storage = edge.storage;
+        self.mem_copy(ctx, edge_storage, err_address, 24, dest);
         self.current = Some(ok_block);
         match outcome.ok {
             LowerTy::Scalar(scalar) => {

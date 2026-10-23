@@ -267,11 +267,6 @@ impl FnLowering<'_> {
         self.carriers[carrier].block
     }
 
-    /// Whether an edge entering `carrier` must carry values.
-    pub(super) fn carrier_takes_values(&self, carrier: usize) -> bool {
-        !self.carriers[carrier].regs.is_empty()
-    }
-
     /// A fresh block entered with values for `regs`: one argument per
     /// scalar, staging storage per aggregate.
     pub(super) fn carrier(

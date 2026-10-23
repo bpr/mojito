@@ -496,6 +496,7 @@ impl<'a> Flatten<'a> {
                         yield_interior: Vec::new(),
                         source_retained: true,
                         prepare: Vec::new(),
+                        prepare_raises: None,
                         iterator_ty: iterator_ty.clone().unwrap_or_else(Ty::error),
                         next: None,
                         exhaustion: None,

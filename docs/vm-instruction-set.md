@@ -776,7 +776,10 @@ checker-selected `__iter__()` chain until it yields a nominal struct with
 `__next__`, with a defensive iteration-depth limit. The iterator lands in a
 slot of its own; an owned chain (`__iter__(var self)`) moves the source out
 of its slot, leaving it moved. Bundled ranges and
-collections take this same path as concrete user structs.
+collections take this same path as concrete user structs. A raising
+`__iter__` is no `iter.init`: MIR calls it as a raising `call.method` with its
+error region, as upstream's `emitForStmt` does, and stores the iterator into
+the slot.
 
 ### `iter.try_next` — Advance A Typed-Raising Iterator
 

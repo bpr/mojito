@@ -506,9 +506,9 @@ struct FnLowering<'a> {
     sret_ptr: Option<Value>,
     /// The tagged-outcome out-pointer (argument 0) of a raising function.
     outcome_ptr: Option<Value>,
-    /// The entry-block `MjError` staging slot: raise sites and propagating
-    /// call edges write the in-flight error here before jumping to the
-    /// current raise-edge target. Created lazily.
+    /// The entry-block `MjError` staging slot: a `raise` writes the
+    /// in-flight error here before jumping to its `try`'s landing block or
+    /// the propagate block. Created lazily.
     err_slot: Option<Value>,
     /// The per-function propagate block of a raising function: copies the
     /// staged error into the outcome's error slot, tags it, releases the

@@ -914,7 +914,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   nonraising one) and records `IterationProtocol::source_retained`, which HIR
   (`hir.rs` loop lowering) and MIR (`lower_stmt.rs` `GetIter`,
   `lower_expr/ctrl.rs` comprehensions) read to decide whether a loop keeps its
-  source alive and loaned. It also records `IterationProtocol::iterator_ty`,
+  source alive and loaned, and `IterationProtocol::prepare_raises`, the error
+  type of a one-step chain's raising `__iter__`, which MIR's
+  `Flatten::call_raising_iter` (`lower_stmt.rs`) emits as a raising
+  `MethodCall` with its error region in place of `GetIter` (a raising step in
+  a longer chain is rejected). It also records `IterationProtocol::iterator_ty`,
   the `__iter__` result those two `GetIter` sites type a split iterator slot
   with (every iterable with an `__iter__` step splits; an owned one's
   consumed source is `MirInstr::consumed_iteration_source`, which the move,

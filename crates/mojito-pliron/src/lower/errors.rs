@@ -88,27 +88,6 @@ impl FnLowering<'_> {
         slot
     }
 
-    /// The innermost raise-edge target: the innermost enclosing `try`'s
-    /// landing block, else the raising function's propagate block. The staged
-    /// error must already sit in the err slot when jumping here. Such an
-    /// edge is no MIR `raise`, so it carries no values, and a landing block
-    /// taking the handler's arguments refuses it.
-    pub(super) fn raise_edge_target(
-        &mut self,
-        ctx: &mut Context,
-    ) -> Result<Ptr<BasicBlock>, PlironError> {
-        match self.try_frames.last() {
-            Some(frame) if self.carrier_takes_values(frame.landing) => Err(self.unsupported(
-                "a raise inside an instruction's lowering entering a handler that takes \
-                 arguments"
-                    .into(),
-                None,
-            )),
-            Some(frame) => Ok(self.carrier_block(frame.landing)),
-            None => self.ensure_propagate_block(ctx),
-        }
-    }
-
     /// The per-function propagate block of a raising function: free the heap
     /// buffers of still-initialized releasable locals (no user destructor
     /// runs — the VM abandons raising frames and its arena reclaims the

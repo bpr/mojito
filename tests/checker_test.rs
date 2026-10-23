@@ -1577,6 +1577,21 @@ fn a_registered_iterator_trait_is_not_a_shallow_builtin_marker() {
 }
 
 #[test]
+fn a_raising_iter_step_is_rejected_only_in_a_chained_normalization() {
+    let iterator = "@fieldwise_init\nstruct It(Iterator):\n    comptime Element = Int\n    var n: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        raise StopIteration()\n\n";
+    ok_std(&format!(
+        "{iterator}struct Bad:\n    def __init__(out self):\n        pass\n    def __iter__(ref self) raises -> It:\n        raise Error(\"bad\")\n\ndef main() raises:\n    for x in Bad():\n        print(x)\n"
+    ));
+    let error = err_std(&format!(
+        "{iterator}@fieldwise_init\nstruct Mid(Copyable):\n    var z: Int\n    def __iter__(ref self) raises -> It:\n        raise Error(\"mid\")\n\nstruct Top:\n    def __init__(out self):\n        pass\n    def __iter__(ref self) -> Mid:\n        return Mid(0)\n\ndef main() raises:\n    for x in Top():\n        print(x)\n"
+    ));
+    assert!(
+        matches!(error, TypeError::Unsupported(ref message) if message.contains("raising '__iter__'")),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn trait_method_requirements_preserve_and_enforce_raises_effects() {
     let declarations = "trait Fallible:\n    def run(self) raises -> Int: ...\n\n@fieldwise_init\nstruct Failure(Fallible):\n    var code: Int\n    def run(self) raises -> Int:\n        raise \"failed\"\n        return self.code\n";
 

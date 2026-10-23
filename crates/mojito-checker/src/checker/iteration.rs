@@ -359,6 +359,7 @@ impl Checker {
                     yield_interior: Vec::new(),
                     source_retained: true,
                     prepare: Vec::new(),
+                    prepare_raises: None,
                     iterator_ty: ty.clone(),
                     next: None,
                     exhaustion: None,
@@ -439,6 +440,7 @@ impl Checker {
                             IterationMode::Borrowed => mojito_ast::ast::ArgConvention::Imm,
                             IterationMode::Owned => mojito_ast::ast::ArgConvention::Var,
                         })],
+                        prepare_raises: None,
                         iterator_ty,
                         next: Some(Box::new(mojito_checked::checked::CheckedIteratorCall {
                             target: "__iterator_dispatch.__next__".to_string(),
@@ -572,6 +574,14 @@ impl Checker {
         if !iinfo.methods.contains_key("__next__") && iinfo.methods.contains_key("__iter__") {
             let (element, mut nested) =
                 self.struct_iteration_protocol(it_ty, mode, depth + 1, raises)?;
+            // Only a one-step chain calls its `__iter__` as a raising call;
+            // current Mojo requires `__iter__` to return an `Iterator`.
+            if iter_error.is_some() || nested.prepare_raises.is_some() {
+                return Err(TypeError::Unsupported(format!(
+                    "a raising '__iter__' in the iterator normalization of '{c_ty}', \
+                     whose '__iter__' result is not itself an iterator"
+                )));
+            }
             nested.prepare.insert(0, prepare_symbol);
             return Ok((element, nested));
         }
@@ -667,6 +677,7 @@ impl Checker {
                 yield_interior,
                 source_retained: reference_result.is_some() || struct_may_refer_elsewhere(iinfo),
                 prepare: vec![prepare_symbol],
+                prepare_raises: iter_error.clone(),
                 iterator_ty: it_ty.clone(),
                 next: Some(Box::new(checked_next)),
                 exhaustion: Some(exhaustion),

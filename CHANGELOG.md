@@ -494,6 +494,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `for` loop or comprehension over an iterable whose `__iter__` raises
+  calls that `__iter__` as an ordinary raising method call with its error
+  region, as upstream's `emitForStmt` does, instead of inside `iter.init`,
+  which had no raise edge. `try: var k = S(1); for x in Bad(): ...` now
+  destroys `k` and reaches its `except` on the VM, where `simplify-cf` had
+  erased the `try` and the error went unhandled, and runs natively, where it
+  was unsupported (`assets/ok/raising_iter_call_edge.mojo`). A raising
+  `__iter__` in a normalization chain is rejected. Natively, a raising call
+  with no raise edge of its own is now unsupported rather than jumping to
+  the `try` or the propagate block without releasing temporaries.
+
 - Natively, a `raise` releases the owned register temporaries of the
   blocks it leaves, up to the `try` it names or out of the function, as
   every other exit does: `(s + "!", may(n))` no longer leaks the string

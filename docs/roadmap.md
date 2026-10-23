@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1294**.
+Next free ID: **R1295**.
 
 ## Ordered Work
 
@@ -1401,32 +1401,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1290 A raising `__iter__` runs inside `iter.init`, which has no
-  raise edge, where upstream's `emitForStmt` calls it as a throwing call**
-
-  Problem: a `for` over an iterable whose `__iter__` raises raises from an
-  instruction no ownership walk or pass takes for a raise point.
-  - `MirInstr::GetIter` calls `__iter__` through its `prepare` list, and
-    only an instruction with a `Raises` gets an error region (R831).
-  - Upstream's `emitForStmt` emits `__iter__` as an ordinary `lit.call`,
-    which `addErrorRegions` follows with its error region.
-  - Probe: `try: var k = S(1); for x in Bad(): print(x)` /
-    `except e: print("caught", e)`, over `def __iter__(ref self) raises
-    -> It` raising `Error("bad iter")`; the pin prints `del 1`,
-    `caught bad iter`, and Mojito fails with `unhandled error: bad iter`,
-    since `simplify-cf` erases the `try` as one whose body cannot raise.
-  - Probe: the same loop in a `def walk() raises` called in a `try`
-    prints `caught bad iter`, where the pin destroys `k` first.
-  - Fix: lower a raising `__iter__` as a raising `call.method` whose
-    result `iter.init` takes, so it has its raise edge as any call.
-  - Natively, such a call is the one raise that does not reach
-    `FnLowering::lower_raise`: `raise_edge_target` jumps from its outcome
-    branch to the landing or propagate block without releasing the owned
-    temporaries of the blocks it leaves. The fix retires that path.
-  - Found while landing R831 (2026-10-22).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R828 A `for` loop's iterator outlives its last `__next__` on a
   `return` path**
 
@@ -2725,6 +2699,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while planning R1166 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1294 A temporary iterable takes the borrowed `__iter__` where
+  the pin calls its `__iter__(var self)`**
+
+  Problem: `for x in Bag(1)` over a `Bag` declaring both `__iter__(ref
+  self)` and `__iter__(var self)` prints from the borrowed one, where the
+  pin calls the owned one.
+  - Upstream's `emitForStmt` calls `__iter__` on the source as an ordinary
+    method call, whose overload resolution ranks `var self` first for an
+    rvalue receiver.
+  - Mojito's checker picks the iteration mode from the source's spelling,
+    owned only for a `^` transfer (`iteration_protocol` in
+    `checker/iteration.rs`), and selects among the conventions that mode
+    allows.
+  - Ordinary methods overloaded on their receiver convention are rejected
+    instead ("'get' is already declared in this scope"), where the pin
+    runs `Bag(1).get()` through `get(var self)` and `b.get()` through
+    `get(ref self)`.
+  - Probe: the loop above, each `__iter__` printing its convention.
+  - Probe: `Bag(1).get()` and `b.get()` over `get(ref self)` beside
+    `get(var self)`.
+  - Found while landing R1290 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1249 A `Boolable` struct's condition copies the struct**
 

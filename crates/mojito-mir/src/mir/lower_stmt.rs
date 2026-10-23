@@ -431,12 +431,7 @@ impl<'a> Flatten<'a> {
             mutability: mojito_types::origin::Mutability::Immutable,
         }));
         self.var_types.insert(dest, ref_ty.clone());
-        if matches!(
-            place.ty.as_ref().map(Ty::kind),
-            Some(TyKind::VariadicPack(_))
-        ) {
-            self.pack_sources.insert(dest, place.clone());
-        }
+        self.iteration_sources.insert(dest, place.clone());
         let handle = self.fresh_typed(span.clone(), Some(place.root), ref_ty.clone());
         self.emit(MirInstr::MakeRef {
             dest: handle,
@@ -480,20 +475,26 @@ impl<'a> Flatten<'a> {
         dest: VarId,
         protocol: &mojito_checked::checked::IterationProtocol,
     ) {
+        let borrowed_place = self.iteration_sources.remove(&source);
         if protocol.indexes_pack()
-            && let Some(pack) = self.pack_sources.remove(&source)
+            && let Some(pack) = borrowed_place.clone()
             && let Some(TyKind::VariadicPack(element)) = pack.ty.as_ref().map(Ty::kind)
         {
             let element = element.clone();
             self.open_pack_cursor(source, dest, pack, element);
             return;
         }
-        self.emit(MirInstr::GetIter {
-            source,
-            dest,
-            mode: protocol.mode,
-            prepare: protocol.prepare.clone(),
-        });
+        match (&protocol.prepare_raises, protocol.prepare.as_slice()) {
+            (Some(error), [selected]) if source != dest => {
+                self.call_raising_iter(source, dest, borrowed_place, protocol, selected, error);
+            }
+            _ => self.emit(MirInstr::GetIter {
+                source,
+                dest,
+                mode: protocol.mode,
+                prepare: protocol.prepare.clone(),
+            }),
+        }
         if protocol.borrowed_origin.is_some() && protocol.source_retained && source != dest {
             self.reestablish_source_loans(source, dest);
         }
@@ -1970,7 +1971,7 @@ impl<'a> Flatten<'a> {
         let aliases = self.aliases.clone();
         let displays = self.displays.clone();
         let parameter_reads = self.parameter_reads.clone();
-        let pack_sources = self.pack_sources.clone();
+        let iteration_sources = self.iteration_sources.clone();
         let pack_cursors = self.pack_cursors.clone();
         let runtime_aliases = self.runtime_aliases.clone();
         let aggregate_loans = self.aggregate_loans.clone();
@@ -1984,7 +1985,7 @@ impl<'a> Flatten<'a> {
         self.aliases = aliases;
         self.displays = displays;
         self.parameter_reads = parameter_reads;
-        self.pack_sources = pack_sources;
+        self.iteration_sources = iteration_sources;
         self.pack_cursors = pack_cursors;
         self.runtime_aliases = runtime_aliases;
         self.aggregate_loans = aggregate_loans;
@@ -3831,6 +3832,77 @@ impl<'a> Flatten<'a> {
             }
             Terminator::Unreachable => MirTerm::Unreachable,
         }
+    }
+
+    /// `dest = source.__iter__()` through a raising `__iter__`, `selected`:
+    /// an ordinary raising method call followed by its error region, as
+    /// upstream's `emitForStmt` calls `__iter__`, so the raise leaves through
+    /// the call's raise edge. A borrowed source is called on the place its
+    /// handle borrows; an owned one is moved into the consuming receiver.
+    fn call_raising_iter(
+        &mut self,
+        source: VarId,
+        dest: VarId,
+        borrowed_place: Option<MirPlace>,
+        protocol: &mojito_checked::checked::IterationProtocol,
+        selected: &str,
+        error: &Ty,
+    ) {
+        let span = SourceSpan::new(None, DUMMY_SPAN);
+        let owned = protocol.mode == mojito_checked::checked::IterationMode::Owned;
+        let receiver_ty = self.var_types.get(&source).cloned();
+        let recv_place = (!owned).then(|| {
+            borrowed_place.map_or_else(
+                || MirPlace::root(source, receiver_ty.clone()),
+                |mut place| {
+                    place.through = Some(source);
+                    place
+                },
+            )
+        });
+        let recv = self.fresh(span.clone(), Some(source));
+        match &recv_place {
+            Some(place) => self.emit(MirInstr::LoadPlace {
+                dest: recv,
+                place: place.clone(),
+            }),
+            None => self.emit(MirInstr::UseVar {
+                dest: recv,
+                var: source,
+                mode: UseMode::Move,
+                constructor: None,
+            }),
+        }
+        let iterator = self.fresh_typed(span.clone(), Some(dest), protocol.iterator_ty.clone());
+        self.record_call(iterator, Some(selected.to_string()), 0);
+        let raises = self.raises(Some(error.clone()), span);
+        self.emit_call(MirInstr::MethodCall {
+            dest: iterator,
+            recv,
+            method: "__iter__".to_string(),
+            resolved: Some(selected.to_string()),
+            raises: raises.clone(),
+            reference_result: None,
+            result_adapter: None,
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            recv_place: recv_place.map(Box::new),
+            recv_writes: owned,
+            arg_places: Vec::new(),
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            param_decls: Vec::new(),
+            instantiated_args: Vec::new(),
+            spread: None,
+        });
+        self.error_region(raises);
+        self.emit(MirInstr::DefVar {
+            var: dest,
+            src: iterator,
+            binding_ty: Some(protocol.iterator_ty.clone()),
+            in_place: false,
+        });
     }
 }
 

@@ -403,6 +403,11 @@ pub struct IterationProtocol {
     /// ASAP destruction does.
     pub source_retained: bool,
     pub prepare: Vec<String>,
+    /// The error type a one-step `prepare` chain's `__iter__` raises, when
+    /// it raises: MIR calls that `__iter__` as an ordinary raising method
+    /// call, as upstream's `emitForStmt` does, rather than inside the
+    /// normalization. The checker rejects a raising step in a longer chain.
+    pub prepare_raises: Option<Ty>,
     /// The type of the iterator the `prepare` chain produces: its last
     /// `__iter__` result, resolved at the loop site (`_ListIter[Int,
     /// origin_of(xs)]`, or `C.IteratorType[origin_of(self)]` over a generic

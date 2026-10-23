@@ -2906,9 +2906,10 @@ struct Flatten<'a> {
     slots: HashMap<mojito_checked::checked::CheckedNodeId, VarId>,
     /// Local reference slot to its frozen owner place and permission.
     aliases: HashMap<VarId, MirLoan>,
-    /// A borrowed loop's retained-source slot over a runtime pack to the
-    /// pack's owner place, until `GetIter` turns it into a cursor.
-    pack_sources: HashMap<VarId, MirPlace>,
+    /// A borrowed loop's retained-source slot to the place it borrows, until
+    /// `GetIter` reads it: a runtime pack opens a cursor over the place, and
+    /// a raising `__iter__` is called on it.
+    iteration_sources: HashMap<VarId, MirPlace>,
     /// A borrowed loop's iterator slot over a runtime pack to its
     /// [`PackCursor`].
     pack_cursors: HashMap<VarId, PackCursor>,
@@ -4462,7 +4463,7 @@ fn lower_cfg_nested(
             displays: Vec::new(),
             slots: cfg.slots.clone(),
             aliases: HashMap::new(),
-            pack_sources: HashMap::new(),
+            iteration_sources: HashMap::new(),
             pack_cursors: HashMap::new(),
             pending_yields: HashMap::new(),
             runtime_aliases: reference_parameters
