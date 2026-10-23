@@ -1175,14 +1175,11 @@ fn verifier_rejects_runtime_pack_types_in_function_body_slots() {
 fn verifier_rejects_unprotected_raises_in_nonraising_functions() {
     let f = function(
         vec![block(
-            vec![
-                MirInstr::Const {
-                    dest: Reg(0),
-                    k: Const::Str("boom".to_string()),
-                },
-                MirInstr::Raise { src: Reg(0) },
-            ],
-            MirTerm::Return(None),
+            vec![MirInstr::Const {
+                dest: Reg(0),
+                k: Const::Str("boom".to_string()),
+            }],
+            MirTerm::Raise(Reg(0)),
         )],
         1,
         &[(0, Ty::string_literal())],

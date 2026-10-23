@@ -2753,10 +2753,6 @@ impl<'a> Flatten<'a> {
             }
 
             // --- Simple effectful statements -----------------------------------
-            (CheckedStmtOp::Raise(_), &[value]) => {
-                let src = self.expr(value);
-                self.emit(MirInstr::Raise { src });
-            }
             (CheckedStmtOp::Comptime { name, denotes, .. }, &[value]) => {
                 self.lower_comptime_binding(node, name, denotes.as_ref(), value);
             }
@@ -2833,6 +2829,7 @@ impl<'a> Flatten<'a> {
                 | CheckedStmtOp::Continue
                 | CheckedStmtOp::Try { .. }
                 | CheckedStmtOp::Return(_)
+                | CheckedStmtOp::Raise(_)
                 | CheckedStmtOp::VarDecl { .. }
                 | CheckedStmtOp::Assign { .. }
                 | CheckedStmtOp::Expr(_),
@@ -2852,7 +2849,6 @@ impl<'a> Flatten<'a> {
                 CheckedStmtOp::RefDecl { .. }
                 | CheckedStmtOp::SetPlace { .. }
                 | CheckedStmtOp::AugAssign { .. }
-                | CheckedStmtOp::Raise(_)
                 | CheckedStmtOp::Comptime { .. }
                 | CheckedStmtOp::Destructure { .. },
                 _,
@@ -3772,6 +3768,11 @@ impl<'a> Flatten<'a> {
             Terminator::ComptimeContinue => MirTerm::ComptimeContinue(Vec::new()),
             Terminator::MatchNext => MirTerm::MatchNext(Vec::new()),
             Terminator::MatchComplete => MirTerm::MatchComplete(Vec::new()),
+            Terminator::Raise(value) => {
+                let src = self.expr_hir(value);
+                self.flush_argument_anchors();
+                MirTerm::Raise(src)
+            }
             Terminator::Unreachable => MirTerm::Unreachable,
         }
     }

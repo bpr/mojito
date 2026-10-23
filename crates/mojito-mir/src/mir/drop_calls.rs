@@ -453,6 +453,8 @@ fn flow(
                 | MirTerm::ElifCond { .. }
         ) {
             yielded = join(yielded, end);
+        } else if matches!(block.term, MirTerm::Raise(_)) {
+            raised = join(raised, end);
         }
         anywhere = join(anywhere, inside);
         before.push(states);
@@ -509,13 +511,19 @@ fn through(
     (states, raised, anywhere)
 }
 
-/// Whether a raise point lies anywhere in the regions of `instruction`.
+/// Whether a raise point, or a `raise` terminator, lies anywhere in the
+/// regions of `instruction`.
 fn raises_inside(instruction: &MirInstr) -> bool {
     instruction_regions(instruction)
         .into_iter()
         .flatten()
-        .flat_map(|block| &block.instrs)
-        .any(|instruction| instruction.is_raise_point() || raises_inside(instruction))
+        .any(|block| {
+            matches!(block.term, MirTerm::Raise(_))
+                || block
+                    .instrs
+                    .iter()
+                    .any(|instruction| instruction.is_raise_point() || raises_inside(instruction))
+        })
 }
 
 /// The region flows one block list's walk computed, by op (its address in

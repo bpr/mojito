@@ -4512,11 +4512,6 @@ fn region_error_type(blocks: &[MirBlock], reg_types: &HashMap<u32, Ty>) -> Optio
     for block in blocks {
         for instr in &block.instrs {
             match instr {
-                MirInstr::Raise { src } => {
-                    if let Some(ty) = reg_types.get(&src.0) {
-                        return Some(ty.clone());
-                    }
-                }
                 instr if let Some(ty) = instr.call_error() => {
                     return Some(ty.clone());
                 }
@@ -4544,6 +4539,11 @@ fn region_error_type(blocks: &[MirBlock], reg_types: &HashMap<u32, Ty>) -> Optio
                 }
                 _ => {}
             }
+        }
+        if let MirTerm::Raise(src) = block.term
+            && let Some(ty) = reg_types.get(&src.0)
+        {
+            return Some(ty.clone());
         }
     }
     None

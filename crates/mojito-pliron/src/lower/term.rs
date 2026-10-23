@@ -7,8 +7,8 @@ use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Lower `term`, which ends a block as `end` says: a return leaves the
-    /// function, a region exit the region op it names, and a region end
-    /// the region it sits in.
+    /// function, a raise to its raise-edge target, a region exit the region
+    /// op it names, and a region end the region it sits in.
     pub(super) fn lower_term(
         &mut self,
         ctx: &mut Context,
@@ -31,6 +31,7 @@ impl FnLowering<'_> {
             | MirTerm::Continue { values, .. }
             | MirTerm::MatchNext(values)
             | MirTerm::MatchComplete(values) => self.lower_region_exit(ctx, term, values),
+            MirTerm::Raise(src) => self.lower_raise(ctx, *src),
             // `hlcf.unreachable`.
             MirTerm::Unreachable => {
                 let unreachable = UnreachableOp::new(ctx);

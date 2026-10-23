@@ -195,6 +195,7 @@ impl<'a> Walk<'a> {
             (MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. }, exits) => {
                 meet(&mut flow.exits, exits);
             }
+            (MirTerm::Raise(_), raises) => meet(&mut flow.raises, raises),
             (term, Some(state)) => {
                 if let Some((target, resume)) = region_exit(term)
                     && let Some(depth) = self.frames.iter().rposition(|&frame| target.names(frame))
@@ -233,9 +234,6 @@ impl<'a> Walk<'a> {
             self.step(index, &mut state, instruction, report);
             if instruction.is_raise_point() {
                 meet(&mut flow.raises, Some(&state));
-            }
-            if matches!(instruction, MirInstr::Raise { .. }) {
-                return flow;
             }
         }
         flow.normal = Some(state);

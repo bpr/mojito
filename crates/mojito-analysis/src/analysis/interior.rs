@@ -498,7 +498,6 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::SimdCast { .. }
         | MirInstr::SimdBitcast { .. }
         | MirInstr::SimdShuffle { .. }
-        | MirInstr::Raise { .. }
         | MirInstr::Drop { .. }
         | MirInstr::Unsupported(_)
         | MirInstr::GetIter { .. } => {}

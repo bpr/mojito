@@ -849,7 +849,6 @@ impl FnLowering<'_> {
                     Err(self.unsupported_reg(format!("the symbolic lane mask `{mask}`"), *dest))
                 }
             },
-            MirInstr::Raise { src } => self.lower_raise(ctx, *src),
             MirInstr::If {
                 results,
                 cond,

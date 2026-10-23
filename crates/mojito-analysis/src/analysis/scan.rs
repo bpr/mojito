@@ -266,7 +266,7 @@ pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
 /// Whether executing this instruction can surface a caught
 /// `RuntimeError::Raised`, transferring control to an enclosing handler.
 /// Minimal allowlist of provably silent instructions; everything else — calls,
-/// subscripts, `Raise`, nested `Try`, ... — counts as a potential raise.
+/// subscripts, nested `Try`, ... — counts as a potential raise.
 /// Copy elision and field-drop placement use it; raising→silent could let a
 /// handler observe a vacated slot, so the allowlist stays minimal.
 /// (Non-`Raised` runtime errors abort the program, so drops are unobservable
@@ -290,6 +290,16 @@ pub(super) const fn may_raise(instr: &MirInstr) -> bool {
 /// upstream's CFG has raise edges only at raising operations.
 pub(super) fn raises_to_handler(instr: &MirInstr) -> bool {
     matches!(instr, MirInstr::Try { .. }) || instr.is_raise_point()
+}
+
+/// The values a block's terminator hands on: those an arm yields, and the
+/// error a `raise` raises.
+pub(super) fn handed_values(term: &MirTerm) -> &[Reg] {
+    match term {
+        MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => values,
+        MirTerm::Raise(src) => std::slice::from_ref(src),
+        _ => &[],
+    }
 }
 
 /// Visit every instruction under `blocks`, recursing into every region op's

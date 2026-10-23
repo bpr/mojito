@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 89;
+pub const VERSION_MINOR: u16 = 90;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -227,7 +227,6 @@ pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "simd.cast",
     "simd.bits",
     "simd.shuffle",
-    "raise",
     "try",
     "if",
     "loop",
@@ -262,6 +261,7 @@ pub const TERMINATOR_MNEMONICS: &[&str] = &[
     "comptime.for.continue",
     "match.next",
     "match.complete",
+    "raise",
     "unreachable",
 ];
 
@@ -383,7 +383,6 @@ pub const fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
         MirInstr::SimdCast { .. } => "simd.cast",
         MirInstr::SimdBitcast { .. } => "simd.bits",
         MirInstr::SimdShuffle { .. } => "simd.shuffle",
-        MirInstr::Raise { .. } => "raise",
         MirInstr::Try { .. } => "try",
         MirInstr::If { .. } => "if",
         MirInstr::Loop { .. } => "loop",
@@ -421,6 +420,7 @@ pub const fn terminator_mnemonic(terminator: &MirTerm) -> &'static str {
         MirTerm::ComptimeContinue(_) => "comptime.for.continue",
         MirTerm::MatchNext(_) => "match.next",
         MirTerm::MatchComplete(_) => "match.complete",
+        MirTerm::Raise(_) => "raise",
         MirTerm::Unreachable => "unreachable",
     }
 }

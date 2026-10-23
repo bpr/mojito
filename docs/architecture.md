@@ -2723,9 +2723,13 @@ pub enum Terminator {
     ComptimeContinue,
     MatchNext,
     MatchComplete,
+    Raise(HirExpr),
     Unreachable,
 }
 ```
+
+A `raise` statement seals its block with `Terminator::Raise`, as upstream's
+`raise` ends its block; MIR lowers it to `MirTerm::Raise`.
 
 Iterator-driven loops use `ReturnWithCleanup` when a source `return` bypasses
 their common exit. The return expression is materialized first, then MIR keeps
@@ -3196,6 +3200,7 @@ pub enum MirTerm {
     Return(Option<Reg>),
     ReturnWithCleanup { value: Option<Reg>, cleanup: Vec<CleanupDrop> },
     TryYield,
+    Raise(Reg),
     // Yield, ElifCond, Break, Continue, ComptimeYield, ComptimeBreak,
     // ComptimeContinue, MatchNext, MatchComplete, Unreachable
 }
@@ -3206,7 +3211,16 @@ destructor the drop runs, as a `DropVar` does, so the backends call it
 without looking it up from the slot's type.
 
 `TryYield` (`lit.try.yield`) completes a `try` part and never ends a function
-body. Drop elaboration writes
+body. `Raise` (MIR text 1.90) raises its register and may end any region:
+it leaves every enclosing region for the nearest `try`'s raise edge, or the
+function, as upstream's `LowerSemanticCF` lowers a `raise` to
+`lit.try.raise` or `lit.error.return`. The ownership walks read the raise
+channel after it (`region_walk.rs`: a forward walk joins its state into the
+region's raises, a backward walk's live-out is the handler's or `finally`'s
+live-in, nothing outside every `try`), so drop elaboration destroys before
+it, or at the entry of the arm holding it, what the handler does not read,
+as upstream's `DestructorInsertion` does at each raise exit. A raising
+call stays an instruction whose raise edge is implicit (R831). Drop elaboration writes
 `ReturnWithCleanup` on a return that crosses a `finally`, listing what the
 return still holds once the crossed `finally` blocks have run; the VM runs
 every pending `finally` before destroying those values and completing the
@@ -3518,7 +3532,6 @@ VariantTake
 VariantDeinitWith
 VariantReplace
 MakeSimd
-Raise
 Try
 DropVar
 HasNext

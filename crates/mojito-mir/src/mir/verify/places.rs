@@ -39,6 +39,13 @@ pub(super) fn verify_terminator(
                 }
             }
         }
+        MirTerm::Raise(_) => {
+            if !function.raises && !context.protected {
+                errors.push(format!(
+                    "{prefix}: unprotected raise in nonraising function"
+                ));
+            }
+        }
         MirTerm::TryYield => {
             if !context.is_try_part() {
                 errors.push(format!(

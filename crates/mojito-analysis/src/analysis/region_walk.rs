@@ -281,6 +281,10 @@ where
         MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => {
             add_state(scan, &mut flow.exits, Some(&state));
         }
+        MirTerm::Raise(_) => {
+            let seed = scan.raise_seed(&state, None);
+            add_state(scan, &mut flow.raises, Some(&seed));
+        }
         MirTerm::Break { .. }
         | MirTerm::Continue { .. }
         | MirTerm::ComptimeBreak(_)
@@ -299,8 +303,8 @@ where
 
 /// Walk one block's instructions from `state`, collecting their raise
 /// states and their nested ops' abnormal channels into `flow`. `None` when
-/// the block's end is unreachable (after a `raise`, or a region op that
-/// never falls off).
+/// the block's end is unreachable (after a region op that never falls
+/// off).
 fn walk_block<S, O>(
     scan: &S,
     state: S::State,
@@ -336,9 +340,7 @@ where
             let seed = scan.raise_seed(&state, block.instrs.get(i + 1));
             add_state(scan, &mut flow.raises, Some(&seed));
         }
-        if !matches!(instr, MirInstr::Raise { .. }) {
-            current = Some(state);
-        }
+        current = Some(state);
     }
     if let (Some(observer), Some(entry)) = (observer, &entry) {
         observer.block(entry, current.as_ref(), block);
@@ -792,8 +794,9 @@ impl<S: BackwardScan> BackWalk<'_, S> {
     }
 
     /// The state live after a block's terminator: `exit` after a yield,
-    /// the return channel after a `return`, and the named frame's set after
-    /// a region terminator.
+    /// the return channel after a `return`, the raise channel after a
+    /// `raise` (nothing outside every `try`), and the named frame's set
+    /// after a region terminator.
     fn live_out(&self, term: &MirTerm, exit: &S::State) -> S::State {
         match term {
             MirTerm::TryYield
@@ -801,6 +804,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             | MirTerm::ComptimeYield(_)
             | MirTerm::ElifCond { .. } => exit.clone(),
             MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } => self.exit.clone(),
+            MirTerm::Raise(_) => self.raise.clone().unwrap_or_default(),
             MirTerm::Unreachable => S::State::default(),
             MirTerm::Break { .. }
             | MirTerm::Continue { .. }

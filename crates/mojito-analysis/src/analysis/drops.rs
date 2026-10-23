@@ -352,6 +352,7 @@ impl Splice<'_> {
             steps,
             end,
             yielded: self.facts.yielded(block),
+            raises: matches!(block.term, MirTerm::Raise(_)),
             raise: plan.raise.as_ref(),
             deinit_params: &self.f.deinit_params,
             loan_roots: self.loan_roots,
@@ -562,8 +563,10 @@ struct BlockReplay<'a> {
     steps: Vec<Step<'a>>,
     /// The generations at the terminator; `None` when it is unreachable.
     end: Option<&'a LoanGenerationState>,
-    /// The roots the terminator's yielded values consume.
+    /// The roots the values the terminator hands on consume.
     yielded: &'a RegisterUses,
+    /// Whether the terminator is a `raise`, which holds what it leaves live.
+    raises: bool,
     /// What a raising instruction keeps live: the raise channel.
     raise: Option<&'a DenseSet>,
     /// The function's `deinit` parameters, whose fields
@@ -593,6 +596,12 @@ impl BlockReplay<'_> {
         let mut live = live_out.clone();
         let mut reversed = Vec::with_capacity(self.instrs.len());
         let mut raise_held = DenseSet::default();
+        if self.raises {
+            raise_held.union(&live);
+            if let Some(end) = self.end {
+                raise_held.union(&loan_extras(&live, end, self.loan_roots));
+            }
+        }
         // The terminator reads the values it yields: an owner whose last use
         // that is dies before it.
         if let Some(end) = self.end

@@ -891,8 +891,8 @@ impl Walk<'_> {
     /// constant `Bool` hoists the live arm's instructions before the op,
     /// stopping at a `comptime for`, which declares a parameter. A live arm
     /// left a bare yield replaces the op by its values; one left a bare
-    /// `unreachable`, `break`, or `continue` replaces the op and the rest of
-    /// the block; otherwise the dead arm becomes one `unreachable` block and
+    /// `unreachable`, `break`, `continue`, or `raise` replaces the op and
+    /// the rest of the block; otherwise the dead arm becomes one `unreachable` block and
     /// the op stays, a parameter scope.
     fn canonicalize_comptime_if(&mut self, block: &mut MirBlock, index: usize) -> bool {
         if trivial_comptime_if(block, index) {
@@ -947,7 +947,10 @@ impl Walk<'_> {
                 }
                 self.erase_ops(std::slice::from_ref(&removed));
             }
-            term @ (MirTerm::Unreachable | MirTerm::Break { .. } | MirTerm::Continue { .. })
+            term @ (MirTerm::Unreachable
+            | MirTerm::Break { .. }
+            | MirTerm::Continue { .. }
+            | MirTerm::Raise(_))
                 if bare =>
             {
                 let tail = block.instrs.split_off(index);

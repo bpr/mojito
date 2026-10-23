@@ -1,5 +1,5 @@
 //! Error-path plumbing: traces, error slots, raise edges, the propagate
-//! block, and `Raise` lowering.
+//! block, and `raise` lowering.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -302,17 +302,16 @@ impl FnLowering<'_> {
             },
         );
         // Error construction is compiler-internal and its only supported
-        // consumer is `Raise`; `store_error_into` transfers this allocation.
+        // consumer is a `raise`; `store_error_into` transfers this allocation.
         // Do not schedule ordinary temporary cleanup between construction
         // and the raise edge.
         Ok(())
     }
 
-    /// `Raise`: materialize the raised value as an owned error in the staging
-    /// slot and jump to the innermost raise-edge target (a `try` landing
-    /// block once regions lower; the raising function's propagate block
-    /// otherwise). Lowering continues into a fresh unreachable block for the
-    /// dead remainder of the MIR block.
+    /// A `raise` terminator: materialize the raised value as an owned error
+    /// in the staging slot and jump to the innermost raise-edge target (a
+    /// `try` landing block once regions lower; the raising function's
+    /// propagate block otherwise).
     pub(super) fn lower_raise(&mut self, ctx: &mut Context, src: Reg) -> Result<(), PlironError> {
         let err_slot = self.ensure_err_slot(ctx);
         self.store_error_into(ctx, err_slot, src)?;
@@ -332,10 +331,6 @@ impl FnLowering<'_> {
         let target = self.raise_edge_target(ctx)?;
         let jump = BrOp::new(ctx, target, vec![]);
         self.append(ctx, jump.get_operation(), Some(src));
-        let region = self.region.expect("lowering is inside a function region");
-        let dead = BasicBlock::new(ctx, None, vec![]);
-        dead.insert_at_back(region, ctx);
-        self.current = Some(dead);
         Ok(())
     }
 }

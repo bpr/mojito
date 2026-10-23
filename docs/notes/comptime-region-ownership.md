@@ -61,7 +61,7 @@ experiment below.
 | `c4` `untaken_arm_uses_moved` | `a` consumed before the region; untaken arm reads it | rejects | same | **runs** | rejects |
 | `c5` `untaken_unused_decl_moves` | untaken arm declares `var t = a^` and never uses `t`; `a` used after | rejects | same | **runs** | rejects |
 | `c6` `early_return` | taken arm returns; other arm consumes `b`; `b` used after | rejects: use of uninitialized `b` | same | rejects | rejects |
-| `c7` `raise_in_arm` | taken arm consumes `a` and raises; `b` used after the join | runs: **`del b`** first (at the arm's entry), `consume a`, `del a`, `caught boom` | same | runs, `b` never destroyed | same as Mojito |
+| `c7` `raise_in_arm` | taken arm consumes `a` and raises; `b` used after the join | runs: **`del b`** first (at the arm's entry), `consume a`, `del a`, `caught boom` | same | same since R906 (2026-10-22); before, `b` was never destroyed | same |
 | `c8` `ref_bearing` | `ref r = a` before the region; `r` read in one arm and after | runs: `del b`, `then a`, `after a`, `del a`, `end` | same | same | same |
 | `c9` `cond_use_then_after` | `a` read in one arm, `b` in the other, `a` after | runs: `del b`, `look a`, `look a`, `del a`, `end` | same | same | same |
 | `c10` `both_arms_move` | both arms consume `a`; nothing after | runs | same | same | same |
@@ -84,11 +84,11 @@ Two findings beside the rule:
   and `l3` are now `assets/extensions/ownership_ok/` fixtures on the roadmap
   ledger.
 - `c7` is not about regions. A value live after a region and unused in the
-  arm that raises is never destroyed when the raise leaves the function
-  (`conformance/probes/raise_path_live_value_leaks.mojo`: the same leak
-  follows a raising call with the value live after it, a raise in a loop,
-  and a raise in an `else` arm; only a value dead at the raise is
-  destroyed). It is a drop-elaboration defect on the roadmap.
+  arm that raises was never destroyed when the raise left the function.
+  Since R906 (2026-10-22) a `raise` is a terminator, and drop elaboration
+  destroys `b` at the arm's entry, as the pin does; the same leak after a
+  raising call stays on the roadmap as R20
+  (`conformance/probes/raise_path_live_value_leaks.mojo`, `v6`).
 
 ## What landed (2026-10-03)
 

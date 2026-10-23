@@ -13,7 +13,8 @@
 //!   block, and what followed the loop goes. An inlined body is such a
 //!   loop: its `return`s are `break`s.
 //! - **Trivial `try`s** (`removeTrivialTry`). A `try` with a handler whose
-//!   body holds no raise point ([`MirInstr::is_raise_point`]) is replaced by
+//!   body holds no raise point ([`MirInstr::is_raise_point`], or a `raise`
+//!   terminator) is replaced by
 //!   its body and, when the body completes (`try.yield`), its `else`; a part
 //!   that leaves instead ends the enclosing block. A raise in a nested
 //!   `try`'s body is that `try`'s, and one in its other parts the enclosing
@@ -21,7 +22,8 @@
 //!   this pass, is kept.
 //! - **Implied conditions** (`propagateImpliedCondition`). After an `if`
 //!   whose condition is not a constant and whose `then` arm cannot fall
-//!   through (it ends in a `return`, `break`, `continue`, or `unreachable`),
+//!   through (it ends in a `return`, `raise`, `break`, `continue`, or
+//!   `unreachable`),
 //!   the condition is `false` wherever the `if`'s block reads it later; with
 //!   no elifs and an `else` arm that cannot fall through, it is `true`.
 //!   `canonicalize` then folds what reads it.
@@ -85,12 +87,13 @@ pub fn simplify_cf(_name: &str, function: &mut MirFunction, _: &MirDeclarations)
 }
 
 /// Whether a region ending in `term` cannot fall through to its op's end:
-/// it returns, leaves or resumes a loop, or never ends.
+/// it returns, raises, leaves or resumes a loop, or never ends.
 const fn exits_early(term: &MirTerm) -> bool {
     matches!(
         term,
         MirTerm::Return(_)
             | MirTerm::ReturnWithCleanup { .. }
+            | MirTerm::Raise(_)
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::Unreachable
@@ -170,6 +173,11 @@ impl Census {
                         }
                     }
                 }
+            }
+            if matches!(block.term, MirTerm::Raise(_))
+                && let Some(id) = self.last_try
+            {
+                self.elidable[id] = false;
             }
             if let MirTerm::Break { label, .. } | MirTerm::Continue { label, .. } = &block.term
                 && let Some(&(_, id)) =

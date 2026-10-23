@@ -1174,7 +1174,6 @@ fn instruction_families_reprint_byte_identically() {
             other: Some(Reg(36)),
             mask: LaneMask::Join,
         },
-        MirInstr::Raise { src: Reg(1) },
         MirInstr::Drop { reg: Reg(2) },
         MirInstr::DeclareVar { var: 1 },
         MirInstr::UseVar {
@@ -1241,6 +1240,15 @@ fn instruction_families_reprint_byte_identically() {
     };
     let program = program_with(vec![("instructions".into(), function)]);
     assert_reprints(&program);
+}
+
+#[test]
+fn raise_terminator_reprints() {
+    let mut function = function_with(vec![Ty::int()], Vec::new());
+    function.blocks[0].term = MirTerm::Raise(Reg(0));
+    let program = program_with(vec![("raising".into(), function)]);
+    assert_reprints(&program);
+    assert!(write::program(&program).contains("terminator: raise { src: %r0 }"));
 }
 
 #[test]

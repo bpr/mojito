@@ -2060,28 +2060,6 @@ impl VmBackend {
                     "vm backend does not support {what} yet"
                 )));
             }
-            MirInstr::Raise { src } => {
-                // Raise an error, propagating as `Raised` — the nearest enclosing
-                // `Try` (if any) intercepts it; otherwise it unwinds the frame.
-                let error = match &regs[src.0 as usize] {
-                    Value::Str(message) => Value::Error(message.clone()),
-                    // A raised nominal String reads its buffer back through
-                    // the struct-to-literal bridge.
-                    value @ Value::Struct { name, .. }
-                        if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
-                    {
-                        match self.string_struct_literal(value)? {
-                            Value::Str(message) => Value::Error(message),
-                            other => other,
-                        }
-                    }
-                    other => other.clone(),
-                };
-                if let Value::Error(message) = &error {
-                    self.record_lifecycle(format!("raise {message}"));
-                }
-                return Err(RuntimeError::Raised(error));
-            }
             MirInstr::Try {
                 body,
                 handler,
@@ -2292,9 +2270,35 @@ impl VmBackend {
                         cleanup: cleanup.clone(),
                     });
                 }
+                Transfer::Exit(MirTerm::Raise(src)) => {
+                    return Err(self.raise(&regs[src.0 as usize]));
+                }
                 Transfer::Exit(_) => return Ok(Flow::Normal),
             }
         }
+    }
+
+    /// The error a `raise` of `value` propagates as: `Raised`, which the
+    /// nearest enclosing `try` intercepts, or which otherwise unwinds the
+    /// frame.
+    pub(super) fn raise(&mut self, value: &Value) -> RuntimeError {
+        let error = match value {
+            Value::Str(message) => Value::Error(message.clone()),
+            // A raised nominal String reads its buffer back through the
+            // struct-to-literal bridge.
+            Value::Struct { name, .. } if mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+                match self.string_struct_literal(value) {
+                    Ok(Value::Str(message)) => Value::Error(message),
+                    Ok(other) => other,
+                    Err(error) => return error,
+                }
+            }
+            other => other.clone(),
+        };
+        if let Value::Error(message) = &error {
+            self.record_lifecycle(format!("raise {message}"));
+        }
+        RuntimeError::Raised(error)
     }
 
     /// Preserve a reference yielded directly from an iterator receiver after

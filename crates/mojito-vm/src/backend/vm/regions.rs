@@ -113,7 +113,10 @@ impl RegionCursor {
                     return Ok(Transfer::Leave(leave));
                 }
             }
-            MirTerm::Return(_) | MirTerm::ReturnWithCleanup { .. } | MirTerm::TryYield => {
+            MirTerm::Return(_)
+            | MirTerm::ReturnWithCleanup { .. }
+            | MirTerm::TryYield
+            | MirTerm::Raise(_) => {
                 return Ok(Transfer::Exit(term));
             }
             MirTerm::Unreachable => {
@@ -252,8 +255,8 @@ impl RegionCursor {
 pub(super) enum Transfer<'p> {
     /// The cursor moved to the terminator's target.
     Moved,
-    /// A `return` or `lit.try.yield`, which leaves the root list: the
-    /// driver's to run.
+    /// A `return`, `raise`, or `lit.try.yield`, which leaves the root
+    /// list: the driver's to run.
     Exit(&'p MirTerm),
     /// A region exit naming an op outside the root list.
     Leave(Leave),

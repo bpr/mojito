@@ -494,6 +494,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `raise` statement is now a MIR terminator (`MirTerm::Raise`, HIR
+  `Terminator::Raise`), as upstream's `raise` ends its block, where it was
+  an instruction followed by its region's normal terminator. Drop
+  elaboration reads the raise channel after it, so a value live after the
+  region a `raise` leaves, and read by no handler or `finally`, is
+  destroyed at the raising arm's entry, as at the pin, whether the raise
+  leaves the function or a `try` body, from an `if`, `else`, loop, or
+  `comptime if` arm; before, it was never destroyed when the raise left
+  the function (`assets/ok/raise_exit_destroys_live_values.mojo`). The MIR
+  text format is 1.90 (`raise { src }` is a terminator) and the package
+  format 80. This closes R906; R20 keeps the raising-call case.
+
 - An unrolled `comptime for` copy whose reduced call drops an operand built
   by an inlined constructor sheds the dropped registers' types, so
   `looped[n]` over a written `@always_inline` `Arr[n]` no longer fails

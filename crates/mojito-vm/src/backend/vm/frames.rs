@@ -211,6 +211,9 @@ impl VmBackend {
                     self.run_cleanup(prog, frame.function, cleanup, &mut frame.variables)?;
                     returned
                 }
+                Transfer::Exit(MirTerm::Raise(src)) => {
+                    return Err(self.raise(&frame.registers[src.0 as usize]));
+                }
                 Transfer::Exit(_) => Value::None,
             };
             // A reference returned by projecting through a stored handle (a

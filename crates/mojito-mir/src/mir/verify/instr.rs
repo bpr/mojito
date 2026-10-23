@@ -240,16 +240,7 @@ pub(super) fn verify_instruction(
 /// region op verifies each of its regions under that region's protection.
 fn verify_effect_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mut Vec<String>) {
     let prefix = cx.prefix;
-    match instruction {
-        MirInstr::Raise { .. } => {
-            if !cx.function.raises && !cx.context.protected {
-                errors.push(format!(
-                    "{prefix}: unprotected raise in nonraising function"
-                ));
-            }
-        }
-        _ => verify_regions(cx, instruction, errors),
-    }
+    verify_regions(cx, instruction, errors);
     // A call carrying a checked error contract raises unless handled.
     if instruction.call_error().is_some() && !cx.function.raises && !cx.context.protected {
         errors.push(format!(

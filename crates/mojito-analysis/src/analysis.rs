@@ -823,10 +823,7 @@ mod interior_origin_tests {
     #[test]
     fn stale_uses_inside_try_handlers_are_checked() {
         let try_instr = MirInstr::Try {
-            body: vec![block(
-                vec![invalidate(1), MirInstr::Raise { src: Reg(2) }],
-                MirTerm::TryYield,
-            )],
+            body: vec![block(vec![invalidate(1)], MirTerm::Raise(Reg(2)))],
             handler: Some((
                 None,
                 vec![block(vec![use_reference(1, 3)], MirTerm::TryYield)],

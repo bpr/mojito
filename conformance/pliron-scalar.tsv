@@ -726,6 +726,7 @@ assets/ok/print_argument_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_argument_read_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/print_keywords_file.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/raise_borrowed_string_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/raise_exit_destroys_live_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/range_zero_step_empty.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/read_temporary_conditional_argument_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_assignment.mojo	-	ineligible	no-scalar-entry-shape

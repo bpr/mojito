@@ -341,11 +341,6 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "one shufflevector per compile-time mask (a one-lane mask extracts the scalar)",
     ),
     (
-        "raise",
-        CapabilityStatus::Supported,
-        "tagged-outcome error edge",
-    ),
-    (
         "try",
         CapabilityStatus::Supported,
         "lowered to LLVM blocks as `LowerControlFlow` lowers `lit.try`, with cleanup drops and finally dispatch",

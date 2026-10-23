@@ -140,7 +140,8 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         MirTerm::Return(Some(reg))
         | MirTerm::ReturnWithCleanup {
             value: Some(reg), ..
-        } => vec![reg],
+        }
+        | MirTerm::Raise(reg) => vec![reg],
         MirTerm::Yield(values)
         | MirTerm::ComptimeYield(values)
         | MirTerm::MatchNext(values)
@@ -165,7 +166,8 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
         MirTerm::Return(Some(reg))
         | MirTerm::ReturnWithCleanup {
             value: Some(reg), ..
-        } => vec![*reg],
+        }
+        | MirTerm::Raise(reg) => vec![*reg],
         MirTerm::Yield(values)
         | MirTerm::ComptimeYield(values)
         | MirTerm::MatchNext(values)
@@ -801,7 +803,6 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             out.extend([dest, value]);
             out.extend(other.iter_mut());
         }
-        MirInstr::Raise { src } => out.push(src),
         MirInstr::Drop { reg } => out.push(reg),
         MirInstr::ConsumePlace {
             place: target,
@@ -2255,11 +2256,6 @@ pub enum MirInstr {
         other: Option<Reg>,
         mask: mojito_types::types::LaneMask,
     },
-    /// `raise <src>` — raise an error value. Propagates as an exceptional outcome
-    /// (the VM unwinds to the nearest enclosing [`MirInstr::Try`] handler).
-    Raise {
-        src: Reg,
-    },
     /// A structurally lowered `try`/`except`/`else`/`finally` region. Each
     /// sub-part is a self-contained mini-CFG (a
     /// `Vec<MirBlock>` with local block ids, entry = block 0) that **shares this
@@ -2519,10 +2515,10 @@ impl MirInstr {
         }
     }
 
-    /// Whether the instruction is a raise point: a `raise`, or a call
-    /// declared `raises`.
+    /// Whether the instruction is a raise point: a call declared
+    /// `raises`. A `raise` statement is a terminator, [`MirTerm::Raise`].
     pub fn is_raise_point(&self) -> bool {
-        matches!(self, Self::Raise { .. }) || self.call_error().is_some()
+        self.call_error().is_some()
     }
 
     /// Whether the instruction has no effect but reading, so it can be
@@ -2611,7 +2607,6 @@ impl MirInstr {
             | Self::VariantSetInitWith { .. }
             | Self::VariantDeinitWith { .. }
             | Self::VariantReplace { .. }
-            | Self::Raise { .. }
             | Self::Try { .. }
             | Self::If { .. }
             | Self::Loop { .. }
@@ -2957,6 +2952,12 @@ pub enum MirTerm {
     /// `hlcf.match.complete`: the nearest enclosing [`MirInstr::Match`]
     /// case ran; leave the op, its values defining the op's results.
     MatchComplete(Vec<Reg>),
+    /// A `raise` statement: raise the error value `src`, leaving every
+    /// region to the nearest enclosing [`MirInstr::Try`]'s raise edge, or
+    /// out of the function when none encloses it. Upstream's `raise` is a
+    /// terminator too, which `LowerSemanticCF`'s `emitRaise` lowers to
+    /// `lit.try.raise` inside a `try` and `lit.error.return` outside one.
+    Raise(Reg),
     /// `hlcf.unreachable`: control never reaches here.
     Unreachable,
 }
@@ -3451,14 +3452,11 @@ mod tests {
         // A `try` in a loop body lists slot 0, which every path to its raise
         // point has already dropped, so the list entry goes.
         let body = vec![block(
-            vec![
-                MirInstr::DropVar {
-                    var: 0,
-                    destructor: None,
-                },
-                MirInstr::Raise { src: Reg(0) },
-            ],
-            MirTerm::TryYield,
+            vec![MirInstr::DropVar {
+                var: 0,
+                destructor: None,
+            }],
+            MirTerm::Raise(Reg(0)),
         )];
         let listed = MirInstr::Try {
             body,

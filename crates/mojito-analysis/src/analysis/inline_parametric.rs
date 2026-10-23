@@ -1722,11 +1722,10 @@ impl ReturnExit {
 
     /// Rewrite a return ending `block` into a break of the wrapper loop,
     /// carrying the returned value when the loop has a result. A
-    /// value-less return after a raise is never taken, the raise leaving
-    /// the body as it left the callee, and one from a function returning a
-    /// value is the checker's unreachable fall-off; a break carrying no
-    /// value cannot leave a loop with a result, so both are unreachable
-    /// there.
+    /// value-less return from a function returning a value is the
+    /// checker's unreachable fall-off; a break carrying no value cannot
+    /// leave a loop with a result, so it is unreachable there. A `raise`
+    /// stays, leaving the body as it left the callee.
     fn rewrite(&self, block: &mut MirBlock) {
         let leave = |values| MirTerm::Break {
             label: Some(LoopLabel::INLINED_CF_SCOPE),
@@ -2631,8 +2630,7 @@ struct ContinueWalk {
 impl ContinueWalk {
     /// Walk `blocks`, a reached region, whose one block holds it; returns
     /// whether its `yield` or elif condition's end is reached. A block's
-    /// end is reached when each region op before it completes: a `raise`
-    /// does not end it, as the lowered block's edges follow it.
+    /// end is reached when each region op before it completes.
     fn region(&mut self, blocks: &[MirBlock]) -> bool {
         let Some(block) = blocks.first() else {
             return true;
@@ -3726,20 +3724,13 @@ mod tests {
     /// back edge, as upstream prices `hlcf` directly.
     #[test]
     fn structured_back_edges_count_resumed_loops() {
-        let raise = MirInstr::Raise { src: Reg(0) };
-        let continue_after_raise = one(
+        let raising_body = one(
             vec![MirInstr::Loop {
                 label: Some(LoopLabel(0)),
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(
-                    vec![raise],
-                    MirTerm::Continue {
-                        label: Some(LoopLabel(0)),
-                        values: Vec::new(),
-                    },
-                ),
+                body: one(Vec::new(), MirTerm::Raise(Reg(0))),
             }],
             MirTerm::Unreachable,
         );
@@ -3854,7 +3845,7 @@ mod tests {
             MirTerm::Unreachable,
         );
         for (blocks, edges) in [
-            (continue_after_raise, 1),
+            (raising_body, 0),
             (dead_continue, 0),
             (outer_continue, 1),
             (match_to_orelse, 1),

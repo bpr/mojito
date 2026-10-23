@@ -316,7 +316,6 @@ impl<'a> ArgumentPassing<'a> {
             // The rest run callee code or consume a whole value: none loads a
             // scalar operand.
             MirInstr::Try { .. }
-            | MirInstr::Raise { .. }
             | MirInstr::GetIter { .. }
             | MirInstr::HasNext { .. }
             | MirInstr::Next { .. }
@@ -1110,16 +1109,14 @@ impl ForwardObserver<DropFactsState> for DropFactsObserver<'_> {
             loaded: Vec::new(),
         };
         let end = end.map(|state| {
-            if let MirTerm::Yield(values) | MirTerm::ComptimeYield(values) = &block.term {
-                let mut owners = BTreeSet::new();
-                for value in values {
-                    let provenance = [&state.registers.owners, &state.registers.single_hop];
-                    for map in provenance {
-                        owners.extend(map.get(&value.0).into_iter().flatten());
-                    }
+            let mut owners = BTreeSet::new();
+            for value in handed_values(&block.term) {
+                let provenance = [&state.registers.owners, &state.registers.single_hop];
+                for map in provenance {
+                    owners.extend(map.get(&value.0).into_iter().flatten());
                 }
-                yielded.retained = owners.into_iter().collect();
             }
+            yielded.retained = owners.into_iter().collect();
             self.facts.intern(&state.generations)
         });
         self.facts.blocks.insert(

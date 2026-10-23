@@ -786,9 +786,6 @@ impl Decoder {
                 other: self.req(value, fields, "other", |d, v| Some(d.option_reg(v)))?,
                 mask: self.req(value, fields, "mask", Self::lane_mask)?,
             }),
-            "raise" => Some(MirInstr::Raise {
-                src: self.req(value, fields, "src", Self::reg)?,
-            }),
             "try" => {
                 let body = self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?;
                 let handler = {
@@ -977,6 +974,7 @@ impl Decoder {
             }
             "match.next" => Some(MirTerm::MatchNext(self.added_regs(fields, "values"))),
             "match.complete" => Some(MirTerm::MatchComplete(self.added_regs(fields, "values"))),
+            "raise" => Some(MirTerm::Raise(self.req(value, fields, "src", Self::reg)?)),
             "unreachable" => Some(MirTerm::Unreachable),
             other => {
                 self.error(value.span, format!("unknown terminator `{other}`"));

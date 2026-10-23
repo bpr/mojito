@@ -393,7 +393,6 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         | I::DeclareVar { .. }
         | I::UninitStorage { .. }
         | I::GetField { .. }
-        | I::Raise { .. }
         | I::Try { .. }
         | I::If { .. }
         | I::Loop { .. }

@@ -1,4 +1,4 @@
-mojito-mir 1.61
+mojito-mir 1.90
 artifact {
   features: [],
   files: [
@@ -36,7 +36,7 @@ artifact {
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v0, mode: copy },
               binary { op: lt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
-              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: string("negative") }, call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, raise { src: %r5 }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: string("negative") }, call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: raise { src: %r5 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               var.use { dest: %r6, var: $v0, mode: copy }
             ],
             terminator: return { value: present(%r6) }

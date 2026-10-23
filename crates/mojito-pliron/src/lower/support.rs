@@ -458,7 +458,6 @@ pub fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
             out.extend(args.iter().copied());
             out.extend(kwargs.iter().map(|(_, reg)| *reg));
         }
-        MirInstr::Raise { src } => out.push(*src),
         MirInstr::MakeVariant { value, .. }
         | MirInstr::VariantIs { variant: value, .. }
         | MirInstr::VariantGet { variant: value, .. }
@@ -544,7 +543,6 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::UninitStorage { .. } => "UninitStorage",
         MirInstr::UninitStorageTake { .. } => "UninitStorageTake",
         MirInstr::UninitStorageDestroy { .. } => "UninitStorageDestroy",
-        MirInstr::Raise { .. } => "Raise",
         MirInstr::Try { .. } => "Try",
         MirInstr::If { .. } => "If",
         MirInstr::Loop { .. } => "Loop",

@@ -368,7 +368,6 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
                 index_regs(p, out);
             }
         }
-        MirInstr::Raise { src } => out.push(*src),
         MirInstr::If { cond, .. } => out.push(*cond),
         MirInstr::Loop { operands, .. } | MirInstr::ComptimeFor { operands, .. } => {
             out.extend(operands.iter().copied());

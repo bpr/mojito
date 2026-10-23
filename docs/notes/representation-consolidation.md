@@ -35,7 +35,7 @@ disappear. Four such gaps remain, and one of them reaches far outside
 
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
-| A. Raises are implicit | every raise point ends a region | R906, R831, R20, R884 | R1264, R1106, R1272, R1113, R832, R833, R733, R956, R890, likely R829 |
+| A. Raises are implicit | every raise point ends a region | R831, R20, R884 | R1264, R1106, R1272, R1113, R832, R833, R733, R956, R890, likely R829 |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1283, R1278, R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
@@ -58,10 +58,12 @@ This gap blocks about 14 entries across four tracks (`pmir`,
   `lowerTryFinally` copies each `finally` before every exit. Every raise
   point is then an explicit region exit, and `CheckLifetimes` and
   `DestructorInsertion` destroy on each one what that exit holds.
-- **Mojito**: `MirInstr::Raise` sits mid-block (R906), a raising call's
-  error edge is implicit, one cleanup list serves a whole `try` body
-  (R831), a raise out of the function has no cleanup at all (R20), and the
-  VM runs `finally` dynamically (R884).
+- **Mojito**: a `raise` statement is the `MirTerm::Raise` terminator
+  (R906 landed 2026-10-22), so drop elaboration destroys on its exit what
+  that exit holds, as upstream does. A raising call's error edge is still
+  implicit, one cleanup list serves a whole `try` body's raising calls
+  (R831), a raising call out of the function has no cleanup at all (R20),
+  and the VM runs `finally` dynamically (R884).
 - **What follows** once raises are explicit exits:
   - R833 (drop order on a raise) and R733 (a value dead from the raise on)
     are per-exit drop placement.
@@ -76,7 +78,7 @@ This gap blocks about 14 entries across four tracks (`pmir`,
   - R829 is very likely the `return` case of R884.
 - **Cost**: generators grow by one `if` per raising call. That is
   upstream's shape. Expect the instruction counters to rise slightly.
-- **Order**: R906 → R831 → R20 → R884. Plan this as
+- **Order**: R831 → R20 → R884 (R906 landed first). Plan this as
   one arc with a plan file, as the region chain was: R831, R20, and R884
   are Fable, Planned.
 
@@ -142,9 +144,8 @@ entry's probe is "one instance per `n` where the pin has one".
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1283 -n 0
    ```
 
-2. **Gap A**, for leverage. Its order is encoded as Depends bullets (R831
-   on R906, R20 and R884 on R831), so the run below brings in R906 and
-   R831:
+2. **Gap A**, for leverage. Its order is encoded as Depends bullets (R20
+   and R884 on R831; R906 has landed), so the run below brings in R831:
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R20 --task R884 -n 0

@@ -396,12 +396,10 @@ impl ForwardObserver<Carry> for FieldFactsObserver<'_> {
     }
 
     fn block(&mut self, _entry: &Carry, end: Option<&Carry>, block: &MirBlock) {
-        let (Some(state), MirTerm::Yield(values) | MirTerm::ComptimeYield(values)) =
-            (end, &block.term)
-        else {
+        let Some(state) = end else {
             return;
         };
-        let fields: FieldSet = values
+        let fields: FieldSet = handed_values(&block.term)
             .iter()
             .filter_map(|value| state.get(&value.0))
             .flat_map(|(carry, single)| carry.iter().chain(single).copied())
@@ -703,17 +701,25 @@ impl FieldSplice<'_> {
     }
 
     /// Collect into `present` the fields live at each raise point of
-    /// `blocks`, entering every region op but a `try`.
+    /// `blocks`, a `raise` terminator included, entering every region op
+    /// but a `try`.
     fn raise_points(&self, blocks: &[MirBlock], present: &mut FieldSet) {
-        for instr in blocks.iter().flat_map(|block| &block.instrs) {
-            if region_op(instr) && !matches!(instr, MirInstr::Try { .. }) {
-                for region in instruction_regions(instr) {
-                    self.raise_points(region, present);
+        for block in blocks {
+            for instr in &block.instrs {
+                if region_op(instr) && !matches!(instr, MirInstr::Try { .. }) {
+                    for region in instruction_regions(instr) {
+                        self.raise_points(region, present);
+                    }
+                } else if raises_to_handler(instr)
+                    && let Some(live) = self.plan.instrs.get(&std::ptr::from_ref(instr))
+                {
+                    present.extend(live.iter().copied());
                 }
-            } else if raises_to_handler(instr)
-                && let Some(live) = self.plan.instrs.get(&std::ptr::from_ref(instr))
+            }
+            if matches!(block.term, MirTerm::Raise(_))
+                && let Some(plan) = self.plan.blocks.get(&std::ptr::from_ref(block))
             {
-                present.extend(live.iter().copied());
+                present.extend(plan.live_out.iter().copied());
             }
         }
     }

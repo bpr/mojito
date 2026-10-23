@@ -1507,7 +1507,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("mask", lane_mask(mask)),
             ],
         ),
-        MirInstr::Raise { src } => record(tag, &[("src", reg_value(*src))]),
         MirInstr::Try {
             body,
             handler,
@@ -1736,6 +1735,7 @@ fn term_value(term: &MirTerm) -> String {
             ],
         ),
         MirTerm::TryYield | MirTerm::Unreachable => record(tag, &[]),
+        MirTerm::Raise(src) => record(tag, &[("src", reg_value(*src))]),
         MirTerm::Yield(values)
         | MirTerm::ComptimeYield(values)
         | MirTerm::MatchNext(values)

@@ -338,6 +338,9 @@ pub enum Terminator {
     /// `hlcf.match.complete`: the innermost [`HirInstr::Match`] case ran;
     /// leave the op.
     MatchComplete,
+    /// A `raise` statement: leave every region for the nearest enclosing
+    /// [`HirInstr::Try`]'s raise edge, or out of the function.
+    Raise(HirExpr),
     /// `hlcf.unreachable`: no execution reaches the region's end — a case
     /// earlier ones cover, or the fall-through of a `match` whose cases
     /// cover its subject.
@@ -970,6 +973,10 @@ impl Lower {
             CheckedStmtOp::Break => self.leave(id, true),
             CheckedStmtOp::Continue => self.leave(id, false),
             CheckedStmtOp::Return(value) => self.ret(*value),
+            CheckedStmtOp::Raise(value) => {
+                let value = self.expr(*value);
+                self.seal(Terminator::Raise(value));
+            }
 
             CheckedStmtOp::VarDecl { name, value, .. }
                 if checked
@@ -2053,7 +2060,6 @@ fn checked_statement_roots(statement: &CheckedStmtOp) -> Vec<CheckedNodeId> {
         | CheckedStmtOp::RefDecl { value, .. }
         | CheckedStmtOp::Assign { value, .. }
         | CheckedStmtOp::Comptime { value, .. }
-        | CheckedStmtOp::Raise(value)
         | CheckedStmtOp::Expr(value) => vec![*value],
         CheckedStmtOp::SetPlace { place, value }
         | CheckedStmtOp::AugAssign { place, value, .. } => {

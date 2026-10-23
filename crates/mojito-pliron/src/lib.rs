@@ -155,9 +155,10 @@ pub fn compile(
         lower::lower_body(&mut context, name, function, func_op, &env, &mut shared)?;
     }
 
-    // Raise lowering leaves unreachable blocks holding the dead remainders
-    // of raising MIR blocks; pliron's dominance verifier does not tolerate
-    // value uses inside unreachable blocks, so prune them before verifying.
+    // Region lowering leaves unreachable blocks, the continuation of a
+    // region op none of whose regions falls off; pliron's dominance
+    // verifier does not tolerate value uses inside unreachable blocks, so
+    // prune them before verifying.
     let mut rewriter =
         pliron::irbuild::rewriter::IRRewriter::<pliron::irbuild::listener::Recorder>::default();
     pliron::opts::simplify_cfg::remove_blocks_inside_op(

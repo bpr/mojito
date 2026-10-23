@@ -147,7 +147,6 @@ accessed; the compact notation omits this analysis-only field.
 
 | Mnemonic | MIR operation | Purpose |
 |---|---|---|
-| `raise` | `Raise` | Raise an error value |
 | `try` | `Try` | Execute structured try/except/else/finally regions |
 | `unsupported` | `Unsupported` | Report an explicitly unsupported operation |
 
@@ -192,6 +191,7 @@ stored handle and operating on its referent.
 | `return` | `Return` | Return from a function or structured region |
 | `return.cleanup` | `ReturnWithCleanup` | Return after pending `finally` regions, then destroy what the return still holds |
 | `try.yield` | `TryYield` | Complete a try sub-region normally |
+| `raise` | `Raise` | Raise an error value, leaving every region to the nearest `try`'s raise edge or the function |
 
 The structured region terminators — `yield`, `if.elifcond.yield`, `break`,
 `continue`, `match.next`, `match.complete`, `comptime.yield`,
@@ -815,16 +815,6 @@ tests `iter.has_next` first.
 
 ## Exceptions and Structured Regions
 
-### `raise` — Raise Error
-
-```text
-raise %source
-```
-
-Raises the value in `%source`. An `Error` or `String` supplies its message;
-another value reports its runtime type. The exceptional outcome propagates to
-the nearest enclosing `try` handler or out of the current function.
-
 ### `try` — Structured Exception Region
 
 ```text
@@ -927,6 +917,19 @@ try.yield
 Marks normal completion of a try sub-region. It is not a valid ordinary function
 terminator. The region runner translates it to normal flow and allows the
 surrounding `try` instruction to continue with `else` or `finally` as required.
+
+### `raise` — Raise Error
+
+```text
+raise %source
+```
+
+Raises the value in `%source`. An `Error` or `String` supplies its message;
+another value reports its runtime type. It ends any region, as upstream's
+`raise` ends its block: the exceptional outcome leaves every enclosing
+region for the nearest enclosing `try`'s raise edge, or out of the current
+function. Drop elaboration has already destroyed, before it, what neither
+the handler nor a `finally` reads.
 
 ## Call ABI and Function Metadata
 

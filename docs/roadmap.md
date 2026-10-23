@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1289**.
+Next free ID: **R1290**.
 
 ## Ordered Work
 
@@ -1559,6 +1559,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The MIR verifier accepts the list, since some raise path holds each
     entry.
   - Lever: an explicit raise edge per raising instruction in a `try` body.
+  - Upstream's `emitRaise` ends each raise in `lit.try.raise`, naming its
+    `try`'s label, or in `lit.error.return` out of the function; MIR's one
+    `raise` terminator (R906) serves both, its `try` found by the
+    ownership walks' raise channel and by the backends as they run.
   - Found while landing R826 (2026-10-14).
   - Depends on R906 (a `raise` ends its region, as each explicit raise
     edge will).
@@ -1750,22 +1754,23 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R20 A value live after a region is never destroyed when the region
-  raises out of the function**
+- [ ] **R20 A value live after a raising call is never destroyed when the
+  call raises out of the function**
 
-  Problem: `var b = Thing(); if cond: raise Error("boom"); look(b)` never
-  runs `b`'s destructor when the raise propagates, where the pin destroys
-  `b` on the raise edge.
-  - The same leak follows a raising call with the value live after it, a
-    raise inside a loop, a raise in an `else` arm, and a raise inside a
-    `comptime if` arm; only a value dead at the raise is destroyed, since
-    its drop precedes the raise.
-  - A `try` in the same function cleans up its body's locals on the
-    exceptional edge; a raise that leaves the function has no cleanup list.
-  - Decide where the cleanup lives: a per-function unwind list the VM and
-    the native runtime both run, or drops elaborated on the raise edge.
-  - Probe: `conformance/probes/raise_path_live_value_leaks.mojo`
-    (`docs/notes/comptime-region-ownership.md`, `c7`).
+  Problem: `var b = Thing(); if cond: fail(); look(b)` never runs `b`'s
+  destructor when `fail()` raises out of the function, where the pin
+  destroys `b` on the raise edge.
+  - A `raise` statement has destroyed it since R906: it is a terminator
+    whose live-out is the raise channel, so drop elaboration destroys at
+    the raising arm's entry what no handler reads, in a loop, an `else`
+    arm, and a `comptime if` arm alike.
+  - A raising call's raise edge is implicit, so no instruction on it can
+    host the drop, and a raise that leaves the function has no cleanup
+    list.
+  - Upstream's `addErrorRegions` gives each raising call an error region
+    ending in a raise, which R831's explicit raise edges bring.
+  - Probe: `conformance/probes/raise_path_live_value_leaks.mojo` (`v6`;
+    the other cases match the pin since R906).
   - Depends on R831 (the explicit raise edges whose drops a raise out of
     the function needs too).
   - Model: Fable, Planned.
@@ -1779,13 +1784,37 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Inlined into a `try`'s body (`inline-parametric`), the `out self` slot
     stays off the raise-edge cleanup, since a slot list cannot end part of
     a value.
-  - Kept as a call, the raise leaves the initializer holding the fields,
-    which R20 covers for every function.
-  - Fix: end the fields the raise holds, one `DropPlace` each, on the
-    raise edge R20 settles.
+  - Kept as a call, the `raise` terminator (R906) is an exit drop
+    elaboration places drops before, but it never ends part of the
+    `out self` slot: only a `deinit` receiver's fields get field drops
+    (`field_drops.rs`), where upstream's `DestructorInsertion` destroys a
+    partially initialized `self` field by field.
+  - Fix: end the fields the raise holds, one `DropPlace` each, before the
+    `raise`; a raising call in the initializer needs the same on its raise
+    edge once R20 lands.
   - Probe: a `Pair.__init__` setting `a`, raising, then setting `b`,
-    called in a `try` (found while landing R919, 2026-10-14).
-  - Depends on R20.
+    called in a `try` (found while landing R919, 2026-10-14); the pin
+    prints `del a`, `caught boom`, Mojito only `caught boom`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1289 A closed `comptime if`'s dead arm keeps values alive through
+  drop elaboration**
+
+  Upstream's `LowerSemanticCF` marks a constant-dead `comptime if` arm
+  `unreachable`, and erases the code after a live arm that never falls
+  through, before `CheckLifetimes` runs; Mojito keeps both until
+  `canonicalize` folds the op, after drop elaboration.
+  - Probe: `var b = Thing("b")`, `print("start")`, then `comptime if FLAG:
+    return` and `print("after", b.s)`, over a module `comptime FLAG =
+    True`: the pin prints `del b`, `start`, and Mojito `start`, `del b`.
+    A `raise Error("boom")` in the arm differs the same way.
+  - Lever: decide a closed condition before the ownership checks, as
+    `markRegionDeadDueToConstantCond` does, the way `hir::Lower` already
+    erases the statements after a `return` or `raise`
+    (`CheckedTables::live_statements`).
+  - Found while landing R906 (2026-10-22).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R30 A `var` of an opaque type is not required to be `Deinitable`**
@@ -10358,24 +10387,6 @@ follow-ups the landed producer stages filed come last.
   - Upstream has no HIR, so this only removes a shape upstream lacks.
   - Found while landing R873 (2026-10-14).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R906 A `raise` is a mid-block MIR instruction, where upstream's
-  `raise` ends its block**
-
-  `MirInstr::Raise` is followed by its region's normal terminator
-  (`yield`, or a region exit), so every analysis special-cases it as "the
-  rest of the block is unreachable".
-  - The special cases: `moves.rs` (two), `interior.rs`, `verify/drops.rs`,
-    and `register_loans.rs`.
-  - Lever: a `raise` region terminator in HIR (`Terminator`) and MIR
-    (`MirTerm`).
-  - The VM (`exec.rs`), Pliron (`lower/term.rs`, beside the other region
-    terminators), and the MIR text format (a version bump) follow.
-  - Dead statements after a `raise` are already erased
-    (`CheckedTables::live_statements`).
-  - Found while landing R889 (2026-10-14).
-  - Depends on R1274, so only structured bodies need the new terminator.
   - Model: Opus, Not Planned.
 
 - [ ] **R912 A removed parameter stays in its generator's signature and its

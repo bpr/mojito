@@ -265,7 +265,7 @@ impl FnLowering<'_> {
     }
 
     /// The `Error(x)` builtin. Before Stage 4's tagged outcomes the only
-    /// consumer is `Raise`, which reads the message bytes and exits — so an
+    /// consumer is a `raise`, which reads the message bytes and exits — so an
     /// error value lowers as its message string pair.
     /// The lowered function-return value kind: the reference pointer for a
     /// reference-returning function, else the checked return type's lowering.

@@ -1,4 +1,4 @@
-mojito-mir 1.89
+mojito-mir 1.90
 artifact {
   features: [],
   files: [
@@ -221,7 +221,7 @@ artifact {
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Bounded, arguments: [] }), projections: [projection { op: field(i), type: Int }], type: present(Int), through: absent } },
               place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Bounded, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
               binary { op: eq, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent },
-              if { results: [], condition: %r2, then: [bb0 { instructions: [call { dest: %r3, func: "__module$std$iter$StopIteration.__init__", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, raise { src: %r3 }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r2, then: [bb0 { instructions: [call { dest: %r3, func: "__module$std$iter$StopIteration.__init__", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: raise { src: %r3 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               place.load { dest: %r4, place: place { root: $v0, root_type: present(struct_type { name: Bounded, arguments: [] }), projections: [projection { op: field(i), type: Int }], type: present(Int), through: absent } },
               const { dest: %r5, value: int_literal(1) },
               literal.materialize { dest: %r6, value: %r5, target: Int },
