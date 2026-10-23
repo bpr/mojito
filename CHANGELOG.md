@@ -789,6 +789,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `lower-lit` erases every `loans.establish` too, as upstream's `LowerLIT`
+  leaves no loan op behind, so concrete MIR holds none (an empty
+  program's held 200) and concrete verification, the VM, and the Pliron
+  backend refuse one, so an artifact written by an older binary that still
+  holds one no longer runs (R931). A `ref` binding whose reads lowering
+  substitutes by its place (`ref r = x.a[i]`) now stores that place's
+  `ref.make` handle in its slot with a `var.store`, as upstream's `lit.ref`
+  is a value, where Pliron read the binding's loan marker to materialize
+  it; a native place through the binding addresses from that handle.
+  Output is unchanged on both backends; the MIR text and package formats
+  are unchanged.
 - `sroa` splits a struct slot whatever its fields' types and whatever its
   drop runs, as upstream's `SROA` tests only that the element types
   resolve (R1267). A memory-only slot, one whose type declares neither

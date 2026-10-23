@@ -29,7 +29,9 @@ impl VmBackend {
         let caller_function = function;
         self.burn_ctfe()?;
         match i {
-            MirInstr::EstablishLoans { .. } => {}
+            MirInstr::EstablishLoans { .. } => {
+                return Err(parametric_instruction("loan marker"));
+            }
             MirInstr::InvalidateInteriors { .. } => {
                 return Err(parametric_instruction("interior invalidation"));
             }

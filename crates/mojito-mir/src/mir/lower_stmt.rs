@@ -2371,6 +2371,39 @@ impl<'a> Flatten<'a> {
                 }) {
                     self.var_types.insert(reference, reference_ty);
                 }
+                // The slot holds the handle `lit.ref` would be: every read
+                // through the binding addresses its place, and a backend
+                // addresses that place from this handle.
+                let handle_ty = self
+                    .var_types
+                    .get(&reference)
+                    .filter(|ty| matches!(ty.kind(), TyKind::Ref(_)))
+                    .cloned()
+                    .or_else(|| {
+                        mir_place_handle_ty(
+                            &place,
+                            Some(if mutable {
+                                mojito_types::origin::Mutability::Mutable
+                            } else {
+                                mojito_types::origin::Mutability::Immutable
+                            }),
+                        )
+                    })
+                    .unwrap_or_else(Ty::error);
+                self.var_types
+                    .entry(reference)
+                    .or_insert_with(|| handle_ty.clone());
+                let handle = self.fresh_typed(node.location(), Some(place.root), handle_ty.clone());
+                self.emit(MirInstr::MakeRef {
+                    dest: handle,
+                    place: place.clone(),
+                });
+                self.emit(MirInstr::DefVar {
+                    var: reference,
+                    src: handle,
+                    binding_ty: Some(handle_ty),
+                    in_place: false,
+                });
                 self.aliases.insert(reference, loans[0].clone());
                 self.aggregate_loans.insert(reference, loans.clone());
                 let marker = self.fresh_typed(node.location(), Some(place.root), Ty::none());

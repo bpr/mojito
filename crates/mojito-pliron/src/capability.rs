@@ -81,8 +81,8 @@ impl CapabilityStatus {
 pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "loans.establish",
-        CapabilityStatus::Supported,
-        "ownership fact; erased after validation",
+        CapabilityStatus::Unsupported,
+        "`lower-lit` erases every lifetime marker; one that survives rejects",
     ),
     (
         "interiors.invalidate",

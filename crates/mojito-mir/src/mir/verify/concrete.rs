@@ -281,7 +281,9 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
                 "{head} keeps a compile-time assertion of `{cond:?}` in elaborated MIR"
             ));
         }
-        MirInstr::KeepAlive { .. } | MirInstr::InvalidateInteriors { .. } => {
+        MirInstr::KeepAlive { .. }
+        | MirInstr::EstablishLoans { .. }
+        | MirInstr::InvalidateInteriors { .. } => {
             errors.push(format!(
                 "{head} keeps the lifetime marker `{}` in elaborated MIR",
                 instruction_mnemonic(instruction)
@@ -557,6 +559,12 @@ mod tests {
     fn lifetime_markers_are_refused_in_elaborated_mir() {
         let markers = [
             MirInstr::KeepAlive { var: 0 },
+            MirInstr::EstablishLoans {
+                reference: 0,
+                loans: Vec::new(),
+                marker: Reg(0),
+                dest_interior: None,
+            },
             MirInstr::InvalidateInteriors {
                 base: crate::mir::MirInteriorOrigin {
                     root: 0,
@@ -567,10 +575,11 @@ mod tests {
                 marker: Reg(0),
             },
         ];
-        for (marker, mnemonic) in markers
-            .into_iter()
-            .zip(["lifetime.keep_alive", "interiors.invalidate"])
-        {
+        for (marker, mnemonic) in markers.into_iter().zip([
+            "lifetime.keep_alive",
+            "loans.establish",
+            "interiors.invalidate",
+        ]) {
             let findings = concrete_function_findings("f", &function_with(marker, Ty::none()));
             assert_eq!(findings.len(), 1, "{findings:?}");
             assert!(findings[0].contains(&format!("keeps the lifetime marker `{mnemonic}`")));

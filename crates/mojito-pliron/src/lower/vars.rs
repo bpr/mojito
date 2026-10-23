@@ -1,46 +1,10 @@
-//! Variable-slot lowering: loans, `UseVar`/`DefVar`, copies, and raw
-//! allocation.
+//! Variable-slot lowering: `UseVar`/`DefVar`, copies, and raw allocation.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
-    /// Materialize the runtime handle of a static `ref` binding. MIR normally
-    /// erases loan bookkeeping at execution, but a binding whose only
-    /// definition is `EstablishLoans` still needs its verified target address
-    /// in native storage. Reference-result variables already arrive through
-    /// `DefVar` and retain that more precise (possibly interior) handle.
-    pub(super) fn lower_establish_loans(
-        &mut self,
-        ctx: &mut Context,
-        reference: u32,
-        loans: &[mojito_mir::mir::MirLoan],
-        marker: Reg,
-    ) -> Result<(), PlironError> {
-        if !self.initialized_vars.contains(&reference)
-            && matches!(
-                self.func.var_tys.get(&reference).map(Ty::kind),
-                Some(TyKind::Ref(_))
-            )
-        {
-            let [loan] = loans else {
-                return Err(self.unsupported_reg(
-                    "reference binding with non-singleton runtime target".into(),
-                    marker,
-                ));
-            };
-            let place = loan.place.clone();
-            let address = self.place_address(ctx, &place, marker)?.0;
-            let store = StoreOp::new(ctx, address, self.var_slots[reference as usize]);
-            self.append(ctx, store.get_operation(), Some(marker));
-            self.initialized_vars.insert(reference);
-            self.reference_places.insert(reference, place);
-        }
-        self.erased.insert(marker.0);
-        Ok(())
-    }
-
     /// `UseVar`: scalars load from their slot; an aggregate copy or move
     /// runs the `constructor` it names, and one naming none copies with the
     /// VM's `clone_value` semantics or transfers the bytes (the VM
@@ -119,7 +83,13 @@ impl FnLowering<'_> {
         var: u32,
         src: Reg,
     ) -> Result<(), PlironError> {
-        self.initialized_vars.insert(var);
+        if matches!(
+            self.func.var_tys.get(&var).map(Ty::kind),
+            Some(TyKind::Ref(_))
+        ) && let Some(place) = self.made_ref_places.get(&src.0)
+        {
+            self.reference_places.insert(var, place.clone());
+        }
         match self.var_lower_ty(var)? {
             LowerTy::Scalar(expected) => {
                 let value = self.literal_slot_value(ctx, var, src, expected)?;

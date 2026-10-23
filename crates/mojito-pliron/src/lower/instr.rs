@@ -121,8 +121,6 @@ impl FnLowering<'_> {
             let store = StoreOp::new(ctx, value, self.var_slots[param]);
             self.append(ctx, store.get_operation(), None);
         }
-        self.initialized_vars
-            .extend((0..self.func.n_params).map(|var| var as u32));
         // Every droppable variable gets an initialization flag (parameters
         // arrive bound, everything else starts empty). See `drop_flags`.
         let i1: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
@@ -576,12 +574,9 @@ impl FnLowering<'_> {
             MirInstr::KeepAlive { .. } => {
                 Err(self.unsupported("a keep-alive marker after lower-lit".to_string(), None))
             }
-            MirInstr::EstablishLoans {
-                reference,
-                loans,
-                marker,
-                ..
-            } => self.lower_establish_loans(ctx, *reference, loans, *marker),
+            MirInstr::EstablishLoans { marker, .. } => {
+                Err(self.unsupported_reg("a loan marker after lower-lit".to_string(), *marker))
+            }
             MirInstr::CopyValue {
                 dest,
                 value,

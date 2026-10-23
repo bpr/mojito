@@ -304,6 +304,13 @@ impl FnLowering<'_> {
         if (place.proj.is_empty() || forwards_stored_handle)
             && let TyKind::Ref(reference) = ty.kind()
         {
+            self.made_ref_places.insert(
+                dest.0,
+                MirPlace {
+                    ty: Some(reference.referent.clone()),
+                    ..place.clone()
+                },
+            );
             let handle = ScalarTy::Ptr.handle(ctx);
             let load = LoadOp::new(ctx, address, handle);
             self.append(ctx, load.get_operation(), Some(dest));
@@ -327,6 +334,13 @@ impl FnLowering<'_> {
         if matches!(ty.kind(), TyKind::Pointer { .. }) && !borrows_pointer {
             self.pointer_slot_refs.insert(dest.0);
         }
+        self.made_ref_places.insert(
+            dest.0,
+            MirPlace {
+                ty: Some(ty),
+                ..place
+            },
+        );
         self.reg_values.insert(dest.0, address);
         Ok(())
     }

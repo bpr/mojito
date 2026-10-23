@@ -4,12 +4,15 @@
 //! Upstream's `LITLowerer::lowerLITOps` erases the ownership ops "used
 //! internally by the frontend and ownership lowering, but … not needed after
 //! that", `lit.ownership.use` among them: a no-op use that keeps a value
-//! alive, which is MIR's `lifetime.keep_alive`. Upstream has no op for
-//! interior invalidation at all, since that state lives inside
-//! `CheckLifetimes`; MIR's `interiors.invalidate` carries it to the
-//! ownership analysis and drop elaboration, which together are MIR's
-//! lifetime check, and ends here too. Below this pass neither marker is
-//! legal: concrete verification refuses one, and so do both backends.
+//! alive, which is MIR's `lifetime.keep_alive`. Upstream has no op for a
+//! loan or for interior invalidation at all, since that state lives inside
+//! `CheckLifetimes`; MIR's `loans.establish` and `interiors.invalidate`
+//! carry it to the ownership analysis and drop elaboration, which together
+//! are MIR's lifetime check, and end here too. A `ref` binding's slot
+//! already holds its handle (`ref.make` then `var.store`), as upstream's
+//! `lit.ref` value does, so no loan op is left to define it. Below this
+//! pass none of the three markers is legal: concrete verification refuses
+//! one, and so do both backends.
 //!
 //! `var.declare` stays. It is `lit.var.decl`, which upstream lowers to a
 //! stack allocation rather than erasing, and `mem-2-reg` reads it as the
@@ -26,8 +29,8 @@ pub const LOWER_LIT: BodyPass = BodyPass {
     run: lower_lit,
 };
 
-/// Erase every `lifetime.keep_alive` and `interiors.invalidate` in
-/// `function`, its regions included.
+/// Erase every `lifetime.keep_alive`, `loans.establish`, and
+/// `interiors.invalidate` in `function`, its regions included.
 ///
 /// The erased markers' registers lose their types and spans, and registers
 /// are not renumbered. Returns whether any marker was erased.
@@ -46,8 +49,8 @@ pub fn lower_lit(_name: &str, function: &mut MirFunction, _declarations: &MirDec
 }
 
 /// Erase the lifetime-only markers of `blocks` and their regions, adding
-/// each erased invalidation's marker register to `erased_markers`, and
-/// return how many instructions went.
+/// each erased marker register to `erased_markers`, and return how many
+/// instructions went.
 fn erase_markers(blocks: &mut [MirBlock], erased_markers: &mut HashSet<u32>) -> usize {
     blocks
         .iter_mut()
@@ -55,7 +58,8 @@ fn erase_markers(blocks: &mut [MirBlock], erased_markers: &mut HashSet<u32>) -> 
             let before = block.instrs.len();
             block.instrs.retain(|instruction| match instruction {
                 MirInstr::KeepAlive { .. } => false,
-                MirInstr::InvalidateInteriors { marker, .. } => {
+                MirInstr::EstablishLoans { marker, .. }
+                | MirInstr::InvalidateInteriors { marker, .. } => {
                     erased_markers.insert(marker.0);
                     false
                 }

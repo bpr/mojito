@@ -5565,14 +5565,19 @@ Before the pipeline, at both seams and whether or not the pipeline is on,
 `lower-lit` (`analysis::LOWER_LIT`, `analysis/lower_lit.rs`, R837) erases
 the lifetime-only markers, as upstream's `LowerLIT` erases the LIT
 ownership ops after `CheckLifetimes`: every `lifetime.keep_alive`
-(upstream's `lit.ownership.use`) and every `interiors.invalidate` (state
-upstream keeps inside `CheckLifetimes`, with no op) goes, with its marker
-register's type and span. Mojito's lifetime check is the ownership
-analysis plus drop elaboration, which both read the markers, so they end
-right after `elaborate_drops_function`: `CompiledProgram::elaborated_mir`
-runs `lower_lit_program` over every body, `__toplevel__` included, and
-`finish_package_body` runs `lower_lit` on each package body. Below it
-concrete verification and both backends refuse either marker.
+(upstream's `lit.ownership.use`), every `loans.establish`, and every
+`interiors.invalidate` (state upstream keeps inside `CheckLifetimes`, with
+no op) goes, with its marker register's type and span. Mojito's lifetime
+check is the ownership analysis plus drop elaboration, which both read the
+markers, so they end right after `elaborate_drops_function`:
+`CompiledProgram::elaborated_mir` runs `lower_lit_program` over every body,
+`__toplevel__` included, and `finish_package_body` runs `lower_lit` on each
+package body. Below it concrete verification and both backends refuse any
+of the three. No loan op defines a binding: a `ref` binding whose reads
+lowering substitutes by its place (`ref r = x.a[i]`) still stores that
+place's `MakeRef` handle in its slot, as upstream's `lit.ref` is a value,
+and the native backend addresses a place through the binding from the
+stored handle with only the projections beyond the `MakeRef` place.
 `var.declare` stays: it is `lit.var.decl`, which upstream lowers to a
 stack allocation rather than erasing, and `mem-2-reg` reads it as the
 point where a slot declared in a loop is uninitialized again.

@@ -670,22 +670,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R931 `loans.establish` survives into every instance**
-
-  `lower-lit` erases the other lifetime-only markers, but every
-  `loans.establish` still reaches the elaborator and both backends, where
-  upstream's `LowerLIT` leaves no loan op behind.
-  - std's bodies `empty.mojo` reaches hold 253 of them.
-  - The VM ignores each one. Pliron reads one only where a `ref` binding's
-    sole definition is the marker (`lower_establish_loans`,
-    `crates/mojito-pliron/src/lower/vars.rs`).
-  - The lever: give that binding a `ref.make` plus `var.store` at MIR
-    lowering, then let `lower-lit` erase every `loans.establish`.
-  - Done when concrete MIR holds none and `--backend pliron` matches the VM
-    on the `ref`-binding fixtures.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R932 Ownership marks outlive the point where upstream erases them**
 
   `ownership.mark_initialized`, `ownership.mark_destroyed`, and
