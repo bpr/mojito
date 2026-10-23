@@ -527,7 +527,8 @@ impl VmBackend {
                     got: 0,
                 }),
             },
-            // `len(c)` on a user struct dispatches to `c.__len__()`.
+            // The compiler's own `len`: a pack cursor's length, and CTFE's
+            // over a compile-time list. A program's `len` is the library's.
             "len" => match args.into_iter().next() {
                 Some(Value::Str(s)) => Ok(Value::Int(s.len() as i64)),
                 Some(Value::ComptimeList(items)) if self.ctfe_fuel.is_some() => {
@@ -542,18 +543,8 @@ impl VmBackend {
                     | Value::IntLiteral(_)
                     | Value::FloatLiteral(_),
                 ) => Ok(Value::Int(1)),
-                Some(Value::Struct {
-                    name,
-                    fields,
-                }) => {
-                    let recv = Value::Struct {
-                        name: name.clone(),
-                        fields,
-                    };
-                    self.call_dunder(prog, &name, "__len__", vec![recv])
-                }
                 _ => Err(RuntimeError::Unsupported(
-                    "vm: len supports String, internal Tuple storage, SIMD and its scalars, and nominal structs with __len__"
+                    "vm: len supports String, internal Tuple storage, and SIMD and its scalars"
                         .into(),
                 )),
             },

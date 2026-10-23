@@ -51,6 +51,21 @@ fn instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
     result
 }
 
+/// Every instruction of `blocks`, each region's own included.
+fn nested_instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
+    blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .flat_map(|instruction| {
+            std::iter::once(instruction).chain(
+                mojito_mir::mir::instruction_regions(instruction)
+                    .into_iter()
+                    .flat_map(|region| nested_instructions(region)),
+            )
+        })
+        .collect()
+}
+
 fn test_binder(name: &str) -> ParamRef {
     ParamRef {
         id: mojito_types::param_expr::ParamId::new(&format!("$test:{name}"), 0),
@@ -367,19 +382,19 @@ fn value_constructor_literal_arguments_bind_against_the_receiver_solution() {
 }
 
 #[test]
-fn nominal_len_rewrites_to_a_resolved_dunder_method_call() {
+fn nominal_len_inlines_the_library_overload_to_a_resolved_dunder_call() {
     let source = "@fieldwise_init\n\
-                  struct Sized:\n\
+                  struct Measured(Sized):\n\
                   \x20   var n: Int\n\
                   \n\
                   \x20   def __len__(self) -> Int:\n\
                   \x20       return self.n\n\
                   \n\
                   def main():\n\
-                  \x20   print(len(Sized(3)))\n";
+                  \x20   print(len(Measured(3)))\n";
     let specialized = specialized_main(source);
     let main = function(&specialized, "main");
-    let instrs = instructions(&main.blocks);
+    let instrs = nested_instructions(&main.blocks);
     let resolved = instrs
         .iter()
         .find_map(|instruction| match instruction {
@@ -390,21 +405,21 @@ fn nominal_len_rewrites_to_a_resolved_dunder_method_call() {
             } if method == "__len__" => Some(resolved.clone()),
             _ => None,
         })
-        .expect("`len(nominal)` must rewrite to a resolved `__len__` call");
+        .expect("the `@inline(.always)` library `len` must inline to a resolved `__len__` call");
     assert!(
         specialized
             .program
             .functions
             .iter()
             .any(|(name, _)| *name == resolved),
-        "the rewritten target `{resolved}` must be a specialized function"
+        "the inlined target `{resolved}` must be a specialized function"
     );
     assert!(
         !instrs.iter().any(|instruction| matches!(
             instruction,
-            MirInstr::Call { func, .. } if func.0 == "len"
+            MirInstr::Call { func, .. } if func.0 == "len" || func.0.starts_with("len$ov$")
         )),
-        "no bare `len` builtin call may survive the rewrite"
+        "no `len` call may survive the inlining"
     );
 }
 

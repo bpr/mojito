@@ -2490,6 +2490,8 @@ pub struct CheckedDef {
     /// The level its inline decorator names, as upstream's function op
     /// records it.
     pub inline: crate::declaration::InlineLevel,
+    /// Whether it is `@unavailable`: a signature with no body to lower.
+    pub unavailable: bool,
 }
 
 /// A declaration's checked signature, as the check recorded it at the
@@ -5803,6 +5805,7 @@ impl<'a> ArenaBuilder<'a> {
                     .clone()
                     .unwrap_or_default(),
                 inline: crate::declaration::InlineLevel::of(decorators).unwrap_or_default(),
+                unavailable: mojito_ast::ast::is_unavailable(decorators),
             })),
             StmtKind::Struct {
                 name,

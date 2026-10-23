@@ -204,6 +204,7 @@ assets/ok/ctfe_pointer_struct_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_projection_of_temporary_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_type_generic_def_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dead_code_after_terminators.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/decorator_unavailable_function.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/def_aggregate_value_binder_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/default_args.mojo	-	ineligible	no-scalar-entry-shape
@@ -369,6 +370,7 @@ assets/ok/lane_keyed_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lane_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/late_initialized_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/layout_allocation.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/len_library_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lifecycle_deprecated_spellings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lifecycle_member_unread_struct_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lifted_body_owner_instances.mojo	-	ineligible	no-scalar-entry-shape

@@ -472,8 +472,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::check_decorators` checks one declaration's decorators against
   its `DecoratorSite` (struct, `def`, method, trait method), as the pin
   resolves a decorator by name for each declaration kind, and returns the
-  `DecoratorFacts` a struct's state (the `@explicit_destroy` message). The
-  inline level itself stays `mojito_checked::declaration::InlineLevel::of`.
+  `DecoratorFacts` a declaration's state (a struct's `@explicit_destroy`
+  message, a `def`'s `@unavailable` mark). The inline level itself stays
+  `mojito_checked::declaration::InlineLevel::of`. An unavailable `def`'s
+  message rides on its `CallableOriginSignature` (`unavailable`), which
+  `call_inference.rs` rejects when overload selection picks it or a value
+  reference names it (`reject_unavailable`,
+  `Checker::reject_unavailable_reference`); `CheckedDef::unavailable`
+  (`mojito-ast::ast::is_unavailable`) keeps its body out of
+  `CheckedProgram::lowering_units`.
 - `checker/traits.rs` owns trait/struct declaration checking, conformance
   (nominal and built-in), and type-capability queries (`is_deinitable`,
   `is_movable`, `is_copyable`, …, and the three-valued
@@ -955,7 +962,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   signature and body checking.
 - `checker/annotations.rs` converts AST annotations into checked `Ty` values.
 - `checker/builtins.rs` owns built-in typing/coercion rules and builtin
-  free-function inference (`print`/`len`/`range`/…), and the `Hasher`
+  free-function inference (`print`/`range`/…, and `len` where the library
+  overload set cannot bind: a type pack, or a program linked without the
+  prelude), and the `Hasher`
   requirement `_update_with_simd` as a call through an `H: Hasher` bound
   sees it (`hasher_simd_update_requirement`, generic over its dtype and
   width binders).

@@ -2469,8 +2469,24 @@ impl Checker {
         // ownership with `var` instead. A trait member is a method of its
         // trait, whose receiver may be `deinit`.
         let trait_member = std::mem::take(&mut self.checking_trait_member);
-        if !trait_member {
-            self.check_decorators(DecoratorSite::Function, decorators)?;
+        let unavailable = if trait_member {
+            None
+        } else {
+            self.check_decorators(DecoratorSite::Function, decorators)?
+                .unavailable
+                .map(|unavailable| unavailable.message(name))
+        };
+        // An unavailable function declares a signature only: its body is
+        // the one `...` upstream requires.
+        if unavailable.is_some()
+            && body
+                .iter()
+                .any(|statement| !matches!(statement.kind, StmtKind::Pass))
+        {
+            return Err(TypeError::InvalidDecorator(
+                "unexpected function body in @unavailable function declaration, use '...'"
+                    .to_string(),
+            ));
         }
         if let Some(param) = params
             .iter()
@@ -2769,6 +2785,7 @@ impl Checker {
             callable_origin_signature(type_params, &caller_regular, erased_origin_constraints);
         origin_signature.view_return =
             self.view_return_origins(ret_anno.as_ref(), type_params, &regular, 0, None);
+        origin_signature.unavailable.clone_from(&unavailable);
         self.register_callable_origins(name, origin_signature);
         let capture_policy = if self.function_bases.is_empty() {
             if captures.is_some() {
@@ -3139,6 +3156,7 @@ impl Checker {
         // path (falling off the end would yield `None`).
         let reach = |stmt: &Stmt| self.match_reach(stmt);
         if result.is_ok()
+            && unavailable.is_none()
             && named_result.is_none()
             && ret_ty != TyKind::None
             && !definitely_returns(body, &reach)

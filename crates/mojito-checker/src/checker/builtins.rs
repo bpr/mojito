@@ -94,28 +94,6 @@ pub(super) fn has_order_bound(ty: &Ty) -> bool {
     }
 }
 
-/// Upstream's `@unavailable` text for `len` over a string: a UTF-8 length
-/// is ambiguous between bytes, codepoints, and grapheme clusters, so
-/// `String`, `StringSpan`, and a literal name the unit instead.
-pub(super) fn string_len_unavailable(ty: &Ty) -> Option<String> {
-    let name = match ty.kind() {
-        TyKind::StringLiteral => "StringLiteral",
-        TyKind::Struct(name, _) if mojito_types::types::is_stdlib_string_struct(name) => "String",
-        TyKind::Struct(name, _) if name == mojito_types::types::STDLIB_STRING_SPAN_STRUCT => {
-            "StringSpan"
-        }
-        _ => return None,
-    };
-    Some(format!(
-        "{name} does not support `__len__` because Mojo strings are UTF-8 encoded, so a \
-         single length is ambiguous: it could mean the number of UTF-8 bytes, the number \
-         of Unicode code points, or the number of user-visible characters (grapheme \
-         clusters). Use `s.byte_length()` or `len(s.bytes())` for the number of UTF-8 \
-         bytes, `len(s.codepoints())` for Unicode code points, or `len(s.graphemes())` \
-         for grapheme clusters."
-    ))
-}
-
 /// Upstream's `print` rejection: its variadic `*values` pack element does not
 /// conform to `Writable`.
 pub(super) fn not_writable(ty: &Ty) -> TypeError {
@@ -751,9 +729,6 @@ impl Checker {
             }
             return Ok(Some(Ty::int()));
         }
-        if string_len_unavailable(ty).is_some() {
-            return Ok(None);
-        }
         // A literal argument materializes, and `SIMD.__len__` returns the
         // lane count of every scalar it models.
         if mojito_types::conformance::modelled_declares(&default_literal(ty), "Sized") {
@@ -789,8 +764,11 @@ impl Checker {
         Ok(None)
     }
 
-    /// Type `len(x)`: every possible type of a dependent input must fulfill the
-    /// same `Sized`/`__len__ -> Int` contract.
+    /// Type `len(x)` where the library `len` cannot bind it: a type pack
+    /// (`len(Ts)`), which records the pack's length query, and any operand
+    /// of a program linked without the prelude, as a phase test links,
+    /// where every possible type of a dependent input must fulfill the same
+    /// `Sized`/`__len__ -> Int` contract.
     pub(super) fn infer_len(&self, span: SourceSpan, args: &[Expr]) -> Result<Ty, TypeError> {
         // `len(Ts)` of a pack that is still a parameter.
         if let [pack] = args
@@ -800,9 +778,6 @@ impl Checker {
             return Ok(Ty::int());
         }
         let tys = self.builtin_args("len", 1, args)?;
-        if let Some(message) = string_len_unavailable(&tys[0]) {
-            return Err(TypeError::Unsupported(message));
-        }
         self.borrow_nominal_place_argument(&args[0], &tys[0]);
         self.borrow_storage_place_argument(&args[0], &tys[0]);
         if let Some(result) = self.len_result_for_type(&tys[0])? {

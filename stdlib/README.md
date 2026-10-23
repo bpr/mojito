@@ -65,7 +65,10 @@ point, as upstream's toolchain does.
   default initializer stores each element's default construction to that
   storage, available where every element is `Defaultable`.
 - `std/builtin/len.mojo` — upstream's `Sized` and `SizedRaising` traits,
-  each requiring `__len__`; the prelude exports both. A struct conforms by
+  each requiring `__len__`, and upstream's `len` overload set over them
+  (an `@inline(.always)` `Sized` overload, a raising `SizedRaising` one,
+  and an `@unavailable` one over a string); the prelude exports all three.
+  A struct conforms by
   declaring one, and the compiler-modelled `SIMD` scalars, tuples, and packs
   conform as the upstream structs they stand in for declare `Sized`.
 - `std/builtin/_stubs.mojo` — upstream's `paramfor_has_next`,

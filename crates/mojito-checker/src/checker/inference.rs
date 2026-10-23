@@ -1081,6 +1081,7 @@ impl Checker {
             ExprKind::Identifier(name) => {
                 self.check_capture_access(name, false)?;
                 self.reject_display_crossing(expr)?;
+                self.reject_unavailable_reference(name)?;
                 if let Some(owner) = self.lookup_owner(name) {
                     self.record_at(expr.source_span()).binding = Some(owner);
                 }

@@ -5134,7 +5134,7 @@ fn borrow_check_is_place_sensitive() {
 
 // --- Operator overloading (dunder dispatch) ---
 
-const VEC2: &str = "@fieldwise_init\nstruct Vec2(Writable):\n    var x: Int\n    def __add__(self, o: Vec2) -> Vec2:\n        return Vec2(self.x + o.x)\n    def __eq__(self, o: Vec2) -> Bool:\n        return self.x == o.x\n    def __getitem__(self, i: Int) -> Int:\n        return self.x\n    def __len__(self) -> Int:\n        return 1\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(self.x)\n    def __contains__(self, v: Int) -> Bool:\n        return self.x == v\n\n";
+const VEC2: &str = "@fieldwise_init\nstruct Vec2(Sized, Writable):\n    var x: Int\n    def __add__(self, o: Vec2) -> Vec2:\n        return Vec2(self.x + o.x)\n    def __eq__(self, o: Vec2) -> Bool:\n        return self.x == o.x\n    def __getitem__(self, i: Int) -> Int:\n        return self.x\n    def __len__(self) -> Int:\n        return 1\n    def write_to(self, mut writer: Some[Writer]):\n        writer.write(self.x)\n    def __contains__(self, v: Int) -> Bool:\n        return self.x == v\n\n";
 
 #[test]
 fn dunder_dispatch_type_checks_operators_and_builtins() {
@@ -5161,22 +5161,27 @@ fn operator_without_dunder_is_rejected() {
 
 #[test]
 fn len_of_a_string_literal_is_unavailable() {
-    // Upstream marks string `__len__` `@unavailable` (bytes, codepoints, or
-    // grapheme clusters?); the literal rejects like `String`/`StringSpan`.
-    let e = err("def main():\n    var n: Int = len(\"abc\")\n");
+    // Upstream's `len` declares an `@unavailable` overload over a string
+    // (bytes, codepoints, or grapheme clusters?); the literal selects it
+    // like `String`/`StringSpan`.
+    let e = err_std("def main():\n    var n: Int = len(\"abc\")\n");
     assert!(
-        matches!(&e, TypeError::Unsupported(message) if message.contains("does not support `__len__`")),
+        matches!(&e, TypeError::Unavailable(message) if message.contains("`len(String/StringSlice)` is not supported")),
         "got {e:?}"
     );
 }
 
 #[test]
 fn len_dunder_must_return_int() {
-    // `len(x)` requires `__len__ -> Int`; a wrong return type is a type error.
+    // `len(x)` requires a `Sized` argument, whose `__len__` returns `Int`; a
+    // wrong return type breaks the conformance.
     let e = err_std(
-        "@fieldwise_init\nstruct Bad:\n    var x: Int\n    def __len__(self) -> String:\n        return \"nope\"\n\ndef main():\n    var n: Int = len(Bad(1))\n",
+        "@fieldwise_init\nstruct Bad(Sized):\n    var x: Int\n    def __len__(self) -> String:\n        return \"nope\"\n\ndef main():\n    var n: Int = len(Bad(1))\n",
     );
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+    assert!(
+        matches!(e, TypeError::TraitMethodMismatch { .. }),
+        "got {e:?}"
+    );
 }
 
 #[test]

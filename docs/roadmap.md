@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1284**.
+Next free ID: **R1286**.
 
 ## Ordered Work
 
@@ -704,27 +704,6 @@ which names the upstream pass each one follows. Each is measured by the
     with `retarget_method_symbol` gone from `native::mono`.
   - Found while landing R1052 (2026-10-22).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1021 `len(b)` reads its argument's struct whole, whatever
-  `__len__` removed**
-
-  `flen[n](b: NBox[n])` returning `len(b)` keeps `n`, where the pin, whose
-  `@inline(.always)` library `len` inlines to `b.__len__()`, removes it
-  because `__len__` is `_REMOVED_ARG`.
-  - Not landable yet: `len(b)` is an undeclared builtin `call`, which
-    `mir::unread_parameters` reads whole, and the pin's reduction needs
-    the library `len` (R988) and plain `@always_inline` inlining (R923;
-    a `@no_inline` `len` lookalike keeps `n` on the pin).
-  - Do not special-case `len` in `param_uses` or lower it as
-    `b.__len__()` in the checker: both would freeze the builtin R988
-    removes.
-  - Once those land, expect no code change: check that `flen` is one
-    instance on both backends and add it to
-    `assets/ok/member_call_unread_struct_parameter_instances.mojo`,
-    pin-checked.
-  - Found while landing R998 (2026-10-15).
-  - Depends on R1051, R988, R923.
   - Model: Fable, Not Planned.
 
 - [ ] **R983 With the pre-elaboration pipeline off, a capturing callable
@@ -3357,16 +3336,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1162 `@unavailable` on a function or method is rejected**
+- [ ] **R1162 `@unavailable` on a method is rejected**
 
-  Problem: `@unavailable("use g instead")` over a `...`-bodied `def` is
-  reported as an unsupported decorator, where the pin accepts the
-  declaration and rejects each use with the decorator's message.
-  - At the pin a body other than `...` is an error ("unexpected function
-    body in @unavailable function declaration, use '...'").
-  - `checker/decorators.rs` validates the arguments and then rejects the
-    decorator.
-  - Probe: `conformance/probes/decorator_unavailable.mojo`.
+  Problem: `@unavailable` on a struct or trait method is reported as an
+  unsupported decorator, where the pin accepts the declaration and rejects
+  each use with the decorator's message.
+  - The function half landed with R988: `checker/decorators.rs` returns
+    the mark through `DecoratorFacts`, `CallableOriginSignature` carries
+    it to overload selection, and `CheckedDef::unavailable` keeps the
+    body out of lowering. A method needs the same mark on its
+    `MethodSig`, beside the overload selection of a method call.
+  - Upstream marks `String`'s and `StringSlice`'s `__len__` and
+    `UnsafePointer.__bool__` this way.
+  - Probe: a nested `@unavailable` `def` is accepted but still lowers its
+    `...` body inside its enclosing function (`mir::lower_stmt`).
+  - Probe: a `pass` body is accepted, where the pin wants `...`
+    ("unexpected function body in @unavailable function declaration, use
+    '...'"): the parser reads `...` as `StmtKind::Pass`.
   - Found while landing R192 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5955,9 +5941,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Problem: `def sized[*vs: Int]() -> Box[len(vs)]` fails with "not a
   compile-time Int constant: not an associated comptime expression", where
   the pin types the result by the pack's length.
-  - A signature has no body to lift `len(vs)` from, and `len` is a checker
-    builtin rather than a module function, so `called_application` does not
-    serve it.
+  - A signature has no body to lift `len(vs)` from, and `len` is now the
+    library function, but `called_application` serves only `Int` and
+    `Bool` arguments, so a pack argument still needs its own path (R1284).
   - `Box[vs.size]` is the spelling that works today.
   - Found while landing R494 (2026-10-13).
   - Depends on nothing.
@@ -8273,17 +8259,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R191 `Int` conforms to `Floatable` and `len` resolves from a bare
-  `__len__`, though the pin allows neither**
+- [ ] **R191 `Int` conforms to `Floatable`, though the pin does not**
 
   Problem: Mojito conforms `Int` and an integer literal to `Floatable`.
   Upstream conforms neither, so a `Floatable`-bounded helper takes only a
   float there.
-  - Mojito also resolves `len(x)` from a bare `__len__` where the pin wants
-    a declared `Sized` conformance.
-  - `assets/ok/dunder_index.mojo` and `assets/ok/self_hosted_vec.mojo` now
-    declare it.
-  - Two conformance leniencies to withdraw.
+  - A conformance leniency to withdraw.
   - Ledger name: `int-is-floatable`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -8767,24 +8748,30 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R988 `len` is a checker builtin, where upstream's is a library
-  function**
+- [ ] **R1284 Compile-time `len` of a compile-time-only operand is a
+  checker query, where upstream applies the library `len`**
 
-  The pin declares `@inline(.always) def len[T: Sized](value: T) -> Int`
-  and its `SizedRaising` overload in `builtin/len.mojo`, and Mojito
-  checks `len(x)` as a builtin `call` the elaborator dispatches.
-  - Declare both in the bundled std and resolve `len(x)` as an ordinary
-    overloaded call, keeping the builtin only where a pack length needs
-    it (R804).
-  - Done when `len(xs)` over a `List` lowers to a call of the library
-    `len` and every fixture's output is unchanged.
-  - Probe: `len(x)` over a `T: SizedRaising` in a `def` that does not
-    raise is accepted, where the pin rejects it with "cannot call function
-    that may raise in a context that cannot raise"; the builtin carries no
-    raising overload.
-  - Found while landing R939 (2026-10-15).
+  `len(Ts)` over a type pack, `len(tl)` over a `TypeList` binding,
+  `len(Self.values)` over a raw list, and `len(names)` over a reflected
+  list are answered by checker queries, where the pin applies its library
+  `len` to the operand's value at compile time (its `Ts` is a `TypeList`
+  value, whose `__len__` the `Sized` overload calls).
+  - `call_inference::compile_time_len_operand` routes a type pack to the
+    builtin `infer_len` ahead of the library lookup.
+  - The comptime evaluators fold `len` by name: `eval_reflection_expr`,
+    `pack_length_binder`, the bound-display arm, and
+    `compile_dependent_ct_expr`'s raw-list arm (`checker/constraints.rs`,
+    `checker/reflection.rs`), and `applies_callable` excludes it
+    (`checker/comptime_requests.rs`).
+  - The VM's and Pliron's bare `len` callee survives for the pack cursor's
+    has-next test (`mir::lower_stmt::emit_has_next`) and CTFE's
+    compile-time lists.
+  - Done when each operand's length is a compile-time application of the
+    library overload and the bare `len` callee is gone.
+  - Probe: R804's `Box[len(vs)]`.
+  - Found while landing R988 (2026-10-22).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R857 A built-in scalar conversion is a named builtin `call`, not a
   cast op**
@@ -11120,6 +11107,10 @@ residue found inside a task moves to the task that owns its fix.
   `Byte` alias mangles a different key than the `StringSpan` / `UInt8` the
   call selects.
   - Workaround: the ports spell the canonical names.
+  - Probe: an overloaded free function hits it too: `def f(value:
+    StringSlice)` beside `def f(value: Int)` fails on the VM with "does not
+    support the built-in or callee 'f$ov$StringSpan'"; the bundled `len`'s
+    `@unavailable` overload spells `StringSpan` for it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

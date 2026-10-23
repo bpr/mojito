@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `@unavailable` on a module `def` is accepted as at the pin: the body must
+  be `...`, the function has no body to lower, overload selection still
+  ranks it, and a call selecting it or a reference to it as a value is
+  rejected with the decorator's reason, or "'f' is unavailable, use 'g'
+  instead" for `use=g` (`assets/ok/decorator_unavailable_function.mojo`).
+  Methods stay R1162's. The package format is 79.
+
 - `match` emits its cases as upstream's `emitCases` / `emitCaseCluster`
   do: neighbouring cases whose first command tests a spelled literal or an
   enum case on one path form a cluster that reads the leading value and
@@ -635,6 +642,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `len` is upstream's library overload set in `std/builtin/len.mojo`
+  (`@inline(.always)` over `Sized`, raising over `SizedRaising`, and an
+  `@unavailable` overload over a string) rather than a checker builtin.
+  `len(x)` over a `SizedRaising` value now needs a raising context, a
+  struct with an undeclared `__len__` is rejected as at the pin, `len(xs)`
+  inlines to the collection's `__len__`, so `flen[n](b: NBox[n])`
+  returning `len(b)` is one instance (R1021). A compile-time-only
+  operand (`len(Ts)`) is still a checker query (R1284). An argument with
+  no runtime form (a compile-time display) now reports its crossing error
+  through an overloaded call too. This closes R988 and R1021.
 - The VM and the Pliron backend no longer resolve a call naming a struct to
   an `__init__` overload by arity (R1029): every constructor call runs the
   symbol it names, as upstream's backends take the call's symbol. A call

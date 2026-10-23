@@ -1,4 +1,4 @@
-# expect: no matching function in call to 'len'
+# expect: invalid call to 'len'
 # The handler's `var element: values.Ts[index]` (deprecated spelling
 # `element_types`) is opaque under the pack's `Movable` bound inside the
 # handler body, on both compilers: `len(element)` finds no `Sized`

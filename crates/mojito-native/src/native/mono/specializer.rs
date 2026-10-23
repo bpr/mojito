@@ -2277,7 +2277,7 @@ impl<'a> Specializer<'a> {
                     }
                     continue;
                 }
-                // `len`/`abs`/`round` on a nominal receiver are checker-typed
+                // `abs`/`round` on a nominal receiver are checker-typed
                 // dunder dispatches the VM performs by name (`call_dunder`);
                 // rewrite them into ordinary method calls so the shared
                 // resolver and the `MethodCall` arm below monomorphize the
@@ -2293,7 +2293,6 @@ impl<'a> Specializer<'a> {
                 } = instruction
                 {
                     let dunder = match func.0.as_str() {
-                        "len" => Some("__len__"),
                         "abs" => Some("__abs__"),
                         "round" => Some("__round__"),
                         // Conversion builtins over a nominal receiver are the

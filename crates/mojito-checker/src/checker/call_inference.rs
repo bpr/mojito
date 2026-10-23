@@ -23,6 +23,26 @@ type InferredCall = (
 );
 
 impl Checker {
+    /// Whether `len(args)` measures an operand only a compile-time position
+    /// holds, a type pack, which the library `len` cannot bind: upstream
+    /// applies `len` to the pack's `TypeList` value at compile time, and
+    /// the check answers it with the pack's length query.
+    pub(super) fn compile_time_len_operand(&self, args: &[Expr]) -> bool {
+        matches!(args, [operand] if self.type_pack_named(operand).is_some())
+    }
+
+    /// Reject a reference to the module function `name` as a value when
+    /// it is `@unavailable`, as a call selecting it is.
+    pub(super) fn reject_unavailable_reference(&self, name: &str) -> Result<(), TypeError> {
+        if self.binding_scope(name) != Some(0) {
+            return Ok(());
+        }
+        match self.lookup_callable_origins(name).as_deref() {
+            Some([signature]) => reject_unavailable(Some(signature)),
+            _ => Ok(()),
+        }
+    }
+
     fn erased_origin_constraint_environment(
         signature: &CallableOriginSignature,
         bindings: &HashMap<usize, bool>,
@@ -398,6 +418,7 @@ impl Checker {
             matches: Vec::new(),
             availability_failures: Vec::new(),
             bound_failures: Vec::new(),
+            argument_failure: None,
         };
         for (index, candidate) in candidates.iter().enumerate() {
             match self.probe(|| {
@@ -406,6 +427,9 @@ impl Checker {
                 CandidateOutcome::Match(found) => probes.matches.push(found),
                 CandidateOutcome::Unavailable(reason) => probes.availability_failures.push(reason),
                 CandidateOutcome::Bound(failure) => probes.bound_failures.push(failure),
+                CandidateOutcome::Argument(failure) => {
+                    probes.argument_failure.get_or_insert(failure);
+                }
                 CandidateOutcome::Rejected => {}
             }
         }
@@ -505,6 +529,8 @@ impl Checker {
             // `hash[T: Hashable, //, ...]`) keeps its conformance
             // diagnostic, like a single callable's.
             Err(failure @ TypeError::TraitNotSatisfied { .. }) => CandidateOutcome::Bound(failure),
+            // An argument with no runtime form fails every candidate alike.
+            Err(failure @ TypeError::ComptimeCrossing(_)) => CandidateOutcome::Argument(failure),
             Err(_) => CandidateOutcome::Rejected,
         }
     }
@@ -771,6 +797,13 @@ impl Checker {
             }
         }
         self.reject_nested_self_reference(name)?;
+        if name == "len"
+            && param_args.is_empty()
+            && kwargs.is_empty()
+            && self.compile_time_len_operand(args)
+        {
+            return self.infer_len(span, args);
+        }
         let Some(ty) = self.lookup(name).cloned() else {
             return self.infer_unbound_call(span, name, param_args, args, kwargs);
         };
@@ -784,6 +817,7 @@ impl Checker {
                 matches,
                 availability_failures,
                 bound_failures,
+                argument_failure,
             } = self.probe_overload_candidates(
                 &OverloadCall {
                     span: &span,
@@ -797,6 +831,7 @@ impl Checker {
             );
             return match select_callable_overload(matches) {
                 Ok((ret, target, selected_index, error)) => {
+                    reject_unavailable(origin_signatures.get(selected_index))?;
                     self.record_at(span.clone()).overload_target = Some(target);
                     if let Some((index, selected)) = candidates
                         .get(selected_index)
@@ -888,6 +923,9 @@ impl Checker {
                     {
                         return Ok(ty);
                     }
+                    if let Some(failure) = argument_failure {
+                        return Err(failure);
+                    }
                     if availability_failures.is_empty()
                         && let [failure] = bound_failures.as_slice()
                     {
@@ -939,6 +977,7 @@ impl Checker {
             };
             return self.infer_element_call(span, &receiver, &ty, &indices, args, kwargs);
         }
+        reject_unavailable(origin_signatures.first())?;
         let (ty, ordinary_param_args, forwarded) =
             self.prepare_callable_specialization(name, param_args, ty, origin_signatures.first())?;
         let indirect_target = match ty.kind() {
@@ -2281,11 +2320,13 @@ struct OverloadCall<'a> {
 }
 
 /// What probing an overload set's candidates found: the call-compatible
-/// ones, the failed availability clauses, and the failed trait bounds.
+/// ones, the failed availability clauses, the failed trait bounds, and an
+/// argument that fails every candidate alike.
 struct OverloadProbes {
     matches: Vec<CallableOverloadMatch>,
     availability_failures: Vec<Option<String>>,
     bound_failures: Vec<TypeError>,
+    argument_failure: Option<TypeError>,
 }
 
 /// What checking one overload candidate contributes to the selection.
@@ -2296,10 +2337,20 @@ enum CandidateOutcome {
     Unavailable(Option<String>),
     /// Rejected only by a trait bound on a solved type argument.
     Bound(TypeError),
+    /// Rejected by an argument itself, whatever the candidate.
+    Argument(TypeError),
     Rejected,
 }
 
 const PARAM_LIST_ADDRESS: &str = "__param_list_address";
+
+/// Reject a use of the declaration `signature` describes when it is
+/// `@unavailable`, with its decorator's message.
+fn reject_unavailable(signature: Option<&CallableOriginSignature>) -> Result<(), TypeError> {
+    signature
+        .and_then(|signature| signature.unavailable.clone())
+        .map_or(Ok(()), |message| Err(TypeError::Unavailable(message)))
+}
 
 /// The declaration each bracket argument binds, one entry per argument, as
 /// [`mojito_ast::call::match_parameter_slots`] binds them; every entry is

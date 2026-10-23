@@ -204,6 +204,7 @@ assets/ok/ctfe_pointer_struct_result.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_projection_of_temporary_in_body.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_type_generic_def_in_body.mojo	main	exe-differential	sanitized
 assets/ok/dead_code_after_terminators.mojo	main	exe-differential	sanitized
+assets/ok/decorator_unavailable_function.mojo	main	exe-differential	sanitized
 assets/ok/decorators.mojo	main	exe-differential	sanitized
 assets/ok/def_aggregate_value_binder_served.mojo	main	exe-differential	sanitized
 assets/ok/default_args.mojo	main	exe-differential	sanitized
@@ -369,6 +370,7 @@ assets/ok/lane_keyed_hash.mojo	main	exe-differential	sanitized
 assets/ok/lane_template_served.mojo	main	exe-differential	sanitized
 assets/ok/late_initialized_local.mojo	main	exe-differential	sanitized
 assets/ok/layout_allocation.mojo	main	exe-differential	sanitized
+assets/ok/len_library_overloads.mojo	main	exe-differential	sanitized
 assets/ok/lifecycle_deprecated_spellings.mojo	main	exe-differential	sanitized
 assets/ok/lifecycle_member_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/lifted_body_owner_instances.mojo	main	exe-differential	sanitized

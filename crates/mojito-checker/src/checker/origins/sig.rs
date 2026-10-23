@@ -354,6 +354,7 @@ pub(in crate::checker) fn callable_origin_signature(
         source,
         availability,
         view_return: Vec::new(),
+        unavailable: None,
     }
 }
 

@@ -738,7 +738,8 @@ fn self_hosted_atof_is_correctly_rounded() {
 
 #[test]
 fn self_hosted_string_len_is_unavailable() {
-    // Upstream's `@unavailable` `__len__`: a UTF-8 length names its unit.
+    // Upstream's `@unavailable` `len` over a string: a UTF-8 length names
+    // its unit.
     let d = TempDir::new();
     let main = d.write(
         "main.mojo",
@@ -746,7 +747,7 @@ fn self_hosted_string_len_is_unavailable() {
     );
     let error = run_compiled(&main).unwrap_err();
     assert!(
-        error.contains("String does not support `__len__`"),
+        error.contains("`len(String/StringSlice)` is not supported"),
         "got {error}"
     );
     let view = d.write(
@@ -755,7 +756,7 @@ fn self_hosted_string_len_is_unavailable() {
     );
     let error = run_compiled(&view).unwrap_err();
     assert!(
-        error.contains("StringSpan does not support `__len__`"),
+        error.contains("`len(String/StringSlice)` is not supported"),
         "got {error}"
     );
     let units = d.write(

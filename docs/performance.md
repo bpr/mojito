@@ -1966,8 +1966,8 @@ binary, before (the parent commit) and after:
 
 `fg`, `NBox.twice`, `fsub`, `fop`, `finv`, `fput`, `fk`, `fit`, and `ft`
 each fall to one instance, as on the pin; `fneg` keeps one per argument,
-as on the pin. A construction (R1020) and `len` (R1021) still read their
-struct whole. The corpus effect on `benchmarks/instantiation.tsv` is left
+as on the pin. A construction (R1020) still reads its struct whole;
+`len` (R1021) stopped doing so once it became the library function (R988). The corpus effect on `benchmarks/instantiation.tsv` is left
 to its next regeneration.
 
 ## A method's unused argument leaves the generator a method call names (2026-10-15, R1011)

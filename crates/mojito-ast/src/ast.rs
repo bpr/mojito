@@ -53,6 +53,14 @@ pub fn is_nested_origins_read_only(decorators: &[Decorator]) -> bool {
     })
 }
 
+/// Whether a declaration carries `@unavailable`: it declares a signature
+/// whose every use is an error, and has no body to lower.
+pub fn is_unavailable(decorators: &[Decorator]) -> bool {
+    decorators
+        .iter()
+        .any(|decorator| decorator.path.len() == 1 && decorator.path[0] == "unavailable")
+}
+
 /// Whether a declaration carries a decorator that bears on its body or its
 /// identity. `@__unsafe_nested_origins_read_only` does not: it states a
 /// contract to the declaration's callers only.

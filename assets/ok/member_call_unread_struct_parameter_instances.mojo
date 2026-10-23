@@ -8,7 +8,8 @@
 # loop over an iterator `__iter__` builds from `self.v` (`fit`), and `ft`,
 # whose `TBox[T].again` returns `self.copy()`. So does `fbound`, whose
 # inlined `mylen[T: MySized]` calls `__len__` through its bound, which the
-# inlining folds to `NBox.__len__`, the witness `NBox`'s conformance records.
+# inlining folds to `NBox.__len__`, the witness `NBox`'s conformance records,
+# and `flen`, whose library `len` inlines to `b.__len__()` the same way.
 # `fneg`, whose `__neg__` reads `Self.n`, keeps one instance per value, as on
 # the pin.
 trait MySized:
@@ -31,7 +32,7 @@ struct IntIter(Iterator, Movable):
         return self.i
 
 
-struct NBox[n: Int](Copyable, Movable, MySized):
+struct NBox[n: Int](Copyable, Movable, MySized, Sized):
     var v: Int
 
     def __init__(out self, v: Int):
@@ -144,6 +145,11 @@ def fbound[n: Int](b: NBox[n]) -> Int:
 
 
 @no_inline
+def flen[n: Int](b: NBox[n]) -> Int:
+    return len(b)
+
+
+@no_inline
 def ft[T: AnyType](b: TBox[T]) -> Int:
     return b.again().v
 
@@ -160,3 +166,4 @@ def main():
     print(fit(NBox[1](3)), fit(NBox[2](4)))
     print(ft(TBox[Int](5)), ft(TBox[String](6)))
     print(fbound(NBox[1](3)), fbound(NBox[2](4)))
+    print(flen(NBox[1](3)), flen(NBox[2](4)))

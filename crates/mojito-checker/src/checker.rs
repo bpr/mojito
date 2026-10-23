@@ -3043,6 +3043,8 @@ struct CallableOriginSignature {
     availability: Vec<GenericConstraint>,
     /// See [`MethodSig::view_return`]; the free-function twin.
     view_return: Vec<ViewReturnOrigin>,
+    /// The rejection of a use of an `@unavailable` declaration.
+    unavailable: Option<String>,
 }
 
 /// The source-level pieces of a struct declaration passed through checking.

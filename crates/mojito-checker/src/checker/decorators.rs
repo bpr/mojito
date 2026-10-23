@@ -41,6 +41,30 @@ pub(super) struct DecoratorFacts {
     /// The `@explicit_destroy` message, shown where a value of the type would
     /// be implicitly destroyed.
     pub(super) explicit_destroy: Option<String>,
+    /// The `@unavailable` mark of a function, which withdraws every use of
+    /// it.
+    pub(super) unavailable: Option<Unavailable>,
+}
+
+/// What an `@unavailable` decorator says to a use of its function.
+#[derive(Debug)]
+pub(super) enum Unavailable {
+    /// Its reason message.
+    Reason(String),
+    /// The replacement its `use=` names.
+    Use(String),
+}
+
+impl Unavailable {
+    /// The pin's rejection of a use of the function `name`.
+    pub(super) fn message(&self, name: &str) -> String {
+        match self {
+            Self::Reason(reason) => reason.clone(),
+            Self::Use(replacement) => {
+                format!("'{name}' is unavailable, use '{replacement}' instead")
+            }
+        }
+    }
 }
 
 impl Checker {
@@ -101,12 +125,20 @@ impl Checker {
                 }
                 ("unavailable", _) => {
                     check_deprecated(decorator, "unavailable")?;
-                    if matches!(site, DecoratorSite::Struct { .. }) {
-                        return Err(invalid(
-                            "@unavailable can only be applied to functions and methods",
-                        ));
+                    match site {
+                        DecoratorSite::Struct { .. } => {
+                            return Err(invalid(
+                                "@unavailable can only be applied to functions and methods",
+                            ));
+                        }
+                        DecoratorSite::Function => {
+                            facts.unavailable =
+                                Some(unavailable(decorator).ok_or_else(|| unmodeled(name, site))?);
+                        }
+                        DecoratorSite::Method { .. } | DecoratorSite::TraitMethod { .. } => {
+                            return Err(unmodeled(name, site));
+                        }
                     }
-                    return Err(unmodeled(name, site));
                 }
                 (
                     "always_inline" | "inline" | "no_inline",
@@ -237,6 +269,21 @@ fn check_deprecated(decorator: &Decorator, name: &str) -> Result<(), TypeError> 
         _ => Err(invalid(format!(
             "@{name} accepts either a reason message or a replacement symbol (with 'use')"
         ))),
+    }
+}
+
+/// The mark an `@unavailable` whose operands [`check_deprecated`] accepted
+/// states; `None` for a `use=` naming something other than a declaration.
+fn unavailable(decorator: &Decorator) -> Option<Unavailable> {
+    let (use_, value) = match (decorator.args.as_slice(), decorator.kwargs.as_slice()) {
+        ([reason], []) => (false, reason),
+        ([], [kwarg]) => (kwarg.name == "use", &kwarg.value),
+        _ => return None,
+    };
+    match &value.kind {
+        ExprKind::Str(reason) if !use_ => Some(Unavailable::Reason(reason.clone())),
+        ExprKind::Identifier(replacement) if use_ => Some(Unavailable::Use(replacement.clone())),
+        _ => None,
     }
 }
 

@@ -5974,8 +5974,8 @@ point where a slot declared in a loop is uninitialized again.
   A struct type is read whole where upstream's IR keeps it nominal: a
   declared callee's compile-time arguments and receiver, a constant, a
   compile-time condition or sequence, a call of an undeclared callee that
-  may run a member of a struct it names (a constructor, R1020, or the
-  builtin `len`, R988), and the parts of a dropped, copied,
+  may run a member of a struct it names (a constructor, R1020), and the
+  parts of a dropped, copied,
   or moved value's type its lifecycle member reads
   (`StructReads::member_reads`). Upstream's destructor and copy/move
   insertion leaves a call of that member, which passes the struct's kept

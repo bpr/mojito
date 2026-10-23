@@ -187,7 +187,11 @@ impl CheckedProgram {
             };
             let root = *root;
             match &node.op {
-                CheckedStmtOp::Def(_) => units.push(LoweringUnit::Function { root }),
+                CheckedStmtOp::Def(def) => {
+                    if !def.unavailable {
+                        units.push(LoweringUnit::Function { root });
+                    }
+                }
                 CheckedStmtOp::Struct(declaration) => {
                     let name = &declaration.name;
                     units.extend((0..declaration.methods.len()).map(|index| {
