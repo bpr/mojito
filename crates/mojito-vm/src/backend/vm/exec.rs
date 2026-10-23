@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_mir::mir::verify::instruction_places;
 use mojito_types::types::TyKind;
 
 impl VmBackend {
@@ -28,9 +29,13 @@ impl VmBackend {
         // The executing frame's function, before any callee shadows the name.
         let caller_function = function;
         self.burn_ctfe()?;
+        give_storage(prog, function, i, vars);
         match i {
             MirInstr::EstablishLoans { .. } => {
                 return Err(parametric_instruction("loan marker"));
+            }
+            MirInstr::MarkInitialized { .. } => {
+                return Err(parametric_instruction("initialization mark"));
             }
             MirInstr::InvalidateInteriors { .. } => {
                 return Err(parametric_instruction("interior invalidation"));
@@ -1966,6 +1971,13 @@ impl VmBackend {
                     *nav_mut(vars, regs, place)? = Value::Moved;
                 }
             }
+            // A field's whole-value destruction, leaving a tombstone: a
+            // `deinit` parameter's field dying at its own last use (the
+            // receiver's later `ConsumeVar` skips it), or the value a store
+            // is about to overwrite. A `mut` receiver or parameter root is a
+            // reference into the caller's storage, and so is a handle the
+            // place reaches below its root (the value `p.src[].v = …`
+            // replaces lives wherever `p.src` points).
             MirInstr::ConsumePlace { place, .. } => {
                 let value = self.take_place(frame_id, place, regs, vars)?;
                 let value = match &place.ty {
@@ -1974,30 +1986,6 @@ impl VmBackend {
                 };
                 if let Value::Struct { fields, .. } = value {
                     self.drop_struct_fields(prog, fields)?;
-                }
-            }
-            // A field's whole-value destruction, leaving a tombstone: a
-            // `deinit` parameter's field dying at its own last use (the
-            // receiver's later `ConsumeVar` skips it), or the value a store
-            // is about to overwrite. A `mut` receiver or parameter root is a
-            // reference into the caller's storage, and so is a handle the
-            // place reaches below its root (the value `p.src[].v = …`
-            // replaces lives wherever `p.src` points).
-            // An initializer's receiver enters with every field's storage
-            // present and unwritten, which the pointer writes that follow
-            // fill. A named result marked whole, or an inlined
-            // initializer's receiver, has no storage yet, or only what a
-            // move left: it gets the same unwritten skeleton here, as does a
-            // split struct's whole field slot of tuple storage.
-            MirInstr::MarkInitialized { place } => {
-                if place.is_whole_root()
-                    && matches!(vars[place.root as usize], Value::None | Value::Moved)
-                    && let Some(skeleton) = place
-                        .ty
-                        .as_ref()
-                        .and_then(|ty| Self::uninitialized_value(prog, ty))
-                {
-                    vars[place.root as usize] = skeleton;
                 }
             }
             MirInstr::DropPlace { place, destructor } => {
@@ -2080,6 +2068,38 @@ impl VmBackend {
             return self.read_reference(&reference, frame_id, vars);
         }
         load_place(vars, regs, place)
+    }
+}
+
+/// Upstream's stack allocation: a slot's storage exists from its allocation.
+/// The value tree builds a struct or tuple slot's unwritten skeleton
+/// ([`VmBackend::uninitialized_value`]) where an instruction first uses the
+/// slot as storage: stores into it, reads or moves out of it, addresses it,
+/// or passes it by address. A drop, consumption, or mark is no such use,
+/// so a tested drop of a slot never written still finds nothing to
+/// destroy. A place reached through a reference addresses storage some
+/// other frame owns.
+fn give_storage(prog: &Prog, function: usize, instruction: &MirInstr, vars: &mut [Value]) {
+    let mut give = |root: VarId| {
+        let slot = &mut vars[root as usize];
+        if matches!(slot, Value::None | Value::Moved)
+            && let Some(skeleton) = (prog.mir.functions[function].1.var_tys.get(&root))
+                .and_then(|ty| VmBackend::uninitialized_value(prog, ty))
+        {
+            *slot = skeleton;
+        }
+    };
+    match instruction {
+        MirInstr::UseVar { var, .. } => give(*var),
+        MirInstr::DropPlace { .. }
+        | MirInstr::ConsumePlace { .. }
+        | MirInstr::MarkDestroyed { .. }
+        | MirInstr::MarkInitialized { .. }
+        | MirInstr::EstablishLoans { .. } => {}
+        _ => instruction_places(instruction)
+            .into_iter()
+            .filter(|place| place.through.is_none())
+            .for_each(|place| give(place.root)),
     }
 }
 

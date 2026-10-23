@@ -33,6 +33,7 @@ artifact {
           bb0 {
             instructions: [
               var.declare { var: $v1 },
+              ownership.mark_initialized { place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } },
               const { dest: %r1, value: int_literal(0) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v0, mode: copy },

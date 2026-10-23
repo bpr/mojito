@@ -49,7 +49,7 @@
               drop.var { var: $v0 },
               const { dest: %r1, value: int_literal(5) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
-              ownership.mark_initialized { place: place { root: $v2, root_type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              var.declare { var: $v2 },
               var.store { var: $v3, src: %r2, binding_type: present(Int), in_place: false },
               loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r6, var: $v3, mode: copy }, place.store { place: place { root: $v2, root_type: present(struct_type { name: G, arguments: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r6 }], terminator: break { label: present(loop4294967295), values: [] } }] },
               var.use { dest: %r3, var: $v2, mode: forward },

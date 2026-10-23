@@ -34,7 +34,7 @@ artifact {
               const { dest: %r1, value: int_literal(3) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v0, mode: copy },
-              ownership.mark_initialized { place: place { root: $v2, root_type: present(struct_type { name: Q, arguments: [] }), projections: [], type: present(struct_type { name: Q, arguments: [] }), through: absent } },
+              var.declare { var: $v2 },
               var.store { var: $v3, src: %r0, binding_type: present(Int), in_place: false },
               var.store { var: $v4, src: %r2, binding_type: present(Int), in_place: false },
               loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r15, var: $v3, mode: copy }, place.store { place: place { root: $v2, root_type: present(struct_type { name: Q, arguments: [] }), projections: [projection { op: field(a), type: Int }], type: present(Int), through: absent }, src: %r15 }, var.use { dest: %r16, var: $v4, mode: copy }, place.store { place: place { root: $v2, root_type: present(struct_type { name: Q, arguments: [] }), projections: [projection { op: field(b), type: Int }], type: present(Int), through: absent }, src: %r16 }], terminator: break { label: present(loop4294967295), values: [] } }] },

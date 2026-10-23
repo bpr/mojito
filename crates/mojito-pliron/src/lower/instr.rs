@@ -538,9 +538,6 @@ impl FnLowering<'_> {
             MirInstr::DropPlace { place, destructor } => {
                 self.lower_drop_place(ctx, place, destructor.as_deref())
             }
-            // The receiver's alloca and its leaf drop flags already exist;
-            // the marked storage is filled by the writes that follow.
-            MirInstr::MarkInitialized { .. } => Ok(()),
             // The marked place holds no value from here: its presence flag
             // clears, as a move out of it would clear it. A whole slot's
             // value lives on behind the pointer it was handed on through
@@ -573,6 +570,9 @@ impl FnLowering<'_> {
             )),
             MirInstr::KeepAlive { .. } => {
                 Err(self.unsupported("a keep-alive marker after lower-lit".to_string(), None))
+            }
+            MirInstr::MarkInitialized { .. } => {
+                Err(self.unsupported("an initialization mark after lower-lit".to_string(), None))
             }
             MirInstr::EstablishLoans { marker, .. } => {
                 Err(self.unsupported_reg("a loan marker after lower-lit".to_string(), *marker))

@@ -795,6 +795,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `lower-lit` erases every `ownership.mark_initialized` too, as upstream's
+  `LowerLIT` erases `lit.ownership.mark_initialized`, so concrete MIR holds
+  none (about 300 per fixture before) and concrete verification, the VM,
+  and the Pliron backend refuse one (R932). `inline-parametric` opens an
+  inlined initializer's `out self` slot with a `var.declare`, upstream's
+  `lit.var.decl`, where it emitted the mark, and the VM builds a struct or
+  tuple slot's unwritten storage where an instruction first uses it rather
+  than at the mark. `ownership.mark_destroyed` and `consume.place` still
+  reach the backends (R1310, R1311). Output is unchanged on both backends;
+  the MIR text and package formats are unchanged.
 - `lower-lit` erases every `loans.establish` too, as upstream's `LowerLIT`
   leaves no loan op behind, so concrete MIR holds none (an empty
   program's held 200) and concrete verification, the VM, and the Pliron

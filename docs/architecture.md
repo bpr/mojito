@@ -5357,8 +5357,11 @@ of upstream's `lit.ownership.mark_initialized`, defines its place in that flow
 without writing it: a constructor that then fills the storage through pointers
 (`Tuple.__init__`, `Pointer(to=self[i]).unsafe_write({})`) writes through
 handles that name no whole variable, so nothing is destroyed, as upstream
-assumes the storage uninitialized; the VM and the native backend emit nothing
-for it, the receiver's storage already existing. `MarkDestroyed`, the image
+assumes the storage uninitialized. `lower-lit` erases it, as upstream's
+`LowerLIT` erases its counterpart, and both backends refuse one that
+survives: native storage exists from the slot's alloca, and the VM builds a
+struct or tuple slot's unwritten skeleton where an instruction first stores
+into, reads, addresses, or passes the slot by address. `MarkDestroyed`, the image
 of `lit.ownership.mark_destroyed`, is its counterpart: it moves its place in
 that flow without reading it, after a consuming member took each element out
 through a pointer (`Tuple.consume_elements`), so no destructor runs on the
@@ -5860,9 +5863,9 @@ point where a slot declared in a loop is uninitialized again.
   outside `Tuple`'s own members, where the bare spelling denotes `Self`)
   binds the pack to the empty list (R1093). A type whose arguments do not
   align with the binders keeps the call. The
-  initializer's `out self` is a fresh slot that an
-  `ownership.mark_initialized` opens and the call's register moves from
-  after the body. Callee registers are renumbered before a place-bound
+  initializer's `out self` is a fresh slot that a `var.declare` opens
+  (upstream's `lit.var.decl`, the caller's stack allocation for the
+  result) and the call's register moves from after the body. Callee registers are renumbered before a place-bound
   parameter is composed, so the caller's index registers in that place
   stay the caller's. A `call.indirect` through a closure the caller makes
   (the private `Closures` table: a `closure.make` register, or a slot
@@ -5959,8 +5962,8 @@ point where a slot declared in a loop is uninitialized again.
   no constructor (`var.use` in copy, move, or forward mode, or a
   whole-root `place.load`), which becomes a read per field and a
   `struct.create` (`MirInstr::MakeStruct`, upstream's `kgen.struct.create`)
-  of them; a `var.declare`, `drop.var`, `var.consume`, or whole-root
-  `ownership.mark_initialized`, which marks each field's slot, but a field
+  of them; a `var.declare`, `drop.var`, or `var.consume`, which marks
+  each field's slot, but a field
   some instruction ends whole (a field move), which the slot's drop or
   consumption does not end again; or an instruction each of whose places
   on the slot projects a declared field first, which is then rerooted at
@@ -6021,10 +6024,8 @@ point where a slot declared in a loop is uninitialized again.
   mention of it is a `var.store` of a register defined once and read by
   the store alone; a `var.use` (copy, move, or forward)
   or a whole-root `place.load` at the slot's type; or a `var.declare`,
-  `drop.var`, `var.consume`, or whole-root `ownership.mark_initialized`,
-  all of which do nothing to such a type once drops are elaborated (the
-  mark binds nothing, as upstream's `LowerLIT` has erased it before
-  `Mem2Reg` runs).
+  `drop.var`, or `var.consume`, all of which do nothing to such a type
+  once drops are elaborated.
   A destructor or copy constructor takes the slot's address, so its type is
   never one, as upstream's never is; a borrow, capture, loan, projection,
   or iterator keeps the slot. A slot every store of which is

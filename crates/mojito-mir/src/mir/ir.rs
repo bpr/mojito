@@ -2546,8 +2546,8 @@ pub enum MirInstr {
     /// Mark `place` initialized without writing it (upstream's
     /// `lit.ownership.mark_initialized`): ownership treats the place as
     /// defined from here, so a constructor may fill its storage through
-    /// pointers; the storage itself already exists, so the backends emit
-    /// nothing.
+    /// pointers. The ownership analysis and drop elaboration read it, and
+    /// `lower-lit` erases it, so no backend sees one.
     MarkInitialized {
         place: MirPlace,
     },

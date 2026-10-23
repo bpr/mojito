@@ -49,7 +49,7 @@
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              ownership.mark_initialized { place: place { root: $v2, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), projections: [], type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), through: absent } },
+              var.declare { var: $v2 },
               var.store { var: $v3, src: %r0, binding_type: present(Int), in_place: false },
               loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [var.use { dest: %r4, var: $v3, mode: copy }, const { dest: %r5, value: int(4) }, binary { op: mul, dest: %r6, a: %r4, b: %r5, resolved: absent, raises: absent }, place.store { place: place { root: $v2, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent }, src: %r6 }], terminator: break { label: present(loop4294967295), values: [] } }] },
               var.use { dest: %r1, var: $v2, mode: forward },

@@ -14,9 +14,8 @@
 //! - a whole read that runs no constructor (`var.use`, or `place.load` of
 //!   the whole slot), which becomes one read per field and a
 //!   `struct.create` of them;
-//! - a lifetime marker (`var.declare`, `drop.var`, `consume.var`, or a
-//!   whole-slot `ownership.mark_initialized`), which marks each field's
-//!   slot instead, but for a field some instruction ends whole (a field
+//! - a lifetime marker (`var.declare`, `drop.var`, or `consume.var`),
+//!   which marks each field's slot instead, but for a field some instruction ends whole (a field
 //!   move), which the slot's drop or consumption does not end again;
 //! - an instruction each of whose places on the slot projects a declared
 //!   field first, which then addresses that field's slot: upstream replaces
@@ -148,7 +147,6 @@ enum Whole {
     Declare,
     Drop,
     Consume,
-    Mark,
 }
 
 /// A slot a round splits.
@@ -401,7 +399,7 @@ fn take_census(
                 && slots == [var]
             {
                 let entry = census.entry(var).or_default();
-                entry.defined |= matches!(whole, Whole::Store(_) | Whole::Declare | Whole::Mark);
+                entry.defined |= matches!(whole, Whole::Store(_) | Whole::Declare);
                 match whole {
                     Whole::Store(src) => entry.stores.push(src),
                     Whole::Read { dest, .. } => entry.reads.push(dest),
@@ -513,7 +511,6 @@ fn whole_mention(instruction: &MirInstr) -> Option<(VarId, Whole)> {
             destructor: None,
         } => Some((*var, Whole::Drop)),
         MirInstr::ConsumeVar { var } => Some((*var, Whole::Consume)),
-        MirInstr::MarkInitialized { place } if whole(place) => Some((place.root, Whole::Mark)),
         _ => None,
     }
 }
@@ -609,9 +606,6 @@ impl Splitter<'_> {
                     .filter(|field| !field.ended)
                     .map(|field| MirInstr::ConsumeVar { var: field.slot }),
             ),
-            Whole::Mark => out.extend(fields.iter().map(|field| MirInstr::MarkInitialized {
-                place: MirPlace::root(field.slot, Some(field.ty.clone())),
-            })),
         }
     }
 

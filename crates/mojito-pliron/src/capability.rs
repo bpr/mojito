@@ -402,8 +402,8 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "ownership.mark_initialized",
-        CapabilityStatus::Supported,
-        "a marker over storage that already exists; it lowers to nothing",
+        CapabilityStatus::Unsupported,
+        "`lower-lit` erases every lifetime marker; one that survives rejects",
     ),
     (
         "ownership.mark_destroyed",

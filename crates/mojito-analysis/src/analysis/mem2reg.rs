@@ -10,9 +10,7 @@
 //! as upstream's `canPromote` has no type test, and every
 //! mention of it is a store (`var.store`), a read (`var.use`, or a
 //! whole-root `place.load`), or a mention with no effect on such a type
-//! once drops are elaborated (`var.declare`, `drop.var`, `var.consume`, and
-//! a whole-root `ownership.mark_initialized`, which upstream's `LowerLIT`
-//! erases before `Mem2Reg` runs).
+//! once drops are elaborated (`var.declare`, `drop.var`, and `var.consume`).
 //! A destructor or copy constructor would take the slot's address, so a
 //! type with either is never one, as upstream's never is; a borrow, a
 //! capture, a loan, or a projected place keeps the slot too. A slot every
@@ -184,9 +182,6 @@ enum Mention {
     /// A drop or consumption: a lifetime marker, after which the slot holds
     /// nothing.
     Kill,
-    /// A whole-slot `ownership.mark_initialized`, which upstream's
-    /// `LowerLIT` has erased before `Mem2Reg` runs: it binds nothing.
-    Mark,
 }
 
 /// The census of one slot: whether some mention keeps it, and each
@@ -236,7 +231,7 @@ impl Facts {
         let typed = function.var_tys.get(&var);
         let stores_closures = entry.mentions.iter().all(|(_, mention)| match *mention {
             Mention::Store(src) => self.closures.contains(&src.0),
-            Mention::Read { .. } | Mention::Declare | Mention::Kill | Mention::Mark => true,
+            Mention::Read { .. } | Mention::Declare | Mention::Kill => true,
         });
         (var as usize >= function.n_params || entry_stored.contains(&var))
             && !entry.kept
@@ -248,7 +243,7 @@ impl Facts {
                         && self.reads.get(src.0 as usize) == Some(&1)
                 }
                 Mention::Read { dest, .. } => function.reg_types.get(&dest.0) == typed,
-                Mention::Declare | Mention::Kill | Mention::Mark => true,
+                Mention::Declare | Mention::Kill => true,
             })
     }
 }
@@ -494,7 +489,7 @@ impl Promoter<'_> {
                     }
                     // A lifetime marker leaves the value, as upstream's
                     // `StackAllocLifetimeEndOp` does.
-                    Mention::Kill | Mention::Mark => {}
+                    Mention::Kill => {}
                 }
                 let mut results = Vec::new();
                 instruction_result_regs(&instruction, &mut results);
@@ -867,9 +862,6 @@ const fn slot_use(instruction: &MirInstr) -> Option<(VarId, Mention)> {
         }
         MirInstr::DeclareVar { var } => Some((*var, Mention::Declare)),
         MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } => Some((*var, Mention::Kill)),
-        MirInstr::MarkInitialized { place } if place.proj.is_empty() && place.through.is_none() => {
-            Some((place.root, Mention::Mark))
-        }
         _ => None,
     }
 }

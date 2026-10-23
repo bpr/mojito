@@ -10,9 +10,18 @@
 //! carry it to the ownership analysis and drop elaboration, which together
 //! are MIR's lifetime check, and end here too. A `ref` binding's slot
 //! already holds its handle (`ref.make` then `var.store`), as upstream's
-//! `lit.ref` value does, so no loan op is left to define it. Below this
-//! pass none of the three markers is legal: concrete verification refuses
-//! one, and so do both backends.
+//! `lit.ref` value does, so no loan op is left to define it.
+//! `ownership.mark_initialized` is upstream's
+//! `lit.ownership.mark_initialized`, which this pass erases too: it told
+//! the lifetime check where a value began, and a slot's storage exists from
+//! its allocation. Below this pass none of the four markers is legal:
+//! concrete verification refuses one, and so do both backends.
+//!
+//! `ownership.mark_destroyed` and `consume.place` stay, though upstream
+//! erases their counterparts here: a backend's `consume.var` still destroys
+//! the fields an ended value holds at run time, under the tombstones and
+//! flags the two leave, where upstream's `DestructorInsertion` has destroyed
+//! each live field statically.
 //!
 //! `var.declare` stays. It is `lit.var.decl`, which upstream lowers to a
 //! stack allocation rather than erasing, and `mem-2-reg` reads it as the
@@ -29,8 +38,9 @@ pub const LOWER_LIT: BodyPass = BodyPass {
     run: lower_lit,
 };
 
-/// Erase every `lifetime.keep_alive`, `loans.establish`, and
-/// `interiors.invalidate` in `function`, its regions included.
+/// Erase every `lifetime.keep_alive`, `loans.establish`,
+/// `interiors.invalidate`, and `ownership.mark_initialized` in `function`,
+/// its regions included.
 ///
 /// The erased markers' registers lose their types and spans, and registers
 /// are not renumbered. Returns whether any marker was erased.
@@ -57,7 +67,7 @@ fn erase_markers(blocks: &mut [MirBlock], erased_markers: &mut HashSet<u32>) -> 
         .map(|block| {
             let before = block.instrs.len();
             block.instrs.retain(|instruction| match instruction {
-                MirInstr::KeepAlive { .. } => false,
+                MirInstr::KeepAlive { .. } | MirInstr::MarkInitialized { .. } => false,
                 MirInstr::EstablishLoans { marker, .. }
                 | MirInstr::InvalidateInteriors { marker, .. } => {
                     erased_markers.insert(marker.0);

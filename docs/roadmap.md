@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1310**.
+Next free ID: **R1312**.
 
 ## Ordered Work
 
@@ -103,7 +103,7 @@ which names the upstream pass each one follows. Each is measured by the
     mechanical lowering, as `lower_copies_and_moves` lowers copies, for
     its callers `name_destructors` (and so `inline-parametric`) and the
     specializer (`mono/specializer.rs`).
-  - Related to R932 (runtime drop flags).
+  - Related to R1311 (runtime drop flags).
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -670,21 +670,68 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R932 Ownership marks outlive the point where upstream erases them**
+- [ ] **R1310 `consume.var` destroys an ended value's residual fields at
+  run time, where upstream's exit `mark_destroyed` consumes only the
+  whole-object bit**
 
-  `ownership.mark_initialized`, `ownership.mark_destroyed`, and
-  `consume.place` reach both backends, where upstream's `LowerLIT` erases
-  their LIT counterparts once `CheckLifetimes` has decided every
-  destruction.
-  - The VM executes all three (`crates/mojito-vm/src/backend/vm/exec.rs`).
-  - Pliron clears a presence flag at `ownership.mark_destroyed`
-    (`crates/mojito-pliron/src/lower/instr.rs`).
-  - The cause is runtime drop flags where upstream's `DestructorInsertion`
-    decides statically.
-  - Done when drop elaboration leaves no instance that needs a mark, and
-    `lower-lit` erases all three.
-  - Depends on R931, which settles how `lower-lit` grows past the markers.
-  - Model: Fable, Planned.
+  Both backends destroy whatever a `consume.var` ends still holds: the
+  VM's `ConsumeVar` (`drop_struct_fields`, or `drop_value` for tuple
+  storage, `crates/mojito-vm/src/backend/vm/exec.rs`) and Pliron's
+  `lower_consume_var` (`emit_surviving_leaf_drops`, `lower/drops.rs`).
+  - Upstream's `IREmitter` ends a `deinit` argument with `mark_destroyed`,
+    and `CheckLifetimes` consumes only its whole-object bit, since
+    `DestructorInsertion` has destroyed every live field by then.
+  - With the VM's residual teardown off, 12 fixtures lose 42 destructor
+    lines, all elements of tuple or pack storage. Probes:
+    `named_result_transferred`, `pack_drop_names_element_destructors`,
+    `for_destructuring_lifetimes`, `dict_display_literal_constructor`,
+    `match_cluster_lifecycle`, `match_or_failed_alternative_copies`,
+    `pack_element_read_borrowed`, `pointer_subscript_reads_in_place`,
+    `struct_operator_subscript_operand_in_place`,
+    `value_parameter_materialized_per_use`,
+    `value_parameter_method_aggregate`, `variadic_collector_len`.
+  - The cause: a public `Tuple`'s `deinit` receiver stays one bit in
+    `DropValues`, and `sroa` rewrites a split storage slot's end to
+    `consume.var`, so no `drop.place` names those elements.
+  - Lever: lay out a nominal `Tuple` by its `storage` field and that
+    storage's elements (a `Field` step, then `ConstIndex`), so the walk
+    names each element's drop (`refine_pack_drops`). Then neither
+    backend's `consume.var` destroys anything.
+  - Trap: a `ConstIndex` on a nominal `Tuple` failed `emit-mir`
+    verification while R1252 landed.
+  - Found while planning R932 (2026-10-23).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1311 `consume.place` and `ownership.mark_destroyed` reach both
+  backends, where upstream's `LowerLIT` erases their counterparts**
+
+  `lower-lit` erases every other lifetime marker, `ownership.mark_initialized`
+  included, but these two still carry run-time ownership state: the VM
+  tombstones a part, and Pliron clears presence and drop flags
+  (`end_presence`, `set_drop_flag`, `lower/instr.rs`).
+  - Upstream: `lowerLITOps` (`LowerLIT.cpp`) erases `mark_destroyed` and
+    `mark_consumed` with `mark_initialized`, and a call's `deinit` operand
+    consumes the part (`memConsume`).
+  - Producers that must stop: `lower_whole_drops` (`mir/drop_calls.rs`),
+    whose lowered drop of a part ends with the call, since the callee's
+    `deinit` consumes it; `refine_pack_drops` (`mir/pack_drops.rs`);
+    `sroa`'s `consume.place` → `consume.var` rewrite; and
+    `variadic_list`'s whole-slot marks, which `lower-lit` then erases.
+  - `inline_parametric::argument_binding` decides `Binding::Part` from
+    the `deinit` parameter and the argument's loaded place, not from the
+    trailing `consume.place`, as upstream substitutes the field's address.
+  - Then `lower-lit` erases both, the VM and Pliron arms refuse them, and
+    Pliron's `end_presence` and `ended_inside` go.
+  - Evidence from R932's plan: `consume.place`'s own residual drop is dead
+    on the corpus; dropping it and the part tombstone double-frees
+    (`nominal_string_codepoint_from_byte`, `consume.place $v0._text` then
+    `consume.var $v0`) until `consume.var` destroys nothing (R1310).
+  - A whole-slot `mark_destroyed` (an owned `VariadicList`'s element
+    temporaries) is the only thing clearing that slot's flag before
+    Pliron's return sweep (R832).
+  - Depends on R1310, R832.
+  - Model: Fable, Not Planned.
 
 - [ ] **R933 A span origin can name a slot no instruction addresses**
 
@@ -1026,8 +1073,10 @@ change that needs a new `MJRT_ABI_VERSION`.
     A slot the sweep still has to drop is one drop elaboration left no
     `drop.var` for; once each has one, the lookup goes with the sweep.
   - Found while landing R826 (2026-10-14).
-  - Depends on R932 (drops decided statically, so `lower-lit` erases the
-    ownership markers).
+  - Once `lower-lit` erases a whole-slot `ownership.mark_destroyed`
+    (R1311), this sweep would drop an owned `VariadicList`'s element
+    temporaries a second time, so it must go first.
+  - Depends on R1306 (drops decided statically).
   - Model: Fable, Planned.
 
 - [ ] **R987 Native code drops every function's inline level**
@@ -8567,8 +8616,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `W.__init__(out self, n)` that sets `self.t = String("x") + String(n)`
     and calls `self.show()`, then `var w = W(3); w.n += 1; print(w.t)`)
     double-free under `--backend pliron`.
-  - Depends on R932, which decides drops statically so no backend tracks
-    an owned temporary.
+  - Depends on R1311, which erases the last ownership markers so no
+    backend tracks an owned temporary.
   - Model: Fable, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler

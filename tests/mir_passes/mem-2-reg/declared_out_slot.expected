@@ -1,6 +1,6 @@
   functions: [
       fn {
-        name: marked,
+        name: declared,
         registers: 2,
         vars: 1,
         var_names: [a],

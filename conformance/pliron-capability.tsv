@@ -8,7 +8,7 @@
 #         unsupported (contextual rejection; the note names the gap)
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
 #   cargo nextest run --features backend-pliron capability_matrix
-instruction	loans.establish	supported	ownership fact; erased after validation
+instruction	loans.establish	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	interiors.invalidate	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	ref.make	supported	materializes a verified place address
 instruction	ref.read	partial	typed referent registers
@@ -73,7 +73,7 @@ instruction	drop.var	partial	flag-guarded compiled destructors, including destru
 instruction	consume.var	supported	clears the initialization flag; surviving droppable struct fields destroy in reverse order under the per-leaf flags
 instruction	consume.place	partial	no droppable residual fields
 instruction	drop.place	supported	destroys one depth-1 struct field under its leaf flag and clears the flag
-instruction	ownership.mark_initialized	supported	a marker over storage that already exists; it lowers to nothing
+instruction	ownership.mark_initialized	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	ownership.mark_destroyed	supported	clears the place's presence flag
 instruction	unsupported	unsupported	explicit lowering marker; rejects by definition
 instruction	iter.init	partial	concrete post-mono `__iter__` chains: aliased `ref`/`mut`, byte-copied `read`, and consuming `var` receivers; raising `__iter__` steps and stepless heap-owning splits reject

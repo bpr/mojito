@@ -1611,9 +1611,16 @@ impl<'c> Inliner<'_, 'c> {
                         in_place: false,
                     });
                 }
-                Binding::Out => caller.instrs.push(MirInstr::MarkInitialized {
-                    place: MirPlace::root(var + var_base, ty),
-                }),
+                // The caller's stack allocation for the result, upstream's
+                // `lit.var.decl`.
+                Binding::Out => {
+                    if let Some(ty) = ty {
+                        function.var_tys.entry(var + var_base).or_insert(ty);
+                    }
+                    caller.instrs.push(MirInstr::DeclareVar {
+                        var: var + var_base,
+                    });
+                }
                 Binding::Place(_) | Binding::Slot(_) | Binding::Part { .. } => {}
             }
         }
