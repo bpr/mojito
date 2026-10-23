@@ -1,16 +1,16 @@
-//! The region cursor: where a frame executes next inside the `hlcf` region
-//! ops it is in, and each region op's `interpret` and each region
-//! terminator's transfer, as upstream's interpreter moves a frame's `pc`
-//! with `InterpreterState::transferControlFlowTo` rather than recursing.
+//! The region cursor: where a frame executes next inside the `hlcf` and
+//! `lit.try` region ops it is in, and each region op's `interpret` and each
+//! region terminator's transfer, as upstream's interpreter moves a frame's
+//! `pc` with `InterpreterState::transferControlFlowTo` rather than
+//! recursing.
 //! See `docs/symbol-map.md`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::{LoopLabel, MirBlockId, RegionFrame, region_exit};
+use mojito_mir::mir::{LoopLabel, MirBlockId, RegionFrame, TryLabel, region_exit};
 
 /// Where a frame executes next: upstream's interpreter `pc`, as the path
-/// from a block list (the function's, or a `try` part's) through each
-/// region op it is inside.
+/// from the function's block list through each region op it is inside.
 pub(super) struct RegionCursor {
     /// One position per list, the root list first. Every level but the
     /// innermost is at the region op the next level is a region of.
@@ -49,7 +49,7 @@ impl RegionCursor {
 
     /// The `interpret` of the region op `op`: enter the region it runs
     /// first, binding that region's arguments. `false` when `op` is no
-    /// `if`, `loop`, or `match`.
+    /// `if`, `loop`, `match`, or `try`.
     pub(super) fn enter(&mut self, op: &MirInstr, regs: &mut [Value]) -> bool {
         let region = match op {
             MirInstr::If { cond, elifs, .. } => {
@@ -73,6 +73,7 @@ impl RegionCursor {
             }
             MirInstr::Match { cases, .. } if cases.is_empty() => RegionRef::Else,
             MirInstr::Match { .. } => RegionRef::Case(0),
+            MirInstr::Try { label, .. } => RegionRef::TryBody(*label),
             _ => return false,
         };
         self.levels.push(RegionLevel::entry(region));
@@ -81,14 +82,13 @@ impl RegionCursor {
 
     /// The transfer of the terminator `term` the cursor is at in `root`:
     /// into a sibling region, or out to the op it names, binding the values
-    /// it carries. A terminator that leaves the
-    /// root list comes back for the driver to run.
-    pub(super) fn transfer<'p>(
+    /// it carries. A `return` or `raise` comes back for the driver to run.
+    pub(super) fn transfer(
         &mut self,
         root: &[MirBlock],
-        term: &'p MirTerm,
+        term: &MirTerm,
         regs: &mut [Value],
-    ) -> Result<Transfer<'p>, RuntimeError> {
+    ) -> Result<Transfer, RuntimeError> {
         match term {
             MirTerm::Yield(values) => {
                 let values = read(regs, values);
@@ -104,17 +104,16 @@ impl RegionCursor {
             | MirTerm::MatchNext(values)
             | MirTerm::MatchComplete(values) => {
                 let (frame, resume) = region_exit(term).ok_or_else(lost_position)?;
-                let leave = Leave {
-                    frame,
-                    resume,
-                    values: read(regs, values),
-                };
-                if let Some(leave) = self.resolve_leave(root, leave, regs)? {
-                    return Ok(Transfer::Leave(leave));
-                }
+                let values = read(regs, values);
+                self.resolve_leave(root, frame, resume, values, regs)?;
             }
-            MirTerm::Return(_) | MirTerm::TryYield | MirTerm::Raise { .. } => {
-                return Ok(Transfer::Exit(term));
+            MirTerm::TryYield => self.try_yield(root)?,
+            MirTerm::Return(value) => return Ok(Transfer::Return(*value)),
+            MirTerm::Raise { src, label } => {
+                return Ok(Transfer::Raise {
+                    src: *src,
+                    label: *label,
+                });
             }
             MirTerm::Unreachable => {
                 return Err(RuntimeError::Unsupported(
@@ -133,32 +132,67 @@ impl RegionCursor {
         Ok(Transfer::Moved)
     }
 
-    /// Resolve `leave` to the innermost op the cursor is inside that it
-    /// names: resume that op (the next iteration of a loop, the next case
-    /// of a `match`) or leave it, binding the values it carries. `leave`
-    /// comes back when no such op encloses the cursor, so it leaves the
-    /// root list.
-    pub(super) fn resolve_leave(
+    /// `lit.try.raise`: unwind to the body of the `try` labelled `label`
+    /// around the cursor and enter its `except` region, returning the
+    /// variable that region binds the error to.
+    pub(super) fn catch(
         &mut self,
         root: &[MirBlock],
-        leave: Leave,
-        regs: &mut [Value],
-    ) -> Result<Option<Leave>, RuntimeError> {
-        let Some(depth) = (1..self.levels.len()).rev().find(|&depth| {
-            self.levels[depth]
-                .region
-                .frame()
-                .is_some_and(|frame| leave.frame.names(frame))
-        }) else {
-            return Ok(Some(leave));
+        label: TryLabel,
+    ) -> Result<Option<VarId>, RuntimeError> {
+        let depth = (1..self.levels.len())
+            .rev()
+            .find(|&depth| matches!(self.levels[depth].region, RegionRef::TryBody(found) if found == label))
+            .ok_or_else(|| {
+                RuntimeError::Unsupported(format!(
+                    "vm: a raise named try{}, which does not enclose it",
+                    label.0
+                ))
+            })?;
+        let MirInstr::Try { handler, .. } = self.op(root, depth)? else {
+            return Err(lost_position());
         };
+        let (slot, _) = handler.as_ref().ok_or_else(|| {
+            RuntimeError::Unsupported(format!(
+                "vm: a raise named try{}, which has no handler",
+                label.0
+            ))
+        })?;
+        self.levels.truncate(depth + 1);
+        self.levels[depth] = RegionLevel::entry(RegionRef::TryHandler);
+        Ok(*slot)
+    }
+
+    /// Resolve a region exit leaving to `frame` to the innermost op the
+    /// cursor is inside that it names: resume that op (the next iteration
+    /// of a loop, the next case of a `match`) or leave it, binding the
+    /// values it carries.
+    fn resolve_leave(
+        &mut self,
+        root: &[MirBlock],
+        frame: RegionFrame,
+        resume: bool,
+        values: Vec<Value>,
+        regs: &mut [Value],
+    ) -> Result<(), RuntimeError> {
+        let depth = (1..self.levels.len())
+            .rev()
+            .find(|&depth| {
+                self.levels[depth]
+                    .region
+                    .frame()
+                    .is_some_and(|found| frame.names(found))
+            })
+            .ok_or_else(|| {
+                RuntimeError::Unsupported("vm: a region exit left its function".to_string())
+            })?;
         let op = self.op(root, depth)?;
         self.levels.truncate(depth + 1);
-        if !leave.resume {
+        if !resume {
             self.levels.pop();
-            store(regs, results(op)?, leave.values);
+            store(regs, results(op)?, values);
             self.advance();
-            return Ok(None);
+            return Ok(());
         }
         let (region, args) = match (op, self.levels[depth].region) {
             (MirInstr::Loop { args, .. }, region @ RegionRef::Body(_)) => (region, args),
@@ -175,8 +209,28 @@ impl RegionCursor {
             _ => return Err(lost_position()),
         };
         self.levels[depth] = RegionLevel::entry(region);
-        store(regs, args, leave.values);
-        Ok(None)
+        store(regs, args, values);
+        Ok(())
+    }
+
+    /// `lit.try.yield`: end the innermost `try` part, entering the `try`'s
+    /// `else` region from its body when it has one, else leaving the `try`.
+    fn try_yield(&mut self, root: &[MirBlock]) -> Result<(), RuntimeError> {
+        let depth = self.levels.len() - 1;
+        let MirInstr::Try { orelse, .. } = self.op(root, depth)? else {
+            return Err(lost_position());
+        };
+        match self.levels[depth].region {
+            RegionRef::TryBody(_) if orelse.is_some() => {
+                self.levels[depth] = RegionLevel::entry(RegionRef::TryElse);
+            }
+            RegionRef::TryBody(_) | RegionRef::TryHandler | RegionRef::TryElse => {
+                self.levels.pop();
+                self.advance();
+            }
+            _ => return Err(lost_position()),
+        }
+        Ok(())
     }
 
     /// Leave the innermost region to its op, `values` defining the op's
@@ -249,24 +303,14 @@ impl RegionCursor {
 }
 
 /// Where a terminator sent control.
-pub(super) enum Transfer<'p> {
+pub(super) enum Transfer {
     /// The cursor moved to the terminator's target.
     Moved,
-    /// A `return`, `raise`, or `lit.try.yield`, which leaves the root
-    /// list: the driver's to run.
-    Exit(&'p MirTerm),
-    /// A region exit naming an op outside the root list.
-    Leave(Leave),
-}
-
-/// A `break`, `continue`, `match.next`, or `match.complete` naming an op
-/// outside the list it left — a `try` part's `break` out of a loop around
-/// the `try` — with the values it carries. It propagates out of each `try`
-/// (running its `finally`) until a cursor inside that op resolves it.
-pub(super) struct Leave {
-    frame: RegionFrame,
-    resume: bool,
-    values: Vec<Value>,
+    /// A `return` of the register it names: the driver's to run.
+    Return(Option<Reg>),
+    /// A `raise` of `src`, naming the `try` it reaches or none when it
+    /// leaves the function: the driver's to run.
+    Raise { src: Reg, label: Option<TryLabel> },
 }
 
 /// One list's position: a block and an instruction in it, and which region
@@ -289,7 +333,8 @@ impl RegionLevel {
 }
 
 /// A region of a region op: an `if`'s `then`, an elif's condition or arm,
-/// an `if`'s or `match`'s else region, a loop's body, or a `match` case.
+/// an `if`'s or `match`'s else region, a loop's body, a `match` case, or a
+/// `try`'s body, `except`, or `else`.
 #[derive(Clone, Copy)]
 enum RegionRef {
     Root,
@@ -299,6 +344,9 @@ enum RegionRef {
     Else,
     Body(Option<LoopLabel>),
     Case(usize),
+    TryBody(TryLabel),
+    TryHandler,
+    TryElse,
 }
 
 impl RegionRef {
@@ -307,7 +355,14 @@ impl RegionRef {
         match self {
             Self::Body(label) => Some(RegionFrame::Loop(label)),
             Self::Case(_) => Some(RegionFrame::MatchCase),
-            Self::Root | Self::Then | Self::ElifCond(_) | Self::ElifThen(_) | Self::Else => None,
+            Self::Root
+            | Self::Then
+            | Self::ElifCond(_)
+            | Self::ElifThen(_)
+            | Self::Else
+            | Self::TryBody(_)
+            | Self::TryHandler
+            | Self::TryElse => None,
         }
     }
 }
@@ -359,6 +414,11 @@ fn region(op: &MirInstr, region: RegionRef) -> Option<&[MirBlock]> {
         (MirInstr::Match { cases, .. }, RegionRef::Case(index)) => {
             cases.get(index).map(|case| case.body.as_slice())
         }
+        (MirInstr::Try { body, .. }, RegionRef::TryBody(_)) => Some(body),
+        (MirInstr::Try { handler, .. }, RegionRef::TryHandler) => {
+            handler.as_ref().map(|(_, blocks)| blocks.as_slice())
+        }
+        (MirInstr::Try { orelse, .. }, RegionRef::TryElse) => orelse.as_deref(),
         _ => None,
     }
 }

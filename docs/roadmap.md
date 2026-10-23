@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1291**.
+Next free ID: **R1292**.
 
 ## Ordered Work
 
@@ -122,32 +122,31 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1251, whose field-sensitive drop state this walk needs.
   - Model: Fable, Not Planned.
 
-- [ ] **R1272 A `try` runs its parts on the host stack, so recursion
-  through a call in a `try` part overflows where upstream's interpreter
-  transfers into `lit.try`'s regions**
+- [ ] **R1291 A method call returning no reference runs its callee on the
+  host stack, so recursion through a method overflows where upstream's
+  interpreter pushes a frame for every call**
 
-  `exec_instr`'s `Try` arm runs `exec_try`, which runs each part through
-  `run_region`, and a call inside a part goes through `exec_instr`'s
-  synchronous call path (`call_frame`, a nested `drive_frames`).
-  - Upstream's `TryOp::interpret` transfers into the try region, and
-    `TryYieldOp`/`TryRaiseOp` transfer to `else`, past the op, or the
-    matching `except` (`lib/LITDialect/LITOps.cpp`), so control never
-    grows the host stack.
-  - Since R882 every other region op is a level of the frame's
-    `RegionCursor` and a call inside one is a pushed frame.
-  - Probe: `def down(n: Int) raises -> Int:` whose `try:` holds
-    `if n > 0: return down(n - 1) + 1`, an `except e: print(e)`, then
-    `return 0`; `print(down(40))` aborts with a stack overflow in a debug
-    build (`down(20)` prints `20`), where `down(100000)` without the `try`
-    prints `100000`.
-  - Lever: make each `try` part a cursor level that records the part; a
-    raise naming a `try` unwinds `VmBackend::frames` to the innermost
-    frame whose cursor is in the body of the `try` carrying its label,
-    stopping at a synchronous call's target frame. `exec_try`,
-    `run_region`, and their recursion go away.
-  - Since R884 no `finally` runs in the VM: each is copied before its
-    exits, so a part records no pending outcome.
-  - Depends on R882.
+  `prepare_direct_call` pushes a frame for a `call.method` only when the
+  method returns a reference; every other method call runs through
+  `exec_instr`'s synchronous path (`call_frame`, a nested `drive_frames`).
+  - Upstream lowers a method call to an ordinary `kgen.call` of the
+    method's function, which its interpreter runs as one more frame.
+  - A free-function call and a `CallIndirect` are pushed frames, so the
+    gap is the method call alone.
+  - Probe: `def down(self, n: Int) -> Int:` returning
+    `self.down(n - 1) + self.step` for `n > 0`, else `0`;
+    `print(Walker(1).down(80))` aborts with a stack overflow in a debug
+    build (`down(60)` prints `60`), where the free-function form runs
+    100 000 deep.
+  - Probe: a `mut self` method `bump` adding 1 to `self.hits` and
+    recursing through `self.bump(n - 1)`: `c.bump(200)` overflows where
+    `c.bump(60)` prints `60`; its receiver must be written back through
+    `ReturnContinuation::writebacks`.
+  - Lever: push a frame for every resolved method call, its receiver and
+    `mut` arguments written back through the continuation, and its
+    `result_adapter` applied when the frame finishes.
+  - Found while landing R1272 (2026-10-23).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1271 The post-elaboration pipeline has no `AutomaticInline`, so

@@ -21,7 +21,7 @@ use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     ConcreteMir, Const, MirBlock, MirCaptureMode, MirFunction, MirInstr, MirIntrinsicSubscript,
-    MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Raises, Reg, TryLabel,
+    MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::types::Ty;
@@ -1423,34 +1423,6 @@ fn navigate_reference_mut<'a>(
     Ok(value)
 }
 
-/// The control-flow outcome of executing an instruction or a `try` sub-region.
-/// Most execution is `Normal`; a `return` inside a `try` part surfaces as
-/// `Return`, a `break`/`continue` that leaves a `try` part to a loop around
-/// the `try` as `Leave`, and a raise naming a `try` as `Raise`, which the
-/// `try` it names intercepts. (A raise out of the function propagates as
-/// `RuntimeError::Raised`.)
-enum Flow {
-    Normal,
-    Return(Value),
-    /// `lit.try.raise`: the error a raise names the `try` labelled `label`
-    /// with, unwinding every `try` part up to that `try`'s body.
-    Raise {
-        label: TryLabel,
-        error: Value,
-    },
-    /// A region exit naming an op outside the `try` part it left. Propagates
-    /// out of the `try` (running each `finally`) until the cursor of a list
-    /// inside that op resolves it ([`RegionCursor::resolve_leave`]).
-    Leave(regions::Leave),
-}
-
-struct TryRegions<'a> {
-    label: TryLabel,
-    body: &'a [MirBlock],
-    handler: &'a Option<(Option<VarId>, Vec<MirBlock>)>,
-    orelse: &'a Option<Vec<MirBlock>>,
-}
-
 struct ReferencePointerBoundary<'a> {
     allocation: u64,
     offset: i64,
@@ -1580,7 +1552,6 @@ mod calls;
 mod exec;
 
 mod frames;
-use frames::raise_into_edge;
 
 mod references;
 

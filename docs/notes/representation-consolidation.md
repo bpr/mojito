@@ -38,7 +38,7 @@ disappear. Four such gaps were found, and one of them reaches far outside
 
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
-| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R956, R1264, R1290, R1113, R1272, R890 (R733, R833, R1129, R1106, and R829 closed; R832 waits on gap D) |
+| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R956, R1264, R1290, R1113, R890 (R733, R833, R1129, R1106, R829, and R1272 closed; R832 waits on gap D) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1278, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
@@ -87,8 +87,8 @@ This gap blocks about 14 entries across four tracks (`pmir`,
   - R1113 is `lower_raise` releasing temporaries as
     `release_leaving_temps` does for the other exits; still no program
     reproduces it, since inlining stores the temporaries in slots.
-  - R1272 is the VM transferring to the handler on the terminator; its
-    probe still overflows the stack at `down(40)` (10-23).
+  - R1272 closed 10-23: a `try` part is a VM cursor level, and its probe
+    recurses 100 000 deep.
   - R890 is a `try` whose handler breaks; `TryNext` is still there, and
     its R874 prerequisite has landed.
   - R832 needs no flag for raise edges any more; its remaining flags go
@@ -160,7 +160,7 @@ entry's probe is "one instance per `n` where the pin has one".
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R956 --only R1264 --only R1290 \
-     --only R1113 --only R1272 --only R890 -n 0
+     --only R1113 --only R890 -n 0
    ```
 
    R832 waits for gap D.

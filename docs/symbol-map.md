@@ -1236,18 +1236,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   error as it was raised (`Prog::edge_errors`).
 - `backend/vm/regions.rs` owns `RegionCursor`, a frame's position through the
   region ops it is inside, upstream's interpreter `pc`: `enter` is each `if`,
-  `loop`, and `match`'s `interpret`, `transfer` each region terminator's, and
-  `resolve_leave` resolves a `Flow::Leave` a `try` part returned, by
-  `mir::region_exit` and `RegionFrame::names`.
+  `loop`, `match`, and `try`'s `interpret`, `transfer` each region
+  terminator's (a region exit resolving by `mir::region_exit` and
+  `RegionFrame::names`, `lit.try.yield` moving to `else` or past the
+  `try`), and `catch` unwinds a raise naming a `mir::TryLabel` to that
+  `try`'s `except`.
 - `backend/vm/references.rs` owns runtime reference handle read/write/projection,
   including `place_crosses_reference`/`place_handle`, which decide whether a
   place reaches a stored handle at or below its root and must therefore be
   accessed through the handle walk rather than frame storage.
-- `backend/vm/exec.rs` owns the `exec_instr` instruction dispatcher and
-  `try`-region execution (`run_region` steps a `RegionCursor` rooted at a
-  `try` part, and `exec_try` enters the handler on the `Flow::Raise` that
-  names its `mir::TryLabel`; a raise with no label propagates as
-  `RuntimeError::Raised`).
+- `backend/vm/exec.rs` owns the `exec_instr` instruction dispatcher and the
+  error a `raise` propagates as (`raise_register`, `raise`); a raise with no
+  label leaves the function as `RuntimeError::Raised`.
 - `backend/vm/calls.rs` turns `CallSlots` into runtime values and frame slots.
 - `backend/vm/places.rs` navigates projected runtime storage, including the
   `UninitPayload` projection into inline uninit storage (a final payload store

@@ -1,6 +1,5 @@
-//! The `exec_instr` instruction dispatcher plus `try`-region execution
-//! (`exec_try`/`run_region`, the latter stepping a region cursor over a
-//! `try` part).
+//! The `exec_instr` instruction dispatcher and the error a `raise`
+//! propagates as.
 //! Extracted from `backend/vm.rs`; see `docs/symbol-map.md`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -9,9 +8,6 @@ use mojito_types::types::TyKind;
 
 impl VmBackend {
     /// Execute one straight-line MIR instruction against the current frame.
-    /// Returns the control-flow outcome — `Normal`, or `Return` when a `return`
-    /// inside a nested `try` region crosses out (all other instructions are
-    /// `Normal`).
     #[allow(
         clippy::cognitive_complexity,
         clippy::too_many_lines,
@@ -24,7 +20,7 @@ impl VmBackend {
         scope: FrameScope,
         regs: &mut [Value],
         vars: &mut Vec<Value>,
-    ) -> Result<Flow, RuntimeError> {
+    ) -> Result<(), RuntimeError> {
         let FrameScope {
             function,
             id: frame_id,
@@ -81,7 +77,7 @@ impl VmBackend {
                                     .collect(),
                             }
                         };
-                        return Ok(Flow::Normal);
+                        return Ok(());
                     }
                     let mut offset = offset;
                     for segment in super::references::place_projection_segments(place, regs)? {
@@ -96,7 +92,7 @@ impl VmBackend {
                         }
                     }
                     regs[dest.0 as usize] = Value::Pointer { allocation, offset };
-                    return Ok(Flow::Normal);
+                    return Ok(());
                 }
                 let (frame, slot, mut projection) = match root {
                     Value::Ref {
@@ -136,7 +132,10 @@ impl VmBackend {
             MirInstr::ComptimeAssert { .. } => {
                 return Err(parametric_instruction("a compile-time assertion"));
             }
-            MirInstr::If { .. } | MirInstr::Loop { .. } | MirInstr::Match { .. } => {
+            MirInstr::If { .. }
+            | MirInstr::Loop { .. }
+            | MirInstr::Match { .. }
+            | MirInstr::Try { .. } => {
                 return Err(RuntimeError::Unsupported(format!(
                     "vm: `{}` outside a region cursor",
                     mojito_mir::mir::text::instruction_mnemonic(i)
@@ -1611,7 +1610,7 @@ impl VmBackend {
                 {
                     let (region, slot) = self.heap_index(allocation, offset, 0)?;
                     self.write_heap_projection(region, slot, &suffix, v)?;
-                    return Ok(Flow::Normal);
+                    return Ok(());
                 }
                 // A handle at the root (a `mut`/`ref self` receiver) and one
                 // reached below it (`p.src[].v`, through a `ref`-typed or
@@ -2060,152 +2059,13 @@ impl VmBackend {
                     "vm backend does not support {what} yet"
                 )));
             }
-            MirInstr::Try {
-                label,
-                body,
-                handler,
-                orelse,
-            } => {
-                // A `try` may complete with a `return`, a region exit, or a
-                // raise naming an enclosing `try` from inside it; propagate
-                // that outcome to the block driver.
-                return self.exec_try(
-                    prog,
-                    scope,
-                    &TryRegions {
-                        label: *label,
-                        body,
-                        handler,
-                        orelse,
-                    },
-                    CallerFrame {
-                        id: frame_id,
-                        function: caller_function,
-                        registers: regs,
-                        variables: vars,
-                    },
-                );
-            }
             MirInstr::Drop { .. } => {
                 return Err(RuntimeError::Unsupported(format!(
                     "vm backend does not support this operation yet: {i:?}"
                 )));
             }
         }
-        Ok(Flow::Normal)
-    }
-
-    /// Execute a `try`/`except`/`else` region. Each part runs as a region
-    /// in the current frame; a raise naming this `try` from its body
-    /// unwinds to `handler`, binding the error, and `else` runs on normal
-    /// completion. Every other outcome, a raise naming an enclosing `try`
-    /// included, leaves the `try`.
-    pub(super) fn exec_try(
-        &mut self,
-        prog: &Prog,
-        scope: FrameScope,
-        regions: &TryRegions<'_>,
-        frame: CallerFrame<'_>,
-    ) -> Result<Flow, RuntimeError> {
-        let TryRegions {
-            label,
-            body,
-            handler,
-            orelse,
-        } = regions;
-        let CallerFrame {
-            id: _,
-            function: _,
-            registers: regs,
-            variables: vars,
-        } = frame;
-        match self.run_region(prog, scope, body, regs, vars)? {
-            Flow::Raise {
-                label: raised,
-                error,
-            } if raised == *label => {
-                let Some((err_slot, hblocks)) = handler else {
-                    return Err(RuntimeError::Unsupported(format!(
-                        "vm: a raise named try{}, which has no handler",
-                        label.0
-                    )));
-                };
-                if let Value::Error(message) = &error {
-                    self.record_lifecycle(format!("catch {message}"));
-                }
-                if let Some(slot) = err_slot {
-                    vars[*slot as usize] = error;
-                }
-                self.run_region(prog, scope, hblocks, regs, vars)
-            }
-            // `else` runs only on *normal* completion; a `return`, a region
-            // exit, or a raise naming an enclosing `try` carries out.
-            Flow::Normal => match orelse {
-                Some(eblocks) => self.run_region(prog, scope, eblocks, regs, vars),
-                None => Ok(Flow::Normal),
-            },
-            flow => Ok(flow),
-        }
-    }
-
-    /// Run a `try` part (block ids local, entry = 0) in the current frame,
-    /// stepping a [`RegionCursor`] rooted at it through the region ops it
-    /// holds. Returns the control-flow outcome — `Flow::Normal` on normal
-    /// completion (`lit.try.yield`), `Flow::Return` when a `return` inside
-    /// the part crosses out, `Flow::Leave` when a region exit names an op
-    /// around the `try`, or `Flow::Raise` when a raise names a `try` — and
-    /// propagates a raise out of the function as `RuntimeError::Raised`.
-    pub(super) fn run_region(
-        &mut self,
-        prog: &Prog,
-        scope: FrameScope,
-        blocks: &[MirBlock],
-        regs: &mut [Value],
-        vars: &mut Vec<Value>,
-    ) -> Result<Flow, RuntimeError> {
-        let mut cursor = RegionCursor::default();
-        'region: loop {
-            let block = cursor.block(blocks)?;
-            while let Some(instruction) = block.instrs.get(cursor.instruction()) {
-                if cursor.enter(instruction, regs) {
-                    continue 'region;
-                }
-                cursor.advance();
-                // A non-`Normal` outcome from a nested `try` (a `return`, or
-                // a region exit naming an op this part does not hold) leaves
-                // this part carrying it.
-                let outcome = self.exec_instr(prog, instruction, scope, regs, vars);
-                match raise_into_edge(instruction, outcome, regs)? {
-                    Flow::Normal => {}
-                    Flow::Leave(leave) => match cursor.resolve_leave(blocks, leave, regs)? {
-                        Some(leave) => return Ok(Flow::Leave(leave)),
-                        None => continue 'region,
-                    },
-                    left @ (Flow::Return(_) | Flow::Raise { .. }) => return Ok(left),
-                }
-            }
-            match cursor.transfer(blocks, &block.term, regs)? {
-                Transfer::Moved => {}
-                Transfer::Leave(leave) => return Ok(Flow::Leave(leave)),
-                Transfer::Exit(MirTerm::Return(r)) => {
-                    let v = r
-                        .as_ref()
-                        .map_or(Value::None, |r| regs[r.0 as usize].clone());
-                    return Ok(Flow::Return(v));
-                }
-                Transfer::Exit(MirTerm::Raise { src, label }) => {
-                    let raised = self.raise_register(prog, scope.function, regs, *src);
-                    return match (raised, label) {
-                        (RuntimeError::Raised(error), Some(label)) => Ok(Flow::Raise {
-                            label: *label,
-                            error,
-                        }),
-                        (raised, _) => Err(raised),
-                    };
-                }
-                Transfer::Exit(_) => return Ok(Flow::Normal),
-            }
-        }
+        Ok(())
     }
 
     /// The error a `raise` of register `src` of `function` propagates as:

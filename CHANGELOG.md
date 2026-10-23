@@ -494,6 +494,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `try` on the VM is a level of its frame's region cursor, as upstream's
+  `TryOp::interpret` transfers into the try region (R1272): `lit.try.yield`
+  moves to the `else` region or past the op, and a raise naming a `try`
+  unwinds the cursor to that `try`'s body and enters its `except`, binding
+  the error. A call inside a `try` part is a pushed frame like any other,
+  so recursion through one runs at any depth (100 000 deep in a debug
+  build) where it overflowed the host stack at about 40; `exec_try`,
+  `run_region`, and the VM's `Flow` outcome are gone. Every corpus
+  fixture's output is unchanged.
 - `T()` and `T(copy=x)` at a struct name the struct's member, as
   upstream's substitution folds the `Defaultable` and `Copyable`
   witnesses, rather than a call naming the struct (R1283): `T()` calls

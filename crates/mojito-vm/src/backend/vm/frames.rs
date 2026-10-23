@@ -157,40 +157,7 @@ impl VmBackend {
                     &mut frame.registers,
                     &mut frame.variables,
                 );
-                match raise_into_edge(instruction, outcome, &mut frame.registers)? {
-                    Flow::Normal => {}
-                    Flow::Leave(leave) => {
-                        if frame
-                            .cursor
-                            .resolve_leave(blocks, leave, &mut frame.registers)?
-                            .is_some()
-                        {
-                            return Err(left_function());
-                        }
-                        self.frames.push(frame);
-                        continue 'frames;
-                    }
-                    Flow::Raise { label, .. } => return Err(unnamed_try(label)),
-                    Flow::Return(value) => {
-                        // Re-root returned reference handles exactly as the
-                        // terminator return path below does: a `return` leaving
-                        // a `try` region otherwise carries refs rooted at this
-                        // dying frame.
-                        let value = {
-                            let mut value = value;
-                            self.canonicalize_value_references(
-                                frame.id,
-                                &frame.variables,
-                                &mut value,
-                            );
-                            value
-                        };
-                        if let Some(done) = self.finish_frame(prog, target, frame, value)? {
-                            return Ok(done);
-                        }
-                        continue 'frames;
-                    }
-                }
+                raise_into_edge(instruction, outcome, &mut frame.registers)?;
             }
             self.burn_ctfe()?;
             let returned = match frame
@@ -201,15 +168,30 @@ impl VmBackend {
                     self.frames.push(frame);
                     continue;
                 }
-                Transfer::Leave(_) => return Err(left_function()),
-                Transfer::Exit(MirTerm::Return(reg)) => reg
-                    .as_ref()
-                    .map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone()),
-                Transfer::Exit(MirTerm::Raise {
-                    label: Some(label), ..
-                }) => return Err(unnamed_try(*label)),
-                Transfer::Exit(MirTerm::Raise { src, label: None }) => {
-                    let raised = self.raise_register(prog, frame.function, &frame.registers, *src);
+                Transfer::Return(reg) => {
+                    reg.map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone())
+                }
+                Transfer::Raise {
+                    src,
+                    label: Some(label),
+                } => {
+                    let error =
+                        match self.raise_register(prog, frame.function, &frame.registers, src) {
+                            RuntimeError::Raised(error) => error,
+                            raised => return Err(raised),
+                        };
+                    let slot = frame.cursor.catch(blocks, label)?;
+                    if let Value::Error(message) = &error {
+                        self.record_lifecycle(format!("catch {message}"));
+                    }
+                    if let Some(slot) = slot {
+                        frame.variables[slot as usize] = error;
+                    }
+                    self.frames.push(frame);
+                    continue;
+                }
+                Transfer::Raise { src, label: None } => {
+                    let raised = self.raise_register(prog, frame.function, &frame.registers, src);
                     match raised {
                         RuntimeError::Raised(error)
                             if frame.id != target
@@ -224,7 +206,6 @@ impl VmBackend {
                         raised => return Err(raised),
                     }
                 }
-                Transfer::Exit(_) => Value::None,
             };
             // A reference returned by projecting through a stored handle (a
             // `ref[origin]` field's element) — or buried inside a returned
@@ -681,11 +662,11 @@ impl VmBackend {
 /// raise sets its error flag and error, as upstream's throwing call returns
 /// its flag, and completion clears the flag. An instruction with no raise
 /// edge, and an error that is no raise, pass through.
-pub(super) fn raise_into_edge(
+fn raise_into_edge(
     instruction: &MirInstr,
-    outcome: Result<Flow, RuntimeError>,
+    outcome: Result<(), RuntimeError>,
     registers: &mut [Value],
-) -> Result<Flow, RuntimeError> {
+) -> Result<(), RuntimeError> {
     let Some(raises) = instruction.raise_edge() else {
         return outcome;
     };
@@ -693,27 +674,12 @@ pub(super) fn raise_into_edge(
         Err(RuntimeError::Raised(error)) => {
             registers[raises.flag.0 as usize] = Value::Bool(true);
             registers[raises.error.0 as usize] = error;
-            Ok(Flow::Normal)
+            Ok(())
         }
-        Ok(flow) => {
+        Ok(()) => {
             registers[raises.flag.0 as usize] = Value::Bool(false);
-            Ok(flow)
+            Ok(())
         }
         Err(other) => Err(other),
     }
-}
-
-/// The error of a raise naming a `try` whose body does not hold it: the
-/// verifier admits only raises naming an enclosing `try`.
-fn unnamed_try(label: TryLabel) -> RuntimeError {
-    RuntimeError::Unsupported(format!(
-        "vm: a raise named try{}, which does not enclose it",
-        label.0
-    ))
-}
-
-/// The error of a region exit naming no op of its function: the verifier
-/// admits only exits an enclosing op resolves.
-fn left_function() -> RuntimeError {
-    RuntimeError::Unsupported("vm: a region exit left its function".to_string())
 }

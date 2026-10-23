@@ -281,6 +281,12 @@ fn deep_free_function_recursion_uses_vm_frames() {
 }
 
 #[test]
+fn deep_recursion_through_a_try_part_uses_vm_frames() {
+    let src = "def down(n: Int) raises -> Int:\n    try:\n        if n > 0:\n            return down(n - 1) + 1\n        raise Error(\"bottom\")\n    except e:\n        print(e)\n    else:\n        print(\"else\")\n    return 0\n\ndef main() raises:\n    print(down(10000))\n    for i in range(3):\n        try:\n            if i == 1:\n                continue\n            print(i)\n        except:\n            pass\n";
+    assert_eq!(run(src).unwrap(), "bottom\n10000\n0\n2\n");
+}
+
+#[test]
 fn nested_calls_evaluate_in_order() {
     let src = "def add(a: Int, b: Int) -> Int:\n    return a + b\n\ndef sq(n: Int) -> Int:\n    return n * n\n\ndef main():\n    print(sq(add(1, 2)))\n";
     assert_eq!(parity(src), "9\n");

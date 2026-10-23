@@ -3103,9 +3103,9 @@ The `break` targets a loop outside the `try` region. A seeded try-region CFG
 lowers it to `Terminator::Break(label)` naming that loop, and MIR lowering
 copies the `finally` before it (`try_finally.rs`, as upstream's
 `lowerTryFinally` pastes it). The VM's region cursor resolves the `break`
-to that loop: the part ends with `Flow::Leave`, which propagates out of
-each `try` until the cursor of a list inside the loop resolves it, so a
-loop inside an enclosing `try` part is reached too. Pliron resolves it by
+to that loop: a `try` part is a level of the same cursor, so the `break`
+unwinds every level inside the loop, `try` parts included, wherever the
+loop sits. Pliron resolves it by
 the same rule while lowering region ops, branching to the loop's exit
 block, wherever the loop sits.
 
@@ -6729,7 +6729,7 @@ raise shorthand is normalized to the builtin `Error` value.
 
 Each frame steps its body with a region cursor (`backend/vm/regions.rs`), the
 VM's `transferControlFlowTo`: the frame's position is a path from its block
-list through each `if`, `loop`, and `match` it is inside. Entering an op
+list through each `if`, `loop`, `match`, and `try` it is inside. Entering an op
 pushes a level for the region it runs first and binds that region's
 arguments, and each region terminator (`yield`, `if.elifcond.yield`,
 `break`, `continue`, `match.next`, `match.complete`) moves the position,
@@ -6738,20 +6738,17 @@ by `mir::region_exit` and `RegionFrame::names`, the rule Pliron shares.
 A call in any region is a pushed frame, so neither nesting nor recursion grows
 the host stack. Reaching `hlcf.unreachable` is a runtime error.
 
-A `try` runs its parts synchronously (`exec_try`/`run_region`, each part under
-a cursor of its own; R1272), and a part ends with a control-flow enum:
-
-```rust
-Normal
-Return(Value)
-Raise { label, error } // a raise naming a `try`, which that `try` catches
-Leave(Leave)           // a region exit naming an op around the `try`
-```
-
-This lets `return`, `break`, `continue`, and a raise naming an enclosing
-`try` cross a `try` boundary; each `finally` they cross already ran before
-them, copied there by MIR lowering. A raise out of the function propagates
-as `RuntimeError::Raised`, untouched by every `try`.
+A `try`, as upstream's `TryOp::interpret`, enters its body as one more
+cursor level. `lit.try.yield` ends a part: the body moves to the `else`
+region when there is one, and otherwise, like the end of `except` or
+`else`, leaves the `try`. A raise naming a `try` (`lit.try.raise`)
+unwinds the cursor to that `try`'s body, enters its `except`, and binds
+the error to the handler's variable; the label names a `try` of the same
+function, so the frame stack is untouched. A `return`, `break`, or
+`continue` crosses `try` levels as it crosses any other, and each
+`finally` it crosses already ran before it, copied there by MIR lowering.
+A raise out of the function propagates as `RuntimeError::Raised`,
+untouched by every `try`.
 
 The rule is:
 
