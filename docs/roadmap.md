@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1286**.
+Next free ID: **R1289**.
 
 ## Ordered Work
 
@@ -450,20 +450,55 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1075 `inline_cost` prices `print` and a `for` loop by
-  observation, not by their operations**
+- [ ] **R1286 `inline_cost` prices a `for` loop's `__next__` as its own
+  body, where the pin counts it inlined into the loop's `try`, its
+  iterator left in memory**
 
-  A `print` call costs 28 and an `iter.init` the whole bound in
-  `inline_cost`, the figures the pin's probes show, because both are
-  builtins here where the pin lowers library code: the `print` call site's
-  pack and default arguments, and `range`'s inlined iterator methods.
-  - Once each is the library call the pin makes, as `len` becomes through
-    R988, the operation count prices it without a figure of its own.
-  - Done when both prices are gone and `show`, `show_twice`, and `sum_to`
-    in `assets/ok/always_inline_small_calls.mojo` still decide as the pin
-    does.
-  - Found while landing R923 (2026-10-16).
-  - Depends on R988.
+  Three loop shapes inline here and keep their call at the pin, which
+  counts at least 32 operations where `inline_cost` counts 31 or fewer.
+  - Probe: `for i in range(x): break` costs 31 here.
+  - Probe: `for i in Bounded(x): s += i`, over a struct iterator whose
+    `__next__` tests `self.i == self.n`, raises `StopIteration`, and
+    stores `self.i`, costs 31 here (`var it = Bounded(x)` first costs 33,
+    as `tests/mir_passes/inline-parametric/for_protocol.mir` pins).
+  - Probe, once R1288 lets a callee holding a `try` inline: `var r =
+    range(x)`, then `try: s += Int(r.__next__())` costs 27 here.
+  - The pin's count stays small for a raising inlined body that does not
+    store to `self` (11) and for one that stores without raising (5), so
+    the operations it adds are a slot its `Mem2Reg` leaves in memory.
+  - Mojito's `TryNext` hides that body, so `protocol_call_cost` prices the
+    callee's own finished body, whose `self` is a reference parameter.
+  - Once R890 makes the loop call `__next__` in a `try`, the inlined body
+    sits in the caller, and `inline_cost` can price the slot traffic left
+    after `mem-2-reg`, as the pin's count holds it.
+  - Done when the probes decide as the pin does and `protocol_call_cost`
+    is gone.
+  - Found while landing R1075 (2026-10-22).
+  - Depends on R890, R1288.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1288 `inline-parametric` keeps the call to a callee holding a
+  `try`, which the pin inlines**
+
+  `is_closed` refuses a callee whose body holds a `try`, `nodebug` or
+  plain, where the pin inlines both below its size bound.
+  - Probe: `@always_inline def f(x: Int) -> Int` holding `var s = x`,
+    `try: s += 1`, `except: pass`, and `return s` inlines at the pin,
+    `nodebug` too.
+  - Probe: the same `try` around `s += g(x)`, over an `@always_inline` `g`
+    that raises `StopIteration` when `x == 3`, inlines at the pin, costing
+    10 there.
+  - The splice would place the callee's `try` in the caller's block, its
+    parts sharing the caller's registers as an inlined `if`'s do.
+  - `inline_cost` already prices a `try` as four beside its parts.
+  - It also prices a handler that its body cannot reach, which the pin
+    empties: `try: s += 1`, `except: s += 2` costs 6 there and 8 here.
+  - The comments on `is_closed` and in
+    `docs/pre-elaboration-optimization-plan.md` say the pin refuses such a
+    callee, which neither the 2026-09-21 nor the 2026-10-17 pin does.
+  - Done when the probes inline and a pass case pins one.
+  - Found while landing R1075 (2026-10-22).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1076 A comparison of a register with itself is not folded**
@@ -10025,6 +10060,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `P[SIMD[DType.int, 1]](x=Int(1))`.
   - Depends on nothing.
   - Model: Fable, Planned.
+
+- [ ] **R1287 `print` is a compiler builtin where upstream's is an
+  `@inline(.never)` library function**
+
+  `print` is checked, run, and lowered as a builtin call (`infer_print`,
+  the VM's `dispatch.rs`, Pliron's `lower/calls.rs`), where upstream's
+  `std/io/io.mojo` declares `def print[*Ts: Writable](*values: *Ts, sep:
+  StringSlice = " ", end: StringSlice = "\n", flush: Bool = False, var
+  file: RawFileDescriptor = stdout)`.
+  - `inline_cost` prices the builtin call at the figure the pin's
+    `print(s)` call site costs (`PRINT_COST`, 30), since the call holds
+    none of the pack and defaults the pin's call site builds.
+  - Probe: `@always_inline def show(x: Int): print("show", x)` inlines
+    here and keeps its call at the pin, where a `StringLiteral` value
+    takes `print("a")` past the bound.
+  - The pin prices `print()` at 24 and `print(s, x)` at 31.
+  - Done when `print` is the library function, the caller's MIR holds its
+    pack and defaults, and `PRINT_COST` is gone.
+  - Found while landing R1075 (2026-10-22).
+  - Depends on R424, R422, R1102.
+  - Model: Fable, Not Planned.
 
 - [ ] **R426 The bundled `_FormatUtils` respells constructs upstream writes
   differently**

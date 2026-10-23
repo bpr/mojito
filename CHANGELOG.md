@@ -642,6 +642,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline_cost`, the size a plain `@always_inline` callee is measured by,
+  prices a `for` loop by its operations rather than at the whole bound:
+  the bodies of the `__iter__` and `__next__` its protocol calls, the
+  latter in a `try`, as upstream's `emitForStmt` calls and then inlines
+  them. A `for` over a small iterator of a program's own now inlines, as
+  at the pin, and one over `range` still keeps its call
+  (`tests/mir_passes/inline-parametric/for_protocol.mir`). Other prices
+  were recalibrated against the pin. A field read or written through a
+  reference costs its `struct.gep`, a raising body costs two, a `try`
+  costs four beside its parts, and a `comptime assert` costs nothing.
+  `print` stays a figure, now 30, the pin's `print(s)` call site, until it
+  is the library function (R1287). Shapes still decided unlike the pin are
+  R1286 and R1288. This closes R1075.
+
 - `len` is upstream's library overload set in `std/builtin/len.mojo`
   (`@inline(.always)` over `Sized`, raising over `SizedRaising`, and an
   `@unavailable` overload over a string) rather than a checker builtin.

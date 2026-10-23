@@ -264,12 +264,13 @@ folds the operators over it (R840);
      count of the operations left after the first round: 31 `s += x`
      statements inline and 32 do not, ten `if`s and not eleven, seven
      `if`/`else`s and not eight, four `while` loops and not five, fifteen
-     `s += f(x)` calls and not sixteen, one `print` and not two, and no
-     `for range` loop. Mojito's `inline_cost` prices its own MIR to the
-     same boundaries (R923).
+     `s += f(x)` calls and not sixteen, one `print` of an `Int` and not
+     two, and no `for range` loop. Mojito's `inline_cost` prices its own
+     MIR to the same boundaries (R923, R1075).
    - Nothing else inlines: a plain `def`, `@no_inline`, a trait-dispatched
-     call, a callee holding a `try`, and a few `String`-literal shapes stay
-     calls; a recursive `@always_inline` function is an error.
+     call, and a few `String`-literal shapes stay calls; a recursive
+     `@always_inline` function is an error. A callee holding a `try`
+     inlines below the bound, which Mojito does not yet do (R1288).
 
    Mojito inlines a callee whatever its compile-time parameters, binding
    every binder kind the call's arguments reach through one map

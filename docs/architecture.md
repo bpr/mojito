@@ -5565,12 +5565,18 @@ point where a slot declared in a loop is uninitialized again.
   (32), the pin's count of the operations its first round leaves,
   calibrated on probe bodies: a slot's reads, stores, and declarations, a
   copy or drop running no constructor or destructor, and a repeated
-  constant are free, an `if` costs one plus one per `elif`, each reached
-  `continue` four beyond its loop's test and body (the private
-  `structured_back_edges` counts them), `iter.init` the whole
-  bound as the pin's `range` protocol does, and `print` the 28 its call
-  site costs there; each other instruction costs one, a `try` with its
-  parts free. Every body is placed as upstream's `inlineGeneratorCall`
+  constant or `comptime assert` are free, an `if` costs one plus one per
+  `elif`, each reached `continue` four beyond its loop's test and body (the
+  private `structured_back_edges` counts them), a place's field projection
+  one `struct.gep` (a read-modify-write's store reusing its read's), a
+  raising body two, a `try` four beside its parts, `iter.init` the body of
+  each `__iter__` it calls and `iter.try_next` a `try` around its
+  `__next__`'s, as upstream's `emitForStmt` calls and then inlines them
+  (bodies `Callees::body` answers, one per call that stays), and `print`
+  the 30 its call site costs there (R1287); each other instruction costs
+  one. The bound is upstream's `getInlineThreshold` of 35 at `-O3`, which
+  `shouldInline` compares with `getNumOperations`, less three operations
+  every body holds there. Every body is placed as upstream's `inlineGeneratorCall`
   places it (the private `splice_region`): in a `loop` labelled
   `LoopLabel::INLINED_CF_SCOPE`, upstream's `inlined_cf_scope`, which no
   source loop carries, appended to the call's block, so the callee's one

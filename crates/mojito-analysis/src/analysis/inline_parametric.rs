@@ -9,8 +9,9 @@
 //! which is what `nodebug` asks for: the inlined code steps as the call.
 //! The pin inlines a `nodebug` or `builtin` callee at any size and a plain
 //! `@always_inline` one below a size bound ([`INLINE_SIZE_BOUND`] over
-//! [`inline_cost`]), and refuses one that lies on a cycle of such calls or
-//! holds a `try`.
+//! [`inline_cost`]), and refuses one that lies on a cycle of such calls.
+//! This pass also keeps the call to a callee holding a `try`, which the
+//! pin inlines (R1288).
 //!
 //! A callee this pass inlines is a function, a method, a subscript's
 //! accessor, which calls it on the subscripted base, a struct's one
@@ -204,7 +205,9 @@ pub const fn is_inlined_before_elaboration(declaration: &MirFunctionDeclaration)
 
 /// The [`inline_cost`] from which a plain `@always_inline` callee keeps its
 /// calls: the pin inlines a body of 31 `s += x` statements and keeps one of
-/// 32.
+/// 32. Upstream's `shouldInline` compares `getNumOperations`, every op of
+/// the generator, against `getInlineThreshold`'s 35 at `-O3`, and this
+/// count leaves out three operations every body holds there.
 pub const INLINE_SIZE_BOUND: usize = 32;
 
 /// The size of `callee`'s finished body as the pin's bound measures it: a
@@ -214,21 +217,25 @@ pub const INLINE_SIZE_BOUND: usize = 32;
 /// The pin counts the operations left after its first round, so what that
 /// round erases is free: a slot's reads, stores, and declarations, which
 /// its `Mem2Reg` promotes, a copy or drop that runs no constructor or
-/// destructor, and every constant but the first of its value, which its
-/// canonicalizer folds into one. Each other instruction is one operation.
+/// destructor, a `comptime assert`, and every constant but the first of
+/// its value, which its canonicalizer folds into one. Each other
+/// instruction is one operation. A place read or written through a field
+/// costs one `struct.gep` more per projection, a read-modify-write's store
+/// reusing its read's, and a raising body two more for its error result.
 /// Control flow is priced as the structured ops the pin holds before it
 /// lowers them: an `if` costs one, and one more per `elif`, as each
 /// `branch` lowering makes of it, and each reached `continue` the four
 /// operations its loop, its condition's test, and its break and continue
-/// cost there beyond its own test and body. A `try` is one operation, its
-/// parts free. A `for` loop's iterator protocol costs at least the bound at the
-/// pin, where `range`'s inlined methods alone keep `for i in range(3): s +=
-/// x` a call, so `iter.init` is priced at the bound; `print`, a builtin
-/// call here, costs the pin's 28, where `print(s)` inlines alone and keeps
-/// the call with four statements more.
-pub fn inline_cost(callee: &MirFunction) -> usize {
+/// cost there beyond its own test and body. A `try` costs four beside its
+/// parts. A `for` loop costs what upstream's `emitForStmt` makes of it once
+/// its calls are inlined: the `__iter__` call's body, and a `try` around
+/// the `__next__` call's. `print`, a builtin call here where the pin calls
+/// the library's, costs the 30 the pin's `print(s)` call site holds.
+pub fn inline_cost(callee: &MirFunction, callees: &Callees<'_>) -> usize {
     let mut constants = BTreeSet::new();
-    blocks_cost(&callee.blocks, &mut constants) + LOOP_COST * structured_back_edges(&callee.blocks)
+    blocks_cost(&callee.blocks, callees, &mut constants)
+        + LOOP_COST * structured_back_edges(&callee.blocks)
+        + if callee.raises { RAISES_COST } else { 0 }
 }
 
 /// Inline into `function` every call [`Callees::body`] answers whose shape
@@ -275,9 +282,17 @@ pub fn inline_parametric(
 /// body of five `while s < x: s += x` loops and inlines one of four.
 const LOOP_COST: usize = 4;
 
+/// What raising costs a body at the pin: `pass` in a raising body holds
+/// two operations more there than in a non-raising one.
+const RAISES_COST: usize = 2;
+
+/// What a `try` costs at the pin beyond its parts: an empty
+/// `try: pass except: pass` holds four operations there.
+const TRY_COST: usize = 4;
+
 /// What a `print` call costs at the pin: `print(s)` inlines alone and keeps
-/// the call with four `s += x` statements more.
-const PRINT_COST: usize = 28;
+/// the call with two `s += x` statements more.
+const PRINT_COST: usize = 30;
 
 /// The caller, its blocks taken out, and where its callees come from.
 struct Inliner<'f, 'c> {
@@ -1092,7 +1107,9 @@ impl<'c> Inliner<'_, 'c> {
         };
         let callee = reduced.as_ref().unwrap_or(full);
         let declaration = declaration.as_ref();
-        if declaration.inline == InlineLevel::Always && inline_cost(callee) >= INLINE_SIZE_BOUND {
+        if declaration.inline == InlineLevel::Always
+            && inline_cost(callee, self.callees) >= INLINE_SIZE_BOUND
+        {
             return None;
         }
         let kept = |indexes: &BTreeSet<usize>, length: usize| {
@@ -2167,7 +2184,7 @@ fn carried_by_breaks(blocks: &mut [MirBlock], returned: &mut Vec<Reg>) {
 
 /// Whether the callee has a shape the splice handles: a struct receiver
 /// if any, and blocks of plain or structured control flow, at any depth,
-/// with no `try` (which the pin refuses), closure, or compile-time
+/// with no `try` (which the pin inlines, R1288), closure, or compile-time
 /// assertion (which fails the callee's own instance).
 fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool {
     let receiver_closed = !declaration.has_receiver
@@ -2509,38 +2526,63 @@ fn rebind_blocks<'b>(
 
 /// The [`inline_cost`] of `blocks` and their regions but for their back
 /// edges, each constant of `constants` counted once.
-fn blocks_cost(blocks: &[MirBlock], constants: &mut BTreeSet<String>) -> usize {
+fn blocks_cost(
+    blocks: &[MirBlock],
+    callees: &Callees<'_>,
+    constants: &mut BTreeSet<String>,
+) -> usize {
     blocks
         .iter()
         .map(|block| {
+            let mut loaded = Vec::new();
             block
                 .instrs
                 .iter()
-                .map(|instruction| instruction_cost(instruction, constants))
+                .map(|instruction| instruction_cost(instruction, callees, constants, &mut loaded))
                 .sum::<usize>()
         })
         .sum()
 }
 
-/// What `instruction` and its regions cost toward [`inline_cost`].
-fn instruction_cost(instruction: &MirInstr, constants: &mut BTreeSet<String>) -> usize {
+/// What `instruction` and its regions cost toward [`inline_cost`], beside
+/// `loaded`, the places its block has read so far.
+fn instruction_cost<'i>(
+    instruction: &'i MirInstr,
+    callees: &Callees<'_>,
+    constants: &mut BTreeSet<String>,
+    loaded: &mut Vec<&'i MirPlace>,
+) -> usize {
     let regions = |constants: &mut BTreeSet<String>| {
         instruction_regions(instruction)
             .into_iter()
-            .map(|region| blocks_cost(region, constants))
+            .map(|region| blocks_cost(region, callees, constants))
             .sum::<usize>()
     };
     match instruction {
         MirInstr::Const { k, .. } => usize::from(constants.insert(format!("{k:?}"))),
         MirInstr::UseVar { constructor, .. } => usize::from(constructor.is_some()),
         MirInstr::DropVar { destructor, .. } => usize::from(destructor.is_some()),
+        MirInstr::LoadPlace { place, .. } => {
+            loaded.push(place);
+            1 + address_cost(place)
+        }
+        MirInstr::Store { place, .. } => match address_cost(place) {
+            0 => 0,
+            _ if loaded.iter().any(|read| same_part(read, place)) => 1,
+            address => 1 + address,
+        },
         MirInstr::DefVar { .. }
         | MirInstr::DeclareVar { .. }
-        | MirInstr::Store { .. }
         | MirInstr::Drop { .. }
-        | MirInstr::KeepAlive { .. } => 0,
-        MirInstr::GetIter { .. } => INLINE_SIZE_BOUND,
+        | MirInstr::KeepAlive { .. }
+        | MirInstr::ComptimeAssert { .. } => 0,
+        MirInstr::GetIter { prepare, .. } => prepare
+            .iter()
+            .map(|method| protocol_call_cost(method, callees))
+            .sum(),
+        MirInstr::TryNext { call, .. } => TRY_COST + protocol_call_cost(&call.target, callees),
         MirInstr::Call { func, .. } if func.0 == "print" => PRINT_COST,
+        MirInstr::Try { .. } => TRY_COST + regions(constants),
         MirInstr::If { elifs, .. } => 1 + elifs.len() + regions(constants),
         MirInstr::Loop { .. }
         | MirInstr::ComptimeIf { .. }
@@ -2548,6 +2590,25 @@ fn instruction_cost(instruction: &MirInstr, constants: &mut BTreeSet<String>) ->
         | MirInstr::Match { .. } => regions(constants),
         _ => 1,
     }
+}
+
+/// The `struct.gep`s the pin computes `place`'s address with: one per
+/// projection, `rebind` reusing its operand's address.
+fn address_cost(place: &MirPlace) -> usize {
+    place
+        .proj
+        .iter()
+        .filter(|projection| !matches!(projection, Proj::Rebind))
+        .count()
+}
+
+/// What a call the `for` protocol makes costs toward [`inline_cost`]: the
+/// operations of the body this pass follows, which the pin's lowering calls
+/// and inlines before it measures, or one for a call that stays.
+fn protocol_call_cost(method: &str, callees: &Callees<'_>) -> usize {
+    callees
+        .body(method)
+        .map_or(1, |body| inline_cost(body, callees))
 }
 
 /// How many `continue`s of `blocks`, a structured body, are reached, each

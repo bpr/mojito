@@ -36,7 +36,7 @@ disappear. Four such gaps remain, and one of them reaches far outside
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
 | A. Raises are implicit | every raise point ends a region | R906, R831, R20, R884 | R1264, R1106, R1272, R1113, R832, R833, R733, R956, R890, likely R829 |
-| B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1283, R1278, R1021 (closed), R1075 |
+| B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1283, R1278, R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
 
@@ -100,8 +100,11 @@ entry's probe is "one instance per `n` where the pin has one".
   subscripts, and iterator steps through a bound as well, not only
   `__len__`.
 - After R1052, R988 (library `len`) closed R1021 with no code change
-  (2026-10-22), and turns R1075's two observed prices into ordinary
-  operation counts.
+  (2026-10-22).
+- R1075 then priced a `for` loop by the bodies of the `__iter__` and
+  `__next__` it calls (2026-10-22). `print` keeps an observed price until
+  it is the library function (R1287), and the loop's last gap waits on
+  R890's `__next__` call in a `try` (R1286).
 
 ### C. Packs are built by the backends
 
@@ -137,12 +140,6 @@ entry's probe is "one instance per `n` where the pin has one".
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1283 -n 0
-   ```
-
-   Then R1075 (R988 and R1021 landed 2026-10-22):
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1075 -n 0
    ```
 
 2. **Gap A**, for leverage. Its order is encoded as Depends bullets (R831

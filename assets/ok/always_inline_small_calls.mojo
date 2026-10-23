@@ -1,9 +1,9 @@
 # A plain `@always_inline` callee is inlined before elaboration when its
 # body is small enough, as at the pin, and keeps its calls past the size
 # bound: 31 `s += x` statements inline and 32 do not, ten `if`s inline and
-# eleven do not, four `while` loops inline and five do not, one `print`
-# inlines and two do not, and a `for` loop never does. Each prints what the
-# call computes either way.
+# eleven do not, four `while` loops inline and five do not, one `print` of
+# an `Int` inlines and two do not, and a `for` loop over `range` does not.
+# Each prints what the call computes either way.
 
 
 @no_inline
@@ -119,7 +119,7 @@ def bumped_sixteen(x: Int) -> Int:
 
 @always_inline
 def show(x: Int):
-    print("show", x)
+    print(x)
 
 
 @always_inline
