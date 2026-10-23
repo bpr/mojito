@@ -1,9 +1,10 @@
-# A store into an initialized droppable field destroys the value it replaces
-# at the store, whatever reaches the field: a `mut self` method, a `mut`
+# A store into an initialized droppable field replaces a value that dies at
+# its own last use, whatever reaches the field: a `mut self` method, a `mut`
 # parameter, a nested field chain, or a constructor's second store into the
-# same field. A constructor's first store initializes and destroys nothing,
-# and a field moved out on one path is only destroyed where it still holds a
-# value.
+# same field. In these shapes nothing runs between that last use and the
+# store, so each replaced value is destroyed just before its store. A
+# constructor's first store initializes and destroys nothing, and a field
+# moved out on one path is only destroyed where it still holds a value.
 @fieldwise_init
 struct Inner(Movable):
     var id: Int

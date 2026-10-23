@@ -4896,8 +4896,9 @@ named drop stays a `drop.var`, whose runtime partial-aggregate rule,
 Pliron's drop and leaf flags, and an owned pack's reverse order carry
 the states upstream's lifetime checker makes definite; the move and
 initialization scan walks regions, but its state is pre-drop and
-per-template, and upstream decides a drop's shape in the walk that places
-it (R1251).
+per-template. The walk that places a drop decides its shape, the whole
+value or a laid-out part, but this fold still decides whether the value is
+held whole there, where upstream's walk leaves no undecided drop (R1306).
 A storage destroy, a variant store (one
 `destructors` entry per alternative, the `__deinit__` the replaced payload
 runs under that tag, as upstream's `Variant.__del__` names each under its
@@ -5280,8 +5281,8 @@ matching current Mojo's pack lifecycle, in the VM and natively. Public
 collections, including `Tuple`, are nominal structs and follow the ordinary
 declaration order for fields; their library destructors own any
 element-specific teardown. Per-field liveness for `deinit` parameters is a
-refinement pass after the variable-granular elaboration
-(`analysis/field_drops.rs`), on the structured body and the same region
+refinement pass after the drop walk, which keeps each `deinit` parameter one
+bit (`analysis/field_drops.rs`), on the structured body and the same region
 walks: for every `deinit` parameter of struct type a forward walk
 (`FieldFacts`) records the fields each instruction consumes through its
 operand registers — a loaded register carries its field to every consumer as
@@ -5305,15 +5306,35 @@ the pinned Mojo destroys it at entry instead and reads the destroyed value (an
 upstream bug left unmatched, an `output-diff` row). Upstream destroys fields in `DestructorInsertion`'s
 one field-sensitive walk; here they are a second walk after it.
 
-A store into a field destroys the value it replaces at the store, as Mojo's
-assignment does. A whole-variable reassignment needs nothing extra (the old
-value dies at its last use before the redefining `DefVar`), but a field is not
-a variable, so a pass ahead of the variable-granular elaboration
-(`analysis/store_drops.rs`) splices a `DropPlace` immediately before each
-`Store` into a static field or constant-index element of droppable type whose
-subtree is initialized there. A whole place written *through a reference* has
-no redefining `DefVar` either — its old value is the caller's or another
-slot's — so the same pass drops it first: a `WriteRef` through the handle a
+Drop liveness is field-sensitive over the values it tracks, as upstream's
+`DestructorInsertion` is over its `ValueSet`: `analysis/drop_values.rs`
+(`DropValues`) gives every variable one bit, except a root whose owned parts
+the body stores a droppable value into (a local, a `var` parameter, a `mut`
+or `ref` parameter). That root is laid out along the stored paths: at each
+struct or tuple level a stored path enters, every field in declaration order
+gets its own range, and the level's whole-object bit comes last. A `Store`
+into a laid-out part is a definition of that part alone, so the value it
+replaces dies at its own last use, as a whole variable's does before its
+redefining `DefVar`; a use drills into a level only while the level's
+whole-object bit is live (`computeAccessPathForMaxUnconsumedField`), so the
+last use of any part of a value that dies whole destroys it whole; the join
+is upstream's `unifyConsumedSets`; and a death under a live level is a
+`DropPlace` of each dying part in declaration order (`destroyValueIfNeeded`).
+A split `mut`/`ref` parameter is demanded whole at every `return` and every
+raise out of the function (`checkTerminatorOp`), so a part the body
+overwrites before reading dies at the function's entry. The receiver of an
+initializer, `deinit` parameters, and an owning pack stay one bit each: their
+fields are refined by the passes after the walk.
+
+A store into a field of a root the walk does not lay out still destroys the
+value it replaces at the store, through a pass ahead of the walk
+(`analysis/store_drops.rs`), which splices a `DropPlace` immediately before
+each `Store` into a static field or constant-index element of droppable type
+whose subtree is initialized there and which the walk does not define: an
+initializer's `out self` field, and `__toplevel__`'s, which has no walk. A
+whole place written *through a reference* has no redefining `DefVar` and no
+laid-out part — its old value is the caller's or another slot's — so the same
+pass drops it first, as upstream's indirect `checkDef` does: a `WriteRef` through the handle a
 `mut` parameter or `mut self` receiver makes of itself, and a `Store` through
 a place pointer (`q[] = v`) or a whole-variable `ref` binding. A `WriteRef`
 names only its handle register, so the place comes from the `MakeRef` that

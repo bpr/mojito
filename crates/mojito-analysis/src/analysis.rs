@@ -27,6 +27,8 @@ pub use dead_symbols::{
 };
 pub use destructor_calls::name_destructors;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use drop_values::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use drops::*;
 pub use duplicate_functions::{ELIMINATE_DUPLICATE_FUNCTIONS, eliminate_duplicate_functions};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -206,16 +208,18 @@ impl CalleeRefParams<'_> {
 
 // --- Liveness + ASAP drop elaboration ---------------------------------------
 
-/// Elaborate ASAP destruction across a whole program: before each store that
-/// overwrites an initialized droppable field, splice a `DropPlace`; after each
-/// variable's last use, splice a `DropVar`.
+/// Elaborate ASAP destruction across a whole program.
+///
+/// After each value's last use, splice a `DropVar`, or a `DropPlace` of a
+/// field a store redefines; before each store that overwrites a field the
+/// walk does not follow, splice a `DropPlace`.
 ///
 /// Each body stays structured, as upstream's `DestructorInsertion` leaves
 /// `hlcf`: the VM runs it as it stands, and Pliron lowers its region ops to
 /// LLVM blocks as `LowerControlFlow` does.
 ///
 /// Applied by the VM before execution so a struct's `__deinit__` fires at the
-/// value's last use (not at scope end), and a replaced field's at the store.
+/// value's last use (not at scope end), a replaced field's included.
 pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
     let functions = prog
         .functions
@@ -227,7 +231,7 @@ pub fn elaborate_drops_program(prog: MirProgram) -> MirProgram {
             // clear the slot).
             let elaborated = if name == "__toplevel__" {
                 let mut f = f;
-                elaborate_store_drops(&mut f, &name, &prog.declarations);
+                elaborate_store_drops(&mut f, &name, &prog.declarations, &|_| false);
                 name_destructors(&mut f, &prog.declarations);
                 lower_copies_and_moves(&name, &mut f, &|name| prog.declarations.function(name));
                 f
@@ -261,21 +265,31 @@ pub fn elaborate_drops_function(
     mut function: MirFunction,
     declarations: &MirDeclarations,
 ) -> MirFunction {
-    elaborate_store_drops(&mut function, name, declarations);
     let scope = binder_scope(name, |name| declarations.function(name));
     let slots = materialized_parameter_slots(&function, &scope);
     let receiver = initializer_receiver_entry(&function, name, declarations).map(|_| 0);
-    let mut elaborated = elaborate_drops(function, &slots, receiver, declarations);
+    let pack = declarations
+        .function(name)
+        .and_then(mojito_mir::mir::owned_pack_slot);
+    let values = DropValues::new(&function, declarations, |v| {
+        let parameter = (v as usize) < function.n_params;
+        let flag = |flags: &[bool]| parameter && flags.get(v as usize).copied() == Some(true);
+        Some(v) != receiver
+            && Some(v) != pack
+            && !slots.contains(&v)
+            && !flag(&function.deinit_params)
+            && (is_droppable_root(&function, v) || flag(&function.ref_params))
+    });
+    elaborate_store_drops(&mut function, name, declarations, &|place| {
+        values.defines_part(place)
+    });
+    let mut elaborated = elaborate_drops(function, &slots, receiver, &values, declarations);
     refine_receiver_drops(&mut elaborated, name, declarations);
     elide_dying_copies(&mut elaborated);
     refine_deinit_fields(&mut elaborated, declarations);
-    mojito_mir::mir::refine_pack_drops(
-        &mut elaborated,
-        declarations
-            .function(name)
-            .and_then(mojito_mir::mir::owned_pack_slot),
-        &|ty| declarations.drop_runs_no_code(ty),
-    );
+    mojito_mir::mir::refine_pack_drops(&mut elaborated, pack, &|ty| {
+        declarations.drop_runs_no_code(ty)
+    });
     name_destructors(&mut elaborated, declarations);
     mojito_mir::mir::name_constructors(&mut elaborated, declarations);
     lower_copies_and_moves(name, &mut elaborated, &|name| declarations.function(name));
@@ -287,6 +301,7 @@ mod copy_elision;
 mod cse;
 mod dead_symbols;
 mod destructor_calls;
+mod drop_values;
 mod drops;
 mod duplicate_functions;
 mod field_drops;

@@ -1,0 +1,257 @@
+  functions: [
+      fn {
+        name: note,
+        registers: 0,
+        vars: 1,
+        var_names: [v],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [],
+        locations: [],
+        blocks: [
+          bb0 {
+            instructions: [
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "D.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, v],
+        params: 2,
+        param_types: [struct_type { name: D, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: D, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 117, end: 118, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: D, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "D.__deinit__",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: D, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: D, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 166, end: 172, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 161, end: 173, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: D, arguments: [] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              call { dest: %r1, func: note, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              consume.var { var: $v0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "S.__init__",
+        registers: 5,
+        vars: 2,
+        var_names: [self, v],
+        params: 2,
+        param_types: [struct_type { name: S, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: D, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 277, end: 278, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 275, end: 279, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 299, end: 300, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 297, end: 301, origin: absent }) }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              call { dest: %r1, func: "D.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, src: %r1 },
+              var.use { dest: %r2, var: $v1, mode: copy },
+              call { dest: %r3, func: "D.__init__", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(e), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, src: %r3 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "S.__deinit__",
+        registers: 8,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: S, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r1, type: None }, reg_type { reg: %r2, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r5, type: None }, reg_type { reg: %r6, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r7, type: None }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent } },
+              call.method { dest: %r7, recv: %r6, method: __deinit__, resolved: present("D.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }), recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              consume.place { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, marker: %r6 },
+              place.load { dest: %r4, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(e), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent } },
+              call.method { dest: %r5, recv: %r4, method: __deinit__, resolved: present("D.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(e), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }), recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              consume.place { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(e), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, marker: %r4 },
+              consume.var { var: $v0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: last_use,
+        registers: 19,
+        vars: 2,
+        var_names: [x, s],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: S, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: None }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r11, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r12, type: None }, reg_type { reg: %r13, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r14, type: None }, reg_type { reg: %r15, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r16, type: None }, reg_type { reg: %r17, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r18, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 347, end: 348, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 345, end: 349, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 359, end: 364, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 350, end: 365, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 375, end: 376, origin: present($v0) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 366, end: 377, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 390, end: 391, origin: present($v0) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 388, end: 392, origin: absent }) }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 404, end: 409, origin: present($v1) }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 404, end: 409, origin: present($v1) }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 404, end: 409, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 404, end: 409, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 404, end: 409, origin: absent }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 404, end: 409, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 404, end: 409, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 404, end: 409, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 404, end: 409, origin: absent }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 404, end: 409, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: "S.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: S, arguments: [] }), in_place: true },
+              place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }, projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r17, place: place { root: $v1, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent } },
+              call.method { dest: %r18, recv: %r17, method: __deinit__, resolved: present("D.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }), recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              consume.place { place: place { root: $v1, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, marker: %r17 },
+              call { dest: %r3, func: note, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.use { dest: %r4, var: $v0, mode: copy },
+              call { dest: %r5, func: note, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.use { dest: %r6, var: $v0, mode: copy },
+              call { dest: %r7, func: "D.__init__", raises: absent, args: [%r6], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              place.store { place: place { root: $v1, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, src: %r7 },
+              place.load { dest: %r9, place: place { root: $v1, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(e), type: struct_type { name: D, arguments: [] } }, projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              var.use { dest: %r15, var: $v1, mode: forward },
+              call.method { dest: %r16, recv: %r15, method: __deinit__, resolved: present("S.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              value.copy { dest: %r10, value: %r9 }
+            ],
+            terminator: return { value: present(%r10) }
+          }
+        ]
+      },
+      fn {
+        name: sibling_arm,
+        registers: 23,
+        vars: 4,
+        var_names: [x, c, s, "$discard_s3"],
+        params: 2,
+        param_types: [Int, Bool],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Bool }, var_type { var: $v2, type: struct_type { name: S, arguments: [] } }, var_type { var: $v3, type: struct_type { name: D, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r2, type: Bool }, reg_type { reg: %r3, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: None }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: Int }, reg_type { reg: %r11, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r12, type: None }, reg_type { reg: %r13, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r14, type: None }, reg_type { reg: %r15, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r16, type: None }, reg_type { reg: %r17, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r18, type: None }, reg_type { reg: %r19, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r20, type: None }, reg_type { reg: %r21, type: struct_type { name: S, arguments: [] } }, reg_type { reg: %r22, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 467, end: 468, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 465, end: 469, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 477, end: 478, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 492, end: 496, origin: present($v2) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 520, end: 521, origin: present($v0) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 515, end: 522, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 535, end: 536, origin: present($v0) }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 533, end: 537, origin: absent }) }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 549, end: 554, origin: present($v2) }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 549, end: 554, origin: present($v2) }) }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 549, end: 554, origin: absent }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 549, end: 554, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 549, end: 554, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 549, end: 554, origin: absent }) }, reg_loc { reg: %r17, location: absent }, reg_loc { reg: %r18, location: absent }, reg_loc { reg: %r19, location: present(loc { file: file0, start: 549, end: 554, origin: absent }) }, reg_loc { reg: %r20, location: present(loc { file: file0, start: 549, end: 554, origin: absent }) }, reg_loc { reg: %r21, location: present(loc { file: file0, start: 549, end: 554, origin: absent }) }, reg_loc { reg: %r22, location: present(loc { file: file0, start: 549, end: 554, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              call { dest: %r1, func: "S.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v2, src: %r1, binding_type: present(struct_type { name: S, arguments: [] }), in_place: true },
+              var.use { dest: %r2, var: $v1, mode: copy },
+              if { results: [], condition: %r2, then: [bb0 { instructions: [place.move { dest: %r3, place: place { root: $v2, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent } }, var.store { var: $v3, src: %r3, binding_type: absent, in_place: false }, var.use { dest: %r17, var: $v3, mode: forward }, call.method { dest: %r18, recv: %r17, method: __deinit__, resolved: present("D.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }], terminator: yield { values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [place.load { dest: %r19, place: place { root: $v2, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent } }, call.method { dest: %r20, recv: %r19, method: __deinit__, resolved: present("D.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v2, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }), recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }, consume.place { place: place { root: $v2, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, marker: %r19 }, var.use { dest: %r4, var: $v0, mode: copy }, call { dest: %r5, func: note, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: yield { values: [] } }] },
+              var.use { dest: %r6, var: $v0, mode: copy },
+              call { dest: %r7, func: "D.__init__", raises: absent, args: [%r6], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              place.store { place: place { root: $v2, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, src: %r7 },
+              place.load { dest: %r9, place: place { root: $v2, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(e), type: struct_type { name: D, arguments: [] } }, projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              var.use { dest: %r21, var: $v2, mode: forward },
+              call.method { dest: %r22, recv: %r21, method: __deinit__, resolved: present("S.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              value.copy { dest: %r10, value: %r9 }
+            ],
+            terminator: return { value: present(%r10) }
+          }
+        ]
+      },
+      fn {
+        name: mut_param,
+        registers: 8,
+        vars: 2,
+        var_names: [s, x],
+        params: 2,
+        param_types: [struct_type { name: S, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [true, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: S, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: None }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r4, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r5, type: None }, reg_type { reg: %r6, type: struct_type { name: D, arguments: [] } }, reg_type { reg: %r7, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 599, end: 600, origin: present($v1) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 594, end: 601, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 614, end: 615, origin: present($v1) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 612, end: 616, origin: absent }) }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r6, place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent } },
+              call.method { dest: %r7, recv: %r6, method: __deinit__, resolved: present("D.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }), recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              consume.place { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, marker: %r6 },
+              var.use { dest: %r0, var: $v1, mode: copy },
+              call { dest: %r1, func: note, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.use { dest: %r2, var: $v1, mode: copy },
+              call { dest: %r3, func: "D.__init__", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: S, arguments: [] }), projections: [projection { op: field(d), type: struct_type { name: D, arguments: [] } }], type: present(struct_type { name: D, arguments: [] }), through: absent }, src: %r3 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]

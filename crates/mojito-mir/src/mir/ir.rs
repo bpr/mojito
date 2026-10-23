@@ -1608,6 +1608,31 @@ impl MirPlace {
     pub fn is_whole_root(&self) -> bool {
         self.proj.iter().all(|step| matches!(step, Proj::Rebind))
     }
+
+    /// The path of the owned part this place names directly in its root
+    /// slot: fields and tuple elements, at least one, and no reference on
+    /// the way.
+    pub fn owned_path(&self) -> Option<Vec<OwnedStep>> {
+        if self.through.is_some() || self.proj.is_empty() {
+            return None;
+        }
+        self.proj
+            .iter()
+            .map(|step| match step {
+                Proj::Field(name) => Some(OwnedStep::Field(name.clone())),
+                Proj::ConstIndex(index) => Some(OwnedStep::Element(*index)),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// One step of the path to an owned part of a slot ([`MirPlace::owned_path`]):
+/// a field, or an element of compiler-private tuple storage.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum OwnedStep {
+    Field(String),
+    Element(usize),
 }
 
 /// Canonical, runtime-erased identity of an interior storage generation after

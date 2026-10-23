@@ -10,21 +10,40 @@ use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
 /// (`Store`/`LoadPlace`/a `mut self` receiver — so a write *through* a moved value
 /// is caught too), and the `for` iterator variable.
 pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
+    instruction_uses(i)
+        .into_iter()
+        .flat_map(|(used, reg)| match used {
+            Used::Var(var) => vec![(var, reg)],
+            Used::Place(place) => place_loan_uses(place, reg),
+        })
+        .collect()
+}
+
+/// One read of an instruction: a variable, or a place, which reads its root
+/// and the reference it is reached through.
+pub(super) enum Used<'a> {
+    Var(VarId),
+    Place(&'a MirPlace),
+}
+
+/// What a MIR instruction reads ([`var_uses`]), each place whole, each
+/// paired with a nearby result register.
+pub(super) fn instruction_uses(i: &MirInstr) -> Vec<(Used<'_>, Reg)> {
     match i {
         MirInstr::EstablishLoans { loans, marker, .. } => loans
             .iter()
-            .flat_map(|loan| place_loan_uses(&loan.place, *marker))
+            .map(|loan| (Used::Place(&loan.place), *marker))
             .collect(),
-        MirInstr::MakeRef { dest, place } => place_loan_uses(place, *dest),
+        MirInstr::MakeRef { dest, place } => vec![(Used::Place(place), *dest)],
         MirInstr::MakeClosure { dest, captures, .. } => captures
             .iter()
-            .flat_map(|capture| place_loan_uses(&capture.place, *dest))
+            .map(|capture| (Used::Place(&capture.place), *dest))
             .collect(),
-        MirInstr::UseVar { dest, var, .. } => vec![(*var, *dest)],
-        MirInstr::KeepAlive { var } => vec![(*var, Reg(0))],
-        MirInstr::MovePlace { dest, place } => place_loan_uses(place, *dest),
-        MirInstr::Store { place, src } => place_loan_uses(place, *src),
-        MirInstr::StoreRef { place, reference } => place_loan_uses(place, *reference),
+        MirInstr::UseVar { dest, var, .. } => vec![(Used::Var(*var), *dest)],
+        MirInstr::KeepAlive { var } => vec![(Used::Var(*var), Reg(0))],
+        MirInstr::MovePlace { dest, place } => vec![(Used::Place(place), *dest)],
+        MirInstr::Store { place, src } => vec![(Used::Place(place), *src)],
+        MirInstr::StoreRef { place, reference } => vec![(Used::Place(place), *reference)],
         MirInstr::MultiSet {
             receiver_place,
             arg_places,
@@ -38,26 +57,26 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
                 .into_iter()
                 .chain(arg_places.iter().flatten())
                 .chain(value_place.as_deref())
-                .flat_map(|place| place_loan_uses(place, *value))
+                .map(|place| (Used::Place(place), *value))
                 .collect::<Vec<_>>();
             uses.extend(
                 call.capture_accesses
                     .iter()
-                    .map(|access| (access.root, *value)),
+                    .map(|access| (Used::Var(access.root), *value)),
             );
             uses
         }
-        MirInstr::VariantSet { place, value, .. } => place_loan_uses(place, *value),
-        MirInstr::VariantSetInitWith { place, factory, .. } => place_loan_uses(place, *factory),
-        MirInstr::VariantReplace { place, value, .. } => place_loan_uses(place, *value),
-        MirInstr::LoadPlace { dest, place } => place_loan_uses(place, *dest),
+        MirInstr::VariantSet { place, value, .. } => vec![(Used::Place(place), *value)],
+        MirInstr::VariantSetInitWith { place, factory, .. } => vec![(Used::Place(place), *factory)],
+        MirInstr::VariantReplace { place, value, .. } => vec![(Used::Place(place), *value)],
+        MirInstr::LoadPlace { dest, place } => vec![(Used::Place(place), *dest)],
         // Consuming a projected field reads its root: a `deinit` receiver's
         // whole-variable teardown must follow the field consumption, not
         // precede it.
-        MirInstr::ConsumePlace { place, marker } => place_loan_uses(place, *marker),
+        MirInstr::ConsumePlace { place, marker } => vec![(Used::Place(place), *marker)],
         MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }
-        | MirInstr::MarkDestroyed { place } => place_loan_uses(place, Reg(0)),
+        | MirInstr::MarkDestroyed { place } => vec![(Used::Place(place), Reg(0))],
         // Call arguments are evaluated into registers first, but mutable/ref
         // conventions still consume their retained places at the call
         // boundary for handle passing and write-back. Keep those slots alive
@@ -74,9 +93,13 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
                 .iter()
                 .flatten()
                 .chain(kwarg_places.iter().flatten())
-                .flat_map(|place| place_loan_uses(place, *dest))
+                .map(|place| (Used::Place(place), *dest))
                 .collect::<Vec<_>>();
-            uses.extend(capture_accesses.iter().map(|access| (access.root, *dest)));
+            uses.extend(
+                capture_accesses
+                    .iter()
+                    .map(|access| (Used::Var(access.root), *dest)),
+            );
             uses
         }
         MirInstr::ConstructTypeParam {
@@ -84,7 +107,7 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
         } => kwarg_places
             .iter()
             .flatten()
-            .flat_map(|place| place_loan_uses(place, *dest))
+            .map(|place| (Used::Place(place), *dest))
             .collect(),
         MirInstr::CallIndirect {
             dest,
@@ -99,9 +122,13 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
                 .into_iter()
                 .chain(arg_places.iter().flatten())
                 .chain(kwarg_places.iter().flatten())
-                .flat_map(|place| place_loan_uses(place, *dest))
+                .map(|place| (Used::Place(place), *dest))
                 .collect::<Vec<_>>();
-            uses.extend(capture_accesses.iter().map(|access| (access.root, *dest)));
+            uses.extend(
+                capture_accesses
+                    .iter()
+                    .map(|access| (Used::Var(access.root), *dest)),
+            );
             uses
         }
         MirInstr::MethodCall {
@@ -117,9 +144,13 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
                 .into_iter()
                 .chain(arg_places.iter().flatten())
                 .chain(kwarg_places.iter().flatten())
-                .flat_map(|place| place_loan_uses(place, *dest))
+                .map(|place| (Used::Place(place), *dest))
                 .collect::<Vec<_>>();
-            uses.extend(capture_accesses.iter().map(|access| (access.root, *dest)));
+            uses.extend(
+                capture_accesses
+                    .iter()
+                    .map(|access| (Used::Var(access.root), *dest)),
+            );
             uses
         }
         MirInstr::Index {
@@ -133,13 +164,13 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
                 .as_deref()
                 .into_iter()
                 .chain(index_place.as_deref())
-                .flat_map(|place| place_loan_uses(place, *dest))
+                .map(|place| (Used::Place(place), *dest))
                 .collect::<Vec<_>>();
             if let Some(call) = call {
                 uses.extend(
                     call.capture_accesses
                         .iter()
-                        .map(|access| (access.root, *dest)),
+                        .map(|access| (Used::Var(access.root), *dest)),
                 );
             }
             uses
@@ -162,24 +193,24 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
                 .as_deref()
                 .into_iter()
                 .chain(index_place.iter().flatten())
-                .flat_map(|place| place_loan_uses(place, *dest))
+                .map(|place| (Used::Place(place), *dest))
                 .collect::<Vec<_>>();
             if let Some(call) = call {
                 uses.extend(
                     call.capture_accesses
                         .iter()
-                        .map(|access| (access.root, *dest)),
+                        .map(|access| (Used::Var(access.root), *dest)),
                 );
             }
             uses
         }
         MirInstr::HasNext { dest, iter, .. } | MirInstr::Next { dest, iter, .. } => {
-            vec![(*iter, *dest)]
+            vec![(Used::Var(*iter), *dest)]
         }
         // `GetIter` normalizes its source into the iterator; count the source as a
         // use so a borrowed named source (a reference bound before the loop) stays
         // live through the read and is not dropped before the iterator is derived.
-        MirInstr::GetIter { source, .. } => vec![(*source, Reg(0))],
+        MirInstr::GetIter { source, .. } => vec![(Used::Var(*source), Reg(0))],
         // A `try` reads every variable its sub-regions read, at any depth:
         // the outer liveness must treat it as one big use, so a value used
         // only inside the `try` is not dropped *before* it.
@@ -188,7 +219,11 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
             for region in instruction_regions(i) {
                 for_each_instr_deep(region, &mut |instr| {
                     if !matches!(instr, MirInstr::Try { .. }) {
-                        uses.extend(var_uses(instr));
+                        uses.extend(
+                            var_uses(instr)
+                                .into_iter()
+                                .map(|(var, reg)| (Used::Var(var), reg)),
+                        );
                     }
                 });
             }

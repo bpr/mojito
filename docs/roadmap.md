@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1306**.
+Next free ID: **R1308**.
 
 ## Ordered Work
 
@@ -80,28 +80,31 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1251 `mir::lower_whole_drops` decides a drop's shape by a forward
-  fold of its own, where `DestructorInsertion` decides it in the backward
-  walk that places the drop**
+- [ ] **R1306 `mir::lower_whole_drops` still decides after drop
+  elaboration whether a drop's value is held whole there, by a forward
+  fold of its own**
 
-  Whether a drop is a whole-value destructor call, a field-by-field
-  teardown, or nothing is decided after drop elaboration, by a separate
-  definite-initialization fold that follows every region op.
-  - Upstream's `scheduleNeededDtors` and `DestructorInserter::destroyValueIfNeeded`
-    decide it in the destructor-insertion walk, from that walk's own
-    field-sensitive consumed bits.
-  - The forward move scan hands that walk annotations only
-    (`unusedMarkDestroyName`, `extraOriginUsesAttrName`,
-    `selfPartiallyInitializedAttrName`, `liveValueIdsAfterNoReturnCallAttrName`),
-    not its per-point state.
-  - Lever: `crates/mojito-mir/src/mir/drop_calls.rs`, its caller
-    `name_destructors`, which reads regions, and the elaborator's
-    `name_lifecycle_calls` (`mono/specializer.rs`), which runs on the
-    lowered CFG.
-  - The drop walk (`analysis/drops.rs`, `DropLiveness`) is variable-granular
-    today; this entry makes its decision field-sensitive.
-  - Related to R932 (runtime drop flags where upstream decides statically).
-  - Depends on R878, so the fold's callers read regions.
+  Drop elaboration decides each drop's shape, a whole value or a laid-out
+  part, in its field-sensitive backward walk, but whether the slot holds
+  that value on every path is decided afterwards, by `drop_calls.rs`'s
+  per-slot definite-initialization fold (`Held`, `Flow`, `region_flow`,
+  `held_after`).
+  - Upstream's `DestructorInsertion` leaves no undecided drop: the forward
+    `UninitializedValueScan` rejects every maybe-initialized use and hands
+    the walk annotations only (`unusedMarkDestroyName`,
+    `selfPartiallyInitializedAttrName`, ...).
+  - What the fold leaves as a runtime-tested drop today: `$iter` slots an
+    `iter.init` with `source == dest` normalizes in place (about 550 over
+    the corpus, R664's shape), `$arg_loan_r*` temporaries defined on one
+    path, owned closure captures, and stores through a whole place.
+  - Lever: a `tested` flag on `drop.var`/`drop.place` (a MIR format
+    bump), set by the walk for those slots alone, from what the move scan
+    knows is maybe moved there; `drop_calls.rs` then shrinks to a
+    mechanical lowering, as `lower_copies_and_moves` lowers copies, for
+    its callers `name_destructors` (and so `inline-parametric`) and the
+    specializer (`mono/specializer.rs`).
+  - Related to R932 (runtime drop flags).
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R1252 A `deinit` receiver's fields die in a second backward walk
@@ -115,8 +118,9 @@ which names the upstream pass each one follows. Each is measured by the
     forward and backward walks per receiver after `drops.rs` has placed
     the variable drops, and splices `DropPlace`s around them.
   - Lever: fold `FieldFacts`/`FieldLiveness` into `drops.rs`'s
-    `DropFacts`/`DropLiveness` over field bits, and let the splice place
-    field and variable drops together.
+    `DropLiveness`, whose bits (`analysis/drop_values.rs`'s `DropValues`)
+    leave `deinit` parameters out today, and let the splice place field
+    and variable drops together.
   - No output difference is known: R878's probes (a field read in a
     handler, in one `if` arm, in a loop) match the pin.
   - Probe: a field the body borrows (`var p = Pointer(to=self.a)` in
@@ -1491,6 +1495,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `r`, then `r[] = Inner(31)`, misses the pin's `del 30`.
   - Probe: a destructured pointer (`var (p, x) = (Pointer(to=a), 1)`) then
     `p[] = v` over a droppable pointee.
+  - Probe: `t[0] = Inner(62)` over `var t = (Inner(60), Inner(61))`
+    writes through the reference the inlined `Tuple.__getitem__` returns
+    and never destroys `Inner(60)`, where the pin prints `del 60` before
+    the next `print`.
   - Found while landing R352 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -1546,7 +1554,32 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `if c: self.a = Tracer("a")`, `print("a stored")`, then `raise`. The
     pin prints `del b` before `b stored` and `del a` before `a stored`;
     Mojito prints both after `b stored`, `a` first.
+  - Probe: `self.item = Inner(40)`, `print("first")`, `self.item =
+    Inner(41)` in an initializer. The pin prints `del 40` before `first`,
+    the first store dead on arrival; Mojito prints it at the second store.
+    The drop walk's bits (`DropValues`) leave the receiver out, so
+    `elaborate_store_drops` still destroys it at the store.
   - Found while landing R956 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1307 A replaced field read through a register or a reference
+  dies at that read, where the pin destroys it as soon as nothing reads
+  it**
+
+  Problem: `var p = Pair(Inner(1), Inner(2))`, `print("built")`,
+  `print("b is", p.b.id)`, then `p.a = Inner(3)` prints `del 1` after
+  `b is 2`, where the pin prints it first, right after `p` is built.
+  - Cause: drop liveness (`analysis/drops.rs`) follows each part a place
+    names, but the roots `DropFacts` hands it through operand registers
+    (`RegisterUses`) and the owners a loan generation keeps alive
+    (`loan_extras`) are whole roots, so a read of `p.b` through either
+    keeps `p.a` live too.
+  - Upstream's `DestructorInsertion` follows the field a register or a
+    reference reaches (`getValueRefsForAccess`).
+  - Probe: `ref r = p.b`, `print("r is", r.id)`, then `p.a = Inner(3)`:
+    Mojito prints `del 1` after `r is 2`, the pin first.
+  - Found while landing R1251 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

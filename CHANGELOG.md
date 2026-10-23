@@ -494,6 +494,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A field's replaced value now dies at its own last use, as the pin's
+  field-sensitive destructor insertion places it, rather than at the store
+  that replaces it: after the read that last uses it, right after its
+  holder is built when nothing reads it, at the entry of an `if` arm that
+  does not move it out, and, for a `mut` parameter the body overwrites
+  before reading, at the function's entry
+  (`assets/ok/field_overwrite_dies_at_last_use.mojo`). Drop liveness lays
+  out each root whose fields the body stores into, per field with a
+  whole-object bit, as upstream's `ValueSet` does (R1251).
+
 - A forwarded `**kwargs^` now runs natively: Pliron bound the forwarded
   dictionary as one keyword of a fresh collector and failed IR
   verification, so `assets/ok/trait_default_wrapper_conventions.mojo`, a

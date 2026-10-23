@@ -1,6 +1,7 @@
-# A store into an initialized droppable field destroys the value it replaces
-# at the store, as the pinned Mojo does: `del 2` at `p.b = Inner(3)`, then
-# `del 1` and `del 3` when `p` dies after its last use, then `after`.
+# A store into an initialized droppable field replaces a value that dies at
+# its last use, as the pinned Mojo destroys it: `p.b`'s first value is never
+# read, so `del 2` runs as soon as `p` is built, then `del 1` and `del 3`
+# when `p` dies after the store, its last use, then `after`.
 @fieldwise_init
 struct Inner:
     var id: Int

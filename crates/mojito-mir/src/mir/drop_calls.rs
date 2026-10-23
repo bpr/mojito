@@ -24,7 +24,7 @@
 //! stays a drop.
 
 use super::{
-    MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, Proj, RegionFrame, UseMode, VarId,
+    MirBlock, MirFunction, MirInstr, MirPlace, MirTerm, OwnedStep, RegionFrame, UseMode, VarId,
     fresh_register, instruction_regions, instruction_regions_mut, instruction_slots, region_exit,
 };
 use mojito_common::token::SourceSpan;
@@ -129,7 +129,7 @@ fn lower_list(
                     MirInstr::DropPlace {
                         place,
                         destructor: Some(destructor),
-                    } => owned_part(place).map(|path| {
+                    } => place.owned_path().map(|path| {
                         (
                             block,
                             index,
@@ -275,19 +275,11 @@ enum Held {
     Whole,
     /// A whole value but for the owned parts at these paths, each moved out
     /// or destroyed, none inside another.
-    Missing(Vec<Vec<Part>>),
+    Missing(Vec<Vec<OwnedStep>>),
     /// No value: declared and not yet defined, moved out, or ended.
     Empty,
     /// Possibly empty, or partly so in a way the paths do not track.
     Partial,
-}
-
-/// One step of the path to an owned part of a slot: a field, or an
-/// element of compiler-private tuple storage.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum Part {
-    Field(String),
-    Element(usize),
 }
 
 /// A named drop of a block list whose slot's state is definite: the
@@ -383,14 +375,14 @@ fn named_drop_root(instruction: &MirInstr) -> Option<VarId> {
         MirInstr::DropPlace {
             place,
             destructor: Some(_),
-        } if owned_part(place).is_some() => Some(place.root),
+        } if place.owned_path().is_some() => Some(place.root),
         _ => None,
     }
 }
 
 /// Whether a slot in `held` holds the owned part at `path` whole: the slot
 /// is whole, or no missing part overlaps it.
-fn holds_part(held: &Held, path: &[Part]) -> bool {
+fn holds_part(held: &Held, path: &[OwnedStep]) -> bool {
     match held {
         Held::Whole => true,
         Held::Missing(paths) => !paths
@@ -773,17 +765,21 @@ fn held_after(held: Held, instruction: &MirInstr, var: VarId) -> Held {
         MirInstr::MovePlace { place, .. } | MirInstr::DropPlace { place, .. }
             if place.root == var =>
         {
-            owned_part(place).map_or(Held::Partial, |path| without(held, path))
+            place
+                .owned_path()
+                .map_or(Held::Partial, |path| without(held, path))
         }
         MirInstr::ConsumePlace { place, .. } | MirInstr::MarkDestroyed { place }
             if place.root == var =>
         {
-            owned_part(place).map_or(Held::Partial, |path| ended(held, path))
+            place
+                .owned_path()
+                .map_or(Held::Partial, |path| ended(held, path))
         }
         MirInstr::MarkInitialized { place } | MirInstr::Store { place, .. }
             if place.root == var =>
         {
-            match owned_part(place) {
+            match place.owned_path() {
                 Some(path) => restored(held, &path),
                 None => held,
             }
@@ -823,25 +819,8 @@ fn join(left: State, right: State) -> State {
     }
 }
 
-/// The path of the owned part `place` names directly in its root slot:
-/// fields and tuple elements, at least one, and no reference on the way.
-fn owned_part(place: &MirPlace) -> Option<Vec<Part>> {
-    if place.through.is_some() || place.proj.is_empty() {
-        return None;
-    }
-    place
-        .proj
-        .iter()
-        .map(|step| match step {
-            Proj::Field(name) => Some(Part::Field(name.clone())),
-            Proj::ConstIndex(index) => Some(Part::Element(*index)),
-            _ => None,
-        })
-        .collect()
-}
-
 /// `held` with the part at `path` moved out or destroyed.
-fn without(held: Held, path: Vec<Part>) -> Held {
+fn without(held: Held, path: Vec<OwnedStep>) -> Held {
     match held {
         Held::Whole => Held::Missing(vec![path]),
         Held::Missing(mut paths)
@@ -859,7 +838,7 @@ fn without(held: Held, path: Vec<Part>) -> Held {
 /// `held` with the part at `path` ended without being destroyed: a part
 /// inside it already missing is subsumed, since ending the part destroys
 /// nothing.
-fn ended(held: Held, path: Vec<Part>) -> Held {
+fn ended(held: Held, path: Vec<OwnedStep>) -> Held {
     match held {
         Held::Missing(mut paths) => {
             paths.retain(|missing| !missing.starts_with(&path));
@@ -871,7 +850,7 @@ fn ended(held: Held, path: Vec<Part>) -> Held {
 
 /// `held` with the part at `path` stored whole: every missing part inside
 /// it is filled.
-fn restored(held: Held, path: &[Part]) -> Held {
+fn restored(held: Held, path: &[OwnedStep]) -> Held {
     match held {
         Held::Missing(mut paths) => {
             paths.retain(|missing| !missing.starts_with(path));

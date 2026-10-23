@@ -268,6 +268,7 @@ assets/ok/explicit_destroy_partial_fields.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/explicit_destroy_raise_edges.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_transfer_convention.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/external_call_write_stdout.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/field_overwrite_dies_at_last_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/field_store_overwrite_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/field_store_overwrite_drop_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/field_view_beside_field_store.mojo	-	ineligible	no-scalar-entry-shape

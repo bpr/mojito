@@ -1,10 +1,14 @@
-//! Store-overwrite destruction: a write into an initialized droppable place
-//! destroys the value it replaces first, as Mojo's assignment does. A whole
-//! variable's reassignment needs no instruction of its own (the old value dies
-//! at its last use before the redefining `DefVar`), but two writes have no
-//! such `DefVar` and so get a `DropPlace` right before them: a field, which is
-//! not a variable, and a whole place written *through a reference*, whose old
-//! value lives in the caller's storage or another slot.
+//! Store-overwrite destruction for the writes drop liveness does not
+//! follow: a write into an initialized droppable place destroys the value it
+//! replaces first, as Mojo's assignment does. A whole variable's
+//! reassignment and a store into a part of a root the walk lays out
+//! (`DropValues`) need no instruction of their own: the old value dies at
+//! its last use before the redefinition. Two writes have no such definition
+//! and so get a `DropPlace` right before them: a field of a root the walk
+//! keeps whole (an initializer's `out self`, a `deinit` parameter,
+//! `__toplevel__`'s, which has no walk), and a whole place written *through
+//! a reference*, whose old value lives in the caller's storage or another
+//! slot, as upstream's indirect `checkDef` destroys it before the write.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -13,7 +17,8 @@ use mojito_types::types::{Ty, TyKind};
 
 /// Splice a `DropPlace` before every write in function `name` that overwrites
 /// an initialized droppable place: a `Store` into a field or constant-index
-/// element, and a whole-place write through a reference handle. Parameters
+/// element whose place `walked` does not define, and a whole-place write
+/// through a reference handle. Parameters
 /// arrive initialized and every other slot starts uninitialized, except an
 /// initializer's `out self` receiver: its storage exists but each declared
 /// field is uninitialized until its first store, so a constructor's first
@@ -22,6 +27,7 @@ pub(super) fn elaborate_store_drops(
     f: &mut MirFunction,
     name: &str,
     declarations: &MirDeclarations,
+    walked: &dyn Fn(&MirPlace) -> bool,
 ) {
     let receiver = initializer_receiver_entry(f, name, declarations);
     let uninitialized_receiver = receiver.is_some();
@@ -29,7 +35,9 @@ pub(super) fn elaborate_store_drops(
     let handles = make_ref_places(&f.blocks);
     let mut overwrites: HashMap<*const MirInstr, MirPlace> = HashMap::new();
     let observed = observe_move_states(f, entry, &mut |state, instr| {
-        if let Some(place) = replaced_place(instr, state, f, &handles, uninitialized_receiver) {
+        if let Some(place) = replaced_place(instr, state, f, &handles, uninitialized_receiver)
+            && !walked(place)
+        {
             overwrites.insert(std::ptr::from_ref(instr), place.clone());
         }
     });
