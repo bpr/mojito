@@ -54,10 +54,6 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::VariantReplace { dest, .. }
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(*dest),
-        MirInstr::TryNext { dest, yielded, .. } => {
-            out.push(*dest);
-            out.push(*yielded);
-        }
         MirInstr::EstablishLoans { marker, .. }
         | MirInstr::InvalidateInteriors { marker, .. }
         | MirInstr::ConsumePlace { marker, .. } => out.push(*marker),
@@ -398,7 +394,6 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::GetIter { .. }
         | MirInstr::HasNext { .. }
         | MirInstr::Next { .. }
-        | MirInstr::TryNext { .. }
         | MirInstr::Unsupported(_)
         | MirInstr::Try { .. }
         | MirInstr::ComptimeIf { .. }

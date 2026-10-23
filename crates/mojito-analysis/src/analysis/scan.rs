@@ -173,9 +173,7 @@ pub(super) fn var_uses(i: &MirInstr) -> Vec<(VarId, Reg)> {
             }
             uses
         }
-        MirInstr::HasNext { dest, iter, .. }
-        | MirInstr::Next { dest, iter, .. }
-        | MirInstr::TryNext { dest, iter, .. } => {
+        MirInstr::HasNext { dest, iter, .. } | MirInstr::Next { dest, iter, .. } => {
             vec![(*iter, *dest)]
         }
         // `GetIter` normalizes its source into the iterator; count the source as a

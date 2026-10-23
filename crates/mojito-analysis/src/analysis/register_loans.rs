@@ -318,8 +318,7 @@ impl<'a> ArgumentPassing<'a> {
             MirInstr::Try { .. }
             | MirInstr::GetIter { .. }
             | MirInstr::HasNext { .. }
-            | MirInstr::Next { .. }
-            | MirInstr::TryNext { .. } => Vec::new(),
+            | MirInstr::Next { .. } => Vec::new(),
             _ => {
                 let mut operands = Vec::new();
                 mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);

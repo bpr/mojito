@@ -405,27 +405,28 @@ which names the upstream pass each one follows. Each is measured by the
   body, where the pin counts it inlined into the loop's `try`, its
   iterator left in memory**
 
-  Three loop shapes inline here and keep their call at the pin, which
-  counts at least 32 operations where `inline_cost` counts 31 or fewer.
+  Three loop shapes cost 31 or fewer by `inline_cost` and keep their call
+  at the pin, which counts at least 32 operations.
   - Probe: `for i in range(x): break` costs 31 here.
   - Probe: `for i in Bounded(x): s += i`, over a struct iterator whose
     `__next__` tests `self.i == self.n`, raises `StopIteration`, and
-    stores `self.i`, costs 31 here (`var it = Bounded(x)` first costs 33,
-    as `tests/mir_passes/inline-parametric/for_protocol.mir` pins).
+    stores `self.i`, costs 31 here (`var it = Bounded(x)` first costs 33).
   - Probe, once R1288 lets a callee holding a `try` inline: `var r =
     range(x)`, then `try: s += Int(r.__next__())` costs 27 here.
+  - Since R890 the first two keep their call here too, but only because
+    each loop holds the `try` around its `__next__` call, which R1288's
+    veto refuses; once R1288 lands, the cost decides them again.
   - The pin's count stays small for a raising inlined body that does not
     store to `self` (11) and for one that stores without raising (5), so
     the operations it adds are a slot its `Mem2Reg` leaves in memory.
-  - Mojito's `TryNext` hides that body, so `protocol_call_cost` prices the
-    callee's own finished body, whose `self` is a reference parameter.
-  - Once R890 makes the loop call `__next__` in a `try`, the inlined body
-    sits in the caller, and `inline_cost` can price the slot traffic left
-    after `mem-2-reg`, as the pin's count holds it.
+  - The `__next__` call is inlined into the loop's `try` before its
+    caller is measured (R890), so `inline_cost` can price the slot
+    traffic left after `mem-2-reg`, as the pin's count holds it;
+    `protocol_call_cost` now prices only the `__iter__` call.
   - Done when the probes decide as the pin does and `protocol_call_cost`
     is gone.
   - Found while landing R1075 (2026-10-22).
-  - Depends on R890, R1288.
+  - Depends on R1288.
   - Model: Opus, Not Planned.
 
 - [ ] **R1288 `inline-parametric` keeps the call to a callee holding a
@@ -439,6 +440,14 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: the same `try` around `s += g(x)`, over an `@always_inline` `g`
     that raises `StopIteration` when `x == 3`, inlines at the pin, costing
     10 there.
+  - Probe: since R890 every `for` loop over a raising iterator holds a
+    `try` around its `__next__` call, so `@always_inline def first(x:
+    Int) -> Int` holding `var s = x` and `for i in It(x): s += i; break`,
+    over an `It` whose `__next__` never raises, costs 19 here and inlines
+    at the pin, but keeps its call here
+    (`tests/mir_passes/inline-parametric/for_protocol.mir` pins it kept).
+  - Probe: R1280's `@always_inline("nodebug") def count[T: Iterable]`
+    counting `for _ in a` keeps its call in `fc` here since R890.
   - The splice would place the callee's `try` in the caller's block, its
     parts sharing the caller's registers as an inlined `if`'s do.
   - `inline_cost` already prices a `try` as four beside its parts.
@@ -524,8 +533,8 @@ which names the upstream pass each one follows. Each is measured by the
   through `instruction_places` and `instruction_named_types`, which skip
   sites `mir::visit` reaches.
   - Missed today: `MethodCall.reference_result`, a subscript call's
-    `parameter_ty` and `reference_result`, `TryNext.call`'s types, and the
-    `comptime` terminators' parameters.
+    `parameter_ty` and `reference_result`, and the `comptime` terminators'
+    parameters.
   - Give `mir::visit` a read-only twin (`TypeVisitor`, `walk_instruction`)
     and run both verifier modes over it, then delete
     `instruction_named_types`.
@@ -648,11 +657,11 @@ which names the upstream pass each one follows. Each is measured by the
 
   When `inline-parametric` substitutes `List[Int]` for a callee's `T:
   Iterable`, the inlined `for x in a` keeps `prepare:
-  ["__trait_dispatch.__iter__$ov$SelfRead"]` and `iter.try_next { target:
-  "__iterator_dispatch.__next__" }`, where upstream's substitution folds
-  both witnesses.
+  ["__trait_dispatch.__iter__$ov$SelfRead"]` and its `call.method` naming
+  `__iterator_dispatch.__next__`, where upstream's substitution folds both
+  witnesses.
   - The inliner's witness fold (`inline_parametric::fold_witnesses`) skips
-    `GetIter` and `TryNext`: the iterator slot is typed by an associated
+    `GetIter` and that call: the iterator slot is typed by an associated
     projection (`T.IteratorType[o]`) only the elaborator solves.
   - `prepare` names the borrowed alternate
     (`symbol::borrowed_iterator_dispatch_alternate`) of `Iterable`'s
@@ -665,8 +674,11 @@ which names the upstream pass each one follows. Each is measured by the
     `@always_inline("nodebug") def count[T: Iterable](a: T) -> Int`
     counting `for _ in a`; done when `fc`'s inlined body names
     `List.__iter__` and the iterator's `__next__`.
+  - Since R890 the loop holds a `try` around its `__next__` call, so
+    `count` keeps its call until R1288 lets a callee holding a `try`
+    inline.
   - Found while landing R1052 (2026-10-22).
-  - Depends on nothing.
+  - Depends on R1288.
   - Model: Fable, Not Planned.
 
 - [ ] **R1281 The elaborator resolves a call through a bound by composing
@@ -10203,22 +10215,6 @@ follow-ups the landed producer stages filed come last.
     `match_next_argument_constant.mir` fold where the pin keeps.
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R890 A `for` over a raising iterator tests a `TryNext` flag where
-  upstream calls `__next__` in a `try` whose handler breaks to the loop's
-  `else`**
-
-  `HirInstr::TryNext` and `MirInstr::TryNext` catch the exhaustion type
-  inside one instruction and write a `Bool` the loop's opening `if` tests.
-  - Upstream's `emitForStmt` wraps the `__next__` call in an error region
-    that leaves through the loop's `else` (`lit.loop.break.else`).
-  - Comprehension loops (`lower_expr/ctrl.rs`) share the shape.
-  - Every `try` part is one block since R1274, and a raising call has its
-    own error region since R831, so the call can be a `Try` whose handler
-    breaks, and `TryNext` can go.
-  - Found while landing R872 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1227 A comprehension lowers in MIR as an expression, so its
   clause cannot run a sequence or place target**

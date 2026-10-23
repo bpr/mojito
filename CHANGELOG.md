@@ -756,6 +756,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `for` loop or comprehension over a raising iterator calls its
+  `__next__` as an ordinary raising method call inside a `try` whose
+  handler runs the loop's `else` body and breaks, as upstream's
+  `emitForStmt` calls it with a `lit.loop.break.else` handler (R890). The
+  element is stored into the loop's yield slot inside the `try`, and the
+  loop variable binds after it. `iter.try_next` (`MirInstr::TryNext`,
+  `HirInstr::TryNext`) is gone, with the VM's and Pliron's own lowering of
+  it, so `inline-parametric` now inlines an `@always_inline` `__next__`
+  into the loop as the pin does, while a callee holding such a loop keeps
+  its call (R1288). The loan check follows a `try`'s control flow, so the
+  loop's exit through that handler still carries the loans live after the
+  loop (`assets/ownership_error/pointer_to_owner_across_for_loop.mojo`).
+  Every corpus fixture's output is unchanged on both backends. The MIR
+  text format is 1.94 and the package format 84.
+
 - `mem-2-reg` promotes a trivially copyable local stored inside a `try`
   part and declared outside it, as upstream's `Mem2Reg` carries it through
   `lit.try`'s region values (R1264). A `try` has results and handler and

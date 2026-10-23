@@ -890,7 +890,6 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         MirInstr::DropPlace { place: target, .. }
         | MirInstr::MarkInitialized { place: target }
         | MirInstr::MarkDestroyed { place: target } => place_regs_mut(target, &mut out),
-        MirInstr::TryNext { dest, yielded, .. } => out.extend([dest, yielded]),
     }
     out
 }
@@ -940,9 +939,7 @@ pub fn instruction_slots(instruction: &MirInstr) -> Vec<VarId> {
         | MirInstr::DropVar { var, .. }
         | MirInstr::ConsumeVar { var } => out.push(*var),
         MirInstr::GetIter { source, dest, .. } => out.extend([*source, *dest]),
-        MirInstr::HasNext { iter, .. }
-        | MirInstr::Next { iter, .. }
-        | MirInstr::TryNext { iter, .. } => out.push(*iter),
+        MirInstr::HasNext { iter, .. } | MirInstr::Next { iter, .. } => out.push(*iter),
         _ => {}
     }
     out
@@ -996,9 +993,7 @@ pub fn for_each_instruction_slot_mut(
             visit(source);
             visit(dest);
         }
-        MirInstr::HasNext { iter, .. }
-        | MirInstr::Next { iter, .. }
-        | MirInstr::TryNext { iter, .. } => visit(iter),
+        MirInstr::HasNext { iter, .. } | MirInstr::Next { iter, .. } => visit(iter),
         _ => {}
     }
 }
@@ -2570,7 +2565,7 @@ pub enum MirInstr {
     /// Iterator protocol over compiler-private iterator storage (a runtime
     /// pack or a compile-time list): read whether the iterator variable `iter`
     /// yields another element into `dest` (a `Bool`) — a pure read. Nominal
-    /// iterators advance through [`MirInstr::TryNext`] instead.
+    /// iterators call their raising `__next__` instead.
     HasNext {
         dest: Reg,
         iter: VarId,
@@ -2581,22 +2576,6 @@ pub enum MirInstr {
     Next {
         dest: Reg,
         iter: VarId,
-    },
-    /// Invoke a typed-raising iterator `__next__`. `yielded` is true when
-    /// `dest` contains an element and false when the call raises exactly the
-    /// checked `exhaustion` type; other raised values propagate.
-    TryNext {
-        dest: Reg,
-        yielded: Reg,
-        iter: VarId,
-        /// Exact selected target, reference/value ABI, and raising effect.
-        call: Box<mojito_checked::checked::CheckedIteratorCall>,
-        exhaustion: Ty,
-        /// The `__copyinit__` the call's result adapter runs copying the
-        /// element out of the reference the step returns, as on
-        /// [`MirInstr::MethodCall`]; none without an adapter.
-        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
-        adapter_constructor: Option<String>,
     },
 }
 
@@ -2762,8 +2741,7 @@ impl MirInstr {
             | Self::Unsupported(_)
             | Self::GetIter { .. }
             | Self::HasNext { .. }
-            | Self::Next { .. }
-            | Self::TryNext { .. } => false,
+            | Self::Next { .. } => false,
         }
     }
 

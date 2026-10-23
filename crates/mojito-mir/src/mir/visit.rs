@@ -13,7 +13,7 @@ use super::{
     Const, MirBlock, MirFunction, MirInstr, MirParamArg, MirPlace, MirSubscriptCall, Proj,
     instruction_regions_mut,
 };
-use mojito_checked::checked::{CheckedIteratorCall, ComptimeSequence};
+use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
 use mojito_types::param_expr::ParamRef;
 use mojito_types::types::{
@@ -227,12 +227,6 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             binding_ty: Some(ty),
             ..
         } => visitor.visit_ty(ty, TySite::Instruction),
-        I::TryNext {
-            call, exhaustion, ..
-        } => {
-            walk_iterator_call(visitor, call)?;
-            visitor.visit_ty(exhaustion, TySite::Instruction)
-        }
         I::Call {
             raises,
             arg_places,
@@ -499,18 +493,6 @@ fn walk_subscript_call<V: MutTypeVisitor + ?Sized>(
         visitor.visit_ty(&mut reference.referent, TySite::Result)?;
     }
     visitor.visit_param_decls(&mut call.param_decls, ParamDeclSite::SubscriptContract)
-}
-
-/// An iterator call's result type, error type, then reference referent.
-fn walk_iterator_call<V: MutTypeVisitor + ?Sized>(
-    visitor: &mut V,
-    call: &mut CheckedIteratorCall,
-) -> Result<(), V::Error> {
-    visitor.visit_ty(&mut call.result_ty, TySite::Result)?;
-    visit_opt_ty(visitor, call.raises.as_mut(), TySite::Contract)?;
-    call.reference_result.as_mut().map_or(Ok(()), |reference| {
-        visitor.visit_ty(&mut reference.referent, TySite::Result)
-    })
 }
 
 /// A SIMD instruction's slots, visited as the vector type they build; a

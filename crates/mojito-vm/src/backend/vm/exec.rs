@@ -1887,83 +1887,6 @@ impl VmBackend {
                     )));
                 }
             },
-            MirInstr::TryNext {
-                dest,
-                yielded,
-                iter,
-                call,
-                exhaustion,
-                adapter_constructor,
-            } => {
-                let slot = *iter as usize;
-                let Value::Struct { name, .. } = &vars[slot] else {
-                    return Err(RuntimeError::TypeError(format!(
-                        "vm: checked raising iterator next applied to {}",
-                        crate::runtime::type_name(&vars[slot])
-                    )));
-                };
-                let receiver_name = name.clone();
-                let fidx = prog
-                    .runtime_method_name(&receiver_name, "__next__", Some(call.target.as_str()), 0)
-                    .and_then(|target| prog.index_of(&target))
-                    .ok_or_else(|| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: checked iterator method '{}' of '{receiver_name}' is missing from MIR",
-                            call.target
-                        ))
-                    })?;
-                let concrete_returns_reference = prog.mir.functions[fidx].1.returns_reference;
-                match self.call_frame_caller_reachable(
-                    prog,
-                    fidx,
-                    vec![vars[slot].clone()],
-                    frame_id,
-                    function,
-                    vars,
-                ) {
-                    Ok((element, mut frame_vars, returned_frame_id)) => {
-                        let adapted = self.apply_checked_result_adapter(
-                            prog,
-                            element,
-                            call.result_adapter.map(|kind| ResultAdapter {
-                                kind,
-                                constructor: adapter_constructor.as_deref(),
-                            }),
-                            concrete_returns_reference,
-                            ResultAdapterFrames {
-                                current: frame_id,
-                                current_variables: vars,
-                                returned: Some((returned_frame_id, &mut frame_vars)),
-                            },
-                        )?;
-                        let adapted = self.rebase_iterator_result(
-                            adapted,
-                            returned_frame_id,
-                            &frame_vars,
-                            frame_id,
-                            *iter,
-                        );
-                        vars[slot] = frame_vars.into_iter().next().unwrap_or(Value::None);
-                        regs[dest.0 as usize] = adapted;
-                        regs[yielded.0 as usize] = Value::Bool(true);
-                    }
-                    Err(RuntimeError::Raised(error)) => {
-                        let catches_exhaustion = matches!(
-                            (&error, exhaustion.kind()),
-                            (
-                                Value::Struct { name, .. },
-                                TyKind::Struct(expected, arguments)
-                            ) if arguments.is_empty() && name == expected
-                        );
-                        if !catches_exhaustion {
-                            return Err(RuntimeError::Raised(error));
-                        }
-                        regs[dest.0 as usize] = Value::None;
-                        regs[yielded.0 as usize] = Value::Bool(false);
-                    }
-                    Err(other) => return Err(other),
-                }
-            }
             MirInstr::DeclareVar { .. } => {}
             // ASAP destruction: drop the value at the variable's last use,
             // running the destructor the drop names.
@@ -2107,49 +2030,6 @@ impl VmBackend {
             self.record_lifecycle(format!("raise {message}"));
         }
         RuntimeError::Raised(error)
-    }
-
-    /// Preserve a reference yielded directly from an iterator receiver after
-    /// the temporary `__next__` frame is discarded. Stored handles are first
-    /// canonicalized while that frame remains available. A handle still rooted
-    /// at receiver slot zero then names the caller's write-back iterator slot,
-    /// which contains the same advanced receiver after the call completes.
-    fn rebase_iterator_result(
-        &self,
-        value: Value,
-        returned_frame: FrameId,
-        returned_variables: &[Value],
-        caller_frame: FrameId,
-        iterator: VarId,
-    ) -> Value {
-        let Value::Ref {
-            frame,
-            slot,
-            projection,
-        } = value
-        else {
-            return value;
-        };
-        let (frame, slot, projection) = self.canonical_reference_parts(
-            returned_frame,
-            returned_variables,
-            frame,
-            slot,
-            projection,
-        );
-        if frame == returned_frame.0 && slot == 0 {
-            Value::Ref {
-                frame: caller_frame.0,
-                slot: iterator as usize,
-                projection,
-            }
-        } else {
-            Value::Ref {
-                frame,
-                slot,
-                projection,
-            }
-        }
     }
 }
 

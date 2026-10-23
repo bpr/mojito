@@ -179,7 +179,6 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
         | MirInstr::PointerStorageDestroy { element: ty, .. }
         | MirInstr::UninitStorageTake { element: ty, .. }
         | MirInstr::UninitStorageDestroy { element: ty, .. }
-        | MirInstr::TryNext { exhaustion: ty, .. }
         | MirInstr::DefVar {
             binding_ty: Some(ty),
             ..

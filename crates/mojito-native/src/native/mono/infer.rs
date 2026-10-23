@@ -722,23 +722,6 @@ impl Specializer<'_> {
         Ok((concrete, result))
     }
 
-    /// Whether the nullary iterator-protocol operation `method` of
-    /// `receiver` returns a reference.
-    pub(super) fn iterator_step_returns_reference(
-        &self,
-        receiver: &Ty,
-        method: &str,
-        selected: Option<&str>,
-    ) -> bool {
-        let TyKind::Struct(receiver_name, _) = receiver.kind() else {
-            return false;
-        };
-        let target = self.iterator_step_template(receiver_name, method, selected);
-        self.declarations
-            .get(target.as_str())
-            .is_some_and(|declaration| declaration.returns_reference)
-    }
-
     /// The template method a nullary iterator-protocol operation on a
     /// receiver named `receiver_name` selects.
     fn iterator_step_template(

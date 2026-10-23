@@ -155,18 +155,19 @@ pub enum HirInstr {
         /// Exact checker-resolved element type.
         element_ty: Ty,
     },
-    /// Nominal iterator protocol: call a typed-raising `__next__` exactly once,
-    /// storing whether it yielded in `yielded`; its exact result is bound to
-    /// `raw` by the [`HirInstr::BindIteration`] past the exhaustion test, so
-    /// the exhausted edge never fills it. Raising the checked exhaustion type
-    /// sets `yielded = False`; every other runtime error propagates normally.
-    TryNext {
+    /// Nominal iterator protocol: `raw = iter.__next__()`, a call of the
+    /// typed-raising `__next__` whose error leaves through the enclosing
+    /// [`HirInstr::Try`], as upstream's `emitForStmt` calls it inside a
+    /// `lit.try` whose handler leaves the loop.
+    CallNext {
         iter: VarId,
         raw: VarId,
-        yielded: VarId,
         /// Exact checker-selected reference/value result and effect contract.
         call: mojito_checked::checked::CheckedIteratorCall,
-        exhaustion: Ty,
+        /// The checked exhaustion type the call raises.
+        error: Ty,
+        /// The binding plan's yielded type `raw` holds.
+        element_ty: Ty,
     },
     /// Adapt one raw iterator result into the user-visible target. This executes
     /// only in the yielded body, so reference copies and value moves never run on
@@ -1797,12 +1798,7 @@ impl Lower {
     /// as `LowerSemanticCF` lowers it.
     fn loop_test(&mut self, cond: HirCond, label: u32, orelse: Option<&[CheckedStmtId]>) {
         let then = self.region(|_| Terminator::Yield);
-        let orelse = self.region(|this| {
-            if let Some(body) = orelse {
-                this.scoped_block(body);
-            }
-            Terminator::Break(label)
-        });
+        let orelse = self.loop_exit(label, orelse);
         self.push(HirInstr::If {
             cond,
             then,
@@ -1811,11 +1807,23 @@ impl Lower {
         });
     }
 
+    /// The region that leaves loop `label` through its `else` body: run
+    /// `orelse`, then break.
+    fn loop_exit(&mut self, label: u32, orelse: Option<&[CheckedStmtId]>) -> HirRegion {
+        self.region(|this| {
+            if let Some(body) = orelse {
+                this.scoped_block(body);
+            }
+            Terminator::Break(label)
+        })
+    }
+
     /// `for x in it: body else: orelse` — a while-shaped loop driving the
     /// iterator protocol: the iterable is evaluated once into an iterator
-    /// slot before the loop; the loop body computes `has_next` and tests
-    /// it, then binds the loop variable via `next` (which advances the
-    /// iterator).
+    /// slot before the loop. The loop body calls a nominal iterator's
+    /// raising `__next__` in a `try` whose handler runs `orelse` and
+    /// breaks; over compiler-private storage it tests `has_next` and
+    /// advances with `next`. It then binds the loop variable.
     fn for_loop(&mut self, s: &CheckedStmt) {
         let CheckedStmtOp::For {
             var,
@@ -1906,7 +1914,6 @@ impl Lower {
         let v = self.declare_binding(var, Some(binding));
         debug_assert_eq!(declaration.ty.as_ref(), Some(&binding_plan.binding_ty));
         let raw_var = self.var(&format!("$yield{}", self.vars.len()));
-        let hn_var = self.var(&format!("$hasnext{}", self.vars.len()));
         let label = self.label();
         // The yielded slot is not listed: the binding always consumes it.
         let mut cleanup = vec![v, iter_var];
@@ -1914,33 +1921,48 @@ impl Lower {
             cleanup.push(it_var);
         }
         let body = self.region(|this| {
-            // A nominal typed-raising iterator calls `__next__` first and
-            // tests whether it returned an element; compiler-private
-            // storage tests `HasNext` and advances with `Next` after.
-            let exhaustion = protocol.exhaustion.clone();
-            let raising = exhaustion.is_some();
-            if let Some(exhaustion) = exhaustion {
-                this.push(HirInstr::TryNext {
-                    iter: iter_var,
-                    raw: raw_var,
-                    yielded: hn_var,
-                    call: *protocol
-                        .next
-                        .clone()
-                        .expect("raising iterator has checked __next__ contract"),
-                    exhaustion,
-                });
-            } else {
-                this.push(HirInstr::HasNext {
-                    iter: iter_var,
-                    dest: hn_var,
-                });
-            }
             // The loop variable is out of scope in the `else` body.
             let scope = this.scopes.pop();
-            this.loop_test(HirCond::Slot(hn_var), label, orelse.as_deref());
-            this.scopes.extend(scope);
-            if !raising {
+            if let Some(error) = protocol.exhaustion.clone() {
+                // A nominal typed-raising iterator calls `__next__` in a
+                // `try` whose handler leaves the loop through its `else`, as
+                // upstream's `emitForStmt` does.
+                let call = *protocol
+                    .next
+                    .clone()
+                    .expect("raising iterator has checked __next__ contract");
+                let body = this.region(|this| {
+                    this.push(HirInstr::CallNext {
+                        iter: iter_var,
+                        raw: raw_var,
+                        call,
+                        error,
+                        element_ty: binding_plan.yielded_ty.clone(),
+                    });
+                    Terminator::TryYield
+                });
+                let except = HirExcept {
+                    binding: None,
+                    slot: None,
+                    body: this.loop_exit(label, orelse.as_deref()),
+                };
+                this.push(HirInstr::Try {
+                    body,
+                    except: Some(except),
+                    orelse: None,
+                    finalbody: None,
+                });
+                this.scopes.extend(scope);
+            } else {
+                // Compiler-private storage tests `HasNext` and advances with
+                // `Next` after.
+                let has_next = this.var(&format!("$hasnext{}", this.vars.len()));
+                this.push(HirInstr::HasNext {
+                    iter: iter_var,
+                    dest: has_next,
+                });
+                this.loop_test(HirCond::Slot(has_next), label, orelse.as_deref());
+                this.scopes.extend(scope);
                 this.push(HirInstr::Next {
                     iter: iter_var,
                     raw: raw_var,

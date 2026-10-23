@@ -33,7 +33,7 @@ instruction	unary	partial	checked scalar operand types
 instruction	binary	partial	checked scalar operand types plus pointer `+` element arithmetic; nominal left operands monomorphize to operator-method calls; other forms reject
 instruction	call	partial	positional and keyword arguments (including `mut`/`ref` places) with constant defaults, plus the `len`/`abs`/`min`/`max`/`round`/`divmod`/`input`/`_mojito_abort` builtins, conversion-dunder rewrites, and the `UnsafePointer` allocation family; value param-args reject
 instruction	call.indirect	partial	contract-bound positional and keyword arguments through `{invoke, env}` values, raising contracts included; variadic/keyword-variadic contracts, defaulted arguments, reference returns, generic callable values, and un-devirtualized nominal callables reject
-instruction	call.method	partial	positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; reference-result adapters reject
+instruction	call.method	partial	positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; a reference-returning `__next__`'s copy adapter copies the referent out by the `__copyinit__` it names, as a `for` loop's raising `__next__` call does
 instruction	pointer.take	partial	element-offset raw move out of ownership-verified single-take storage; unlayoutable elements reject
 instruction	pointer.destroy	partial	in-place element destructor at the element offset; raising or droppable-field destructors reject
 instruction	uninit.make	partial	payload-only frame storage, no init flag (verified programs never take or destroy uninitialized slots)
@@ -79,7 +79,6 @@ instruction	unsupported	unsupported	explicit lowering marker; rejects by definit
 instruction	iter.init	partial	concrete post-mono `__iter__` chains: aliased `ref`/`mut`, byte-copied `read`, and consuming `var` receivers; raising `__iter__` steps and stepless heap-owning splits reject
 instruction	iter.has_next	partial	compiler-private runtime-pack storage only: a shadow position against the static element count; an untyped iterator slot rejects
 instruction	iter.next	partial	compiler-private runtime-pack storage only: the homogeneous element at the cursor, advancing the shadow position; heterogeneous packs and untyped iterator slots reject
-instruction	iter.try_next	partial	tagged-outcome `__next__(mut self)` with the statically typed StopIteration edge, including reference-yielding raising iterators (copy and `for ref` contracts); elements with user destructors reject
 type	Int	supported	signless i64
 type	UInt	supported	signless i64; unsigned operator selection
 type	Bool	supported	i1

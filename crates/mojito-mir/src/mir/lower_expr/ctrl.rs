@@ -550,55 +550,12 @@ impl<'a> Flatten<'a> {
                     .bindings
                     .get(binding_index)
                     .expect("checked comprehension binder metadata");
-                let yield_ty = protocol.next.as_ref().map_or_else(
-                    || binding.plan.yielded_ty.clone(),
-                    |call| call.result_ty.clone(),
-                );
-                let element_value =
-                    self.fresh_typed(iter.location(), Some(iterator_object), yield_ty);
-                // `emitForStmt` after `LowerSemanticCF`: `__has_next__`, an
-                // `if` that breaks when it fails, `__next__`, the body, and
-                // `continue`.
+                // `emitForStmt` after `LowerSemanticCF`: a raising `__next__`
+                // in a `try` whose handler breaks, or `__has_next__`, an `if`
+                // that breaks when it fails, and `__next__`; then the body
+                // and `continue`.
                 let label = Some(self.loop_label());
                 let body = self.region(|this| {
-                    let has_next = this.fresh(iter.location(), Some(iterator_object));
-                    if let Some(exhaustion) = protocol.exhaustion.clone() {
-                        this.emit(MirInstr::TryNext {
-                            dest: element_value,
-                            yielded: has_next,
-                            iter: iterator_object,
-                            call: Box::new(
-                                *protocol
-                                    .next
-                                    .clone()
-                                    .expect("raising iterator has checked __next__ contract"),
-                            ),
-                            exhaustion,
-                            adapter_constructor: None,
-                        });
-                    } else {
-                        this.emit_has_next(has_next, iterator_object);
-                    }
-                    this.emit(MirInstr::If {
-                        results: Vec::new(),
-                        cond: has_next,
-                        then: vec![MirBlock {
-                            instrs: Vec::new(),
-                            term: MirTerm::Yield(Vec::new()),
-                        }],
-                        elifs: Vec::new(),
-                        else_args: Vec::new(),
-                        orelse: vec![MirBlock {
-                            instrs: Vec::new(),
-                            term: MirTerm::Break {
-                                label,
-                                values: Vec::new(),
-                            },
-                        }],
-                    });
-                    if protocol.exhaustion.is_none() {
-                        this.emit_next(element_value, iterator_object);
-                    }
                     let binding_var = this.var(&format!("$comp{}${}", var, binding.owner.0));
                     // Retain the raw `__next__` result in a compiler-owned slot, then
                     // adapt it to the comprehension target with the same checked
@@ -606,12 +563,13 @@ impl<'a> Flatten<'a> {
                     let raw_var = this.var(&format!("$compyield{}${}", var, binding.owner.0));
                     this.var_types
                         .insert(raw_var, binding.plan.yielded_ty.clone());
-                    this.emit(MirInstr::DefVar {
-                        var: raw_var,
-                        src: element_value,
-                        binding_ty: Some(binding.plan.yielded_ty.clone()),
-                        in_place: false,
-                    });
+                    let raw = (raw_var, &binding.plan.yielded_ty);
+                    match (&protocol.exhaustion, protocol.next.as_deref()) {
+                        (Some(error), Some(call)) => {
+                            this.raising_next_try(iterator_object, raw, call, error, label);
+                        }
+                        _ => this.next_or_break(iterator_object, raw, label, iter.location()),
+                    }
                     this.bind_iteration_result(
                         &binding.plan,
                         raw_var,
@@ -717,6 +675,82 @@ impl<'a> Flatten<'a> {
     const fn loop_label(&mut self) -> LoopLabel {
         self.next_label += 1;
         LoopLabel(self.next_label - 1)
+    }
+
+    /// A comprehension loop's step over a typed-raising iterator: `raw =
+    /// iter.__next__()` in a `try` whose handler breaks out of loop
+    /// `label`, as upstream's `emitForStmt` calls it.
+    fn raising_next_try(
+        &mut self,
+        iter: VarId,
+        raw: (VarId, &Ty),
+        call: &mojito_checked::checked::CheckedIteratorCall,
+        error: &Ty,
+        label: Option<LoopLabel>,
+    ) {
+        let try_label = TryLabel(self.next_try);
+        self.next_try += 1;
+        let enclosing = self.raise_target.replace(try_label);
+        let body = self.region(|this| {
+            this.call_raising_next(iter, raw, call, error);
+            MirTerm::TryYield(Vec::new())
+        });
+        self.raise_target = enclosing;
+        let handler = vec![MirBlock {
+            instrs: Vec::new(),
+            term: MirTerm::Break {
+                label,
+                values: Vec::new(),
+            },
+        }];
+        self.emit(MirInstr::Try {
+            label: try_label,
+            results: Vec::new(),
+            body,
+            handler_args: Vec::new(),
+            handler: Some((None, handler)),
+            else_args: Vec::new(),
+            orelse: None,
+        });
+    }
+
+    /// A comprehension loop's step over compiler-private iterator storage:
+    /// break out of loop `label` unless `iter` has another element, then
+    /// store it into `raw`.
+    fn next_or_break(
+        &mut self,
+        iter: VarId,
+        (raw, raw_ty): (VarId, &Ty),
+        label: Option<LoopLabel>,
+        location: SourceSpan,
+    ) {
+        let has_next = self.fresh(location.clone(), Some(iter));
+        self.emit_has_next(has_next, iter);
+        self.emit(MirInstr::If {
+            results: Vec::new(),
+            cond: has_next,
+            then: vec![MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::Yield(Vec::new()),
+            }],
+            elifs: Vec::new(),
+            else_args: Vec::new(),
+            orelse: vec![MirBlock {
+                instrs: Vec::new(),
+                term: MirTerm::Break {
+                    label,
+                    values: Vec::new(),
+                },
+            }],
+        });
+        let element = self.fresh_typed(location, Some(iter), raw_ty.clone());
+        self.emit_next(element, iter);
+        self.emit(MirInstr::DefVar {
+            var: raw,
+            src: element,
+            binding_ty: Some(raw_ty.clone()),
+            in_place: false,
+        });
     }
 
     /// What a chain's next link reads for middle operand `operand`, whose

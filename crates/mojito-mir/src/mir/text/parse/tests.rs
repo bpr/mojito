@@ -733,20 +733,6 @@ fn sample_subscript_call() -> MirSubscriptCall {
     }
 }
 
-fn sample_iterator_call() -> CheckedIteratorCall {
-    CheckedIteratorCall {
-        target: "_ListIter::__next__".into(),
-        result_ty: Ty::int(),
-        reference_result: Some(RefTy {
-            referent: Ty::int(),
-            origin: Origin::SelfParam,
-            mutability: Mutability::Immutable,
-        }),
-        raises: Some(Ty::error()),
-        result_adapter: Some(CheckedResultAdapter::CopyIteratorReference),
-    }
-}
-
 #[test]
 #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
 fn instruction_families_reprint_byte_identically() {
@@ -1239,14 +1225,6 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::Next {
             dest: Reg(40),
             iter: 1,
-        },
-        MirInstr::TryNext {
-            dest: Reg(41),
-            yielded: Reg(42),
-            iter: 1,
-            call: Box::new(sample_iterator_call()),
-            exhaustion: TyKind::Struct("StopIteration".into(), Vec::new()).into(),
-            adapter_constructor: None,
         },
     ];
     let mut function = function_with(vec![Ty::int(); 43], instrs);

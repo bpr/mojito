@@ -165,11 +165,7 @@ fn direct_field_uses(instr: &MirInstr, root: &DeinitRoot) -> FieldSet {
         MirInstr::UseVar { var, .. } | MirInstr::KeepAlive { var } if *var == root.var => {
             whole = true;
         }
-        MirInstr::HasNext { iter, .. }
-        | MirInstr::Next { iter, .. }
-        | MirInstr::TryNext { iter, .. }
-            if *iter == root.var =>
-        {
+        MirInstr::HasNext { iter, .. } | MirInstr::Next { iter, .. } if *iter == root.var => {
             whole = true;
         }
         _ => {}

@@ -921,14 +921,6 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 iter: self.req(value, fields, "iter", Self::var)?,
             }),
-            "iter.try_next" => Some(MirInstr::TryNext {
-                dest: self.req(value, fields, "dest", Self::reg)?,
-                yielded: self.req(value, fields, "yielded", Self::reg)?,
-                iter: self.req(value, fields, "iter", Self::var)?,
-                call: Box::new(self.req(value, fields, "call", Self::iterator_call)?),
-                exhaustion: self.req(value, fields, "exhaustion", Self::ty)?,
-                adapter_constructor: self.lifecycle_symbol(fields, "adapter_constructor"),
-            }),
             other => {
                 self.error(value.span, format!("unknown instruction `{other}`"));
                 None

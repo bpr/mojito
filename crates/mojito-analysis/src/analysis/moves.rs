@@ -490,9 +490,7 @@ pub(super) fn place_uses(
             vec![(place.root, path, Touch::Write { parent }, *value)]
         }
         // The `for` iterator variable is read (and advanced) — treat as a whole read.
-        MirInstr::HasNext { dest, iter, .. }
-        | MirInstr::Next { dest, iter, .. }
-        | MirInstr::TryNext { dest, iter, .. } => {
+        MirInstr::HasNext { dest, iter, .. } | MirInstr::Next { dest, iter, .. } => {
             vec![(*iter, Vec::new(), Touch::Read, *dest)]
         }
         _ => Vec::new(),

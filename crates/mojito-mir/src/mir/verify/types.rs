@@ -232,52 +232,6 @@ pub(super) fn declared<'a>(
     declarations.function(callee)
 }
 
-pub(super) fn iterator_result_matches_declaration(
-    call: &mojito_checked::checked::CheckedIteratorCall,
-    declaration: &MirFunctionDeclaration,
-) -> bool {
-    // The adapter copies the element out of the reference a concrete step
-    // returns, so the call's result is the referent by value.
-    if call.result_adapter.is_some() {
-        return declaration.returns_reference
-            && call.reference_result.is_none()
-            && types_compatible(&call.result_ty, &declaration.ret_ty);
-    }
-    match (&call.reference_result, call.result_ty.kind()) {
-        (Some(reference), TyKind::Ref(result_reference)) => {
-            declaration.returns_reference
-                && reference == result_reference
-                && types_compatible(&reference.referent, &declaration.ret_ty)
-        }
-        (None, _) => {
-            !declaration.returns_reference && types_compatible(&call.result_ty, &declaration.ret_ty)
-        }
-        _ => false,
-    }
-}
-
-pub(super) fn verify_iterator_result_adapter(
-    prefix: &str,
-    call: &mojito_checked::checked::CheckedIteratorCall,
-    errors: &mut Vec<String>,
-) -> bool {
-    let abstract_dispatch = call.target == "__iterator_dispatch.__next__";
-    match call.result_adapter {
-        Some(mojito_checked::checked::CheckedResultAdapter::CopyIteratorReference) => {
-            if call.reference_result.is_some() {
-                errors.push(format!(
-                    "{prefix}: adapted iterator result also carries a concrete reference ABI"
-                ));
-            }
-        }
-        None if abstract_dispatch && call.reference_result.is_none() => errors.push(format!(
-            "{prefix}: abstract value-returning iterator dispatch lacks its copy-reference adapter"
-        )),
-        None => {}
-    }
-    abstract_dispatch
-}
-
 pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
     match ty.kind() {
         TyKind::RuntimePack(_) => true,

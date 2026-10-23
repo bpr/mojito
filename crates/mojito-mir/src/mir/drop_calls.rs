@@ -808,8 +808,7 @@ fn held_after(held: Held, instruction: &MirInstr, var: VarId) -> Held {
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::GetIter { .. }
         | MirInstr::HasNext { .. }
-        | MirInstr::Next { .. }
-        | MirInstr::TryNext { .. } => held,
+        | MirInstr::Next { .. } => held,
         _ if names_slot(instruction, var) => Held::Partial,
         _ => held,
     }

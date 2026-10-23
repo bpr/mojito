@@ -172,11 +172,6 @@ impl Walk<'_> {
                 self.function.reg_types.get(&dest.0),
                 adapter.constructor.as_deref().unwrap_or_default(),
             ),
-            MirInstr::TryNext {
-                dest,
-                adapter_constructor: Some(constructor),
-                ..
-            } => self.named(self.function.reg_types.get(&dest.0), constructor),
             MirInstr::UseVar { var, mode, .. } => match mode {
                 UseMode::Copy => self.var(*var, false),
                 UseMode::Move => self.var(*var, true),
@@ -212,9 +207,6 @@ impl Walk<'_> {
                 result_adapter: Some(_),
                 ..
             } => self.register(*dest),
-            MirInstr::TryNext { dest, call, .. } if call.result_adapter.is_some() => {
-                self.register(*dest);
-            }
             MirInstr::CopyValue { dest, .. } => self.register(*dest),
             // Every other instruction, a read out of storage included,
             // copies nothing.

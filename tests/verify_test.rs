@@ -1578,144 +1578,6 @@ fn verifier_rejects_misaligned_call_place_metadata() {
     expect_finding(&program(f), "call place metadata is not aligned");
 }
 
-#[test]
-fn verifier_rejects_a_mismatched_iterator_exhaustion_contract() {
-    use mojito::mir::MirFunctionDeclaration;
-
-    let other_error = Ty::new(TyKind::Struct("OtherError".to_string(), Vec::new()));
-    let stop_iteration = TyKind::Struct("StopIteration".to_string(), Vec::new());
-    let mut f = function(
-        vec![block(
-            vec![MirInstr::TryNext {
-                dest: Reg(0),
-                yielded: Reg(1),
-                iter: 0,
-                call: Box::new(mojito::checked::CheckedIteratorCall {
-                    target: "Iterator.__next__".to_string(),
-                    result_ty: Ty::int(),
-                    reference_result: None,
-                    raises: Some(other_error.clone()),
-                    result_adapter: None,
-                }),
-                exhaustion: other_error,
-                adapter_constructor: None,
-            }],
-            MirTerm::Return(None),
-        )],
-        2,
-        &[(0, Ty::int()), (1, Ty::bool())],
-    );
-    f.var_names[0] = "iterator".to_string();
-    f.var_tys
-        .insert(0, TyKind::Struct("Iterator".to_string(), Vec::new()).into());
-
-    let mut prog = program(f);
-    prog.declarations.functions.push(MirFunctionDeclaration {
-        lowered_name: "Iterator.__next__".to_string(),
-        param_names: Vec::new(),
-        param_types: Vec::new(),
-        defaults: Vec::new(),
-        required: Vec::new(),
-        variadic: None,
-        variadic_convention: None,
-        variadic_index: None,
-        kw_variadic: None,
-        kw_variadic_convention: None,
-        kw_variadic_index: None,
-        positional_only: None,
-        keyword_only: None,
-        param_decls: Vec::new(),
-        has_receiver: true,
-        receiver_convention: Some(mojito::ast::ArgConvention::Mut),
-        param_conventions: Vec::new(),
-        ret_ty: Ty::int(),
-        returns_reference: false,
-        raises: true,
-        error_ty: Some(stop_iteration.into()),
-        ref_params: Vec::new(),
-        param_writes: Vec::new(),
-        availability: Vec::new(),
-        enclosing: None,
-        region_binders: Vec::new(),
-        inline: mojito_checked::declaration::InlineLevel::default(),
-        provenance: mojito_checked::declaration::FunctionProvenance::default(),
-    });
-
-    expect_finding(&prog, "TryNext catches non-StopIteration type OtherError");
-    expect_finding(&prog, "does not match 'Iterator.__next__' raising contract");
-}
-
-#[test]
-fn verifier_rejects_an_iterator_reference_result_abi_mismatch() {
-    use mojito::mir::MirFunctionDeclaration;
-
-    let stop_iteration = Ty::new(TyKind::Struct("StopIteration".to_string(), Vec::new()));
-    let result_ty = reference_ty(Ty::int(), mojito::Mutability::Immutable);
-    let TyKind::Ref(reference_result) = result_ty.kind() else {
-        unreachable!("reference_ty constructs TyKind::Ref")
-    };
-    let mut f = function(
-        vec![block(
-            vec![MirInstr::TryNext {
-                dest: Reg(0),
-                yielded: Reg(1),
-                iter: 0,
-                call: Box::new(mojito::checked::CheckedIteratorCall {
-                    target: "Iterator.__next__".to_string(),
-                    result_ty: result_ty.clone(),
-                    reference_result: Some(reference_result.clone()),
-                    raises: Some(stop_iteration.clone()),
-                    result_adapter: None,
-                }),
-                exhaustion: stop_iteration.clone(),
-                adapter_constructor: None,
-            }],
-            MirTerm::Return(None),
-        )],
-        2,
-        &[(0, result_ty), (1, Ty::bool())],
-    );
-    f.var_names[0] = "iterator".to_string();
-    f.var_tys
-        .insert(0, TyKind::Struct("Iterator".to_string(), Vec::new()).into());
-
-    let mut prog = program(f);
-    prog.declarations.functions.push(MirFunctionDeclaration {
-        lowered_name: "Iterator.__next__".to_string(),
-        param_names: Vec::new(),
-        param_types: Vec::new(),
-        defaults: Vec::new(),
-        required: Vec::new(),
-        variadic: None,
-        variadic_convention: None,
-        variadic_index: None,
-        kw_variadic: None,
-        kw_variadic_convention: None,
-        kw_variadic_index: None,
-        positional_only: None,
-        keyword_only: None,
-        param_decls: Vec::new(),
-        has_receiver: true,
-        receiver_convention: Some(mojito::ast::ArgConvention::Mut),
-        param_conventions: Vec::new(),
-        ret_ty: Ty::int(),
-        // Deliberately corrupt: the checked operation returns a reference, but
-        // the retained declaration claims an owned-value ABI.
-        returns_reference: false,
-        raises: true,
-        error_ty: Some(stop_iteration),
-        ref_params: Vec::new(),
-        param_writes: Vec::new(),
-        availability: Vec::new(),
-        enclosing: None,
-        region_binders: Vec::new(),
-        inline: mojito_checked::declaration::InlineLevel::default(),
-        provenance: mojito_checked::declaration::FunctionProvenance::default(),
-    });
-
-    expect_finding(&prog, "TryNext result contract does not match");
-}
-
 // Pins the abstract-dispatch verify witness via the raw seam (schema-freeze
 // survivor); under the authoritative Compiler this shape is retained-template
 // residue.
@@ -1729,14 +1591,18 @@ fn verifier_rejects_missing_or_value_step_iterator_result_adapters() {
         .filter(|(name, _)| name == "first")
         .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
-            MirInstr::TryNext { call, .. } => Some(call),
+            MirInstr::MethodCall {
+                method,
+                result_adapter,
+                ..
+            } if method == "__next__" => Some(result_adapter),
             _ => None,
         })
         .expect("abstract iterator next");
-    call.result_adapter = None;
+    *call = None;
     expect_finding(
         &missing,
-        "abstract value-returning iterator dispatch lacks its copy-reference adapter",
+        "abstract value-returning __next__ call lacks its copy-reference adapter",
     );
 
     let mut concrete = lower_source(source);
@@ -1746,14 +1612,22 @@ fn verifier_rejects_missing_or_value_step_iterator_result_adapters() {
         .filter(|(name, _)| name == "first")
         .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
         .find_map(|instruction| match instruction {
-            MirInstr::TryNext { call, .. } => Some(call),
+            MirInstr::MethodCall {
+                method,
+                resolved: Some(target),
+                ..
+            } if method == "__next__" => Some(target),
             _ => None,
         })
         .expect("abstract iterator next");
-    call.target = "IntRefIter.__len__".to_string();
+    *call = "IntRefIter.__len__".to_string();
     expect_finding(
         &concrete,
-        "TryNext result contract does not match 'IntRefIter.__len__'",
+        "copy-reference result adapter is not attached to a value-yielding __next__ call",
+    );
+    expect_finding(
+        &concrete,
+        "method-call result ABI does not match 'IntRefIter.__len__'",
     );
 }
 

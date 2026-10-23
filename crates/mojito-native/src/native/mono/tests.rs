@@ -130,10 +130,14 @@ fn raising_user_iterator_types_the_split_slot_and_retargets_its_operations() {
             "prepare step `{step}` must name a specialized function"
         );
     }
-    let target = instrs
-        .iter()
+    let target = nested_instructions(&main.blocks)
+        .into_iter()
         .find_map(|instruction| match instruction {
-            MirInstr::TryNext { call, .. } => Some(&call.target),
+            MirInstr::MethodCall {
+                method,
+                resolved: Some(target),
+                ..
+            } if method == "__next__" => Some(target),
             _ => None,
         })
         .expect("user iteration advances through a raising `__next__`");
@@ -167,22 +171,33 @@ fn raising_range_iteration_types_the_slot_and_reaches_its_operations() {
         "the range iterator slot must be struct-typed: {:?}",
         main.var_tys.get(&dest)
     );
-    let call = instrs
-        .iter()
-        .find_map(|instruction| match instruction {
-            MirInstr::TryNext { call, .. } => Some(call),
-            _ => None,
-        })
-        .expect("range iteration advances through a raising `__next__`");
+    // `_ZeroStartingRange.__next__` is `@inline(.always)`, so it is inlined
+    // into the loop's `try`, as upstream inlines it; a call left names its
+    // instance.
+    let nested = nested_instructions(&main.blocks);
     assert!(
-        specialized
-            .program
-            .functions
+        nested
             .iter()
-            .any(|(name, _)| name == &call.target),
-        "`{}` must name a specialized function",
-        call.target
+            .any(|instruction| matches!(instruction, MirInstr::Try { .. })),
+        "range iteration steps inside a `try`"
     );
+    for target in nested.iter().filter_map(|instruction| match instruction {
+        MirInstr::MethodCall {
+            method,
+            resolved: Some(target),
+            ..
+        } if method == "__next__" => Some(target),
+        _ => None,
+    }) {
+        assert!(
+            specialized
+                .program
+                .functions
+                .iter()
+                .any(|(name, _)| name == target),
+            "`{target}` must name a specialized function"
+        );
+    }
 }
 
 #[test]

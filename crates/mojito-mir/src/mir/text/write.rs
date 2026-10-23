@@ -3,8 +3,8 @@ use super::{instruction_mnemonic, quote, terminator_mnemonic, version_header};
 use crate::mir::*;
 use mojito_ast::ast::{ArgConvention, InfixOp, PrefixOp};
 use mojito_checked::checked::{
-    CheckedCallArgument, CheckedCallArgumentSource, CheckedConst, CheckedIteratorCall,
-    CheckedResultAdapter, ComptimeSequence,
+    CheckedCallArgument, CheckedCallArgumentSource, CheckedConst, CheckedResultAdapter,
+    ComptimeSequence,
 };
 use mojito_checked::declaration::InlineLevel;
 use mojito_types::ct::{CtMarker, CtValue};
@@ -1700,27 +1700,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
             tag,
             &[("dest", reg_value(*dest)), ("iter", var_value(*iter))],
         ),
-        MirInstr::TryNext {
-            dest,
-            yielded,
-            iter,
-            call,
-            exhaustion,
-            adapter_constructor,
-        } => record(
-            tag,
-            &with_symbol(
-                vec![
-                    ("dest", reg_value(*dest)),
-                    ("yielded", reg_value(*yielded)),
-                    ("iter", var_value(*iter)),
-                    ("call", iterator_call(call)),
-                    ("exhaustion", ty_value(exhaustion)),
-                ],
-                "adapter_constructor",
-                adapter_constructor.as_deref(),
-            ),
-        ),
     }
 }
 
@@ -2031,24 +2010,6 @@ fn raises_value(value: &Raises) -> String {
             ("type", ty_value(&value.ty)),
             ("flag", reg_value(value.flag)),
             ("error", reg_value(value.error)),
-        ],
-    )
-}
-fn iterator_call(value: &CheckedIteratorCall) -> String {
-    record(
-        "iterator_call",
-        &[
-            ("target", symbol(&value.target)),
-            ("result_type", ty_value(&value.result_ty)),
-            (
-                "reference_result",
-                option(value.reference_result.as_ref().map(ref_ty)),
-            ),
-            ("raises", option(value.raises.as_ref().map(ty_value))),
-            (
-                "result_adapter",
-                option(value.result_adapter.map(result_adapter_value)),
-            ),
         ],
     )
 }

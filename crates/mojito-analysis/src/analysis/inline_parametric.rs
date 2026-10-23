@@ -230,9 +230,9 @@ pub const INLINE_SIZE_BOUND: usize = 32;
 /// `branch` lowering makes of it, and each reached `continue` the four
 /// operations its loop, its condition's test, and its break and continue
 /// cost there beyond its own test and body. A `try` costs four beside its
-/// parts. A `for` loop costs what upstream's `emitForStmt` makes of it once
-/// its calls are inlined: the `__iter__` call's body, and a `try` around
-/// the `__next__` call's. `print`, a builtin call here where the pin calls
+/// parts. A `for` loop's `__iter__` call costs its body, which the pin
+/// inlines before it measures; the `try` around its `__next__` call is
+/// priced as any other. `print`, a builtin call here where the pin calls
 /// the library's, costs the 30 the pin's `print(s)` call site holds.
 pub fn inline_cost(callee: &MirFunction, callees: &Callees<'_>) -> usize {
     let mut constants = BTreeSet::new();
@@ -2585,7 +2585,6 @@ fn instruction_cost<'i>(
             .iter()
             .map(|method| protocol_call_cost(method, callees))
             .sum(),
-        MirInstr::TryNext { call, .. } => TRY_COST + protocol_call_cost(&call.target, callees),
         MirInstr::Call { func, .. } if func.0 == "print" => PRINT_COST,
         MirInstr::Try { .. } => TRY_COST + regions(constants),
         MirInstr::If { elifs, .. } => 1 + elifs.len() + regions(constants),
@@ -2607,7 +2606,7 @@ fn address_cost(place: &MirPlace) -> usize {
         .count()
 }
 
-/// What a call the `for` protocol makes costs toward [`inline_cost`]: the
+/// What a `for` loop's `__iter__` call costs toward [`inline_cost`]: the
 /// operations of the body this pass follows, which the pin's lowering calls
 /// and inlines before it measures, or one for a call that stays.
 fn protocol_call_cost(method: &str, callees: &Callees<'_>) -> usize {

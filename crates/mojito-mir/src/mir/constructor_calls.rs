@@ -138,18 +138,6 @@ fn name_in_blocks(
                 result_adapter: Some(adapter),
                 ..
             } => adapter.constructor = copied(reg_types.get(&dest.0)),
-            MirInstr::TryNext {
-                dest,
-                call,
-                adapter_constructor,
-                ..
-            } => {
-                *adapter_constructor = copied(
-                    reg_types
-                        .get(&dest.0)
-                        .filter(|_| call.result_adapter.is_some()),
-                );
-            }
             _ => {}
         }
         for region in instruction_regions_mut(instruction) {

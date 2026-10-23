@@ -2913,9 +2913,6 @@ struct Flatten<'a> {
     /// A borrowed loop's iterator slot over a runtime pack to its
     /// [`PackCursor`].
     pack_cursors: HashMap<VarId, PackCursor>,
-    /// A `for` loop's yield slot to the register its `try_next` stepped
-    /// into, until the body binds it past the exhaustion test.
-    pending_yields: HashMap<VarId, Reg>,
     runtime_aliases: std::collections::HashSet<VarId>,
     /// The frame slot holding each copied or moved capture of a nested
     /// `def` that holds its environment ([`NestedInfo::holds_environment`]),
@@ -4465,7 +4462,6 @@ fn lower_cfg_nested(
             aliases: HashMap::new(),
             iteration_sources: HashMap::new(),
             pack_cursors: HashMap::new(),
-            pending_yields: HashMap::new(),
             runtime_aliases: reference_parameters
                 .iter()
                 .take(cfg.n_params)
@@ -4705,9 +4701,6 @@ fn close_register_types(
         };
         for block in blocks {
             for instr in &block.instrs {
-                if let MirInstr::TryNext { yielded, .. } = instr {
-                    changed |= record(reg_types, yielded, Some(Ty::bool()));
-                }
                 let derived: Option<(&Reg, Option<Ty>)> = match instr {
                     MirInstr::Const { dest, k } => {
                         let ty = match k {
@@ -4973,9 +4966,6 @@ fn close_register_types(
                                 _ => None,
                             });
                         Some((dest, result))
-                    }
-                    MirInstr::TryNext { dest, call, .. } => {
-                        Some((dest, Some(call.result_ty.clone())))
                     }
                     MirInstr::EstablishLoans { marker, .. }
                     | MirInstr::InvalidateInteriors { marker, .. }

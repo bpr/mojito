@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.93
+# Mojito Textual MIR Format, Version 1.94
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.93 is implemented end to end for inspection and loading: canonical
+Version 1.94 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.93
+mojito-mir 1.94
 ```
 
-The writer emits 1.93. The reader accepts 1.0 through 1.93; *Schema 1.0*
+The writer emits 1.94. The reader accepts 1.0 through 1.94; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -417,6 +417,13 @@ upstream's `Mem2Reg` does (R1264): a `try` carries `results`,
 as `lit.try.raise`'s operands do. The reader accepts an older minor's
 `try`, `try.yield {}`, and `raise` as carrying no values.
 
+Minor version 94 withdraws `iter.try_next`. A `for` loop over a raising
+iterator calls its `__next__` as a `call.method` with its raise edge
+inside a `try` whose handler leaves the loop, as upstream's `emitForStmt`
+calls it inside a `lit.try` (R890), and the `iterator_call` record goes
+with it. The reader still accepts an older minor that spells no
+`iter.try_next`, and names one it meets as an unknown instruction.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -665,8 +672,9 @@ declaration, and a package unit may be a struct's synthesized destructor
 
 Abstract dispatch requirements (`__trait_dispatch.*`, `__iterator_dispatch.*`) have no concrete declaration record;
 a `__trait_dispatch.*` method's parameter contract is its trait requirement's (minor version 48).
-Their complete `subscript_call`, `iterator_call`, or stored `func`/`generic_func`
-callable contract at the instruction is the declaration of record and must be
+Their complete `subscript_call`, `call.method` (a `for` loop's call of
+`__iterator_dispatch.__next__`), or stored `func`/`generic_func` callable
+contract at the instruction is the declaration of record and must be
 verified before runtime retargeting.
 
 ## Functions and Blocks
@@ -1130,7 +1138,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `ComptimeIf` | `comptime.if { results: [reg...], conditions: [<constraint>...], arms: [[block...]...], else: [block...] }` — `hlcf.comptime.if`, one arm per condition (schema 1.54) |
 | `ComptimeFor` | `comptime.for { results: [reg...], binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, operands: [reg...], arguments: [reg...], body: [block...], else: [block...] }` — `hlcf.comptime.for`; the four sequence fields are the `ComptimeFor` terminator's; `else` is one block ending in `unreachable {}`; `body` is one block ending in `unreachable {}` that holds a `comptime.if` on `eq { left: operand_expr(<has_next>), right: operand_value(ct_bool(true)) }`, whose arm is the suite and whose else arm is the stop arm, ending in `comptime.for.break`, as `LowerSemanticCF` leaves upstream's body (schema 1.54; the `slot` field and the `elements` source withdrawn, schema 1.57; the body's `has_next` test, schema 1.58); the `operands` define the body's `arguments` on entry and each `comptime.for.continue` for the next iteration, each `comptime.for.break` defines the `results`, and operands and results agree in number and type, as `ComptimeForOp::verify` requires (schema 1.85) |
 | `ComptimeAssert` | `comptime.assert { condition: <constraint> }` — upstream's `kgen.param.assert`, a `comptime assert` over the function's binders, its message (if any) a `with_message` around the condition; the elaborator judges it per reached instance, failing the instance `constraint failed: MESSAGE`, and concrete MIR carries none (schema 1.81) |
-| `GetIter` / `HasNext` / `Next` / `TryNext` | `iter.init` / `iter.has_next` / `iter.next` / `iter.try_next` (schema 1.71: an `iter.try_next` whose `call` has a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands, as `call.method` does) |
+| `GetIter` / `HasNext` / `Next` | `iter.init` / `iter.has_next` / `iter.next` (schema 1.94 withdraws `iter.try_next`; see *Compatibility*) |
 
 `UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic
 subscripts are `tuple_storage`, `variadic_storage`, `simd`, `pointer`, and

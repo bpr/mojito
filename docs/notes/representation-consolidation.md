@@ -97,8 +97,9 @@ This gap blocks about 14 entries across four tracks (`pmir`,
     before a raising call reproduced it.
   - R1272 closed 10-23: a `try` part is a VM cursor level, and its probe
     recurses 100 000 deep.
-  - R890 is a `try` whose handler breaks; `TryNext` is still there, and
-    its R874 prerequisite has landed.
+  - R890 closed 10-23: a `for` loop calls a raising `__next__` as a
+    `call.method` with its error region inside a `try` whose handler runs
+    the loop's `else` and breaks, and `TryNext` is gone.
   - R832 needs no flag for raise edges any more; its remaining flags go
     with gap D, so it now depends on R932.
   - R829 closed with R884: its probe matched the pin by then, and the

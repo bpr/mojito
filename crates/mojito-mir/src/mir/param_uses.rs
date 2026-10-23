@@ -1608,18 +1608,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 ),
                 _ => false,
             },
-            MirInstr::TryNext {
-                iter,
-                call,
-                exhaustion,
-                ..
-            } => self.member_call(
-                declarations,
-                &call.target,
-                function.var_tys.get(iter),
-                &(&call.raises, exhaustion),
-                |own: &[&ParamDecl]| own.is_empty(),
-            ),
             _ => {
                 let Some(call) = instruction_subscript_call(instruction) else {
                     return false;

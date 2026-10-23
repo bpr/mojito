@@ -490,9 +490,7 @@ impl FnLowering<'_> {
                 // element by value. An implementation that returns `ref`
                 // hands back a borrowed place instead, so the contract's
                 // value is an owned copy of the referent — the VM's
-                // `CopyIteratorReference` adapter, which
-                // `lower_try_next_reference` already performs for a `for`
-                // loop's own advance.
+                // `CopyIteratorReference` adapter.
                 if let Some(constructor) = adapter
                     && resolved
                         .as_deref()
@@ -612,21 +610,6 @@ impl FnLowering<'_> {
             // is named so that new instructions force a decision here.
             MirInstr::HasNext { dest, iter } => self.lower_has_next(ctx, *dest, *iter),
             MirInstr::Next { dest, iter } => self.lower_next(ctx, *dest, *iter),
-            MirInstr::TryNext {
-                dest,
-                yielded,
-                iter,
-                call,
-                exhaustion: _,
-                adapter_constructor,
-            } => self.lower_try_next(
-                ctx,
-                *dest,
-                *yielded,
-                *iter,
-                call,
-                adapter_constructor.as_deref(),
-            ),
             MirInstr::PointerStorageTake {
                 dest,
                 pointer,

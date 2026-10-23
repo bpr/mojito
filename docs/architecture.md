@@ -2324,10 +2324,10 @@ concrete calls. The VM temporarily restores both the executing caller and the
 identified just-completed iterator frame while user copy code runs; reference
 handles nested inside a `Copyable` result therefore resolve against real storage
 and any permitted write-through is preserved. The native backend applies the
-same test at both sites: a `for` loop's own advance copies the element out in
-`lower_try_next_reference`, and a direct `iterator.__next__()` through the
-contract copies it in `copy_reference_result` (`lower/methods.rs`), keyed on
-the resolved callee's compiled `ResultForm`.
+same test to a `for` loop's own `__next__` call and to a direct
+`iterator.__next__()` through the contract, both `MethodCall`s: it copies the
+element out in `copy_reference_result` (`lower/methods.rs`), keyed on the
+resolved callee's compiled `ResultForm`.
 
 Opaque trait-bounded collection indexing uses the requirement signature for its
 index and result types, then executes through concrete dunder dispatch after
@@ -3033,22 +3033,33 @@ preheader -> header -> body -> header
 
 ### For
 
-A `for` lowers to the same control-flow shape as a `while`, with explicit
-iterator protocol instructions. Current typed-raising iterators call
-`__next__` exactly once per trip and treat only the checked `StopIteration` type
-as normal exhaustion:
+A `for` lowers to the same control-flow shape as a `while`. A typed-raising
+iterator's `__next__` is called exactly once per trip, inside a `try` whose
+handler runs the loop's `else` body and breaks, as upstream's `emitForStmt`
+calls it through `emitCallInTryBlock` with a `lit.loop.break.else` handler
+(R890): the call is an ordinary raising `MethodCall`, its error region raising
+to that `try`, and the element is stored into the loop's `$yield` slot inside
+the `try` body, as upstream stores it into a temporary there:
 
 ```text
 bind iterator
 initialize iterator through selected __iter__ chain
-header:
-    try_next(iterator) -> (loop variable, yielded)
-    branch yielded, body, exit
-body:
+loop:
+    try:
+        $yield = iterator.__next__()    # raises StopIteration when exhausted
+    except:
+        else body
+        break
+    loop variable = $yield
     user body
-    jump header
-exit:
+    continue
 ```
+
+Every error the call raises is the checked `StopIteration`, its declared
+error type, so the handler catches it whole, as upstream's ignores the error
+value. The loop's `else` body runs inside the handler before its `break`, as
+upstream's `LowerSemanticCF` splices the `lit.loop`'s `else` region in place
+of `lit.loop.break.else`.
 
 A nonraising `__next__` has no loop shape: the checker rejects it with upstream's
 `__has_next__` diagnostic, and only compiler-private carriers (the CTFE
@@ -3077,9 +3088,10 @@ referent. Compiler-private iterator carriers alone omit the nominal operation
 contract.
 
 Abstract iteration instead retains the value type promised by the trait. Its
-checked `TryNext` operation, which catches the `StopIteration` that the bundled
-`Iterator.__next__` requirement declares, carries the same explicit copy-reference
-adapter as an ordinary bounded `iterator.__next__()` call. Runtime retargeting
+`__next__` call names `__iterator_dispatch.__next__`, raises the `StopIteration`
+that the bundled `Iterator.__next__` requirement declares, and carries the same
+explicit copy-reference adapter as an ordinary bounded `iterator.__next__()`
+call. Runtime retargeting
 leaves a concrete value return unchanged, or materializes and lifecycle-copies a
 concrete reference return before writing the value-typed destination. A
 reference into the iterator receiver is read from the identified just-completed
@@ -4670,10 +4682,10 @@ during iteration; the reference slot is read only by `GetIter` and dropped
 afterward as a no-op. Owned iteration keeps the
 single slot: `__iter__(var self)` consumes the source into the iterator.
 Bundled borrowed paths cover List, Set, Dict, and Range; the bundled owned path
-is currently List-specific. For a current typed-raising iterator, `TryNext`
-invokes `__next__(mut self)`, writes the mutated iterator back, and branches on
-whether the call returned an element or raised the exact checked
-`StopIteration`; a generic `Iterable` bound takes the same path through the
+is currently List-specific. For a current typed-raising iterator, the loop
+calls `__next__(mut self)` as a raising `MethodCall` on the iterator slot,
+which writes the mutated iterator back, inside a `try` whose handler leaves
+the loop once it raises `StopIteration`; a generic `Iterable` bound takes the same path through the
 abstract `__iterator_dispatch.__next__`, and a named source of a parameter
 type is borrowed in place as a nominal one is, not copied into the loop. Bundled Range/list/set/dict iterators
 and concrete user iterators use that nominal path. `HasNext`/`Next` serve only
@@ -4827,9 +4839,10 @@ drop, or consume of a field or tuple-element path marks that part missing,
 a consume subsuming the parts inside it already missing, and a store into
 it fills it again; reads, borrows, calls, iterator
 advances, and lifetime markers keep it; compiler-private iterator storage
-normalized in place leaves it partial. A `for` loop binds what
-`iter.try_next` yields only past its exhaustion test, in the body, so its
-`$yield` slot is never filled on the exhausted edge. A named drop of a slot
+normalized in place leaves it partial. A `for` loop stores what its
+`__next__` call returns into its `$yield` slot inside the stepping `try`'s
+body, so the slot is never filled on the exhausted edge, which raises
+before the store. A named drop of a slot
 empty on every path to it is erased, since nothing dies there. Every other
 named drop stays a `drop.var`, whose runtime partial-aggregate rule,
 Pliron's drop and leaf flags, and an owned pack's reverse order carry
@@ -4855,7 +4868,7 @@ Copies and moves name their constructor the same way, from MIR lowering on:
 `mir::name_constructors` (`mir/constructor_calls.rs`) sets each copying or
 moving `UseVar`, each `CopyValue`, each owned `MakeClosure` capture, each
 `MakeVariant`/`VariantSet`/`VariantReplace` payload store, and each
-`MethodCall` or `TryNext` result adapter's `constructor` to the
+`MethodCall` result adapter's `constructor` to the
 `__copyinit__` or `__moveinit__` the value's struct records
 (`MirDeclarations::struct_member`), as upstream's copy/move insertion leaves
 a call naming the constructor at each site. A call naming a struct over one
@@ -5625,10 +5638,10 @@ point where a slot declared in a loop is uninitialized again.
   `elif`, each reached `continue` four beyond its loop's test and body (the
   private `structured_back_edges` counts them), a place's field projection
   one `struct.gep` (a read-modify-write's store reusing its read's), a
-  raising body two, a `try` four beside its parts, `iter.init` the body of
-  each `__iter__` it calls and `iter.try_next` a `try` around its
-  `__next__`'s, as upstream's `emitForStmt` calls and then inlines them
-  (bodies `Callees::body` answers, one per call that stays), and `print`
+  raising body two, a `try` four beside its parts (a `for` loop's `try`
+  around its `__next__` call among them), `iter.init` the body of each
+  `__iter__` it calls, as upstream's `emitForStmt` calls and then inlines
+  it (bodies `Callees::body` answers, one per call that stays), and `print`
   the 30 its call site costs there (R1287); each other instruction costs
   one. The bound is upstream's `getInlineThreshold` of 35 at `-O3`, which
   `shouldInline` compares with `getNumOperations`, less three operations

@@ -1230,25 +1230,6 @@ impl<'p> CallEdges<'p, '_> {
                     self.push_named(step);
                 }
             }
-            // Its result adapter copies the element out by the
-            // constructor it names.
-            MirInstr::TryNext {
-                dest,
-                call,
-                adapter_constructor,
-                ..
-            } => {
-                self.push_named(&call.target);
-                if let Some(constructor) = adapter_constructor
-                    && !self
-                        .function
-                        .reg_types
-                        .get(&dest.0)
-                        .is_some_and(is_stdlib_string_type)
-                {
-                    self.push_named(constructor);
-                }
-            }
             // Subscript instructions carry their checker-selected (and
             // mono-retargeted) targets on the instruction.
             MirInstr::Index {

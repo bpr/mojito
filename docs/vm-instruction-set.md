@@ -139,7 +139,6 @@ accessed; the compact notation omits this analysis-only field.
 | Mnemonic | MIR operation | Purpose |
 |---|---|---|
 | `iter.init` | `GetIter` | Normalize a value into an iterator |
-| `iter.try_next` | `TryNext` | Advance a typed-raising iterator, treating checked `StopIteration` as exhaustion |
 | `iter.has_next` | `HasNext` | Test compiler-private iterator storage for another element |
 | `iter.next` | `Next` | Advance compiler-private iterator storage |
 
@@ -781,22 +780,16 @@ collections take this same path as concrete user structs. A raising
 error region, as upstream's `emitForStmt` does, and stores the iterator into
 the slot.
 
-### `iter.try_next` — Advance A Typed-Raising Iterator
-
-```text
-iter.try_next %dest, %yielded, $iterator, @method, StopIteration
-```
-
-Calls the checker-selected typed-raising `__next__(mut self)` exactly once and
-writes the final receiver back into `$iterator`. On success, `%dest` receives the
-element and `%yielded` is `True`. Raising exactly the retained exhaustion type
-sets `%yielded` to `False`; any other raised value propagates. Current bundled
-iterators use this path. An abstract value-result call may carry the verified
-`CopyIteratorReference` adapter: runtime dispatch consults the selected concrete
-declaration's ABI and, when it returns `ref T`, reads and lifecycle-copies the
-`Copyable` referent before writing `%dest`. Exhaustion is never interpreted as an
-adapter failure. A `for` loop stores `%dest` into its `$yield` slot only on the
-yielded edge, past the branch on `%yielded`.
+A typed-raising iterator has no `iter.*` advance either: a `for` loop calls
+its `__next__(mut self)` as a raising `call.method` on the iterator slot,
+which writes the final receiver back, inside a `try` whose handler runs the
+loop's `else` body and breaks, as upstream's `emitForStmt` does. The `try`
+body stores the element into the loop's `$yield` slot, so the exhausted edge,
+which raises before the store, never fills it. An abstract value-result call
+carries the verified `CopyIteratorReference` adapter, as any `call.method`
+does: runtime dispatch consults the selected concrete declaration's ABI and,
+when it returns `ref T`, reads and lifecycle-copies the `Copyable` referent
+before writing the destination.
 
 ### `iter.has_next` — Test Compiler-Private Iterator Storage
 
@@ -807,8 +800,8 @@ iter.has_next %dest, $iterator
 Writes whether `$iterator` holds another element. The operand is restricted to
 `Value::ComptimeList` while the VM is running in CTFE mode and private
 `Value::Tuple` runtime-pack storage an owned loop (`for v in xs^`) consumes;
-every nominal iterator, generic or concrete, advances through `iter.try_next`
-instead, and a borrowed loop over a runtime pack indexes it in place through
+every nominal iterator, generic or concrete, advances through its raising
+`__next__` call instead, and a borrowed loop over a runtime pack indexes it in place through
 `ref.make` with no `iter.*` instruction. A public Tuple is a nominal struct
 and cannot reach either path.
 

@@ -241,55 +241,20 @@ impl<'a> Flatten<'a> {
                     in_place: false,
                 });
             }
-            HirInstr::TryNext {
+            HirInstr::CallNext {
                 iter,
                 raw,
-                yielded,
                 call,
-                exhaustion,
-            } => {
-                let element = self.fresh_typed(
-                    SourceSpan::new(None, DUMMY_SPAN),
-                    Some(*iter),
-                    call.result_ty.clone(),
-                );
-                let has_element = self.fresh(SourceSpan::new(None, DUMMY_SPAN), Some(*iter));
-                self.emit(MirInstr::TryNext {
-                    dest: element,
-                    yielded: has_element,
-                    iter: *iter,
-                    call: Box::new(call.clone()),
-                    exhaustion: exhaustion.clone(),
-                    adapter_constructor: None,
-                });
-                // The element is bound to `raw` only past the exhaustion
-                // test, in the body, so on the exhausted edge the slot was
-                // never filled.
-                self.pending_yields.insert(*raw, element);
-                self.emit(MirInstr::DefVar {
-                    var: *yielded,
-                    src: has_element,
-                    binding_ty: Some(Ty::bool()),
-                    in_place: false,
-                });
-            }
+                error,
+                element_ty,
+            } => self.call_raising_next(*iter, (*raw, element_ty), call, error),
             HirInstr::BindIteration {
                 raw,
                 dest,
                 iter,
                 plan,
                 binding,
-            } => {
-                if let Some(element) = self.pending_yields.remove(raw) {
-                    self.emit(MirInstr::DefVar {
-                        var: *raw,
-                        src: element,
-                        binding_ty: Some(plan.yielded_ty.clone()),
-                        in_place: false,
-                    });
-                }
-                self.bind_iteration_result(plan, *raw, *dest, *iter, *binding);
-            }
+            } => self.bind_iteration_result(plan, *raw, *dest, *iter, *binding),
         }
     }
 
@@ -3901,6 +3866,57 @@ impl<'a> Flatten<'a> {
             var: dest,
             src: iterator,
             binding_ty: Some(protocol.iterator_ty.clone()),
+            in_place: false,
+        });
+    }
+
+    /// `raw = iter.__next__()` over a typed-raising iterator: the call on
+    /// the iterator slot, its error region raising to the enclosing `try`,
+    /// and the element stored into the yield slot `raw`, typed `raw_ty`, as
+    /// upstream's `emitCallInTryBlock` stores the call's result into a
+    /// temporary inside its `lit.try`.
+    pub(super) fn call_raising_next(
+        &mut self,
+        iter: VarId,
+        (raw, raw_ty): (VarId, &Ty),
+        call: &mojito_checked::checked::CheckedIteratorCall,
+        error: &Ty,
+    ) {
+        let span = SourceSpan::new(None, DUMMY_SPAN);
+        let place = MirPlace::root(iter, self.var_types.get(&iter).cloned());
+        let recv = self.fresh(span.clone(), Some(iter));
+        self.emit(MirInstr::LoadPlace {
+            dest: recv,
+            place: place.clone(),
+        });
+        let element = self.fresh_typed(span.clone(), Some(iter), call.result_ty.clone());
+        self.record_call(element, Some(call.target.clone()), 0);
+        let raises = self.raises(Some(error.clone()), span);
+        self.emit_call(MirInstr::MethodCall {
+            dest: element,
+            recv,
+            method: "__next__".to_string(),
+            resolved: Some(call.target.clone()),
+            raises: raises.clone(),
+            reference_result: call.reference_result.clone().map(Box::new),
+            result_adapter: call.result_adapter.map(MirResultAdapter::new),
+            args: Vec::new(),
+            kwargs: Vec::new(),
+            recv_place: Some(Box::new(place)),
+            recv_writes: true,
+            arg_places: Vec::new(),
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            param_decls: Vec::new(),
+            instantiated_args: Vec::new(),
+            spread: None,
+        });
+        self.error_region(raises);
+        self.emit(MirInstr::DefVar {
+            var: raw,
+            src: element,
+            binding_ty: Some(raw_ty.clone()),
             in_place: false,
         });
     }

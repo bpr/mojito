@@ -2,7 +2,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 
 pub(super) fn verify_iteration_instruction(
     cx: &InstrCx<'_>,
@@ -79,92 +78,8 @@ pub(super) fn verify_iteration_instruction(
                 }
             }
         }
-        MirInstr::Next { iter, .. } => {
-            if *iter as usize >= cx.function.n_vars {
-                errors.push(format!("{prefix}: Next uses invalid iterator slot {iter}"));
-            }
-        }
-        MirInstr::TryNext {
-            dest,
-            yielded,
-            iter,
-            call,
-            exhaustion,
-            adapter_constructor,
-        } => {
-            super::instr::verify_lifecycle_symbol(
-                cx,
-                "iterator result adapter",
-                cx.reg_ty(*dest),
-                call.result_adapter.is_some().then_some("__copyinit__"),
-                adapter_constructor.as_deref(),
-                errors,
-            );
-            if *iter as usize >= cx.function.n_vars {
-                errors.push(format!(
-                    "{prefix}: TryNext uses invalid iterator slot {iter}"
-                ));
-            }
-            if cx.reg_ty(*yielded).is_some_and(|ty| *ty != TyKind::Bool) {
-                errors.push(format!(
-                    "{prefix}: TryNext yielded flag has non-Bool type {}",
-                    cx.reg_ty(*yielded).expect("checked above")
-                ));
-            }
-            let is_stop_iteration = matches!(
-                exhaustion.kind(),
-                TyKind::Struct(name, arguments)
-                    if arguments.is_empty()
-                        && (name == "StopIteration" || name.ends_with("$StopIteration"))
-            );
-            if !is_stop_iteration {
-                errors.push(format!(
-                    "{prefix}: TryNext catches non-StopIteration type {exhaustion}"
-                ));
-            }
-            if cx.reg_ty(*dest) != Some(&call.result_ty) {
-                errors.push(format!(
-                    "{prefix}: TryNext result does not match its checked type {}",
-                    call.result_ty
-                ));
-            }
-            if call.raises.as_ref() != Some(exhaustion) {
-                errors.push(format!(
-                    "{prefix}: TryNext exhaustion type {exhaustion} does not match its checked call effect"
-                ));
-            }
-            if verify_iterator_result_adapter(prefix, call, errors) {
-                return;
-            }
-            match declared(cx.declarations, &call.target) {
-                None => errors.push(format!(
-                    "{prefix}: TryNext refers to undeclared iterator method '{}'",
-                    call.target
-                )),
-                Some(declaration) => {
-                    if !declaration.param_types.is_empty()
-                        || declaration.receiver_convention
-                            != Some(mojito_ast::ast::ArgConvention::Mut)
-                    {
-                        errors.push(format!(
-                            "{prefix}: TryNext method '{}' is not a nullary 'mut self' operation",
-                            call.target
-                        ));
-                    }
-                    if !declaration.raises || declaration.error_ty.as_ref() != Some(exhaustion) {
-                        errors.push(format!(
-                            "{prefix}: TryNext exhaustion type {exhaustion} does not match '{}' raising contract",
-                            call.target
-                        ));
-                    }
-                    if !iterator_result_matches_declaration(call, declaration) {
-                        errors.push(format!(
-                            "{prefix}: TryNext result contract does not match '{}'",
-                            call.target
-                        ));
-                    }
-                }
-            }
+        MirInstr::Next { iter, .. } if *iter as usize >= cx.function.n_vars => {
+            errors.push(format!("{prefix}: Next uses invalid iterator slot {iter}"));
         }
         _ => {}
     }

@@ -125,9 +125,9 @@ pub struct OutcomeAbi {
     /// The lowered ok payload (`ZeroSized` for a `None` return).
     pub ok: LowerTy,
     /// Whether the ok payload is a place pointer rather than the value — the
-    /// shape of every raising reference-returning callee, called directly,
-    /// through a callable value, or by `TryNext`. A raising call defines its
-    /// destination as that handle; only `TryNext` copies the referent out.
+    /// shape of every raising reference-returning callee, called directly
+    /// or through a callable value. A raising call defines its destination
+    /// as that handle.
     pub ok_is_reference: bool,
 }
 

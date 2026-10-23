@@ -333,7 +333,6 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         | MirInstr::PointerStorageDestroy { element: ty, .. }
         | MirInstr::UninitStorageTake { element: ty, .. }
         | MirInstr::UninitStorageDestroy { element: ty, .. }
-        | MirInstr::TryNext { exhaustion: ty, .. }
         | MirInstr::DefVar {
             binding_ty: Some(ty),
             ..

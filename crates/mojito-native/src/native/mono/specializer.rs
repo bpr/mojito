@@ -1060,7 +1060,7 @@ impl<'a> Specializer<'a> {
         // substituted register-type table without aliasing its body.
         let mut blocks = std::mem::take(&mut function.blocks);
         // Iterator normalization first: the advance rewrites of each
-        // `HasNext`/`Next`/`TryNext` need the iterator slot types this pass
+        // `HasNext`/`Next` need the iterator slot types this pass
         // records.
         self.rewrite_iterator_inits(&key.template, &mut function, &mut blocks)?;
         let arguments = parameter_argument_regs(&mut blocks);
@@ -3292,37 +3292,6 @@ impl<'a> Specializer<'a> {
                             call,
                         )?;
                     }
-                    // An untyped iterator slot passes through: it belongs to
-                    // a compiler-private pack loop the backend rejects at its
-                    // own boundary.
-                    MirInstr::TryNext {
-                        iter,
-                        call,
-                        adapter_constructor,
-                        ..
-                    } => {
-                        if let Some(receiver) = function.var_tys.get(iter).cloned() {
-                            // The adapter copies the element out of a
-                            // reference the step returns: a step that
-                            // returns the element itself needs none.
-                            if !self.iterator_step_returns_reference(
-                                &receiver,
-                                "__next__",
-                                Some(&call.target),
-                            ) {
-                                call.result_adapter = None;
-                                *adapter_constructor = None;
-                            }
-                            let (target, _) = self.resolve_iterator_step(
-                                owner,
-                                &receiver,
-                                "__next__",
-                                Some(&call.target),
-                                Some(&call.result_ty),
-                            )?;
-                            call.target = target;
-                        }
-                    }
                     // Variant equality lowers to a tag switch that calls each
                     // nominal alternative's `__eq__`; enqueue those instances.
                     MirInstr::BinOp {
@@ -4440,14 +4409,6 @@ fn for_each_lifecycle_site_mut(
                 } => reg_types
                     .get(&dest.0)
                     .map(|ty| (ty, "__copyinit__", &mut adapter.constructor)),
-                MirInstr::TryNext {
-                    dest,
-                    call,
-                    adapter_constructor,
-                    ..
-                } if call.result_adapter.is_some() => reg_types
-                    .get(&dest.0)
-                    .map(|ty| (ty, "__copyinit__", adapter_constructor)),
                 _ => None,
             };
             if let Some((ty, member, symbol)) = site {

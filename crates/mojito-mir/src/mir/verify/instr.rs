@@ -88,7 +88,7 @@ pub(super) fn verify_instruction(
         | MirInstr::MakeStruct { .. }
         | MirInstr::MakeVariant { .. }
         | MirInstr::MakeClosure { .. } => verify_value_instruction(&cx, instruction, errors),
-        MirInstr::GetIter { .. } | MirInstr::Next { .. } | MirInstr::TryNext { .. } => {
+        MirInstr::GetIter { .. } | MirInstr::Next { .. } => {
             verify_iteration_instruction(&cx, instruction, errors);
         }
         MirInstr::Index { .. }

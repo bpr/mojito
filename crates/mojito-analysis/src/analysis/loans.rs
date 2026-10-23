@@ -175,19 +175,24 @@ pub(super) enum LoanAccess {
 ///
 /// The check walks the structured body twice: backward for reference
 /// liveness (`region_walk.rs`'s `DestructorInsertion`-shaped walk) and
-/// forward for the loan generations reaching each instruction. A `try` is
-/// one instruction to both: it uses every variable read anywhere in its
-/// parts, and neither the loans established nor the accesses made inside it
-/// are checked. Upstream has no persistent-loan check at all (argument
-/// exclusivity is checked at the call), so the exemption keeps the check on
-/// the side of the pin's acceptance.
+/// forward for the loan generations reaching each instruction. Both follow
+/// a `try`'s control flow, the `break` its handler leaves a `for` loop with
+/// included, but inside it only reads count: it kills no reference, and
+/// neither the loans established nor the accesses made there are checked.
+/// Upstream has no persistent-loan check at all (argument exclusivity is
+/// checked at the call), so the exemption keeps the check on the side of
+/// the pin's acceptance.
 pub(super) fn analyze_loans(
     f: &MirFunction,
     callees: &CalleeRefParams<'_>,
 ) -> Result<(), OwnershipError> {
     let mut generations: BTreeMap<u32, Vec<Loan>> = BTreeMap::new();
     let mut references = HashSet::new();
+    // The instructions outside every `try`, by address, which is stable
+    // while `f` is borrowed: the only ones the walks apply and check.
+    let mut outside = HashSet::new();
     for_each_instr_outside_try(&f.blocks, &mut |instr| {
+        outside.insert(std::ptr::from_ref(instr));
         if let MirInstr::EstablishLoans {
             reference,
             loans: established,
@@ -218,24 +223,30 @@ pub(super) fn analyze_loans(
     // order, so a conflict names the same one on every run; keyed by the
     // instruction's address, which is stable while `f` is borrowed.
     let mut live_references: HashMap<*const MirInstr, Vec<VarId>> = HashMap::new();
-    walk_backward(&ReferenceLiveness, &f.blocks, &mut |instr: &MirInstr,
-                                                       live: &HashSet<
-        VarId,
-    >| {
-        let mut active: Vec<VarId> = live
-            .iter()
-            .copied()
-            .filter(|var| references.contains(var))
-            .collect();
-        if !active.is_empty() {
-            active.sort_unstable();
-            live_references.insert(std::ptr::from_ref(instr), active);
-        }
-    });
+    let liveness = ReferenceLiveness { outside: &outside };
+    walk_backward(
+        &liveness,
+        &f.blocks,
+        &mut |instr: &MirInstr, live: &HashSet<VarId>| {
+            let mut active: Vec<VarId> = live
+                .iter()
+                .copied()
+                .filter(|var| references.contains(var))
+                .collect();
+            if !active.is_empty() {
+                active.sort_unstable();
+                live_references.insert(std::ptr::from_ref(instr), active);
+            }
+        },
+    );
     let scan = LoanScan {
         dests: loan_generation_dests(f),
+        outside: &outside,
     };
     let mut check = |state: &LoanGenerationState, instr: &MirInstr| {
+        if !outside.contains(&std::ptr::from_ref(instr)) {
+            return Ok(());
+        }
         let active = live_references
             .get(&std::ptr::from_ref(instr))
             .map_or(&[][..], Vec::as_slice);
@@ -772,10 +783,13 @@ fn check_loans_at(
     Ok(())
 }
 
-/// The backward liveness of reference variables the loan check reads.
-struct ReferenceLiveness;
+/// The backward liveness of reference variables the loan check reads; an
+/// instruction inside a `try` only reads.
+struct ReferenceLiveness<'a> {
+    outside: &'a HashSet<*const MirInstr>,
+}
 
-impl BackwardScan for ReferenceLiveness {
+impl BackwardScan for ReferenceLiveness<'_> {
     type State = HashSet<VarId>;
 
     fn join(&self, state: &mut HashSet<VarId>, other: &HashSet<VarId>) {
@@ -783,14 +797,16 @@ impl BackwardScan for ReferenceLiveness {
     }
 
     fn transfer(&self, live: &mut HashSet<VarId>, instr: &MirInstr) {
-        if let Some(def) = loan_liveness_def(instr) {
+        if self.outside.contains(&std::ptr::from_ref(instr))
+            && let Some(def) = loan_liveness_def(instr)
+        {
             live.remove(&def);
         }
         live.extend(var_uses(instr).into_iter().map(|(used, _)| used));
     }
 
-    fn enters(&self, instr: &MirInstr) -> bool {
-        !matches!(instr, MirInstr::Try { .. })
+    fn enters(&self, _instr: &MirInstr) -> bool {
+        true
     }
 
     fn define(&self, live: &mut HashSet<VarId>, var: VarId) {
@@ -798,13 +814,14 @@ impl BackwardScan for ReferenceLiveness {
     }
 }
 
-/// The loan generations reaching each instruction, which a `try` does not
-/// change.
-struct LoanScan {
+/// The loan generations reaching each instruction, which no instruction
+/// inside a `try` changes.
+struct LoanScan<'a> {
     dests: BTreeMap<u32, Option<MirInteriorOrigin>>,
+    outside: &'a HashSet<*const MirInstr>,
 }
 
-impl ForwardScan for LoanScan {
+impl ForwardScan for LoanScan<'_> {
     type State = LoanGenerationState;
 
     fn join(
@@ -816,14 +833,16 @@ impl ForwardScan for LoanScan {
     }
 
     fn transfer(&self, state: &mut LoanGenerationState, instr: &MirInstr) {
-        transfer_loan_generation(state, instr, &self.dests);
+        if self.outside.contains(&std::ptr::from_ref(instr)) {
+            transfer_loan_generation(state, instr, &self.dests);
+        }
     }
 
     fn raise_seed(&self, state: &LoanGenerationState) -> LoanGenerationState {
         state.clone()
     }
 
-    fn enters(&self, instr: &MirInstr) -> bool {
-        !matches!(instr, MirInstr::Try { .. })
+    fn enters(&self, _instr: &MirInstr) -> bool {
+        true
     }
 }

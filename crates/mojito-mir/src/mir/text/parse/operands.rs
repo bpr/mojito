@@ -451,36 +451,6 @@ impl Decoder {
         })
     }
 
-    pub(super) fn iterator_call(&mut self, value: &Value) -> Option<CheckedIteratorCall> {
-        let fields = self.record(value, "iterator_call").ok()?;
-        let target = self.req(value, fields, "target", Self::symbol)?;
-        let result_ty = self.req(value, fields, "result_type", Self::ty)?;
-        let reference_result = self.req(value, fields, "reference_result", |d, v| {
-            Some(d.option_value(Some(v)).and_then(|v| d.ref_ty(v)))
-        })?;
-        let raises = self.req(value, fields, "raises", |d, v| Some(d.option_ty(Some(v))))?;
-        let result_adapter = self.req(value, fields, "result_adapter", |d, v| {
-            Some(d.option_value(Some(v)).and_then(|v| d.result_adapter(v)))
-        })?;
-        self.unknown(
-            fields,
-            &[
-                "target",
-                "result_type",
-                "reference_result",
-                "raises",
-                "result_adapter",
-            ],
-        );
-        Some(CheckedIteratorCall {
-            target,
-            result_ty,
-            reference_result,
-            raises,
-            result_adapter,
-        })
-    }
-
     pub(super) fn closure_captures(&mut self, value: &Value) -> Vec<MirClosureCapture> {
         let Ok(values) = self.list(value) else {
             return Vec::new();

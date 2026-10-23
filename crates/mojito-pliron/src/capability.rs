@@ -203,7 +203,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "call.method",
         CapabilityStatus::Partial,
-        "positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; reference-result adapters reject",
+        "positional and keyword contracts on compiled targets, the scalar `__floor__`/`__ceil__`/`__trunc__`/`__ceildiv__` intrinsics, the `Writer.write`/`write_to` display dispatches, and the String struct-to-literal bridge; a reference-returning `__next__`'s copy adapter copies the referent out by the `__copyinit__` it names, as a `for` loop's raising `__next__` call does",
     ),
     (
         "pointer.take",
@@ -429,11 +429,6 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "iter.next",
         CapabilityStatus::Partial,
         "compiler-private runtime-pack storage only: the homogeneous element at the cursor, advancing the shadow position; heterogeneous packs and untyped iterator slots reject",
-    ),
-    (
-        "iter.try_next",
-        CapabilityStatus::Partial,
-        "tagged-outcome `__next__(mut self)` with the statically typed StopIteration edge, including reference-yielding raising iterators (copy and `for ref` contracts); elements with user destructors reject",
     ),
 ];
 

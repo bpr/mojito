@@ -473,57 +473,45 @@ fn owned_iteration_iterator_has_a_slot_of_its_own() {
 }
 
 #[test]
-fn try_next_yield_is_bound_past_the_exhaustion_test() {
+fn raising_next_is_called_in_a_try_whose_handler_breaks() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
     let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");
     let main = mir_function(&program, "main");
     let element = nested_instructions(&main.blocks)
         .into_iter()
         .find_map(|instruction| match instruction {
-            MirInstr::TryNext { dest, .. } => Some(*dest),
+            MirInstr::MethodCall {
+                dest,
+                method,
+                raises: Some(_),
+                ..
+            } if method == "__next__" => Some(*dest),
             _ => None,
         })
-        .expect("typed TryNext");
-    let stepping = list_holding(&main.blocks, &|instruction| {
-        matches!(instruction, MirInstr::TryNext { .. })
-    })
-    .expect("the stepping region");
-    let instructions: Vec<_> = stepping.iter().flat_map(|block| &block.instrs).collect();
-    let position = |holds: &dyn Fn(&MirInstr) -> bool| {
-        instructions
-            .iter()
-            .position(|instruction| holds(instruction))
-            .unwrap_or_else(|| panic!("{main:#?}"))
-    };
-    // The element is bound past the `if` whose arm leaves the loop once the
-    // iterator is exhausted.
-    let step = position(&|instruction| matches!(instruction, MirInstr::TryNext { .. }));
-    let test = position(&|instruction| {
-        matches!(instruction, MirInstr::If { .. })
-            && mojito::mir::instruction_regions(instruction)
-                .into_iter()
-                .flatten()
-                .any(|block| matches!(block.term, MirTerm::Break { .. }))
-    });
-    let binding = position(
-        &|instruction| matches!(instruction, MirInstr::DefVar { src, .. } if *src == element),
+        .expect("raising `__next__` call");
+    let (body, handler) = nested_instructions(&main.blocks)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Try {
+                body,
+                handler: Some((None, handler)),
+                ..
+            } => Some((body, handler)),
+            _ => None,
+        })
+        .expect("the stepping `try`");
+    // The element is stored inside the `try`, whose handler leaves the loop
+    // once the iterator is exhausted.
+    assert!(
+        body.iter().flat_map(|block| &block.instrs).any(
+            |instruction| matches!(instruction, MirInstr::DefVar { src, .. } if *src == element)
+        ),
+        "{main:#?}"
     );
-    assert!(step < test && test < binding, "{main:#?}");
-}
-
-/// The block list of `blocks`, at any depth, holding an instruction
-/// `holds` accepts.
-fn list_holding<'a>(
-    blocks: &'a [MirBlock],
-    holds: &dyn Fn(&MirInstr) -> bool,
-) -> Option<&'a [MirBlock]> {
-    let instructions = blocks.iter().flat_map(|block| &block.instrs);
-    if instructions.clone().any(holds) {
-        return Some(blocks);
-    }
-    instructions
-        .flat_map(mojito::mir::instruction_regions)
-        .find_map(|region| list_holding(region, holds))
+    assert!(
+        matches!(handler[0].term, MirTerm::Break { .. }),
+        "{main:#?}"
+    );
 }
 
 #[test]
@@ -1386,39 +1374,35 @@ fn parameterized_implicit_receiver_copy_drops_the_source_place_metadata() {
 }
 
 #[test]
-fn raising_iterator_lowers_to_typed_try_next() {
+fn raising_iterator_lowers_to_a_typed_raising_next_call() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct I:\n    var current: Int\n    var end: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.current >= self.end:\n            raise StopIteration(0)\n        var result = self.current\n        self.current += 1\n        return result\n\n@fieldwise_init\nstruct C:\n    var end: Int\n    def __iter__(self) -> I:\n        return I(0, self.end)\n\ndef main():\n    for value in C(2):\n        print(value)\n";
     let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");
-    let main = program
-        .functions
-        .iter()
-        .find(|(name, _)| name == "main")
-        .map(|(_, function)| function)
-        .expect("main MIR");
-    let instructions: Vec<_> = nested_instructions(&main.blocks).into_iter().collect();
-    let (dest, call) = instructions
+    let main = mir_function(&program, "main");
+    let instructions = nested_instructions(&main.blocks);
+    let (dest, reference_result) = instructions
         .iter()
         .copied()
         .find_map(|instruction| match instruction {
-            MirInstr::TryNext {
+            MirInstr::MethodCall {
                 dest,
-                call,
-                exhaustion,
+                method,
+                raises: Some(raises),
+                reference_result,
                 ..
-            } if matches!(
-                exhaustion.kind(),
-                mojito::TyKind::Struct(name, arguments)
-                    if name == "StopIteration" && arguments.is_empty()
-            ) =>
+            } if method == "__next__"
+                && matches!(
+                    raises.ty.kind(),
+                    mojito::TyKind::Struct(name, arguments)
+                        if name == "StopIteration" && arguments.is_empty()
+                ) =>
             {
-                Some((dest, call))
+                Some((dest, reference_result))
             }
             _ => None,
         })
-        .expect("typed TryNext");
+        .expect("typed raising `__next__` call");
     assert_eq!(main.reg_types.get(&dest.0), Some(&Ty::int()));
-    assert_eq!(&call.result_ty, &Ty::int());
-    assert!(call.reference_result.is_none());
+    assert!(reference_result.is_none());
     assert!(!instructions.iter().any(|instruction| matches!(
         instruction,
         MirInstr::HasNext { .. } | MirInstr::Next { .. }
@@ -1426,35 +1410,32 @@ fn raising_iterator_lowers_to_typed_try_next() {
 }
 
 #[test]
-fn reference_yielding_try_next_retains_a_typed_reference_destination() {
+fn reference_yielding_next_call_retains_a_typed_reference_destination() {
     let source = "@fieldwise_init\nstruct StopIteration:\n    var marker: Int\n\n@fieldwise_init\nstruct RefIter[o: Origin[mut=False]]:\n    var source: ref[o] Int\n    var done: Bool\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.done:\n            raise StopIteration(0)\n        self.done = True\n        return self.source\n\n@fieldwise_init\nstruct RefSource:\n    var value: Int\n    def __iter__(ref self) -> RefIter[origin_of(self.value)]:\n        ref value = self.value\n        return RefIter(value, False)\n\ndef main():\n    var source = RefSource(42)\n    for item in source:\n        print(item)\n";
     let program = lower_program(&parse(source).expect("parse")).expect("checked lowering");
-    let main = &program
-        .functions
-        .iter()
-        .find(|(name, _)| name == "main")
-        .expect("main MIR")
-        .1;
-    let (dest, call) = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    let main = mir_function(&program, "main");
+    let (dest, reference_result) = nested_instructions(&main.blocks)
+        .into_iter()
         .find_map(|instruction| match instruction {
-            MirInstr::TryNext { dest, call, .. } => Some((dest, call)),
+            MirInstr::MethodCall {
+                dest,
+                method,
+                reference_result,
+                ..
+            } if method == "__next__" => Some((dest, reference_result)),
             _ => None,
         })
-        .expect("reference-yielding TryNext");
+        .expect("reference-yielding `__next__` call");
     let destination_ty = main
         .reg_types
         .get(&dest.0)
-        .expect("typed TryNext destination");
+        .expect("typed `__next__` destination");
     assert!(matches!(
         destination_ty.kind(),
         mojito::TyKind::Ref(reference) if reference.referent == mojito::TyKind::Int
     ));
-    assert_eq!(&call.result_ty, destination_ty);
     assert_eq!(
-        call.reference_result.as_ref(),
+        reference_result.as_deref(),
         match destination_ty.kind() {
             mojito::TyKind::Ref(reference) => Some(reference),
             _ => None,
@@ -1513,12 +1494,16 @@ fn abstract_next_calls_retain_the_copyable_reference_adapter() {
     let loop_adapter = nested_instructions(&first.blocks)
         .into_iter()
         .find_map(|instruction| match instruction {
-            MirInstr::TryNext { call, .. } => Some(call.result_adapter),
+            MirInstr::MethodCall {
+                resolved: Some(target),
+                result_adapter,
+                ..
+            } if target == "__iterator_dispatch.__next__" => Some(result_adapter),
             _ => None,
         })
         .expect("abstract iterator next call");
     assert_eq!(
-        loop_adapter,
+        loop_adapter.as_deref().map(|adapter| adapter.kind),
         Some(mojito::checked::CheckedResultAdapter::CopyIteratorReference)
     );
 }
@@ -3522,19 +3507,14 @@ fn reference_list_iteration_lowers_through_the_generic_protocol() {
         other => panic!("loop binding is a mutable reference, got {other:?}"),
     }
 
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = nested_instructions(&main.blocks);
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
-        MirInstr::TryNext { call, .. }
-            if call.target.contains("__next__")
-                && call
-                    .reference_result
-                    .as_ref()
-                    .is_some_and(|reference| reference.mutability == mojito::Mutability::Mutable)
+        MirInstr::MethodCall {
+            method,
+            reference_result: Some(reference),
+            ..
+        } if method == "__next__" && reference.mutability == mojito::Mutability::Mutable
     )));
     assert!(
         !main
