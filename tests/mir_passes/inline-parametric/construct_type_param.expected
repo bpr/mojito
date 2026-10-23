@@ -1,0 +1,87 @@
+  functions: [
+      fn {
+        name: make,
+        registers: 1,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(param { owner: "make", slot: 0, name: T, bounds: [Defaultable], callable_bound: absent }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: param { owner: "make", slot: 0, name: T, bounds: [Defaultable], callable_bound: absent } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 70, end: 73, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              type.construct { dest: %r0, owner: "make", slot: 0, param: T, kwargs: [], kwarg_places: [], element: absent }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: "Counter.__init__",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Counter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Counter, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(0) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r1 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: main,
+        registers: 4,
+        vars: 2,
+        var_names: [a, c],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Counter, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Counter, arguments: [] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: struct_type { name: Counter, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 203, end: 214, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 227, end: 242, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 203, end: 214, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 227, end: 242, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r2, value: int(0) }], terminator: break { label: present(loop4294967295), values: [%r2] } }] },
+              var.store { var: $v0, src: %r0, binding_type: present(Int), in_place: false },
+              drop.var { var: $v0 },
+              loop { results: [%r1], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [call { dest: %r3, func: Counter, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r3] } }] },
+              var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: Counter, arguments: [] }), in_place: false },
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]

@@ -1179,11 +1179,16 @@ default construction (`Ts[i]()`, `Self.Ts[i]()`) over a symbolic pack is
 the parameter's: the checker records `SemanticAdjustment::ConstructPackElement`
 and MIR lowers it as `ConstructTypeParam` with its `element` index (schema
 1.21), so one instruction constructs a parameter or a pack element. The
-elaborator's `default_construct_parameters` (`mono/substitute.rs`) writes
-every nullary construction whose type the bindings decide as that type's
-default construction — before unrolling for a parameter or a literal index,
-and in each unrolled copy for the loop's index — and a binding of the
-element under the loop takes the copy's own slot at its element type. A
+elaborator's `default_construct_parameters` (`mono/substitute.rs`) wraps
+`mir::construct_type_parameters` (`mojito-mir/src/mir/type_construction.rs`),
+which writes every construction whose type the bindings decide as that
+type's own — a nullary one as its default construction, `T(copy=x)` as the
+value copy or the struct's `copy=` call — before unrolling for a parameter
+or a literal index, and in each unrolled copy for the loop's index; a
+binding of the element under the loop takes the copy's own slot at its
+element type. `inline-parametric` runs the same rewrite on an inlined
+callee's body under the call's binding, so a construction of a bound
+binder is the bound type's own there too. A
 type parameter has no frame slot (`callable_parameter_locals`), as Mojo
 gives a type parameter no storage. A non-callable value binder's slot,
 interned at its first read by `Flatten::var`, is typed by the binder's
@@ -5671,7 +5676,8 @@ point where a slot declared in a loop is uninitialized again.
   the call for a value only the elaborator folds (a deferred or marker
   value), a type still
   naming a bound binder after substitution (`types::names_binder`, which
-  counts a pack query), a `T()` or `T(copy=x)` at a concrete `T` (R1097),
+  counts a pack query), a construction of a binder the binding leaves
+  open (a symbolic non-binder type, `Ts[i]()` under a loop binder, R445),
   a conformance test of a concrete binding (R1096), or a value binder's
   slot used other than as a read. A compile-time application over a bound
   type pack (`Tuple.reverse`'s `comptime for` bound, a thunk applied to

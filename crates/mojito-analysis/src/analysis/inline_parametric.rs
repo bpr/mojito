@@ -74,12 +74,15 @@
 //! elaborator unrolls in the caller. A compile-time application over a
 //! bound type pack (`Tuple.reverse`'s `comptime for` bound) is applied to
 //! the bound list, which the elaborator evaluates in the caller's
-//! instance. What still keeps the call: a value only the elaborator folds
-//! (a deferred or marker value), a type that still names a bound pack
-//! after substitution (a pack queried under a loop binder), and a binding
-//! the body's sites
-//! cannot hold (`T()` at a concrete `T`, R1097; a conformance test of a
-//! concrete binding, R1096).
+//! instance. A construction of a bound type binder (`T()`, `Ts[0]()`,
+//! `T(copy=x)`) is the bound type's own, as the elaborator writes it
+//! (`mir::construct_type_parameters`). What still keeps the call: a value
+//! only the elaborator folds (a deferred or marker value), a type that
+//! still names a bound pack after substitution (a pack queried under a
+//! loop binder), a construction the binding leaves open (`T()` at a
+//! symbolic non-binder type, `Ts[i]()` under a loop binder, R445), and a
+//! binding the body's sites cannot hold (a conformance test of a concrete
+//! binding, R1096).
 //!
 //! An owned parameter, or a `read` one of a type no destructor tears down,
 //! is a fresh slot the argument initializes, and so is a `read` one passed
@@ -154,10 +157,11 @@ use mojito_mir::mir::visit::{
     MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_function_mut,
 };
 use mojito_mir::mir::{
-    CleanupDrop, Const, FuncRef, LoopLabel, MirBlock, MirCaptureAccess, MirCaptureMode,
-    MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirPlace, MirSubscriptCall, MirTerm, Proj, Reg, RegionFrame, UseMode, callable_targets,
-    cleanup_slots, count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
+    CleanupDrop, Const, ConstructionTypes, FuncRef, LoopLabel, MirBlock, MirCaptureAccess,
+    MirCaptureMode, MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration,
+    MirInstr, MirParamArg, MirPlace, MirSubscriptCall, MirTerm, Proj, Reg, RegionFrame,
+    TypeConstructionError, UseMode, callable_targets, cleanup_slots, construct_type_parameters,
+    count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
     instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
     instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
     loop_continues_mut, lower_copies_and_moves, member_receiver_ty, name_constructors, region_exit,
@@ -2685,6 +2689,16 @@ fn instantiated<'c>(
     let mut instantiation = Instantiation::new(declaration, owner, arguments)?;
     let mut function = callee.clone();
     walk_function_mut(&mut instantiation, &mut function).ok()?;
+    construct_type_parameters(
+        &mut function.blocks,
+        &mut function.n_regs,
+        &mut function.reg_types,
+        &instantiation,
+    )
+    .ok()?;
+    if constructs_binder(&function.blocks, &instantiation.types) {
+        return None;
+    }
     let closures = instantiation.read_binders(&mut function)?;
     let mut blocks = std::mem::take(&mut function.blocks);
     fold_witnesses(&mut blocks, &function, declarations);
@@ -3323,22 +3337,17 @@ impl MutTypeVisitor for Instantiation {
         Ok(())
     }
 
-    /// A constructed type binder renames to the binder it is bound to; at a
-    /// concrete type its construction is the elaborator's to lower.
+    /// A constructed type binder renames to the binder it is bound to; at
+    /// any other binding the construction is the bound type's own, which
+    /// [`instantiated`] writes.
     fn visit_param_ref(&mut self, param: &mut ParamRef) -> Result<(), ParamError> {
-        if !self.types.contains(param) {
-            return Ok(());
+        if self.types.contains(param)
+            && let Some(TyKind::Param { binder, .. }) =
+                self.bindings.types().get(&param.id).map(Ty::kind)
+        {
+            *param = binder.clone();
         }
-        match self.bindings.types().get(&param.id).map(Ty::kind) {
-            Some(TyKind::Param { binder, .. }) => {
-                *param = binder.clone();
-                Ok(())
-            }
-            _ => Err(ParamError::Unsupported(format!(
-                "constructing `{}` at a concrete binding",
-                param.name
-            ))),
-        }
+        Ok(())
     }
 
     fn visit_constraint(&mut self, cond: &mut GenericConstraint) -> Result<(), ParamError> {
@@ -3352,6 +3361,37 @@ impl MutTypeVisitor for Instantiation {
     fn visit_sequence(&mut self, source: &mut ComptimeSequence) -> Result<(), ParamError> {
         *source = source.try_map_exprs(&mut |expr| self.context.replace(expr, &self.bindings))?;
         Ok(())
+    }
+}
+
+/// A construction of one of the callee's binders is the bound type's: the
+/// binding is already in the caller's terms, so a selected pack element
+/// closes as it is.
+impl ConstructionTypes for Instantiation {
+    type Error = TypeConstructionError;
+
+    fn bound(&self, param: &ParamRef) -> Option<&Ty> {
+        if !self.types.contains(param) {
+            return None;
+        }
+        self.bindings
+            .types()
+            .get(&param.id)
+            .filter(|ty| !matches!(ty.kind(), TyKind::Param { .. }))
+    }
+
+    fn element_index(&self, element: &MirParamArg) -> Option<usize> {
+        element
+            .expr
+            .as_ref()?
+            .as_constant()
+            .and_then(mojito_types::param_expr::fold::integer_value)?
+            .to_i64()
+            .and_then(|value| usize::try_from(value).ok())
+    }
+
+    fn close(&self, ty: &Ty) -> Result<Ty, TypeConstructionError> {
+        Ok(ty.clone())
     }
 }
 
@@ -3591,6 +3631,18 @@ fn passes_value_arguments(instruction: &MirInstr) -> bool {
         _ => false,
     }
 }
+
+/// Whether `blocks`, regions included, still construct one of `binders`:
+/// a construction the binding left open, which the caller cannot name.
+fn constructs_binder(blocks: &[MirBlock], binders: &[ParamRef]) -> bool {
+    blocks.iter().flat_map(|block| &block.instrs).any(|instruction| {
+        matches!(instruction, MirInstr::ConstructTypeParam { param, .. } if binders.contains(param))
+            || instruction_regions(instruction)
+                .into_iter()
+                .any(|region| constructs_binder(region, binders))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

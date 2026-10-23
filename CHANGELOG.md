@@ -635,6 +635,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `nodebug` callee constructing its type binder (`T()`, `Ts[0]()`,
+  `T(copy=x)`) now inlines at a concrete binding (R1097): the inlined body
+  holds the bound type's own construction, a scalar's zero, a vector's
+  zero splat, a struct's initializer call, or the copy, so `make[Int]()`,
+  `dup(s)`, and `dup(7)` leave no `make` or `dup` call in `main`
+  (`assets/ok/always_inline_nodebug_type_construction.mojo`). The rewrite
+  moved from the elaborator into `mir::construct_type_parameters`, which
+  the elaborator and `inline-parametric` both run; a construction the
+  binding leaves open, such as `Ts[i]()` under a loop binder, keeps the
+  call (R445).
 - A call through a trait bound that `inline-parametric` inlines at a
   concrete struct now names the member the struct's conformance witnesses
   rather than the abstract dispatch (R1052): the checker records each

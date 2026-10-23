@@ -36,7 +36,7 @@ disappear. Four such gaps remain, and one of them reaches far outside
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
 | A. Raises are implicit | every raise point ends a region | R906, R831, R20, R884 | R1264, R1106, R1272, R1113, R832, R833, R733, R956, R890, likely R829 |
-| B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 | R1029, R1097 (copy half), R1021, R1075 |
+| B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 | R1029, R1283, R1021, R1075 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102 | R1103, R1070, R1073, R1090 |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931 | R1252, R932, R832, R1267 |
 
@@ -91,7 +91,9 @@ entry's probe is "one instance per `n` where the pin has one".
   `__init__` does.
 - Together they remove both paths still reaching R1029's by-arity arms (a
   fieldwise struct with no `__init__`, and `T(copy=x)`). That leaves
-  R1029 a deletion and R1097's copy half a plain call rewrite.
+  R1029 a deletion. R1097 moved `T()`/`T(copy=x)` into the shared
+  `mir::construct_type_parameters`; R1283 makes its struct arm name the
+  witnessed constructor rather than the struct.
 - R1052 records each conformance's witness table on the declaration, so
   substitution folds a trait dispatch to the member. It covers operators,
   subscripts, and iterator steps through a bound as well, not only
@@ -128,11 +130,11 @@ entry's probe is "one instance per `n` where the pin has one".
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1049 --only R1050 --only R1052 -n 0
    ```
 
-   Then R1029 and R1097, which carry no Depends bullets, so run them only
+   Then R1029 and R1283, which carry no Depends bullets, so run them only
    after the three above:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1029 --only R1097 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1029 --only R1283 -n 0
    ```
 
    Then R988 → R1021 → R1075 (R1021 also waits on R1052):
@@ -176,14 +178,13 @@ entry's probe is "one instance per `n` where the pin has one".
 
 None of these unblocks another entry. Run them whenever they are useful.
 
-- **Generator size and inlining reach**, for the measure: R1096, R1097,
+- **Generator size and inlining reach**, for the measure: R1096,
   R1098 (lets the third round inline through a known callee), R1099,
   R1105, R1076, R1110, R1268. R1271 (`AutomaticInline`) is the largest
-  but shrinks only concrete code, not instance counts. R1097 is also in
-  step 1; leave it out here if that step ran.
+  but shrinks only concrete code, not instance counts.
 
   ```sh
-  scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1096 --only R1097 --only R1098 --only R1099 \
+  scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1096 --only R1098 --only R1099 \
     --only R1105 --only R1076 --only R1110 --only R1268 --only R1271 -n 0
   ```
 

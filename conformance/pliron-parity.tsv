@@ -19,6 +19,7 @@ assets/ok/always_inline_nodebug_nested_calls.mojo	main	exe-differential	sanitize
 assets/ok/always_inline_nodebug_reference_results.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_nodebug_struct_calls.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_nodebug_tuple_members.mojo	main	exe-differential	sanitized
+assets/ok/always_inline_nodebug_type_construction.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_result_runs_no_move.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_small_calls.mojo	main	exe-differential	sanitized
 assets/ok/arithmetic.mojo	main	exe-differential	sanitized

@@ -19,6 +19,7 @@ assets/ok/always_inline_nodebug_nested_calls.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/always_inline_nodebug_reference_results.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_struct_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_tuple_members.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/always_inline_nodebug_type_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_result_runs_no_move.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_small_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/arithmetic.mojo	-	ineligible	no-scalar-entry-shape

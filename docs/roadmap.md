@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1283**.
+Next free ID: **R1284**.
 
 ## Ordered Work
 
@@ -333,28 +333,32 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R1097 `T()` and `T(copy=x)` at a concrete binding keep their call
-  inlined**
+- [ ] **R1283 `T()` and `T(copy=x)` at a struct call the struct by name,
+  not its constructor**
 
-  `type_param.construct` is rewritten only by the elaborator
-  (`mono/substitute.rs`: `default_construct_parameters`,
-  `construct_type_parameter`), private to `mojito-native`, so a `nodebug`
-  callee constructing its type binder (`make[Int]()` over `return T()`,
-  `dup(s)` over `return T(copy=x)`) keeps the call.
-  - Both rewrites need only the binder's bound type: the scalar zeros, the
-    `MakeSimd` splat, a struct's plain call of the struct, and
-    `builtin_copy_is_value_read` or a `copy=` call of the struct.
-  - The lever: `mir::construct_type_parameters(blocks, resolve)` in a new
-    `crates/mojito-mir/src/mir/type_construction.rs`, the elaborator's two
-    functions becoming wrappers that map its error into `MonoError`, and
-    `Instantiation::visit_param_ref` leaving a concrete binding in place
-    for `instantiated` to run the rewrite.
-  - Done when `make[Int]()` prints `0` and `dup(s)`, `dup(7)` print
-    `ab 7` with no `make` or `dup` call in `main`, pinned by pass tests
-    `construct_type_param.mir` and `copy_type_param.mir`, and
-    `assets/ok/always_inline_nodebug_generic_calls.mojo` prints as before.
+  `mir::construct_type_parameters` writes a struct binding's construction
+  as a call naming the struct (`call Counter`, `call Counter(copy=c)`),
+  which the elaborator resolves to an `__init__` overload by arity and the
+  backends' copy path by lookup, where upstream's substitution folds the
+  `Defaultable`/`Copyable` witness to the member symbol.
+  - The lever: the checker records a `Defaultable` witness table naming
+    the nullary `__init__` overload, which `compiler_trait_witness_table`
+    (`checker/traits.rs`) cannot match today because it requires one
+    `Self` parameter; the copy arm names the member table's
+    `__copyinit__`.
+  - Both calls pass the struct's arguments as `instantiated_args`, as a
+    direct `S()` / `S(copy=x)` lowers.
+  - A struct with no `__copyinit__` member (a trivial synthesized copy)
+    copies by `value.copy`, which fixes R724's `T(copy=x)` half.
+  - This removes the type-parameter route into R1029's by-arity arms.
+  - Probe: `tests/mir_passes/inline-parametric/construct_type_param.mir`
+    and `copy_type_param.mir` show `call Counter`; done when they name
+    `Counter.__init__` and `Counter.__copyinit__`, and
+    `assets/ok/always_inline_nodebug_type_construction.mojo` prints as
+    before.
+  - Found while landing R1097 (2026-10-22).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1098 `canonicalize` keeps a `call.indirect` whose callee is a
   function constant**
@@ -10098,6 +10102,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     name, so the fold waits for the erased oracle's removal.
   - `T(copy=x)` keeps its own form, or becomes a selected `Copyable`
     initializer call.
+  - Probe: `inline-parametric` keeps an `each[Int, Bool]()` call over
+    `comptime for i in range(len(Ts)): print(Ts[i]())`: the inlined
+    `Ts[i]()` would name the callee's pack binder, which the caller does
+    not declare, though substitution already closes its result type to
+    the bound list's element at `i`, which a `ConstructType` would carry.
   - Found while landing R364 (2026-10-07).
   - Depends on R10, which deletes the erased oracle's reification.
   - Model: Opus, Not Planned.

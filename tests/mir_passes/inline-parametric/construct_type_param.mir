@@ -1,0 +1,103 @@
+mojito-mir 1.89
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("construct.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: Counter, fields: [field { name: n, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Defaultable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: "Counter.__init__", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(out), param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: main, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: make, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "make", slot: 0, name: T, bounds: [Defaultable], trait_param: absent, callable_bound: absent, default: absent, infer_only: false, variadic: false, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: param { owner: "make", slot: 0, name: T, bounds: [Defaultable], callable_bound: absent }, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug }
+  ],
+  functions: [
+      fn {
+        name: make,
+        registers: 1,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(param { owner: "make", slot: 0, name: T, bounds: [Defaultable], callable_bound: absent }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: param { owner: "make", slot: 0, name: T, bounds: [Defaultable], callable_bound: absent } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 70, end: 73, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              type.construct { dest: %r0, owner: "make", slot: 0, param: T, kwargs: [], kwarg_places: [], element: absent }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: "Counter.__init__",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Counter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Counter, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 175, end: 176, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(0) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r1 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: main,
+        registers: 2,
+        vars: 2,
+        var_names: [a, c],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: Counter, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: Counter, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 203, end: 214, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 227, end: 242, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              call { dest: %r0, func: make, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(Int)], spread: absent },
+              var.store { var: $v0, src: %r0, binding_type: present(Int), in_place: true },
+              drop.var { var: $v0 },
+              call { dest: %r1, func: make, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [type_arg(struct_type { name: Counter, arguments: [] })], spread: absent },
+              var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: Counter, arguments: [] }), in_place: true },
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]
+}

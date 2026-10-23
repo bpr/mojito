@@ -289,6 +289,16 @@ impl std::fmt::Display for MonoError {
 
 impl std::error::Error for MonoError {}
 
+impl From<mojito_mir::mir::TypeConstructionError> for MonoError {
+    fn from(error: mojito_mir::mir::TypeConstructionError) -> Self {
+        Self {
+            kind: MonoErrorKind::Unsupported,
+            function: None,
+            construct: error.to_string(),
+        }
+    }
+}
+
 /// Specialize the graph reachable from `entries` without modifying `program`.
 ///
 /// `target` is the native target the elaboration answers layout queries

@@ -39,53 +39,17 @@ impl<'a> ConstructionDecls<'_, 'a> {
     }
 }
 
-/// Rewrite each nullary `T()`, `Ts[i]()`, or construction of a type
-/// expression (`types[i]()` over a reflected field-type list) whose
-/// constructed type these bindings decide into that type's default
-/// construction ([`default_construction`]). A construction they leave open
-/// — an element whose `comptime for` index is not yet unrolled — stays for
-/// the copy that binds it.
+/// Rewrite the type constructions these bindings decide into the bound
+/// type's own ([`mojito_mir::mir::construct_type_parameters`]). A
+/// construction they leave open — an element whose `comptime for` index is
+/// not yet unrolled — stays for the copy that binds it.
 pub(super) fn default_construct_parameters(
     blocks: &mut [MirBlock],
     n_regs: &mut u32,
     reg_types: &mut HashMap<u32, Ty>,
     bindings: &Bindings,
 ) -> Result<(), MonoError> {
-    for block in blocks {
-        let mut index = 0;
-        while index < block.instrs.len() {
-            let constructed = match &mut block.instrs[index] {
-                MirInstr::ConstructTypeParam {
-                    dest,
-                    param,
-                    kwargs,
-                    element,
-                    ..
-                } if kwargs.is_empty() => {
-                    constructed_type(param, element.as_ref(), bindings)?.map(|ty| (*dest, ty))
-                }
-                MirInstr::ConstructType { dest, ty } => substitute_ty(ty, bindings)
-                    .ok()
-                    .filter(|ty| !mojito_types::types::is_symbolic(ty))
-                    .map(|ty| (*dest, ty)),
-                instruction => {
-                    for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                        default_construct_parameters(region, n_regs, reg_types, bindings)?;
-                    }
-                    None
-                }
-            };
-            let Some((dest, ty)) = constructed else {
-                index += 1;
-                continue;
-            };
-            let built = default_construction(dest, &ty, n_regs, reg_types)?;
-            let count = built.len();
-            block.instrs.splice(index..=index, built);
-            index += count;
-        }
-    }
-    Ok(())
+    mojito_mir::mir::construct_type_parameters(blocks, n_regs, reg_types, bindings)
 }
 
 /// Substitute `bindings` through `function`, whose declaration declares the
@@ -122,8 +86,8 @@ pub(super) fn substitute_function(
 /// Rewrite each dispatched `copy()` whose receiver this instance makes a
 /// built-in with a value-read copy into that value copy. `Copyable.copy` is
 /// `Self(copy=self)`, so at such a `Self` it is the [`MirInstr::CopyValue`]
-/// [`construct_type_parameter`] writes for `T(copy=x)`. The copy is no
-/// call, so a binding of its result is no longer in place.
+/// [`mojito_mir::mir::construct_type_parameters`] writes for `T(copy=x)`.
+/// The copy is no call, so a binding of its result is no longer in place.
 pub(super) fn copy_builtin_receivers(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>) {
     for block in blocks {
         let mut copied = HashSet::new();
@@ -1004,7 +968,7 @@ impl MutTypeVisitor for Substitution<'_> {
     }
 
     fn visit_instruction(&mut self, instruction: &mut MirInstr) -> Result<(), MonoError> {
-        construct_type_parameter(instruction, self.bindings)?;
+        reject_unconstructed(instruction)?;
         walk_instruction_mut(self, instruction)?;
         // A type name is spelled from the instance's type; a type the
         // bindings leave symbolic stays for the verifier's concrete mode.
@@ -1022,93 +986,68 @@ impl MutTypeVisitor for Substitution<'_> {
     }
 }
 
-/// Rewrite a construction of a type parameter the bindings bind.
-///
-/// `T(copy=x)` copies its source through the bound type's copy initializer:
-/// a built-in value copies by the value read, a struct by the ordinary
-/// `Name(copy=x)` construction, which the call rewriting then instantiates.
-/// Every nullary construction the bindings decide was written as its type's
-/// default construction (`default_construct_parameters`), so one left is an
-/// error.
-fn construct_type_parameter(
-    instruction: &mut MirInstr,
-    bindings: &Bindings,
-) -> Result<(), MonoError> {
+/// The elaborator's bindings decide a construction as its instance's
+/// substitution does: a pack element's index evaluates under them, and a
+/// selected element closes through them.
+impl mojito_mir::mir::ConstructionTypes for Bindings {
+    type Error = MonoError;
+
+    fn bound(&self, param: &ParamRef) -> Option<&Ty> {
+        self.types.get(param)
+    }
+
+    fn element_index(&self, element: &MirParamArg) -> Option<usize> {
+        element
+            .expr
+            .as_ref()
+            .and_then(|expr| eval_ct(expr, self).ok())
+            .as_ref()
+            .and_then(mojito_types::param_expr::fold::integer_value)
+            .and_then(|value| value.to_i64())
+            .and_then(|value| usize::try_from(value).ok())
+    }
+
+    fn close(&self, ty: &Ty) -> Result<Ty, MonoError> {
+        substitute_ty(ty, self)
+    }
+}
+
+/// Reject a construction of a type parameter the instance left: every
+/// construction its bindings decide was written as the bound type's own
+/// before substitution ([`default_construct_parameters`]).
+fn reject_unconstructed(instruction: &MirInstr) -> Result<(), MonoError> {
     let MirInstr::ConstructTypeParam {
-        dest,
         param,
         kwargs,
-        kwarg_places,
         element,
+        ..
     } = instruction
     else {
         return Ok(());
     };
-    if kwargs.is_empty() {
-        return Err(MonoError {
-            kind: MonoErrorKind::Unsupported,
-            function: None,
-            construct: match element {
-                Some(_) => format!(
-                    "constructing an element of pack `{}` at an index the instance does not decide",
-                    param.name
-                ),
-                None => format!(
-                    "constructing type parameter `{}` without a concrete binding",
-                    param.name
-                ),
-            },
-        });
-    }
-    let source = match kwargs.as_slice() {
-        [(keyword, source)] if keyword == "copy" => *source,
-        _ => {
-            return Err(MonoError {
-                kind: MonoErrorKind::Unsupported,
-                function: None,
-                construct: format!(
-                    "constructing type parameter `{}` through an initializer other than `copy=`",
-                    param.name
-                ),
-            });
-        }
+    let construct = match (kwargs.as_slice(), element) {
+        ([], Some(_)) => format!(
+            "constructing an element of pack `{}` at an index the instance does not decide",
+            param.name
+        ),
+        ([], None) => format!(
+            "constructing type parameter `{}` without a concrete binding",
+            param.name
+        ),
+        ([(keyword, _)], _) if keyword == "copy" => format!(
+            "copying through type parameter `{}` without a concrete binding",
+            param.name
+        ),
+        _ => format!(
+            "constructing type parameter `{}` through an initializer other than `copy=`",
+            param.name
+        ),
     };
-    match bindings.types.get(&*param).map(Ty::kind) {
-        Some(ty) if mojito_types::types::builtin_copy_is_value_read(ty) => {
-            *instruction = MirInstr::CopyValue {
-                dest: *dest,
-                value: source,
-                constructor: None,
-            };
-        }
-        Some(TyKind::Struct(struct_name, _)) => {
-            *instruction = MirInstr::Call {
-                dest: *dest,
-                func: mojito_mir::mir::FuncRef::named(struct_name),
-                raises: None,
-                args: Vec::new(),
-                kwargs: std::mem::take(kwargs),
-                arg_places: Vec::new(),
-                kwarg_places: std::mem::take(kwarg_places),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                receiver: None,
-                instantiated_args: Vec::new(),
-                spread: None,
-            };
-        }
-        _ => {
-            return Err(MonoError {
-                kind: MonoErrorKind::Unsupported,
-                function: None,
-                construct: format!(
-                    "copying through type parameter `{}` without a concrete binding",
-                    param.name
-                ),
-            });
-        }
-    }
-    Ok(())
+    Err(MonoError {
+        kind: MonoErrorKind::Unsupported,
+        function: None,
+        construct,
+    })
 }
 
 /// Close a template's `_get_type_index[T, *Ts]()` once the instance binds
@@ -1215,138 +1154,6 @@ fn declared_associated_type(
     }
     let template = mojito_types::types::substitute_origin_params(&member.template, &origins);
     substitute_ty(&template, &member_bindings).map(Some)
-}
-
-/// The type a nullary construction builds under `bindings`: the binder's
-/// own binding, or for `Ts[i]()` the element its evaluated index selects
-/// from the pack's. `None` while either is still symbolic.
-fn constructed_type(
-    param: &ParamRef,
-    element: Option<&mojito_mir::mir::MirParamArg>,
-    bindings: &Bindings,
-) -> Result<Option<Ty>, MonoError> {
-    let Some(bound) = bindings.types.get(param) else {
-        return Ok(None);
-    };
-    let Some(element) = element else {
-        return Ok((!mojito_types::types::is_symbolic(bound)).then(|| bound.clone()));
-    };
-    let TyKind::RuntimePack(elements) = bound.kind() else {
-        return Err(MonoError {
-            kind: MonoErrorKind::Unsupported,
-            function: None,
-            construct: format!(
-                "pack `{}` is bound to the non-pack type `{bound}`",
-                param.name
-            ),
-        });
-    };
-    let Some(index) = element
-        .expr
-        .as_ref()
-        .and_then(|expr| eval_ct(expr, bindings).ok())
-        .as_ref()
-        .and_then(mojito_types::param_expr::fold::integer_value)
-        .and_then(|value| value.to_i64())
-        .and_then(|value| usize::try_from(value).ok())
-    else {
-        return Ok(None);
-    };
-    let chosen = elements.get(index).ok_or_else(|| MonoError {
-        kind: MonoErrorKind::Unsupported,
-        function: None,
-        construct: format!(
-            "element {index} of pack `{}` is out of range for its {} elements",
-            param.name,
-            elements.len()
-        ),
-    })?;
-    substitute_ty(chosen, bindings).map(Some)
-}
-
-/// The default construction of the concrete `ty` into `dest`: a scalar's
-/// zero value (the VM's `ConstructTypeParam` answer for the built-in
-/// `Defaultable` types); a SIMD type's zero vector, a splat of one zero lane
-/// held in a fresh register, as `Defaultable` admits every SIMD value and a
-/// single instruction cannot spell the splat; or a struct's nullary
-/// constructor call, which the call rewriting then instantiates.
-fn default_construction(
-    dest: Reg,
-    ty: &Ty,
-    n_regs: &mut u32,
-    reg_types: &mut HashMap<u32, Ty>,
-) -> Result<Vec<MirInstr>, MonoError> {
-    use mojito_ast::ast::Dtype;
-    use mojito_mir::mir::Const;
-    let zero = match ty.kind() {
-        TyKind::Int | TyKind::IntLiteral | TyKind::UInt => Some(Const::Int(0)),
-        TyKind::Bool => Some(Const::Bool(false)),
-        TyKind::Float64 | TyKind::FloatLiteral => Some(Const::Float(0.0)),
-        TyKind::StringLiteral => Some(Const::Str(String::new())),
-        TyKind::None => Some(Const::None),
-        _ => None,
-    };
-    if let Some(k) = zero {
-        return Ok(vec![MirInstr::Const { dest, k }]);
-    }
-    match ty.kind() {
-        TyKind::Simd { dtype, width } => {
-            let (Some(dtype), Some(width)) = (dtype.known(), width.known()) else {
-                return Err(MonoError {
-                    kind: MonoErrorKind::Unsupported,
-                    function: None,
-                    construct: format!("default-constructing the open vector type `{ty}`"),
-                });
-            };
-            let (zero, lane_ty) = match dtype {
-                Dtype::Bool => (Const::Bool(false), Ty::bool()),
-                Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {
-                    (Const::Float(0.0), Ty::float64())
-                }
-                _ => (Const::Int(0), Ty::int()),
-            };
-            let lane = Reg(*n_regs);
-            *n_regs += 1;
-            reg_types.insert(lane.0, lane_ty);
-            Ok(vec![
-                MirInstr::Const {
-                    dest: lane,
-                    k: zero,
-                },
-                MirInstr::MakeSimd {
-                    dest,
-                    dtype: SimdDtype::Known(dtype),
-                    width: SimdWidth::Known(width),
-                    elems: vec![lane],
-                },
-            ])
-        }
-        TyKind::Struct(struct_name, _) => Ok(vec![plain_call(dest, struct_name, Vec::new())]),
-        _ => Err(MonoError {
-            kind: MonoErrorKind::Unsupported,
-            function: None,
-            construct: format!("default-constructing `{ty}`, which is no struct"),
-        }),
-    }
-}
-
-/// A call of `func` over the positional `args`, with nothing else bound,
-/// which the call rewriting then resolves and instantiates.
-fn plain_call(dest: Reg, func: &str, args: Vec<Reg>) -> MirInstr {
-    MirInstr::Call {
-        dest,
-        func: mojito_mir::mir::FuncRef::named(func),
-        raises: None,
-        arg_places: vec![None; args.len()],
-        args,
-        kwargs: Vec::new(),
-        kwarg_places: Vec::new(),
-        capture_accesses: Vec::new(),
-        param_arg_regs: Vec::new(),
-        receiver: None,
-        instantiated_args: Vec::new(),
-        spread: None,
-    }
 }
 
 /// Construct each part of a parameter value at its type into a fresh

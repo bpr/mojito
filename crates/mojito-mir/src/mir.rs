@@ -91,6 +91,8 @@ pub use struct_reads::{
 };
 mod symbols;
 pub use symbols::{SymbolTable, implicit_callees, replace_symbol_uses};
+mod type_construction;
+pub use type_construction::{ConstructionTypes, TypeConstructionError, construct_type_parameters};
 mod unused_args;
 pub use unused_args::{
     erase_removed_operands, removed_argument_operands, unused_arguments, used_slots,
