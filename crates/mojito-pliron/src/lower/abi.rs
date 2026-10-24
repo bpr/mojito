@@ -7,9 +7,9 @@ use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// The bound operand value of one argument at its expected lowered type.
-    /// A consuming (`owned`) parameter takes ownership — an owned temporary
-    /// passed there transfers to the callee, which destroys it, so a register
-    /// that merely aliases a variable's storage can never reach one.
+    /// A consuming (`owned`) parameter takes ownership — the register passed
+    /// there transfers to the callee, which destroys it, so a register that
+    /// merely aliases a variable's storage can never reach one.
     pub(super) fn arg_value(
         &mut self,
         ctx: &mut Context,
@@ -18,13 +18,8 @@ impl FnLowering<'_> {
         owned: bool,
         dest: Reg,
     ) -> Result<Value, PlironError> {
-        if owned {
-            if self.aliased_load_regs.contains(&reg.0) {
-                return Err(
-                    self.unsupported_reg("owning use of a place-aliased register".into(), dest)
-                );
-            }
-            self.owned_temps.remove(&reg.0);
+        if owned && self.aliased_load_regs.contains(&reg.0) {
+            return Err(self.unsupported_reg("owning use of a place-aliased register".into(), dest));
         }
         match expected {
             LowerTy::Scalar(scalar) => self.reg_value(ctx, reg, *scalar),
@@ -61,7 +56,7 @@ impl FnLowering<'_> {
                             Some(TyKind::StringLiteral)
                         ))
                 {
-                    return self.materialize_string_argument(ctx, reg, ty, owned, dest);
+                    return self.materialize_string_argument(ctx, reg, owned, dest);
                 }
                 self.reg_ptr(ctx, reg)
             }
@@ -122,28 +117,27 @@ impl FnLowering<'_> {
         Ok(storage)
     }
 
-    /// Materialize a literal-shaped register as an owned nominal String for
-    /// a String-typed parameter slot. The register's storage becomes the
+    /// Materialize a literal-shaped register as a nominal String for a
+    /// String-typed parameter slot. The register's storage becomes the
     /// materialized struct (its first 16 bytes still read as the literal
-    /// descriptor); a borrowed materialization is released after the
-    /// register's last use, an owned one transfers to the callee.
+    /// descriptor): an owned parameter takes a fresh copy of the bytes,
+    /// which the callee destroys, and a borrowed one views them in place.
     pub(super) fn materialize_string_argument(
         &mut self,
         ctx: &mut Context,
         reg: Reg,
-        string_ty: &Ty,
         owned: bool,
         dest: Reg,
     ) -> Result<Value, PlironError> {
-        let (data, len) = self.writer_argument_text(ctx, reg, dest)?;
-        let copy = self.emit_alloc(ctx, len, 1, dest);
-        self.mem_copy_dynamic(ctx, copy, data, len, dest);
-        let storage = self.entry_alloca(ctx, 24, 8);
-        self.store_string_fields(ctx, storage, copy, len, len, dest);
-        self.cache_lazy(reg, storage);
-        if !owned {
-            self.mark_owned_temp(reg, string_ty.clone())?;
+        let (mut data, len) = self.writer_argument_text(ctx, reg, dest)?;
+        if owned {
+            let copy = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, copy, data, len, dest);
+            data = copy;
         }
+        let storage = self.entry_alloca(ctx, 24, 8);
+        self.store_string_fields(ctx, storage, data, len, len, dest);
+        self.cache_lazy(reg, storage);
         Ok(storage)
     }
 
@@ -217,7 +211,7 @@ impl FnLowering<'_> {
         mut operands: Vec<Value>,
     ) -> Result<(), PlironError> {
         if let Some(outcome) = outcome {
-            return self.emit_raising_call(ctx, dest, callable, func_ty, outcome, operands);
+            return self.emit_raising_call(ctx, dest, callable, func_ty, &outcome, operands);
         }
         if let Some(layout) = sret {
             let storage = self.entry_alloca(ctx, layout.size, layout.align);
@@ -225,13 +219,6 @@ impl FnLowering<'_> {
             let call = CallOp::new(ctx, callable, func_ty, operands);
             self.append(ctx, call.get_operation(), Some(dest));
             self.reg_values.insert(dest.0, storage);
-            // The callee's return transferred ownership here; a discarded or
-            // borrowed-only aggregate result is an owned temporary.
-            if let Some(ty) = self.func.reg_types.get(&dest.0).cloned()
-                && ((self.owns_heap(&ty) && self.releasable(&ty)) || self.stdlib_deinit_temp(&ty))
-            {
-                self.mark_owned_temp(dest, ty)?;
-            }
             Ok(())
         } else {
             let call = CallOp::new(ctx, callable, func_ty, operands);
@@ -259,7 +246,7 @@ impl FnLowering<'_> {
         dest: Reg,
         callable: CallOpCallable,
         func_ty: TypedHandle<FuncType>,
-        outcome: OutcomeAbi,
+        outcome: &OutcomeAbi,
         mut operands: Vec<Value>,
     ) -> Result<(), PlironError> {
         // A reference-yielding raising callee's ok payload is the place
@@ -311,14 +298,9 @@ impl FnLowering<'_> {
                 let load = LoadOp::new(ctx, address, handle);
                 self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
             }
-            LowerTy::Aggregate { ty, .. } => {
+            LowerTy::Aggregate { .. } => {
                 let address = self.offset_address(ctx, storage, outcome.ok_offset);
                 self.reg_values.insert(dest.0, address);
-                // The ok payload transferred ownership here, like an sret
-                // result.
-                if (self.owns_heap(&ty) && self.releasable(&ty)) || self.stdlib_deinit_temp(&ty) {
-                    self.mark_owned_temp(dest, ty)?;
-                }
                 Ok(())
             }
             LowerTy::ZeroSized => {
@@ -417,22 +399,8 @@ impl FnLowering<'_> {
             }
             LowerTy::Aggregate { ty, layout } => {
                 let ptr = self.reg_ptr(ctx, src)?;
-                // Owned string bytes cannot enter literal-typed storage:
-                // the literal value model is drop-inert, so the buffer would
-                // lose its releasing owner (the recorded literal-ownership
-                // gap behind the struct-to-literal bridge rejection).
-                if matches!(*ty.kind(), TyKind::StringLiteral)
-                    && self.owned_temps.contains_key(&src.0)
-                {
-                    return Err(self.unsupported(
-                        "owned string bytes entering drop-inert literal storage".into(),
-                        self.reg_span(src),
-                    ));
-                }
-                // An owned temporary transfers into the designated storage;
-                // any other source is stored as the VM stores it, the MIR
-                // having copied it first wherever the storage owns it.
-                self.owned_temps.remove(&src.0);
+                // The source is stored as the VM stores it, the MIR having
+                // copied it first wherever the storage owns it.
                 self.copy_value(ctx, address, ptr, &ty, layout, src);
                 Ok(())
             }

@@ -109,15 +109,13 @@ impl<'a> FnLowering<'a> {
     /// a register, at the storage it addresses, as [`Self::lower_drop_var`]
     /// destroys a slot's. `lower_drops` has lowered a named one to its
     /// destructor's call, so the value's type usually has none and its
-    /// fields drop by their types. The register is no owned temporary of
-    /// Pliron's own from here.
+    /// fields drop by their types.
     pub(super) fn lower_drop_reg(
         &mut self,
         ctx: &mut Context,
         reg: Reg,
         destructor: Option<&str>,
     ) -> Result<(), PlironError> {
-        self.owned_temps.remove(&reg.0);
         let Some(ty) = self.func.reg_types.get(&reg.0).cloned() else {
             return Err(self.unsupported_reg(format!("untyped register %r{}", reg.0), reg));
         };

@@ -143,8 +143,6 @@ impl FnLowering<'_> {
         };
         self.str_runtime.remove(&dest.0);
         self.str_consts.remove(&dest.0);
-        self.owned_temps.remove(&dest.0);
-        self.temp_releases.remove(&dest.0);
         let layout = self.layout.mj_string();
         let storage = self.entry_alloca(ctx, layout.size, layout.align);
         self.store_string_fields(ctx, storage, data, len, len, dest);
@@ -176,7 +174,8 @@ impl FnLowering<'_> {
         {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
-            return self.borrow_or_adopt_string(ctx, arg, dest, data, len);
+            self.borrow_or_adopt_string(ctx, arg, dest, data, len);
+            return Ok(());
         }
         // An error value converts to its bare message (the VM's
         // `format_value` over `Value::Error`), borrowed from the error.
@@ -186,7 +185,8 @@ impl FnLowering<'_> {
         ) {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
-            return self.borrow_or_adopt_string(ctx, arg, dest, data, len);
+            self.borrow_or_adopt_string(ctx, arg, dest, data, len);
+            return Ok(());
         }
         // A runtime StringLiteral value reads back as a borrowed string.
         if matches!(
@@ -196,7 +196,8 @@ impl FnLowering<'_> {
         {
             let ptr = self.reg_ptr(ctx, arg)?;
             let (data, len) = self.string_parts(ctx, ptr, dest);
-            return self.borrow_or_adopt_string(ctx, arg, dest, data, len);
+            self.borrow_or_adopt_string(ctx, arg, dest, data, len);
+            return Ok(());
         }
         // A nominal struct converts through its `write_to` conformance over
         // a fresh accumulator — the VM's `format_value` struct arm. The
@@ -221,7 +222,6 @@ impl FnLowering<'_> {
             // The accumulator alloca is exactly the 16-byte `MjStrDesc`
             // StringLiteral storage; aggregate consumers read it directly.
             self.reg_values.insert(dest.0, writer);
-            self.mark_owned_temp(dest, Ty::string_literal())?;
             return Ok(());
         }
         let ty = match self.concrete_scalar_ty(arg)? {
@@ -253,16 +253,12 @@ impl FnLowering<'_> {
                 owned: true,
             },
         );
-        self.mark_owned_temp(dest, Ty::string_literal())?;
         Ok(())
     }
 
     /// Record `dest` as the `(data, len)` string the `String(arg)` builtin
-    /// reads out of `arg`. A borrowed descriptor aliases `arg`'s buffer, so
-    /// when `arg` is an owned register temporary — released right after this
-    /// instruction, its final use — the buffer transfers to `dest` instead
-    /// (owned, moved into a nominal result by [`Self::own_string_result`], or
-    /// released after `dest`'s own final use).
+    /// reads out of `arg`: a borrowed descriptor aliasing `arg`'s buffer,
+    /// which [`Self::own_string_result`] copies into the nominal result.
     ///
     /// A register that aliases a *place*, or snapshots one
     /// ([`FnLowering::load_from`]), copies out instead. MIR types this
@@ -279,23 +275,16 @@ impl FnLowering<'_> {
         dest: Reg,
         data: Value,
         len: Value,
-    ) -> Result<(), PlironError> {
+    ) {
         let mut data = data;
-        let mut owned = self.owned_temps.remove(&arg.0).is_some();
-        if !owned
-            && (self.aliased_load_regs.contains(&arg.0) || self.storage_reads.contains(&arg.0))
-        {
+        let owned = self.aliased_load_regs.contains(&arg.0) || self.storage_reads.contains(&arg.0);
+        if owned {
             let copy = self.emit_alloc(ctx, len, 1, dest);
             self.mem_copy_dynamic(ctx, copy, data, len, dest);
             data = copy;
-            owned = true;
         }
         self.str_runtime
             .insert(dest.0, RuntimeStr { data, len, owned });
-        if owned {
-            self.mark_owned_temp(dest, Ty::string_literal())?;
-        }
-        Ok(())
     }
 
     /// The `Error(x)` builtin. Before Stage 4's tagged outcomes the only

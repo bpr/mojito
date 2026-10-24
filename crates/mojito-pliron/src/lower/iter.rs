@@ -481,14 +481,11 @@ impl FnLowering<'_> {
                 let load = LoadOp::new(ctx, source, handle);
                 self.define(ctx, dest, load.get_operation(), load.get_result(ctx))
             }
-            LowerTy::Aggregate { ty, layout } => {
+            LowerTy::Aggregate { layout, .. } => {
                 let storage = self.entry_alloca(ctx, layout.size, layout.align);
                 self.mem_copy(ctx, storage, source, layout.size, dest);
                 self.mem_zero(ctx, source, layout.size);
                 self.reg_values.insert(dest.0, storage);
-                if self.owns_heap(&ty) || self.stdlib_deinit_temp(&ty) || self.needs_drop(&ty) {
-                    self.mark_owned_temp(dest, ty)?;
-                }
                 Ok(())
             }
             LowerTy::ZeroSized => {

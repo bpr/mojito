@@ -27,11 +27,7 @@ impl FnLowering<'_> {
         let else_entry = orelse.map(|_| self.carrier(ctx, else_args)).transpose()?;
 
         // Body: raises naming this `try` land on its landing block.
-        self.try_frames.push(TryFrame {
-            label,
-            landing,
-            open: self.open_blocks.len(),
-        });
+        self.try_frames.push(TryFrame { label, landing });
         let body_entry = self.lower_part(ctx, body, else_entry.unwrap_or(exit));
         self.try_frames.pop();
         let body_entry = body_entry?;
@@ -42,7 +38,7 @@ impl FnLowering<'_> {
         // Landing: the handler's arguments, then the staged error bound. A
         // `try` no raise names has no handler, and its landing block no
         // predecessor.
-        self.enter_exit(ctx, landing)?;
+        self.enter_exit(ctx, landing);
         if let Some((error_var, handler_blocks)) = handler {
             // The VM logs a catch of an `Error` value only, never of a
             // typed error such as a `for` loop's `StopIteration`.
@@ -71,7 +67,8 @@ impl FnLowering<'_> {
         if let (Some(orelse_blocks), Some(entry)) = (orelse, else_entry) {
             self.lower_region(ctx, orelse_blocks, entry, RegionEnd::TryPart(exit))?;
         }
-        self.enter_exit(ctx, exit)
+        self.enter_exit(ctx, exit);
+        Ok(())
     }
 
     /// Lower the `try` part `blocks` into a block of its own, entered with

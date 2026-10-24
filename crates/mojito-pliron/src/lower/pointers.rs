@@ -138,10 +138,7 @@ impl FnLowering<'_> {
         let ptr = self.reg_value(ctx, pointer, ScalarTy::Ptr)?;
         let address = self.pointer_element_address(ctx, ptr, index, element, dest)?;
         self.load_moved_from(ctx, address, element, dest)?;
-        // The destination owns the moved value now: free its heap buffers if
-        // it dies as a discarded temporary (the VM's Rust runtime frees
-        // register temporaries invisibly).
-        self.mark_owned_temp(dest, element.clone())
+        Ok(())
     }
 
     /// `PointerStorageDestroy`: run `destructor`, the element's `__deinit__`
@@ -226,7 +223,7 @@ impl FnLowering<'_> {
         let absent = self.bool_constant(ctx, false);
         let clear = StoreOp::new(ctx, absent, ptr);
         self.append(ctx, clear.get_operation(), Some(dest));
-        self.mark_owned_temp(dest, element.clone())
+        Ok(())
     }
 
     /// `UninitStorageDestroy`: run `destructor`, the payload's `__deinit__`
@@ -252,8 +249,7 @@ impl FnLowering<'_> {
     }
 
     /// An owned copy of an aggregate — the VM's `clone_value` in fresh
-    /// storage, registered as an owned temporary when the clone did more than
-    /// copy bytes.
+    /// storage.
     pub(super) fn copy_aggregate(
         &mut self,
         ctx: &mut Context,
@@ -266,14 +262,14 @@ impl FnLowering<'_> {
         if self.clone_needs_work(ty) {
             self.fork_value_into(ctx, storage, ty, layout, src_ptr, dest)?;
             self.reg_values.insert(dest.0, storage);
-            return self.mark_owned_temp(dest, ty.clone());
+            return Ok(());
         }
         self.copy_value(ctx, storage, src_ptr, ty, layout, dest);
         self.reg_values.insert(dest.0, storage);
         Ok(())
     }
 
-    /// Copy the aggregate at `src_ptr` into a fresh owned temporary `dest`
+    /// Copy the aggregate at `src_ptr` into fresh owned storage for `dest`
     /// by running `constructor`, the copy constructor the copy names; a
     /// copy naming none, and the nominal String's, whose copy is bridged
     /// natively, copy as [`Self::copy_aggregate`].
@@ -292,7 +288,7 @@ impl FnLowering<'_> {
         let storage = self.value_storage(ctx, ty, layout);
         self.emit_constructor_call(ctx, copyinit, storage, src_ptr, dest)?;
         self.reg_values.insert(dest.0, storage);
-        self.mark_owned_temp(dest, ty.clone())
+        Ok(())
     }
 
     /// Clone the value at `src_ptr` into `dst` — the VM's `clone_value`: a

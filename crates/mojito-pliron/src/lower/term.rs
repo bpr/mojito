@@ -14,10 +14,7 @@ impl FnLowering<'_> {
         end: RegionEnd,
     ) -> Result<(), PlironError> {
         match term {
-            MirTerm::Return(value) => {
-                self.release_leaving_temps(ctx, 0, term)?;
-                self.lower_return(ctx, value.as_ref().copied())
-            }
+            MirTerm::Return(value) => self.lower_return(ctx, value.as_ref().copied()),
             MirTerm::Yield(_) | MirTerm::ElifCond { .. } | MirTerm::TryYield(_) => {
                 self.lower_region_end(ctx, term, end)
             }
@@ -70,7 +67,6 @@ impl FnLowering<'_> {
                     .expect("aggregate-returning functions receive an sret pointer");
                 let ptr = self.reg_ptr(ctx, reg)?;
                 self.copy_value(ctx, sret, ptr, &ty, layout, reg);
-                self.owned_temps.remove(&reg.0);
                 None
             }
             (Some(reg), Some(LowerTy::Scalar(expected))) => {
@@ -121,7 +117,6 @@ impl FnLowering<'_> {
                 let address = self.offset_address(ctx, outcome_ptr, outcome.ok_offset);
                 self.copy_value(ctx, address, ptr, &ty, layout, reg);
                 // The caller owns the payload now.
-                self.owned_temps.remove(&reg.0);
             }
         }
         let tag = self.tag_constant(ctx, mojito_native::native::rt_abi::MJ_TAG_OK);

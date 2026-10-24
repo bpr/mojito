@@ -205,9 +205,6 @@ impl FnLowering<'_> {
         let payload = self.offset_address(ctx, storage, variant.payload_offset);
         self.move_reg_into(ctx, payload, selected, value, dest, constructor)?;
         self.reg_values.insert(dest.0, storage);
-        if self.needs_drop(selected) {
-            self.mark_owned_temp(dest, TyKind::Variant(alternatives.to_vec()).into())?;
-        }
         Ok(())
     }
 
@@ -256,7 +253,6 @@ impl FnLowering<'_> {
                     }
                     None => self.mem_copy(ctx, address, source, layout.size, anchor),
                 }
-                self.owned_temps.remove(&src.0);
                 Ok(())
             }
             LowerTy::ZeroSized => Ok(()),
@@ -345,9 +341,6 @@ impl FnLowering<'_> {
                 let storage = self.entry_alloca(ctx, layout.size, layout.align);
                 self.mem_copy(ctx, storage, payload, layout.size, dest);
                 self.reg_values.insert(dest.0, storage);
-                if self.needs_drop(&selected) {
-                    self.mark_owned_temp(dest, selected)?;
-                }
             }
             LowerTy::ZeroSized => {
                 self.erased.insert(dest.0);
@@ -355,7 +348,6 @@ impl FnLowering<'_> {
         }
         // MIR moved the receiver place before `VariantTake`; ownership of the
         // payload, not a clone, is now in `dest`.
-        self.owned_temps.remove(&variant.0);
         Ok(())
     }
 
@@ -462,9 +454,6 @@ impl FnLowering<'_> {
                 let storage = self.entry_alloca(ctx, layout.size, layout.align);
                 self.mem_copy(ctx, storage, payload, layout.size, dest);
                 self.reg_values.insert(dest.0, storage);
-                if self.needs_drop(&output) {
-                    self.mark_owned_temp(dest, output)?;
-                }
             }
             LowerTy::ZeroSized => {
                 self.erased.insert(dest.0);
@@ -526,7 +515,6 @@ impl FnLowering<'_> {
             }
         }
         self.lower_call_indirect(ctx, dest, handler, &[payload], &[], &[None], &[], None)?;
-        self.owned_temps.remove(&variant.0);
         self.reg_values.remove(&payload.0);
         self.erased.remove(&payload.0);
         self.erased.insert(dest.0);

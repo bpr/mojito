@@ -115,7 +115,7 @@ impl FnLowering<'_> {
             && matches!(struct_ty.kind(), TyKind::Struct(..))
         {
             let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
-            let LowerTy::Aggregate { ty, layout } = lowered else {
+            let LowerTy::Aggregate { layout, .. } = lowered else {
                 return Err(self.unsupported_reg(format!("constructor result `{struct_ty}`"), dest));
             };
             let storage = self.entry_alloca(ctx, layout.size, layout.align);
@@ -172,14 +172,6 @@ impl FnLowering<'_> {
             // storage its `out self` wrote through.
             self.erased.remove(&dest.0);
             self.reg_values.insert(dest.0, storage);
-            // As in the struct-name constructor path: the constructed value
-            // owns its heap, so consumers relocate it (a `var` parameter, a
-            // store) and a discarded result releases invisibly. Without the
-            // mark a consuming argument forks the value and both copies
-            // release the same buffers.
-            if self.owns_heap(&ty) {
-                self.mark_tracked_owned_temp(dest, ty)?;
-            }
             return Ok(());
         }
         let lowered_args =

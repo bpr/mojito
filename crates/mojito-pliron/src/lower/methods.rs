@@ -230,7 +230,7 @@ impl FnLowering<'_> {
         // A receiver with a known place passes the caller's storage address
         // directly (write-through) — copy-in/copy-out would point an escaping
         // interior pointer at the copy. A placeless receiver register is
-        // either an aliased load (its address) or an owned temporary.
+        // either an aliased load (its address) or an owned register.
         let receiver_alias = recv_place.is_some() && matches!(params[0], LowerTy::Aggregate { .. });
         let recv_value = if receiver_alias {
             let place = recv_place.expect("aliased receivers have a place").clone();
@@ -351,7 +351,7 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            return self.mark_owned_temp(dest, Ty::string_literal());
+            return Ok(());
         }
         if matches!(
             self.func.reg_types.get(&arg.0).map(Ty::kind),
@@ -370,7 +370,7 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            return self.mark_owned_temp(dest, Ty::string_literal());
+            return Ok(());
         }
         if let Some(literal_scalar) = match self.func.reg_types.get(&arg.0).map(Ty::kind) {
             Some(TyKind::IntLiteral) => Some(ScalarTy::Int),
@@ -396,7 +396,7 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            return self.mark_owned_temp(dest, Ty::string_literal());
+            return Ok(());
         }
         if !matches!(
             self.func.reg_types.get(&arg.0).map(Ty::kind),
@@ -428,7 +428,7 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            return self.mark_owned_temp(dest, Ty::string_literal());
+            return Ok(());
         }
         if let Some(TyKind::Ref(reference)) = (self.func.reg_types.get(&arg.0).cloned())
             .as_ref()
@@ -455,7 +455,7 @@ impl FnLowering<'_> {
                     owned: true,
                 },
             );
-            return self.mark_owned_temp(dest, Ty::string_literal());
+            return Ok(());
         }
         if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
             .as_ref()
@@ -487,7 +487,7 @@ impl FnLowering<'_> {
                         owned: true,
                     },
                 );
-                return self.mark_owned_temp(dest, Ty::string_literal());
+                return Ok(());
             }
             return Err(self.unsupported_reg(
                 format!("repr of `{name}` without compiled write_repr_to"),

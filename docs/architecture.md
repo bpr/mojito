@@ -629,17 +629,10 @@ landing block binds them before it binds the staged error.
 Concrete MIR reaches `compile` structured, every region one block, as
 `mir::verify` requires. MIR destroys every register it owns
 (`mir::RegisterEnds`): drop elaboration places a `drop.reg` at each owned
-register's death, so Pliron marks an owned temporary of its own only for a
-register MIR does not own (R1321 deletes that bookkeeping). Those temporaries
-follow the region tree: one is released in the block defining
-it, after the instruction there that reads it last (a region op reads what
-its regions read), and on each terminator leaving that block before then.
-A `field.get` chain whose result a store, a `struct.create` or tuple
-element, or a region terminator consumes moves that field out, as a store
-of upstream's `kgen.struct.extract` moves the element, so the temporary
-releases only what is left, and nothing once every heap-owning field is
-moved (`collect_moved_out_fields`). A field moved out across a region, or
-out of a temporary its stdlib destructor releases, refuses.
+register's death, and the operand that takes it ends it otherwise, so
+Pliron keeps no register bookkeeping of its own and releases no register
+temporary. A `raise` of a `String` register MIR owns consumes it, so its
+buffer becomes the error's message (`FnLowering::mir_owned`).
 
 Variant storage lowering (the `__VariantStorage` primitive behind the
 self-hosted `std.utils.Variant`) uses the shared native tag/payload layout

@@ -88,7 +88,7 @@ pub struct FnSignature {
     /// lives inline in the outcome; a function never receives both).
     pub outcome: Option<OutcomeAbi>,
     /// Whether each parameter is consuming — the callee takes ownership and
-    /// destroys the value, so passing an owned temporary transfers it.
+    /// destroys the value, so passing an owned register transfers it.
     pub owned_params: Vec<bool>,
     /// Whether each parameter is a `mut`/`ref` reference: it passes as a
     /// pointer to the caller's storage and the callee's slot aliases it
@@ -219,8 +219,7 @@ pub use module_env::*;
 pub use support::*;
 pub use types::*;
 
-use regions::{Carrier, OpenBlock, RegionEnd, RegionTarget};
-use release::TempRelease;
+use regions::{Carrier, RegionEnd, RegionTarget};
 
 /// The module-wide read-only lowering environment shared by every function
 /// body: compiled signatures, call-binding declarations, and the span
@@ -264,21 +263,16 @@ pub fn lower_body(
         pack_positions: HashMap::new(),
         str_consts: HashMap::new(),
         str_runtime: HashMap::new(),
-        owned_temps: HashMap::new(),
         mir_owned: mojito_mir::mir::RegisterEnds::new(func, env.mir_declarations)
             .owned_registers()
             .into_iter()
             .map(|reg| reg.0)
             .collect(),
-        last_uses: HashMap::new(),
-        temp_releases: HashMap::new(),
-        open_blocks: Vec::new(),
         lazy_values: Vec::new(),
         erased: HashSet::new(),
         print_sink: None,
         aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
         loaded_places: collect_loaded_places(&func.blocks),
-        moved_out: collect_moved_out_fields(&func.blocks),
         storage_reads: HashSet::new(),
         pointer_slot_refs: HashSet::new(),
         made_ref_places: HashMap::new(),
@@ -363,13 +357,11 @@ struct RuntimeStr {
 }
 
 /// One enclosing `try` body during lowering: its label, which a raise
-/// naming it carries, the landing carrier such a raise enters with the
-/// handler's arguments, whose block binds the error for the handler, and
-/// the blocks open at the op, which such a raise stays inside.
+/// naming it carries, and the landing carrier such a raise enters with the
+/// handler's arguments, whose block binds the error for the handler.
 struct TryFrame {
     label: TryLabel,
     landing: usize,
-    open: usize,
 }
 
 struct FnLowering<'a> {
@@ -401,28 +393,10 @@ struct FnLowering<'a> {
     str_consts: HashMap<u32, Vec<u8>>,
     /// Registers holding a runtime string as a `(data, len)` SSA pair.
     str_runtime: HashMap<u32, RuntimeStr>,
-    /// Registers holding an owned heap-carrying temporary (a `clone_value`
-    /// copy, a constructed String, or an owned runtime string) that no
-    /// variable owns. The VM never destroys register temporaries — its arena
-    /// makes that free — so the native release is invisible bookkeeping:
-    /// heap buffers free directly after the temporary's last use, and no
-    /// user destructor runs.
-    owned_temps: HashMap<u32, Ty>,
     /// The registers MIR owns ([`mojito_mir::mir::RegisterEnds`]): drop
     /// elaboration destroys each with a `drop.reg` where nothing takes it,
-    /// so none is an owned temporary here.
+    /// and the operand that takes it ends it otherwise.
     mir_owned: HashSet<u32>,
-    /// Each register's final read, as the chain of `(block, instruction)`
-    /// positions from the body block down to the reading position: a read
-    /// inside a region is a read by the region op holding it at every
-    /// enclosing level. A terminator read is at `usize::MAX`.
-    last_uses: HashMap<u32, Vec<(BlockKey, usize)>>,
-    /// Where each owned temporary is released: its defining block, and the
-    /// position there of its final read.
-    temp_releases: HashMap<u32, TempRelease>,
-    /// The blocks being lowered, outermost first, each with the position of
-    /// the instruction being lowered in it.
-    open_blocks: Vec<OpenBlock>,
     /// Registers whose value a read materialized on demand (a pending
     /// literal, a string descriptor) at the position being lowered, in
     /// order, each with the value it replaced: a region's own revert when
@@ -447,10 +421,6 @@ struct FnLowering<'a> {
     /// can borrow these directly even when the checker did not retain an
     /// explicit `arg_place` on the call contract.
     loaded_places: HashMap<u32, MirPlace>,
-    /// The fields each register gives up to a consumer: a store of
-    /// upstream's `kgen.struct.extract` moves the element out of the
-    /// extracted value, so an owned temporary releases only what is left.
-    moved_out: MovedOutFields,
     /// `MakeRef` results that address pointer-typed storage: a value access
     /// through such a handle first loads the stored pointer (the VM's
     /// reference-pointer boundary). A plain pointer value (a loaded pointer
@@ -502,11 +472,10 @@ struct FnLowering<'a> {
     /// destructor — the VM abandons raising frames), and returns. Created
     /// lazily.
     propagate_block: Option<Ptr<BasicBlock>>,
-    /// The error registers of the function's raise edges, each with the
-    /// results its instruction defines, which only its normal path sees: a
-    /// `raise` of one hands on, whole, the error its instruction raised,
-    /// traces no new raise, and releases none of those results.
-    edge_errors: HashMap<u32, Vec<Reg>>,
+    /// The error registers of the function's raise edges: a `raise` of one
+    /// hands on, whole, the error its instruction raised, and traces no new
+    /// raise.
+    edge_errors: HashSet<u32>,
     /// The raise edge of the instruction being lowered ([`OpenEdge`]).
     open_edge: Option<OpenEdge>,
     current: Option<Ptr<BasicBlock>>,
@@ -522,17 +491,14 @@ struct OpenEdge {
     error_block: Option<Ptr<BasicBlock>>,
 }
 
-/// The error register of every raise edge in `blocks`, at any depth, with
-/// the results of its instruction.
-fn edge_errors(blocks: &[MirBlock]) -> HashMap<u32, Vec<Reg>> {
-    let mut errors = HashMap::new();
+/// The error register of every raise edge in `blocks`, at any depth.
+fn edge_errors(blocks: &[MirBlock]) -> HashSet<u32> {
+    let mut errors = HashSet::new();
     let mut pending: Vec<&[MirBlock]> = vec![blocks];
     while let Some(blocks) = pending.pop() {
         for instruction in blocks.iter().flat_map(|block| &block.instrs) {
             if let Some(raises) = instruction.raise_edge() {
-                let mut results = Vec::new();
-                mojito_mir::mir::verify::instruction_result_regs(instruction, &mut results);
-                errors.insert(raises.error.0, results);
+                errors.insert(raises.error.0);
             }
             pending.extend(
                 mojito_mir::mir::instruction_regions(instruction)

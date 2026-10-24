@@ -439,12 +439,6 @@ impl FnLowering<'_> {
         );
         self.append(ctx, call.get_operation(), Some(dest));
         self.reg_values.insert(dest.0, storage);
-        // The moved value is an owned temporary until consumed.
-        if let Some(ty) = self.func.reg_types.get(&dest.0).cloned()
-            && (self.owns_heap(&ty) || self.stdlib_deinit_temp(&ty) || self.needs_drop(&ty))
-        {
-            self.mark_owned_temp(dest, ty)?;
-        }
         Ok(())
     }
 

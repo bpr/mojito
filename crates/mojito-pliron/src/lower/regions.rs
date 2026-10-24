@@ -42,16 +42,6 @@ pub(super) struct RegionTarget {
     resume: usize,
     /// Where a leaving terminator goes: the block after the op.
     exit: usize,
-    /// The blocks open at the op: an exit leaves the rest.
-    open: usize,
-}
-
-/// A block being lowered, and the position in it of the instruction being
-/// lowered.
-#[derive(Clone, Copy)]
-pub(super) struct OpenBlock {
-    pub(super) key: BlockKey,
-    pub(super) index: usize,
 }
 
 /// A block entered with values: the registers it defines from them, and
@@ -114,7 +104,8 @@ impl FnLowering<'_> {
             self.lower_region(ctx, &elif.then, *arm, RegionEnd::Arm(exit))?;
         }
         self.lower_region(ctx, orelse, else_entry, RegionEnd::Arm(exit))?;
-        self.enter_exit(ctx, exit)
+        self.enter_exit(ctx, exit);
+        Ok(())
     }
 
     /// `hlcf.loop`: a branch into the body with `operands` as its
@@ -136,7 +127,8 @@ impl FnLowering<'_> {
         let lowered = self.lower_region_with(ctx, body, entry, !resumed, RegionEnd::Function);
         self.region_targets.pop();
         lowered?;
-        self.enter_exit(ctx, exit)
+        self.enter_exit(ctx, exit);
+        Ok(())
     }
 
     /// `hlcf.match`: a branch into the first case; a `match.next` enters the
@@ -166,7 +158,8 @@ impl FnLowering<'_> {
             lowered?;
         }
         self.lower_region(ctx, orelse, else_entry, RegionEnd::Arm(exit))?;
-        self.enter_exit(ctx, exit)
+        self.enter_exit(ctx, exit);
+        Ok(())
     }
 
     /// A region terminator ending the block it sits in (`yield`,
@@ -177,18 +170,14 @@ impl FnLowering<'_> {
         term: &MirTerm,
         end: RegionEnd,
     ) -> Result<(), PlironError> {
-        let open = self.open_blocks.len() - 1;
         match (term, end) {
             (MirTerm::Yield(values), RegionEnd::Arm(exit)) => {
-                self.release_leaving_temps(ctx, open, term)?;
                 self.branch_carrying(ctx, exit, values)
             }
             (MirTerm::ElifCond { cond, values }, RegionEnd::ElifCond { then, next }) => {
-                self.release_leaving_temps(ctx, open, term)?;
                 let condition = self.reg_value(ctx, *cond, ScalarTy::Bool)?;
                 let then_args = self.carry(ctx, then, values)?;
                 let next_args = self.carry(ctx, next, values)?;
-                self.transfer(values);
                 let branch = CondBrOp::new(
                     ctx,
                     condition,
@@ -201,7 +190,6 @@ impl FnLowering<'_> {
                 Ok(())
             }
             (MirTerm::TryYield(values), RegionEnd::TryPart(completed)) => {
-                self.release_leaving_temps(ctx, open, term)?;
                 self.branch_carrying(ctx, completed, values)
             }
             _ => Err(self.unsupported(
@@ -241,8 +229,6 @@ impl FnLowering<'_> {
         };
         let target = &self.region_targets[target];
         let carrier = if resume { target.resume } else { target.exit };
-        let open = target.open;
-        self.release_leaving_temps(ctx, open, term)?;
         self.branch_carrying(ctx, carrier, values)
     }
 
@@ -317,7 +303,6 @@ impl FnLowering<'_> {
         values: &[Reg],
     ) -> Result<(), PlironError> {
         let operands = self.carry(ctx, carrier, values)?;
-        self.transfer(values);
         let jump = BrOp::new(ctx, self.carriers[carrier].block, operands);
         self.append(ctx, jump.get_operation(), None);
         Ok(())
@@ -348,7 +333,6 @@ impl FnLowering<'_> {
         let mut operands = Vec::new();
         for (position, (src, dest)) in values.iter().zip(&regs).enumerate() {
             let facts = EdgeFacts {
-                owned: self.owned_temps.contains_key(&src.0),
                 shared: self.storage_reads.contains(&src.0)
                     || self.aliased_load_regs.contains(&src.0),
                 pointer_ref: self.pointer_slot_refs.contains(&src.0),
@@ -380,18 +364,10 @@ impl FnLowering<'_> {
         Ok(operands)
     }
 
-    /// The edge carrying `values` is lowered: owned temporaries among them
-    /// belong to the block it enters now.
-    pub(super) fn transfer(&mut self, values: &[Reg]) {
-        for value in values {
-            self.owned_temps.remove(&value.0);
-        }
-    }
-
     /// Continue in `exit`'s block after a region op, its results bound.
-    pub(super) fn enter_exit(&mut self, ctx: &mut Context, exit: usize) -> Result<(), PlironError> {
+    pub(super) fn enter_exit(&mut self, ctx: &mut Context, exit: usize) {
         self.current = Some(self.carriers[exit].block);
-        self.bind_carried(ctx, exit, true)
+        self.bind_carried(ctx, exit, true);
     }
 
     /// [`Self::lower_region`], where `edges_known` says whether every edge
@@ -436,10 +412,6 @@ impl FnLowering<'_> {
         entry: CarrierBinding,
         end: RegionEnd,
     ) -> Result<(), PlironError> {
-        self.open_blocks.push(OpenBlock {
-            key: BlockKey::of(block),
-            index: 0,
-        });
         let lazy = self.lazy_values.len();
         let result = self.lower_block_body(ctx, block, entry, end);
         for (reg, previous) in self.lazy_values.split_off(lazy).into_iter().rev() {
@@ -448,7 +420,6 @@ impl FnLowering<'_> {
                 None => self.reg_values.remove(&reg),
             };
         }
-        self.open_blocks.pop();
         result
     }
 
@@ -457,28 +428,16 @@ impl FnLowering<'_> {
             frame,
             resume,
             exit,
-            open: self.open_blocks.len(),
         });
     }
 
-    fn set_position(&mut self, index: usize) {
-        if let Some(open) = self.open_blocks.last_mut() {
-            open.index = index;
-        }
-    }
-
     /// Define `carrier`'s registers in its block, the current one: a scalar
-    /// is its block argument, an aggregate a copy of its staging storage,
-    /// owned when an edge handed it an owned temporary. When `edges_known`
+    /// is its block argument, an aggregate a copy of its staging storage.
+    /// When `edges_known`
     /// and every edge carried the same compile-time constant, the register
     /// is that constant, as a block argument with one incoming value folds
     /// to it.
-    fn bind_carried(
-        &mut self,
-        ctx: &mut Context,
-        carrier: usize,
-        edges_known: bool,
-    ) -> Result<(), PlironError> {
+    fn bind_carried(&mut self, ctx: &mut Context, carrier: usize, edges_known: bool) {
         let block = self.carriers[carrier].block;
         let regs = self.carriers[carrier].regs.clone();
         let mut argument = 0;
@@ -525,20 +484,12 @@ impl FnLowering<'_> {
                     if facts.shared {
                         self.storage_reads.insert(reg.0);
                     }
-                    if facts.owned
-                        && (self.owns_heap(&ty)
-                            || self.stdlib_deinit_temp(&ty)
-                            || self.needs_drop(&ty))
-                    {
-                        self.mark_owned_temp(reg, ty)?;
-                    }
                 }
                 CarrySlot::ZeroSized => {
                     self.erased.insert(reg.0);
                 }
             }
         }
-        Ok(())
     }
 
     fn lower_block_body(
@@ -550,15 +501,12 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         match entry {
             CarrierBinding::None => {}
-            CarrierBinding::Complete(carrier) => self.bind_carried(ctx, carrier, true)?,
-            CarrierBinding::Partial(carrier) => self.bind_carried(ctx, carrier, false)?,
+            CarrierBinding::Complete(carrier) => self.bind_carried(ctx, carrier, true),
+            CarrierBinding::Partial(carrier) => self.bind_carried(ctx, carrier, false),
         }
-        for (index, instr) in block.instrs.iter().enumerate() {
-            self.set_position(index);
+        for instr in &block.instrs {
             self.lower_instr(ctx, instr)?;
-            self.flush_owned_temps(ctx)?;
         }
-        self.set_position(usize::MAX);
         self.lower_term(ctx, &block.term, end)
     }
 
@@ -596,8 +544,6 @@ enum CarrySlot {
 /// What the edges lowered so far carried into one region value.
 #[derive(Clone, Default)]
 struct EdgeFacts {
-    /// Some edge handed over an owned temporary.
-    owned: bool,
     /// Some edge carried bytes sharing another owner's buffers.
     shared: bool,
     /// Some edge carried a handle to pointer-typed storage.
@@ -607,7 +553,6 @@ struct EdgeFacts {
 
 impl EdgeFacts {
     fn join(&mut self, edge: &Self) {
-        self.owned |= edge.owned;
         self.shared |= edge.shared;
         self.pointer_ref |= edge.pointer_ref;
         self.constant = match (self.constant, edge.constant) {

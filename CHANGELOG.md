@@ -829,6 +829,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Pliron no longer tracks or releases owned register temporaries of its
+  own: every owned register's end is MIR's, a `drop.reg` or the operand
+  that takes it, as upstream's `CheckLifetimes` has it (R1321). The
+  per-instruction release flush, the release on each terminator leaving a
+  block, and the field-move bookkeeping behind them are gone. A natively
+  raised `String` that MIR owns (`raise String("too big: ") + String(n)`)
+  now gives the error its buffer, where the raise copied it and leaked the
+  original, and a literal passed to a borrowed `String` parameter is
+  viewed in place rather than copied.
+
 - `x.write_repr_to(w)` on a built-in `Writable` writes a `repr(x)` text
   that is an owned nominal `String`, as upstream's `repr` returns, so drop
   elaboration destroys it, where it was a `StringLiteral` register only

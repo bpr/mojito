@@ -124,8 +124,6 @@ impl FnLowering<'_> {
         let jump = BrOp::new(ctx, body, vec![]);
         self.append(ctx, jump.get_operation(), None);
 
-        // Final reads drive the owned-temporary releases.
-        record_last_uses(&mut self.last_uses, &func.blocks, &mut Vec::new());
         self.current = Some(body);
         self.lower_body_block(ctx, body_block)
     }
@@ -155,22 +153,18 @@ impl FnLowering<'_> {
         lowered?;
         let mut results = Vec::new();
         mojito_mir::mir::verify::instruction_result_regs(instr, &mut results);
-        edge.map_or(Ok(()), |edge| self.close_edge(ctx, edge, &results))
+        if let Some(edge) = edge {
+            self.close_edge(ctx, edge, &results);
+        }
+        Ok(())
     }
 
     /// Join the paths of `edge`'s instruction, whose result registers are
-    /// `results`. Both paths first release the temporaries due after the
-    /// instruction, the normal path its result among them, which the raise
-    /// path never defined; the values the normal path defined for the
-    /// results cross the join, the raise path passing poison, and the
-    /// join's first argument is the flag. The error register is the edge's storage. A callee with no
-    /// outcome never raises, so its flag is false.
-    fn close_edge(
-        &mut self,
-        ctx: &mut Context,
-        edge: OpenEdge,
-        results: &[Reg],
-    ) -> Result<(), PlironError> {
+    /// `results`: the values the normal path defined for the results cross
+    /// the join, the raise path passing poison, and the join's first
+    /// argument is the flag. The error register is the edge's storage. A
+    /// callee with no outcome never raises, so its flag is false.
+    fn close_edge(&mut self, ctx: &mut Context, edge: OpenEdge, results: &[Reg]) {
         let OpenEdge {
             raises,
             storage,
@@ -180,10 +174,8 @@ impl FnLowering<'_> {
         let Some(error_block) = error_block else {
             let flag = self.bool_constant(ctx, false);
             self.reg_values.insert(raises.flag.0, flag);
-            return Ok(());
+            return;
         };
-        let due = self.due_owned_temps();
-        self.flush_owned_temps(ctx)?;
         let results: Vec<Reg> = results
             .iter()
             .copied()
@@ -203,9 +195,6 @@ impl FnLowering<'_> {
         let completed = BrOp::new(ctx, join, normal);
         self.append(ctx, completed.get_operation(), Some(raises.flag));
         self.current = Some(error_block);
-        for (reg, ty) in due.iter().filter(|(reg, _)| !results.contains(&Reg(*reg))) {
-            self.emit_release_reg(ctx, *reg, ty)?;
-        }
         let mut raised = vec![self.bool_constant(ctx, true)];
         for ty in &types[1..] {
             let poison = PoisonOp::new(ctx, *ty);
@@ -232,7 +221,6 @@ impl FnLowering<'_> {
                 string.len = len;
             }
         }
-        Ok(())
     }
 
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
@@ -321,8 +309,8 @@ impl FnLowering<'_> {
             MirInstr::MovePlace { dest, place } => {
                 let (address, ty) = self.place_address(ctx, place, *dest)?;
                 // A move relocates the bytes — ownership transfers to the
-                // destination (the VM's `mem::replace`; no clone runs), so
-                // the moved value is an owned temporary until consumed.
+                // destination register (the VM's `mem::replace`; no clone
+                // runs).
                 match lower_ty(self.name, &ty, &self.layout, self.reg_span(*dest))? {
                     LowerTy::Scalar(scalar) => {
                         let handle = scalar.handle(ctx);
@@ -333,12 +321,6 @@ impl FnLowering<'_> {
                         let storage = self.value_storage(ctx, &ty, layout);
                         self.copy_value(ctx, storage, address, &ty, layout, *dest);
                         self.reg_values.insert(dest.0, storage);
-                        if self.owns_heap(&ty)
-                            || self.stdlib_deinit_temp(&ty)
-                            || self.needs_drop(&ty)
-                        {
-                            self.mark_owned_temp(*dest, ty.clone())?;
-                        }
                         Ok(())
                     }
                     LowerTy::ZeroSized => {

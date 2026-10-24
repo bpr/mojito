@@ -317,7 +317,7 @@ pub fn declare_function(
             sret,
             outcome,
             // A `deinit` parameter consumes its argument as a `var` one does:
-            // the callee ends the value, so an owned temporary passed to it
+            // the callee ends the value, so the register passed to it
             // transfers.
             owned_params: func
                 .owned_params

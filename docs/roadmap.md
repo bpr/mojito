@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1337**.
+Next free ID: **R1338**.
 
 ## Ordered Work
 
@@ -8597,20 +8597,21 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1321 Pliron keeps its own owned-temporary bookkeeping**
+- [ ] **R1337 Pliron frees storage MIR places no drop for**
 
-  Once every owned register's destruction is a `drop.reg` (R1329),
-  Pliron's register tracking has nothing left to release.
-  - Delete `FnLowering::owned_temps`, `temp_releases`, `TempRelease`, the
-    `mark_*_owned_temp` call sites, `flush_owned_temps`,
-    `release_temps_leaving`, and `MovedOutFields`
-    (`crates/mojito-pliron/src/lower/release.rs`, `lower/support.rs`).
-  - Probe: `String(x)`, `repr(x)`, `input()` (R1327), an inverted
-    `write_repr_to`'s `repr` text, and a t-string segment (R1336) are
-    MIR-owned `String`s; a `MOJITO_PLIRON_DBG_TEMPS=1` run over
-    `assets/ok/tstring_forms.mojo` and `assets/ok/path_operations.mojo`
-    logs no mark.
-  - Depends on R1329, R1327, and R1336.
+  Pliron still destroys two kinds of value itself with
+  `emit_release_storage`, where upstream's backend destroys nothing: every
+  destruction is a call `DestructorInsertion` placed.
+  - Probe: a `GetIter` whose `prepare` chain calls a by-value `__iter__`
+    step frees the superseded intermediate natively (`release_current` in
+    `lower/iter.rs`), since the chain's intermediates are no MIR registers.
+  - Probe: a call to a callee whose body has no instructions frees each
+    owned aggregate argument after the call (`empty_body` in
+    `lower/abi.rs`'s direct-call emission), where the callee's own drop
+    elaboration should have destroyed it.
+  - Split it in two if the causes differ.
+  - Found while landing R1321 (2026-10-24).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1328 A memory-only owned value lives in an SSA register, where
@@ -9111,6 +9112,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     already stages it through an `err_slot`.
   - Fix: a `Try` names its error slot, each raise naming it stores the
     error there first, and the handler's `error_var` reads it.
+  - Probe: a handler with no binder (`except:`) has its caught error freed
+    by Pliron at the handler's entry (`emit_release_storage` of the
+    `err_slot` in `lower/try_flow.rs`), since MIR names no value for it;
+    with the slot declared, drop elaboration destroys it.
   - Found while landing R1264 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.

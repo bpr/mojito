@@ -429,7 +429,7 @@ impl FnLowering<'_> {
                 },
             );
         }
-        self.mark_owned_temp(dest, dest_ty)
+        Ok(())
     }
 
     /// Pointer-receiver method intrinsics — the VM's `Value::Pointer` method

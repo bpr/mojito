@@ -90,9 +90,9 @@ impl FnLowering<'_> {
 
     /// Materialize the register a `raise` names as an owned `MjError` in
     /// `storage`: a compile-time or borrowed message copies into a fresh
-    /// allocation, an owned runtime string or String temporary transfers its
-    /// allocation, a live nominal String copies its bytes (the VM clones the
-    /// message and drops the String normally), and an error value moves.
+    /// allocation, an owned runtime string or a String register MIR owns
+    /// (which the raise consumes) transfers its allocation, any other nominal
+    /// String copies its bytes, and an error value moves.
     pub(super) fn store_error_into(
         &mut self,
         ctx: &mut Context,
@@ -101,7 +101,6 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         if let Some(descriptor) = self.str_runtime.get(&src.0).copied() {
             let data = if descriptor.owned {
-                self.owned_temps.remove(&src.0);
                 descriptor.data
             } else {
                 let data = self.emit_alloc(ctx, descriptor.len, 1, src);
@@ -128,8 +127,9 @@ impl FnLowering<'_> {
                 if mojito_symbol::symbol::is_stdlib_string_struct(name) =>
             {
                 let ptr = self.reg_ptr(ctx, src)?;
-                if self.owned_temps.remove(&src.0).is_some() {
-                    // The temporary transfers its whole allocation.
+                if self.mir_owned.contains(&src.0) {
+                    // An owned register the raise consumes transfers its
+                    // whole allocation.
                     let (data, size) = self.string_parts(ctx, ptr, src);
                     let cap = self.string_cap(ctx, ptr, src);
                     self.store_string_fields(ctx, storage, data, size, cap, src);
@@ -144,7 +144,6 @@ impl FnLowering<'_> {
             Some(TyKind::Error) => {
                 let ptr = self.reg_ptr(ctx, src)?;
                 self.mem_copy(ctx, storage, ptr, 24, src);
-                self.owned_temps.remove(&src.0);
                 Ok(())
             }
             // A nullary error struct (`raise StopIteration()`) carries no
@@ -221,9 +220,7 @@ impl FnLowering<'_> {
     }
 
     /// A `raise` terminator: materialize the raised value as an owned error
-    /// in the staging slot, release the owned temporaries of the blocks it
-    /// leaves but the results of a raise edge's instruction, which its
-    /// error path never defined, and jump to the landing block of the `try`
+    /// in the staging slot and jump to the landing block of the `try`
     /// it names, carrying `values` into the handler's arguments, or, naming
     /// none, to the raising function's propagate block. A raise edge's
     /// error is the error its call raised, staged whole and traced once,
@@ -237,9 +234,7 @@ impl FnLowering<'_> {
     ) -> Result<(), PlironError> {
         let frame = label.map(|label| self.raise_target(label)).transpose()?;
         let err_slot = self.ensure_err_slot(ctx);
-        let mut kept: Vec<Reg> = std::iter::once(src).chain(values.iter().copied()).collect();
-        if let Some(results) = self.edge_errors.get(&src.0) {
-            kept.extend(results);
+        if self.edge_errors.contains(&src.0) {
             let storage = self.reg_ptr(ctx, src)?;
             self.mem_copy(ctx, err_slot, storage, 24, src);
         } else {
@@ -253,11 +248,9 @@ impl FnLowering<'_> {
                 self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_RAISE);
             }
         }
-        self.release_temps_leaving(ctx, frame.map_or(0, |(_, open)| open), &kept)?;
         let (target, operands) = match frame {
-            Some((landing, _)) => {
+            Some(landing) => {
                 let operands = self.carry(ctx, landing, values)?;
-                self.transfer(values);
                 (self.carrier_block(landing), operands)
             }
             None => (self.ensure_propagate_block(ctx)?, Vec::new()),
@@ -269,14 +262,13 @@ impl FnLowering<'_> {
 
     /// The landing carrier of the nearest enclosing `try` body carrying
     /// `label`, which a raise naming it enters, as `lit.try.raise`
-    /// branches to its `try`'s handler, and the blocks open at that `try`,
-    /// which the raise stays inside.
-    fn raise_target(&self, label: TryLabel) -> Result<(usize, usize), PlironError> {
+    /// branches to its `try`'s handler.
+    fn raise_target(&self, label: TryLabel) -> Result<usize, PlironError> {
         self.try_frames
             .iter()
             .rev()
             .find(|frame| frame.label == label)
-            .map(|frame| (frame.landing, frame.open))
+            .map(|frame| frame.landing)
             .ok_or_else(|| {
                 self.unsupported(
                     format!("a raise naming try{}, which does not enclose it", label.0),
