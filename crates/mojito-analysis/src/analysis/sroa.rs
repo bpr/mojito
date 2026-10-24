@@ -45,7 +45,6 @@
 //! (upstream's `loopLimit`), so a nested struct splits one level a round.
 
 use super::pre_elaboration::BodyPass;
-use mojito_ast::ast::ArgConvention;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::{
@@ -273,7 +272,7 @@ fn splittable_slots(function: &MirFunction, declarations: &MirDeclarations) -> V
         return Vec::new();
     }
     let mut census = HashMap::new();
-    take_census(&function.blocks, &fields, declarations, &mut census);
+    take_census(&function.blocks, &fields, &mut census);
     if fields.values().any(|(_, memory_only)| *memory_only) {
         let mut registers = Registers::default();
         registers.record(&function.blocks);
@@ -387,13 +386,12 @@ fn keep_address_users(
 fn take_census(
     blocks: &[MirBlock],
     fields: &HashMap<VarId, Judged<'_>>,
-    declarations: &MirDeclarations,
     census: &mut HashMap<VarId, Census>,
 ) {
     for block in blocks {
         for instruction in &block.instrs {
             for region in instruction_regions(instruction) {
-                take_census(region, fields, declarations, census);
+                take_census(region, fields, census);
             }
             let slots = instruction_slots(instruction);
             if let Some((var, whole)) = whole_mention(instruction)
@@ -422,7 +420,7 @@ fn take_census(
                 let entry = census.entry(var).or_default();
                 entry.kept |= mentions != projected;
                 entry.ended.extend(
-                    ended_places(instruction, declarations)
+                    ended_places(instruction)
                         .filter(|place| {
                             place.root == var
                                 && place.proj.get(1..).is_some_and(|rest| {
@@ -451,24 +449,12 @@ fn keep(census: &mut HashMap<VarId, Census>, slots: impl IntoIterator<Item = Var
 /// place of a call whose `deinit` receiver consumes it in place, as
 /// upstream's call consumes a `deinit` operand's address, and a closure's
 /// move captures.
-fn ended_places<'i>(
-    instruction: &'i MirInstr,
-    declarations: &MirDeclarations,
-) -> impl Iterator<Item = &'i MirPlace> {
+fn ended_places(instruction: &MirInstr) -> impl Iterator<Item = &MirPlace> {
     let (single, captures) = match instruction {
         MirInstr::MovePlace { place, .. } | MirInstr::DropPlace { place, .. } => {
             (Some(place), &[][..])
         }
-        MirInstr::MethodCall {
-            resolved: Some(callee),
-            recv_place: Some(place),
-            ..
-        } if declarations.function(callee).is_some_and(|declaration| {
-            declaration.receiver_convention == Some(ArgConvention::Deinit)
-        }) =>
-        {
-            (Some(&**place), &[][..])
-        }
+        MirInstr::MethodCall { .. } => (instruction.consumed_receiver(), &[][..]),
         MirInstr::MakeClosure { captures, .. } => (None, captures.as_slice()),
         _ => (None, &[][..]),
     };

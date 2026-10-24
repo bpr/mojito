@@ -400,9 +400,14 @@ pub(super) fn place_uses(
                 .chain(owners)
                 .collect()
         }
-        MirInstr::ConsumePlace { place, marker } => {
-            vec![(place.root, place_path(place), Touch::Read, *marker)]
-        }
+        // A `deinit`-receiver call consuming a part of its receiver reads
+        // that part, as upstream's `checkConsume` requires it live.
+        MirInstr::MethodCall { recv, .. } => i
+            .consumed_receiver()
+            .filter(|place| !place.is_whole_root())
+            .map(|place| (place.root, place_path(place), Touch::Read, *recv))
+            .into_iter()
+            .collect(),
         MirInstr::DropPlace { place, .. } | MirInstr::MarkDestroyed { place } => {
             vec![(place.root, place_path(place), Touch::Read, Reg(0))]
         }
@@ -522,16 +527,21 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, context: &MoveCont
         MirInstr::MovePlace { place, .. } => {
             state[place.root as usize].do_move(&place_path(place));
         }
-        // A named destructor's receiver: consumed by the call it follows.
+        // A `deinit` parameter's or pack's end before the exit.
         MirInstr::ConsumeVar { var } => state[*var as usize].do_move(&[]),
+        // A `deinit`-receiver call consumes its receiver place, as
+        // upstream's call consumes its `DeinitMem` operand.
+        MirInstr::MethodCall { .. } => {
+            if let Some(place) = i.consumed_receiver() {
+                state[place.root as usize].do_move(&place_path(place));
+            }
+        }
         MirInstr::GetIter { .. } => {
             if let Some(source) = i.consumed_iteration_source() {
                 state[source as usize].do_move(&[]);
             }
         }
-        MirInstr::ConsumePlace { place, .. }
-        | MirInstr::DropPlace { place, .. }
-        | MirInstr::MarkDestroyed { place } => {
+        MirInstr::DropPlace { place, .. } | MirInstr::MarkDestroyed { place } => {
             state[place.root as usize].do_move(&place_path(place));
         }
         // A field or statically selected private Tuple-element store
@@ -727,11 +737,10 @@ fn check_instruction_uses(
 ) -> Result<(), OwnershipError> {
     let widens_hole = matches!(
         instr,
-        MirInstr::MovePlace { .. }
-            | MirInstr::ConsumePlace { .. }
-            | MirInstr::DropPlace { .. }
-            | MirInstr::MarkDestroyed { .. }
-    );
+        MirInstr::MovePlace { .. } | MirInstr::DropPlace { .. } | MirInstr::MarkDestroyed { .. }
+    ) || instr
+        .consumed_receiver()
+        .is_some_and(|place| !place.is_whole_root());
     for (root, path, touch, reg) in place_uses(instr, context) {
         let node = &state[root as usize];
         let (sev, blame) = match &touch {
@@ -874,7 +883,9 @@ fn partial_move_span(
     for_each_instr_deep(&f.blocks, &mut |instr| {
         let moved = match instr {
             MirInstr::MovePlace { dest, place } => Some((*dest, place)),
-            MirInstr::ConsumePlace { place, marker } => Some((*marker, place)),
+            MirInstr::MethodCall { recv, .. } => {
+                instr.consumed_receiver().map(|place| (*recv, place))
+            }
             _ => None,
         };
         if reg.is_none()

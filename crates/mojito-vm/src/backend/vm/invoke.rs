@@ -486,10 +486,11 @@ impl VmBackend {
                         && !function.owned_params.first().copied().unwrap_or(false)
                         && !deinit_receiver
                         && Self::function_result_carries_reference(prog, fidx));
-                // A named destructor owns its receiver from the call on: the
-                // callee's elaborated drops destroy its fields, so the
-                // caller's slot is vacated before the call and its trailing
-                // consumption finds nothing to destroy.
+                // The call consumes its `deinit` receiver's place, as
+                // upstream's call consumes a `DeinitMem` operand: the
+                // callee's elaborated drops destroy its fields, and the place
+                // holds the VM's ended-place tombstone from the call on, as a
+                // move leaves one.
                 if deinit_receiver
                     && !receiver_as_reference
                     && let Some(place) = recv_place

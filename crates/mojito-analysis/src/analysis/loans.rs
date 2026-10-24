@@ -95,6 +95,11 @@ pub(super) fn transfer_loan_generation(
         | MirInstr::ConsumeVar { var } => {
             state.active.remove(var);
         }
+        MirInstr::MethodCall { .. } => {
+            if let Some(var) = instruction.consumed_receiver_slot() {
+                state.active.remove(&var);
+            }
+        }
         _ => {}
     }
 }
@@ -557,9 +562,6 @@ pub(super) fn loan_accesses(
                 )
             })
             .collect(),
-        MirInstr::ConsumePlace { place, marker } => {
-            vec![(place.clone(), LoanAccess::Write, span_for(*marker))]
-        }
         MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }
         | MirInstr::MarkDestroyed { place } => {

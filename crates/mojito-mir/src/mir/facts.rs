@@ -423,6 +423,14 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// Whether the selected callee's receiver is `deinit`, so the call
+    /// consumes its receiver place (upstream's `DeinitMem`).
+    pub(super) fn receiver_deinit(self) -> bool {
+        self.call_contract().is_some_and(|contract| {
+            contract.receiver_convention == Some(mojito_ast::ast::ArgConvention::Deinit)
+        })
+    }
+
     /// Whether a callable-value (indirect) or method call's argument list
     /// may anchor loan-carrying temporaries — the same rule as a plain
     /// function call (see `allow_argument_anchors`): a callee borrowing

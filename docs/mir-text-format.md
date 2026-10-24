@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.97
+# Mojito Textual MIR Format, Version 1.98
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.97 is implemented end to end for inspection and loading: canonical
+Version 1.98 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.97
+mojito-mir 1.98
 ```
 
-The writer emits 1.97. The reader accepts 1.0 through 1.97; *Schema 1.0*
+The writer emits 1.98. The reader accepts 1.0 through 1.98; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -455,6 +455,16 @@ element }` (`!pop.array<size, element>`) and its constructor `array.create
 builds for its callee's `*xs: T` is now one, stored in the caller's
 `__passed_varargs__` slot, where 1.96 built a `tuple.make`. A 1.96 consumer
 rejects both as unknown, which is the intended failure.
+
+Schema 1.98 adds `deinit_receiver` after a `call.method`'s `recv_writes`:
+whether the callee's receiver is `deinit` (upstream's `DeinitMem`), so the
+call itself consumes its `recv_place`, as upstream's call consumes its
+operand (`memConsume`). The verifier requires it to match the callee's
+declared receiver convention. An explicit destroy is the call alone: no
+`consume.var` of a whole receiver follows it, and `consume.place`, which
+ended a part, is withdrawn. An older `call.method` reads as consuming
+nothing, so an older artifact holding a `deinit`-receiver call fails
+verification at load, as does one holding a `consume.place`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1151,7 +1161,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `UseVar` / `DefVar` | `var.use` / `var.store` (schema 1.49: `var.store` adds `in_place`, true when the slot is the preceding non-raising call's result storage; schema 1.68: a copying or moving `var.use` carries `constructor: "<symbol>"` after its `mode` when it names the `__copyinit__` or `__moveinit__` it runs, as upstream's copy/move insertion names the constructor at each site: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the use names none, the reader takes an absent field as none, and the verifier reports a use naming an undeclared function, a borrow or forward naming any, or a copy or move naming other than the constructor its struct's member table records) |
 | `MovePlace` / `LoadPlace` | `place.move` / `place.load` |
 | `UnOp` / `BinOp` | `unary` / `binary` (schema 1.53: both add `raises: option<type>`, the error type of the operator method's call, as a call's `raises`; schema 1.91: `raises` is `option<raises { type, flag, error }>`, as a call's) |
-| `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` (schema 1.95: `spread` is the position of the collector operand the call passes, the `tuple.make` it builds or a caller's spread pack; schema 1.71: a `call.method` with a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands when the adapter's copy of the referent names the `__copyinit__` it runs, as `value.copy` does; schema 1.91: `raises` is `absent` or `present(raises { type, flag: %rN, error: %rM })`, the error type and the instruction's error flag and error, which its error region tests and raises) |
+| `Call` / `CallIndirect` / `MethodCall` | `call` / `call.indirect` / `call.method` (schema 1.98: `deinit_receiver: bool` after `recv_writes`, whether the callee's receiver is `deinit`, so the call consumes `recv_place`; schema 1.95: `spread` is the position of the collector operand the call passes, the `tuple.make` it builds or a caller's spread pack; schema 1.71: a `call.method` with a `result_adapter` carries `adapter_constructor: "<symbol>"` after its operands when the adapter's copy of the referent names the `__copyinit__` it runs, as `value.copy` does; schema 1.91: `raises` is `absent` or `present(raises { type, flag: %rN, error: %rM })`, the error type and the instruction's error flag and error, which its error region tests and raises) |
 | `PointerStorageTake` / `PointerStorageDestroy` | `pointer.take` / `pointer.destroy` — a `pointer.destroy` carries `destructor: "<symbol>"` after `element` when it names the element's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `UninitStorage` / `UninitStorageTake` / `UninitStorageDestroy` | `uninit.make` / `uninit.take` / `uninit.destroy` — an `uninit.destroy` carries `destructor: "<symbol>"` after `element` when it names the payload's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `MarkInitialized` | `ownership.mark_initialized` (schema 1.28: `{ place }`, upstream's `lit.ownership.mark_initialized`; `lower-lit` erases it, so concrete MIR holds none) |
@@ -1168,7 +1178,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Try` | `try { label: tryN, results: [%rN...], body, handler_arguments: [%rN...], handler, else_arguments: [%rN...], orelse }` — `lit.try` after `lowerTryFinally`: `label` names it for the raises in its body (schema 1.92; before, a `try` named nothing and held `finalbody` and `cleanup`, see *Compatibility*); `results` are the op's, `handler_arguments` the handler's, which every raise naming it defines, and `else_arguments` the `else`'s, which the body's `try.yield` defines (schema 1.93) |
 | `DeclareVar` | `var.declare` (schema 1.50: a `var x: T` slot's declaration point; no def, no use, a no-op on both backends, counted as a def site by region locality; unlike the lifetime markers it survives `lower-lit`, as upstream lowers `lit.var.decl` to an allocation) |
 | `Drop` / `DropVar` / `DropPlace` | `drop.reg` / `drop.var { var }` / `drop.place { place }` — a `drop.var` or `drop.place` carries `destructor: "<symbol>"` after its operand when it names the `__deinit__` it runs on the whole value, as upstream's destructor insertion names the `__del__` at each death: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the drop names none, the reader takes an absent field as none, and the verifier reports a drop naming an undeclared function or other than the destructor its struct's member table records (schema 1.67) |
-| `ConsumeVar` / `ConsumePlace` | `consume.var` / `consume.place` (`consume.place` is upstream's `lit.ownership.mark_consumed`; `lower-lit` erases it, so concrete MIR holds none) |
+| `ConsumeVar` | `consume.var` (a `deinit` parameter's or pack's end before the exit, upstream's exit `mark_destroyed`; schema 1.98 withdraws `consume.place`, as a `deinit`-receiver `call.method` consumes its receiver itself) |
 | `Unsupported` | `unsupported { message: string }` |
 | `If` | `if { results: [reg...], condition: %rN, then: [block...], elifs: [elif { condition_arguments: [reg...], condition: [block...], then_arguments: [reg...], then: [block...] }...], else_arguments: [reg...], else: [block...] }` — `hlcf.if` (schema 1.54); the region arguments (schema 1.84) are defined by the `if.elifcond.yield` entering each region, and the op enters `then`, the first elif's condition, and an `else` without elifs with none |
 | `Loop` | `loop { results: [reg...], label: option<loopN>, operands: [reg...], arguments: [reg...], body: [block...] }` — `hlcf.loop` (schema 1.54), its `results` (schema 1.82) defined by the values of the `break` that leaves it, its body's `arguments` (schema 1.83) defined by its `operands` on entry and by the values of each `continue` that resumes it, one operand per argument; `loop4294967295` is upstream's `inlined_cf_scope`, the label `inline-parametric` wraps an inlined body in, which no source loop carries, its one result the call's |

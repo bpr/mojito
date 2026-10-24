@@ -25,7 +25,8 @@ use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
 /// A `deinit` parameter laid out per field is marked destroyed at every
 /// exit, as upstream marks a `DeinitMem` argument: each field dies at its
 /// own last use, and a `ConsumeVar` before the exit ends the parameter
-/// unless every path there already has.
+/// unless every path there already has, a `self^.finish()` call consuming
+/// it in place included.
 ///
 /// At a shared death point, variables drop in reverse declaration order
 /// (descending `VarId`), the receiver first, as the pin destroys a partly
@@ -417,11 +418,12 @@ fn effects(
     }
     let consuming = matches!(
         instr,
-        MirInstr::MovePlace { .. }
-            | MirInstr::ConsumePlace { .. }
-            | MirInstr::DropPlace { .. }
-            | MirInstr::MarkDestroyed { .. }
+        MirInstr::MovePlace { .. } | MirInstr::DropPlace { .. } | MirInstr::MarkDestroyed { .. }
     );
+    // A `deinit`-receiver call consumes its receiver place alone, not the
+    // places of its other operands.
+    let receiver = instr.consumed_receiver();
+    let consumes = |place: &MirPlace| consuming || receiver.is_some_and(|r| std::ptr::eq(r, place));
     for (used, _) in &accesses {
         if stored(used).is_some() {
             continue;
@@ -433,7 +435,7 @@ fn effects(
                     effects.mark(values.mark_ref(live, values.whole(through)));
                 }
                 effects.mark(values.mark_ref(live, values.access(place)));
-                if consuming
+                if consumes(place)
                     && let Some(part) = place
                         .owned_path()
                         .and_then(|path| values.part(place.root, &path))

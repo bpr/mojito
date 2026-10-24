@@ -20,7 +20,7 @@
           bb0 {
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), projections: [], type: present(struct_type { name: "__module$std$string$String", arguments: [] }), through: absent } },
-              call.method { dest: %r1, recv: %r0, method: byte_length, resolved: present("__module$std$string$String.byte_length"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), projections: [], type: present(struct_type { name: "__module$std$string$String", arguments: [] }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+              call.method { dest: %r1, recv: %r0, method: byte_length, resolved: present("__module$std$string$String.byte_length"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: "__module$std$string$String", arguments: [] }), projections: [], type: present(struct_type { name: "__module$std$string$String", arguments: [] }), through: absent }), recv_writes: false, deinit_receiver: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r1) }
           }

@@ -1487,7 +1487,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
             | MirInstr::DropVar { .. }
             | MirInstr::DropPlace { .. }
             | MirInstr::ConsumeVar { .. }
-            | MirInstr::ConsumePlace { .. }
             | MirInstr::If { .. }
             | MirInstr::Loop { .. }
             | MirInstr::Try { .. } => {}

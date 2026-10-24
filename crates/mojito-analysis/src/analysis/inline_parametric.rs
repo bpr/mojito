@@ -1468,11 +1468,10 @@ impl<'c> Inliner<'_, 'c> {
         let mut after = caller.instrs.split_off(index + 1);
         caller.instrs.truncate(index);
         // A slot the body takes in place keeps its value until the body
-        // ends it: the forward that fed the call goes, and so does the
-        // caller's consume of a loaded receiver's residue after the call,
-        // which the body's own consume of its receiver is.
+        // ends it: the forward that fed the call goes. A `deinit` receiver
+        // the call consumed in place is ended by the body's own consume of
+        // its receiver.
         let run = run_start(caller, index);
-        let resumed_run = after.iter().position(splits_runs).unwrap_or(after.len());
         for binding in bindings {
             let Binding::Slot(slot) = binding else {
                 continue;
@@ -1481,12 +1480,6 @@ impl<'c> Inliner<'_, 'c> {
                 matches!(instruction, MirInstr::UseVar { var, mode: UseMode::Forward, .. } if var == slot)
             }) {
                 caller.instrs.remove(run + forward);
-            } else if let Some(consume) = after[..resumed_run]
-                .iter()
-                .position(|instruction| instruction_slots(instruction).contains(slot))
-                && matches!(after[consume], MirInstr::ConsumeVar { var } if var == *slot)
-            {
-                after.remove(consume);
             }
         }
         let var_base = function.n_vars as VarId;

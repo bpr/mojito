@@ -40,9 +40,6 @@ impl VmBackend {
             MirInstr::MarkDestroyed { .. } => {
                 return Err(parametric_instruction("destruction mark"));
             }
-            MirInstr::ConsumePlace { .. } => {
-                return Err(parametric_instruction("part consumption"));
-            }
             MirInstr::InvalidateInteriors { .. } => {
                 return Err(parametric_instruction("interior invalidation"));
             }
@@ -2067,7 +2064,6 @@ fn give_storage(prog: &Prog, function: usize, instruction: &MirInstr, vars: &mut
     match instruction {
         MirInstr::UseVar { var, .. } => give(*var),
         MirInstr::DropPlace { .. }
-        | MirInstr::ConsumePlace { .. }
         | MirInstr::MarkDestroyed { .. }
         | MirInstr::MarkInitialized { .. }
         | MirInstr::EstablishLoans { .. } => {}

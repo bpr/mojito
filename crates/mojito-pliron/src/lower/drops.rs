@@ -129,16 +129,12 @@ impl<'a> FnLowering<'a> {
 
     /// `ConsumeVar`: end the slot, upstream's exit `mark_destroyed`, which
     /// destroys nothing, as drop elaboration has destroyed every part the
-    /// value still held. A slot a call's `deinit` receiver already consumed
-    /// ([`FnLowering::consumed_receivers`]) is ended by that call.
+    /// value still held.
     pub(super) fn lower_consume_var(
         &mut self,
         ctx: &mut Context,
         var: u32,
     ) -> Result<(), PlironError> {
-        if self.consumed_receivers.remove(&var) {
-            return Ok(());
-        }
         if let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(var)?
             && self.trace_lifecycle
             && !self.synthesized_body()
@@ -198,12 +194,6 @@ impl<'a> FnLowering<'a> {
         let jump = BrOp::new(ctx, cont, vec![]);
         self.append(ctx, jump.get_operation(), None);
         self.current = Some(cont);
-    }
-
-    /// A whole-value (re)initialization of `var` ends a `deinit` receiver's
-    /// consumption.
-    pub(super) fn refill_slot(&mut self, var: u32) {
-        self.consumed_receivers.remove(&var);
     }
 
     /// Record that an instruction ended the part `place` names, so a whole

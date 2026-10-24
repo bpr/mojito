@@ -109,6 +109,11 @@ pub(super) fn transfer_interior_instruction(
         MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } => {
             remove_active_interior_reference(state, *var);
         }
+        MirInstr::MethodCall { .. } => {
+            if let Some(var) = instr.consumed_receiver_slot() {
+                remove_active_interior_reference(state, var);
+            }
+        }
         // Moving a variable out relocates the storage its interior
         // generations designate (a `var` argument like `dealloc(a^)`, a
         // whole-variable rebind): every generation rooted at it becomes
@@ -436,15 +441,25 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         MirInstr::VariantSetInitWith { place, factory, .. } => {
             add_place(&mut uses, place, *factory);
         }
-        MirInstr::ConsumePlace { place, marker } => add_place(&mut uses, place, *marker),
         MirInstr::DropPlace { place, .. } => add_place(&mut uses, place, Reg(0)),
         MirInstr::HasNext { dest, iter, .. } | MirInstr::Next { dest, iter, .. } => {
             uses.push((*iter, *dest));
         }
         // Call argument and receiver registers were evaluated before the
         // call-boundary invalidation. `arg_places`/`recv_place` are write-back
-        // metadata, not a second read of a copied argument at call time.
-        MirInstr::Call { .. } | MirInstr::CallIndirect { .. } | MirInstr::MethodCall { .. } => {}
+        // metadata, not a second read of a copied argument at call time, but
+        // a `deinit`-receiver call consuming a part of its receiver reads it,
+        // as upstream's `checkConsume` checks the interior origins reachable
+        // through a consumed operand.
+        MirInstr::MethodCall { recv, .. } => {
+            if let Some(place) = instr
+                .consumed_receiver()
+                .filter(|place| !place.is_whole_root())
+            {
+                add_place(&mut uses, place, *recv);
+            }
+        }
+        MirInstr::Call { .. } | MirInstr::CallIndirect { .. } => {}
         // Invalidating, dropping, or keeping an analytical handle alive is not
         // a read through that handle. Region ops' regions are replayed separately.
         MirInstr::InvalidateInteriors { .. }

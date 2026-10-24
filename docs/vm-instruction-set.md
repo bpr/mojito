@@ -169,7 +169,6 @@ and `comptime.for`, and the VM rejects one that survives as unsupported.
 | `ownership.mark_destroyed` | `MarkDestroyed` | End a place's value without destroying it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one |
 | `drop.var` | `DropVar` | Destroy the value in a variable slot, running the destructor the drop names |
 | `consume.var` | `ConsumeVar` | End a slot whose parts drop elaboration has already destroyed (a `deinit` receiver at each exit, upstream's exit `mark_destroyed`); destroys nothing |
-| `consume.place` | `ConsumePlace` | Consume one projected subobject after its named destructor succeeds; absent from concrete MIR (erased by `lower-lit`, the call's `deinit` receiver having consumed the part), so the VM refuses one |
 | `drop.reg` | `Drop` | Reserved register-drop operation |
 
 Verification requires every `ref.make` destination to be a reference capability
@@ -546,7 +545,8 @@ The instruction carries:
 - the source method name
 - an optional statically resolved overload symbol
 - ordinary argument registers
-- an optional writable receiver place
+- an optional writable receiver place, and whether the call consumes it
+  (`deinit_receiver`)
 - optional writable places for positional and keyword ordinary arguments
 - an optional concrete error type selected from the method or trait requirement
 - an optional `reference_result` describing the selected concrete reference ABI
@@ -558,6 +558,12 @@ For a `mut`/`ref self` method, the receiver place becomes a frame/slot handle.
 places. Nominal prelude collections and user-defined structs share this checked
 method instruction; only genuine scalar/runtime intrinsics take a separate
 dispatch path.
+
+A call whose `deinit_receiver` is set (the callee's receiver is `deinit`)
+consumes its receiver place, as upstream's call consumes a `DeinitMem`
+operand: the callee owns the receiver and destroys its fields, and the VM
+stores its ended-place tombstone into the place at the call, as a move
+leaves one. No marker after the call ends the receiver.
 
 Calls made by a structured `try` region use a temporary mirror with the caller's
 real frame identity. This preserves the same handles, including nested projected

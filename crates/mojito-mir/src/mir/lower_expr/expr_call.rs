@@ -939,6 +939,7 @@ impl<'a> Flatten<'a> {
                 recv_place.map(Box::new)
             },
             recv_writes: call.receiver_writes(),
+            deinit_receiver: call.receiver_deinit(),
             arg_places,
             kwarg_places,
             capture_accesses: self.call_capture_accesses(call),

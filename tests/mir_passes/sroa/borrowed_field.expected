@@ -67,7 +67,7 @@
               var.use { dest: %r10, var: $v0, mode: copy },
               var.store { var: $v2, src: %r10, binding_type: present(Int), in_place: false },
               place.load { dest: %r12, place: place { root: $v1, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [], type: present(struct_type { name: Pt, arguments: [] }), through: absent } },
-              call.method { dest: %r13, recv: %r12, method: sum, resolved: present("Pt.sum"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [], type: present(struct_type { name: Pt, arguments: [] }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r13, recv: %r12, method: sum, resolved: present("Pt.sum"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v1, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [], type: present(struct_type { name: Pt, arguments: [] }), through: absent }), recv_writes: false, deinit_receiver: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               place.load { dest: %r14, place: place { root: $v2, root_type: present(Int), projections: [], type: present(Int), through: absent } },
               drop.var { var: $v1 },
               drop.var { var: $v2 },

@@ -135,6 +135,7 @@ pub(super) fn dunder_method_call(
         kwargs: Vec::new(),
         recv_place: None,
         recv_writes: false,
+        deinit_receiver: false,
         arg_places,
         kwarg_places: Vec::new(),
         capture_accesses: Vec::new(),

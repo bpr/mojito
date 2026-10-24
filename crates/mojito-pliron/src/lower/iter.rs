@@ -181,7 +181,6 @@ impl FnLowering<'_> {
             dest_layout.size,
             Reg(u32::MAX),
         );
-        self.refill_slot(dest);
         Ok(())
     }
 
@@ -322,7 +321,6 @@ impl FnLowering<'_> {
             let from = self.var_slots[source as usize];
             let to = self.var_slots[dest as usize];
             self.mem_copy(ctx, to, from, composed.layout.size, Reg(u32::MAX));
-            self.refill_slot(dest);
         }
         Ok(())
     }
@@ -428,7 +426,6 @@ impl FnLowering<'_> {
             let from = self.var_slots[source as usize];
             let to = self.var_slots[dest as usize];
             self.mem_copy(ctx, to, from, layout.size, Reg(u32::MAX));
-            self.refill_slot(dest);
         }
         Ok(())
     }

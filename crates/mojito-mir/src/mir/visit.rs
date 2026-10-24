@@ -210,7 +210,6 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         | I::Store { place, .. }
         | I::StoreRef { place, .. }
         | I::LoadPlace { place, .. }
-        | I::ConsumePlace { place, .. }
         | I::DropPlace { place, .. }
         | I::MarkInitialized { place }
         | I::MarkDestroyed { place } => visitor.visit_place(place),

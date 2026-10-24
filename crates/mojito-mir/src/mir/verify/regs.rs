@@ -55,9 +55,9 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::VariantReplace { dest, .. }
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(*dest),
-        MirInstr::EstablishLoans { marker, .. }
-        | MirInstr::InvalidateInteriors { marker, .. }
-        | MirInstr::ConsumePlace { marker, .. } => out.push(*marker),
+        MirInstr::EstablishLoans { marker, .. } | MirInstr::InvalidateInteriors { marker, .. } => {
+            out.push(*marker);
+        }
         MirInstr::If {
             results,
             elifs,
@@ -112,8 +112,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
                 index_regs(&loan.place, out);
             }
         }
-        MirInstr::ConsumePlace { place: p, .. }
-        | MirInstr::DropPlace { place: p, .. }
+        MirInstr::DropPlace { place: p, .. }
         | MirInstr::MarkInitialized { place: p }
         | MirInstr::MarkDestroyed { place: p }
         | MirInstr::MakeRef { place: p, .. }

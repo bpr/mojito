@@ -72,7 +72,6 @@ instruction	match	supported	lowered to LLVM blocks as `LowerControlFlow` lowers 
 instruction	drop.reg	unsupported	reserved for the future assembler VM; the VM rejects it too
 instruction	drop.var	partial	destroys a whole slot unconditionally, through its destructor or field by field; a slot some part of which an instruction ended rejects
 instruction	consume.var	supported	ends the slot; drop elaboration has destroyed every field
-instruction	consume.place	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	drop.place	supported	destroys one part at its address, unconditionally
 instruction	ownership.mark_initialized	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	ownership.mark_destroyed	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects

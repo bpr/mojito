@@ -795,6 +795,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An explicit destroy (`x^.finish()`, `x.f^.finish()`) is now the call
+  alone: `call.method` records `deinit_receiver`, its callee's `deinit`
+  receiver convention, which the verifier checks against the declaration,
+  and the call consumes its receiver place, as upstream's call consumes a
+  `DeinitMem` operand (R1313). The move scan, drop elaboration, the
+  interior and loan transfers, `sroa`, and the slot-end verifier read the
+  end off the call, so MIR lowering emits no trailing `consume.var` or
+  `consume.place`; `consume.place` is withdrawn, and Pliron's
+  `consumed_receivers` workaround and the inliner's trailing-consume
+  removal are gone. Output is unchanged on both backends; MIR text is 1.98
+  and the package format 88.
+
 - Native drops no longer test a per-leaf presence flag, as upstream's
   `DestructorInsertion` destroys each field statically (R1312): every
   `drop.var` and `drop.place` Pliron lowers destroys unconditionally at the

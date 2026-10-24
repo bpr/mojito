@@ -5021,8 +5021,9 @@ fn close_register_types(
                         Some((dest, result))
                     }
                     MirInstr::EstablishLoans { marker, .. }
-                    | MirInstr::InvalidateInteriors { marker, .. }
-                    | MirInstr::ConsumePlace { marker, .. } => Some((marker, Some(Ty::none()))),
+                    | MirInstr::InvalidateInteriors { marker, .. } => {
+                        Some((marker, Some(Ty::none())))
+                    }
                     _ => None,
                 };
                 if let Some((dest, ty)) = derived {

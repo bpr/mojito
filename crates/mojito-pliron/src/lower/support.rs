@@ -528,7 +528,6 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::Drop { .. } => "Drop",
         MirInstr::DropVar { .. } => "DropVar",
         MirInstr::ConsumeVar { .. } => "ConsumeVar",
-        MirInstr::ConsumePlace { .. } => "ConsumePlace",
         MirInstr::DropPlace { .. } => "DropPlace",
         MirInstr::MarkInitialized { .. } => "MarkInitialized",
         MirInstr::MarkDestroyed { .. } => "MarkDestroyed",

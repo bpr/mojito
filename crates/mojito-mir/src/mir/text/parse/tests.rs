@@ -953,6 +953,7 @@ fn instruction_families_reprint_byte_identically() {
             kwargs: vec![("count".into(), Reg(5))],
             recv_place: Some(Box::new(place(0))),
             recv_writes: true,
+            deinit_receiver: true,
             arg_places: vec![Some(place(1))],
             kwarg_places: vec![None],
             capture_accesses: Vec::new(),
@@ -1208,10 +1209,6 @@ fn instruction_families_reprint_byte_identically() {
             destructor: None,
         },
         MirInstr::ConsumeVar { var: 2 },
-        MirInstr::ConsumePlace {
-            place: place(0),
-            marker: Reg(3),
-        },
         MirInstr::DropPlace {
             place: place(0),
             destructor: Some("D.__deinit__".into()),
@@ -2502,6 +2499,7 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
                     kwargs: Vec::new(),
                     recv_place: None,
                     recv_writes: false,
+                    deinit_receiver: false,
                     arg_places: Vec::new(),
                     kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
@@ -2544,6 +2542,20 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
     assert!(matches!(
         &parsed.program.functions[0].1.blocks[0].instrs[0],
         MirInstr::MethodCall { spread: None, .. }
+    ));
+
+    // Schema 1.98 records whether the call consumes a `deinit` receiver; an
+    // older artifact consumes none.
+    let before_deinit_receiver = write::program(&program).replace(", deinit_receiver: false", "");
+    assert!(!before_deinit_receiver.contains("deinit_receiver"));
+    let parsed =
+        artifact(before_deinit_receiver.as_bytes(), "unit.mir".to_string()).expect("parse 1.97");
+    assert!(matches!(
+        &parsed.program.functions[0].1.blocks[0].instrs[0],
+        MirInstr::MethodCall {
+            deinit_receiver: false,
+            ..
+        }
     ));
 }
 

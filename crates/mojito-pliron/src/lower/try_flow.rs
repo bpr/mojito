@@ -55,7 +55,6 @@ impl FnLowering<'_> {
                 // drop frees the message.
                 let slot = self.var_slots[*var as usize];
                 self.mem_copy(ctx, slot, err_slot, 24, Reg(u32::MAX));
-                self.refill_slot(*var);
             } else {
                 // No binder: the caught error is dropped on entry.
                 self.emit_release_storage(ctx, err_slot, &Ty::error())?;

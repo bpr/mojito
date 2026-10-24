@@ -80,7 +80,7 @@
               call { dest: %r2, func: Noisy, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v0, src: %r2, binding_type: present(struct_type { name: Noisy, arguments: [] }), in_place: true },
               var.use { dest: %r10, var: $v0, mode: forward },
-              call.method { dest: %r11, recv: %r10, method: __deinit__, resolved: present("Noisy.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r11, recv: %r10, method: __deinit__, resolved: present("Noisy.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, deinit_receiver: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               const { dest: %r3, value: int_literal(2) },
               literal.materialize { dest: %r4, value: %r3, target: Int },
               interiors.invalidate { base: interior_origin { root: $v0, path: [] }, except: absent, include_base_generation: false, marker: %r6 },
@@ -90,7 +90,7 @@
               place.load { dest: %r8, place: place { root: $v0, root_type: present(struct_type { name: Noisy, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
               call { dest: %r9, func: print, raises: absent, args: [%r8], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.use { dest: %r12, var: $v0, mode: forward },
-              call.method { dest: %r13, recv: %r12, method: __deinit__, resolved: present("Noisy.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+              call.method { dest: %r13, recv: %r12, method: __deinit__, resolved: present("Noisy.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, deinit_receiver: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }
           }

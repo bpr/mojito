@@ -11,15 +11,15 @@
 //! are MIR's lifetime check, and end here too. A `ref` binding's slot
 //! already holds its handle (`ref.make` then `var.store`), as upstream's
 //! `lit.ref` value does, so no loan op is left to define it.
-//! `ownership.mark_initialized`, `ownership.mark_destroyed`, and
-//! `consume.place` are upstream's `lit.ownership.mark_initialized`,
-//! `lit.ownership.mark_destroyed`, and `lit.ownership.mark_consumed`, which
-//! this pass erases too: they told the lifetime check where a value began
-//! and where a value or a part ended, and nothing is left to do at run
-//! time, since drop elaboration has destroyed each live value statically
-//! and a call's `deinit` receiver consumes its part in place. Below this
-//! pass none of the six markers is legal: concrete verification refuses
-//! one, and so do both backends.
+//! `ownership.mark_initialized` and `ownership.mark_destroyed` are
+//! upstream's `lit.ownership.mark_initialized` and
+//! `lit.ownership.mark_destroyed`, which this pass erases too: they told the
+//! lifetime check where a value began and where a value or a part ended,
+//! and nothing is left to do at run time, since drop elaboration has
+//! destroyed each live value statically. A call's `deinit` receiver needs
+//! no marker, as the call consumes it in place. Below this pass none of the
+//! five markers is legal: concrete verification refuses one, and so do both
+//! backends.
 //!
 //! `var.declare` stays. It is `lit.var.decl`, which upstream lowers to a
 //! stack allocation rather than erasing, and `mem-2-reg` reads it as the
@@ -37,14 +37,11 @@ pub const LOWER_LIT: BodyPass = BodyPass {
 };
 
 /// Erase every `lifetime.keep_alive`, `loans.establish`,
-/// `interiors.invalidate`, `ownership.mark_initialized`,
-/// `ownership.mark_destroyed`, and `consume.place` in `function`, its
-/// regions included.
+/// `interiors.invalidate`, `ownership.mark_initialized`, and
+/// `ownership.mark_destroyed` in `function`, its regions included.
 ///
 /// The erased loan and interior markers' registers lose their types and
-/// spans, and registers are not renumbered. A `consume.place`'s marker
-/// keeps both, since it may be the register its part was loaded into, the
-/// receiver of the call that consumed it. Returns whether any marker was
+/// spans, and registers are not renumbered. Returns whether any marker was
 /// erased.
 pub fn lower_lit(_name: &str, function: &mut MirFunction, _declarations: &MirDeclarations) -> bool {
     let mut erased_markers = HashSet::new();
@@ -71,8 +68,7 @@ fn erase_markers(blocks: &mut [MirBlock], erased_markers: &mut HashSet<u32>) -> 
             block.instrs.retain(|instruction| match instruction {
                 MirInstr::KeepAlive { .. }
                 | MirInstr::MarkInitialized { .. }
-                | MirInstr::MarkDestroyed { .. }
-                | MirInstr::ConsumePlace { .. } => false,
+                | MirInstr::MarkDestroyed { .. } => false,
                 MirInstr::EstablishLoans { marker, .. }
                 | MirInstr::InvalidateInteriors { marker, .. } => {
                     erased_markers.insert(marker.0);

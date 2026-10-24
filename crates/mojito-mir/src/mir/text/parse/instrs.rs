@@ -519,6 +519,14 @@ impl Decoder {
                     .req(value, fields, "recv_place", |d, v| Some(d.option_place(v)))?)
                 .map(Box::new),
                 recv_writes: self.req(value, fields, "recv_writes", Self::boolean)?,
+                // Schema 1.98 records whether the call consumes a `deinit`
+                // receiver; an older artifact carries none, and the verifier
+                // refuses one whose callee's receiver is `deinit`.
+                deinit_receiver: self
+                    .field(fields, "deinit_receiver")
+                    .ok()
+                    .and_then(|found| self.boolean(found))
+                    .unwrap_or_default(),
                 arg_places: self
                     .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
                 kwarg_places: self.req(value, fields, "kwarg_places", |d, v| {
@@ -890,10 +898,6 @@ impl Decoder {
             }),
             "consume.var" => Some(MirInstr::ConsumeVar {
                 var: self.req(value, fields, "var", Self::var)?,
-            }),
-            "consume.place" => Some(MirInstr::ConsumePlace {
-                place: self.req(value, fields, "place", Self::place)?,
-                marker: self.req(value, fields, "marker", Self::reg)?,
             }),
             "drop.place" => Some(MirInstr::DropPlace {
                 place: self.req(value, fields, "place", Self::place)?,

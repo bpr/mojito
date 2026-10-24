@@ -1058,6 +1058,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
             kwargs,
             recv_place,
             recv_writes,
+            deinit_receiver,
             arg_places,
             kwarg_places,
             capture_accesses,
@@ -1090,6 +1091,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                     ("kwargs", kwargs_value(kwargs)),
                     ("recv_place", option(recv_place.as_deref().map(place_value))),
                     ("recv_writes", recv_writes.to_string()),
+                    ("deinit_receiver", deinit_receiver.to_string()),
                     ("arg_places", places_option(arg_places)),
                     ("kwarg_places", places_option(kwarg_places)),
                     (
@@ -1682,13 +1684,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 "destructor",
                 destructor.as_deref(),
             ),
-        ),
-        MirInstr::ConsumePlace { place, marker } => record(
-            tag,
-            &[
-                ("place", place_value(place)),
-                ("marker", reg_value(*marker)),
-            ],
         ),
         MirInstr::DropPlace { place, destructor } => record(
             tag,

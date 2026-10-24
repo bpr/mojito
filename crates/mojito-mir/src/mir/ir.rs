@@ -881,13 +881,6 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             out.extend(other.iter_mut());
         }
         MirInstr::Drop { reg } => out.push(reg),
-        MirInstr::ConsumePlace {
-            place: target,
-            marker,
-        } => {
-            place_regs_mut(target, &mut out);
-            out.push(marker);
-        }
         MirInstr::DropPlace { place: target, .. }
         | MirInstr::MarkInitialized { place: target }
         | MirInstr::MarkDestroyed { place: target } => place_regs_mut(target, &mut out),
@@ -2071,6 +2064,11 @@ pub enum MirInstr {
         /// (a reference result used as the receiver) does not conflict with
         /// the call. Unchecked lowering paths stay conservatively `true`.
         recv_writes: bool,
+        /// Whether the callee's receiver is `deinit`, upstream's `DeinitMem`
+        /// convention: the call itself consumes `recv_place`, as upstream's
+        /// call consumes its operand (`memConsume`), so no marker after the
+        /// call ends it.
+        deinit_receiver: bool,
         /// Like `Call::arg_places`: `arg_places[i]` is `Some` for a
         /// checker-selected `mut`/`ref` ordinary argument with a supported
         /// caller place, or for a shared-read place a borrowing-view result
@@ -2536,21 +2534,13 @@ pub enum MirInstr {
         #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
         destructor: Option<String>,
     },
-    /// Consume a variable without running implicit destruction. Explicit-destroy
-    /// calls emit this immediately after the call, so a raising call leaves the
-    /// source live for an `except` fallback while a successful call consumes it.
+    /// End a variable without running implicit destruction, upstream's
+    /// exit `mark_destroyed`: a `deinit` parameter's or pack's end before
+    /// the exit, whose parts drop elaboration has destroyed. A call's
+    /// `deinit` receiver needs none, as the call consumes it
+    /// ([`MirInstr::consumed_receiver`]).
     ConsumeVar {
         var: VarId,
-    },
-    /// Consume one projected subobject after its named explicit destructor
-    /// succeeds (upstream's `lit.ownership.mark_consumed`), leaving the
-    /// rest of the aggregate available. `marker` is the register the part
-    /// was loaded into, the destructor's receiver. The ownership analysis
-    /// and drop elaboration read it, and `lower-lit` erases it, so no
-    /// backend sees one.
-    ConsumePlace {
-        place: MirPlace,
-        marker: Reg,
     },
     /// Mark `place` initialized without writing it (upstream's
     /// `lit.ownership.mark_initialized`): ownership treats the place as
@@ -2638,6 +2628,27 @@ impl MirInstr {
             } if source != dest && !prepare.is_empty() => Some(*source),
             _ => None,
         }
+    }
+
+    /// The place a `deinit`-receiver call consumes in place, as upstream's
+    /// call consumes a `DeinitMem` operand (`memConsume`).
+    pub fn consumed_receiver(&self) -> Option<&MirPlace> {
+        match self {
+            Self::MethodCall {
+                deinit_receiver: true,
+                recv_place: Some(place),
+                ..
+            } => Some(place),
+            _ => None,
+        }
+    }
+
+    /// The slot a `deinit`-receiver call consumes whole: its receiver place
+    /// names a root, which ends there as a `consume.var` of it would.
+    pub fn consumed_receiver_slot(&self) -> Option<VarId> {
+        self.consumed_receiver()
+            .filter(|place| place.is_whole_root())
+            .map(|place| place.root)
     }
 
     /// The checked error type a call instruction raises, if it raises.
@@ -2776,7 +2787,6 @@ impl MirInstr {
             | Self::Drop { .. }
             | Self::DropVar { .. }
             | Self::ConsumeVar { .. }
-            | Self::ConsumePlace { .. }
             | Self::MarkInitialized { .. }
             | Self::MarkDestroyed { .. }
             | Self::DropPlace { .. }

@@ -154,7 +154,6 @@ impl Walk<'_> {
                 }
                 None => self.place(place, true),
             },
-            MirInstr::ConsumePlace { place, .. } => self.place(place, false),
             MirInstr::PointerStorageDestroy {
                 element,
                 destructor,

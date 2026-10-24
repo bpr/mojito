@@ -1,5 +1,6 @@
-//! Slot ends: a `drop.var` or `var.consume` must end a slot every path
-//! reaching it holds, as upstream's `UninitializedValueScan` rejects a use,
+//! Slot ends: a `drop.var`, a `var.consume`, or a `deinit`-receiver call
+//! consuming a whole slot (upstream's `memConsume` operand) must end a slot
+//! every path reaching it holds, as upstream's `UninitializedValueScan` rejects a use,
 //! a destroy among them, of a value some path has not initialized. So a
 //! slot's state is static at every end, and a backend destroys it with no
 //! drop flag; a slot some path has ended — dropped, consumed, or moved — or
@@ -24,8 +25,8 @@ use crate::mir::{
 };
 use std::collections::HashMap;
 
-/// Report every `drop.var` or `var.consume` in `function` whose slot some
-/// path reaching it does not hold. A finding names the block of the block
+/// Report every slot end in `function` (a `drop.var`, a `var.consume`, or
+/// a `deinit`-receiver call) whose slot some path reaching it does not hold. A finding names the block of the block
 /// list holding it: the function's, or a region's.
 pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut Vec<String>) {
     if !ends_slots(&function.blocks) {
@@ -433,8 +434,20 @@ impl<'a> Walk<'a> {
             set(state, *var, false);
             return;
         }
+        // A `deinit`-receiver call ends its receiver slot as a
+        // `var.consume` does, after the call has read it.
+        let consumed = instruction.consumed_receiver_slot();
+        if let Some(var) = consumed
+            && report
+            && state.get(var as usize) == Some(&false)
+        {
+            self.report(index, "call.method deinit receiver", var);
+        }
         for slot in instruction_slots(instruction) {
             set(state, slot, true);
+        }
+        if let Some(var) = consumed {
+            set(state, var, false);
         }
         if let MirInstr::WriteRef { reference, .. } = instruction
             && let Some(&slot) = self.refills.get(&reference.0)
@@ -447,7 +460,6 @@ impl<'a> Walk<'a> {
         match instruction {
             MirInstr::UseVar { var, mode, .. } if mode.moves() => set(state, *var, false),
             MirInstr::MovePlace { place, .. }
-            | MirInstr::ConsumePlace { place, .. }
             | MirInstr::DropPlace { place, .. }
             | MirInstr::MarkDestroyed { place }
                 if place.is_whole_root() =>
@@ -488,17 +500,18 @@ fn set(state: &mut Held, slot: VarId, held: bool) {
     }
 }
 
-/// Whether some block of `blocks`, at any depth, ends a slot: a `drop.var`
-/// or a `var.consume`.
+/// Whether some block of `blocks`, at any depth, ends a slot: a `drop.var`,
+/// a `var.consume`, or a `deinit`-receiver call consuming a whole slot.
 fn ends_slots(blocks: &[MirBlock]) -> bool {
     blocks.iter().any(|block| {
         block.instrs.iter().any(|instruction| {
             matches!(
                 instruction,
                 MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. }
-            ) || instruction_regions(instruction)
-                .into_iter()
-                .any(|region| ends_slots(region))
+            ) || instruction.consumed_receiver_slot().is_some()
+                || instruction_regions(instruction)
+                    .into_iter()
+                    .any(|region| ends_slots(region))
         })
     })
 }

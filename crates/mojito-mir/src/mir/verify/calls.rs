@@ -98,6 +98,7 @@ pub(super) fn verify_call_instruction(
         MirInstr::MethodCall {
             dest,
             method,
+            deinit_receiver,
             resolved: Some(callee),
             reference_result,
             result_adapter,
@@ -156,6 +157,19 @@ pub(super) fn verify_call_instruction(
             }
             if let Some(declaration) = declared(cx.declarations, callee) {
                 verify_collector_passed(prefix, declaration, *spread, kwargs, errors);
+                // The call consumes its receiver exactly when the callee's
+                // receiver is `deinit`, as upstream's call reads the
+                // convention off its callee's type.
+                if declaration.has_receiver
+                    && *deinit_receiver
+                        != (declaration.receiver_convention
+                            == Some(mojito_ast::ast::ArgConvention::Deinit))
+                {
+                    errors.push(format!(
+                        "{prefix}: method-call deinit-receiver flag does not match '{}'",
+                        declaration.lowered_name
+                    ));
+                }
                 verify_direct_call(
                     prefix,
                     cx.function,

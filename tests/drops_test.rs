@@ -668,8 +668,8 @@ fn read_borrowed_owner_outlives_the_call_inside_a_try() {
 
 #[test]
 fn named_destructor_call_inside_a_try_skips_the_whole_value_deinit() {
-    // `h^.finish()` inside a `try` body: the lowered `ConsumeVar` still owns
-    // the teardown — region elaboration must not splice a competing `DropVar`
+    // `h^.finish()` inside a `try` body: the call consumes its `deinit`
+    // receiver — region elaboration must not splice a competing `DropVar`
     // (the whole-value `__deinit__` would double-run).
     let src = "struct Item(Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __init__(out self, *, deinit move: Self):\n        self.id = move.id\n    def __deinit__(deinit self):\n        print(\"drop item\", self.id)\n\nstruct Holder(Movable):\n    var item: Item\n    def __init__(out self, id: Int):\n        self.item = Item(id)\n    def __deinit__(deinit self):\n        print(\"drop holder\", self.item.id)\n    def finish(deinit self):\n        print(\"finish\", self.item.id)\n\ndef may(x: Int) raises -> Int:\n    if x < 0:\n        raise Error(\"neg\")\n    return x\n\ndef main():\n    try:\n        var h = Holder(1)\n        h^.finish()\n        var x = may(-1)\n    except e:\n        print(\"caught\")\n    print(\"done\")\n";
     assert_eq!(vm(src), "finish 1\ndrop item 1\ncaught\ndone\n");
@@ -965,9 +965,8 @@ fn read_borrowed_owner_outlives_the_call() {
 #[test]
 fn named_destructor_call_skips_the_whole_value_deinit() {
     // `h^.finish()` consumes the receiver through its named destructor: the
-    // whole-value `__deinit__` must not re-run after the call (drop
-    // elaboration used to splice a competing `DropVar` over the lowered
-    // `ConsumeVar`), while residual fields still get their ordinary
+    // whole-value `__deinit__` must not re-run after the call, which ends
+    // the receiver, while residual fields still get their ordinary
     // reverse-order destruction at the consumption point.
     let src = "struct Item(Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __init__(out self, *, deinit move: Self):\n        self.id = move.id\n    def __deinit__(deinit self):\n        print(\"drop item\", self.id)\n\nstruct Holder(Movable):\n    var item: Item\n    def __init__(out self, id: Int):\n        self.item = Item(id)\n    def __deinit__(deinit self):\n        print(\"drop holder\", self.item.id)\n    def finish(deinit self):\n        print(\"finish\", self.item.id)\n\ndef main():\n    var h = Holder(1)\n    h^.finish()\n    print(\"done\")\n";
     assert_eq!(vm(src), "finish 1\ndrop item 1\ndone\n");

@@ -307,6 +307,7 @@ impl<'a> Flatten<'a> {
                 kwargs: Vec::new(),
                 recv_place: recv_place.map(Box::new),
                 recv_writes: true,
+                deinit_receiver: false,
                 arg_places,
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
@@ -360,6 +361,7 @@ impl<'a> Flatten<'a> {
                 kwargs: Vec::new(),
                 recv_place: recv_place.map(Box::new),
                 recv_writes: true,
+                deinit_receiver: false,
                 arg_places: vec![None],
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
@@ -827,8 +829,8 @@ impl<'a> Flatten<'a> {
                 .map(MirResultAdapter::new),
             args: regs,
             kwargs: kw,
-            // An explicit-destructor call keeps its receiver place:
-            // the VM vacates it before the call, as the callee owns the
+            // An explicit-destructor call keeps its receiver place, which
+            // the call consumes (`deinit_receiver`): the callee owns the
             // receiver from then on and destroys its fields itself.
             recv_place: if implicitly_copied_receiver {
                 None
@@ -836,6 +838,7 @@ impl<'a> Flatten<'a> {
                 recv_place.map(Box::new)
             },
             recv_writes: call.receiver_writes(),
+            deinit_receiver: call.receiver_deinit(),
             arg_places,
             kwarg_places,
             capture_accesses,
@@ -846,19 +849,6 @@ impl<'a> Flatten<'a> {
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
-        if explicit_destroy
-            && !implicitly_copied_receiver
-            && let Some(place) = self.try_place(receiver_expr)
-        {
-            if place.is_whole_root() {
-                self.emit(MirInstr::ConsumeVar { var: place.root });
-            } else {
-                self.emit(MirInstr::ConsumePlace {
-                    place,
-                    marker: recv,
-                });
-            }
-        }
         self.error_region(raises);
         d
     }

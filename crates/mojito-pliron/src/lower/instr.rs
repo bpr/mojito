@@ -349,9 +349,6 @@ impl FnLowering<'_> {
                     let flag_store = StoreOp::new(ctx, present, storage);
                     self.append(ctx, flag_store.get_operation(), Some(*src));
                 }
-                if place.proj.is_empty() && place.through.is_none() {
-                    self.refill_slot(place.root);
-                }
                 Ok(())
             }
             MirInstr::GetField {
@@ -472,9 +469,6 @@ impl FnLowering<'_> {
             }
             MirInstr::MarkDestroyed { .. } => {
                 Err(self.unsupported("a destruction mark after lower-lit".to_string(), None))
-            }
-            MirInstr::ConsumePlace { marker, .. } => {
-                Err(self.unsupported_reg("a part consumption after lower-lit".to_string(), *marker))
             }
             MirInstr::EstablishLoans { marker, .. } => {
                 Err(self.unsupported_reg("a loan marker after lower-lit".to_string(), *marker))

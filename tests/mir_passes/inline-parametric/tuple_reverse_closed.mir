@@ -47,10 +47,10 @@ artifact {
               var.store { var: $v2, src: %r2, binding_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), in_place: true },
               place.load { dest: %r3, place: place { root: $v2, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Int), type_arg(Bool)] }), through: absent } },
               call { dest: %r4, func: "Tuple.__copyinit__", raises: absent, args: [], kwargs: [keyword { name: copy, value: %r3 }], arg_places: [], kwarg_places: [absent], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call.method { dest: %r5, recv: %r4, method: reverse, resolved: present("Tuple.reverse"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r5, recv: %r4, method: reverse, resolved: present("Tuple.reverse"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, deinit_receiver: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               var.store { var: $v3, src: %r5, binding_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), in_place: true },
               var.use { dest: %r14, var: $v2, mode: forward },
-              call.method { dest: %r15, recv: %r14, method: __deinit__, resolved: present("Tuple.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r15, recv: %r14, method: __deinit__, resolved: present("Tuple.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, deinit_receiver: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               place.load { dest: %r6, place: place { root: $v3, root_type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), projections: [], type: present(struct_type { name: Tuple, arguments: [type_arg(Bool), type_arg(Int)] }), through: absent } },
               const { dest: %r7, value: int_literal(0) },
               literal.materialize { dest: %r8, value: %r7, target: Int },
@@ -58,7 +58,7 @@ artifact {
               ref.read { dest: %r10, reference: %r9 },
               value.copy { dest: %r11, value: %r10 },
               var.use { dest: %r12, var: $v3, mode: forward },
-              call.method { dest: %r13, recv: %r12, method: __deinit__, resolved: present("Tuple.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+              call.method { dest: %r13, recv: %r12, method: __deinit__, resolved: present("Tuple.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, deinit_receiver: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
             ],
             terminator: return { value: present(%r11) }
           }
@@ -142,7 +142,7 @@ artifact {
               const { dest: %r0, value: param(param_pack_query { pack: binder { owner: "Tuple", slot: 0, name: Ts }, query: pack_length }) },
               call { dest: %r1, func: "range$ov$Int", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               var.store { var: $v0, src: %r1, binding_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), in_place: false },
-              call.method { dest: %r2, recv: %r1, method: __iter__, resolved: present("__module$std$range$_ZeroStartingRange.__iter__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), projections: [], type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), through: absent }), recv_writes: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r2, recv: %r1, method: __iter__, resolved: present("__module$std$range$_ZeroStartingRange.__iter__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: present(place { root: $v0, root_type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), projections: [], type: present(struct_type { name: "__module$std$range$_ZeroStartingRange", arguments: [value_arg(ct_dtype(int))] }), through: absent }), recv_writes: false, deinit_receiver: false, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               drop.var { var: $v0 }
             ],
             terminator: return { value: present(%r2) }

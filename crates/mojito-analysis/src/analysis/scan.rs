@@ -70,10 +70,6 @@ pub(super) fn instruction_uses(i: &MirInstr) -> Vec<(Used<'_>, Reg)> {
         MirInstr::VariantSetInitWith { place, factory, .. } => vec![(Used::Place(place), *factory)],
         MirInstr::VariantReplace { place, value, .. } => vec![(Used::Place(place), *value)],
         MirInstr::LoadPlace { dest, place } => vec![(Used::Place(place), *dest)],
-        // Consuming a projected field reads its root: a `deinit` receiver's
-        // whole-variable teardown must follow the field consumption, not
-        // precede it.
-        MirInstr::ConsumePlace { place, marker } => vec![(Used::Place(place), *marker)],
         MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }
         | MirInstr::MarkDestroyed { place } => vec![(Used::Place(place), Reg(0))],
@@ -264,12 +260,14 @@ pub(super) const fn loan_liveness_def(i: &MirInstr) -> Option<VarId> {
 pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
     match i {
         MirInstr::UseVar { var, mode, .. } if mode.moves() => vec![*var],
-        // A lowered explicit-destructor call already consumes the receiver
-        // slot (its fields destroyed by the callee, whole-value `__deinit__`
-        // skipped);
-        // splicing an ordinary drop as well would run the destructor the
-        // named destructor replaced.
+        // A `deinit` parameter's or pack's end before the exit.
         MirInstr::ConsumeVar { var } => vec![*var],
+        // A `deinit`-receiver call consumes its receiver slot (its fields
+        // destroyed by the callee, whole-value `__deinit__` skipped), as
+        // upstream's call consumes its `DeinitMem` operand; splicing an
+        // ordinary drop as well would run the destructor the named
+        // destructor replaced.
+        MirInstr::MethodCall { .. } => i.consumed_receiver_slot().into_iter().collect(),
         // A declaration-time move capture transfers a whole root into the
         // closure owner. Projected captures leave a residual aggregate that
         // still needs its ordinary drop, so only whole-root moves suppress it.

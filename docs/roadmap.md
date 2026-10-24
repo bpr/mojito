@@ -978,30 +978,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1313 A call's whole-slot `deinit` receiver is ended by a trailing
-  `consume.var`, where upstream's call consumes its `deinit` operand**
-
-  `x^.method()` and a lowered field destructor call leave the call's
-  receiver slot to a `consume.var` after the call, which must then end
-  nothing.
-  - Upstream: `checkConsume`, and `memConsume` in `LowerLIT`.
-  - Producers: MIR lowering of a transferred receiver's call.
-  - Part form: an explicit destroy of a part, `x.f^.finish()`, still
-    emits a `consume.place` after the call (`lower_expr/expr_method.rs`),
-    which the move scan and drop elaboration read where upstream reads the
-    call's `deinit` operand (`memConsume`); `lower-lit` erases it.
-  - Pliron records the slot in `FnLowering::consumed_receivers` at the
-    call (`lower/methods.rs`), and the VM stores `Value::Moved` into the
-    place before it (`vm/invoke.rs`), so neither `consume.var` traces.
-  - Fix: drop elaboration and the verifier treat the call as the end, and
-    both backend workarounds go.
-  - Probes: `assets/ok/deinit_param_destruction_timing.mojo`,
-    `assets/ok/deinit_body_field_last_use.mojo` (their `consume` trace
-    events in `lifecycle_event_traces_match_the_vm`).
-  - Found while landing R832 (2026-10-23).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1319 Pliron refuses a whole drop after a part's end, where
   upstream's `UninitializedValueScan` proves field by field that none
   exists**
@@ -1020,6 +996,11 @@ change that needs a new `MJRT_ABI_VERSION`.
     `place.move`, a `drop.place`, a `deinit` receiver call on a part), a
     `drop.var` or `var.consume` requires every part held, and
     `partially_moved` and its refusal go.
+  - The VM keeps the same backstop at run time: `drop_named` and
+    `drop_value` (`crates/mojito-vm/src/backend/vm/dispatch.rs`) skip a
+    whole destructor when a field holds the `Value::Moved` tombstone a part
+    move or a `deinit` receiver call on a part leaves; the same proof
+    retires that test.
   - The corpus reaches the refusal nowhere (2026-10-23 instrumentation
     while planning R1312), so this is a missing proof, not a wrong run.
   - Found while landing R1312 (2026-10-23).

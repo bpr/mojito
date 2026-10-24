@@ -292,16 +292,14 @@ impl FnLowering<'_> {
                 kwarg_places,
             )?);
         }
-        // A named destructor owns its aliased receiver from the call on (the
-        // callee destroys its fields, each at its last use), so the raise
-        // edge must not destroy that storage again.
-        if deinit_receiver && receiver_alias {
-            let place = recv_place.expect("aliased deinit receiver has a place");
-            if place.proj.is_empty() {
-                self.consumed_receivers.insert(place.root);
-            } else {
-                self.end_part(place);
-            }
+        // The call consumes its aliased `deinit` receiver (the callee
+        // destroys its fields, each at its last use); a part's end is
+        // recorded so a whole drop of its slot refuses.
+        if deinit_receiver
+            && receiver_alias
+            && let Some(place) = recv_place
+        {
+            self.end_part(place);
         }
         self.emit_bound_call(ctx, dest, resolved, lowered)?;
         // `mut self` (the struct's mut_self_methods set — keyed by either the

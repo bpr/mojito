@@ -396,11 +396,6 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "ends the slot; drop elaboration has destroyed every field",
     ),
     (
-        "consume.place",
-        CapabilityStatus::Unsupported,
-        "`lower-lit` erases every lifetime marker; one that survives rejects",
-    ),
-    (
         "drop.place",
         CapabilityStatus::Supported,
         "destroys one part at its address, unconditionally",

@@ -64,7 +64,6 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
         | MirInstr::VariantSet { place, .. }
         | MirInstr::VariantSetInitWith { place, .. }
         | MirInstr::VariantReplace { place, .. }
-        | MirInstr::ConsumePlace { place, .. }
         | MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }
         | MirInstr::MarkDestroyed { place } => vec![place],
@@ -158,7 +157,6 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
         | MirInstr::VariantSet { place, .. }
         | MirInstr::VariantSetInitWith { place, .. }
         | MirInstr::VariantReplace { place, .. }
-        | MirInstr::ConsumePlace { place, .. }
         | MirInstr::DropPlace { place, .. }
         | MirInstr::MarkInitialized { place }
         | MirInstr::MarkDestroyed { place } => vec![place],

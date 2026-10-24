@@ -5409,18 +5409,23 @@ generic struct name. If any aggregate field has already moved, drop glue skips
 the whole-value `__deinit__` for every struct and recursively destroys only its
 initialized residual fields.
 
-A named explicit destructor is lowered as a call followed by `ConsumeVar` for a
-whole binding or `ConsumePlace` for a projected field, the image of upstream's
-`lit.ownership.mark_consumed`, which `lower-lit` erases, so no backend sees
-one: the call's `deinit` receiver has consumed the part. Drop elaboration treats a
-pending `ConsumeVar` as the variable's teardown — the variable stays live up to
-it and counts as moved there — so no competing ordinary `DropVar` is spliced
-between the call and the consumption (which would re-run the whole-value
-`__deinit__` the named destructor replaced). The callee owns its `deinit`
-receiver from the call on: its body's elaborated drops destroy its fields,
-each at its own last use, and its `ConsumeVar` ends the receiver, the VM vacates the caller's receiver place
-before the call, and the caller's trailing consumption therefore finds
-nothing left to destroy. Consumption is unconditional: a raising named
+A named explicit destructor is lowered as a call alone. `MethodCall`
+carries `deinit_receiver`, the callee's `deinit` (upstream's `DeinitMem`)
+receiver convention, which the verifier checks against the callee's
+declaration, and the call consumes its receiver place
+(`MirInstr::consumed_receiver`), as upstream's call consumes its
+`DeinitMem` operand (`memConsume`, read by `checkConsume` in both
+`UninitializedValueScan` and `DestructorInsertion`); no marker follows the
+call. The move scan, drop elaboration, the interior and loan transfers,
+and the slot-end verifier read the end off the call: a whole slot ends
+there as a `ConsumeVar` would end it, and a part as a part move does, so
+no ordinary `DropVar` is spliced after the call (which would re-run the
+whole-value `__deinit__` the named destructor replaced). The callee owns
+its `deinit` receiver from the call on: its body's elaborated drops
+destroy its fields, each at its own last use, and its `ConsumeVar` ends
+the receiver. The VM stores its ended-place tombstone (`Value::Moved`)
+into the caller's receiver place at the call, as a move leaves one.
+Consumption is unconditional: a raising named
 destructor leaves the source uninitialized on both edges (upstream's rule),
 and the checker rejects an `except` arm that re-consumes it.
 
@@ -5454,7 +5459,7 @@ moved fields reconstructs the intact state and restores the whole destructor.
 Obligation paths are part of structured control-flow state. Branches and
 loop backedges must agree on both the remaining
 obligations and moved fields, preventing a partial state from being hidden by a
-join. MIR `ConsumePlace` preserves sibling storage, and drop elaboration
+join. A `deinit`-receiver call on a part preserves sibling storage, and drop elaboration
 destroys only the ordinary residual fields of an incomplete linear aggregate.
 
 ### Region Drops
