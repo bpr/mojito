@@ -89,7 +89,7 @@ pub use param_uses::{
 mod register_ends;
 pub use register_ends::{
     ArgumentBinding, BoundArgument, CallArguments, Callee, ParameterContract, RegisterEnds,
-    owned_register, owned_result_regs, receiver_ty,
+    owned_register, owned_result_regs, receiver_ty, region_argument_regs,
 };
 mod struct_reads;
 pub use struct_reads::{
@@ -493,7 +493,10 @@ impl MirDeclarations {
     /// conformance conditions on its fields is the synthesized one, which
     /// only destroys them, so it runs no code where they run none: the
     /// conformance holds at those arguments (`P[Int]` over a field `T`). A
-    /// type parameter, an associated type, and anything unknown answer no.
+    /// struct whose `IsTriviallyDeinitable` row holds no condition, which no
+    /// instance satisfies, answers no, whether or not its member table
+    /// still lists the destructor an instance inlined everywhere. A type
+    /// parameter, an associated type, and anything unknown answer no.
     pub fn drop_runs_no_code(&self, ty: &Ty) -> bool {
         self.drop_runs_no_code_within(ty, &mut Vec::new())
     }
@@ -518,7 +521,11 @@ impl MirDeclarations {
                     row.trait_name == "IsTriviallyDeinitable"
                         && !matches!(row.conditions.as_slice(), [] | [GenericConstraint::Bool(_)])
                 });
-                if declaration.explicit_destroy.is_some()
+                let never = declaration.conformances.iter().any(|row| {
+                    row.trait_name == "IsTriviallyDeinitable" && row.conditions.is_empty()
+                });
+                if never
+                    || declaration.explicit_destroy.is_some()
                     || !declaration.explicit_destructors.is_empty()
                     || (declaration.member("__deinit__").is_some() && !fieldwise)
                 {

@@ -109,6 +109,17 @@ pub(super) trait BackwardScan {
     /// it: `checkLoopOp` counts the continue point reached even when no
     /// path through the body leaves the loop.
     fn loop_entry(&self, _live: &mut Self::State) {}
+    /// Kill in `live`, the state live after the region op `op`, what the op
+    /// defines once its regions are done: its results, and a raising
+    /// instruction's results at its raise-edge `if`, so no region sees them.
+    fn op_defines(&self, _live: &mut Self::State, _op: &MirInstr) {}
+    /// Add to `live`, the region op `op`'s live-in, what the op itself
+    /// uses: a loop's operands.
+    fn op_uses(&self, _live: &mut Self::State, _op: &MirInstr) {}
+    /// Kill in `live`, a region's live-in, the arguments `args` its entry
+    /// defines, as upstream's `ValueSet` numbers a region's block
+    /// arguments.
+    fn region_args(&self, _live: &mut Self::State, _args: &[Reg]) {}
 }
 
 /// What a backward walk reports on its final replay, each event once. A
@@ -682,7 +693,9 @@ impl<S: BackwardScan> BackWalk<'_, S> {
         self.scan.terminate(&mut live, block);
         for instr in block.instrs.iter().rev() {
             if region_op(instr) && self.scan.enters(instr) {
+                self.scan.op_defines(&mut live, instr);
                 live = self.op(instr, &live, recorder.as_deref_mut());
+                self.scan.op_uses(&mut live, instr);
             } else {
                 self.scan.transfer(&mut live, instr);
                 if raises_to_handler(instr)
@@ -777,10 +790,12 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             MirInstr::If {
                 then,
                 elifs,
+                else_args,
                 orelse,
                 ..
             } => {
                 let mut rest = self.region(orelse, exit, recorder.as_deref_mut());
+                self.scan.region_args(&mut rest, else_args);
                 for elif in elifs.iter().rev() {
                     let arm = self.region(&elif.then, exit, recorder.as_deref_mut());
                     self.scan.join(&mut rest, &arm);
@@ -798,14 +813,20 @@ impl<S: BackwardScan> BackWalk<'_, S> {
                 }
                 live
             }
-            MirInstr::Loop { label, body, .. } => {
-                self.looped(RegionFrame::Loop(*label), body, exit, recorder)
+            MirInstr::Loop {
+                label, body, args, ..
+            } => self.looped(RegionFrame::Loop(*label), (body, args), exit, recorder),
+            MirInstr::ComptimeFor { body, args, .. } => {
+                self.looped(RegionFrame::ComptimeFor, (body, args), exit, recorder)
             }
-            MirInstr::ComptimeFor { body, .. } => {
-                self.looped(RegionFrame::ComptimeFor, body, exit, recorder)
-            }
-            MirInstr::Match { cases, orelse, .. } => {
+            MirInstr::Match {
+                cases,
+                else_args,
+                orelse,
+                ..
+            } => {
                 let mut next = self.region(orelse, exit, recorder.as_deref_mut());
+                self.scan.region_args(&mut next, else_args);
                 for case in cases.iter().rev() {
                     self.frames.push(BackFrame {
                         kind: RegionFrame::MatchCase,
@@ -813,6 +834,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
                         resume: next,
                     });
                     next = self.region(&case.body, &S::State::default(), recorder.as_deref_mut());
+                    self.scan.region_args(&mut next, &case.args);
                     self.frames.pop();
                 }
                 next
@@ -829,18 +851,19 @@ impl<S: BackwardScan> BackWalk<'_, S> {
     /// The live-in of a loop (or a `comptime for`) whose live-out is
     /// `exit`, as `checkLoopOp` walks it: the body is dry-run under a frame
     /// whose break set is `exit` and whose continue set starts empty, until
-    /// the continue set (the body's live-in) is stable, then replayed once
-    /// for `recorder`.
+    /// the continue set (the body's live-in, less the arguments `args` its
+    /// entry defines) is stable, then replayed once for `recorder`.
     fn looped<R: BackwardRecorder<S::State>>(
         &mut self,
         kind: RegionFrame,
-        body: &[MirBlock],
+        (body, args): (&[MirBlock], &[Reg]),
         exit: &S::State,
         recorder: Option<&mut R>,
     ) -> S::State {
         let mut resume = S::State::default();
         loop {
             let mut next = self.framed(kind, body, exit, resume.clone(), None::<&mut R>);
+            self.scan.region_args(&mut next, args);
             self.scan.loop_entry(&mut next);
             self.scan.join(&mut next, &resume);
             if next == resume {
@@ -888,7 +911,9 @@ impl<S: BackwardScan> BackWalk<'_, S> {
         let MirInstr::Try {
             label,
             body,
+            handler_args,
             handler,
+            else_args,
             orelse,
             ..
         } = instr
@@ -897,11 +922,13 @@ impl<S: BackwardScan> BackWalk<'_, S> {
         };
         let handler_in = handler.as_ref().map(|(_, h)| {
             let mut live = self.region(h, exit, recorder.as_deref_mut());
+            self.scan.region_args(&mut live, handler_args);
             self.scan.enter(&mut live, h);
             live
         });
         let else_in = orelse.as_ref().map(|e| {
             let mut live = self.region(e, exit, recorder.as_deref_mut());
+            self.scan.region_args(&mut live, else_args);
             self.scan.enter(&mut live, e);
             live
         });

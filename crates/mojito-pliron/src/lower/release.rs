@@ -73,7 +73,8 @@ impl<'a> FnLowering<'a> {
 
     /// Record `dest` as an owned heap-carrying temporary, released after its
     /// final read in the block defining it ([`TempRelease`]). A read the
-    /// release cannot follow rejects instead of leaking.
+    /// release cannot follow rejects instead of leaking. A register MIR owns
+    /// is never one: its `drop.reg`, or the operand taking it, ends it.
     pub(super) fn mark_owned_temp(&mut self, dest: Reg, ty: Ty) -> Result<(), PlironError> {
         self.mark_temp(dest, ty, true)
     }
@@ -473,6 +474,9 @@ impl<'a> FnLowering<'a> {
     }
 
     fn mark_temp(&mut self, dest: Reg, ty: Ty, reject_untracked: bool) -> Result<(), PlironError> {
+        if self.mir_owned.contains(&dest.0) {
+            return Ok(());
+        }
         if !self.owns_heap(&ty)
             && !matches!(ty.kind(), TyKind::StringLiteral)
             && !self.stdlib_deinit_temp(&ty)

@@ -63,6 +63,7 @@ pub(super) fn elaborate_drops(
     };
     let facts = DropFacts::new(
         &function,
+        declarations,
         &loan_roots,
         &generation_dests,
         &passing,
@@ -283,10 +284,38 @@ impl BackwardScan for DropLiveness<'_> {
     }
 
     fn terminate(&self, live: &mut DenseSet, block: &MirBlock) {
-        for part in &self.facts.yielded(block).retained {
+        for part in self
+            .facts
+            .yielded(block)
+            .retained
+            .iter()
+            .chain(self.facts.term_ended(block))
+        {
             self.values.mark_ref(live, *part);
         }
         self.demands.at_exit(self.values, live, &block.term);
+    }
+
+    fn op_defines(&self, live: &mut DenseSet, op: &MirInstr) {
+        for part in self.facts.op_defined(op) {
+            for bit in part.bits() {
+                live.remove(bit);
+            }
+        }
+    }
+
+    fn op_uses(&self, live: &mut DenseSet, op: &MirInstr) {
+        for part in self.facts.op_ended(op) {
+            self.values.mark_ref(live, *part);
+        }
+    }
+
+    fn region_args(&self, live: &mut DenseSet, args: &[Reg]) {
+        for part in self.values.register_refs(args.iter().copied()) {
+            for bit in part.bits() {
+                live.remove(bit);
+            }
+        }
     }
 
     fn loop_entry(&self, live: &mut DenseSet) {
@@ -395,6 +424,12 @@ fn effects(
         values.clear_all(live, def);
         effects.defined.push(values.range(def));
     }
+    for part in &uses.defined {
+        for bit in part.bits() {
+            live.remove(bit);
+        }
+        effects.defined.push(part.bits());
+    }
     let accesses = instruction_uses(instr);
     let stored = |used: &Used<'_>| match (instr, used) {
         (MirInstr::Store { .. }, Used::Place(place)) => place
@@ -452,6 +487,7 @@ fn effects(
         effects.moved.push(v);
     }
     effects.moved.extend(vars_moved(instr));
+    effects.moved.extend(&uses.ended);
     for part in uses.retained.iter().chain(&uses.loaded) {
         effects.marked.push(values.mark_ref(live, *part));
     }
@@ -484,11 +520,12 @@ struct Splice<'a> {
 }
 
 impl Splice<'_> {
-    /// Whether the function drops the value in `v` whole
-    /// ([`is_droppable_root`]), or an initializer's receiver; a value
-    /// parameter's slot never.
+    /// Whether the function drops the value in `v` whole: an owned
+    /// register, a droppable variable ([`is_droppable_root`]), or an
+    /// initializer's receiver; a value parameter's slot never.
     fn droppable(&self, v: VarId) -> bool {
-        self.receiver == Some(v)
+        self.values.is_register_root(v)
+            || self.receiver == Some(v)
             || (is_droppable_root(self.f, v) && !self.parameter_slots.contains(&v))
     }
 
@@ -553,6 +590,7 @@ impl Splice<'_> {
                 op: region_op(instr)
                     .then(|| self.plan.ops.get(&std::ptr::from_ref(instr)))
                     .flatten(),
+                op_defined: self.facts.op_defined(instr),
             })
             .collect();
         let end = self.facts.end(block);
@@ -566,6 +604,7 @@ impl Splice<'_> {
             steps,
             end,
             yielded: self.facts.yielded(block),
+            term_ended: self.facts.term_ended(block),
             receiver: self.receiver,
             loan_roots: self.loan_roots,
             splice: self,
@@ -583,7 +622,9 @@ impl Splice<'_> {
     /// Place the drops of one region op's regions. An `if` or `comptime if`
     /// destroys at each arm's entry what the arms' unified live-in keeps and
     /// it does not, as `destroyValuesAtEntryIfNeeded` does; a `try`'s
-    /// handler destroys its unread error binding on arrival.
+    /// handler destroys its unread error binding on arrival; and a region
+    /// destroys on arrival each owned argument its entry defines that it
+    /// never reads.
     fn op(&self, instr: &mut MirInstr) {
         if matches!(instr, MirInstr::Try { .. }) {
             self.try_op(instr);
@@ -593,12 +634,22 @@ impl Splice<'_> {
             self.region(region);
         }
         let regions = instruction_regions(instr);
-        let entries = match instr {
+        let arguments = region_arguments(instr);
+        let defined: HashSet<VarId> = arguments
+            .iter()
+            .flat_map(|args| args.iter())
+            .filter_map(|reg| self.values.register_root(*reg))
+            .collect();
+        let mut entries = match instr {
             MirInstr::If { .. } => self.if_entry_drops(&regions),
             MirInstr::ComptimeIf { .. } => self.comptime_if_entry_drops(&regions),
-            _ => Vec::new(),
+            _ => vec![Vec::new(); regions.len()],
         };
-        if !entries.is_empty() {
+        for (drops, (region, args)) in entries.iter_mut().zip(regions.iter().zip(&arguments)) {
+            drops.retain(|death| !defined.contains(&death.root));
+            drops.extend(self.unread_arguments(region, args));
+        }
+        if entries.iter().any(|drops| !drops.is_empty()) {
             for (region, drops) in instruction_regions_mut(instr).into_iter().zip(entries) {
                 if let Some(entry) = region.first_mut() {
                     entry
@@ -607,6 +658,28 @@ impl Splice<'_> {
                 }
             }
         }
+    }
+
+    /// The deaths on arrival in `region` of the owned arguments `args` its
+    /// entry defines and it never reads, in drop order.
+    fn unread_arguments(&self, region: &[MirBlock], args: &[Reg]) -> Vec<Death> {
+        let Some(live) = region
+            .first()
+            .and_then(|block| self.plan.blocks.get(&std::ptr::from_ref(block)))
+            .map(|plan| &plan.live_in)
+        else {
+            return Vec::new();
+        };
+        let dying: DenseSet = self
+            .values
+            .register_refs(args.iter().copied())
+            .into_iter()
+            .flat_map(ValueRef::bits)
+            .filter(|bit| !live.contains(*bit))
+            .collect();
+        let mut deaths = self.all_deaths(&dying, live);
+        order_deaths(&mut deaths, self.receiver);
+        deaths
     }
 
     /// The entry drops of an `if`'s regions, listed as `then`, each elif's
@@ -671,7 +744,9 @@ impl Splice<'_> {
         };
         let MirInstr::Try {
             body,
+            handler_args,
             handler,
+            else_args,
             orelse,
             ..
         } = instr
@@ -680,6 +755,12 @@ impl Splice<'_> {
         };
         if let Some((binding, h)) = handler {
             self.region(h);
+            let unread = self.unread_arguments(h, handler_args);
+            if let Some(entry) = h.first_mut() {
+                entry
+                    .instrs
+                    .splice(0..0, unread.into_iter().map(Death::into_drop));
+            }
             if let Some(bound) = binding
                 && self.droppable(*bound)
                 && !channels
@@ -695,8 +776,38 @@ impl Splice<'_> {
         }
         if let Some(e) = orelse {
             self.region(e);
+            let unread = self.unread_arguments(e, else_args);
+            if let Some(entry) = e.first_mut() {
+                entry
+                    .instrs
+                    .splice(0..0, unread.into_iter().map(Death::into_drop));
+            }
         }
         self.region(body);
+    }
+}
+
+/// The arguments each region of `instr` defines at its entry, in
+/// [`instruction_regions`] order: a loop body's, an `if`'s `else`'s, a
+/// `match` case's and its else region's, and a `try`'s handler's and
+/// `else`'s.
+fn region_arguments(instr: &MirInstr) -> Vec<&[Reg]> {
+    match instr {
+        MirInstr::If {
+            elifs, else_args, ..
+        } => std::iter::repeat_n(&[][..], 1 + 2 * elifs.len())
+            .chain(std::iter::once(else_args.as_slice()))
+            .collect(),
+        MirInstr::Loop { args, .. } => vec![args],
+        MirInstr::ComptimeFor { args, .. } => vec![args, &[]],
+        MirInstr::Match {
+            cases, else_args, ..
+        } => cases
+            .iter()
+            .map(|case| case.args.as_slice())
+            .chain(std::iter::once(else_args.as_slice()))
+            .collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -708,6 +819,8 @@ struct Step<'a> {
     uses: &'a RegisterUses,
     /// For a region op: its live-in.
     op: Option<&'a DenseSet>,
+    /// For a region op: the owned registers it defines.
+    op_defined: &'a [ValueRef],
 }
 
 /// One block's instructions with the analysis facts their drop elaboration
@@ -719,6 +832,8 @@ struct BlockReplay<'a> {
     end: Option<&'a LoanGenerationState>,
     /// The parts the values the terminator hands on consume.
     yielded: &'a RegisterUses,
+    /// The owned registers the terminator takes ownership of.
+    term_ended: &'a [ValueRef],
     /// An initializer's receiver, first at a shared death point.
     receiver: Option<VarId>,
     loan_roots: &'a BTreeMap<u32, DropLoanGeneration>,
@@ -734,11 +849,19 @@ impl BlockReplay<'_> {
     /// keeping it alive retires there, and it is dead after it. A raising
     /// instruction raises through its error region, an `if` whose arm's
     /// entry destroys what the raise does not read. A region op is no death
-    /// point: its regions end what it uses, and its live-in is the walk's.
+    /// point: its regions end what it uses, and its live-in is the walk's;
+    /// an owned register it defines that nothing reads dies right after it.
+    /// What the terminator takes ownership of is a use there, not a death.
     fn elaborate(self, live_out: &DenseSet) -> Vec<MirInstr> {
         let values = self.splice.values;
         let mut live = live_out.clone();
         let mut reversed = Vec::with_capacity(self.instrs.len());
+        let term_ended: DenseSet = self
+            .term_ended
+            .iter()
+            .copied()
+            .flat_map(ValueRef::bits)
+            .collect();
         // The terminator reads the values it yields: an owner whose last use
         // that is dies before it.
         if let Some(end) = self.end
@@ -758,7 +881,7 @@ impl BlockReplay<'_> {
                 .into_iter()
                 .flatten()
                 .chain(extra_before.iter())
-                .filter(|bit| !live_after.contains(*bit))
+                .filter(|bit| !live_after.contains(*bit) && !term_ended.contains(*bit))
                 .collect();
             push_drops_reversed(
                 &mut reversed,
@@ -766,6 +889,7 @@ impl BlockReplay<'_> {
                 self.receiver,
             );
         }
+        live.union(&term_ended);
         // An in-place binding's deaths, held until its producer is reached so
         // the producer's deaths join them after the binding.
         let mut pending: Option<InPlaceDeaths> = None;
@@ -777,6 +901,18 @@ impl BlockReplay<'_> {
                 if let Some(binding) = pending.take() {
                     binding.splice(&mut reversed, Vec::new(), self.receiver);
                 }
+                let unread: DenseSet = step
+                    .op_defined
+                    .iter()
+                    .copied()
+                    .flat_map(ValueRef::bits)
+                    .filter(|bit| !live.contains(*bit))
+                    .collect();
+                push_drops_reversed(
+                    &mut reversed,
+                    self.splice.all_deaths(&unread, &live),
+                    self.receiver,
+                );
                 live = live_in.clone();
                 reversed.push(instr);
                 continue;

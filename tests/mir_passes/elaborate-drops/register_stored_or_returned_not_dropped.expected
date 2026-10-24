@@ -1,0 +1,116 @@
+  functions: [
+      fn {
+        name: "Noisy.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, id],
+        params: 2,
+        param_types: [struct_type { name: Noisy, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Noisy, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 95, end: 97, origin: present($v1) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Noisy, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Noisy.__deinit__",
+        registers: 3,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Noisy, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Noisy, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: StringLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: None }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 143, end: 148, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 150, end: 157, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 137, end: 158, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: string("del") },
+              place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Noisy, arguments: [] }), projections: [projection { op: field(id), type: Int }], type: present(Int), through: absent } },
+              call { dest: %r2, func: print, raises: absent, args: [%r0, %r1], kwargs: [], arg_places: [absent, absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              consume.var { var: $v0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: mk,
+        registers: 2,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Error),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: StringLiteral }, reg_type { reg: %r1, type: Error }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: string("made") },
+              call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: main,
+        registers: 4,
+        vars: 1,
+        var_names: [e],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Error }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: StringLiteral }, reg_type { reg: %r1, type: Error }, reg_type { reg: %r2, type: Error }, reg_type { reg: %r3, type: None }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: string("kept") },
+              call { dest: %r1, func: Error, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v0, src: %r1, binding_type: absent, in_place: false },
+              place.load { dest: %r2, place: place { root: $v0, root_type: present(Error), projections: [], type: present(Error), through: absent } },
+              call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]

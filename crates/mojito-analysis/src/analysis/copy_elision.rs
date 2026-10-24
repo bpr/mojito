@@ -32,13 +32,21 @@
 //! temporary to the dead source's own storage. A raising argument after the
 //! construction keeps the move, as at Mojo. A copy any other binding takes
 //! still becomes a move.
+//!
+//! The other half of upstream's `optimizeCopyDestroys` handles a copy at a
+//! death of its own: a copy (a `var.use` copy, a `value.copy`, or a
+//! `__copyinit__` call) or a constant materializing a parameter value whose
+//! one use is the `drop.reg` drop elaboration placed right after it is
+//! deleted with that drop, and a `var.use` copy whose source slot's
+//! `DropVar` follows it (or its binding) in the run of drops becomes the
+//! slot's move.
 
 use super::scan::{for_each_instr_deep, may_raise, var_def, var_uses, vars_moved};
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_operand_regs;
 use mojito_mir::mir::{
     FORWARDED_ARGUMENT_SLOT, MirBlock, MirFunction, MirInstr, MirPlace, READ_TEMPORARY_SLOT, Reg,
-    UseMode, instruction_regions, instruction_regions_mut, terminator_regs,
+    UseMode, instruction_regions, instruction_regions_mut, is_environment_slot, terminator_regs,
 };
 use std::collections::HashMap;
 
@@ -130,6 +138,8 @@ fn rewrite_blocks(blocks: &mut [MirBlock], elision: &Elision, lent: &mut Vec<Loa
                 rewrite_blocks(region, elision, lent);
             }
         }
+        delete_dead_copies(&mut block.instrs, &elision.uses);
+        move_dying_slot_copies(&mut block.instrs, elision.var_names);
         let mut at = 1;
         while at < block.instrs.len() {
             let instrs = &mut block.instrs;
@@ -430,6 +440,99 @@ fn elide(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy) {
         constructor: None,
     };
     instrs.remove(at - 1);
+}
+
+/// Delete each copy or constant of `instrs` whose one use is the
+/// `drop.reg` in the run of drops right after it, with that drop: nothing
+/// reads the value, so neither it nor its destruction is observable.
+fn delete_dead_copies(instrs: &mut Vec<MirInstr>, uses: &HashMap<u32, usize>) {
+    let mut at = 0;
+    while at < instrs.len() {
+        let dead = dead_value(&instrs[at])
+            .filter(|dest| uses.get(&dest.0) == Some(&1))
+            .and_then(|dest| {
+                instrs[at + 1..]
+                    .iter()
+                    .take_while(|instruction| is_drop(instruction))
+                    .position(|instruction| matches!(instruction, MirInstr::Drop { reg, .. } if *reg == dest))
+            });
+        match dead {
+            Some(offset) => {
+                instrs.remove(at + 1 + offset);
+                instrs.remove(at);
+            }
+            None => at += 1,
+        }
+    }
+}
+
+/// The result of `instruction` when it is a value whose deletion is
+/// unobservable once nothing reads it: a copy construction, a `var.use`
+/// copy, or a constant.
+fn dead_value(instruction: &MirInstr) -> Option<Reg> {
+    match instruction {
+        MirInstr::UseVar {
+            dest,
+            mode: UseMode::Copy,
+            ..
+        }
+        | MirInstr::Const { dest, .. } => Some(*dest),
+        _ => copy_construction(instruction).map(|(dest, _)| *dest),
+    }
+}
+
+/// Turn each `var.use` copy of `instrs` whose source slot's `DropVar`
+/// follows it, or its binding, in the run of drops into the slot's move,
+/// dropping that `DropVar`: the slot dies right at the copy, so the copy
+/// takes its value, as `optimizeCopyDestroys` turns a copy of a dying
+/// value into a move. A copy bound into a nested `def`'s environment
+/// ([`is_environment_slot`]) stays one.
+fn move_dying_slot_copies(instrs: &mut Vec<MirInstr>, var_names: &[String]) {
+    let mut at = 0;
+    while at < instrs.len() {
+        let MirInstr::UseVar {
+            dest,
+            var,
+            mode: UseMode::Copy,
+            ..
+        } = instrs[at]
+        else {
+            at += 1;
+            continue;
+        };
+        let environment = instrs[at + 1..]
+            .iter()
+            .find(|instruction| !is_drop(instruction))
+            .is_some_and(|instruction| {
+                matches!(instruction, MirInstr::DefVar { src, var: slot, .. }
+                    if *src == dest
+                        && var_names
+                            .get(*slot as usize)
+                            .is_some_and(|name| is_environment_slot(name)))
+            });
+        if environment {
+            at += 1;
+            continue;
+        }
+        let after = match instrs.get(at + 1) {
+            Some(MirInstr::DefVar { src, .. }) if *src == dest => at + 1,
+            _ => at,
+        };
+        let death = instrs[after + 1..]
+            .iter()
+            .take_while(|instruction| is_drop(instruction))
+            .position(|instruction| matches!(instruction, MirInstr::DropVar { var: dying, .. } if *dying == var));
+        if let Some(offset) = death {
+            instrs.remove(after + 1 + offset);
+            instrs[at] = MirInstr::UseVar {
+                dest,
+                var,
+                mode: UseMode::Move,
+                constructor: None,
+            };
+        }
+        at += 1;
+    }
 }
 
 /// The index of the first region op other than `try` at or after `from`,

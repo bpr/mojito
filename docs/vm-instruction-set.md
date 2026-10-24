@@ -126,12 +126,12 @@ accessed; the compact notation omits this analysis-only field.
 | Mnemonic | MIR operation | Purpose |
 |---|---|---|
 | `tuple.make` | `MakeTuple` | Construct compiler-private heterogeneous pack storage |
-| `variant.make` | `MakeVariant` | Construct a checked tagged-union alternative |
+| `variant.make` | `MakeVariant` | Construct a checked tagged-union alternative, moving its payload in |
 | `variant.is` | `VariantIs` | Test a checker-selected Variant tag |
 | `variant.get` | `VariantGet` | Project a checked Variant alternative |
-| `variant.set` | `VariantSet` | Replace and destroy a Variant payload through a place |
+| `variant.set` | `VariantSet` | Replace and destroy a Variant payload through a place, moving the new one in |
 | `variant.take` | `VariantTake` | Move a Variant payload out of an owned value |
-| `variant.replace` | `VariantReplace` | Replace a Variant payload and return the old payload |
+| `variant.replace` | `VariantReplace` | Replace a Variant payload, moving the new one in, and return the old payload |
 | `simd.make` | `MakeSimd` | Construct or splat a SIMD value |
 
 ### Iteration
@@ -900,7 +900,8 @@ Destroys the owned value in a register, upstream's direct `ValueToDestroy`,
 and leaves the register moved. A named destructor is lowered before
 execution to the `deinit`-receiver call on the register; the VM runs an
 unnamed one by dropping the value's fields by their types, as `drop.var`
-does. No pass places one yet (R1329): lifetime elaboration uses `drop.var`.
+does. Drop elaboration places one at the death of each owned register no
+operand takes (`docs/architecture.md` §What Gets Dropped).
 
 ## Block Terminators
 

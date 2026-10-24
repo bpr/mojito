@@ -180,8 +180,8 @@ impl FnLowering<'_> {
         })
     }
 
-    /// `variant.make`: the payload is a copy of `value` by `constructor`,
-    /// the `__copyinit__` the store names.
+    /// `variant.make`: the payload takes `value` by move, through
+    /// `constructor`, the `__moveinit__` the store names.
     pub(super) fn lower_make_variant(
         &mut self,
         ctx: &mut Context,
@@ -203,7 +203,7 @@ impl FnLowering<'_> {
         let store = StoreOp::new(ctx, tag, storage);
         self.append(ctx, store.get_operation(), Some(dest));
         let payload = self.offset_address(ctx, storage, variant.payload_offset);
-        self.copy_reg_into(ctx, payload, selected, value, dest, constructor)?;
+        self.move_reg_into(ctx, payload, selected, value, dest, constructor)?;
         self.reg_values.insert(dest.0, storage);
         if self.needs_drop(selected) {
             self.mark_owned_temp(dest, TyKind::Variant(alternatives.to_vec()).into())?;
@@ -211,10 +211,12 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// Store a copy of the `ty` value in `src` at `address`: an aggregate
-    /// copies by `constructor`, the `__copyinit__` the site names, as
-    /// [`Self::copy_named_aggregate`].
-    pub(super) fn copy_reg_into(
+    /// Move the `ty` value in `src` to `address`, as upstream's
+    /// `init_pointee_move`: an aggregate runs `constructor`, the compiled
+    /// `__moveinit__` the store names, over its storage (the nominal
+    /// String's is an identity field move, a byte copy), and is a byte copy
+    /// without one. The store ends `src`, so nothing releases it after.
+    pub(super) fn move_reg_into(
         &mut self,
         ctx: &mut Context,
         address: Value,
@@ -245,10 +247,16 @@ impl FnLowering<'_> {
             }
             LowerTy::Aggregate { layout, .. } => {
                 let source = self.reg_ptr(ctx, src)?;
-                self.copy_named_aggregate(ctx, anchor, ty, layout, source, constructor)?;
-                let copy = self.reg_ptr(ctx, anchor)?;
-                self.mem_copy(ctx, address, copy, layout.size, anchor);
-                self.owned_temps.remove(&anchor.0);
+                match constructor.filter(|moveinit| {
+                    !super::pointers::is_stdlib_string(ty)
+                        && self.signatures.contains_key(*moveinit)
+                }) {
+                    Some(moveinit) => {
+                        self.emit_constructor_call(ctx, moveinit, address, source, anchor)?;
+                    }
+                    None => self.mem_copy(ctx, address, source, layout.size, anchor),
+                }
+                self.owned_temps.remove(&src.0);
                 Ok(())
             }
             LowerTy::ZeroSized => Ok(()),
@@ -373,8 +381,8 @@ impl FnLowering<'_> {
     }
 
     /// `variant.set`: the previous payload drops by the destructor
-    /// `members` names for its alternative, and the new one is a copy of
-    /// `value` by the `__copyinit__` the store names.
+    /// `members` names for its alternative, and the new one takes `value`
+    /// by move, through the `__moveinit__` the store names.
     pub(super) fn lower_variant_set(
         &mut self,
         ctx: &mut Context,
@@ -406,14 +414,14 @@ impl FnLowering<'_> {
         let store = StoreOp::new(ctx, tag, address);
         self.append(ctx, store.get_operation(), Some(dest));
         let payload = self.offset_address(ctx, address, layout.payload_offset);
-        self.copy_reg_into(ctx, payload, selected, value, dest, members.constructor)?;
+        self.move_reg_into(ctx, payload, selected, value, dest, members.constructor)?;
         self.erased.insert(dest.0);
         Ok(())
     }
 
     /// `variant.replace`: the previous payload moves out to `dest` and the
-    /// new one is a copy of `value` by `constructor`, the `__copyinit__` the
-    /// store names.
+    /// new one takes `value` by move, through `constructor`, the
+    /// `__moveinit__` the store names.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn lower_variant_replace(
         &mut self,
@@ -465,7 +473,7 @@ impl FnLowering<'_> {
         let tag = self.tag_constant(ctx, input_index as u32);
         let store = StoreOp::new(ctx, tag, address);
         self.append(ctx, store.get_operation(), Some(dest));
-        self.copy_reg_into(ctx, payload, &input, value, Reg(u32::MAX - 3), constructor)
+        self.move_reg_into(ctx, payload, &input, value, Reg(u32::MAX - 3), constructor)
     }
 
     pub(super) fn lower_variant_set_init_with(

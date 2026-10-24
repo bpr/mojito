@@ -2,6 +2,7 @@
 # `std/builtin/tuple.mojo` serves every element list. A temporary tuple is
 # indexed and unpacked through the reference its accessor returns, the
 # consuming `reverse` and `concat` move each element out through a pointer,
+# a `String` in either operand of `concat` included,
 # and the empty tuple is an instance like any other.
 def make() -> Tuple[Int, String]:
     return (1, "a")
@@ -26,6 +27,9 @@ def main():
     var u = (7, 2, String("abc"))
     var c = u^.concat((8, 3.5))
     print(c[2], c[3], c[4], len(c))
+    var w = (7, 2)
+    var cs = w^.concat((String("x"), 3.5))
+    print(cs[2], len(cs))
     var empty = ()
     print(len(empty), empty)
     var zero = Tuple[Int, Bool, Float64]()

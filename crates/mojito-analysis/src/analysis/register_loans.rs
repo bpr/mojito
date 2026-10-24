@@ -3,7 +3,9 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::{ArgumentBinding, CallArguments, Callee, ParameterContract, receiver_ty};
+use mojito_mir::mir::{
+    ArgumentBinding, CallArguments, Callee, ParameterContract, RegisterEnds, receiver_ty,
+};
 use mojito_types::types::{Ty, TyKind};
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -92,6 +94,24 @@ pub(super) struct RegisterUses {
     /// it loads them (parameter-slot order): each read is a load at call
     /// setup, so an owner whose last use it is dies before the instruction.
     pub(super) loaded: Vec<ValueRef>,
+    /// The owned registers it defines, upstream's owned SSA results; none
+    /// for a raising instruction, whose results its raise-edge `if`
+    /// defines ([`DropFacts::op_defined`]).
+    pub(super) defined: Vec<ValueRef>,
+    /// The roots of the owned registers it takes ownership of
+    /// ([`RegisterEnds::consumed`]), which their new owner ends.
+    pub(super) ended: Vec<VarId>,
+}
+
+impl RegisterUses {
+    const fn none() -> Self {
+        Self {
+            retained: Vec::new(),
+            loaded: Vec::new(),
+            defined: Vec::new(),
+            ended: Vec::new(),
+        }
+    }
 }
 
 /// Which operand registers an instruction receives by value, as the callee's
@@ -367,9 +387,10 @@ pub(super) fn split_single_hop<T: Ord + Copy>(
 
 /// The forward facts drop elaboration reads, from one walk of the
 /// structured body (`walk_forward`, entering every region op): the loan
-/// generations reaching each instruction and each block's ends, and the
-/// roots each instruction consumes through its operand registers. Keyed by
-/// node address, which is stable while the body is borrowed; an
+/// generations reaching each instruction and each block's ends, the roots
+/// each instruction consumes through its operand registers, and the owned
+/// registers each instruction, region op, and terminator defines or ends.
+/// Keyed by node address, which is stable while the body is borrowed; an
 /// instruction the walk never reaches has no generations and consumes
 /// nothing.
 pub(super) struct DropFacts {
@@ -379,8 +400,22 @@ pub(super) struct DropFacts {
     before: HashMap<*const MirInstr, usize>,
     uses: HashMap<*const MirInstr, RegisterUses>,
     blocks: HashMap<*const MirBlock, BlockFacts>,
+    /// The owned registers each region op defines, and those it ends.
+    ops: HashMap<*const MirInstr, OpRegisters>,
     unreached: LoanGenerationState,
     unused: RegisterUses,
+    no_registers: Vec<ValueRef>,
+}
+
+/// The owned registers one region op defines and ends.
+#[derive(Default)]
+struct OpRegisters {
+    /// Its owned results, and for a raising instruction's raise-edge `if`
+    /// the instruction's owned results, which exist on its normal path
+    /// alone.
+    defined: Vec<ValueRef>,
+    /// What it takes ownership of: a loop's operands.
+    ended: Vec<ValueRef>,
 }
 
 impl DropFacts {
@@ -390,32 +425,35 @@ impl DropFacts {
     /// entered by raise.
     pub(super) fn new(
         f: &MirFunction,
+        declarations: &MirDeclarations,
         loan_roots: &BTreeMap<u32, DropLoanGeneration>,
         generation_dests: &BTreeMap<u32, Option<MirInteriorOrigin>>,
         passing: &ArgumentPassing,
         values: &DropValues,
         exits: &[VarId],
     ) -> Self {
+        let ends = RegisterEnds::new(f, declarations);
         let scan = DropFactsScan {
             loan_roots,
             generation_dests,
             reg_types: &f.reg_types,
             values,
+            ends: &ends,
             exits,
         };
         let mut observer = DropFactsObserver {
             scan: &scan,
             passing,
+            raise_flags: HashMap::new(),
             facts: Self {
                 states: Vec::new(),
                 before: HashMap::new(),
                 uses: HashMap::new(),
                 blocks: HashMap::new(),
+                ops: HashMap::new(),
                 unreached: LoanGenerationState::default(),
-                unused: RegisterUses {
-                    retained: Vec::new(),
-                    loaded: Vec::new(),
-                },
+                unused: RegisterUses::none(),
+                no_registers: Vec::new(),
             },
         };
         // The observer never refuses an instruction.
@@ -477,6 +515,31 @@ impl DropFacts {
             .map_or(&self.unused, |facts| &facts.yielded)
     }
 
+    /// The owned registers `block`'s terminator takes ownership of
+    /// ([`RegisterEnds::consumed_by`]): what it carries out of its region,
+    /// returns, or raises, a use at the terminator and no death.
+    pub(super) fn term_ended(&self, block: &MirBlock) -> &[ValueRef] {
+        self.blocks
+            .get(&std::ptr::from_ref(block))
+            .map_or(&self.no_registers, |facts| &facts.term_ended)
+    }
+
+    /// The owned registers the region op `op` defines: its owned results,
+    /// and a raising instruction's when `op` is its raise-edge `if`.
+    pub(super) fn op_defined(&self, op: &MirInstr) -> &[ValueRef] {
+        self.ops
+            .get(&std::ptr::from_ref(op))
+            .map_or(&self.no_registers, |registers| &registers.defined)
+    }
+
+    /// The owned registers the region op `op` takes ownership of: a loop's
+    /// operands.
+    pub(super) fn op_ended(&self, op: &MirInstr) -> &[ValueRef] {
+        self.ops
+            .get(&std::ptr::from_ref(op))
+            .map_or(&self.no_registers, |registers| &registers.ended)
+    }
+
     fn intern(&mut self, state: &LoanGenerationState) -> usize {
         if self.states.last() != Some(state) {
             self.states.push(state.clone());
@@ -523,10 +586,18 @@ struct RegisterLoanStep {
     call_result: bool,
     /// A scalar read's result register and the parts it borrows for one hop.
     single_hop: Option<(u32, BTreeSet<ValueRef>)>,
-    /// The slots the instruction ends by moving them. An ended slot's storage
-    /// backs no register: a by-value scalar already holds its bits, and a
-    /// handle into the slot is dead (use after move is `moves`' error).
+    /// The slots the instruction ends by moving them, and the roots of the
+    /// owned registers it takes ownership of. An ended slot's storage backs
+    /// no register: a by-value scalar already holds its bits, and a handle
+    /// into the slot is dead (use after move is `moves`' error); an ended
+    /// register's alias is dead likewise.
     ended: Vec<VarId>,
+    /// The owned registers among the results, each its own root: a fresh
+    /// owned value carries its own root and its operands' variable owners,
+    /// never their registers, so its readers keep it, not them, live.
+    owned: Vec<(Reg, ValueRef)>,
+    /// The first register root: roots below it are variables'.
+    first_register: VarId,
 }
 
 impl RegisterLoanStep {
@@ -536,6 +607,7 @@ impl RegisterLoanStep {
         loan_roots: &BTreeMap<u32, DropLoanGeneration>,
         register_types: &HashMap<u32, mojito_types::types::Ty>,
         values: &DropValues,
+        ends: &RegisterEnds,
     ) -> Self {
         // The part a place reaches, and the reference it is reached through.
         let reached = |place: &MirPlace| {
@@ -697,15 +769,54 @@ impl RegisterLoanStep {
         );
         let mut results = Vec::new();
         mojito_mir::mir::verify::instruction_result_regs(instruction, &mut results);
+        let owned = results
+            .iter()
+            .filter_map(|reg| {
+                values
+                    .register_root(*reg)
+                    .map(|root| (*reg, values.whole(root)))
+            })
+            .collect();
+        let mut consumed = Vec::new();
+        ends.consumed(instruction, &mut consumed);
+        let mut ended = super::scan::vars_moved(instruction);
+        ended.extend(
+            consumed
+                .into_iter()
+                .filter_map(|reg| values.register_root(reg)),
+        );
         Self {
-            ended: super::scan::vars_moved(instruction),
+            ended,
             operands,
             results,
             owners,
             seeded,
             call_result,
             single_hop,
+            owned,
+            first_register: values.first_register(),
         }
+    }
+
+    /// What the instruction does to owned registers: the ones it defines,
+    /// on its normal path when it raises, and those it ends.
+    fn register_effects(
+        &self,
+        instruction: &MirInstr,
+        values: &DropValues,
+    ) -> (Vec<ValueRef>, Vec<VarId>) {
+        let defined = if instruction.raise_edge().is_some() {
+            Vec::new()
+        } else {
+            self.owned.iter().map(|(_, root)| *root).collect()
+        };
+        let ended = self
+            .ended
+            .iter()
+            .copied()
+            .filter(|root| values.is_register_root(*root))
+            .collect();
+        (defined, ended)
     }
 
     /// The parts the instruction retains: its own owners and its operands'
@@ -750,10 +861,22 @@ impl RegisterLoanStep {
             &inherited
         };
         for result in &self.results {
-            if result_owners.is_empty() {
+            let owners = match self.owned.iter().find(|(reg, _)| reg == result) {
+                Some((_, root)) => {
+                    let mut owners: BTreeSet<ValueRef> = result_owners
+                        .iter()
+                        .filter(|part| part.root < self.first_register)
+                        .copied()
+                        .collect();
+                    owners.insert(*root);
+                    owners
+                }
+                None => result_owners.clone(),
+            };
+            if owners.is_empty() {
                 registers.owners.remove(&result.0);
             } else {
-                registers.owners.insert(result.0, result_owners.clone());
+                registers.owners.insert(result.0, owners);
             }
         }
         if !self.ended.is_empty() {
@@ -779,6 +902,7 @@ fn split_register_uses(
     RegisterUses {
         retained: retained.into_iter().collect(),
         loaded,
+        ..RegisterUses::none()
     }
 }
 
@@ -910,6 +1034,7 @@ struct BlockFacts {
     end: Option<usize>,
     yielded: RegisterUses,
     ended: BTreeSet<VarId>,
+    term_ended: Vec<ValueRef>,
 }
 
 /// One program point of the drop-facts walk.
@@ -929,6 +1054,7 @@ struct DropFactsScan<'a> {
     generation_dests: &'a BTreeMap<u32, Option<MirInteriorOrigin>>,
     reg_types: &'a HashMap<u32, Ty>,
     values: &'a DropValues,
+    ends: &'a RegisterEnds<'a>,
     /// The variables whose ending the walk tracks: the split `deinit`
     /// parameters, which every exit ends unless a path already did.
     exits: &'a [VarId],
@@ -942,6 +1068,7 @@ impl DropFactsScan<'_> {
             self.loan_roots,
             self.reg_types,
             self.values,
+            self.ends,
         )
     }
 }
@@ -988,6 +1115,9 @@ impl ForwardScan for DropFactsScan<'_> {
 struct DropFactsObserver<'a> {
     scan: &'a DropFactsScan<'a>,
     passing: &'a ArgumentPassing<'a>,
+    /// Each raising instruction's error flag beside its owned results,
+    /// which its raise-edge `if` defines.
+    raise_flags: HashMap<u32, Vec<ValueRef>>,
     facts: DropFacts,
 }
 
@@ -996,13 +1126,18 @@ impl ForwardObserver<DropFactsState> for DropFactsObserver<'_> {
         let index = self.facts.intern(&state.generations);
         self.facts.before.insert(std::ptr::from_ref(instr), index);
         let mut single_hop = Vec::new();
-        let retained = self
-            .scan
-            .step(state, instr)
-            .retained(&state.registers, &mut single_hop);
-        let uses = split_register_uses(retained, single_hop, || {
+        let step = self.scan.step(state, instr);
+        let retained = step.retained(&state.registers, &mut single_hop);
+        let mut uses = split_register_uses(retained, single_hop, || {
             self.passing.by_value(instr, self.scan.reg_types)
         });
+        (uses.defined, uses.ended) = step.register_effects(instr, self.scan.values);
+        if let Some(raises) = instr.raise_edge() {
+            let results: Vec<ValueRef> = step.owned.iter().map(|(_, root)| *root).collect();
+            if !results.is_empty() {
+                self.raise_flags.insert(raises.flag.0, results);
+            }
+        }
         self.facts.uses.insert(std::ptr::from_ref(instr), uses);
         Ok(())
     }
@@ -1010,14 +1145,32 @@ impl ForwardObserver<DropFactsState> for DropFactsObserver<'_> {
     fn op(&mut self, state: &DropFactsState, instr: &MirInstr) {
         let index = self.facts.intern(&state.generations);
         self.facts.before.insert(std::ptr::from_ref(instr), index);
+        let values = self.scan.values;
+        let mut results = Vec::new();
+        mojito_mir::mir::owned_result_regs(instr, &mut results);
+        let mut defined = values.register_refs(results);
+        if let MirInstr::If { cond, .. } = instr
+            && let Some(raised) = self.raise_flags.get(&cond.0)
+        {
+            defined.extend(raised.iter().copied());
+        }
+        let mut consumed = Vec::new();
+        self.scan.ends.consumed(instr, &mut consumed);
+        let ended = values.register_refs(consumed);
+        if !defined.is_empty() || !ended.is_empty() {
+            self.facts
+                .ops
+                .insert(std::ptr::from_ref(instr), OpRegisters { defined, ended });
+        }
     }
 
     fn block(&mut self, entry: &DropFactsState, end: Option<&DropFactsState>, block: &MirBlock) {
         let entry = self.facts.intern(&entry.generations);
-        let mut yielded = RegisterUses {
-            retained: Vec::new(),
-            loaded: Vec::new(),
-        };
+        let mut yielded = RegisterUses::none();
+        let term_ended = self
+            .scan
+            .values
+            .register_refs(self.scan.ends.consumed_by(&block.term));
         let ended = end.map(|state| state.ended.clone()).unwrap_or_default();
         let end = end.map(|state| {
             let mut owners = BTreeSet::new();
@@ -1037,6 +1190,7 @@ impl ForwardObserver<DropFactsState> for DropFactsObserver<'_> {
                 end,
                 yielded,
                 ended,
+                term_ended,
             },
         );
     }

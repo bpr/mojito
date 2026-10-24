@@ -829,6 +829,31 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Drop elaboration destroys every owned register nothing takes, as
+  upstream's `CheckLifetimes` destroys an owned SSA value at its death
+  (R1329): `DropValues` numbers the owned registers after the variables,
+  one bit each, so a call result only a `read` parameter borrows, or a
+  copy only `print` reads, gets a `drop.reg` after its last read, placed
+  among the values dying with it in discovery order. A raising call's
+  result is defined past its raise edge, so neither arm destroys it; a
+  region op's unread result and a region's unread argument die too. Copy
+  elision applies both halves of upstream's `optimizeCopyDestroys`: a copy
+  or constant nothing reads goes with its drop, and a copy of a slot that
+  dies right there is its move, so `var d = c`, `take(e)`, and `(f, 5)`
+  over a dying `c`, `e`, or `f` run no copy initializer, as the pin does,
+  while a nested `def`'s `{var x}` capture still copies. A keyword
+  collector (`var **kwargs`) takes the `**` spread and every stray
+  keyword, and a register a call passes as a compile-time argument is no
+  owned value. Pliron marks an owned temporary only for a register MIR
+  does not own, so `MaybeUninit[String](mk("hello"))` then
+  `b^.unsafe_assume_init()` no longer double-frees natively, and a native
+  drop of a `Variant` destroys its active payload.
+- A `Variant`'s new payload is moved in, as upstream's
+  `init_pointee_move` moves it (R1064): `variant.make`, `variant.set`, and
+  `variant.replace` take their operand and name the payload's
+  `__moveinit__` (MIR text 1.101, package 91), so
+  `Variant[CBox[1], Int](b.copy())` reads `101`, not `201`, and
+  `Variant[D, Int](D(1))` runs no copy initializer.
 - Which operands end an owned register is now read off each call's
   conventions, as upstream's `lit.call` carries its callee's, through one
   per-function classification the verifier reads (`mir::RegisterEnds`,

@@ -2,10 +2,10 @@
 //! `__copyinit__` or `__moveinit__` at each copy or move site.
 //!
 //! Each `var.use copy`, `var.use move`, `value.copy`, owned closure capture,
-//! variant payload store (`variant.make`, `variant.set`, `variant.replace`),
-//! and reference-read method or iterator result (`result_adapter`) names
-//! the constructor its value's struct records as its `constructor`
-//! operand, and each call naming a struct over one `copy=` keyword
+//! variant payload store (`variant.make`, `variant.set`, `variant.replace`,
+//! each a move), and reference-read method or iterator result
+//! (`result_adapter`) names the constructor its value's struct records as
+//! its `constructor` operand, and each call naming a struct over one `copy=` keyword
 //! (`S(copy=x)` at a struct whose copy initializer is synthesized) becomes
 //! that struct's copy ([`crate::mir::struct_copy`]), so the symbol walk, the elaborator's respell, and
 //! `eliminate-dead-symbols` follow it as they follow a call's callee, and no
@@ -85,6 +85,7 @@ fn name_in_blocks(
             .map(str::to_owned)
     };
     let copied = |ty: Option<&Ty>| named(ty, Some("__copyinit__"));
+    let moved = |ty: Option<&Ty>| named(ty, Some("__moveinit__"));
     // A copy that is no call leaves its binding no longer in place.
     let mut copied_values = HashSet::new();
     for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
@@ -120,7 +121,7 @@ fn name_in_blocks(
                 index,
                 constructor,
                 ..
-            } => *constructor = copied(variant_payload_ty(alternatives, index)),
+            } => *constructor = moved(variant_payload_ty(alternatives, index)),
             MirInstr::VariantSet {
                 place,
                 index,
@@ -132,7 +133,7 @@ fn name_in_blocks(
                 input_index: index,
                 constructor,
                 ..
-            } => *constructor = copied(variant_place_payload_ty(place, index, var_tys)),
+            } => *constructor = moved(variant_place_payload_ty(place, index, var_tys)),
             MirInstr::MethodCall {
                 dest,
                 result_adapter: Some(adapter),

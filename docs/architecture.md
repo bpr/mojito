@@ -627,8 +627,12 @@ results without one), and the handler's and `else`'s the results; the
 landing block binds them before it binds the staged error.
 `hlcf.unreachable` is `llvm.unreachable`.
 Concrete MIR reaches `compile` structured, every region one block, as
-`mir::verify` requires. Owned register
-temporaries follow the region tree: one is released in the block defining
+`mir::verify` requires. MIR destroys every register it owns
+(`mir::RegisterEnds`): drop elaboration places a `drop.reg` at each owned
+register's death, so Pliron marks an owned temporary of its own only for a
+register MIR does not own, which today is a `StringLiteral` runtime
+descriptor and its `String` materialization (R1327). Those temporaries
+follow the region tree: one is released in the block defining
 it, after the instruction there that reads it last (a region op reads what
 its regions read), and on each terminator leaving that block before then.
 A `field.get` chain whose result a store, a `struct.create` or tuple
@@ -4890,9 +4894,31 @@ owned register (upstream's direct `ValueToDestroy`, MIR text 1.99): it
 names its destructor as a `drop.var` does, and a named one becomes the
 `MethodCall` of the destructor with the register itself as its `deinit`
 receiver; the VM runs an unnamed one through `drop_named`, and Pliron
-destroys it at the register's storage (`lower_drop_reg`). No pass places
-one yet: Pliron still frees an owned temporary after its last read
-(R1329). Since no drop is tested, every
+destroys it at the register's storage (`lower_drop_reg`), a variant's
+active payload under its tag. Drop elaboration places it: `DropValues`
+numbers the owned registers after the variables, one bit each, as
+upstream's `ValueSet::addValue` numbers an owned SSA value, and orders a
+register among the values dying with it by discovery, after the variables
+declared after its definition and before those declared before it. A
+register's definition seeds its own root into its provenance
+(`RegisterUses::defined`), so every reader, a shallow alias's included,
+keeps it live, and an operand that takes it (`RegisterUses::ended`) or the
+terminator carrying it out of its region (`DropFacts::term_ended`) ends
+it, a use and no death. A raising instruction's results exist on its
+normal path alone: its raise-edge `if` defines them
+(`DropFacts::op_defined`, `BackwardScan::op_defines`), so neither arm
+destroys one and an unread one dies after the `if`; a region op's owned
+results die after it when nothing reads them, a loop's operands are its
+uses (`BackwardScan::op_uses`), and a region destroys on arrival an owned
+argument its entry defines and it never reads
+(`BackwardScan::region_args`). Copy elision then applies both halves of
+upstream's `optimizeCopyDestroys`: a copy or constant whose one use is the
+`drop.reg` right after it goes with that drop, and a `var.use` copy whose
+source slot's `drop.var` follows it becomes the slot's move, except a copy
+into a nested `def`'s environment, which upstream makes inside the
+closure's creation (`mir::is_environment_slot`). `canonicalize` erases a
+`drop.reg` whose register an instantiation made trivially destructible,
+before a fold can forward the register past it. Since no drop is tested, every
 producer emits only decided drops: a store's overwrite drop only where the
 move scan's replay says the replaced value is initialized on every path
 (`analysis/store_drops.rs`), so module scope, which has no drop walk,
@@ -4967,8 +4993,8 @@ source field, `place.store_ref` into `self`'s), since a load of such a
 field reads through it; the VM's `MakeRef` of a `ref`-typed place is the
 handle that place's storage holds, as the native address of such a place
 is the stored pointer's. Captures, variant
-payloads, reference-read results, and `T(copy=x)` still find their
-constructor from the type (`mir::relocated_structs`, which closes over the
+payloads (moved in, MIR text 1.101), reference-read results, and
+`T(copy=x)` still find their constructor from the type (`mir::relocated_structs`, which closes over the
 fields only of a struct recording no such member).
 
 An `@fieldwise_init` struct declaring no `__init__` gets a synthesized
@@ -5264,6 +5290,10 @@ Ownership is limited to:
 
 - locals
 - consuming `var` and `deinit` parameters, receivers included
+- owned registers (`mir::RegisterEnds`) no operand takes: a call result
+  only a `read` parameter borrows, a copy only `print` reads, each
+  destroyed by a `drop.reg` at its death, as upstream destroys an owned
+  SSA value
 
 Borrowed parameters are not dropped by the callee. They are owned by the caller,
 as is a `self` outside the leading parameter range of a generated method CFG.
@@ -5271,7 +5301,9 @@ as is a `self` outside the leading parameter range of a generated method CFG.
 ### Drop Order
 
 When several variables die at the same point, they are dropped in reverse
-declaration order. Struct destruction runs:
+declaration order; an owned register dying with them drops after the
+variables declared after its definition and before those declared before
+it, as upstream destroys in descending discovery order. Struct destruction runs:
 
 1. the struct's `__deinit__(deinit self)`, if present — its body owns the
    receiver as independently dying direct fields: each field is destroyed
@@ -5566,7 +5598,15 @@ ownership of it (`RegisterEnds::consumed`): a store, an argument an owned
 parameter or collector binds, a receiver its `call.method` records as
 taken `var` or `deinit` with no retained place, an owned pack's element,
 a storage's initial value, the storage or variant a payload is taken out
-of, a terminator carrying it out of its region, or a `drop.reg`. A call
+of, a variant's new payload, which it takes by move (MIR text 1.101), a
+keyword collector's argument (`var **kwargs` takes the `**` spread and
+every keyword naming no parameter), a terminator carrying it out of its
+region, or a `drop.reg`. A register a call passes as a compile-time
+argument is a parameter value, upstream's attribute, and no owned
+register; nor is a compile-time-only value (a parameter list, a trait, a
+type) or a thin function value. Whether a type's drop runs code reads the
+struct's `IsTriviallyDeinitable` row first, which an instance keeps after
+inlining its destructor everywhere eliminated the member. A call
 binds its arguments through the one `mir::Callee` resolver the
 register-loan analysis reads too: a direct call's declaration (a struct
 name's `__init__`), a method, operator, or subscript call's declaration

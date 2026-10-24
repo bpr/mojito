@@ -7,6 +7,11 @@ struct Tag(ImplicitlyCopyable):
     var id: Int
     var name: String
 
+    def __init__(out self, *, copy: Self):
+        self.id = copy.id
+        self.name = copy.name
+        print("copy", self.id)
+
     def __deinit__(deinit self):
         print("del", self.id)
 

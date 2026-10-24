@@ -65,7 +65,8 @@ pub(super) fn retire_forwarded_packs(function: &mut MirFunction) {
 /// Pass the elements of the collector a method call builds as its
 /// arguments when the builtin its receiver is answers the call (`write`
 /// on the builtin-string writer), which takes its values one by one, as
-/// the builtin `print` does.
+/// the builtin `print` does. The collector's drop, once the call returns,
+/// becomes its elements', first to last, as a `Tuple`'s destroys them.
 pub(super) fn unpack_builtin_collectors(blocks: &mut [MirBlock], reg_types: &mut HashMap<u32, Ty>) {
     let mut retired = Vec::new();
     unpack_in_blocks(blocks, reg_types, &mut retired);
@@ -344,6 +345,17 @@ fn unpack_in_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>, retir
             let MirInstr::MakeTuple { elems, .. } = block.instrs.remove(at) else {
                 unreachable!("the collector's tuple.make was matched above");
             };
+            if let Some(drop) = block.instrs[index..].iter().position(
+                |instruction| matches!(instruction, MirInstr::Drop { reg, .. } if *reg == register),
+            ) {
+                block.instrs.splice(
+                    index + drop..=index + drop,
+                    elems.iter().map(|element| MirInstr::Drop {
+                        reg: *element,
+                        destructor: None,
+                    }),
+                );
+            }
             if let Some(call) = spread_operands(&mut block.instrs[index - 1]) {
                 let count = elems.len();
                 call.args.splice(position..=position, elems);

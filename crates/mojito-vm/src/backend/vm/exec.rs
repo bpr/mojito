@@ -1311,13 +1311,10 @@ impl VmBackend {
                 let selected = alternatives.get(*index).ok_or_else(|| {
                     RuntimeError::TypeError("Variant construction has an invalid tag".to_string())
                 })?;
-                // The variant owns an independent payload: a copy by the
-                // constructor the store names, so the argument temporary's
-                // drop cannot free the stored buffer.
-                let payload = self.copy_named(
+                let payload = self.move_payload(
                     prog,
-                    &crate::runtime::coerce_checked(regs[value.0 as usize].clone(), selected),
-                    Some(selected),
+                    regs[value.0 as usize].clone(),
+                    selected,
                     constructor.as_deref(),
                 )?;
                 regs[dest.0 as usize] = Value::Variant {
@@ -1501,10 +1498,10 @@ impl VmBackend {
                 let selected = alternatives.get(*index).ok_or_else(|| {
                     RuntimeError::TypeError("Variant.set has an invalid checked tag".to_string())
                 })?;
-                let payload = self.copy_named(
+                let payload = self.move_payload(
                     prog,
-                    &crate::runtime::coerce_checked(regs[value.0 as usize].clone(), selected),
-                    Some(selected),
+                    regs[value.0 as usize].clone(),
+                    selected,
                     constructor.as_deref(),
                 )?;
                 let replacement = Value::Variant {
@@ -1553,10 +1550,10 @@ impl VmBackend {
                         "Variant holds '{found}', not '{output}'"
                     )));
                 }
-                let payload = self.copy_named(
+                let payload = self.move_payload(
                     prog,
-                    &crate::runtime::coerce_checked(regs[value.0 as usize].clone(), &input),
-                    Some(&input),
+                    regs[value.0 as usize].clone(),
+                    &input,
                     constructor.as_deref(),
                 )?;
                 let replacement = Value::Variant {

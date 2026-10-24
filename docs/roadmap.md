@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1333**.
+Next free ID: **R1336**.
 
 ## Ordered Work
 
@@ -914,38 +914,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R277 Native `Tuple.concat` double-frees a `String` element of its
-  argument**
-
-  Problem: `var c = u^.concat((String("x"), 3.5))` prints the result and
-  then traps with "vm: double free of Pointer allocation" natively, where the
-  pin and the VM run to completion.
-  - `reverse`, and `concat` over a `String` in the receiver, run natively
-    since the members move their elements out through pointers
-    (2026-10-06).
-  - An argument of `Int`s is clean, and so is one whose element is a struct
-    with a destructor (`assets/ok/named_result_transferred.mojo`).
-  - The probe ran clean natively on 2026-10-23 (`x 4`, exit 0, one
-    allocation and one free), before and after R1312 removed the per-leaf
-    presence flags; recheck and fold it as its header says.
-  - Pinned by `conformance/probes/native_tuple_transform_string_element.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R469 Native `Tuple` construction copies a fresh struct element in
-  and leaks the original**
-
-  Problem: `var t = (1, Q(8, "x"))` runs `Q`'s copy initializer natively and
-  never destroys the temporary, where the pin and the VM move it in and
-  print `1 / del 8 / end`.
-  - Native prints `copy 8 / 1 / del 8 / end`.
-  - Every read of a value parameter holding such a struct constructs one
-    (R466), so the copy shows once per read there.
-  - Pinned by `conformance/probes/native_tuple_struct_element_copied.mojo`.
-  - Found while landing R466 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R299 Native lowering cannot lay out a struct a served pack binds
   only as an element**
 
@@ -1178,21 +1146,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Check `inline-parametric`'s `Returned::Out` result move the same way.
   - `return c^` from a local moves once at both.
   - Found while landing R1017 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1064 Constructing a `Variant` copies the value it takes**
-
-  Problem: `Variant[CBox[n], Int](b.copy())`, over a `CBox` whose copy
-  constructor adds 100, reads back `201`, where the pin reads `101`.
-  - The pin's `Variant.__init__` takes `var value: T` and moves it in;
-    the VM's `variant.make` (`copy_named`) and Pliron's
-    (`copy_named_aggregate` through `copy_reg_into` in `variants.rs`) copy
-    the payload again, by the constructor the store names since R1045.
-  - Make `variant.make` take its operand, after checking MIR lowering
-    copies a borrowed argument first; `variant.set` and
-    `variant.replace` may share the fix.
-  - Found while landing R1010 (2026-10-16).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8578,49 +8531,63 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1329 Drop elaboration does not destroy an owned register that
-  nothing consumes**
+- [ ] **R1333 A nested `def`'s `{var x}` capture copy is a `var.use` copy
+  told apart by its slot's name**
 
-  An owned register no instruction consumes (a call result only a `read`
-  parameter borrows, a copy only `print` reads) dies silently on the VM
-  and through Pliron's own release, where upstream's `CheckLifetimes`
-  destroys every owned SSA value at its death (`ValueToDestroy`).
-  - `mir::RegisterEnds` already says which registers are owned and which
-    operands end them, as the call's conventions say, and the verifier
-    rejects a register ended twice (`verify/drops.rs`).
-  - Fix: `DropValues` (`analysis/drop_values.rs`) numbers the owned
-    registers after the variables, one bit each, as upstream's
-    `ValueSet::addValue` does. A definition seeds the register's root into
-    its own provenance, a read keeps it live, and an operand
-    `RegisterEnds::consumed` names moves it, so `Splice` places `drop.reg`
-    at its death and `name_destructors` lowers it.
-  - A raising instruction's results exist only on its normal path: define
-    them at the end of its raise-edge `if`, never drop them in its raise
-    arm.
-  - Region results and region arguments need `BackwardScan` hooks: a
-    region op defines its results, a loop consumes its operands, and a
-    region's arguments are defined at its entry.
-  - A copy or constant no one reads is deleted with its drop, upstream's
-    `optimizeCopyDestroys`, or `value_parameter_materialized_per_use`
-    prints three extra `del 8` per call.
-  - Then Pliron marks an owned temporary only for a `StringLiteral`
-    runtime descriptor (`mark_temp`, `lower/release.rs`), and
-    `docs/architecture.md` §Native Backend Contract says MIR destroys the
-    rest.
-  - Probe: `def make(s: String) -> String: return s + "!"` and
-    `print(make("b"))` leave `make`'s `String.__copyinit__` copy of `s`
-    destroyed by no instruction.
-  - Probe: `MaybeUninit[String](mk("hello"))` then
-    `b^.unsafe_assume_init()` double-frees natively ("vm: double free of
-    Pointer allocation"), as Pliron releases `uninit.make`'s consumed
-    `init`.
-  - Probe: the VM output over `assets/ok` and `assets/ownership_ok` must
-    not change, `pack_argument_destroyed_after_call`,
-    `pliron_callable_struct`, `maybe_uninit_roundtrip`, and the dict
-    fixtures among them.
-  - Re-check R469 and R277 once it lands.
+  MIR lowers a `{var x}` capture as a `var.use` copy bound into the
+  environment slot `{def}${capture}`, where upstream copies inside the
+  closure's creation, after `CheckLifetimes`, so its lifetime check sees
+  only a read of `x`.
+  - Copy elision must not turn that copy into `x`'s move when `x` dies
+    there (the pin prints `copy 100` then `del 0` in
+    `assets/ok/nested_def_inline_shapes.mojo`'s `looped`), so
+    `move_dying_slot_copies` (`analysis/copy_elision.rs`) skips a copy
+    bound into a slot `mir::is_environment_slot` recognizes by its name.
+  - Fix: lower the environment copy as part of the nested `def`'s
+    creation (`lower_nested_environment`, `mir/lower_stmt.rs`), as a
+    `closure.make` capture copies, and drop the name test.
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1334 A trivially destructible library value gets a `drop.reg`
+  that runs no code**
+
+  Drop elaboration destroys every owned register whose type
+  `MirDeclarations::drop_runs_no_code` does not clear, and that answer is
+  no for some library types upstream never destroys at run time, so their
+  registers get a destructor call that does nothing.
+  - Probe: a non-owned `VariadicList[T, False]` (the `struct.create` a
+    call builds for a read `*xs: T` collector) is destroyed by
+    `VariadicList.__deinit__`, whose `comptime if` on ownership runs
+    nothing; the row its `IsTriviallyDeinitable` conformance gets holds no
+    condition over the `is_owned` parameter.
+  - Upstream tracks no register-passable trivial value
+    (`isRegisterPassableTrivial`, `CheckLifetimes.cpp`), and decides a
+    parameterized destructor per instance.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1335 The MIR verifier does not reject an owned register no path
+  ends**
+
+  `verify/drops.rs` rejects an owned register ended twice, but not one
+  that reaches an exit unended, where upstream's `DestructorInserter`
+  leaves no owned SSA value undestroyed.
+  - A census of `emit-mir` over `assets/ok` and `assets/ownership_ok`
+    (2026-10-24) finds one shape left: an owned `Error` read in a `try`
+    handler no raise reaches, which the forward walk never enters, so
+    drop elaboration records no facts there and places no `drop.reg`.
+  - Probe: `assets/ok/pliron_reference_write_back.mojo`'s handler
+    (`print(e)` over a body with no raising call), and
+    `copyable_iterator_reference_aggregate`,
+    `read_temporary_conditional_argument_drop`,
+    `try_finally_raise_skips_own_handler`, and
+    `try_region_shadowed_binding`.
+  - Fix: erase a handler no raise reaches before drop elaboration, as
+    upstream's canonicalization of a `try` without one does, then report
+    an owned register live at an exit.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1330 An operand names a register that a store already consumed**
 
@@ -8636,8 +8603,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The `call.method` receivers of `M` and `_ArrayIter` are stored, then
     named.
   - Each one names the slot's place beside the stale register, so nothing
-    is destroyed twice today, but once R1329 places register drops a
-    consumed register's root must leave its provenance.
+    is destroyed twice: drop elaboration scrubs a consumed register's root
+    from every provenance, so a stale read places no `drop.reg`.
   - Lever: read the slot (`place.load`) instead, as R1320 did for
     `$arg_loan_r`, then extend the verifier's register-end rule to reject
     a read of an ended owned register.

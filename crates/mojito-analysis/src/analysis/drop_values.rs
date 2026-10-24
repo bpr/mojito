@@ -11,7 +11,11 @@
 //! value it replaces dies at its own last use rather than at the store, and
 //! a `deinit` parameter's fields die one by one, each at its own last use.
 //!
-//! One bit past every variable's is upstream's sentinel slot: set where a
+//! Every owned register ([`mojito_mir::mir::RegisterEnds`]) is one bit
+//! after the variables', as upstream's `ValueSet::addValue` numbers an owned
+//! SSA value: register `k`-th in register order is root `n_vars + k`.
+//!
+//! One bit past every value's is upstream's sentinel slot: set where a
 //! path reaches an exit, so a live set without it is unreached, which a
 //! join takes the other side over.
 
@@ -21,22 +25,34 @@ use mojito_mir::mir::OwnedStep;
 use mojito_types::types::{Ty, TyKind};
 use std::ops::Range;
 
-/// Every variable's bits, and the layout of each root split into parts.
+/// Every variable's bits, each owned register's, and the layout of each
+/// root split into parts.
 pub(super) struct DropValues {
-    /// Variable `v`'s bits are `starts[v]..starts[v + 1]`; the last start is
+    /// Root `v`'s bits are `starts[v]..starts[v + 1]`; the last start is
     /// the sentinel bit, set where a path reaches an exit.
     starts: Vec<u32>,
     layouts: HashMap<VarId, Level>,
+    /// The number of variables: roots from here on are registers.
+    vars: VarId,
+    /// The owned registers, in root order.
+    registers: Vec<Reg>,
+    /// Each owned register's root.
+    register_roots: HashMap<u32, VarId>,
+    /// For each register root, one past the highest variable defined or
+    /// declared before its definition, upstream's discovery order.
+    anchors: Vec<u32>,
 }
 
 impl DropValues {
-    /// The layout of `f`'s variables: a root `splittable` admits is split
-    /// along the owned parts its body stores a value that needs destroying
-    /// into, and, when `fielded` admits it too, along each of its fields,
-    /// when every level on the way has fields the declarations list.
+    /// The layout of `f`'s variables and its `owned` registers: a root
+    /// `splittable` admits is split along the owned parts its body stores a
+    /// value that needs destroying into, and, when `fielded` admits it too,
+    /// along each of its fields, when every level on the way has fields the
+    /// declarations list; a register is one bit.
     pub(super) fn new(
         f: &MirFunction,
         declarations: &MirDeclarations,
+        owned: &[Reg],
         splittable: impl Fn(VarId) -> bool,
         fielded: impl Fn(VarId) -> bool,
     ) -> Self {
@@ -103,8 +119,69 @@ impl DropValues {
                 None => next += 1,
             }
         }
+        let vars = f.n_vars as VarId;
+        let mut register_roots = HashMap::new();
+        for (index, reg) in owned.iter().enumerate() {
+            starts.push(next);
+            next += 1;
+            register_roots.insert(reg.0, vars + index as VarId);
+        }
         starts.push(next);
-        Self { starts, layouts }
+        let anchors = register_anchors(f, owned);
+        Self {
+            starts,
+            layouts,
+            vars,
+            registers: owned.to_vec(),
+            register_roots,
+            anchors,
+        }
+    }
+
+    /// The root of `reg`, when it is an owned register.
+    pub(super) fn register_root(&self, reg: Reg) -> Option<VarId> {
+        self.register_roots.get(&reg.0).copied()
+    }
+
+    /// Whether `root` is an owned register's.
+    pub(super) const fn is_register_root(&self, root: VarId) -> bool {
+        root >= self.vars
+    }
+
+    /// The first register root: roots below it are variables'.
+    pub(super) const fn first_register(&self) -> VarId {
+        self.vars
+    }
+
+    /// The register whose root `root` is.
+    fn root_register(&self, root: VarId) -> Option<Reg> {
+        root.checked_sub(self.vars)
+            .and_then(|index| self.registers.get(index as usize).copied())
+    }
+
+    /// The whole of each owned register of `regs`.
+    pub(super) fn register_refs(&self, regs: impl IntoIterator<Item = Reg>) -> Vec<ValueRef> {
+        regs.into_iter()
+            .filter_map(|reg| self.register_root(reg))
+            .map(|root| self.whole(root))
+            .collect()
+    }
+
+    /// Where `root` dies among the deaths at one point: a variable `v` at
+    /// `(v + 1, 0)`, and a register after the variables declared after its
+    /// definition and before those declared before it, as upstream destroys
+    /// in descending discovery order.
+    fn rank(&self, root: VarId) -> (u32, u32) {
+        match root.checked_sub(self.vars) {
+            Some(index) => (
+                self.anchors
+                    .get(index as usize)
+                    .copied()
+                    .unwrap_or_default(),
+                index + 1,
+            ),
+            None => (root + 1, 0),
+        }
     }
 
     /// The sentinel bit: set in a live set a path to an exit reaches.
@@ -286,11 +363,45 @@ impl DropValues {
             }
             None => {
                 if whole && self.range(root).any(|bit| dying.contains(bit)) {
-                    out.push(Death::var(root, self.range(root)));
+                    out.push(Death {
+                        register: self.root_register(root),
+                        rank: self.rank(root),
+                        ..Death::var(root, self.range(root))
+                    });
                 }
             }
         }
     }
+}
+
+/// For each of `owned`, one past the highest variable defined or declared
+/// before its definition, in a pre-order walk of `f`'s body.
+fn register_anchors(f: &MirFunction, owned: &[Reg]) -> Vec<u32> {
+    let index: HashMap<u32, usize> = owned
+        .iter()
+        .enumerate()
+        .map(|(index, reg)| (reg.0, index))
+        .collect();
+    let mut anchors = vec![f.n_params as u32; owned.len()];
+    let mut seen = f.n_params as u32;
+    let mut results = Vec::new();
+    for_each_instr_deep(&f.blocks, &mut |instr| {
+        if let Some(var) = var_def(instr).or(match instr {
+            MirInstr::DeclareVar { var } => Some(*var),
+            _ => None,
+        }) {
+            seen = seen.max(var + 1);
+        }
+        results.clear();
+        mojito_mir::mir::verify::instruction_result_regs(instr, &mut results);
+        results.extend(mojito_mir::mir::region_argument_regs(instr));
+        for reg in &results {
+            if let Some(&at) = index.get(&reg.0) {
+                anchors[at] = seen;
+            }
+        }
+    });
+    anchors
 }
 
 /// A reference to bits of one variable, upstream's `ValueRef`: the whole
@@ -320,8 +431,8 @@ pub(super) const fn overlap(a: &Range<u32>, b: &Range<u32>) -> bool {
     a.start < b.end && b.start < a.end
 }
 
-/// One destruction drop elaboration places: a variable whole, or one owned
-/// part of it.
+/// One destruction drop elaboration places: a variable whole, one owned
+/// part of it, or an owned register.
 #[derive(Clone)]
 pub(super) struct Death {
     pub(super) root: VarId,
@@ -329,6 +440,10 @@ pub(super) struct Death {
     /// root's parts as their fields are declared.
     bits: Range<u32>,
     place: Option<MirPlace>,
+    /// The register, when the root is an owned register's.
+    register: Option<Reg>,
+    /// Its place among the deaths at one point ([`DropValues::rank`]).
+    rank: (u32, u32),
 }
 
 impl Death {
@@ -338,6 +453,8 @@ impl Death {
             root,
             bits,
             place: None,
+            register: None,
+            rank: (root + 1, 0),
         }
     }
 
@@ -346,15 +463,19 @@ impl Death {
         self.bits.clone()
     }
 
-    /// The drop: a `DropVar`, or a `DropPlace` of the part, its destructor
-    /// named later.
+    /// The drop: a `DropVar`, a `DropPlace` of the part, or a `Drop` of the
+    /// register, its destructor named later.
     pub(super) fn into_drop(self) -> MirInstr {
-        match self.place {
-            None => MirInstr::DropVar {
+        match (self.register, self.place) {
+            (Some(reg), _) => MirInstr::Drop {
+                reg,
+                destructor: None,
+            },
+            (None, None) => MirInstr::DropVar {
                 var: self.root,
                 destructor: None,
             },
-            Some(place) => MirInstr::DropPlace {
+            (None, Some(place)) => MirInstr::DropPlace {
                 place,
                 destructor: None,
             },
@@ -362,11 +483,15 @@ impl Death {
     }
 
     /// The sort key of drop order: an initializer's receiver first, then
-    /// reverse declaration order, a root's parts in field order.
-    pub(super) fn order(&self, receiver: Option<VarId>) -> (bool, std::cmp::Reverse<VarId>, u32) {
+    /// reverse discovery order ([`DropValues::rank`]), a root's parts in
+    /// field order.
+    pub(super) fn order(
+        &self,
+        receiver: Option<VarId>,
+    ) -> (bool, std::cmp::Reverse<(u32, u32)>, u32) {
         (
             Some(self.root) != receiver,
-            std::cmp::Reverse(self.root),
+            std::cmp::Reverse(self.rank),
             self.bits.start,
         )
     }
@@ -527,12 +652,12 @@ impl Level {
     fn part_deaths(&self, root: VarId, dying: &DenseSet, live: &DenseSet, out: &mut Vec<Death>) {
         for field in &self.fields {
             let death = || Death {
-                root,
                 bits: match &field.node {
                     Node::Leaf(bit) => *bit..*bit + 1,
                     Node::Level(level) => level.range(),
                 },
                 place: Some(field.place.clone()),
+                ..Death::var(root, 0..0)
             };
             match &field.node {
                 Node::Leaf(bit) => {
@@ -645,7 +770,13 @@ mod tests {
             n_vars: 2,
             ..MirFunction::default()
         };
-        DropValues::new(&function, &MirDeclarations::default(), |_| true, |_| false)
+        DropValues::new(
+            &function,
+            &MirDeclarations::default(),
+            &[],
+            |_| true,
+            |_| false,
+        )
     }
 
     fn element(index: usize) -> OwnedStep {

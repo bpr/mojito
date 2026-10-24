@@ -151,6 +151,25 @@ impl VmBackend {
         }
     }
 
+    /// The payload a variant store takes `value` of the alternative `ty`
+    /// as: moved in by `constructor`, the `__moveinit__` the store names,
+    /// as upstream's `init_pointee_move`. The operand register is the
+    /// store's to end, so no drop of it follows.
+    pub(super) fn move_payload(
+        &mut self,
+        prog: &Prog,
+        value: Value,
+        ty: &Ty,
+        constructor: Option<&str>,
+    ) -> Result<Value, RuntimeError> {
+        let value = crate::runtime::coerce_checked(value, ty);
+        if self.has_moveinit {
+            self.move_named(prog, value, Some(ty), constructor)
+        } else {
+            Ok(value)
+        }
+    }
+
     /// Copy `value` held in a slot or register of the static type `ty`: as
     /// [`Self::clone_value`], through `ty`'s members where it is an erased
     /// struct instance ([`erased_instance_value`]). The copy keeps `value`'s

@@ -257,6 +257,7 @@ assets/ok/dunder_index.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_setitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_vec2.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dying_slot_copy_moves.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/element_store_from_same_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/entry_redeclares_library_names.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/enum_like_protocol.mojo	-	ineligible	no-scalar-entry-shape
@@ -768,6 +769,7 @@ assets/ok/reflection_list_materialized_whole.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/reflection_runtime_query.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_symbolic_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_template_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/register_copy_dies_after_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/replaced_field_read_through_register.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_sized_scalars.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/repr_type_names.mojo	-	ineligible	no-scalar-entry-shape
@@ -1177,6 +1179,7 @@ assets/ok/variant_hash_dict_key.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_init_with_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_nominal_string_payload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_owning_api.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/variant_payload_moved_in.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_string_literal_payload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_unsafe_get_static_supported.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/view_copy_at_last_use.mojo	-	ineligible	no-scalar-entry-shape

@@ -27,7 +27,9 @@ use std::hash::BuildHasher;
 ///
 /// A register is owned when it holds a fresh owned value whose drop runs
 /// code ([`owned_result_regs`], [`owned_register`]) or is a region
-/// argument of such a type, and is not a borrowed pack: a `tuple.make`,
+/// argument of such a type, is no compile-time argument a call passes as
+/// a parameter (a parameter value, upstream's attribute, not an SSA
+/// value), and is not a borrowed pack: a `tuple.make`,
 /// `array.create`, or `struct.create` one of whose elements is a shallow
 /// read of an owned-typed value (a `place.load`, a `field.get`), upstream's
 /// non-owned `VariadicPack` of references. A borrowed pack takes ownership
@@ -48,7 +50,9 @@ impl<'f> RegisterEnds<'f> {
             owned: HashSet::new(),
             borrowed_packs: HashSet::new(),
         };
-        ends.collect(&function.blocks);
+        let mut parameters = HashSet::new();
+        ends.collect(&function.blocks, &mut parameters);
+        ends.owned.retain(|reg| !parameters.contains(reg));
         ends
     }
 
@@ -62,6 +66,13 @@ impl<'f> RegisterEnds<'f> {
         self.owned.is_empty()
     }
 
+    /// The owned registers in register order.
+    pub fn owned_registers(&self) -> Vec<Reg> {
+        let mut owned: Vec<Reg> = self.owned.iter().copied().map(Reg).collect();
+        owned.sort_unstable_by_key(|reg| reg.0);
+        owned
+    }
+
     /// Push the operands `instruction` takes ownership of.
     ///
     /// They are a stored value (a slot's, a place's, through a reference,
@@ -69,9 +80,9 @@ impl<'f> RegisterEnds<'f> {
     /// collector binds, a receiver the call records as taken `var` or
     /// `deinit` with no retained place, an owned pack's element, a
     /// storage's initial value, storage or a variant a payload is taken
-    /// out of, a loop's operands, a rebind's operand, and a destroyed
-    /// register. A variant's new payload is a copy of its operand
-    /// ([`MirInstr::MakeVariant`]), which it leaves owned by the caller.
+    /// out of, a variant's new payload, which it takes by move, as
+    /// upstream's `init_pointee_move` does, a loop's operands, a rebind's
+    /// operand, and a destroyed register.
     pub fn consumed(&self, instruction: &MirInstr, out: &mut Vec<Reg>) {
         match instruction {
             MirInstr::DefVar { src, .. }
@@ -83,6 +94,9 @@ impl<'f> RegisterEnds<'f> {
             | MirInstr::UninitStorageDestroy { storage: src, .. }
             | MirInstr::VariantTake { variant: src, .. }
             | MirInstr::VariantDeinitWith { variant: src, .. }
+            | MirInstr::MakeVariant { value: src, .. }
+            | MirInstr::VariantSet { value: src, .. }
+            | MirInstr::VariantReplace { value: src, .. }
             | MirInstr::Drop { reg: src, .. } => out.push(*src),
             MirInstr::UninitStorage { init, .. } => out.extend(init.iter().copied()),
             MirInstr::MakeTuple { dest, elems, .. }
@@ -301,9 +315,11 @@ impl<'f> RegisterEnds<'f> {
 
     /// Record the owned registers and borrowed packs of `blocks`, at any
     /// depth, in one pre-order walk, so a pack's elements are classified
-    /// before it.
-    fn collect(&mut self, blocks: &[MirBlock]) {
+    /// before it, and the registers passed as compile-time arguments in
+    /// `parameters`.
+    fn collect(&mut self, blocks: &[MirBlock], parameters: &mut HashSet<u32>) {
         for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+            parameters.extend(parameter_argument_regs(instruction));
             let mut defined = Vec::new();
             owned_result_regs(instruction, &mut defined);
             defined.extend(region_argument_regs(instruction));
@@ -326,7 +342,7 @@ impl<'f> RegisterEnds<'f> {
                 }
             }
             for region in instruction_regions(instruction) {
-                self.collect(region);
+                self.collect(region, parameters);
             }
         }
     }
@@ -454,6 +470,9 @@ pub struct ParameterContract<'c> {
     pub collector: Option<usize>,
     /// The convention the variadic collector takes its arguments by.
     pub collector_convention: Option<ArgConvention>,
+    /// Whether a keyword collector (`var **kwargs`) takes every keyword
+    /// argument naming no parameter; Mojo's is always owned.
+    pub keyword_collector: bool,
 }
 
 impl<'c> From<&'c MirFunctionDeclaration> for ParameterContract<'c> {
@@ -464,6 +483,7 @@ impl<'c> From<&'c MirFunctionDeclaration> for ParameterContract<'c> {
             conventions: &declaration.param_conventions,
             collector: declaration.variadic_index,
             collector_convention: declaration.variadic_convention,
+            keyword_collector: declaration.kw_variadic.is_some(),
         }
     }
 }
@@ -476,6 +496,7 @@ impl<'c> From<&'c TraitRequirement> for ParameterContract<'c> {
             conventions: &requirement.param_conventions,
             collector: requirement.variadic_index,
             collector_convention: requirement.variadic_convention,
+            keyword_collector: requirement.kw_variadic.is_some(),
         }
     }
 }
@@ -493,6 +514,7 @@ impl<'c> From<&'c FuncTy> for ParameterContract<'c> {
             collector,
             collector_convention: collector
                 .and_then(|slot| function.conventions.get(slot).copied().flatten()),
+            keyword_collector: function.kw_variadic.is_some(),
         }
     }
 }
@@ -510,7 +532,7 @@ impl ParameterContract<'_> {
         match binding {
             ArgumentBinding::Slot(slot) => self.consumes(slot),
             ArgumentBinding::Collector => owned_convention(self.collector_convention),
-            ArgumentBinding::Unbound => false,
+            ArgumentBinding::Unbound => self.keyword_collector,
         }
     }
 }
@@ -603,9 +625,10 @@ pub enum ArgumentBinding {
 /// Some later operand consumes each, or drop elaboration destroys it: a
 /// call's or a resolved operator's value result, a copy, a slot's copying,
 /// moving, or forwarding use, a moved place, a constructed aggregate,
-/// variant, or closure, a payload taken out of storage, an iterator's
-/// element, a subscript call's value result, a constant, a region op's
-/// result, and a rebind of an owned value. A shallow read (`place.load`, `field.get`, `ref.read`) and a
+/// variant, or closure, a payload taken out of storage or handed back by
+/// a variant's replacement, an iterator's element, a subscript call's
+/// value result, a constant, a region op's result, and a rebind of an
+/// owned value. A shallow read (`place.load`, `field.get`, `ref.read`) and a
 /// reference are not owned; nor is anything of a type whose drop runs no
 /// code, which [`owned_register`] leaves out.
 pub fn owned_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
@@ -622,6 +645,7 @@ pub fn owned_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::PointerStorageTake { dest, .. }
         | MirInstr::UninitStorageTake { dest, .. }
         | MirInstr::VariantTake { dest, .. }
+        | MirInstr::VariantReplace { dest, .. }
         | MirInstr::Next { dest, .. }
         | MirInstr::Const { dest, .. }
         | MirInstr::Rebind { dest, .. }
@@ -662,10 +686,27 @@ pub fn owned_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
     }
 }
 
-/// Whether a register of type `ty` holds an owned value whose end matters:
-/// no reference, and a type whose drop runs code.
+/// Whether a register of type `ty` holds an owned value whose end matters.
+///
+/// It is no reference, no compile-time-only value (a parameter list, a
+/// trait, a type), no thin function value, which upstream passes as a
+/// register-passable trivial value, and a type whose drop runs code.
 pub fn owned_register(ty: &Ty, declarations: &MirDeclarations) -> bool {
-    !matches!(ty.kind(), TyKind::Ref(_)) && !declarations.drop_runs_no_code(ty)
+    let untracked = match ty.kind() {
+        TyKind::Ref(_)
+        | TyKind::ParamList(_)
+        | TyKind::AnyTrait(_)
+        | TyKind::Trait(_)
+        | TyKind::TypeType => true,
+        TyKind::Func(function) => {
+            matches!(
+                function.environment,
+                mojito_types::origin::CallableEnvironment::Thin
+            )
+        }
+        _ => false,
+    };
+    !untracked && !declarations.drop_runs_no_code(ty)
 }
 
 /// Whether `convention` takes ownership of its argument.
@@ -674,9 +715,10 @@ const fn owned_convention(convention: Option<ArgConvention>) -> bool {
 }
 
 /// The region arguments `instruction` defines at its regions' entries.
-fn region_argument_regs(instruction: &MirInstr) -> Vec<Reg> {
+pub fn region_argument_regs(instruction: &MirInstr) -> Vec<Reg> {
     match instruction {
         MirInstr::Loop { args, .. } | MirInstr::ComptimeFor { args, .. } => args.clone(),
+        MirInstr::If { else_args, .. } => else_args.clone(),
         MirInstr::Match {
             cases, else_args, ..
         } => cases
@@ -692,6 +734,31 @@ fn region_argument_regs(instruction: &MirInstr) -> Vec<Reg> {
         } => handler_args.iter().chain(else_args).copied().collect(),
         _ => Vec::new(),
     }
+}
+
+/// The registers `instruction` passes as compile-time arguments: a call's
+/// or a subscript call's bracket arguments, and a constructed element.
+fn parameter_argument_regs(instruction: &MirInstr) -> impl Iterator<Item = u32> + '_ {
+    let arguments: &[super::MirParamArg] = match instruction {
+        MirInstr::ConstructTypeParam { element, .. } => element.as_slice(),
+        MirInstr::Call { param_arg_regs, .. }
+        | MirInstr::CallIndirect { param_arg_regs, .. }
+        | MirInstr::MethodCall { param_arg_regs, .. } => param_arg_regs,
+        MirInstr::Index {
+            call: Some(call), ..
+        }
+        | MirInstr::Slice {
+            call: Some(call), ..
+        }
+        | MirInstr::MultiIndex {
+            call: Some(call), ..
+        } => &call.param_arg_regs,
+        MirInstr::MultiSet { call, .. } => &call.param_arg_regs,
+        _ => &[],
+    };
+    arguments
+        .iter()
+        .filter_map(|argument| argument.value.map(|reg| reg.0))
 }
 
 /// The signature a call through a value of type `ty` binds: a function
@@ -1083,7 +1150,7 @@ mod tests {
     }
 
     #[test]
-    fn taking_a_payload_consumes_the_variant_and_a_new_payload_copies() {
+    fn taking_a_payload_consumes_the_variant_and_a_new_payload_moves_in() {
         let declarations = MirDeclarations::default();
         let take = MirInstr::VariantTake {
             dest: Reg(2),
@@ -1099,7 +1166,49 @@ mod tests {
             value: Reg(1),
             constructor: None,
         };
-        assert!(consumed(&make, &declarations).is_empty());
+        assert_eq!(consumed(&make, &declarations), vec![Reg(1)]);
+    }
+
+    #[test]
+    fn a_keyword_collector_consumes_its_spread_and_stray_keywords() {
+        let mut declarations = declarations_with(vec![None]);
+        declarations.functions[0].kw_variadic = Some(struct_ty());
+        let mut forward = call(vec![Reg(1)]);
+        if let MirInstr::Call { kwargs, .. } = &mut forward {
+            *kwargs = vec![("**".into(), Reg(2)), ("extra".into(), Reg(3))];
+        }
+        assert_eq!(consumed(&forward, &declarations), vec![Reg(2), Reg(3)]);
+        declarations.functions[0].kw_variadic = None;
+        assert!(consumed(&forward, &declarations).is_empty());
+    }
+
+    #[test]
+    fn compile_time_values_and_thin_functions_are_not_owned() {
+        let declarations = MirDeclarations::default();
+        let thin = Ty::new(TyKind::Func(Box::new(FuncTy {
+            environment: mojito_types::origin::CallableEnvironment::Thin,
+            params: Vec::new(),
+            names: Vec::new(),
+            ret: Ty::none(),
+            required: Vec::new(),
+            variadic: None,
+            kw_variadic: None,
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            error: None,
+            conventions: Vec::new(),
+            ref_params: Vec::new(),
+            ref_return: None,
+            transfers: Default::default(),
+        })));
+        assert!(!owned_register(&thin, &declarations));
+        assert!(!owned_register(&Ty::new(TyKind::TypeType), &declarations));
+        assert!(!owned_register(
+            &Ty::new(TyKind::ParamList(struct_ty())),
+            &declarations
+        ));
+        assert!(owned_register(&struct_ty(), &declarations));
     }
 
     #[test]

@@ -178,9 +178,9 @@ pub(super) fn verify_instruction(
         } => {
             verify_lifecycle_symbol(
                 &cx,
-                "variant payload copy",
+                "variant payload move",
                 crate::mir::variant_place_payload_ty(place, index, &function.var_tys),
-                Some("__copyinit__"),
+                Some("__moveinit__"),
                 constructor.as_deref(),
                 errors,
             );
@@ -196,9 +196,9 @@ pub(super) fn verify_instruction(
             ..
         } => verify_lifecycle_symbol(
             &cx,
-            "variant payload copy",
+            "variant payload move",
             crate::mir::variant_place_payload_ty(place, index, &function.var_tys),
-            Some("__copyinit__"),
+            Some("__moveinit__"),
             constructor.as_deref(),
             errors,
         ),
@@ -704,9 +704,9 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
         } => {
             verify_lifecycle_symbol(
                 cx,
-                "variant payload copy",
+                "variant payload move",
                 crate::mir::variant_payload_ty(alternatives, index),
-                Some("__copyinit__"),
+                Some("__moveinit__"),
                 constructor.as_deref(),
                 errors,
             );

@@ -275,9 +275,11 @@ pub fn elaborate_drops_function(
     let flag = |v: VarId, flags: &[bool]| {
         (v as usize) < function.n_params && flags.get(v as usize).copied() == Some(true)
     };
+    let owned = mojito_mir::mir::RegisterEnds::new(&function, declarations).owned_registers();
     let values = DropValues::new(
         &function,
         declarations,
+        &owned,
         |v| {
             Some(v) != receiver
                 && Some(v) != pack

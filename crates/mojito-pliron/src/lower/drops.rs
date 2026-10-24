@@ -227,7 +227,7 @@ impl<'a> FnLowering<'a> {
     /// Emit the drop of the value of type `ty` at `ptr`: a call of
     /// `destructor`, a struct's compiled `__deinit__` (its own body destroys
     /// the receiver's fields), else recurse into fields in
-    /// declaration order.
+    /// declaration order; a variant destroys its active payload.
     pub(super) fn emit_drop(
         &mut self,
         ctx: &mut Context,
@@ -350,6 +350,15 @@ impl<'a> FnLowering<'a> {
                     self.emit_drop_value(ctx, address, element)?;
                 }
                 Ok(())
+            }
+            // The active payload, under its tag, by its type's destructor.
+            TyKind::Variant(alternatives) => {
+                let alternatives = alternatives.clone();
+                let layout = self
+                    .layout
+                    .variant_layout(&alternatives)
+                    .map_err(|error| self.unsupported(format!("drop layout ({error})"), None))?;
+                self.emit_drop_variant_payload(ctx, ptr, &alternatives, layout.payload_offset, &[])
             }
             _ => Ok(()),
         }

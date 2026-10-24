@@ -21,13 +21,11 @@
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               var.store { var: $v1, src: %r0, binding_type: present(Int), in_place: false },
-              var.use { dest: %r1, var: $v1, mode: copy },
-              drop.var { var: $v1 },
+              var.use { dest: %r1, var: $v1, mode: move },
               var.store { var: $v2, src: %r1, binding_type: present(Int), in_place: false },
               const { dest: %r3, value: int_literal(1) },
               literal.materialize { dest: %r4, value: %r3, target: Int },
-              var.use { dest: %r2, var: $v2, mode: copy },
-              drop.var { var: $v2 },
+              var.use { dest: %r2, var: $v2, mode: move },
               binary { op: add, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r5) }

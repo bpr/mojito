@@ -257,6 +257,7 @@ assets/ok/dunder_index.mojo	main	exe-differential	sanitized
 assets/ok/dunder_setitem.mojo	main	exe-differential	sanitized
 assets/ok/dunder_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/dunder_vec2.mojo	main	exe-differential	sanitized
+assets/ok/dying_slot_copy_moves.mojo	main	exe-differential	sanitized
 assets/ok/element_store_from_same_list.mojo	main	exe-differential	sanitized
 assets/ok/entry_redeclares_library_names.mojo	main	exe-differential	sanitized
 assets/ok/enum_like_protocol.mojo	main	exe-differential	sanitized
@@ -768,6 +769,7 @@ assets/ok/reflection_list_materialized_whole.mojo	main	exe-differential	sanitize
 assets/ok/reflection_runtime_query.mojo	main	exe-differential	sanitized
 assets/ok/reflection_symbolic_fields.mojo	main	exe-differential	sanitized
 assets/ok/reflection_template_served.mojo	main	exe-differential	sanitized
+assets/ok/register_copy_dies_after_read.mojo	main	exe-differential	sanitized
 assets/ok/replaced_field_read_through_register.mojo	main	exe-differential	sanitized
 assets/ok/repr_sized_scalars.mojo	main	exe-differential	sanitized
 assets/ok/repr_type_names.mojo	main	exe-differential	sanitized
@@ -1177,6 +1179,7 @@ assets/ok/variant_hash_dict_key.mojo	main	exe-differential	sanitized
 assets/ok/variant_init_with_constructor.mojo	main	exe-differential	sanitized
 assets/ok/variant_nominal_string_payload.mojo	main	exe-differential	sanitized
 assets/ok/variant_owning_api.mojo	main	exe-differential	sanitized
+assets/ok/variant_payload_moved_in.mojo	main	exe-differential	sanitized
 assets/ok/variant_string_literal_payload.mojo	main	exe-differential	sanitized
 assets/ok/variant_unsafe_get_static_supported.mojo	main	exe-differential	sanitized
 assets/ok/view_copy_at_last_use.mojo	main	exe-differential	sanitized

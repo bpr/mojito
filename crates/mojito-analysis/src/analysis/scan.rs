@@ -301,6 +301,7 @@ pub(super) const fn may_raise(instr: &MirInstr) -> bool {
             | MirInstr::DeclareVar { .. }
             | MirInstr::UseVar { .. }
             | MirInstr::DropVar { .. }
+            | MirInstr::Drop { .. }
             | MirInstr::ConsumeVar { .. }
             | MirInstr::KeepAlive { .. }
     )

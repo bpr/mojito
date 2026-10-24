@@ -12,6 +12,10 @@
 //! driver applies a `fold` that returns an operand; and an instruction
 //! whose results nothing reads goes when it has no effect but reading
 //! ([`MirInstr::would_be_trivially_dead`]), repeated until nothing changes.
+//! A `drop.reg` of a register whose type an instantiation made one whose
+//! destruction runs no code goes first, as upstream tracks no
+//! register-passable trivial value: a fold may then forward the register
+//! past where it died.
 //!
 //! A structured body's region ops take upstream's `hlcf` canonicalization
 //! patterns (`hlcf`): an `if` on a constant keeps the arm it selects, exits
@@ -61,7 +65,7 @@ pub fn canonicalize(
 ) -> bool {
     let mut erased = HashSet::new();
     let mut folded_constants = 0;
-    let mut patterns = 0;
+    let mut patterns = erase_trivial_drops(&mut function.blocks, &function.reg_types, declarations);
     loop {
         folded_constants += fold_constants(function, declarations);
         let rewritten = hlcf::hlcf_patterns(function, &mut erased);
@@ -98,6 +102,28 @@ pub fn canonicalize(
     function.spans.0.retain(|reg, _| !erased.contains(reg));
     timing::count("erased_instructions", erased.len() as u64);
     folded_constants + patterns + forwarded_copies + erased.len() > 0
+}
+
+/// Erase each `drop.reg` of `blocks`, regions included, whose register
+/// holds no owned value ([`mojito_mir::mir::owned_register`]); returns how
+/// many went.
+fn erase_trivial_drops(
+    blocks: &mut [MirBlock],
+    reg_types: &HashMap<u32, Ty>,
+    declarations: &MirDeclarations,
+) -> usize {
+    let mut erased = 0;
+    visit_blocks(blocks, &mut |block| {
+        let before = block.instrs.len();
+        block.instrs.retain(|instruction| {
+            !matches!(instruction, MirInstr::Drop { reg, .. }
+                if reg_types
+                    .get(&reg.0)
+                    .is_some_and(|ty| !mojito_mir::mir::owned_register(ty, declarations)))
+        });
+        erased += before - block.instrs.len();
+    });
+    erased
 }
 
 /// How many times `blocks` and their regions define each of `n_regs`

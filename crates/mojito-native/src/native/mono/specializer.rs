@@ -4358,7 +4358,7 @@ fn for_each_lifecycle_site_mut(
                     constructor,
                     ..
                 } => mojito_mir::mir::variant_payload_ty(alternatives, index)
-                    .map(|ty| (ty, "__copyinit__", constructor)),
+                    .map(|ty| (ty, "__moveinit__", constructor)),
                 MirInstr::VariantSet {
                     place,
                     index,
@@ -4369,7 +4369,7 @@ fn for_each_lifecycle_site_mut(
                     if let Some(ty) =
                         mojito_mir::mir::variant_place_payload_ty(place, index, var_tys)
                     {
-                        name(ty, "__copyinit__", constructor)?;
+                        name(ty, "__moveinit__", constructor)?;
                     }
                     name_variant_destructors(place, destructors, var_tys, name)?;
                     None
@@ -4386,7 +4386,7 @@ fn for_each_lifecycle_site_mut(
                     constructor,
                     ..
                 } => mojito_mir::mir::variant_place_payload_ty(place, index, var_tys)
-                    .map(|ty| (ty, "__copyinit__", constructor)),
+                    .map(|ty| (ty, "__moveinit__", constructor)),
                 MirInstr::MethodCall {
                     dest,
                     result_adapter: Some(adapter),

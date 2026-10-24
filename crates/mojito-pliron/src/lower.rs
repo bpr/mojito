@@ -265,6 +265,11 @@ pub fn lower_body(
         str_consts: HashMap::new(),
         str_runtime: HashMap::new(),
         owned_temps: HashMap::new(),
+        mir_owned: mojito_mir::mir::RegisterEnds::new(func, env.mir_declarations)
+            .owned_registers()
+            .into_iter()
+            .map(|reg| reg.0)
+            .collect(),
         last_uses: HashMap::new(),
         temp_releases: HashMap::new(),
         open_blocks: Vec::new(),
@@ -403,6 +408,10 @@ struct FnLowering<'a> {
     /// heap buffers free directly after the temporary's last use, and no
     /// user destructor runs.
     owned_temps: HashMap<u32, Ty>,
+    /// The registers MIR owns ([`mojito_mir::mir::RegisterEnds`]): drop
+    /// elaboration destroys each with a `drop.reg` where nothing takes it,
+    /// so none is an owned temporary here.
+    mir_owned: HashSet<u32>,
     /// Each register's final read, as the chain of `(block, instruction)`
     /// positions from the body block down to the reading position: a read
     /// inside a region is a read by the region op holding it at every

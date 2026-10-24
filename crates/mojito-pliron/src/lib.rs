@@ -1308,7 +1308,7 @@ impl<'p> CallEdges<'p, '_> {
             {
                 self.push_named(constructor);
             }
-            // A variant payload store copies by the constructor it names.
+            // A variant payload store moves by the constructor it names.
             MirInstr::MakeVariant {
                 alternatives,
                 index,
@@ -1319,7 +1319,7 @@ impl<'p> CallEdges<'p, '_> {
             {
                 self.push_named(constructor);
             }
-            // A variant store copies by the constructor it names and
+            // A variant store moves by the constructor it names and
             // drops the replaced payload by the destructor it names for
             // the active alternative.
             MirInstr::VariantSet {

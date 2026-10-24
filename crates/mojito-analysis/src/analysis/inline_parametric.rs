@@ -2150,7 +2150,9 @@ fn consumed_in_place(place: &MirPlace) -> bool {
 }
 
 /// The slot the register `argument` forwards in `block` before the call at
-/// `index`, in its run ([`run_start`]), when nothing between the forward and the call names it.
+/// `index`, in its run ([`run_start`]), when nothing between the forward
+/// and the call names it or reads `argument`: the call is the forward's
+/// one reader, so the body takes the slot in place.
 fn forwarded_slot(block: &MirBlock, index: usize, argument: Reg) -> Option<VarId> {
     let run = run_start(block, index);
     let (forward, slot) =
@@ -2169,8 +2171,28 @@ fn forwarded_slot(block: &MirBlock, index: usize, argument: Reg) -> Option<VarId
             })?;
     block.instrs[forward + 1..index]
         .iter()
-        .all(|instruction| !instruction_slots(instruction).contains(&slot))
+        .all(|instruction| {
+            !instruction_slots(instruction).contains(&slot)
+                && !reads_register(instruction, argument)
+        })
         .then_some(slot)
+}
+
+/// Whether `instruction`, its regions included, reads `reg`.
+fn reads_register(instruction: &MirInstr, reg: Reg) -> bool {
+    let mut operands = Vec::new();
+    mojito_mir::mir::verify::instruction_operand_regs(instruction, &mut operands);
+    operands.contains(&reg)
+        || instruction_regions(instruction)
+            .into_iter()
+            .flatten()
+            .any(|block| {
+                block
+                    .instrs
+                    .iter()
+                    .any(|instruction| reads_register(instruction, reg))
+                    || mojito_mir::mir::terminator_regs(&block.term).contains(&reg)
+            })
 }
 
 /// The whole slot the register `argument` is a load of before the call at

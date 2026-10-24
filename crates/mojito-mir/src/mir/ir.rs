@@ -1326,6 +1326,17 @@ pub const FORWARDED_ARGUMENT_SLOT: &str = "$fwd_arg_r";
 /// source's storage instead.
 pub const READ_TEMPORARY_SLOT: &str = "$tmp_arg_r";
 
+/// Whether a slot named `name` holds an entry of a nested `def`'s
+/// environment, `{def}${capture}`.
+///
+/// It holds a `{var x}` capture's copy, which upstream makes inside the
+/// closure's creation, after the lifetime check, where it reads `x` and
+/// copies no dying value. A compiler temporary's name starts with `$`; no
+/// source identifier holds one.
+pub fn is_environment_slot(name: &str) -> bool {
+    !name.starts_with('$') && name.contains('$')
+}
+
 /// One already-evaluated argument to a multi-dimensional subscript.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MirSubscriptArg {
@@ -2270,8 +2281,9 @@ pub enum MirInstr {
         fields: Vec<Reg>,
     },
     /// Construct a tagged union. Alternative order determines the runtime tag.
-    /// The payload is a copy of `value`; `constructor` names the
-    /// `__copyinit__` it runs, as on [`MirInstr::CopyValue`].
+    /// The payload takes `value` by move, as upstream's `init_pointee_move`;
+    /// `constructor` names the `__moveinit__` it runs, as on a `var.use`
+    /// move.
     MakeVariant {
         dest: Reg,
         alternatives: Vec<Ty>,
@@ -2293,7 +2305,7 @@ pub enum MirInstr {
         index: mojito_types::types::VariantIndex,
     },
     /// Replace a writable variant and destroy its previous payload. The new
-    /// payload is a copy of `value` naming its `__copyinit__` as
+    /// payload takes `value` by move, naming its `__moveinit__` as
     /// [`MirInstr::MakeVariant`] does; `destructors` names, per
     /// alternative, the `__deinit__` the previous payload runs when the tag
     /// selects it, as upstream's `Variant.__del__` names each alternative's
@@ -2339,8 +2351,8 @@ pub enum MirInstr {
         index: mojito_types::types::VariantIndex,
     },
     /// Replace the active payload without destroying it, returning ownership of
-    /// that previous payload to the caller. The new payload is a copy of
-    /// `value` naming its `__copyinit__` as [`MirInstr::MakeVariant`] does.
+    /// that previous payload to the caller. The new payload takes `value` by
+    /// move, naming its `__moveinit__` as [`MirInstr::MakeVariant`] does.
     VariantReplace {
         dest: Reg,
         place: MirPlace,
