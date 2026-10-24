@@ -954,7 +954,7 @@ fn instruction_families_reprint_byte_identically() {
             kwargs: vec![("count".into(), Reg(5))],
             recv_place: Some(Box::new(place(0))),
             recv_writes: true,
-            deinit_receiver: true,
+            receiver_convention: Some(ArgConvention::Deinit),
             arg_places: vec![Some(place(1))],
             kwarg_places: vec![None],
             capture_accesses: Vec::new(),
@@ -2513,7 +2513,7 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
                     kwargs: Vec::new(),
                     recv_place: None,
                     recv_writes: false,
-                    deinit_receiver: false,
+                    receiver_convention: None,
                     arg_places: Vec::new(),
                     kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
@@ -2558,19 +2558,25 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
         MirInstr::MethodCall { spread: None, .. }
     ));
 
-    // Schema 1.98 records whether the call consumes a `deinit` receiver; an
-    // older artifact consumes none.
-    let before_deinit_receiver = write::program(&program).replace(", deinit_receiver: false", "");
-    assert!(!before_deinit_receiver.contains("deinit_receiver"));
-    let parsed =
-        artifact(before_deinit_receiver.as_bytes(), "unit.mir".to_string()).expect("parse 1.97");
-    assert!(matches!(
-        &parsed.program.functions[0].1.blocks[0].instrs[0],
-        MirInstr::MethodCall {
-            deinit_receiver: false,
-            ..
+    // Schema 1.100 records the callee's receiver convention; 1.98 and 1.99
+    // record only whether it is `deinit`, and an older artifact neither.
+    let convention = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+            MirInstr::MethodCall {
+                receiver_convention,
+                ..
+            } => *receiver_convention,
+            other => panic!("expected a method call, read {other:?}"),
         }
-    ));
+    };
+    let written = write::program(&program);
+    assert!(written.contains(", receiver_convention: absent"));
+    let deinit_flag = written.replace(", receiver_convention: absent", ", deinit_receiver: true");
+    assert_eq!(convention(&deinit_flag), Some(ArgConvention::Deinit));
+    let before_deinit_receiver = written.replace(", receiver_convention: absent", "");
+    assert!(!before_deinit_receiver.contains("receiver_convention"));
+    assert_eq!(convention(&before_deinit_receiver), None);
 }
 
 /// Schema 1.7 carries the expression a value argument built from the

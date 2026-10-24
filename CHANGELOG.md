@@ -829,11 +829,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Which operands end an owned register is now read off each call's
+  conventions, as upstream's `lit.call` carries its callee's, through one
+  per-function classification the verifier reads (`mir::RegisterEnds`,
+  R1325). `call.method` records its callee's receiver convention in place
+  of `deinit_receiver` (MIR text 1.100, package 90), and calls bind through
+  the one callee resolver the register-loan analysis uses (`mir::Callee`),
+  so an owned argument through a trait bound, a callable struct's
+  `__call__`, a subscript's owned key, a struct name's `__init__`, and a
+  payload taken out of storage or a variant end their registers, while a
+  pack over a shallow read is borrowed and takes no element, and a new
+  variant payload copies its operand. `hasher^.finish()` over a `Hasher`
+  bound now hands its receiver over without a move, as an ordinary owned
+  receiver does, and a call `native::mono` retargets to an instance takes
+  the instance's receiver convention. Output is unchanged on both
+  backends; no pass destroys an unconsumed owned register yet (R1329).
+
 - `drop.reg` names its destructor, as `drop.var` does (MIR text 1.99,
   package 89): it is the death of an owned register, upstream's direct
   `ValueToDestroy`, which `lower_drops` writes as the `deinit`-receiver
   call on the register, and which the VM and Pliron now run when it names
-  none. No pass emits one yet (R1325).
+  none. No pass emits one yet (R1329).
 - The MIR verifier rejects an owned register ended twice on some path, as
   `CheckLifetimes` rejects a use of a consumed owned SSA value: the slot-end
   walk keeps the owned registers some path has stored, passed to an owned

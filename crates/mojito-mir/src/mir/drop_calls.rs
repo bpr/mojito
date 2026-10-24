@@ -121,7 +121,7 @@ fn lowered(
         kwargs: Vec::new(),
         recv_place: place.cloned().map(Box::new),
         recv_writes: true,
-        deinit_receiver: true,
+        receiver_convention: Some(mojito_ast::ast::ArgConvention::Deinit),
         arg_places: Vec::new(),
         kwarg_places: Vec::new(),
         capture_accesses: Vec::new(),

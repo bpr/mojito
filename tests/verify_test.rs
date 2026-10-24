@@ -16,9 +16,9 @@ use std::path::Path;
 use mojito::mir::{
     Const, FuncRef, LoopLabel, MirBlock, MirCase, MirDeclarations, MirFunction, MirInstr,
     MirInteriorOrigin, MirIntrinsicSubscript, MirLoan, MirParamArg, MirPlace, MirProgram, MirTerm,
-    Proj, Raises, Reg, SpanTable, TryLabel, UseMode,
+    Proj, Raises, Reg, SpanTable, TraitDeclaration, TraitRequirement, TryLabel, UseMode,
 };
-use mojito::param_expr::{MetaTy, ParamContext, ParamId};
+use mojito::param_expr::{MetaTy, ParamContext, ParamId, ParamRef};
 use mojito::types::DependentType;
 use mojito::types::TransferSet;
 use mojito::types::{FuncTy, GenericFuncTy};
@@ -1721,7 +1721,7 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
                     kwargs: Vec::new(),
                     recv_place: None,
                     recv_writes: true,
-                    deinit_receiver: false,
+                    receiver_convention: None,
                     arg_places: Vec::new(),
                     kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
@@ -1902,7 +1902,7 @@ fn verifier_rejects_a_method_call_spread_of_a_non_pack_register() {
                     kwargs: Vec::new(),
                     recv_place: None,
                     recv_writes: false,
-                    deinit_receiver: false,
+                    receiver_convention: None,
                     arg_places: vec![None],
                     kwarg_places: Vec::new(),
                     capture_accesses: Vec::new(),
@@ -2142,8 +2142,21 @@ fn verifier_rejects_a_drop_of_a_slot_some_path_does_not_hold() {
 /// function whose parameter `x` and local `y` hold a struct `S` whose drop
 /// runs code; `%r0` is `S` and `%r1` is `Bool`.
 fn register_end_findings(blocks: Vec<MirBlock>) -> Vec<String> {
+    register_end_findings_in(blocks, &[], MirDeclarations::default())
+}
+
+/// [`register_end_findings`] over `declarations`, the registers `more`
+/// typed besides `%r0` and `%r1`.
+fn register_end_findings_in(
+    blocks: Vec<MirBlock>,
+    more: &[(u32, Ty)],
+    declarations: MirDeclarations,
+) -> Vec<String> {
     let s = Ty::new(TyKind::Struct("S".into(), Vec::new()));
-    let mut f = function(blocks, 2, &[(0, s.clone()), (1, Ty::bool())]);
+    let mut types = vec![(0, s.clone()), (1, Ty::bool())];
+    types.extend_from_slice(more);
+    let n_regs = types.iter().map(|(reg, _)| reg + 1).max().unwrap_or(0);
+    let mut f = function(blocks, n_regs, &types);
     f.n_vars = 2;
     f.var_names = vec!["x".to_string(), "y".to_string()];
     f.n_params = 1;
@@ -2153,7 +2166,9 @@ fn register_end_findings(blocks: Vec<MirBlock>) -> Vec<String> {
     f.ref_params = vec![false];
     f.var_tys = HashMap::from([(0, s.clone()), (1, s)]);
     f.ret_ty = Some(Ty::none());
-    verify(&program(f))
+    let mut program = program(f);
+    program.declarations = declarations;
+    verify(&program)
         .into_iter()
         .filter(|finding| finding.contains("ends owned register"))
         .collect()
@@ -2219,6 +2234,123 @@ fn verifier_rejects_an_owned_register_ended_twice() {
     .concat();
     assert_eq!(
         register_end_findings(vec![block(after_one_arm, MirTerm::Return(None))]),
+        [
+            "MIR function 'test' block 0: drop.reg ends owned register %r0, which some path reaching it has ended"
+        ]
+    );
+}
+
+const DROP_R0: MirInstr = MirInstr::Drop {
+    reg: Reg(0),
+    destructor: None,
+};
+
+/// An owned argument a call through a trait bound passes to a `var`
+/// parameter of the requirement ends there, as upstream's call reads the
+/// requirement's convention, so a later `drop.reg` of it ends it twice.
+#[test]
+fn verifier_rejects_a_drop_of_an_argument_a_bound_call_took() {
+    let dispatch = "__trait_dispatch.absorb";
+    let declarations = MirDeclarations {
+        traits: vec![TraitDeclaration {
+            name: "Absorber".into(),
+            refines: Vec::new(),
+            requirements: vec![TraitRequirement {
+                name: "absorb".into(),
+                arity: 1,
+                dispatch: dispatch.into(),
+                param_names: vec!["t".into()],
+                param_types: vec![Ty::new(TyKind::Struct("S".into(), Vec::new()))],
+                param_conventions: vec![Some(mojito::ast::ArgConvention::Var)],
+                variadic_index: None,
+                required: vec![true],
+                positional_only: None,
+                keyword_only: None,
+                variadic: None,
+                kw_variadic: None,
+                variadic_convention: None,
+            }],
+        }],
+        ..MirDeclarations::default()
+    };
+    let bound = Ty::new(TyKind::Param {
+        binder: ParamRef {
+            id: ParamId::new("test", 0),
+            name: "T".into(),
+        },
+        bounds: vec!["Absorber".into()],
+        callable_bound: None,
+    });
+    let absorb = MirInstr::MethodCall {
+        dest: Reg(3),
+        recv: Reg(2),
+        method: "absorb".into(),
+        resolved: Some(dispatch.into()),
+        raises: None,
+        reference_result: None,
+        result_adapter: None,
+        args: vec![Reg(0)],
+        kwargs: Vec::new(),
+        recv_place: None,
+        recv_writes: false,
+        receiver_convention: None,
+        arg_places: vec![None],
+        kwarg_places: Vec::new(),
+        capture_accesses: Vec::new(),
+        param_arg_regs: Vec::new(),
+        param_decls: Vec::new(),
+        instantiated_args: Vec::new(),
+        spread: None,
+    };
+    let instrs = [copy_x_and_condition(), vec![absorb, DROP_R0]].concat();
+    assert_eq!(
+        register_end_findings_in(
+            vec![block(instrs, MirTerm::Return(None))],
+            &[(2, bound), (3, Ty::none())],
+            declarations,
+        ),
+        [
+            "MIR function 'test' block 0: drop.reg ends owned register %r0, which some path reaching it has ended"
+        ]
+    );
+}
+
+/// A pack over a shallow read is borrowed, upstream's non-owned
+/// `VariadicPack` of references: it takes no element, so its owned element
+/// is still the caller's to destroy, where an owned pack takes it.
+#[test]
+fn verifier_accepts_a_drop_of_an_element_a_borrowed_pack_holds() {
+    let s = Ty::new(TyKind::Struct("S".into(), Vec::new()));
+    let load_y = MirInstr::LoadPlace {
+        dest: Reg(2),
+        place: MirPlace::root(1, Some(s.clone())),
+    };
+    let tuple = |elems| MirInstr::MakeTuple {
+        dest: Reg(3),
+        elems,
+        element_types: None,
+    };
+    let borrowed = [
+        copy_x_and_condition(),
+        vec![load_y, tuple(vec![Reg(2), Reg(0)]), DROP_R0],
+    ]
+    .concat();
+    let pair = Ty::new(TyKind::Tuple(vec![s.clone(), s.clone()]));
+    assert!(
+        register_end_findings_in(
+            vec![block(borrowed, MirTerm::Return(None))],
+            &[(2, s.clone()), (3, pair)],
+            MirDeclarations::default(),
+        )
+        .is_empty()
+    );
+    let owned = [copy_x_and_condition(), vec![tuple(vec![Reg(0)]), DROP_R0]].concat();
+    assert_eq!(
+        register_end_findings_in(
+            vec![block(owned, MirTerm::Return(None))],
+            &[(3, Ty::new(TyKind::Tuple(vec![s])))],
+            MirDeclarations::default(),
+        ),
         [
             "MIR function 'test' block 0: drop.reg ends owned register %r0, which some path reaching it has ended"
         ]

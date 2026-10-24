@@ -15,7 +15,7 @@
 //!
 //! An owned register ends at most once on every path, as `CheckLifetimes`
 //! rejects a use of an owned SSA value after its consumption: an operand
-//! that takes ownership of it ([`consumed_operand_regs`]), a terminator
+//! that takes ownership of it ([`RegisterEnds::consumed`]), a terminator
 //! carrying it out of its region, a `drop.reg`, or a `deinit`-receiver call
 //! on it ends it, and its definition (each time a loop reaches it, a
 //! region argument at its region's entry) starts it again. The walk keeps
@@ -44,11 +44,10 @@ use super::{
 };
 use crate::mir::text::instruction_mnemonic;
 use crate::mir::{
-    MirCaptureMode, MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, VarId,
-    consumed_operand_regs, consumed_terminator_regs, instruction_regions, instruction_slots,
-    owned_register, owned_result_regs, region_exit,
+    MirCaptureMode, MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds,
+    VarId, instruction_regions, instruction_slots, region_exit,
 };
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 /// Report every slot end in `function` (a `drop.var`, a `var.consume`, or
 /// a `deinit`-receiver call) whose slot some path reaching it does not
@@ -63,12 +62,11 @@ pub(super) fn verify_slot_ends(
     declarations: &MirDeclarations,
     errors: &mut Vec<String>,
 ) {
-    let mut owned = HashSet::new();
-    collect_owned(&function.blocks, function, declarations, &mut owned);
+    let owned = RegisterEnds::new(function, declarations);
     if owned.is_empty() && !ends_slots(&function.blocks) {
         return;
     }
-    let mut walk = Walk::new(name, function, declarations, owned);
+    let mut walk = Walk::new(name, function, owned);
     let entry = Held {
         slots: (0..function.n_vars)
             .map(|v| v < function.n_params)
@@ -224,9 +222,9 @@ type Memo = HashMap<(*const MirInstr, Held, usize), Flow>;
 struct Walk<'a> {
     name: &'a str,
     function: &'a MirFunction,
-    declarations: &'a MirDeclarations,
-    /// The registers holding an owned value whose end matters.
-    owned: HashSet<u32>,
+    /// The registers holding an owned value whose end matters, and the
+    /// operands that end them.
+    owned: RegisterEnds<'a>,
     /// The place a reference register was made from: a write through it
     /// stores into that place again.
     refills: HashMap<u32, &'a MirPlace>,
@@ -240,18 +238,12 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    fn new(
-        name: &'a str,
-        function: &'a MirFunction,
-        declarations: &'a MirDeclarations,
-        owned: HashSet<u32>,
-    ) -> Self {
+    fn new(name: &'a str, function: &'a MirFunction, owned: RegisterEnds<'a>) -> Self {
         let mut refills = HashMap::new();
         collect_refills(&function.blocks, &mut refills);
         Self {
             name,
             function,
-            declarations,
             owned,
             refills,
             findings: Vec::new(),
@@ -269,7 +261,7 @@ impl<'a> Walk<'a> {
         };
         let mut out = self.block(0, entry.clone(), block, report);
         if let Some(state) = out.normal.as_mut() {
-            let carried = consumed_terminator_regs(&block.term);
+            let carried = self.owned.consumed_by(&block.term);
             self.end_registers(0, state, &carried, "terminator", report);
         }
         match (&block.term, out.normal.as_ref()) {
@@ -559,7 +551,7 @@ impl<'a> Walk<'a> {
         report: bool,
     ) {
         let mut consumed = Vec::new();
-        consumed_operand_regs(instruction, self.function, self.declarations, &mut consumed);
+        self.owned.consumed(instruction, &mut consumed);
         self.end_registers(
             index,
             state,
@@ -583,7 +575,7 @@ impl<'a> Walk<'a> {
         report: bool,
     ) {
         for reg in regs {
-            if !self.owned.contains(&reg.0) {
+            if !self.owned.owned(*reg) {
                 continue;
             }
             if !state.ended_regs.insert(reg.0) && report {
@@ -783,47 +775,6 @@ fn collect_refills<'a>(blocks: &'a [MirBlock], refills: &mut HashMap<u32, &'a Mi
         }
         for region in instruction_regions(instruction) {
             collect_refills(region, refills);
-        }
-    }
-}
-
-/// The registers of `blocks`, at any depth, holding an owned value whose
-/// end matters: an owned result ([`owned_result_regs`]) or a region
-/// argument, of a type [`owned_register`] answers for.
-fn collect_owned(
-    blocks: &[MirBlock],
-    function: &MirFunction,
-    declarations: &MirDeclarations,
-    owned: &mut HashSet<u32>,
-) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        let mut defined = Vec::new();
-        owned_result_regs(instruction, &mut defined);
-        match instruction {
-            MirInstr::Loop { args, .. } | MirInstr::ComptimeFor { args, .. } => {
-                defined.extend(args.iter().copied());
-            }
-            MirInstr::Match {
-                cases, else_args, ..
-            } => {
-                defined.extend(cases.iter().flat_map(|case| case.args.iter().copied()));
-                defined.extend(else_args.iter().copied());
-            }
-            MirInstr::Try {
-                handler_args,
-                else_args,
-                ..
-            } => defined.extend(handler_args.iter().chain(else_args).copied()),
-            _ => {}
-        }
-        owned.extend(defined.into_iter().map(|reg| reg.0).filter(|reg| {
-            function
-                .reg_types
-                .get(reg)
-                .is_some_and(|ty| owned_register(ty, declarations))
-        }));
-        for region in instruction_regions(instruction) {
-            collect_owned(region, function, declarations, owned);
         }
     }
 }

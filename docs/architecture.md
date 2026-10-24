@@ -4892,7 +4892,7 @@ names its destructor as a `drop.var` does, and a named one becomes the
 receiver; the VM runs an unnamed one through `drop_named`, and Pliron
 destroys it at the register's storage (`lower_drop_reg`). No pass places
 one yet: Pliron still frees an owned temporary after its last read
-(R1325). Since no drop is tested, every
+(R1329). Since no drop is tested, every
 producer emits only decided drops: a store's overwrite drop only where the
 move scan's replay says the replaced value is initialized on every path
 (`analysis/store_drops.rs`), so module scope, which has no drop walk,
@@ -5426,9 +5426,10 @@ the whole-value `__deinit__` for every struct and recursively destroys only its
 initialized residual fields.
 
 A named explicit destructor is lowered as a call alone. `MethodCall`
-carries `deinit_receiver`, the callee's `deinit` (upstream's `DeinitMem`)
-receiver convention, which the verifier checks against the callee's
-declaration, and the call consumes its receiver place
+carries `receiver_convention`, its callee's receiver convention as
+upstream's call carries each operand's (MIR text 1.100), which the
+verifier checks against the callee's declaration; a `deinit` one
+(upstream's `DeinitMem`) makes the call consume its receiver place
 (`MirInstr::consumed_receiver`), as upstream's call consumes its
 `DeinitMem` operand (`memConsume`, read by `checkConsume` in both
 `UninitializedValueScan` and `DestructorInsertion`); no marker follows the
@@ -5554,14 +5555,25 @@ receiver call that would destroy an ended part is rejected. A `var.consume`
 destroys nothing, so it ends a slot whatever parts are ended — the end of a
 `deinit` body whose fields died singly. The same walk keeps the owned
 registers some path has ended, as upstream's `ValueSet` holds an owned SSA
-value beside memory values: an owned register (a fresh owned result,
-`mir::owned_result_regs`, or a region argument, of a type whose drop runs
-code) ends at an operand that takes ownership of it
-(`mir::consumed_operand_regs`: a store, an argument an owned parameter or
-collector binds, an owned receiver without a retained place, an
-aggregate's element, a variant payload), a terminator carrying it out of
-its region, or a `drop.reg`, and the verifier rejects a second end on some
-path, as `CheckLifetimes` rejects a use after consumption.
+value beside memory values. `mir::RegisterEnds`, built once per function,
+answers which registers are owned and which operands end them. An owned
+register is a fresh owned result (`mir::owned_result_regs`) or a region
+argument, of a type whose drop runs code, that is not a borrowed pack: a
+`tuple.make`, `array.create`, or `struct.create` with an element read
+shallowly (a `place.load`), upstream's non-owned `VariadicPack` of
+references, which takes no element. It ends at an operand that takes
+ownership of it (`RegisterEnds::consumed`): a store, an argument an owned
+parameter or collector binds, a receiver its `call.method` records as
+taken `var` or `deinit` with no retained place, an owned pack's element,
+a storage's initial value, the storage or variant a payload is taken out
+of, a terminator carrying it out of its region, or a `drop.reg`. A call
+binds its arguments through the one `mir::Callee` resolver the
+register-loan analysis reads too: a direct call's declaration (a struct
+name's `__init__`), a method, operator, or subscript call's declaration
+or, through a bound, the requirement it selects, and a call through a
+value's function type or its resolved `__call__`. The verifier rejects a
+second end on some path, as `CheckLifetimes` rejects a use after
+consumption.
 
 Iterator-driven loops also place an explicit drop at their common exhaustion or
 `break` exit. A `return` cannot reach that block, so HIR lists its current

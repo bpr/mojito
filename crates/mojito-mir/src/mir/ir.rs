@@ -2064,11 +2064,14 @@ pub enum MirInstr {
         /// (a reference result used as the receiver) does not conflict with
         /// the call. Unchecked lowering paths stay conservatively `true`.
         recv_writes: bool,
-        /// Whether the callee's receiver is `deinit`, upstream's `DeinitMem`
-        /// convention: the call itself consumes `recv_place`, as upstream's
-        /// call consumes its operand (`memConsume`), so no marker after the
-        /// call ends it.
-        deinit_receiver: bool,
+        /// The selected callee's receiver convention, as upstream's call
+        /// carries each operand's convention; `None` when the call records
+        /// no checked contract. A `deinit` receiver (upstream's `DeinitMem`)
+        /// makes the call itself consume `recv_place`, as upstream's call
+        /// consumes its operand (`memConsume`), so no marker after the call
+        /// ends it; with no `recv_place`, a `var` or `deinit` receiver
+        /// consumes the receiver register.
+        receiver_convention: Option<mojito_ast::ast::ArgConvention>,
         /// Like `Call::arg_places`: `arg_places[i]` is `Some` for a
         /// checker-selected `mut`/`ref` ordinary argument with a supported
         /// caller place, or for a shared-read place a borrowing-view result
@@ -2642,12 +2645,23 @@ impl MirInstr {
     pub fn consumed_receiver(&self) -> Option<&MirPlace> {
         match self {
             Self::MethodCall {
-                deinit_receiver: true,
                 recv_place: Some(place),
                 ..
-            } => Some(place),
+            } if self.deinit_receiver() => Some(place),
             _ => None,
         }
+    }
+
+    /// Whether this is a method call whose callee's receiver is `deinit`,
+    /// upstream's `DeinitMem` convention.
+    pub const fn deinit_receiver(&self) -> bool {
+        matches!(
+            self,
+            Self::MethodCall {
+                receiver_convention: Some(mojito_ast::ast::ArgConvention::Deinit),
+                ..
+            }
+        )
     }
 
     /// The slot a `deinit`-receiver call consumes whole: its receiver place

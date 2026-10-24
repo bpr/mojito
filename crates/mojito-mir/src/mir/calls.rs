@@ -873,7 +873,7 @@ impl<'a> Flatten<'a> {
                         kwargs: Vec::new(),
                         recv_place: None,
                         recv_writes: false,
-                        deinit_receiver: false,
+                        receiver_convention: None,
                         arg_places: Vec::new(),
                         kwarg_places: Vec::new(),
                         capture_accesses: Vec::new(),

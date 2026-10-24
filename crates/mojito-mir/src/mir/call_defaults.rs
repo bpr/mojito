@@ -777,7 +777,7 @@ fn build_keyword_collector(
             kwargs: Vec::new(),
             recv_place: Some(Box::new(place.clone())),
             recv_writes: true,
-            deinit_receiver: false,
+            receiver_convention: Some(mojito_ast::ast::ArgConvention::Mut),
             arg_places: vec![None, site.kwarg_places.get(index).cloned().flatten()],
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),

@@ -286,7 +286,7 @@ impl<'a> Flatten<'a> {
                 kwargs: Vec::new(),
                 recv_place: recv_place.map(Box::new),
                 recv_writes: e.receiver_writes(),
-                deinit_receiver: e.receiver_deinit(),
+                receiver_convention: e.receiver_convention(object),
                 arg_places: Vec::new(),
                 kwarg_places: Vec::new(),
                 capture_accesses: self.call_capture_accesses(e),

@@ -88,8 +88,8 @@ pub use param_uses::{
 };
 mod register_ends;
 pub use register_ends::{
-    ArgumentBinding, BoundArgument, CallArguments, ParameterContract, consumed_operand_regs,
-    consumed_terminator_regs, owned_register, owned_result_regs,
+    ArgumentBinding, BoundArgument, CallArguments, Callee, ParameterContract, RegisterEnds,
+    owned_register, owned_result_regs, receiver_ty,
 };
 mod struct_reads;
 pub use struct_reads::{

@@ -423,11 +423,31 @@ impl<'a> Node<'a> {
         })
     }
 
-    /// Whether the selected callee's receiver is `deinit`, so the call
-    /// consumes its receiver place (upstream's `DeinitMem`).
-    pub(super) fn receiver_deinit(self) -> bool {
-        self.call_contract().is_some_and(|contract| {
-            contract.receiver_convention == Some(mojito_ast::ast::ArgConvention::Deinit)
+    /// The selected callee's receiver convention, which a method call
+    /// records as upstream's call carries each operand's: a `deinit` one
+    /// consumes its receiver place (upstream's `DeinitMem`). A call the
+    /// check recorded no contract for takes its receiver `var` when the
+    /// check marked `receiver` as taken by an owned receiver.
+    pub(super) fn receiver_convention(
+        self,
+        receiver: Node<'_>,
+    ) -> Option<mojito_ast::ast::ArgConvention> {
+        match self.call_contract() {
+            Some(contract) => contract.receiver_convention,
+            None => receiver
+                .forwarded()
+                .then_some(mojito_ast::ast::ArgConvention::Var),
+        }
+    }
+
+    /// Whether the check marked this operand as taken by an owned
+    /// parameter, receiver, or operator operand (`ForwardedArgument`).
+    pub(super) fn forwarded(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::ForwardedArgument
+            )
         })
     }
 

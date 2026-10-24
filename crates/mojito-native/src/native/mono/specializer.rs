@@ -2629,6 +2629,7 @@ impl<'a> Specializer<'a> {
                         resolved,
                         raises,
                         result_adapter,
+                        receiver_convention,
                         args,
                         kwargs,
                         arg_places,
@@ -2797,6 +2798,15 @@ impl<'a> Specializer<'a> {
                                 spread: spread.take(),
                             };
                             continue;
+                        }
+                        // A call through a bound records no receiver
+                        // convention; the call to the instance takes its
+                        // declaration's.
+                        if receiver_convention.is_none() {
+                            *receiver_convention = self
+                                .declarations
+                                .get(target.as_str())
+                                .and_then(|declaration| declaration.receiver_convention);
                         }
                         *resolved = Some(concrete);
                         param_arg_regs.clear();
@@ -3007,13 +3017,10 @@ impl<'a> Specializer<'a> {
                                 Some(TyKind::Ref(reference)) => Some(reference.clone()),
                                 _ => None,
                             });
-                        let deinit_receiver =
-                            self.declarations
-                                .get(target.as_str())
-                                .is_some_and(|declaration| {
-                                    declaration.receiver_convention
-                                        == Some(mojito_ast::ast::ArgConvention::Deinit)
-                                });
+                        let receiver_convention = self
+                            .declarations
+                            .get(target.as_str())
+                            .and_then(|declaration| declaration.receiver_convention);
                         let concrete = self.enqueue(&target, bindings, arguments)?;
                         *instruction = MirInstr::MethodCall {
                             dest: *dest,
@@ -3027,7 +3034,7 @@ impl<'a> Specializer<'a> {
                             kwargs: std::mem::take(kwargs),
                             recv_place: callee_place.take(),
                             recv_writes: true,
-                            deinit_receiver,
+                            receiver_convention,
                             arg_places: std::mem::take(arg_places),
                             kwarg_places: std::mem::take(kwarg_places),
                             capture_accesses: Vec::new(),

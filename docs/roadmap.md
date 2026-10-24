@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1329**.
+Next free ID: **R1333**.
 
 ## Ordered Work
 
@@ -1267,6 +1267,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1331 A loan-carrying temporary at a read parameter is destroyed at
+  the statement's end, where the pin destroys it after the call**
+
+  Problem: `print(look(Holder(Pointer(to=local))))` with `def look(h:
+  Holder) -> Int` and a `Holder.__deinit__` that prints prints `7`, then
+  `del 7`, on both backends, where the pin prints `del 7`, then `7`.
+  - MIR anchors the temporary in a hidden `$arg_loan_r` slot to keep
+    `local` borrowed through the call (`anchor_borrowing_argument`,
+    `mir/calls.rs`).
+  - The slot lives to the statement's `KeepAlive`
+    (`flush_argument_anchors`, `mir/lower_stmt.rs`), so the temporary dies
+    after `print`, where upstream destroys it once `look` returns.
+  - Related: R123 (the same anchor at an owned parameter has two owners)
+    and R691 (its loan conflicts until the statement's end).
+  - Found while planning R1325 (2026-10-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R716 A call temporary read inside a t-string dies before the
   print**
 
@@ -2098,6 +2116,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     the list inside it.
   - A temporary with no destructor (`Span(xs)`) is unaffected.
   - Probe: `conformance/probes/loan_carrying_temporary_owned_argument.mojo`.
+  - Probe: `print(take(Holder(Pointer(to=local))))` with `def take(var h:
+    Holder) -> Int` and a `Holder.__deinit__` that prints prints `del 7`
+    twice on both backends, where the pin prints it once.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2932,6 +2953,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - MIR therefore cannot tell a raising prefix dunder from a non-raising
     one, and `produced_in_place` never binds a prefix result in place.
   - Found while landing R714 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1332 A struct prefix operator records no call contract, so a
+  `deinit self` dunder is rejected**
+
+  Problem: `print(-(n^))` over `def __neg__(deinit self) -> Int` stops
+  with "invalid checked program: … method-call receiver convention does not
+  match 'N.__neg__'", where the pin prints `-3`.
+  - `infer_prefix` (`checker/operators.rs`) records only the selected
+    dunder (`ResolveCallable`), where an ordinary method call records its
+    whole contract (`SelectedCall`) and upstream checks `-x` as
+    `x.__neg__()`.
+  - MIR's `prefix_op` (`mir/lower_expr/expr.rs`) therefore reads the
+    receiver convention off the operand's `ForwardedArgument` mark, which
+    says only that the receiver is owned, so it records `var`.
+  - Lever: record the selected call's contract for a struct prefix
+    operator, and lower its `call.method` from it.
+  - Found while landing R1325 (2026-10-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8538,54 +8578,78 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1325 Drop elaboration does not destroy an owned register that
+- [ ] **R1329 Drop elaboration does not destroy an owned register that
   nothing consumes**
 
   An owned register no instruction consumes (a call result only a `read`
   parameter borrows, a copy only `print` reads) dies silently on the VM
   and through Pliron's own release, where upstream's `CheckLifetimes`
   destroys every owned SSA value at its death (`ValueToDestroy`).
-  - `drop.reg` already names its destructor and both backends lower it;
-    the verifier already rejects a register ended twice
-    (`mir::register_ends`, `verify/drops.rs`).
-  - Fix: `DropValues` (`analysis/drop_values.rs`) gets one bit per owned
-    register (`mir::owned_result_regs`, region results and arguments) whose
-    drop runs code; a definition clears it, a read keeps it live, and a
-    consuming read (`mir::consumed_operand_regs`, a terminator) moves it,
-    so `Splice` places `drop.reg` at its death and `name_destructors`
-    lowers it to the destructor call.
+  - `mir::RegisterEnds` already says which registers are owned and which
+    operands end them, as the call's conventions say, and the verifier
+    rejects a register ended twice (`verify/drops.rs`).
+  - Fix: `DropValues` (`analysis/drop_values.rs`) numbers the owned
+    registers after the variables, one bit each, as upstream's
+    `ValueSet::addValue` does. A definition seeds the register's root into
+    its own provenance, a read keeps it live, and an operand
+    `RegisterEnds::consumed` names moves it, so `Splice` places `drop.reg`
+    at its death and `name_destructors` lowers it.
+  - A raising instruction's results exist only on its normal path: define
+    them at the end of its raise-edge `if`, never drop them in its raise
+    arm.
+  - Region results and region arguments need `BackwardScan` hooks: a
+    region op defines its results, a loop consumes its operands, and a
+    region's arguments are defined at its entry.
+  - A copy or constant no one reads is deleted with its drop, upstream's
+    `optimizeCopyDestroys`, or `value_parameter_materialized_per_use`
+    prints three extra `del 8` per call.
   - Then Pliron marks an owned temporary only for a `StringLiteral`
     runtime descriptor (`mark_temp`, `lower/release.rs`), and
     `docs/architecture.md` §Native Backend Contract says MIR destroys the
     rest.
-  - The classification must first be exact, or a consumed register is
-    destroyed twice: `consumed_operand_regs` binds only a declared callee,
-    so an owned argument of a call through a trait bound (the
-    `__trait_dispatch.*` symbol, `MirDeclarations::bound_requirement`), of
-    a subscript call (`index.get`, `slice.get`, `index.multi`), or of a
-    resolved `unary` (which records no `resolved`) is read as borrowed.
-  - An anchored loan-carrying temporary (`$arg_loan_r`) passed to an owned
-    parameter is a read of a slot that still destroys it at the
-    statement's end; check that no such call survives.
-  - Probe: `print(make("b"))` with `def make(s: String) -> String: return
-    s + "!"` leaves `make`'s result destroyed by no instruction.
-  - Probe: `MaybeUninit[String](mk("hello"))` then `b^.unsafe_assume_init()`
-    double-frees natively ("vm: double free of Pointer allocation"), as
-    Pliron releases `uninit.make`'s consumed `init`.
-  - Probe: a whole-corpus `MOJITO_PLIRON_DBG_TEMPS=1` run (2026-10-24)
-    logged 960 releases: 385 `StringLiteral` (R1327), 142 `String` from a
-    forwarding `var.use`, 139 from `call.method`, 125 `Error` from a
-    copying `var.use`, 90 from `call`, 79 other.
+  - Probe: `def make(s: String) -> String: return s + "!"` and
+    `print(make("b"))` leave `make`'s `String.__copyinit__` copy of `s`
+    destroyed by no instruction.
+  - Probe: `MaybeUninit[String](mk("hello"))` then
+    `b^.unsafe_assume_init()` double-frees natively ("vm: double free of
+    Pointer allocation"), as Pliron releases `uninit.make`'s consumed
+    `init`.
+  - Probe: the VM output over `assets/ok` and `assets/ownership_ok` must
+    not change, `pack_argument_destroyed_after_call`,
+    `pliron_callable_struct`, `maybe_uninit_roundtrip`, and the dict
+    fixtures among them.
   - Re-check R469 and R277 once it lands.
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Fable, Planned.
+
+- [ ] **R1330 An operand names a register that a store already consumed**
+
+  A register stored into a slot is read again afterwards, where upstream
+  rejects a use of an owned SSA value after its consumption.
+  - A whole-corpus census (2026-10-24) found 47 such reads.
+  - `var h, t = pair()` reads the call result `%r0` in its `index.get`
+    after `var.store` put it in the `$mat_r` slot
+    (`lower_destructure_elements`, `mir/lower_stmt.rs`), in
+    `os._makedirs`, `os.removedirs`, and `path.expandvars` too.
+  - A called closure expression is read as the `call.indirect` callee
+    after it is stored into its `$sc` slot.
+  - The `call.method` receivers of `M` and `_ArrayIter` are stored, then
+    named.
+  - Each one names the slot's place beside the stale register, so nothing
+    is destroyed twice today, but once R1329 places register drops a
+    consumed register's root must leave its provenance.
+  - Lever: read the slot (`place.load`) instead, as R1320 did for
+    `$arg_loan_r`, then extend the verifier's register-end rule to reject
+    a read of an ended owned register.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1326 An operand that is only borrowed is copied into a register
   first**
 
   MIR copies a value into a fresh owned register before a `read` use,
   where upstream borrows the value in place, so the copy is one more owned
-  register that R1325 then has to destroy.
+  register that R1329 then has to destroy.
   - Probe: `except e: print("caught", e)` and `var e = Error("boom");
     print(e)` read `e` by `var.use { mode: copy }` before `print`.
   - Probe: `s + "!"` over a `read` `String` parameter `s` copies `s`
@@ -8598,7 +8662,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
 - [ ] **R1321 Pliron keeps its own owned-temporary bookkeeping**
 
-  Once every owned register's destruction is a `drop.reg` (R1325),
+  Once every owned register's destruction is a `drop.reg` (R1329),
   Pliron's register tracking has nothing left to release.
   - Delete `FnLowering::owned_temps`, `temp_releases`, `TempRelease`, the
     `mark_*_owned_temp` call sites, `flush_owned_temps`,
@@ -8608,7 +8672,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `MOJITO_PLIRON_DBG_TEMPS=1` run logged (2026-10-24) free a
     `StringLiteral` runtime descriptor (`str_runtime`) that has no MIR
     value to drop (R1327).
-  - Depends on R1325 and R1327.
+  - Depends on R1329 and R1327.
   - Model: Opus, Not Planned.
 
 - [ ] **R1328 A memory-only owned value lives in an SSA register, where
@@ -8618,7 +8682,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   SSA register: it materializes such a value in a temporary allocation
   and destroys that as an indirect value, field by field, while Mojito's
   registers hold them whole.
-  - So `drop.reg` (R1325) destroys a memory-only register whole, where
+  - So `drop.reg` (R1329) destroys a memory-only register whole, where
     upstream's register values are one bit (`numValueBits = 1` in
     `ValueSet::addValue`, `CheckLifetimes.cpp`) and only register-passable
     types reach them.
@@ -8626,7 +8690,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     into a hidden temporary slot that drop elaboration destroys like any
     variable, and its readers read the slot.
   - Related: R677 (a memory-only `read` argument passed by value).
-  - Depends on R1325.
+  - Depends on R1329.
   - Model: Fable, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
@@ -9210,7 +9274,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The check records no declaration site for a trait method, so the
     arena builder has nothing to read.
   - `TraitRequirement` (`declaration.rs`) holds parameter types and
-    conventions, but no result type and no `ParamDecl`s.
+    conventions, but no result type, no `ParamDecl`s, and no receiver
+    convention.
+  - Probe: so a `binary` operator through a bound whose requirement takes
+    `var self` is read as borrowing its left operand
+    (`Callee::receiver_convention`, `mir/register_ends.rs`), which R1329's
+    register drops would destroy a second time.
   - The lever: record a requirement's checked signature where
     `checker/traits.rs` builds its `MethodSig`, and have the trait op hold
     a `CheckedSignature`, as `CheckedMethod` does.

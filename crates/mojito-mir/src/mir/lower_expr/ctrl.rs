@@ -437,7 +437,7 @@ impl<'a> Flatten<'a> {
             kwargs: Vec::new(),
             recv_place: Some(Box::new(MirPlace::root(collection, Some(target.clone())))),
             recv_writes: true,
-            deinit_receiver: false,
+            receiver_convention: Some(mojito_ast::ast::ArgConvention::Mut),
             arg_places: vec![None; args.len()],
             kwarg_places: Vec::new(),
             capture_accesses: Vec::new(),

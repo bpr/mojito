@@ -78,7 +78,7 @@
               const { dest: %r0, value: int_literal(1) },
               literal.materialize { dest: %r1, value: %r0, target: Int },
               call { dest: %r2, func: Noisy, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              call.method { dest: %r4, recv: %r2, method: __deinit__, resolved: present("Noisy.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, deinit_receiver: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r4, recv: %r2, method: __deinit__, resolved: present("Noisy.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, receiver_convention: present(deinit), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               call { dest: %r3, func: print, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
             ],
             terminator: return { value: absent }

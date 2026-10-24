@@ -519,14 +519,20 @@ impl Decoder {
                     .req(value, fields, "recv_place", |d, v| Some(d.option_place(v)))?)
                 .map(Box::new),
                 recv_writes: self.req(value, fields, "recv_writes", Self::boolean)?,
-                // Schema 1.98 records whether the call consumes a `deinit`
-                // receiver; an older artifact carries none, and the verifier
-                // refuses one whose callee's receiver is `deinit`.
-                deinit_receiver: self
-                    .field(fields, "deinit_receiver")
-                    .ok()
-                    .and_then(|found| self.boolean(found))
-                    .unwrap_or_default(),
+                // Schema 1.100 records the callee's receiver convention;
+                // 1.98 and 1.99 record only whether it is `deinit`, and an
+                // older artifact neither, which the verifier refuses for a
+                // callee whose receiver takes ownership.
+                receiver_convention: match self.field(fields, "receiver_convention") {
+                    Ok(found) => self
+                        .option_value(Some(found))
+                        .and_then(|v| self.convention(v)),
+                    Err(()) => self
+                        .field(fields, "deinit_receiver")
+                        .ok()
+                        .and_then(|found| self.boolean(found))
+                        .and_then(|deinit| deinit.then_some(ArgConvention::Deinit)),
+                },
                 arg_places: self
                     .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
                 kwarg_places: self.req(value, fields, "kwarg_places", |d, v| {

@@ -446,7 +446,10 @@ impl Checker {
                 }
                 return Ok(Some(Ty::none()));
             }
+            // `finish(var self)` takes the receiver, as an ordinary call's
+            // owned receiver does.
             "finish" if args.is_empty() => {
+                self.record_forwarded_operand(object);
                 return Ok(Some(canonical_simd_ty(Dtype::UInt64, 1)));
             }
             _ => {}

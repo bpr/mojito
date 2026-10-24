@@ -307,7 +307,7 @@ impl<'a> Flatten<'a> {
                 kwargs: Vec::new(),
                 recv_place: recv_place.map(Box::new),
                 recv_writes: true,
-                deinit_receiver: false,
+                receiver_convention: Some(mojito_ast::ast::ArgConvention::Mut),
                 arg_places,
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
@@ -361,7 +361,7 @@ impl<'a> Flatten<'a> {
                 kwargs: Vec::new(),
                 recv_place: recv_place.map(Box::new),
                 recv_writes: true,
-                deinit_receiver: false,
+                receiver_convention: Some(mojito_ast::ast::ArgConvention::Mut),
                 arg_places: vec![None],
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
@@ -830,7 +830,7 @@ impl<'a> Flatten<'a> {
             args: regs,
             kwargs: kw,
             // An explicit-destructor call keeps its receiver place, which
-            // the call consumes (`deinit_receiver`): the callee owns the
+            // the call consumes (a `deinit` `receiver_convention`): the callee owns the
             // receiver from then on and destroys its fields itself.
             recv_place: if implicitly_copied_receiver {
                 None
@@ -838,7 +838,7 @@ impl<'a> Flatten<'a> {
                 recv_place.map(Box::new)
             },
             recv_writes: call.receiver_writes(),
-            deinit_receiver: call.receiver_deinit(),
+            receiver_convention: call.receiver_convention(object),
             arg_places,
             kwarg_places,
             capture_accesses,

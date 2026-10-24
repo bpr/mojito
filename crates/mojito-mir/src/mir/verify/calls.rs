@@ -98,7 +98,7 @@ pub(super) fn verify_call_instruction(
         MirInstr::MethodCall {
             dest,
             method,
-            deinit_receiver,
+            receiver_convention,
             resolved: Some(callee),
             reference_result,
             result_adapter,
@@ -157,16 +157,15 @@ pub(super) fn verify_call_instruction(
             }
             if let Some(declaration) = declared(cx.declarations, callee) {
                 verify_collector_passed(prefix, declaration, *spread, kwargs, errors);
-                // The call consumes its receiver exactly when the callee's
-                // receiver is `deinit`, as upstream's call reads the
-                // convention off its callee's type.
+                // The call takes ownership of its receiver, by `var` or
+                // `deinit`, exactly as the callee's receiver does, as
+                // upstream's call reads the convention off its callee's type.
                 if declaration.has_receiver
-                    && *deinit_receiver
-                        != (declaration.receiver_convention
-                            == Some(mojito_ast::ast::ArgConvention::Deinit))
+                    && owned_receiver(*receiver_convention)
+                        != owned_receiver(declaration.receiver_convention)
                 {
                     errors.push(format!(
-                        "{prefix}: method-call deinit-receiver flag does not match '{}'",
+                        "{prefix}: method-call receiver convention does not match '{}'",
                         declaration.lowered_name
                     ));
                 }
@@ -1096,4 +1095,17 @@ fn verify_error_region(
             ));
         }
     }
+}
+
+/// The convention by which a receiver of `convention` is taken ownership
+/// of: `var` or `deinit`, else none.
+fn owned_receiver(
+    convention: Option<mojito_ast::ast::ArgConvention>,
+) -> Option<mojito_ast::ast::ArgConvention> {
+    convention.filter(|convention| {
+        matches!(
+            convention,
+            mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Deinit
+        )
+    })
 }

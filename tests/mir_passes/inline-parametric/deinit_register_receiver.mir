@@ -94,7 +94,7 @@ artifact {
               var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: Box, arguments: [] }), in_place: true },
               place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [] }), projections: [], type: present(struct_type { name: Box, arguments: [] }), through: absent } },
               value.copy { dest: %r3, value: %r2 },
-              call.method { dest: %r4, recv: %r3, method: take, resolved: present("Box.take"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, deinit_receiver: true, arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              call.method { dest: %r4, recv: %r3, method: take, resolved: present("Box.take"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, receiver_convention: present(deinit), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
               var.store { var: $v2, src: %r4, binding_type: present(Int), in_place: true },
               var.use { dest: %r5, var: $v2, mode: copy },
               drop.var { var: $v2 },

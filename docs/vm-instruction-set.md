@@ -545,8 +545,9 @@ The instruction carries:
 - the source method name
 - an optional statically resolved overload symbol
 - ordinary argument registers
-- an optional writable receiver place, and whether the call consumes it
-  (`deinit_receiver`)
+- an optional writable receiver place, and the callee's receiver
+  convention (`receiver_convention`), which says whether the call consumes
+  the place or the receiver register
 - optional writable places for positional and keyword ordinary arguments
 - an optional concrete error type selected from the method or trait requirement
 - an optional `reference_result` describing the selected concrete reference ABI
@@ -559,8 +560,7 @@ places. Nominal prelude collections and user-defined structs share this checked
 method instruction; only genuine scalar/runtime intrinsics take a separate
 dispatch path.
 
-A call whose `deinit_receiver` is set (the callee's receiver is `deinit`)
-consumes its receiver place, as upstream's call consumes a `DeinitMem`
+A call whose `receiver_convention` is `deinit` consumes its receiver place, as upstream's call consumes a `DeinitMem`
 operand: the callee owns the receiver and destroys its fields, and the VM
 stores its ended-place tombstone into the place at the call, as a move
 leaves one. No marker after the call ends the receiver.
@@ -900,7 +900,7 @@ Destroys the owned value in a register, upstream's direct `ValueToDestroy`,
 and leaves the register moved. A named destructor is lowered before
 execution to the `deinit`-receiver call on the register; the VM runs an
 unnamed one by dropping the value's fields by their types, as `drop.var`
-does. No pass places one yet (R1325): lifetime elaboration uses `drop.var`.
+does. No pass places one yet (R1329): lifetime elaboration uses `drop.var`.
 
 ## Block Terminators
 
