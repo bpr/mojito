@@ -121,28 +121,17 @@ impl FnLowering<'_> {
             let store = StoreOp::new(ctx, value, self.var_slots[param]);
             self.append(ctx, store.get_operation(), None);
         }
-        // Every droppable variable gets an initialization flag (parameters
-        // arrive bound, everything else starts empty). See `drop_flags`.
-        let i1: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-        for var in 0..self.func.n_vars {
+        // Local droppable storage zeroes at entry (parameters alias caller
+        // storage and arrive initialized): a field-wise teardown of a partly
+        // moved aggregate reads leaves with no presence flag.
+        for var in self.func.n_params..self.func.n_vars {
             let LowerTy::Aggregate { ty, layout } = self.var_lower_ty(var as u32)? else {
                 continue;
             };
-            if !self.needs_drop(&ty) {
-                continue;
-            }
-            // Local droppable storage zeroes at entry (parameters alias
-            // caller storage and arrive initialized).
-            if var >= self.func.n_params {
+            if self.needs_drop(&ty) {
                 let slot = self.var_slots[var];
                 self.mem_zero(ctx, slot, layout.size);
             }
-            let alloca = AllocaOp::new(ctx, i1, one, 0);
-            self.append(ctx, alloca.get_operation(), None);
-            let init = self.bool_constant(ctx, var < self.func.n_params);
-            let store = StoreOp::new(ctx, init, alloca.get_result(ctx));
-            self.append(ctx, store.get_operation(), None);
-            self.drop_flags.insert(var as u32, alloca.get_result(ctx));
         }
         // Depth-1 projected moves leave a variable partially initialized;
         // give each moved top-level leaf a presence flag so later drops and
@@ -164,6 +153,7 @@ impl FnLowering<'_> {
                 );
             }
         }
+        let i1: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
         for (var, position) in leaf_targets {
             let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(var)? else {
                 continue;
@@ -422,7 +412,7 @@ impl FnLowering<'_> {
                 // A whole-variable store (re)initializes the slot; a store
                 // into a tracked leaf restores that leaf's presence.
                 if place.proj.is_empty() && place.through.is_none() {
-                    self.set_drop_flag(ctx, place.root, true);
+                    self.restore_leaves(ctx, place.root);
                 } else if let Some(position) = self.leaf_position(place)
                     && let Some(&flag) = self
                         .leaf_flags
@@ -534,18 +524,17 @@ impl FnLowering<'_> {
             MirInstr::DropVar { var, destructor } => {
                 self.lower_drop_var(ctx, *var, destructor.as_deref())
             }
-            MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var, false),
+            MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var),
             MirInstr::DropPlace { place, destructor } => {
                 self.lower_drop_place(ctx, place, destructor.as_deref())
             }
-            // The marked place holds no value from here: its presence flag
+            // The marked part holds no value from here: its presence flag
             // clears, as a move out of it would clear it. A whole slot's
             // value lives on behind the pointer it was handed on through
-            // (an owned `VariadicList`'s element), which ends it.
+            // (an owned `VariadicList`'s element), and no drop names the
+            // slot after the mark, as the VM's is a no-op.
             MirInstr::MarkDestroyed { place } => {
-                if place.is_whole_root() {
-                    self.set_drop_flag(ctx, place.root, false);
-                } else {
+                if !place.is_whole_root() {
                     self.end_presence(ctx, place);
                 }
                 Ok(())
@@ -987,14 +976,7 @@ impl FnLowering<'_> {
                 dest,
                 mode: _,
                 prepare,
-            } => {
-                self.lower_get_iter(ctx, *source, *dest, prepare)?;
-                // An owned `__iter__` consumed the source's storage.
-                if instr.consumed_iteration_source().is_some() {
-                    self.set_drop_flag(ctx, *source, false);
-                }
-                Ok(())
-            }
+            } => self.lower_get_iter(ctx, *source, *dest, prepare),
             MirInstr::VariantSet {
                 dest,
                 place,

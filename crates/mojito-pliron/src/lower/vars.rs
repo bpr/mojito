@@ -58,10 +58,7 @@ impl FnLowering<'_> {
                     let storage = self.value_storage(ctx, &ty, layout);
                     self.copy_value(ctx, storage, src, &ty, layout, dest);
                     self.reg_values.insert(dest.0, storage);
-                    // The move vacates the slot (the VM tombstones it); a
-                    // later cleanup-edge drop must find it empty. The moved
-                    // value is an owned temporary until consumed.
-                    self.set_drop_flag(ctx, var, false);
+                    // The moved value is an owned temporary until consumed.
                     if self.owns_heap(&ty) || self.stdlib_deinit_temp(&ty) || self.needs_drop(&ty) {
                         self.mark_owned_temp(dest, ty.clone())?;
                     }
@@ -103,7 +100,7 @@ impl FnLowering<'_> {
                 self.copy_value(ctx, slot, ptr, &ty, layout, src);
                 // The variable owns the value now; the temporary transfers.
                 self.owned_temps.remove(&src.0);
-                self.set_drop_flag(ctx, var, true);
+                self.restore_leaves(ctx, var);
                 Ok(())
             }
             LowerTy::ZeroSized => Ok(()),

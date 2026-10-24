@@ -61,7 +61,6 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              drop.var { var: $v0 },
               const { dest: %r1, value: int_literal(5) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
               call { dest: %r3, func: "G.__init__", raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r0), expr: present(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "mkg", slot: 0, name: n, type: meta_value(Int) }))], spread: absent },

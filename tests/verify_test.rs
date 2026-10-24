@@ -1936,7 +1936,7 @@ fn slot_end_findings(blocks: Vec<MirBlock>) -> Vec<String> {
     );
     verify(&program(f))
         .into_iter()
-        .filter(|finding| finding.contains("every path has already ended"))
+        .filter(|finding| finding.contains("that some path reaching it does not hold"))
         .collect()
 }
 
@@ -2038,7 +2038,7 @@ fn verifier_rejects_a_drop_of_an_ended_slot() {
     assert_eq!(
         findings,
         [
-            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that every path has already ended"
+            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that some path reaching it does not hold"
         ]
     );
     let consumed = [define_x(), vec![DROP_X, MirInstr::ConsumeVar { var: 0 }]].concat();
@@ -2055,10 +2055,12 @@ fn verifier_rejects_a_drop_of_an_ended_slot() {
     assert_eq!(slot_end_findings(both_arms).len(), 1);
 }
 
-/// A slot ended on some paths only, re-stored, or still live where a
-/// region raises is not ended on every path.
+/// A slot one path leaves empty — ended in one arm, or stored in one arm
+/// only after a `var.declare` — is not held on every path, as upstream's
+/// `UninitializedValueScan` rejects a destroy of a value some path has not
+/// initialized.
 #[test]
-fn verifier_accepts_a_drop_of_a_slot_some_path_left_live() {
+fn verifier_rejects_a_drop_of_a_slot_some_path_does_not_hold() {
     let one_arm = vec![block(
         [
             define_x(),
@@ -2073,7 +2075,57 @@ fn verifier_accepts_a_drop_of_a_slot_some_path_left_live() {
         .concat(),
         MirTerm::Return(None),
     )];
-    assert_eq!(slot_end_findings(one_arm), Vec::<String>::new());
+    assert_eq!(
+        slot_end_findings(one_arm),
+        [
+            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that some path reaching it does not hold"
+        ]
+    );
+    let declared = vec![block(
+        [
+            define_x(),
+            vec![
+                MirInstr::DeclareVar { var: 0 },
+                if_region(yields(store_x()), yields(Vec::new())),
+                DROP_X,
+            ],
+        ]
+        .concat(),
+        MirTerm::Return(None),
+    )];
+    assert_eq!(slot_end_findings(declared).len(), 1);
+    let never_stored = vec![block(vec![DROP_X], MirTerm::Return(None))];
+    assert_eq!(slot_end_findings(never_stored).len(), 1);
+}
+
+/// `x` stored from r0.
+fn store_x() -> Vec<MirInstr> {
+    vec![MirInstr::DefVar {
+        var: 0,
+        src: Reg(0),
+        binding_ty: Some(Ty::int()),
+        in_place: false,
+    }]
+}
+
+/// A slot re-stored after a move, stored in both arms after a
+/// `var.declare`, or still held where a region raises is held on every
+/// path.
+#[test]
+fn verifier_accepts_a_drop_of_a_slot_every_path_holds() {
+    let both_stored = vec![block(
+        [
+            define_x(),
+            vec![
+                MirInstr::DeclareVar { var: 0 },
+                if_region(yields(store_x()), yields(store_x())),
+                DROP_X,
+            ],
+        ]
+        .concat(),
+        MirTerm::Return(None),
+    )];
+    assert_eq!(slot_end_findings(both_stored), Vec::<String>::new());
     let restored = [
         define_x(),
         vec![
@@ -2155,18 +2207,19 @@ fn defined_then_dropped(ops: Vec<MirInstr>) -> Vec<MirBlock> {
     )]
 }
 
-/// A slot every path through a region op ends is ended after it: an `if`
-/// whose arms both move it, a loop whose every `break` follows a move, one
-/// leaving through a `try`, and a `match` whose completing case and else
-/// region both move it. A `try` in an arm whose handler drops a slot its
-/// body ended before its raise point is the same finding.
+/// A slot some path through a region op ends is not held after it: an
+/// `if` whose arms both move it, or one arm, a loop whose every `break`
+/// follows a move, one leaving through a `try`, a loop whose second
+/// iteration drops what its first dropped, and a `match` whose completing
+/// case and else region both move it. A `try` in an arm whose handler
+/// drops a slot its body ended before its raise point is the same finding.
 #[test]
 fn verifier_rejects_a_drop_of_a_slot_a_region_op_ended() {
     let both_arms = if_region(yields(vec![move_x()]), yields(vec![move_x()]));
     assert_eq!(
         slot_end_findings(defined_then_dropped(vec![both_arms])),
         [
-            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that every path has already ended"
+            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that some path reaching it does not hold"
         ]
     );
     let looped = loop_region(breaks(vec![move_x()]));
@@ -2182,6 +2235,24 @@ fn verifier_rejects_a_drop_of_a_slot_a_region_op_ended() {
         slot_end_findings(defined_then_dropped(vec![crossing])).len(),
         1
     );
+    let one_arm = if_region(yields(vec![move_x()]), yields(Vec::new()));
+    assert_eq!(
+        slot_end_findings(defined_then_dropped(vec![one_arm])).len(),
+        1
+    );
+    let leave = if_region(yields(Vec::new()), breaks(Vec::new()));
+    let redropped = loop_region(region(
+        vec![leave, DROP_X],
+        MirTerm::Continue {
+            label: LOOP,
+            values: Vec::new(),
+        },
+    ));
+    let redropped = vec![block(
+        [define_x(), vec![redropped]].concat(),
+        MirTerm::Return(None),
+    )];
+    assert_eq!(slot_end_findings(redropped).len(), 1);
     let matched = MirInstr::Match {
         results: Vec::new(),
         cases: vec![MirCase {
@@ -2210,35 +2281,29 @@ fn verifier_rejects_a_drop_of_a_slot_a_region_op_ended() {
     assert_eq!(
         findings,
         [
-            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that every path has already ended"
+            "MIR function 'test' block 0: drop.var of slot $v0 ('x') that some path reaching it does not hold"
         ]
     );
 }
 
-/// A slot some path through a region op leaves live is not ended after it:
-/// an `if` with one arm moving it, a loop whose body drops it and continues
-/// once a store before the loop filled it, and a `match` whose `match.next`
-/// path leaves it for the else region.
+/// A slot every path through a region op holds is held after it: a loop
+/// whose body stores it before dropping it each iteration, and a `match`
+/// whose `match.next` path leaves it for the else region.
 #[test]
-fn verifier_accepts_a_drop_of_a_slot_a_region_op_left_live() {
-    let one_arm = if_region(yields(vec![move_x()]), yields(Vec::new()));
-    assert_eq!(
-        slot_end_findings(defined_then_dropped(vec![one_arm])),
-        Vec::<String>::new()
-    );
+fn verifier_accepts_a_drop_of_a_slot_a_region_op_holds() {
     let leave = if_region(yields(Vec::new()), breaks(Vec::new()));
     let looped = loop_region(region(
-        vec![leave, DROP_X],
+        [store_x(), vec![leave, DROP_X]].concat(),
         MirTerm::Continue {
             label: LOOP,
             values: Vec::new(),
         },
     ));
-    let filled = vec![block(
+    let refilled = vec![block(
         [define_x(), vec![looped]].concat(),
         MirTerm::Return(None),
     )];
-    assert_eq!(slot_end_findings(filled), Vec::<String>::new());
+    assert_eq!(slot_end_findings(refilled), Vec::<String>::new());
     let test = if_region(
         region(vec![move_x()], MirTerm::MatchComplete(Vec::new())),
         region(Vec::new(), MirTerm::MatchNext(Vec::new())),

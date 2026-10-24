@@ -20,7 +20,6 @@
         blocks: [
           bb0 {
             instructions: [
-              drop.var { var: $v0 },
               const { dest: %r3, value: int(0) }
             ],
             terminator: return { value: present(%r3) }

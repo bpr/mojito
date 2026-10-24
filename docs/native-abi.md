@@ -242,10 +242,11 @@ Rules:
   out of the function alike, as upstream's error arm does. A raising call
   branches on its callee's outcome tag; both paths join after the
   instruction, its error flag the join's argument, and the error region's
-  `if` branches on it. The propagate block then byte-copies the error out
-  and frees the *buffers* of still-initialized releasable locals (the
-  String and built-in-error family) without running user code, a backstop
-  the drop flags keep (R832).
+  `if` branches on it. The propagate block then only byte-copies the error
+  out and tags the outcome. No native drop carries a run-time flag over
+  its whole slot, and no frame exit sweeps one: the MIR verifier holds
+  every drop to a slot each path reaching it holds, so drop elaboration's
+  drops are static, as upstream's destructor insertion leaves them.
 
 ### Retained callables
 

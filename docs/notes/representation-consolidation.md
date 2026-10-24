@@ -38,15 +38,15 @@ disappear. Four such gaps were found, and one of them reaches far outside
 
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
-| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R890 (R733, R833, R1129, R1106, R829, R1272, R1264, R1113, R1290, and R956 closed; R832 waits on gap D) |
+| A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R890 (R733, R833, R1129, R1106, R829, R1272, R1264, R1113, R1290, R956, and R832 closed) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1278, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102, R1103, R1073 (landed) | R1304 (R1070 and R1090 closed) |
-| D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931, R1306 (landed) | R1310, R832, R1311, R1309 (R1252, R1267, and R932 closed) |
+| D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931, R1306 (landed) | R1310, R1311, R1309, R1312, R1313 (R1252, R1267, R932, and R832 closed) |
 
 Each gap's fix also removes a place where a backend looks something up by
 type instead of reading a name from MIR: the struct-named construction
-(R1278; R1029 removed the by-arity lookup and R1283 the struct-named copy), the keyword collector at binding (R1070; R1102 had the call build the positional one), and the flag sweep at
-return (R832); R1090 had each pack element's drop name its destructor. R1031 → R1109 is the one
+(R1278; R1029 removed the by-arity lookup and R1283 the struct-named copy), and the keyword collector at binding (R1070; R1102 had the call build the positional one); R832 removed the flag sweep at
+return, and R1090 had each pack element's drop name its destructor. R1031 → R1109 is the one
 remaining lookup of that kind outside the four gaps.
 
 ### A. Raises are implicit: the biggest lever
@@ -100,8 +100,9 @@ This gap blocks about 14 entries across four tracks (`pmir`,
   - R890 closed 10-23: a `for` loop calls a raising `__next__` as a
     `call.method` with its error region inside a `try` whose handler runs
     the loop's `else` and breaks, and `TryNext` is gone.
-  - R832 needs no flag for raise edges any more; its remaining flags went
-    with gap D's R1306, so it depends on nothing now.
+  - R832 closed 10-23: no native drop carries a whole-slot flag, and no
+    return or propagate block sweeps one, since the verifier now holds
+    every drop to a slot each path holds.
   - R829 closed with R884: its probe matched the pin by then, and the
     return cleanup list it named is gone.
 - **Cost**: generators grow by one `if` per raising call. That is
@@ -159,8 +160,10 @@ entry's probe is "one instance per `n` where the pin has one".
 - R931 and R932 let `lower-lit` erase `loans.establish` and
   `ownership.mark_initialized`. The last two markers, `consume.place`
   and `ownership.mark_destroyed`, are R1311. It needs `consume.var` to stop
-  destroying residual fields at run time (R1310), and Pliron's return
-  sweep to go (R832).
+  destroying residual fields at run time (R1310). Pliron's return sweep
+  went with R832 (10-23); its per-leaf presence flags go after R1311
+  (R1312), and so does the trailing `consume.var` of a call's `deinit`
+  receiver (R1313).
 - R1306 closed 10-23: every drop is decided where drop elaboration places
   it, and `mir::lower_drops` writes its call; the fold that tested what a
   slot held is gone.
@@ -178,14 +181,12 @@ entry's probe is "one instance per `n` where the pin has one".
    waits on R1277 and R1082.
 
 2. **Gap A**, for leverage. Its core has landed (R906, R831, R20, R884),
-   and the 10-23 re-check closed R733 and reworded R1113, R832, and R890.
+   and the 10-23 re-check closed R733 and reworded R1113 and R890.
    Run what is left:
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R890 -n 0
    ```
-
-   R832 waits for gap D.
 
 3. **Gap C**. R1102, R1103, R743, R1070, and R1073 landed. What remains
    is R1304:
@@ -194,11 +195,11 @@ entry's probe is "one instance per `n` where the pin has one".
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1304 -n 0
    ```
 
-4. **Gap D**. R1251, R1252, R931, R932, and R1306 landed. What remains
-   runs R832 and R1310 → R1311 → R1309:
+4. **Gap D**. R1251, R1252, R931, R932, R1306, and R832 landed. What
+   remains runs R1310 → R1311 → R1309, R1312, R1313:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1310 --task R832 --task R1311 --task R1309 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1310 --task R1311 --task R1309 --task R1312 --task R1313 -n 0
    ```
 
 ## Entries outside the gaps

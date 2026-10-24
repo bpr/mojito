@@ -181,7 +181,7 @@ impl FnLowering<'_> {
             dest_layout.size,
             Reg(u32::MAX),
         );
-        self.set_drop_flag(ctx, dest, true);
+        self.restore_leaves(ctx, dest);
         Ok(())
     }
 
@@ -322,11 +322,7 @@ impl FnLowering<'_> {
             let from = self.var_slots[source as usize];
             let to = self.var_slots[dest as usize];
             self.mem_copy(ctx, to, from, composed.layout.size, Reg(u32::MAX));
-            // The iterator slot receives the pack by relocation. Its source
-            // must be inert before later cleanup, especially when elements
-            // own buffers or define destructors.
-            self.set_drop_flag(ctx, source, false);
-            self.set_drop_flag(ctx, dest, true);
+            self.restore_leaves(ctx, dest);
         }
         Ok(())
     }
@@ -424,8 +420,7 @@ impl FnLowering<'_> {
             let from = self.var_slots[source as usize];
             let to = self.var_slots[dest as usize];
             self.mem_copy(ctx, to, from, layout.size, Reg(u32::MAX));
-            self.set_drop_flag(ctx, source, false);
-            self.set_drop_flag(ctx, dest, true);
+            self.restore_leaves(ctx, dest);
         }
         Ok(())
     }

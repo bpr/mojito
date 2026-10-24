@@ -1,5 +1,7 @@
-//! Drop elaboration lowering: drop/consume vars, drop flags, pack leaf
-//! flags, and recursive value drops.
+//! Drop elaboration lowering: drop/consume vars, pack leaf flags, and
+//! recursive value drops. A slot's own drop is static, as the MIR verifier
+//! holds every `drop.var` and `var.consume` to a slot every path reaching
+//! it holds; only the leaves a partial move tracks carry a run-time flag.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -13,6 +15,38 @@ impl<'a> FnLowering<'a> {
         self.struct_member_symbols(name, member)
             .next()
             .map(|(_, symbol)| symbol)
+    }
+
+    /// Whether `ty`'s teardown/copy chain can reach a user-authored
+    /// lifecycle method (`__deinit__`/`__copyinit__`/`__moveinit__`),
+    /// walking struct fields and pointer element types (a container reaches
+    /// pointed-to elements through its compiled chain). Stdlib-authored
+    /// chains are exempt: pure frees/relocations, nothing user-observable.
+    pub(super) fn chain_runs_user_lifecycle(&self, ty: &Ty, method: &str) -> bool {
+        match ty.kind() {
+            TyKind::Struct(name, _) => {
+                let template = name.split("$mono").next().unwrap_or(name);
+                let stdlib = template.starts_with("__module$std$")
+                    || mojito_symbol::symbol::is_stdlib_string_struct(name)
+                    || matches!(
+                        template,
+                        "List" | "Dict" | "Set" | "Optional" | "Array" | "Span" | "StringSpan"
+                    );
+                if !stdlib && self.lifecycle_symbol(name, method).is_some() {
+                    return true;
+                }
+                self.struct_decls.get(name.as_str()).is_some_and(|decl| {
+                    decl.fields
+                        .iter()
+                        .any(|(_, field)| self.chain_runs_user_lifecycle(field, method))
+                })
+            }
+            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
+                .iter()
+                .any(|element| self.chain_runs_user_lifecycle(element, method)),
+            TyKind::Pointer { element, .. } => self.chain_runs_user_lifecycle(element, method),
+            _ => false,
+        }
     }
 
     /// The entries of the member `method` (`write_to`, `__eq__`) in the
@@ -50,9 +84,10 @@ impl<'a> FnLowering<'a> {
     /// `DropVar` — the VM's `drop_named`: nothing for scalars; for aggregates
     /// call `destructor`, the compiled `__deinit__` the drop names (its body
     /// consumes the receiver's fields), else destroy the fields in
-    /// declaration order. Combinations whose residual state is only
-    /// dynamically knowable (a destructor plus independently droppable
-    /// fields, or a partially-moved variable) reject instead of guessing.
+    /// declaration order. The slot holds its value on every path reaching
+    /// the drop (`mir::verify`'s slot-end rule), so the drop is
+    /// unconditional. A partially-moved variable whose leaves no presence
+    /// flag tracks rejects instead of guessing.
     pub(super) fn lower_drop_var(
         &mut self,
         ctx: &mut Context,
@@ -78,12 +113,10 @@ impl<'a> FnLowering<'a> {
                     ));
                 }
                 let ptr = self.var_slots[var as usize];
-                let flag = self.drop_flags.get(&var).copied();
                 if let Some(leaves) = self.leaf_flags.get(&var).cloned() {
                     // Tracked depth-1 moves: destroy the surviving leaves;
                     // any absent leaf suppresses the whole-value destructor
                     // (the VM's partial-aggregate rule).
-                    let cont = flag.map(|flag| self.begin_flag_guard(ctx, flag));
                     if destructor.is_some() {
                         // `__deinit__` runs only when every tracked leaf
                         // survives. Its compiled `deinit self` epilogue
@@ -100,22 +133,9 @@ impl<'a> FnLowering<'a> {
                     } else {
                         self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves)?;
                     }
-                    self.set_drop_flag(ctx, var, false);
-                    if let Some(cont) = cont {
-                        self.end_flag_guard(ctx, cont);
-                    }
                     return Ok(());
                 }
-                match flag {
-                    Some(flag) => {
-                        let cont = self.begin_flag_guard(ctx, flag);
-                        self.emit_drop(ctx, ptr, &ty, destructor)?;
-                        self.set_drop_flag(ctx, var, false);
-                        self.end_flag_guard(ctx, cont);
-                        Ok(())
-                    }
-                    None => self.emit_drop(ctx, ptr, &ty, destructor),
-                }
+                self.emit_drop(ctx, ptr, &ty, destructor)
             }
         }
     }
@@ -131,26 +151,21 @@ impl<'a> FnLowering<'a> {
 
     /// `ConsumeVar`: skip the whole-value destructor but destroy residual
     /// fields — a no-op unless fields carry their own destructor work. The
-    /// consumed slot is empty afterwards either way. `synthesized` marks the
-    /// frame-exit residual release of a `deinit` parameter, which has no MIR
-    /// instruction and therefore no VM lifecycle event — only a real
-    /// `MirInstr::ConsumeVar` of a source body reports a consume trace.
+    /// consumed slot is empty afterwards either way. A slot a call's `deinit`
+    /// receiver already consumed ([`FnLowering::consumed_receivers`]) is
+    /// ended by that call, so its `consume.var` does nothing.
     pub(super) fn lower_consume_var(
         &mut self,
         ctx: &mut Context,
         var: u32,
-        synthesized: bool,
     ) -> Result<(), PlironError> {
+        if self.consumed_receivers.remove(&var) {
+            return Ok(());
+        }
         match self.var_lower_ty(var)? {
             LowerTy::Scalar(_) | LowerTy::ZeroSized => Ok(()),
             LowerTy::Aggregate { ty, .. } => {
-                let continuation = self
-                    .drop_flags
-                    .get(&var)
-                    .copied()
-                    .map(|flag| self.begin_flag_guard(ctx, flag));
-                if !synthesized
-                    && self.trace_lifecycle
+                if self.trace_lifecycle
                     && !self.synthesized_body()
                     && let TyKind::Struct(name, _) = &ty.kind()
                 {
@@ -178,10 +193,6 @@ impl<'a> FnLowering<'a> {
                     let leaves = self.leaf_flags.get(&var).cloned().unwrap_or_default();
                     let ptr = self.var_slots[var as usize];
                     self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves)?;
-                }
-                self.set_drop_flag(ctx, var, false);
-                if let Some(continuation) = continuation {
-                    self.end_flag_guard(ctx, continuation);
                 }
                 Ok(())
             }
@@ -302,12 +313,11 @@ impl<'a> FnLowering<'a> {
         self.current = Some(cont);
     }
 
-    /// Store `value` into `var`'s initialization flag; a no-op for variables
-    /// without one (nothing droppable to guard).
-    pub(super) fn set_drop_flag(&mut self, ctx: &mut Context, var: u32, value: bool) {
-        // A whole-value (re)initialization makes every tracked leaf present
-        // again.
-        if value && let Some(leaves) = self.leaf_flags.get(&var) {
+    /// A whole-value (re)initialization of `var`: every tracked leaf is
+    /// present again, and a `deinit` receiver's consumption is over.
+    pub(super) fn restore_leaves(&mut self, ctx: &mut Context, var: u32) {
+        self.consumed_receivers.remove(&var);
+        if let Some(leaves) = self.leaf_flags.get(&var) {
             let leaves: Vec<Value> = leaves.values().copied().collect();
             let present = self.bool_constant(ctx, true);
             for flag in leaves {
@@ -315,12 +325,6 @@ impl<'a> FnLowering<'a> {
                 self.append(ctx, store.get_operation(), None);
             }
         }
-        let Some(&flag) = self.drop_flags.get(&var) else {
-            return;
-        };
-        let constant = self.bool_constant(ctx, value);
-        let store = StoreOp::new(ctx, constant, flag);
-        self.append(ctx, store.get_operation(), None);
     }
 
     /// Clear the presence flag selected by a runtime pack cursor. Pack

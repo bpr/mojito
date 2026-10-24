@@ -299,7 +299,7 @@ impl FnLowering<'_> {
         if deinit_receiver && receiver_alias {
             let place = recv_place.expect("aliased deinit receiver has a place");
             if place.proj.is_empty() {
-                self.set_drop_flag(ctx, place.root, false);
+                self.consumed_receivers.insert(place.root);
             } else {
                 self.end_presence(ctx, place);
             }

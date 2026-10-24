@@ -40,44 +40,6 @@ impl FnLowering<'_> {
         self.emit_trace(ctx, kind, data, size);
     }
 
-    /// Free the buffers of still-initialized error-typed locals on a normal
-    /// return. Drop elaboration never drops a bound-but-unused handler
-    /// error (the VM abandons it to its arena at frame end), so the frame
-    /// exit releases it invisibly — error values are never buffer-shared
-    /// (copies are deep), and borrowed parameters are excluded (their value
-    /// belongs to the caller).
-    pub(super) fn emit_frame_exit_error_releases(
-        &mut self,
-        ctx: &mut Context,
-    ) -> Result<(), PlironError> {
-        let mut vars: Vec<u32> = self.drop_flags.keys().copied().collect();
-        vars.sort_unstable();
-        for var in vars {
-            if !matches!(
-                self.func.var_tys.get(&var).map(Ty::kind),
-                Some(TyKind::Error)
-            ) {
-                continue;
-            }
-            let borrowed_param = (var as usize) < self.func.n_params
-                && !self
-                    .func
-                    .owned_params
-                    .get(var as usize)
-                    .copied()
-                    .unwrap_or(false);
-            if borrowed_param {
-                continue;
-            }
-            let flag = self.drop_flags[&var];
-            let cont = self.begin_flag_guard(ctx, flag);
-            let slot = self.var_slots[var as usize];
-            self.emit_release_storage(ctx, slot, &Ty::error())?;
-            self.end_flag_guard(ctx, cont);
-        }
-        Ok(())
-    }
-
     /// The entry-block `MjError` staging slot for in-flight errors.
     pub(super) fn ensure_err_slot(&mut self, ctx: &mut Context) -> Value {
         if let Some(slot) = self.err_slot {
@@ -88,12 +50,10 @@ impl FnLowering<'_> {
         slot
     }
 
-    /// The per-function propagate block of a raising function: free the heap
-    /// buffers of still-initialized releasable locals (no user destructor
-    /// runs — the VM abandons raising frames and its arena reclaims the
-    /// memory invisibly; other droppable locals are a recorded leak residue),
-    /// move the staged error into the outcome's error slot, tag the outcome,
-    /// and return.
+    /// The per-function propagate block of a raising function: move the
+    /// staged error into the outcome's error slot, tag the outcome, and
+    /// return. Each raise edge's own drops destroyed what it held before
+    /// reaching it.
     pub(super) fn ensure_propagate_block(
         &mut self,
         ctx: &mut Context,
@@ -116,34 +76,6 @@ impl FnLowering<'_> {
         block.insert_at_back(region, ctx);
         let saved = self.current;
         self.current = Some(block);
-        let mut vars: Vec<u32> = self.drop_flags.keys().copied().collect();
-        vars.sort_unstable();
-        for var in vars {
-            // A borrowed parameter aliases caller storage (its flag arrives
-            // set only because parameters are bound at entry): the caller
-            // frees it, so only owned parameters release here.
-            if (var as usize) < self.func.n_params
-                && !self
-                    .func
-                    .owned_params
-                    .get(var as usize)
-                    .copied()
-                    .unwrap_or(false)
-            {
-                continue;
-            }
-            let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(var)? else {
-                continue;
-            };
-            if !self.owns_heap(&ty) || !self.releasable(&ty) {
-                continue;
-            }
-            let flag = self.drop_flags[&var];
-            let cont = self.begin_flag_guard(ctx, flag);
-            let slot = self.var_slots[var as usize];
-            self.emit_release_storage(ctx, slot, &ty)?;
-            self.end_flag_guard(ctx, cont);
-        }
         let err_address = self.offset_address(ctx, outcome_ptr, outcome.err_offset);
         self.mem_copy(ctx, err_address, err_slot, 24, Reg(u32::MAX));
         let tag = self.tag_constant(ctx, mojito_native::native::rt_abi::MJ_TAG_ERR);

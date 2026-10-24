@@ -4902,8 +4902,8 @@ first. Drop elaboration refines a concrete pack's before
 `name_destructors`, and the elaborator an instance's before
 `name_lifecycle_calls`, so each element's drop names its destructor as a
 field's does. A consumed residue's fields still find their destructor
-from the type (`mir::destroyed_structs`), as does Pliron's frame-exit
-sweep of still-flagged slots (R832); a named drop's fields are its
+from the type (`mir::destroyed_structs`, Pliron's
+`FnLowering::type_destructor`); a named drop's fields are its
 destructor's to name.
 
 Copies and moves name their constructor the same way, from MIR lowering on:
@@ -5018,8 +5018,8 @@ callee listed (`record_lowered_callees`), as the call-graph pass will. A read ou
 nothing in either backend: Pliron's `FnLowering::load_from` takes a byte
 snapshot sharing its storage's buffers and `FnLowering::store_to` stores
 what the MIR hands it, as the VM does. The instruction
-stays a slot use rather than a call, for the drop flags, tombstone, and
-`String` bridges the backends attach to it.
+stays a slot use rather than a call, for the tombstone and `String`
+bridges the backends attach to it.
 
 Three timing rules complete the last-use model, each pinned against the
 current Mojo:
@@ -5511,8 +5511,10 @@ The handler's unread error binding dies at the handler's entry, where the
 caught error arrives. A `try` is no death point in its block: its parts end
 what it uses. Per-instruction drops own every death, a return's and a
 raise's too. The verifier rejects a `drop.var` or `var.consume` of a slot
-every path reaching it already ended (`mir::verify`'s slot-end rule), so no
-pass may emit either.
+some path reaching it does not hold, ended there or never initialized
+(`mir::verify`'s slot-end rule, upstream's `UninitializedValueScan` applied
+to destroys), so no pass may emit either, and every slot's state at its end
+is static: a backend destroys it with no drop flag.
 
 Iterator-driven loops also place an explicit drop at their common exhaustion or
 `break` exit. A `return` cannot reach that block, so HIR lists its current
@@ -5876,9 +5878,7 @@ point where a slot declared in a loop is uninitialized again.
   of a homogeneous one's `VariadicList` (the private
   `builds_collector`); a heterogeneous `read` collector's slot is never
   dropped, its elements being the caller's, and an owned one's drop is the
-  body's own, so Pliron's frame-exit backstop skips pack-storage slots,
-  while a `read` `VariadicList`'s backstop drop runs its `__deinit__`,
-  which destroys nothing. A
+  body's own. A
   `deinit` argument a transfer loads before an inlined call's region that
   evaluates a later argument still binds the caller's slot when no
   instruction of the region names it (the private

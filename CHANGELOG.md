@@ -795,6 +795,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Native drops carry no whole-slot flag, and no return or propagate block
+  sweeps the slots still flagged, as upstream's destructor insertion leaves
+  only static destroys (R832). The MIR verifier now requires every path
+  reaching a `drop.var` or `var.consume` to hold its slot, upstream's
+  `UninitializedValueScan` rule, where it used to reject only a slot every
+  path had ended. Drop elaboration no longer roots the slot of a
+  compile-time value parameter of any type (`mir::parameter_slots`), which
+  left drops of slots nothing defined. A traced native executable logs a
+  catch only of an `Error`, as the VM does, not a `for` loop's
+  `StopIteration`.
 - Every drop is decided where drop elaboration places it, as upstream's
   `DestructorInsertion` leaves an unconditional destroy, so
   `mir::lower_drops` (formerly `lower_whole_drops`) lowers every named

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1312**.
+Next free ID: **R1314**.
 
 ## Ordered Work
 
@@ -680,8 +680,8 @@ which names the upstream pass each one follows. Each is measured by the
 
   `lower-lit` erases every other lifetime marker, `ownership.mark_initialized`
   included, but these two still carry run-time ownership state: the VM
-  tombstones a part, and Pliron clears presence and drop flags
-  (`end_presence`, `set_drop_flag`, `lower/instr.rs`).
+  tombstones a part, and Pliron clears presence flags (`end_presence`,
+  `lower/instr.rs`).
   - Upstream: `lowerLITOps` (`LowerLIT.cpp`) erases `mark_destroyed` and
     `mark_consumed` with `mark_initialized`, and a call's `deinit` operand
     consumes the part (`memConsume`).
@@ -706,10 +706,7 @@ which names the upstream pass each one follows. Each is measured by the
     double-frees (`nominal_string_codepoint_from_byte`, `consume.place
     $v0._text` then `consume.var $v0`) until `consume.var` destroys
     nothing (R1310).
-  - A whole-slot `mark_destroyed` (an owned `VariadicList`'s element
-    temporaries) is the only thing clearing that slot's flag before
-    Pliron's return sweep (R832).
-  - Depends on R1310, R832.
+  - Depends on R1310.
   - Model: Fable, Not Planned.
 
 - [ ] **R933 A span origin can name a slot no instruction addresses**
@@ -1027,40 +1024,45 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R832 Native drops are flag-guarded, and every return sweeps the
-  flagged slots**
+- [ ] **R1312 Native partial moves keep a run-time presence flag per
+  moved leaf, where upstream tracks each field statically**
 
-  Problem: native lowering guards every `drop.var` with a dynamic drop
-  flag and drops every still-flagged slot at each return, where upstream
-  inserts static destructors with no flags.
-  - `lower_drop_var` (`lower/drops.rs`) checks the flag, and
-    `lower_return` (`lower/term.rs`) sweeps the flagged slots.
-  - The MIR verifier holds every drop to a slot some path still holds, so
-    a slot's state is static wherever no two paths disagree.
-  - Since R831 each raise point is its own raise edge whose drops name
-    what it holds, so no cleanup list over several raise points needs a
-    flag any more.
-  - The propagate block (`ensure_propagate_block`, `lower/errors.rs`)
-    also frees each flagged releasable variable's buffer, a second sweep
-    with no destructor call.
-  - Fix: drop the flag where the slot's state is static, and file what
-    remains (the sweep's comment names compiler-private `StringDict`
-    shells).
-  - The sweep is the one drop no MIR instruction names: it finds each
-    slot's destructor by type (`FnLowering::type_destructor`), where every
-    `drop.var` names its own since R1016 and R1042.
-    A slot the sweep still has to drop is one drop elaboration left no
-    `drop.var` for; once each has one, the lookup goes with the sweep.
-  - Found while landing R826 (2026-10-14).
-  - Once `lower-lit` erases a whole-slot `ownership.mark_destroyed`
-    (R1311), this sweep would drop an owned `VariadicList`'s element
-    temporaries a second time, so it must go first.
-  - Since R1306 every named drop is its destructor's call, decided where
-    drop elaboration places it, and the concrete verifier refuses a named
-    drop. So a flag guards only an unnamed `drop.var` or `drop.place` (a
-    type with no `__deinit__` of its own) and the return sweep.
-  - Depends on nothing.
-  - Model: Fable, Planned.
+  Pliron gives each top-level leaf a depth-1 move or a pack element
+  touches an `i1` flag, and the drops of that slot test it at run time.
+  - Upstream's `DestructorInsertion` keeps per-field bits, so each field's
+    destroy is decided at compile time.
+  - What goes: `leaf_flags`, `clear_pack_leaf_flag`, the leaf guards in
+    `lower_drop_var`, `lower_drop_place`, and `emit_surviving_leaf_drops`
+    (`crates/mojito-pliron/src/lower/drops.rs`), and the entry `mem_zero`
+    of droppable locals (`lower/instr.rs`).
+  - Cause: `consume.place` and part `ownership.mark_destroyed` still reach
+    the backend and clear them (`end_presence`, `ended_inside`).
+  - Found while landing R832 (2026-10-23), which removed the whole-slot
+    drop flags.
+  - Depends on R1311.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1313 A call's whole-slot `deinit` receiver is ended by a trailing
+  `consume.var`, where upstream's call consumes its `deinit` operand**
+
+  `x^.method()` and a lowered field destructor call leave the call's
+  receiver slot to a `consume.var` after the call, which must then end
+  nothing.
+  - Upstream: `checkConsume`, and `memConsume` in `LowerLIT`.
+  - Producers: MIR lowering of a transferred receiver's call, and the
+    `consume.var` that `sroa` makes of a lowered field drop's
+    `consume.place`.
+  - Pliron records the slot in `FnLowering::consumed_receivers` at the
+    call (`lower/methods.rs`), and the VM stores `Value::Moved` into the
+    place before it (`vm/invoke.rs`), so neither `consume.var` traces.
+  - Fix: drop elaboration and the verifier treat the call as the end, and
+    both backend workarounds go.
+  - Probes: `assets/ok/deinit_param_destruction_timing.mojo`,
+    `assets/ok/deinit_body_field_last_use.mojo` (their `consume` trace
+    events in `lifecycle_event_traces_match_the_vm`).
+  - Found while landing R832 (2026-10-23).
+  - Depends on R1311, whose part case is the same move.
+  - Model: Fable, Not Planned.
 
 - [ ] **R987 Native code drops every function's inline level**
 
@@ -1697,7 +1699,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 
   Problem: `[(ref a, ref b), _] = t` inside an `if`, then
   `try: [ref a, ref b] = s`, fails with "drop.var of slot ...
-  ('$elem...') that every path has already ended", where the pin prints
+  ('$elem...') that some path reaching it does not hold", where the pin prints
   `1 2` and `5 6`.
   - The nested tuple element is read into a hidden `$elem<id>`
     (`read_into_hidden` in `checker/destructure.rs`) whose drop is

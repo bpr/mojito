@@ -125,7 +125,7 @@ mod tests {
         assert_eq!(pass, "double-drop");
         assert!(
             findings.iter().any(|finding| finding
-                .contains("drop.var of slot $v1 ('b') that every path has already ended")),
+                .contains("drop.var of slot $v1 ('b') that some path reaching it does not hold")),
             "{findings:?}"
         );
     }

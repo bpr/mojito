@@ -44,25 +44,18 @@ impl FnLowering<'_> {
         // predecessor.
         self.enter_exit(ctx, landing)?;
         if let Some((error_var, handler_blocks)) = handler {
-            if self.trace_lifecycle {
+            // The VM logs a catch of an `Error` value only, never of a
+            // typed error such as a `for` loop's `StopIteration`.
+            if self.trace_lifecycle && raises_error(body, label, &self.func.reg_types) {
                 self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_CATCH);
             }
             let err_slot = self.ensure_err_slot(ctx);
             if let Some(var) = error_var {
-                // A still-initialized previous binding (a loop rebinding the
-                // same handler var) frees first — the VM abandons the
-                // overwritten value to its arena.
-                if let Some(&flag) = self.drop_flags.get(var) {
-                    let cont = self.begin_flag_guard(ctx, flag);
-                    let slot = self.var_slots[*var as usize];
-                    self.emit_release_storage(ctx, slot, &Ty::error())?;
-                    self.end_flag_guard(ctx, cont);
-                }
                 // The staged error moves into the bound slot; its ordinary
                 // drop frees the message.
                 let slot = self.var_slots[*var as usize];
                 self.mem_copy(ctx, slot, err_slot, 24, Reg(u32::MAX));
-                self.set_drop_flag(ctx, *var, true);
+                self.restore_leaves(ctx, *var);
             } else {
                 // No binder: the caught error is dropped on entry.
                 self.emit_release_storage(ctx, err_slot, &Ty::error())?;
@@ -136,3 +129,18 @@ impl FnLowering<'_> {
 
 /// A `try`'s handler: the slot it binds the caught error to, and its region.
 type Handler = (Option<u32>, Vec<MirBlock>);
+
+/// Whether some `raise` in `blocks`, at any depth, naming the `try`
+/// labelled `label` raises an `Error`.
+fn raises_error(blocks: &[MirBlock], label: TryLabel, reg_types: &HashMap<u32, Ty>) -> bool {
+    blocks.iter().any(|block| {
+        matches!(&block.term, MirTerm::Raise { src, label: Some(named), .. }
+            if *named == label
+                && matches!(reg_types.get(&src.0).map(Ty::kind), Some(TyKind::Error)))
+            || block.instrs.iter().any(|instr| {
+                mojito_mir::mir::instruction_regions(instr)
+                    .into_iter()
+                    .any(|region| raises_error(region, label, reg_types))
+            })
+    })
+}

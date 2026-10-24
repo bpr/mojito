@@ -1,18 +1,22 @@
-//! Slot ends: a `drop.var` or `var.consume` of a slot that every path
-//! reaching it has already ended — dropped, consumed, or moved — destroys a
-//! value twice. Upstream's destructor insertion destroys each value once on
-//! a live path; this check holds the elaborated MIR there.
+//! Slot ends: a `drop.var` or `var.consume` must end a slot every path
+//! reaching it holds, as upstream's `UninitializedValueScan` rejects a use,
+//! a destroy among them, of a value some path has not initialized. So a
+//! slot's state is static at every end, and a backend destroys it with no
+//! drop flag; a slot some path has ended — dropped, consumed, or moved — or
+//! never initialized would be destroyed twice, or uninitialized.
 //!
-//! The analysis is a must-analysis over one bit per slot ("ended on every
-//! path"), joined by AND, over the function's structured body, as
-//! upstream's `CheckLifetimes` walks `hlcf`: an `if` or `match` joins its
+//! The analysis is a must-analysis over one bit per slot ("held on every
+//! path"), joined by AND as upstream's `tracked &=`, over the function's
+//! structured body, as `CheckLifetimes` walks `hlcf`: an `if` or `match` joins its
 //! arms, a loop or `comptime for` iterates its body to a fixpoint and
 //! leaves in the join of its `break`s, a `match` case enters the next as
 //! its `match.next`s join, and a `try`'s handler enters as the raises
 //! naming it join. A `break`, `continue`, or `match` exit resolves to its
 //! region op through [`RegionFrame`] and [`region_exit`], and a labelled
-//! `raise` to its `try`'s body frame. Anything that names a slot revives
-//! it: over-reviving hides a finding, never invents one.
+//! `raise` to its `try`'s body frame. A function enters holding its
+//! parameters, a `var.declare` empties a slot, and anything else that names
+//! a slot fills it: a read of an empty slot is the checker's error, and
+//! over-filling hides a finding, never invents one.
 
 use super::{MirBlock, MirFunction, MirInstr, MirTerm};
 use crate::mir::{
@@ -20,33 +24,36 @@ use crate::mir::{
 };
 use std::collections::HashMap;
 
-/// Report every `drop.var` or `var.consume` in `function` whose slot every
-/// path reaching it has already ended. A finding names the block of the
-/// block list holding it: the function's, or a region's.
+/// Report every `drop.var` or `var.consume` in `function` whose slot some
+/// path reaching it does not hold. A finding names the block of the block
+/// list holding it: the function's, or a region's.
 pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut Vec<String>) {
     if !ends_slots(&function.blocks) {
         return;
     }
     let mut walk = Walk::new(name, function);
-    walk.region(&vec![false; function.n_vars], &function.blocks, true);
+    let entry: Held = (0..function.n_vars)
+        .map(|v| v < function.n_params)
+        .collect();
+    walk.region(&entry, &function.blocks, true);
     errors.extend(walk.findings);
 }
 
-/// One bit per slot: whether every path reaching this point ended it.
-type Ended = Vec<bool>;
+/// One bit per slot: whether every path reaching this point holds it.
+type Held = Vec<bool>;
 
 /// The states a region (or one block) leaves by: falling off, raising out
 /// of the function, leaving the function, and leaving or resuming an
 /// enclosing region op (a raise to a `try` leaves its body's frame).
 #[derive(Default, Clone)]
 struct Flow {
-    normal: Option<Ended>,
-    raises: Option<Ended>,
-    exits: Option<Ended>,
+    normal: Option<Held>,
+    raises: Option<Held>,
+    exits: Option<Held>,
     /// The enclosing frames this flow leaves or resumes: the frame's depth
     /// in [`Walk::frames`], whether it resumes it, and the states joined
     /// there.
-    frame_exits: Vec<(usize, bool, Ended)>,
+    frame_exits: Vec<(usize, bool, Held)>,
 }
 
 impl Flow {
@@ -61,15 +68,15 @@ impl Flow {
 
     /// Join `state` into the exit to the frame at `depth`, resuming it
     /// when `resume`.
-    fn leave(&mut self, depth: usize, resume: bool, state: &Ended) {
+    fn leave(&mut self, depth: usize, resume: bool, state: &Held) {
         match self
             .frame_exits
             .iter_mut()
             .find(|(at, resumes, _)| *at == depth && *resumes == resume)
         {
             Some((.., joined)) => {
-                for (ended, other) in joined.iter_mut().zip(state) {
-                    *ended &= *other;
+                for (held, other) in joined.iter_mut().zip(state) {
+                    *held &= *other;
                 }
             }
             None => self.frame_exits.push((depth, resume, state.clone())),
@@ -78,7 +85,7 @@ impl Flow {
 
     /// Take the exits to the frame at `depth`: the states joined where it
     /// is left and where it is resumed.
-    fn take_frame(&mut self, depth: usize) -> (Option<Ended>, Option<Ended>) {
+    fn take_frame(&mut self, depth: usize) -> (Option<Held>, Option<Held>) {
         let mut leave = None;
         let mut resume = None;
         self.frame_exits.retain(|(at, resumes, state)| {
@@ -95,7 +102,7 @@ impl Flow {
 /// The non-reporting flows of the region ops one walk computed, by op (its
 /// address in the body, which the walk does not change), entry state, and
 /// the depth of the frames around it.
-type Memo = HashMap<(*const MirInstr, Ended, usize), Flow>;
+type Memo = HashMap<(*const MirInstr, Held, usize), Flow>;
 
 struct Walk<'a> {
     name: &'a str,
@@ -128,7 +135,7 @@ impl<'a> Walk<'a> {
 
     /// Walk `blocks`, a region's one block, from `entry`, reporting when
     /// `report`, and sort how it leaves by its terminator.
-    fn region(&mut self, entry: &Ended, blocks: &'a [MirBlock], report: bool) -> Flow {
+    fn region(&mut self, entry: &Held, blocks: &'a [MirBlock], report: bool) -> Flow {
         let mut flow = Flow::default();
         let Some(block) = blocks.first() else {
             return flow;
@@ -174,7 +181,7 @@ impl<'a> Walk<'a> {
     /// One block from `state`: its normal channel is the state after its
     /// terminator's own effect, and its other channels are those of its
     /// regions, a raising call's error region among them.
-    fn block(&mut self, index: usize, mut state: Ended, block: &'a MirBlock, report: bool) -> Flow {
+    fn block(&mut self, index: usize, mut state: Held, block: &'a MirBlock, report: bool) -> Flow {
         let mut flow = Flow::default();
         for instruction in &block.instrs {
             if !instruction_regions(instruction).is_empty() {
@@ -196,7 +203,7 @@ impl<'a> Walk<'a> {
     /// [`Self::region_op_unmemoized`], computed once per op, entry state,
     /// and frame depth while not reporting. A reporting walk is made once
     /// per region, from the join of every state entering it.
-    fn region_op(&mut self, state: Ended, instruction: &'a MirInstr, report: bool) -> Flow {
+    fn region_op(&mut self, state: Held, instruction: &'a MirInstr, report: bool) -> Flow {
         if report {
             return self.region_op_unmemoized(state, instruction, true);
         }
@@ -227,7 +234,7 @@ impl<'a> Walk<'a> {
     /// - A `try` is [`Self::try_regions`].
     fn region_op_unmemoized(
         &mut self,
-        state: Ended,
+        state: Held,
         instruction: &'a MirInstr,
         report: bool,
     ) -> Flow {
@@ -301,10 +308,10 @@ impl<'a> Walk<'a> {
     fn enter(
         &mut self,
         flow: &mut Flow,
-        entry: &Ended,
+        entry: &Held,
         blocks: &'a [MirBlock],
         report: bool,
-    ) -> Option<Ended> {
+    ) -> Option<Held> {
         let mut region = self.region(entry, blocks, report);
         let normal = region.normal.take();
         flow.absorb(region);
@@ -317,7 +324,7 @@ impl<'a> Walk<'a> {
     /// completes as its `break`s join.
     fn loop_body(
         &mut self,
-        state: Ended,
+        state: Held,
         frame: RegionFrame,
         body: &'a [MirBlock],
         report: bool,
@@ -350,7 +357,7 @@ impl<'a> Walk<'a> {
     /// refilled, and `orelse` from the body's fall-off; the `try`
     /// completes as the handler's and `orelse`'s (or the body's) fall-offs
     /// join.
-    fn try_regions(&mut self, entry: Ended, instruction: &'a MirInstr, report: bool) -> Flow {
+    fn try_regions(&mut self, entry: Held, instruction: &'a MirInstr, report: bool) -> Flow {
         let MirInstr::Try {
             label,
             body,
@@ -382,7 +389,7 @@ impl<'a> Walk<'a> {
         }
         if let (Some((binding, handler)), Some(mut start)) = (handler, body_raises) {
             if let Some(binding) = binding {
-                set(&mut start, *binding, false);
+                set(&mut start, *binding, true);
             }
             let arm = self.enter(&mut flow, &start, handler, report);
             meet(&mut flow.normal, arm.as_ref());
@@ -390,8 +397,8 @@ impl<'a> Walk<'a> {
         flow
     }
 
-    /// Record one finding: `what` ends slot `var`, which every path reaching
-    /// it has already ended.
+    /// Record one finding: `what` ends slot `var`, which some path reaching
+    /// it does not hold.
     fn report(&mut self, index: usize, what: &str, var: VarId) {
         let slot_name = self
             .function
@@ -399,7 +406,7 @@ impl<'a> Walk<'a> {
             .get(var as usize)
             .map_or("?", String::as_str);
         let finding = format!(
-            "MIR function '{}' block {index}: {what} of slot $v{var} ('{slot_name}') that every path has already ended",
+            "MIR function '{}' block {index}: {what} of slot $v{var} ('{slot_name}') that some path reaching it does not hold",
             self.name
         );
         if !self.findings.contains(&finding) {
@@ -407,11 +414,11 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// One instruction's effect, reporting a drop or consume of a slot
-    /// already ended on every path when `report`.
-    fn step(&mut self, index: usize, state: &mut Ended, instruction: &MirInstr, report: bool) {
+    /// One instruction's effect, reporting a drop or consume of a slot some
+    /// path does not hold when `report`.
+    fn step(&mut self, index: usize, state: &mut Held, instruction: &MirInstr, report: bool) {
         if let MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } = instruction {
-            if report && state.get(*var as usize) == Some(&true) {
+            if report && state.get(*var as usize) == Some(&false) {
                 let spelling = if matches!(instruction, MirInstr::DropVar { .. }) {
                     "drop.var"
                 } else {
@@ -419,31 +426,38 @@ impl<'a> Walk<'a> {
                 };
                 self.report(index, spelling, *var);
             }
-            set(state, *var, true);
+            set(state, *var, false);
+            return;
+        }
+        if let MirInstr::DeclareVar { var } = instruction {
+            set(state, *var, false);
             return;
         }
         for slot in instruction_slots(instruction) {
-            set(state, slot, false);
+            set(state, slot, true);
         }
         if let MirInstr::WriteRef { reference, .. } = instruction
             && let Some(&slot) = self.refills.get(&reference.0)
         {
-            set(state, slot, false);
+            set(state, slot, true);
+        }
+        if let Some(source) = instruction.consumed_iteration_source() {
+            set(state, source, false);
         }
         match instruction {
-            MirInstr::UseVar { var, mode, .. } if mode.moves() => set(state, *var, true),
+            MirInstr::UseVar { var, mode, .. } if mode.moves() => set(state, *var, false),
             MirInstr::MovePlace { place, .. }
             | MirInstr::ConsumePlace { place, .. }
             | MirInstr::DropPlace { place, .. }
             | MirInstr::MarkDestroyed { place }
                 if place.is_whole_root() =>
             {
-                set(state, place.root, true);
+                set(state, place.root, false);
             }
             MirInstr::MakeClosure { captures, .. } => {
                 for capture in captures {
                     if capture.mode == MirCaptureMode::Move && capture.place.is_whole_root() {
-                        set(state, capture.place.root, true);
+                        set(state, capture.place.root, false);
                     }
                 }
             }
@@ -453,14 +467,14 @@ impl<'a> Walk<'a> {
 }
 
 /// AND `source` into `target`; an unreached `target` takes `source` whole.
-fn meet(target: &mut Option<Ended>, source: Option<&Ended>) {
+fn meet(target: &mut Option<Held>, source: Option<&Held>) {
     let Some(source) = source else {
         return;
     };
     match target {
         Some(target) => {
-            for (ended, other) in target.iter_mut().zip(source) {
-                *ended &= *other;
+            for (held, other) in target.iter_mut().zip(source) {
+                *held &= *other;
             }
         }
         None => *target = Some(source.clone()),
@@ -468,9 +482,9 @@ fn meet(target: &mut Option<Ended>, source: Option<&Ended>) {
 }
 
 /// Set one slot's bit; a slot out of range is the bounds check's finding.
-fn set(state: &mut Ended, slot: VarId, ended: bool) {
+fn set(state: &mut Held, slot: VarId, held: bool) {
     if let Some(bit) = state.get_mut(slot as usize) {
-        *bit = ended;
+        *bit = held;
     }
 }
 

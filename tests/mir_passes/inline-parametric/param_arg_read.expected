@@ -46,7 +46,6 @@
         blocks: [
           bb0 {
             instructions: [
-              drop.var { var: $v0 },
               const { dest: %r1, value: int_literal(5) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.declare { var: $v2 },

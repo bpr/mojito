@@ -469,8 +469,8 @@ impl Effects {
 /// before the blocks holding them.
 struct Splice<'a> {
     f: &'a MirFunction,
-    /// The function's compile-time parameter slots: its materialized value
-    /// parameters (`materialized_parameter_slots`), which it never drops.
+    /// The function's compile-time value parameter slots
+    /// (`mojito_mir::mir::parameter_slots`), which it never drops.
     parameter_slots: &'a HashSet<VarId>,
     /// An initializer's `out self`, which a path leaving without returning
     /// drops.

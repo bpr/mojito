@@ -44,7 +44,7 @@ use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,
     MirInteriorOrigin, MirIntrinsicSubscript, MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj,
-    Reg, binder_scope, lower_copies_and_moves, materialized_parameter_slots,
+    Reg, binder_scope, lower_copies_and_moves, parameter_slots,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use moves::*;
@@ -267,7 +267,7 @@ pub fn elaborate_drops_function(
     declarations: &MirDeclarations,
 ) -> MirFunction {
     let scope = binder_scope(name, |name| declarations.function(name));
-    let slots = materialized_parameter_slots(&function, &scope);
+    let slots = parameter_slots(&function, &scope);
     let receiver = initializer_receiver_entry(&function, name, declarations).map(|_| 0);
     let pack = declarations
         .function(name)

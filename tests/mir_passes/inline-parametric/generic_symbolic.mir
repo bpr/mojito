@@ -34,7 +34,6 @@ artifact {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               var.use { dest: %r1, var: $v1, mode: copy },
-              drop.var { var: $v1 },
               binary { op: mul, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
             ],
             terminator: return { value: present(%r2) }
@@ -64,7 +63,6 @@ artifact {
               const { dest: %r1, value: int_literal(1) },
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v1, mode: copy },
-              drop.var { var: $v1 },
               binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
               var.use { dest: %r4, var: $v0, mode: copy },
               call { dest: %r5, func: scaled, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r3), expr: present(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "generic_symbolic", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_expr { op: add, type: meta_value(Int), operands: [param_decl_ref { owner: "generic_symbolic", slot: 0, name: n, type: meta_value(Int) }, param_constant(ct_int(1))] }))], spread: absent }

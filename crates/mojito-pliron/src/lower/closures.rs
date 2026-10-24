@@ -196,10 +196,6 @@ impl FnLowering<'_> {
                             &name,
                         );
                     }
-                    // A whole-root move capture: ownership analysis already
-                    // suppressed the source's ordinary drop; clearing the
-                    // flag mirrors the VM's tombstoned source.
-                    self.set_drop_flag(ctx, place.root, false);
                 }
             }
             (record, composed.offsets[1..].to_vec())

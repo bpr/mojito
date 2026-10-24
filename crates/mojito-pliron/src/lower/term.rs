@@ -1,9 +1,7 @@
-//! Terminator lowering: return edges, region exits, and top-level binding
-//! releases.
+//! Terminator lowering: return edges and region exits.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     /// Lower `term`, which ends a block as `end` says: a return leaves the
@@ -49,55 +47,14 @@ impl FnLowering<'_> {
     }
 
     /// A return terminator: store/copy the value per the return ABI and
-    /// return.
+    /// return. Drop elaboration destroyed what the return held before it,
+    /// so the frame releases nothing here, as upstream's destructor
+    /// insertion leaves a return.
     pub(super) fn lower_return(
         &mut self,
         ctx: &mut Context,
         value: Option<Reg>,
     ) -> Result<(), PlironError> {
-        if self.name == "__toplevel__" {
-            self.emit_toplevel_binding_releases(ctx)?;
-        }
-        // Some compiler-private/std-library shells do not themselves conform
-        // to `Deinitable` even though their concrete fields do (StringDict's
-        // nested List index is the canonical case). MIR therefore has no
-        // source-level `DropVar`, but native allocations still need recursive
-        // frame cleanup. Explicit drops and moves have already cleared the
-        // same flags, so this closes only still-live local slots. A
-        // heterogeneous collector slot an inlined callee's call built, typed
-        // the pack storage, is left out: a `read` collector's elements are
-        // the caller's, and an owned one's drop is the body's own.
-        for var in (self.func.n_params..self.func.n_vars).rev() {
-            let collector = matches!(
-                self.func.var_tys.get(&(var as u32)).map(Ty::kind),
-                Some(TyKind::Tuple(_) | TyKind::RuntimePack(_))
-            );
-            if !collector && self.drop_flags.contains_key(&(var as u32)) {
-                let destructor = self
-                    .func
-                    .var_tys
-                    .get(&(var as u32))
-                    .and_then(|ty| self.type_destructor(ty));
-                self.lower_drop_var(ctx, var as u32, destructor)?;
-            }
-        }
-        // A `deinit` receiver's elaborated `ConsumeVar` consumes its residual
-        // fields at its last use and clears its flag; this flag-guarded exit
-        // consume is the backstop for a receiver the body never uses.
-        // `ConsumeVar` skips the whole-value destructor, so collection APIs
-        // which dismantled their elements still release surviving shell
-        // fields (for example StringDict's bucket index) exactly once.
-        let deinit_params: Vec<u32> = self
-            .func
-            .deinit_params
-            .iter()
-            .enumerate()
-            .filter_map(|(var, deinit)| deinit.then_some(var as u32))
-            .collect();
-        for var in deinit_params.into_iter().rev() {
-            self.lower_consume_var(ctx, var, true)?;
-        }
-        self.emit_frame_exit_error_releases(ctx)?;
         if let Some(outcome) = self.signatures[self.name].outcome.clone() {
             return self.lower_raising_return(ctx, value, &outcome);
         }
@@ -130,84 +87,6 @@ impl FnLowering<'_> {
         let ret = ReturnOp::new(ctx, lowered);
         self.append(ctx, ret.get_operation(), value);
         Ok(())
-    }
-
-    /// Release `__toplevel__`'s heap-carrying bindings at its exit. Module
-    /// scope admits only declarations, so the runtime values of `comptime`
-    /// bindings are pure materialization residue: the VM abandons them to
-    /// its arena (no destructor ever runs), and every later use reads a
-    /// compile-time folded copy. The native release is the same invisible
-    /// bookkeeping as the owned-temporary rule — stdlib-authored destructor
-    /// chains are pure frees; a chain that would run a user destructor
-    /// rejects rather than diverging from the VM's silence.
-    pub(super) fn emit_toplevel_binding_releases(
-        &mut self,
-        ctx: &mut Context,
-    ) -> Result<(), PlironError> {
-        for var in (0..self.func.n_vars as u32).rev() {
-            let Some(ty) = self.func.var_tys.get(&var).cloned() else {
-                continue;
-            };
-            if !matches!(self.var_lower_ty(var)?, LowerTy::Aggregate { .. })
-                || !(self.needs_drop(&ty) || self.owns_heap(&ty))
-            {
-                continue;
-            }
-            if self.chain_runs_user_lifecycle(&ty, "__deinit__") {
-                return Err(self.unsupported(
-                    format!("module-level binding of `{ty}` whose teardown runs a user destructor"),
-                    None,
-                ));
-            }
-            let Some(flag) = self.drop_flags.get(&var).copied() else {
-                return Err(self.unsupported(
-                    format!("module-level binding of `{ty}` without a guarded slot"),
-                    None,
-                ));
-            };
-            let ptr = self.var_slots[var as usize];
-            let cont = self.begin_flag_guard(ctx, flag);
-            let traced = self.trace_lifecycle;
-            self.trace_lifecycle = false;
-            let released = self.emit_drop_value(ctx, ptr, &ty);
-            self.trace_lifecycle = traced;
-            released?;
-            self.set_drop_flag(ctx, var, false);
-            self.end_flag_guard(ctx, cont);
-        }
-        Ok(())
-    }
-
-    /// Whether `ty`'s teardown/copy chain can reach a user-authored
-    /// lifecycle method (`__deinit__`/`__copyinit__`/`__moveinit__`),
-    /// walking struct fields and pointer element types (a container reaches
-    /// pointed-to elements through its compiled chain). Stdlib-authored
-    /// chains are exempt: pure frees/relocations, nothing user-observable.
-    pub(super) fn chain_runs_user_lifecycle(&self, ty: &Ty, method: &str) -> bool {
-        match ty.kind() {
-            TyKind::Struct(name, _) => {
-                let template = name.split("$mono").next().unwrap_or(name);
-                let stdlib = template.starts_with("__module$std$")
-                    || mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    || matches!(
-                        template,
-                        "List" | "Dict" | "Set" | "Optional" | "Array" | "Span" | "StringSpan"
-                    );
-                if !stdlib && self.lifecycle_symbol(name, method).is_some() {
-                    return true;
-                }
-                self.struct_decls.get(name.as_str()).is_some_and(|decl| {
-                    decl.fields
-                        .iter()
-                        .any(|(_, field)| self.chain_runs_user_lifecycle(field, method))
-                })
-            }
-            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
-                .iter()
-                .any(|element| self.chain_runs_user_lifecycle(element, method)),
-            TyKind::Pointer { element, .. } => self.chain_runs_user_lifecycle(element, method),
-            _ => false,
-        }
     }
 
     /// A normal return from a raising function: store the ok payload into the

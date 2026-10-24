@@ -280,7 +280,7 @@ pub fn lower_body(
         pointer_slot_refs: HashSet::new(),
         made_ref_places: HashMap::new(),
         reference_places: HashMap::new(),
-        drop_flags: HashMap::new(),
+        consumed_receivers: HashSet::new(),
         var_slots: Vec::new(),
         carriers: Vec::new(),
         region_targets: Vec::new(),
@@ -471,14 +471,12 @@ struct FnLowering<'a> {
     /// addresses from the stored handle with only the projections beyond
     /// that place.
     reference_places: HashMap<u32, MirPlace>,
-    /// The `i1` initialization flag of each droppable variable. Drop
-    /// elaboration legitimately drops not-yet-initialized slots (ahead of
-    /// `try` regions) and lists variables on cleanup edges they already died
-    /// before; the VM's empty-slot drop is a silent no-op, so native drops
-    /// guard on the flag to be no-op-safe the same way. Set on `DefVar` and
-    /// whole-variable stores, cleared on drop/consume/move-out; parameters
-    /// start initialized.
-    drop_flags: HashMap<u32, Value>,
+    /// The slots a call's aliased `deinit` receiver consumed whole, as
+    /// upstream's call consumes its `deinit` operand (`memConsume`): the
+    /// `consume.var` MIR still emits after the call ends nothing more. The
+    /// VM stores `Value::Moved` into the place before such a call, so its
+    /// `consume.var` logs nothing either.
+    consumed_receivers: HashSet<u32>,
     /// Alloca (pointer) value of each variable slot; aggregate parameter
     /// slots alias the incoming pointer (write-through), but an owned one of
     /// a register-passable trivial type, which the callee copies.

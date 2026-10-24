@@ -766,14 +766,37 @@ pub fn materialized_parameter_ty<'a>(
     })
 }
 
+/// The slots of `function` that name a non-variadic value parameter of
+/// `scope`, whatever its type.
+///
+/// Upstream has no variable for a compile-time parameter, so no such slot is
+/// a drop root: the elaborator folds its reads away, and a callable one it
+/// promotes becomes a borrowed run-time parameter. The
+/// [`materialized_parameter_slots`] are among them.
+#[must_use]
+pub fn parameter_slots(function: &MirFunction, scope: &[&ParamDecl]) -> HashSet<VarId> {
+    function
+        .var_names
+        .iter()
+        .enumerate()
+        .skip(function.n_params)
+        .filter(|(_, name)| {
+            scope.iter().any(|decl| {
+                matches!(decl, ParamDecl::Value { name: declared, variadic: false, .. }
+                    if declared == *name)
+            })
+        })
+        .filter_map(|(var, _)| VarId::try_from(var).ok())
+        .collect()
+}
+
 /// The slots of `function` that hold a value parameter of `scope` rather than
 /// storage.
 ///
 /// Such a parameter ([`materialized_parameter_ty`]), like a `comptime for`
 /// binder, is materialized at each run-time read, whose consumer owns the
-/// result, so its slot owns nothing and is no drop root. A callable-bound
-/// parameter is left out: the elaborator may promote it to a run-time
-/// parameter.
+/// result, so copy lowering reads it in place. A callable-bound parameter is
+/// left out: the elaborator may promote it to a run-time parameter.
 #[must_use]
 pub fn materialized_parameter_slots(
     function: &MirFunction,
