@@ -795,6 +795,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `lower-lit` now erases `ownership.mark_destroyed` and `consume.place`
+  too, as upstream's `LowerLIT` erases `lit.ownership.mark_destroyed` and
+  `lit.ownership.mark_consumed`, so no backend sees one: concrete
+  verification, the VM, and the Pliron backend refuse a survivor, and
+  Pliron's per-part end tracking (`end_presence`, `ended_inside`) is gone
+  (R1311). A lowered field drop is the destructor's call on the field's
+  place, whose `deinit` receiver consumes it, as upstream's call consumes a
+  `deinit` operand; a pack part's drops end with their last element; and
+  neither the elaborator's drop lowering nor its list-literal construction
+  emits a marker. `inline-parametric` binds a destructor's `deinit self`
+  in place from the call's receiver place, a part reached through a `mut`
+  parameter included, where it copied the whole value into a fresh slot
+  (`assets/ok/mut_parameter_reassignment_drop.mojo`, concrete instructions
+  85 → 77; `always_inline_nodebug_destructor.mojo` 418 → 400). `sroa`
+  counts such a call as its field's end. Output is unchanged on both
+  backends; the MIR text and package formats are unchanged.
+
 - A `consume.var` destroys nothing on either backend, as upstream's exit
   `mark_destroyed` consumes only the whole-object bit (R1310). Drop
   elaboration lays a nominal `Tuple` out as the one-field struct it is, so

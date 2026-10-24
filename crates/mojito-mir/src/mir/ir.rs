@@ -2543,9 +2543,11 @@ pub enum MirInstr {
         var: VarId,
     },
     /// Consume one projected subobject after its named explicit destructor
-    /// succeeds, or after that destructor's body inlined on the place,
-    /// leaving the rest of the aggregate available. `marker` is a result
-    /// of no value.
+    /// succeeds (upstream's `lit.ownership.mark_consumed`), leaving the
+    /// rest of the aggregate available. `marker` is the register the part
+    /// was loaded into, the destructor's receiver. The ownership analysis
+    /// and drop elaboration read it, and `lower-lit` erases it, so no
+    /// backend sees one.
     ConsumePlace {
         place: MirPlace,
         marker: Reg,
@@ -2563,7 +2565,8 @@ pub enum MirInstr {
     /// from here, its storage having been moved out through pointers, or,
     /// for a whole slot, handed on through a pointer to it (an owned
     /// `VariadicList`'s element, which the list's destructor ends), so no
-    /// destructor runs on it.
+    /// destructor runs on it. The ownership analysis and drop elaboration
+    /// read it, and `lower-lit` erases it, so no backend sees one.
     MarkDestroyed {
         place: MirPlace,
     },

@@ -8,23 +8,21 @@
 //! in its own step, in which destructor insertion names that element's
 //! `__del__`: a tuple's first to last, an owning collector's last to first.
 //! Here such a drop becomes one `drop.place` per element that runs code,
-//! which naming then gives its element's destructor, as a field's, and
-//! the pack ends after them, a `consume.var` of its slot or a
-//! `consume.place` of the place, which destroys nothing more. A drop whose
+//! which naming then gives its element's destructor, as a field's; a
+//! whole slot ends after them with a `consume.var`, which destroys nothing
+//! more, and a part pack ends with its last element. A drop whose
 //! pack type is still symbolic waits for the elaborator, which refines an
 //! instance's once its elements are concrete.
 
-use crate::mir::{
-    MirBlock, MirFunction, MirInstr, MirPlace, Proj, fresh_register, instruction_regions_mut,
-};
+use crate::mir::{MirBlock, MirFunction, MirInstr, MirPlace, Proj, instruction_regions_mut};
 use mojito_hir::hir::VarId;
 use mojito_types::types::{Ty, TyKind};
 
 /// Refine every drop of a concrete pack aggregate in `function` per element.
 ///
 /// Each `drop.var` and `drop.place`, regions included, becomes the drops of
-/// its elements that run code (`runs_no_code` answering no), the pack's own
-/// end after them; `owned_pack` is the slot of the function's owning
+/// its elements that run code (`runs_no_code` answering no), a whole
+/// slot's end after them; `owned_pack` is the slot of the function's owning
 /// collector, whose elements die last to first.
 pub fn refine_pack_drops(
     function: &mut MirFunction,
@@ -33,7 +31,7 @@ pub fn refine_pack_drops(
 ) {
     let mut blocks = std::mem::take(&mut function.blocks);
     Refine {
-        function,
+        function: &*function,
         owned_pack,
         runs_no_code,
     }
@@ -42,13 +40,13 @@ pub fn refine_pack_drops(
 }
 
 struct Refine<'a> {
-    function: &'a mut MirFunction,
+    function: &'a MirFunction,
     owned_pack: Option<VarId>,
     runs_no_code: &'a dyn Fn(&Ty) -> bool,
 }
 
 impl Refine<'_> {
-    fn blocks(&mut self, blocks: &mut [MirBlock]) {
+    fn blocks(&self, blocks: &mut [MirBlock]) {
         for block in blocks {
             let instrs = std::mem::take(&mut block.instrs);
             let mut refined = Vec::with_capacity(instrs.len());
@@ -63,7 +61,7 @@ impl Refine<'_> {
     }
 
     /// Push `instruction`, or the element drops refining it.
-    fn instruction(&mut self, instruction: MirInstr, out: &mut Vec<MirInstr>) {
+    fn instruction(&self, instruction: MirInstr, out: &mut Vec<MirInstr>) {
         let place = match &instruction {
             MirInstr::DropVar {
                 var,
@@ -88,8 +86,8 @@ impl Refine<'_> {
 
     /// Push the drops of the pack `place`'s elements that run code, each
     /// nested pack refined in turn, in the order its library destructor
-    /// destroys them, then the pack's end: its slot's when it is one.
-    fn pack_drops(&mut self, place: &MirPlace, out: &mut Vec<MirInstr>) {
+    /// destroys them, then the end of the pack's slot when it is one.
+    fn pack_drops(&self, place: &MirPlace, out: &mut Vec<MirInstr>) {
         let Some(elements) = place.ty.as_ref().and_then(pack_elements) else {
             return;
         };
@@ -113,14 +111,9 @@ impl Refine<'_> {
                 });
             }
         }
-        out.push(if place.is_whole_root() {
-            MirInstr::ConsumeVar { var: place.root }
-        } else {
-            MirInstr::ConsumePlace {
-                place: place.clone(),
-                marker: fresh_register(self.function, Ty::none(), None),
-            }
-        });
+        if place.is_whole_root() {
+            out.push(MirInstr::ConsumeVar { var: place.root });
+        }
     }
 }
 
@@ -165,17 +158,14 @@ mod tests {
         }
     }
 
-    /// The elements each `drop.place` of `function` drops, and how the
-    /// pack ends.
+    /// The elements each `drop.place` of `function` drops, and how a
+    /// whole slot's pack ends.
     fn shape(function: &MirFunction) -> Vec<String> {
         function.blocks[0]
             .instrs
             .iter()
             .map(|instruction| match instruction {
                 MirInstr::DropPlace { place, .. } => format!("drop {:?}", place.proj),
-                MirInstr::ConsumePlace { place, marker } => {
-                    format!("consume {:?} %{}", place.proj, marker.0)
-                }
                 MirInstr::ConsumeVar { var } => format!("consume ${var}"),
                 MirInstr::DropVar { var, .. } => format!("drop ${var}"),
                 other => format!("{other:?}"),
@@ -223,12 +213,9 @@ mod tests {
             [
                 "drop [Field(\"storage\"), ConstIndex(0)]",
                 "drop [Field(\"storage\"), ConstIndex(1), ConstIndex(1)]",
-                "consume [Field(\"storage\"), ConstIndex(1)] %0",
-                "consume [Field(\"storage\")] %1",
             ]
         );
-        assert_eq!(f.n_regs, 2);
-        assert_eq!(f.reg_types.get(&1), Some(&Ty::none()));
+        assert_eq!(f.n_regs, 0);
     }
 
     #[test]

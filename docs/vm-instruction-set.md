@@ -166,9 +166,10 @@ and `comptime.for`, and the VM rejects one that survives as unsupported.
 | `ref.write` | `WriteRef` | Write through a runtime reference handle |
 | `lifetime.keep_alive` | `KeepAlive` | Extend an owner's MIR live range without copying it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one |
 | `ownership.mark_initialized` | `MarkInitialized` | Mark a place initialized without writing it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one. A struct or tuple slot gets its unwritten storage where an instruction first stores into, reads, addresses, or passes it by address |
+| `ownership.mark_destroyed` | `MarkDestroyed` | End a place's value without destroying it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one |
 | `drop.var` | `DropVar` | Destroy the value in a variable slot, running the destructor the drop names |
 | `consume.var` | `ConsumeVar` | End a slot whose parts drop elaboration has already destroyed (a `deinit` receiver at each exit, upstream's exit `mark_destroyed`); destroys nothing |
-| `consume.place` | `ConsumePlace` | Consume one projected subobject after its named destructor succeeds |
+| `consume.place` | `ConsumePlace` | Consume one projected subobject after its named destructor succeeds; absent from concrete MIR (erased by `lower-lit`, the call's `deinit` receiver having consumed the part), so the VM refuses one |
 | `drop.reg` | `Drop` | Reserved register-drop operation |
 
 Verification requires every `ref.make` destination to be a reference capability

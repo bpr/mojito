@@ -21,10 +21,9 @@
 //!   field first, which then addresses that field's slot: upstream replaces
 //!   each `struct_gep` by its element's allocation, whatever its users, so
 //!   a borrowed field keeps only its own slot. A `place.store` left on a
-//!   whole field slot becomes a `var.store`, a `consume.place` a
-//!   `consume.var`, a `drop.place` a `drop.var`, and a `place.move` a
-//!   `forward` read, so a nested struct's field slot splits in the next
-//!   round.
+//!   whole field slot becomes a `var.store`, a `drop.place` a `drop.var`,
+//!   and a `place.move` a `forward` read, so a nested struct's field slot
+//!   splits in the next round.
 //!
 //! Any other mention keeps the slot whole: a borrow, a capture, a loan
 //! interior, a `through` place, or a whole read that names a
@@ -46,6 +45,7 @@
 //! (upstream's `loopLimit`), so a nested struct splits one level a round.
 
 use super::pre_elaboration::BodyPass;
+use mojito_ast::ast::ArgConvention;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::{
@@ -273,7 +273,7 @@ fn splittable_slots(function: &MirFunction, declarations: &MirDeclarations) -> V
         return Vec::new();
     }
     let mut census = HashMap::new();
-    take_census(&function.blocks, &fields, &mut census);
+    take_census(&function.blocks, &fields, declarations, &mut census);
     if fields.values().any(|(_, memory_only)| *memory_only) {
         let mut registers = Registers::default();
         registers.record(&function.blocks);
@@ -387,12 +387,13 @@ fn keep_address_users(
 fn take_census(
     blocks: &[MirBlock],
     fields: &HashMap<VarId, Judged<'_>>,
+    declarations: &MirDeclarations,
     census: &mut HashMap<VarId, Census>,
 ) {
     for block in blocks {
         for instruction in &block.instrs {
             for region in instruction_regions(instruction) {
-                take_census(region, fields, census);
+                take_census(region, fields, declarations, census);
             }
             let slots = instruction_slots(instruction);
             if let Some((var, whole)) = whole_mention(instruction)
@@ -421,7 +422,7 @@ fn take_census(
                 let entry = census.entry(var).or_default();
                 entry.kept |= mentions != projected;
                 entry.ended.extend(
-                    ended_places(instruction)
+                    ended_places(instruction, declarations)
                         .filter(|place| {
                             place.root == var
                                 && place.proj.get(1..).is_some_and(|rest| {
@@ -446,14 +447,28 @@ fn keep(census: &mut HashMap<VarId, Census>, slots: impl IntoIterator<Item = Var
     }
 }
 
-/// The places `instruction` ends: a place move, consumption, drop, or
-/// destruction mark, and a closure's move captures.
-fn ended_places(instruction: &MirInstr) -> impl Iterator<Item = &MirPlace> {
+/// The places `instruction` ends: a place move or drop, the receiver
+/// place of a call whose `deinit` receiver consumes it in place, as
+/// upstream's call consumes a `deinit` operand's address, and a closure's
+/// move captures.
+fn ended_places<'i>(
+    instruction: &'i MirInstr,
+    declarations: &MirDeclarations,
+) -> impl Iterator<Item = &'i MirPlace> {
     let (single, captures) = match instruction {
-        MirInstr::MovePlace { place, .. }
-        | MirInstr::ConsumePlace { place, .. }
-        | MirInstr::DropPlace { place, .. }
-        | MirInstr::MarkDestroyed { place } => (Some(place), &[][..]),
+        MirInstr::MovePlace { place, .. } | MirInstr::DropPlace { place, .. } => {
+            (Some(place), &[][..])
+        }
+        MirInstr::MethodCall {
+            resolved: Some(callee),
+            recv_place: Some(place),
+            ..
+        } if declarations.function(callee).is_some_and(|declaration| {
+            declaration.receiver_convention == Some(ArgConvention::Deinit)
+        }) =>
+        {
+            (Some(&**place), &[][..])
+        }
         MirInstr::MakeClosure { captures, .. } => (None, captures.as_slice()),
         _ => (None, &[][..]),
     };
@@ -611,9 +626,9 @@ impl Splitter<'_> {
 
     /// Readdress each place of `instruction` on a split slot to the slot of
     /// the field it projects first; a store left on a whole field slot
-    /// becomes a `var.store`, a consumption a `consume.var`, a drop a
-    /// `drop.var`, and a move a `forward` read, which, as the move, runs
-    /// no move initializer and vacates the slot.
+    /// becomes a `var.store`, a drop a `drop.var`, and a move a `forward`
+    /// read, which, as the move, runs no move initializer and vacates the
+    /// slot.
     fn reroot(&self, instruction: &mut MirInstr) {
         let mut rerooted = false;
         for place in instruction_places_mut(instruction) {
@@ -645,9 +660,6 @@ impl Splitter<'_> {
                     binding_ty: place.root_ty.clone(),
                     in_place: false,
                 };
-            }
-            MirInstr::ConsumePlace { place, .. } if place.proj.is_empty() => {
-                *instruction = MirInstr::ConsumeVar { var: place.root };
             }
             MirInstr::DropPlace { place, destructor } if place.proj.is_empty() => {
                 *instruction = MirInstr::DropVar {

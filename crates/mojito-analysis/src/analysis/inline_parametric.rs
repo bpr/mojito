@@ -21,13 +21,12 @@
 //! into `read`, owned, `mut`, or `ref` parameters, or into a `deinit`
 //! one, which takes the slot the argument forwards or loads whole in
 //! place, as a destructor takes the slot a drop of it forwards, or the
-//! owned part an explicit destroy or a field's lowered drop loads and then
-//! consumes, as upstream passes the field's address, or a fresh slot a
-//! copied receiver's move or another argument initializes, and returns a
-//! value or a reference. A part-bound body's places compose with the
-//! part, and the caller's consume of it after the call is the body's end
-//! of its receiver, on the raise path too, since the call's error region
-//! follows it. A positional collector is a fresh slot the call's block
+//! part an explicit destroy or a field's lowered drop loads and the call
+//! consumes, an owned part or the value a reference reaches, as upstream
+//! passes the field's address, or a fresh slot a copied receiver's move or
+//! another argument initializes, and returns a value or a reference. A
+//! part-bound body's places compose with the part, and the call's
+//! consumption of it is the body's end of its receiver. A positional collector is a fresh slot the call's block
 //! initializes from a `tuple.make` of the overflow arguments, a homogeneous
 //! one's wrapped in its `VariadicList`, as upstream's call builds the pack
 //! it passes; a spread binds the caller's
@@ -140,8 +139,8 @@
 //! destructor's body, as upstream inserts the destructor's call at the death
 //! point and inlines it as any call: its `deinit self` is the dropped slot
 //! itself, which the body's own consumption ends. A drop of a field holds
-//! it too, its `deinit self` the field's place, which the caller's consume
-//! after it ends: a synthesized destructor's fields, a `deinit self`'s
+//! it too, its `deinit self` the field's place, which the call consumes:
+//! a synthesized destructor's fields, a `deinit self`'s
 //! remaining ones, and a field a store overwrites, through a `mut self`
 //! too. Every named drop is so expanded (`mir::lower_drops`): drop
 //! elaboration decides each where it places it.
@@ -356,10 +355,11 @@ enum Binding {
     /// destructor's `deinit self` at a drop of the slot, which upstream
     /// passes by address. The body ends the slot as the forward did.
     Slot(VarId),
-    /// The caller's owned part an explicit destroy, or a field's drop,
-    /// loads into a `deinit` parameter and consumes after the call, which
-    /// upstream passes by address: the body's places compose with it, and
-    /// the caller's consumption of it is the body's end of the parameter.
+    /// The place an explicit destroy, or a field's drop, loads into a
+    /// `deinit` receiver the call consumes in place, an owned part of a
+    /// caller's slot or the value a reference reaches, which upstream
+    /// passes by address: the body's places compose with it, and the
+    /// call's consumption of it is the body's end of the parameter.
     Part { place: MirPlace, argument: Reg },
     /// A constructor's `out self`: a fresh slot the body initializes and
     /// the call's result takes forwarded.
@@ -1250,16 +1250,24 @@ impl<'c> Inliner<'_, 'c> {
             // A `read` argument with no place to bind, an owned temporary
             // such as a call's result, is a value when its type's drop runs
             // no code, as upstream substitutes a register-passable SSA value.
-            let bind = |argument: Reg, place: Option<&MirPlace>| {
-                argument_binding(self.function, callee, block, index, param, argument, place)
-                    .or_else(|| {
-                        (!is_reference_parameter(callee, param)
-                            && callee
-                                .param_types
-                                .get(param)
-                                .is_some_and(|ty| self.declarations.drop_runs_no_code(ty)))
-                        .then_some(Binding::Value(argument))
-                    })
+            let bind = |argument: Reg, place: Option<&MirPlace>, consumed: Option<&MirPlace>| {
+                argument_binding(
+                    self.function,
+                    callee,
+                    block,
+                    (index, param),
+                    argument,
+                    place,
+                    consumed,
+                )
+                .or_else(|| {
+                    (!is_reference_parameter(callee, param)
+                        && callee
+                            .param_types
+                            .get(param)
+                            .is_some_and(|ty| self.declarations.drop_runs_no_code(ty)))
+                    .then_some(Binding::Value(argument))
+                })
             };
             let binding = match declaration.slot_parameter(param) {
                 SlotParameter::Receiver => match site.receiver? {
@@ -1268,6 +1276,7 @@ impl<'c> Inliner<'_, 'c> {
                         recv,
                         site.receiver_place
                             .filter(|_| is_reference_parameter(callee, param)),
+                        site.receiver_place,
                     )?,
                 },
                 SlotParameter::Position(position) if position < site.captures.len() => {
@@ -1284,10 +1293,12 @@ impl<'c> Inliner<'_, 'c> {
                         ArgSlot::Positional(source) => bind(
                             site.call.args[*source],
                             site.call.arg_places.get(*source).and_then(Option::as_ref),
+                            None,
                         )?,
                         ArgSlot::Keyword(source) => bind(
                             site.call.kwargs[*source].1,
                             site.call.kwarg_places.get(*source).and_then(Option::as_ref),
+                            None,
                         )?,
                         ArgSlot::Default => {
                             let default = declaration.defaults.get(position)?.as_ref()?;
@@ -1307,6 +1318,7 @@ impl<'c> Inliner<'_, 'c> {
                         bind(
                             collector,
                             site.call.arg_places.get(position).and_then(Option::as_ref),
+                            None,
                         )?
                     }
                 }
@@ -1416,8 +1428,8 @@ impl<'c> Inliner<'_, 'c> {
             Binding::Place(place) | Binding::Part { place, .. } => Some(place),
             Binding::Value(_) | Binding::Default { .. } | Binding::Out | Binding::Slot(_) => None,
         };
-        // The caller's consumption of a part-bound parameter's place after
-        // the call is the body's end of it.
+        // The call's consumption of a part-bound parameter's place is the
+        // body's end of it.
         let part_bound = |var: VarId| {
             var.checked_sub(base)
                 .and_then(|param| bindings.get(param as usize))
@@ -1515,16 +1527,6 @@ impl<'c> Inliner<'_, 'c> {
             for reg in returned {
                 function.reg_types.insert(reg.0, ty.clone());
             }
-        }
-        // A part the body takes in place ends at the caller's consume of it
-        // after the call, whose marker the call's receiver load no longer
-        // feeds.
-        if bindings
-            .iter()
-            .any(|binding| matches!(binding, Binding::Part { .. }))
-            && let Some(MirInstr::ConsumePlace { marker, .. }) = after.first_mut()
-        {
-            *marker = fresh_register(function, Ty::none(), call_span.as_ref());
         }
         for (var, name) in callee.var_names.iter().enumerate() {
             function.var_names.push(format!("{name}$inline{var_base}"));
@@ -1988,11 +1990,13 @@ fn parameter_constant(value: &ParamExpr, ty: Option<&Ty>) -> Const {
 /// that place, as the VM binds the parameter's slot to a reference to it,
 /// and so does a `read` one of a callee returning a reference, which may
 /// be to it; a `deinit` parameter binds the caller's slot the argument
-/// forwards or loads whole (an explicit destructor's receiver, whose
-/// residue the caller consumes after the call), which the ownership check
-/// proved whole there, and is otherwise a fresh slot the argument, an owned
-/// value the check proved whole (a copied receiver's move), initializes,
-/// for the body to consume;
+/// forwards or loads whole, which the ownership check proved whole there,
+/// or the place `consumed`, the call's receiver place, when the argument
+/// loads it and it is an owned part or the value a reference reaches (an
+/// explicit destroy's or a field drop's receiver, which the call consumes
+/// in place), and is otherwise a fresh slot the argument, an owned value
+/// the check proved whole (a copied receiver's move), initializes, for the
+/// body to consume;
 /// an owned parameter, or a `read` one of a type no destructor tears down,
 /// is a fresh slot the argument initializes, and so is a `read` one passed
 /// a trivial copy of a slot; any other `read` parameter binds the caller's
@@ -2005,10 +2009,10 @@ fn argument_binding(
     caller: &MirFunction,
     callee: &MirFunction,
     block: &MirBlock,
-    index: usize,
-    param: usize,
+    (index, param): (usize, usize),
     argument: Reg,
     place: Option<&MirPlace>,
+    consumed: Option<&MirPlace>,
 ) -> Option<Binding> {
     let owned = callee.owned_params.get(param).copied().unwrap_or(false);
     let deinit = callee.deinit_params.get(param).copied().unwrap_or(true);
@@ -2023,17 +2027,14 @@ fn argument_binding(
             return Some(Binding::Slot(slot));
         }
         let loaded = loaded_place(block, index, argument)
-            .or_else(|| loaded_slot_across_regions(block, index, argument))
-            .filter(|place| place.through.is_none());
+            .or_else(|| loaded_slot_across_regions(block, index, argument));
         return Some(match loaded {
-            Some(place) if place.is_whole_root() => Binding::Slot(place.root),
+            Some(place) if place.is_whole_root() && place.through.is_none() => {
+                Binding::Slot(place.root)
+            }
             Some(place)
-                if is_owned_part(&place)
-                    && matches!(
-                        block.instrs.get(index + 1),
-                        Some(MirInstr::ConsumePlace { place: consumed, marker })
-                            if *marker == argument && same_part(consumed, &place)
-                    ) =>
+                if consumed_in_place(&place)
+                    && consumed.is_some_and(|consumed| same_part(consumed, &place)) =>
             {
                 Binding::Part { place, argument }
             }
@@ -2143,11 +2144,12 @@ fn same_part(left: &MirPlace, right: &MirPlace) -> bool {
         })
 }
 
-/// Whether `place` names an owned part of its root slot directly: fields
-/// and tuple elements, at least one, and no reference on the way.
-fn is_owned_part(place: &MirPlace) -> bool {
-    place.through.is_none()
-        && !place.proj.is_empty()
+/// Whether a call can consume `place` in place, as upstream passes a
+/// `deinit` operand by address: fields and tuple elements of its root
+/// slot, or of the value the reference it is reached through holds, and
+/// not the whole slot.
+fn consumed_in_place(place: &MirPlace) -> bool {
+    (place.through.is_some() || !place.proj.is_empty())
         && place
             .proj
             .iter()
@@ -2461,8 +2463,8 @@ fn copy_bound_parameters<'b>(
 }
 
 /// Remove from `blocks` and their regions each consume of a slot
-/// `part_bound` answers for: the caller's consumption of a part-bound
-/// parameter's place after the call is the body's end of it.
+/// `part_bound` answers for: the call's consumption of a part-bound
+/// parameter's place is the body's end of it.
 fn retain_unconsumed(blocks: &mut [MirBlock], part_bound: &dyn Fn(VarId) -> bool) {
     for block in blocks {
         block.instrs.retain(

@@ -301,7 +301,7 @@ impl FnLowering<'_> {
             if place.proj.is_empty() {
                 self.consumed_receivers.insert(place.root);
             } else {
-                self.end_presence(ctx, place);
+                self.clear_presence(ctx, place);
             }
         }
         self.emit_bound_call(ctx, dest, resolved, lowered)?;

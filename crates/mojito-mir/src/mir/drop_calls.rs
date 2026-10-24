@@ -11,9 +11,9 @@
 //! it, which ends it and hands its storage to the callee as Mojo's owned
 //! argument convention does, and a call of the named destructor on it as the
 //! `deinit self` receiver, which is what an explicit `x^.finish()` lowers
-//! to; a dying part becomes a load of the part, the call on it with the part
-//! as its receiver's place, and a consume of the part, which is what an
-//! explicit `x.f^.finish()` lowers to.
+//! to; a dying part becomes a load of the part and the call on it with the
+//! part as its receiver's place, whose `deinit` receiver consumes the part
+//! in place, as upstream's call consumes the field's address.
 
 use super::{
     MirBlock, MirFunction, MirInstr, UseMode, VarId, fresh_register, instruction_regions_mut,
@@ -109,10 +109,6 @@ fn lowered(
                 place: place.clone(),
             },
             call,
-            MirInstr::ConsumePlace {
-                place: place.clone(),
-                marker: recv,
-            },
         ],
         None => vec![
             MirInstr::UseVar {

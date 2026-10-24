@@ -397,8 +397,8 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "consume.place",
-        CapabilityStatus::Partial,
-        "no droppable residual fields",
+        CapabilityStatus::Unsupported,
+        "`lower-lit` erases every lifetime marker; one that survives rejects",
     ),
     (
         "drop.place",
@@ -412,8 +412,8 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "ownership.mark_destroyed",
-        CapabilityStatus::Supported,
-        "clears the place's presence flag",
+        CapabilityStatus::Unsupported,
+        "`lower-lit` erases every lifetime marker; one that survives rejects",
     ),
     (
         "unsupported",

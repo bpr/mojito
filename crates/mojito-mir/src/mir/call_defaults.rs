@@ -951,6 +951,7 @@ fn build_collector(
             elements,
         );
         prelude.extend(built.before);
+        prelude.extend(built.ended);
         postlude.extend(built.after);
         built.list
     } else {

@@ -284,7 +284,9 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         MirInstr::KeepAlive { .. }
         | MirInstr::EstablishLoans { .. }
         | MirInstr::InvalidateInteriors { .. }
-        | MirInstr::MarkInitialized { .. } => {
+        | MirInstr::MarkInitialized { .. }
+        | MirInstr::MarkDestroyed { .. }
+        | MirInstr::ConsumePlace { .. } => {
             errors.push(format!(
                 "{head} keeps the lifetime marker `{}` in elaborated MIR",
                 instruction_mnemonic(instruction)
@@ -589,12 +591,21 @@ mod tests {
             MirInstr::MarkInitialized {
                 place: crate::mir::MirPlace::root(0, None),
             },
+            MirInstr::MarkDestroyed {
+                place: crate::mir::MirPlace::root(0, None),
+            },
+            MirInstr::ConsumePlace {
+                place: crate::mir::MirPlace::root(0, None),
+                marker: Reg(0),
+            },
         ];
         for (marker, mnemonic) in markers.into_iter().zip([
             "lifetime.keep_alive",
             "loans.establish",
             "interiors.invalidate",
             "ownership.mark_initialized",
+            "ownership.mark_destroyed",
+            "consume.place",
         ]) {
             let findings = concrete_function_findings("f", &function_with(marker, Ty::none()));
             assert_eq!(findings.len(), 1, "{findings:?}");

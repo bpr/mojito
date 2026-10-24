@@ -1231,8 +1231,9 @@ fn array_instance_parts(ty: &Ty) -> Option<(&Ty, i64)> {
 /// elements (`owned` for the initializer's `var` collector, each element
 /// then the list's) and passes it, `__list_literal__` selects the overload,
 /// and the `length` parameter argument reifies the constructed value's
-/// length. Concrete MIR holds no `KeepAlive`, so what the list's
-/// construction keeps live past the call goes unsaid.
+/// length. Concrete MIR holds no lifetime marker, so the slots an owned
+/// list's construction ends and what it keeps live past the call go
+/// unsaid.
 fn array_literal_construction(
     dest: Reg,
     (constructor, owned): (&str, bool),

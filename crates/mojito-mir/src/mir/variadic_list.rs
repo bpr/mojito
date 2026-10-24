@@ -14,9 +14,11 @@
 //! A `read` collector's element is the caller's own place, borrowed, or a
 //! value the call binds to a slot of its own; an owned (`var`) collector's
 //! every element is such a slot, whose value the list then owns: the slot
-//! is marked destroyed once the list is built, so neither the caller's
-//! normal nor its raise path destroys it again, and the callee's
-//! `VariadicList.__deinit__` destroys the element through its pointer.
+//! is marked destroyed once the list is built, which tells the lifetime
+//! check that neither the caller's normal nor its raise path destroys it
+//! again, and the callee's `VariadicList.__deinit__` destroys the element
+//! through its pointer. The marks are inputs to that check, which
+//! `lower-lit` erases, so a list built below it leaves them out.
 
 use crate::mir::{Const, MirInstr, MirPlace, Proj, Reg};
 use mojito_hir::hir::VarId;
@@ -44,12 +46,15 @@ pub trait FrameTables {
 /// A built list, and what runs around the call passing it.
 ///
 /// `before` runs ahead of the call, `list` is the register the call passes,
-/// and `after` follows the call, keeping the borrowed elements, last to
-/// first, and the array live through it (only [`MirInstr::KeepAlive`]s,
-/// which concrete MIR holds none of).
+/// `ended` marks each slot of an owned list's elements destroyed once the
+/// list is built (only [`MirInstr::MarkDestroyed`]s), and `after` follows
+/// the call, keeping the borrowed elements, last to first, and the array
+/// live through it (only [`MirInstr::KeepAlive`]s). Concrete MIR holds
+/// neither kind of marker.
 pub struct VariadicListConstruction {
     pub before: Vec<MirInstr>,
     pub list: Reg,
+    pub ended: Vec<MirInstr>,
     pub after: Vec<MirInstr>,
 }
 
@@ -172,9 +177,12 @@ pub fn build_variadic_list(
         dest: list,
         fields: vec![span],
     });
-    before.extend(ended.into_iter().map(|slot| MirInstr::MarkDestroyed {
-        place: MirPlace::root(slot, Some(element.clone())),
-    }));
+    let ended = ended
+        .into_iter()
+        .map(|slot| MirInstr::MarkDestroyed {
+            place: MirPlace::root(slot, Some(element.clone())),
+        })
+        .collect();
     // The borrowed elements die last to first, as the pin destroys a call's
     // argument temporaries.
     after.reverse();
@@ -182,6 +190,7 @@ pub fn build_variadic_list(
     VariadicListConstruction {
         before,
         list,
+        ended,
         after,
     }
 }

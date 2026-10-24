@@ -37,6 +37,12 @@ impl VmBackend {
             MirInstr::MarkInitialized { .. } => {
                 return Err(parametric_instruction("initialization mark"));
             }
+            MirInstr::MarkDestroyed { .. } => {
+                return Err(parametric_instruction("destruction mark"));
+            }
+            MirInstr::ConsumePlace { .. } => {
+                return Err(parametric_instruction("part consumption"));
+            }
             MirInstr::InvalidateInteriors { .. } => {
                 return Err(parametric_instruction("interior invalidation"));
             }
@@ -1957,26 +1963,6 @@ impl VmBackend {
                 {
                     self.record_lifecycle(format!("consume {name}"));
                 }
-            }
-            // The place's value was moved out through pointers: what its
-            // storage still holds is a stale image no destructor may see.
-            // A whole slot keeps its storage: its value lives on behind the
-            // pointer it was handed on through (an owned `VariadicList`'s
-            // element), and no drop of the slot follows.
-            MirInstr::MarkDestroyed { place } => {
-                if !place.is_whole_root() {
-                    *nav_mut(vars, regs, place)? = Value::Moved;
-                }
-            }
-            // The end of a part a named destructor consumed, called on the
-            // place or inlined there: the destructor destroyed what it held,
-            // so the place holds no value from here and nothing is destroyed.
-            // A `mut` receiver or parameter root is a reference into the
-            // caller's storage, and so is a handle the place reaches below
-            // its root (the value `p.src[].v = …` replaces lives wherever
-            // `p.src` points).
-            MirInstr::ConsumePlace { place, .. } => {
-                self.take_place(frame_id, place, regs, vars)?;
             }
             MirInstr::DropPlace { place, destructor } => {
                 let value = self.take_place(frame_id, place, regs, vars)?;

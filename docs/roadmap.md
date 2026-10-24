@@ -663,40 +663,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1311 `consume.place` and `ownership.mark_destroyed` reach both
-  backends, where upstream's `LowerLIT` erases their counterparts**
-
-  `lower-lit` erases every other lifetime marker, `ownership.mark_initialized`
-  included, but these two still carry run-time ownership state: the VM
-  tombstones a part, and Pliron clears presence flags (`end_presence`,
-  `lower/instr.rs`).
-  - Upstream: `lowerLITOps` (`LowerLIT.cpp`) erases `mark_destroyed` and
-    `mark_consumed` with `mark_initialized`, and a call's `deinit` operand
-    consumes the part (`memConsume`).
-  - Producers that must stop: `lower_drops` (`mir/drop_calls.rs`),
-    whose lowered drop of a part ends with the call, since the callee's
-    `deinit` consumes it; `refine_pack_drops` (`mir/pack_drops.rs`);
-    `sroa`'s `consume.place` → `consume.var` rewrite; and
-    `variadic_list`'s whole-slot marks, which `lower-lit` then erases.
-  - `inline_parametric::argument_binding` decides `Binding::Part` from
-    the `deinit` parameter and the argument's loaded place, not from the
-    trailing `consume.place`, as upstream substitutes the field's address.
-  - Probe: a destructor inlined at `reset(mut p: Pair): p = Pair(...)`'s
-    overwrite drop binds `deinit self` by value, a `place.load` of the
-    whole `p` through its handle into a fresh slot, since
-    `argument_binding` refuses a loaded place reached through a reference
-    (`assets/ok/mut_parameter_reassignment_drop.mojo`, found landing
-    R1306).
-  - Then `lower-lit` erases both, the VM and Pliron arms refuse them, and
-    Pliron's `end_presence` and `ended_inside` go.
-  - Since R1306 the VM's `consume.place` destroys nothing, as Pliron's
-    does, and only tombstones the part. The tombstone used to keep a
-    later `consume.var` of the root from destroying the part again
-    (`nominal_string_codepoint_from_byte`, `consume.place $v0._text` then
-    `consume.var $v0`); since R1310 that `consume.var` destroys nothing.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R933 A span origin can name a slot no instruction addresses**
 
   `mir::addressed_slots`, the guard before `retire_slots`, ignores the
@@ -1023,11 +989,13 @@ change that needs a new `MJRT_ABI_VERSION`.
     `lower_drop_var`, `lower_drop_place`, and `emit_surviving_leaf_drops`
     (`crates/mojito-pliron/src/lower/drops.rs`), and the entry `mem_zero`
     of droppable locals (`lower/instr.rs`).
-  - Cause: `consume.place` and part `ownership.mark_destroyed` still reach
-    the backend and clear them (`end_presence`, `ended_inside`).
+  - Cause: a `place.move` of a part, a `drop.place`, and a call on an
+    aliased `deinit` receiver part (`clear_presence`, `lower/methods.rs`)
+    still clear a flag at run time, and a whole `drop.var` after one tests
+    them, where drop elaboration already splits the slot's death.
   - Found while landing R832 (2026-10-23), which removed the whole-slot
     drop flags.
-  - Depends on R1311.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1313 A call's whole-slot `deinit` receiver is ended by a trailing
@@ -1037,9 +1005,11 @@ change that needs a new `MJRT_ABI_VERSION`.
   receiver slot to a `consume.var` after the call, which must then end
   nothing.
   - Upstream: `checkConsume`, and `memConsume` in `LowerLIT`.
-  - Producers: MIR lowering of a transferred receiver's call, and the
-    `consume.var` that `sroa` makes of a lowered field drop's
-    `consume.place`.
+  - Producers: MIR lowering of a transferred receiver's call.
+  - Part form: an explicit destroy of a part, `x.f^.finish()`, still
+    emits a `consume.place` after the call (`lower_expr/expr_method.rs`),
+    which the move scan and drop elaboration read where upstream reads the
+    call's `deinit` operand (`memConsume`); `lower-lit` erases it.
   - Pliron records the slot in `FnLowering::consumed_receivers` at the
     call (`lower/methods.rs`), and the VM stores `Value::Moved` into the
     place before it (`vm/invoke.rs`), so neither `consume.var` traces.
@@ -1049,7 +1019,7 @@ change that needs a new `MJRT_ABI_VERSION`.
     `assets/ok/deinit_body_field_last_use.mojo` (their `consume` trace
     events in `lifecycle_event_traces_match_the_vm`).
   - Found while landing R832 (2026-10-23).
-  - Depends on R1311, whose part case is the same move.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R987 Native code drops every function's inline level**

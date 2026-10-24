@@ -72,10 +72,10 @@ instruction	match	supported	lowered to LLVM blocks as `LowerControlFlow` lowers 
 instruction	drop.reg	unsupported	reserved for the future assembler VM; the VM rejects it too
 instruction	drop.var	partial	flag-guarded compiled destructors, including destructor-bearing structs with droppable fields; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject
 instruction	consume.var	supported	ends the slot; drop elaboration has destroyed every field
-instruction	consume.place	partial	no droppable residual fields
+instruction	consume.place	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	drop.place	supported	destroys one depth-1 struct field under its leaf flag and clears the flag
 instruction	ownership.mark_initialized	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
-instruction	ownership.mark_destroyed	supported	clears the place's presence flag
+instruction	ownership.mark_destroyed	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	unsupported	unsupported	explicit lowering marker; rejects by definition
 instruction	iter.init	partial	concrete post-mono `__iter__` chains: aliased `ref`/`mut`, byte-copied `read`, and consuming `var` receivers; raising `__iter__` steps and stepless heap-owning splits reject
 instruction	iter.has_next	partial	compiler-private runtime-pack storage only: a shadow position against the static element count; an untyped iterator slot rejects

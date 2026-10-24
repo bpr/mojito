@@ -1911,9 +1911,11 @@ read load turned into the `ref.make` (the private `borrowed_element`), kept
 live past the call by a `KeepAlive` per place, last to first; any other
 element, and every element of an owned collector, is moved into a fresh
 caller slot (`$list_element_r`), which an owned list then owns: the slot is
-`ownership.mark_destroyed` once the list is built, so neither the caller's
-normal nor its raise path destroys it, and the callee's
-`VariadicList.__deinit__` destroys the element through its pointer. A regular slot before
+`ownership.mark_destroyed` once the list is built (`VariadicListConstruction::ended`),
+so neither the caller's normal nor its raise path destroys it, and the callee's
+`VariadicList.__deinit__` destroys the element through its pointer; the marks
+are lifetime-check inputs `lower-lit` erases, so a list the elaborator builds
+(a list display's literal constructor) leaves them out. A regular slot before
 the collector that a keyword fills moves to its position, so the shared
 matcher binds the collector operand alone (`call::bind_spread`). A tuple
 display names its variadic `__init__`, which the checker records on its
@@ -4866,9 +4868,10 @@ hands its storage to the callee as Mojo's owned-argument convention does,
 and a `MethodCall` of the destructor on it as the `deinit self` receiver,
 the shape an explicit `x^.finish()` lowers to, which both backends run as
 any such call. A `drop.place` is the call too, on the place's storage, as
-upstream calls `__del__` on a field's address: a `LoadPlace` of the place,
-the `MethodCall` with the place as its receiver's place, and a
-`ConsumePlace` ending it, the shape `x.f^.finish()` lowers to. This covers
+upstream calls `__del__` on a field's address: a `LoadPlace` of the place
+and the `MethodCall` with the place as its receiver's place, whose `deinit`
+receiver consumes the place, as upstream's call consumes a `deinit`
+operand (`memConsume`), the shape `x.f^.finish()` lowers to. This covers
 a synthesized or written destructor's field ends, a `deinit self`'s
 remaining fields, a store's overwritten field, through a `mut self` too,
 and a whole value a store through a reference replaces. A destructor
@@ -4895,9 +4898,8 @@ name theirs the same way, from MIR lowering on
 `name_lifecycle_calls`, so the VM's `drop_named` and Pliron's `emit_drop`
 call them. A pack aggregate (a `Tuple`'s storage, a heterogeneous owning
 collector) has no destructor of its own: a `drop.var` or `drop.place` of
-one becomes one `drop.place` per element whose drop runs code, then a
-`consume.var` of its slot or a `consume.place` of the place
-(`mir::refine_pack_drops`, `mir/pack_drops.rs`), as upstream's
+one becomes one `drop.place` per element whose drop runs code, then, for a
+whole slot, a `consume.var` of it (`mir::refine_pack_drops`, `mir/pack_drops.rs`), as upstream's
 `Tuple.__del__` and `VariadicPack.__deinit__` unroll a `comptime for` of
 `destroy_pointee`, a tuple's first to last and a collector's last to
 first. Drop elaboration refines a concrete pack's before
@@ -5355,8 +5357,9 @@ into, reads, addresses, or passes the slot by address. `MarkDestroyed`, the imag
 of `lit.ownership.mark_destroyed`, is its counterpart: it moves its place in
 that flow without reading it, after a consuming member took each element out
 through a pointer (`Tuple.consume_elements`), so no destructor runs on the
-storage; the VM tombstones the place and the native backend clears its
-presence flag. A field wholly moved out is
+storage. `lower-lit` erases it too, as upstream's `LowerLIT` erases its
+counterpart, and both backends refuse one that survives: drop elaboration
+has already left no drop of the ended place. A field wholly moved out is
 reinitialized without a drop; a depth-one field moved on only some paths drops
 under the VM's tombstone and the native leaf flag. The `DropPlace` touches the
 same root at the same position as its `Store`, so liveness, loans, and the
@@ -5406,7 +5409,9 @@ the whole-value `__deinit__` for every struct and recursively destroys only its
 initialized residual fields.
 
 A named explicit destructor is lowered as a call followed by `ConsumeVar` for a
-whole binding or `ConsumePlace` for a projected field. Drop elaboration treats a
+whole binding or `ConsumePlace` for a projected field, the image of upstream's
+`lit.ownership.mark_consumed`, which `lower-lit` erases, so no backend sees
+one: the call's `deinit` receiver has consumed the part. Drop elaboration treats a
 pending `ConsumeVar` as the variable's teardown — the variable stays live up to
 it and counts as moved there — so no competing ordinary `DropVar` is spliced
 between the call and the consumption (which would re-run the whole-value
@@ -5448,8 +5453,8 @@ moved fields reconstructs the intact state and restores the whole destructor.
 Obligation paths are part of structured control-flow state. Branches and
 loop backedges must agree on both the remaining
 obligations and moved fields, preventing a partial state from being hidden by a
-join. MIR `ConsumePlace` preserves sibling storage, and the VM drops only
-ordinary residual fields of an incomplete linear aggregate.
+join. MIR `ConsumePlace` preserves sibling storage, and drop elaboration
+destroys only the ordinary residual fields of an incomplete linear aggregate.
 
 ### Region Drops
 
@@ -5953,14 +5958,15 @@ point where a slot declared in a loop is uninitialized again.
   `struct.create` (`MirInstr::MakeStruct`, upstream's `kgen.struct.create`)
   of them; a `var.declare`, `drop.var`, or `var.consume`, which marks
   each field's slot, but a field
-  some instruction ends whole (a field move), which the slot's drop or
-  consumption does not end again; or an instruction each of whose places
+  some instruction ends whole (a field move, or a call whose `deinit`
+  receiver consumes it), which the slot's drop or consumption does not end
+  again; or an instruction each of whose places
   on the slot projects a declared field first, which is then rerooted at
   that field's slot, as upstream replaces a `struct_gep` by its element's
   allocation whatever its users, so a borrowed field keeps only its own
   slot (a `place.store` left on a whole field slot becomes a
-  `var.store`, a `consume.place` a `consume.var`, a `drop.place` a
-  `drop.var`, and a `place.move` a `forward` read, which runs no move
+  `var.store`, a `drop.place` a `drop.var`, and a `place.move` a
+  `forward` read, which runs no move
   initializer either and vacates the slot, so a nested struct's field
   slot splits the next round). Each
   field slot is typed at the slot type's arguments, as upstream's element

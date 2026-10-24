@@ -529,28 +529,6 @@ impl FnLowering<'_> {
             MirInstr::DropPlace { place, destructor } => {
                 self.lower_drop_place(ctx, place, destructor.as_deref())
             }
-            // The marked part holds no value from here: its presence flag
-            // clears, as a move out of it would clear it. A whole slot's
-            // value lives on behind the pointer it was handed on through
-            // (an owned `VariadicList`'s element), and no drop names the
-            // slot after the mark, as the VM's is a no-op.
-            MirInstr::MarkDestroyed { place } => {
-                if !place.is_whole_root() {
-                    self.end_presence(ctx, place);
-                }
-                Ok(())
-            }
-            MirInstr::ConsumePlace { place, marker } => {
-                // Consumption skips the whole-value destructor and destroys
-                // nothing. MIR emits it after a named destructor's call on
-                // the same place, whose aggregate receiver passes by
-                // address, or after the body of one inlined there: that
-                // body's drops destroyed the fields in place, so the place
-                // holds no value from here and its presence flag clears.
-                self.end_presence(ctx, place);
-                self.erased.insert(marker.0);
-                Ok(())
-            }
             // `lower-lit` erases every lifetime-only marker; concrete
             // verification refuses one that survives.
             MirInstr::InvalidateInteriors { marker, .. } => Err(self.unsupported_reg(
@@ -562,6 +540,12 @@ impl FnLowering<'_> {
             }
             MirInstr::MarkInitialized { .. } => {
                 Err(self.unsupported("an initialization mark after lower-lit".to_string(), None))
+            }
+            MirInstr::MarkDestroyed { .. } => {
+                Err(self.unsupported("a destruction mark after lower-lit".to_string(), None))
+            }
+            MirInstr::ConsumePlace { marker, .. } => {
+                Err(self.unsupported_reg("a part consumption after lower-lit".to_string(), *marker))
             }
             MirInstr::EstablishLoans { marker, .. } => {
                 Err(self.unsupported_reg("a loan marker after lower-lit".to_string(), *marker))

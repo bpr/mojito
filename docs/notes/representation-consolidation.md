@@ -158,13 +158,15 @@ entry's probe is "one instance per `n` where the pin has one".
 - R1251 moves the drop-shape decision into a field-sensitive destructor
   walk, and R1252 then folds into it.
 - R931 and R932 let `lower-lit` erase `loans.establish` and
-  `ownership.mark_initialized`. The last two markers, `consume.place`
-  and `ownership.mark_destroyed`, are R1311. `consume.var` stopped
-  destroying residual fields at run time with R1310 (10-23), once drop
-  elaboration laid a `Tuple` out by its `storage` field. Pliron's return sweep
-  went with R832 (10-23); its per-leaf presence flags go after R1311
-  (R1312), and so does the trailing `consume.var` of a call's `deinit`
-  receiver (R1313).
+  `ownership.mark_initialized`, and R1311 (10-23) the last two markers,
+  `consume.place` and `ownership.mark_destroyed`: a lowered field drop's
+  call consumes its part, as upstream's `deinit` operand does.
+  `consume.var` stopped destroying residual fields at run time with R1310
+  (10-23), once drop elaboration laid a `Tuple` out by its `storage`
+  field. Pliron's return sweep went with R832 (10-23); its per-leaf
+  presence flags are R1312, and the trailing `consume.var` of a call's
+  `deinit` receiver, and `consume.place` of an explicit destroy's part, are
+  R1313.
 - R1306 closed 10-23: every drop is decided where drop elaboration places
   it, and `mir::lower_drops` writes its call; the fold that tested what a
   slot held is gone.
