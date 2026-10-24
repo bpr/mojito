@@ -3869,6 +3869,15 @@ impl<'a> Flatten<'a> {
             place.ty = Some(capture.ty.clone());
             self.var_types.insert(place.root, capture.ty.clone());
         }
+        // A run-time alias (a loop's reference target) holds a handle: the
+        // capture is the referent the handle names.
+        if place.through.is_none()
+            && self.runtime_aliases.contains(&place.root)
+            && let Some(TyKind::Ref(reference)) = place.root_ty.as_ref().map(Ty::kind)
+        {
+            place.ty = Some(reference.referent.clone());
+            place.through = Some(place.root);
+        }
         place
     }
 

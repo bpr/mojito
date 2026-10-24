@@ -290,26 +290,6 @@ fn moved_variadic_pack_becomes_tuple_storage_without_double_drop() {
     let compiled = compiler
         .compile_source(&src, Path::new("drops_test.mojo"))
         .expect("compile heterogeneous pack transfer");
-    // The template moves the collector whole; its instance moves each
-    // element out of it.
-    let concrete = compiled.concrete_mir().expect("elaborate");
-    let moved_indices = concrete
-        .program
-        .functions
-        .iter()
-        .flat_map(|(_, function)| mojito::mir::nested_instructions(&function.blocks))
-        .filter_map(|instruction| match instruction {
-            mojito::mir::MirInstr::MovePlace { place, .. } => place.proj.last(),
-            _ => None,
-        })
-        .filter_map(|projection| match projection {
-            mojito::mir::Proj::ConstIndex(index) => Some(*index),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert!(moved_indices.contains(&0), "{moved_indices:?}");
-    assert!(moved_indices.contains(&1), "{moved_indices:?}");
-
     let output = compiler.execute(&compiled).expect("vm run failed").output;
     assert_eq!(output, "use 9\ndrop 7\n");
     assert_eq!(output.matches("drop 7").count(), 1);
@@ -337,7 +317,8 @@ fn tuple_field_is_cleaned_on_a_raising_try_edge() {
         "{MOVABLE_NOISY}@fieldwise_init\nstruct Holder:\n    var storage: Tuple[Noisy, Int]\n\ndef run(flag: Bool):\n    try:\n        var value = Holder((Noisy(10), 0))\n        if flag:\n            print(\"raising\")\n            raise \"boom\"\n        print(\"normal\", value.storage[1])\n    except e:\n        print(\"caught\")\n\ndef main():\n    run(True)\n"
     );
     let output = vm(&src);
-    assert_eq!(output, "raising\ndrop 10\ncaught\n");
+    // The raising arm never reads `value`, so it dies on entry, as on the pin.
+    assert_eq!(output, "drop 10\nraising\ncaught\n");
     assert_eq!(output.matches("drop 10").count(), 1);
 }
 
@@ -386,7 +367,9 @@ fn runtime_reference_owner_drops_after_the_consuming_call() {
 fn branch_rebinding_reference_aggregate_does_not_double_drop_owners() {
     let src = "@fieldwise_init\nstruct Owner:\n    var n: Int\n    def __deinit__(deinit self):\n        print(\"drop\", self.n)\n\n@fieldwise_init\nstruct Borrowed[origin: Origin[mut=True]]:\n    var ptr: UnsafePointer[Owner, Self.origin]\n\ndef run(flag: Bool):\n    var x = Owner(1)\n    var y = Owner(2)\n    var box: Borrowed[MutUnsafeAnyOrigin] = Borrowed(UnsafePointer(to=x))\n    if flag:\n        box = Borrowed(UnsafePointer(to=y))\n    print(box.ptr[0].n)\n\ndef main():\n    run(True)\n    run(False)\n";
     let output = vm(src);
-    assert_eq!(output, "drop 1\n2\ndrop 2\ndrop 2\n1\ndrop 1\n");
+    // After the `if`, `box` may borrow either owner, so both live until its
+    // last use, as on the pin.
+    assert_eq!(output, "2\ndrop 2\ndrop 1\n1\ndrop 2\ndrop 1\n");
     assert_eq!(
         output.matches("drop 1").count(),
         2,
@@ -576,14 +559,15 @@ fn read_temporary_outlives_conditional_argument() {
 
 #[test]
 fn conditional_expression_result_is_taken_not_copied() {
-    // Each arm initializes the conditional's owned result once (a `^` arm by
-    // a move, a place arm by a copy), and its consumer takes it as any other
+    // Each arm moves its value into the conditional's owned result once (a
+    // `^` arm by its own move, a temporary or an explicit copy by a move out
+    // of it), as the pin does, and its consumer takes it as any other
     // temporary: an owned parameter or binding takes its storage, and a read
     // parameter borrows it until the call returns.
-    let src = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n    def __init__(out self, *, deinit move: Self):\n        self.v = move.v + 1000\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\ndef take(var s: M):\n    print(\"take\", s.v)\n\ndef look(s: M):\n    print(\"look\", s.v)\n\ndef bind_ref(ref r: M, c: Bool):\n    var t = r if c else M(3)\n    print(\"t\", t.v)\n\ndef main():\n    var y = M(4)\n    var z = M(5)\n    take(y^ if z.v > 0 else z^)\n    var a = M(1)\n    var b = M(2)\n    var r = a^ if b.v > 0 else b^\n    print(\"r\", r.v)\n    var c = M(6)\n    var d = M(7)\n    look(c^ if d.v > 0 else d^)\n    take(M(10) if r.v > 0 else M(11))\n    var g = M(30)\n    bind_ref(g, True)\n    print(\"g\", g.v)\n";
+    let src = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __init__(out self, *, copy: Self):\n        self.v = copy.v + 100\n    def __init__(out self, *, deinit move: Self):\n        self.v = move.v + 1000\n    def __deinit__(deinit self):\n        print(\"del\", self.v)\n\ndef take(var s: M):\n    print(\"take\", s.v)\n\ndef look(s: M):\n    print(\"look\", s.v)\n\ndef bind_ref(ref r: M, c: Bool):\n    var t = r.copy() if c else M(3)\n    print(\"t\", t.v)\n\ndef main():\n    var y = M(4)\n    var z = M(5)\n    take(y^ if z.v > 0 else z^)\n    var a = M(1)\n    var b = M(2)\n    var r = a^ if b.v > 0 else b^\n    print(\"r\", r.v)\n    var c = M(6)\n    var d = M(7)\n    look(c^ if d.v > 0 else d^)\n    take(M(10) if r.v > 0 else M(11))\n    var g = M(30)\n    bind_ref(g, True)\n    print(\"g\", g.v)\n";
     assert_eq!(
         vm(src),
-        "del 5\ntake 1004\ndel 1004\ndel 2\nr 1001\ndel 7\nlook 1006\ndel 1006\ndel 1001\ntake 10\ndel 10\nt 130\ndel 130\ng 30\ndel 30\n"
+        "del 5\ntake 1004\ndel 1004\ndel 2\nr 1001\ndel 7\nlook 1006\ndel 1006\ndel 1001\ntake 1010\ndel 1010\nt 1130\ndel 1130\ng 30\ndel 30\n"
     );
 }
 

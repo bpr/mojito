@@ -60,6 +60,13 @@ pub(super) fn classify_ct_param(
     {
         return Some(value(ty));
     }
+    if let Some(element) = tp
+        .value_type
+        .as_ref()
+        .and_then(|source| param_list_element(tp, source, siblings, owner))
+    {
+        return Some(value(TyKind::ParamList(element).into()));
+    }
     if let [only] = tp.bounds.as_slice()
         && let Some(ty) =
             ct_value_param_type(only).or_else(|| sibling_type_binder(tp, only, siblings, owner))
@@ -204,6 +211,45 @@ fn sibling_trait_binder(
         },
         bound.clone(),
     ))
+}
+
+/// The element type of upstream's raw parameter list annotation,
+/// `_MLIR.KGENParamListType[T]`, as the checker resolves it: a trait-valued
+/// sibling binder (`TypeList`'s `Trait`) as the dependent type it names, or a
+/// type binder or scalar type.
+fn param_list_element(
+    tp: &TypeParam,
+    source: &Type,
+    siblings: &[TypeParam],
+    owner: &str,
+) -> Option<Ty> {
+    let Type::IndexedProjection { base, index } = source else {
+        return None;
+    };
+    if !matches!(&**base, Type::Assoc { name, .. } if name == "KGENParamListType") {
+        return None;
+    }
+    let ExprKind::Identifier(element) = &index.kind else {
+        return None;
+    };
+    let position = siblings
+        .iter()
+        .position(|sibling| sibling.name == tp.name)?;
+    let trait_binder = siblings[..position]
+        .iter()
+        .find(|sibling| sibling.name == *element)
+        .and_then(|sibling| classify_ct_param(sibling, siblings, owner));
+    if let Some(ParamDecl::Value { id, ty, .. }) = trait_binder
+        && matches!(ty.kind(), TyKind::AnyTrait(_))
+    {
+        let reference = mojito_types::param_expr::ParamContext::detached().decl_ref(
+            id,
+            element,
+            mojito_types::param_expr::MetaTy::Value(ty),
+        );
+        return Some(mojito_types::types::DependentType::resolve(reference));
+    }
+    scalar_type_name(element).or_else(|| sibling_type_binder(tp, element, siblings, owner))
 }
 
 /// The `TyKind::Param` of the type binder `name` when it is a non-variadic

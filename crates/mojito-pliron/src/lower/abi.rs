@@ -85,8 +85,9 @@ impl FnLowering<'_> {
             let place = place
                 .cloned()
                 .or_else(|| self.loaded_places.get(&reg.0).cloned());
+            // A direct `ref` field's place passes its referent's address.
             if let Some(place) = place {
-                return Ok(self.place_address(ctx, &place, dest)?.0);
+                return self.aliased_receiver_address(ctx, &place, dest);
             }
         }
         self.arg_value(ctx, reg, expected, owned, dest)

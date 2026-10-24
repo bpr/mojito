@@ -1186,6 +1186,11 @@ impl<'a> Flatten<'a> {
                         return loans;
                     }
                 }
+                // A result whose type holds no reference, an `Int` from
+                // `len(xs[1:3])`, keeps none of its arguments' loans.
+                if !node.ty().is_none_or(|ty| carries_references(&ty)) {
+                    return Vec::new();
+                }
                 arguments()
                     .flat_map(|argument| self.aggregate_borrows(argument))
                     .collect()

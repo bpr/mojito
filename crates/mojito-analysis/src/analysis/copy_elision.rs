@@ -1,5 +1,6 @@
 //! Copy elision at a dying source: after drop elaboration, a copy
-//! construction `Name(copy=v)`, a call of the struct's `__copyinit__`, whose
+//! construction `Name(copy=v)`, a call of the struct's `__copyinit__` or
+//! the `value.copy` a register-passable struct's runs as, whose
 //! whole owned source `v` dies right at it becomes `v`'s move, as Mojo's
 //! lifetime checker turns a copy initialization followed by the source's
 //! destruction into a move.
@@ -153,36 +154,26 @@ struct DyingCopy {
     var: VarId,
     drop_at: usize,
     binding_at: Option<usize>,
+    /// The binding of the copy into a slot that is not in place, when it
+    /// sits between the construction and the source's death.
+    held_at: Option<usize>,
 }
 
 /// The source slot and its death of the copy construction at `at`, when the
 /// construction copies a whole slot loaded just before it and that slot's
 /// `DropVar` follows it (or its in-place binding) in the run of drops.
 fn dying_copy(instrs: &[MirInstr], at: usize, uses: &HashMap<u32, usize>) -> Option<DyingCopy> {
-    let MirInstr::Call {
-        dest,
-        func,
-        raises: None,
-        args,
-        kwargs,
-        ..
-    } = &instrs[at]
-    else {
-        return None;
-    };
-    let [(keyword, operand)] = kwargs.as_slice() else {
-        return None;
-    };
-    let copy_constructor = matches!(
-        mojito_symbol::symbol::lifecycle_constructor(&func.0),
-        Some((_, "__copyinit__"))
-    );
-    if keyword != "copy" || !args.is_empty() || !copy_constructor {
-        return None;
-    }
+    let (dest, operand) = copy_construction(&instrs[at])?;
+    // A load through a handle reads a referent the slot does not own.
     let MirInstr::LoadPlace {
         dest: loaded,
-        place: MirPlace { root, proj, .. },
+        place:
+            MirPlace {
+                root,
+                proj,
+                through: None,
+                ..
+            },
     } = &instrs[at - 1]
     else {
         return None;
@@ -191,27 +182,62 @@ fn dying_copy(instrs: &[MirInstr], at: usize, uses: &HashMap<u32, usize>) -> Opt
         return None;
     }
     let var = *root;
-    let binding_at = match instrs.get(at + 1) {
-        Some(MirInstr::DefVar {
-            src,
-            in_place: true,
-            ..
-        }) if src == dest => Some(at + 1),
-        _ => None,
+    let (binding_at, held_at) = match instrs.get(at + 1) {
+        Some(MirInstr::DefVar { src, in_place, .. }) if src == dest => {
+            if *in_place {
+                (Some(at + 1), None)
+            } else {
+                (None, Some(at + 1))
+            }
+        }
+        _ => (None, None),
     };
-    let drop_at = instrs[binding_at.unwrap_or(at) + 1..]
+    let after = binding_at.or(held_at).unwrap_or(at);
+    let drop_at = instrs[after + 1..]
         .iter()
         .take_while(|instruction| is_drop(instruction))
         .position(
             |instruction| matches!(instruction, MirInstr::DropVar { var: dying, .. } if *dying == var),
         )?
-        + binding_at.unwrap_or(at)
+        + after
         + 1;
     Some(DyingCopy {
         var,
         drop_at,
         binding_at,
+        held_at,
     })
+}
+
+/// The result and the copied operand of `instruction` when it is a copy
+/// construction: a call of a struct's `__copyinit__` (`Name(copy=v)`), or
+/// the `value.copy` a register-passable struct's runs as.
+fn copy_construction(instruction: &MirInstr) -> Option<(&Reg, &Reg)> {
+    match instruction {
+        MirInstr::Call {
+            dest,
+            func,
+            raises: None,
+            args,
+            kwargs,
+            ..
+        } => {
+            let [(keyword, operand)] = kwargs.as_slice() else {
+                return None;
+            };
+            let copy_constructor = matches!(
+                mojito_symbol::symbol::lifecycle_constructor(&func.0),
+                Some((_, "__copyinit__"))
+            );
+            (keyword == "copy" && args.is_empty() && copy_constructor).then_some((dest, operand))
+        }
+        MirInstr::CopyValue {
+            dest,
+            value,
+            constructor: None,
+        } => Some((dest, value)),
+        _ => None,
+    }
 }
 
 /// Where the call takes the forwarding slot the dying copy is bound to: the
@@ -220,7 +246,7 @@ fn dying_copy(instrs: &[MirInstr], at: usize, uses: &HashMap<u32, usize>) -> Opt
 /// source's death up to the call that consumes the slot can raise, names
 /// the source, or names the slot.
 fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) -> Option<usize> {
-    let MirInstr::DefVar { var: slot, .. } = instrs[source.binding_at?] else {
+    let MirInstr::DefVar { var: slot, .. } = instrs[source.binding_at.or(source.held_at)?] else {
         return None;
     };
     if !var_names
@@ -267,7 +293,7 @@ fn forward(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, forward_at:
         *var = source.var;
     }
     instrs.remove(source.drop_at);
-    if let Some(binding) = source.binding_at {
+    if let Some(binding) = source.binding_at.or(source.held_at) {
         instrs.remove(binding);
     }
     instrs.remove(at);
@@ -297,13 +323,14 @@ fn lending_use(
     source: DyingCopy,
     elision: &Elision,
 ) -> Option<Lending> {
-    let MirInstr::Call { dest, .. } = &instrs[at] else {
-        return None;
-    };
+    let (dest, _) = copy_construction(&instrs[at])?;
     if source.binding_at.is_some() {
         return None;
     }
-    let binding_at = (source.drop_at + 1..instrs.len()).find(|&at| !is_drop(&instrs[at]))?;
+    let binding_at = match source.held_at {
+        Some(held_at) => held_at,
+        None => (source.drop_at + 1..instrs.len()).find(|&at| !is_drop(&instrs[at]))?,
+    };
     let MirInstr::DefVar {
         var: slot,
         src,
@@ -348,9 +375,13 @@ fn lending_use(
         )
         .filter(|&death| death > consumer_at)?;
     let silent = instrs[binding_at + 1..consumer_at].iter().all(cannot_raise);
-    let untouched = !instrs[binding_at + 1..=last_death]
-        .iter()
-        .any(|instruction| names(instruction, source.var));
+    let untouched =
+        !instrs[binding_at + 1..=last_death]
+            .iter()
+            .enumerate()
+            .any(|(offset, instruction)| {
+                binding_at + 1 + offset != source.drop_at && names(instruction, source.var)
+            });
     (silent && untouched).then_some(Lending {
         binding_at,
         load_at,
@@ -367,10 +398,11 @@ fn lend(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, lending: Lendi
     if let MirInstr::LoadPlace { place, .. } = &mut instrs[lending.load_at] {
         place.root = source.var;
     }
-    instrs.remove(lending.binding_at);
-    instrs.remove(source.drop_at);
-    instrs.remove(at);
-    instrs.remove(at - 1);
+    let mut removed = [lending.binding_at, source.drop_at, at, at - 1];
+    removed.sort_unstable_by(|left, right| right.cmp(left));
+    for index in removed {
+        instrs.remove(index);
+    }
     Loan {
         slot: lending.slot,
         source: source.var,
@@ -388,7 +420,7 @@ fn elide(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy) {
     {
         *in_place = false;
     }
-    let MirInstr::Call { dest, .. } = instrs[at] else {
+    let Some((&dest, _)) = copy_construction(&instrs[at]) else {
         return;
     };
     instrs[at] = MirInstr::UseVar {

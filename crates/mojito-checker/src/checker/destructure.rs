@@ -513,10 +513,11 @@ impl Checker {
                     self.record_declared_leaf(item, name);
                 }
                 // A `ref` leaf, or a loop target's bare name, which binds an
-                // immutable reference to its piece.
+                // immutable reference to its piece, as on the pin, whatever
+                // the source's mutability.
                 DestructureTargetKind::Declare {
                     name,
-                    mode: mode @ (BindingMode::Ref | BindingMode::Immutable),
+                    mode: BindingMode::Ref | BindingMode::Immutable,
                 } => {
                     let Some(mut reference) = element.reference.clone() else {
                         return Err(TypeError::Unsupported(format!(
@@ -524,12 +525,10 @@ impl Checker {
                              tuple storage"
                         )));
                     };
-                    if *mode == BindingMode::Immutable {
-                        reference.mutability = Mutability::Immutable;
-                    }
-                    let mutable = reference.mutability == Mutability::Mutable;
+                    reference.mutability = Mutability::Immutable;
+                    element.reference = Some(reference.clone());
                     let binding_ty = Ty::new(TyKind::Ref(reference));
-                    self.declare_with_mutability(name, binding_ty, mutable)?;
+                    self.declare_with_mutability(name, binding_ty, false)?;
                     self.record_declared_leaf(item, name);
                 }
                 DestructureTargetKind::Place(place) => {

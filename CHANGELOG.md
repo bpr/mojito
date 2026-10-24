@@ -494,6 +494,29 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The 2026-10-24 overnight gate's failures. A raised error of a struct with
+  no fields prints again instead of `<uninit>`: the VM reads a `uninitmem`
+  of such a struct as the struct. A read of a direct `ref` field where a
+  value is wanted, a copy or a read argument, reads its referent on both
+  backends, so the bundled `_ListIter` passes `len(self.src)` with the
+  pipeline off. A `Tuple`'s element origins erase in MIR type agreement as
+  a struct's arguments do. A generic lambda's erased storage drops nothing.
+  A call whose result holds no reference keeps none of its arguments'
+  loans (`len(xs[1:3])`), and a read parameter borrows an accessor's
+  reference result over a temporary key (`len(d[String("k")])`). `cse`
+  keys a parameter constant by its identity, so nested `comptime for`
+  binders spelled alike stay apart. A conditional expression's temporary
+  arm is moved into its result, as on the pin (R1107). A loan generation's
+  owner that already died is not destroyed again where the generation
+  retires. `raise "message"` raises the `Error` it converts to. A nested
+  `def` capturing a loop's reference target passes the referent. A `ref`
+  destructuring leaf is an immutable reference, as on the pin. Copy
+  elision takes a `value.copy` of a dying source as it takes a copy
+  constructor. `remove-unused-params` erases a slot only stored to, so an
+  unused argument's construction no longer keys the caller's instances.
+  The bundled `TypeList` and `ParameterList` member aliases elaborate and
+  check with the library linked from source.
+
 - The VM's `consume.var` destroys the elements of tuple storage, as the
   Pliron backend's already did. Since R931 erased `loans.establish`, `sroa`
   splits a consumed `Tuple` into its storage slot, and the VM leaked its

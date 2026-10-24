@@ -197,6 +197,26 @@ impl Elab<'_> {
                     };
                     return self.eval_reflected_field_handle(&ty, field, index, scope);
                 }
+                // A type member applied through its struct's generator
+                // (`ParameterList.empty_of[Int]`), bound by the check's rule.
+                if let ExprKind::Member {
+                    object: base,
+                    field,
+                } = &object.kind
+                    && let Some(name) = self.generator_base(base, scope)
+                    && self.conformance.declares_package_type_member(name, field)
+                {
+                    let arguments = match &index.kind {
+                        ExprKind::TupleLit(elements) => elements
+                            .iter()
+                            .map(|element| (None, ParamArg::Value(element.clone())))
+                            .collect::<Vec<_>>(),
+                        _ => vec![(None, ParamArg::Value((**index).clone()))],
+                    };
+                    return self
+                        .generator_type_member(name, field, &arguments, scope)
+                        .map(CtValue::Type);
+                }
                 // A parameterized member of a bare struct's generator
                 // (`S.Of[Bool]`).
                 if let ExprKind::Member {
@@ -204,8 +224,7 @@ impl Elab<'_> {
                     field,
                 } = &object.kind
                     && let Some(name) = self.generator_base(base, scope)
-                    && (self.declares_parameterized_member(&Self::generator(name), field)
-                        || self.conformance.declares_package_type_member(name, field))
+                    && self.declares_parameterized_member(&Self::generator(name), field)
                 {
                     let args = match &index.kind {
                         ExprKind::TupleLit(elements) => self.eval_all(elements, scope)?,

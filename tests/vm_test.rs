@@ -167,12 +167,16 @@ fn self_hosted_list_moves_and_destroys_raw_storage_exactly() {
 #[test]
 fn discarded_set_elements_and_replaced_dictionary_values_are_destroyed() {
     let output = vm(
-        "struct Token(Hashable, Equatable, Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"drop\", self.id)\n    def __hash__(self, mut hasher: Some[Hasher]):\n        hasher.update(self.id)\n    def __eq__(self, other: Self) -> Bool:\n        return self.id == other.id\n\ndef main():\n    var dictionary = {0: Token(1), 0: Token(2)}\n    print(\"built dict\", len(dictionary))\n    var values = {Token(3), Token(3)}\n    print(\"built set\", len(values))\n",
+        "from std.hash import Hasher\n\nstruct Token(Hashable, Equatable, Copyable, Movable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __deinit__(deinit self):\n        print(\"drop\", self.id)\n    def __hash__(self, mut hasher: Some[Hasher]):\n        self.id.__hash__(hasher)\n    def __eq__(self, other: Self) -> Bool:\n        return self.id == other.id\n\ndef main():\n    var dictionary = {0: Token(1), 0: Token(2)}\n    print(\"built dict\", len(dictionary))\n    var values = {Token(3), Token(3)}\n    print(\"built set\", len(values))\n",
     );
     assert!(output.contains("built dict 1\n"), "{output}");
     assert!(output.contains("built set 1\n"), "{output}");
-    assert_eq!(output.lines().filter(|line| *line == "drop 1").count(), 1);
-    assert_eq!(output.lines().filter(|line| *line == "drop 2").count(), 1);
+    // The dictionary display's pairs are copied in and the replaced value
+    // destroyed, as on the pin.
+    assert_eq!(output.lines().filter(|line| *line == "drop 1").count(), 3);
+    assert_eq!(output.lines().filter(|line| *line == "drop 2").count(), 3);
+    // The set display moves its elements in; the pin's `__set_literal__`
+    // constructor copies them, and destroys `3` twice more (R695).
     assert_eq!(output.lines().filter(|line| *line == "drop 3").count(), 2);
 }
 
@@ -489,18 +493,13 @@ fn try_body_drop_timing_is_preserved() {
 }
 
 #[test]
-fn vm_reports_unsupported_features_cleanly() {
-    // A remaining coverage gap must surface as a clean error, not a wrong answer or
-    // a panic. `break`/`continue` crossing a `try` now works when the target loop is
-    // function-level; the still-refused case is a loop declared *inside* a `try`,
-    // broken by a nested `try` (a region-local target the mini-CFG can't name) — a
-    // statically valid program the VM must reject cleanly, not diverge.
+fn break_from_a_loop_inside_a_try_runs_each_finally() {
+    // A `break` out of a nested `try` targeting a loop declared inside an
+    // enclosing `try` runs the nested `finally`, then the enclosing one, as
+    // on the pin.
     let program = "def main():\n    try:\n        for i in range(3):\n            try:\n                break\n            finally:\n                print(\"fin\", i)\n    finally:\n        print(\"outer\")\n";
     assert!(checks_ok(program), "the program is statically valid");
-    assert!(
-        run(program).is_err(),
-        "a break targeting a loop declared inside an enclosing try is not supported — must error"
-    );
+    assert_eq!(run(program).expect("run"), "fin 0\nouter\n");
 }
 
 #[test]
@@ -761,7 +760,7 @@ fn shadowed_runtime_loop_capture_keeps_the_loop_owner() {
 
 #[test]
 fn unpack_and_exception_targets_seed_typed_capture_slots() {
-    let src = "def main():\n    if True:\n        var left, label = (40, \"two\")\n        def show() {left, label}:\n            print(left, label)\n        show()\n    if True:\n        var left, label = (42, True)\n        def show() {left, label}:\n            print(left, label)\n        show()\n    var error = 40\n    try:\n        raise \"caught\"\n    except error:\n        def show_error() {error}:\n            print(error)\n        show_error()\n    print(error)\n";
+    let src = "def main():\n    if True:\n        var left, label = (40, \"two\")\n        def show() {left, label}:\n            print(left, label)\n        show()\n    if True:\n        var left, label = (42, True)\n        def show_flag() {left, label}:\n            print(left, label)\n        show_flag()\n    var error = 40\n    try:\n        raise \"caught\"\n    except error:\n        def show_error() {error}:\n            print(error)\n        show_error()\n    print(error)\n";
     assert_eq!(
         run_compiled(src).expect("compile nominal Tuple unpacking"),
         "40 two\n42 True\ncaught\n40\n"
@@ -1318,10 +1317,10 @@ fn self_hosted_vec_over_unsafe_pointer() {
 
 #[test]
 fn copyinit_gives_value_semantics() {
-    // A pointer-owning struct with `__copyinit__` deep-copies through the explicit
+    // A pointer-owning struct with a copy constructor deep-copies through the explicit
     // `Buf(copy: a)` constructor, so writes through one don't affect the other.
     // `__moveinit__` relocates on `^`.
-    let src = "from std.memory.alloc import unsafe_alloc\n\nstruct Buf:\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = unsafe_alloc[Int](n)\n        self.n = n\n    def __copyinit__(out self, e: Buf):\n        self.n = e.n\n        self.data = unsafe_alloc[Int](e.n)\n        var i: Int = 0\n        while i < e.n:\n            self.data[i] = e.data[i]\n            i = i + 1\n    def __moveinit__(out self, deinit e: Buf):\n        self.n = e.n\n        self.data = e.data\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = Buf(copy: a)\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = b^\n    print(c.get(0))\n";
+    let src = "from std.memory.alloc import unsafe_alloc\n\nstruct Buf:\n    var data: UnsafePointer[Int]\n    var n: Int\n    def __init__(out self, n: Int):\n        self.data = unsafe_alloc[Int](n)\n        self.n = n\n    def __init__(out self, *, copy: Self):\n        self.n = copy.n\n        self.data = unsafe_alloc[Int](copy.n)\n        var i: Int = 0\n        while i < copy.n:\n            self.data[i] = copy.data[i]\n            i = i + 1\n    def __moveinit__(out self, deinit e: Buf):\n        self.n = e.n\n        self.data = e.data\n    def set(mut self, i: Int, v: Int):\n        self.data[i] = v\n    def get(self, i: Int) -> Int:\n        return self.data[i]\n\ndef main():\n    var a: Buf = Buf(2)\n    a.set(0, 5)\n    a.set(1, 6)\n    var b: Buf = Buf(copy: a)\n    b.set(0, 9)\n    print(a.get(0), b.get(0))\n    var c: Buf = b^\n    print(c.get(0))\n";
     assert_eq!(parity(src), "5 9\n9\n");
 }
 
@@ -1993,14 +1992,14 @@ fn span_implicit_conversion_binding_stales_on_source_mutation() {
 
 #[test]
 fn allocation_tracked_pointer_stales_on_dealloc() {
-    // The tracked `Allocation.unsafe_ptr()` pointer roots an interior
-    // generation at the owning Allocation: moving the Allocation into
-    // `dealloc` stales it, so use-after-free rejects statically instead of
-    // trapping in the VM. (Linked stdlib only — no raw-seam twin.)
+    // The tracked `Allocation.unsafe_ptr()` pointer keeps the owning
+    // Allocation alive: moving it into `dealloc` before the pointer's last
+    // use rejects statically, as on the pin, instead of trapping in the VM.
+    // (Linked stdlib only — no raw-seam twin.)
     let src = "from std.memory import Layout, dealloc\n\ndef main():\n    var a = alloc(Layout[Int](count=2))\n    var p = a.unsafe_ptr()\n    p.unsafe_write(5)\n    dealloc(a^)\n    print(p[])\n";
     let err = run_compiled(src).expect_err("use after dealloc rejects");
     assert!(
-        err.contains("invalidated interior reference"),
+        err.contains("use of uninitialized value 'a'"),
         "unexpected error: {err}"
     );
 }

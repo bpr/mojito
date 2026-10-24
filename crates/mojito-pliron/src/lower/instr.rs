@@ -3,6 +3,7 @@
 use super::variants::VariantStoreMembers;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     pub(super) fn run(&mut self, ctx: &mut Context, func_op: FuncOp) -> Result<(), PlironError> {
@@ -300,7 +301,21 @@ impl FnLowering<'_> {
                     self.reg_values.insert(dest.0, address);
                     return Ok(());
                 }
-                let (address, ty) = self.place_address(ctx, place, *dest)?;
+                let (mut address, mut ty) = self.place_address(ctx, place, *dest)?;
+                // A load of a direct `ref` field into a register typed as
+                // its referent reads through the handle, as the VM's does.
+                if let TyKind::Ref(reference) = ty.kind()
+                    && self
+                        .func
+                        .reg_types
+                        .get(&dest.0)
+                        .is_some_and(|loaded| !matches!(loaded.kind(), TyKind::Ref(_)))
+                {
+                    let load = LoadOp::new(ctx, address, ScalarTy::Ptr.handle(ctx));
+                    self.append(ctx, load.get_operation(), Some(*dest));
+                    address = load.get_result(ctx);
+                    ty = reference.referent.clone();
+                }
                 self.load_from(ctx, address, &ty, *dest)
             }
             MirInstr::MovePlace { dest, place } => {

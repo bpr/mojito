@@ -275,7 +275,7 @@ fn verifier_checks_make_ref_capability_types() {
             0,
             TyKind::Pointer {
                 element: Ty::int(),
-                origin: mojito::PointerOrigin::Untracked { mutable: true },
+                origin: mojito::PointerOrigin::Static,
             }
             .into(),
         )],

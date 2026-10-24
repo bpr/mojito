@@ -143,13 +143,22 @@ impl<'a> Flatten<'a> {
             // `__copyinit__` instead of merely duplicating an owning
             // UnsafePointer.
             //
-            // Reference-valued fields retain their existing handle/read
-            // path.  Their ordinary referent copies are selected by the
-            // checked `ReferenceResult` adjustment, not by this nominal
-            // field rule.
-            if !matches!(place_ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                && copies_place_value(node)
-            {
+            // A direct `ref` field's load reads through to its referent,
+            // whose handle a method receiver or a place operation keeps. A
+            // value use, a copy or a read argument, is the referent, as a
+            // `ref` binding's is.
+            if let Some(TyKind::Ref(reference)) = place_ty.as_ref().map(Ty::kind) {
+                if (copies_place_value(node) || reads_argument(node))
+                    && !matches!(node.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+                {
+                    self.f
+                        .reg_types
+                        .insert(loaded.0, reference.referent.clone());
+                } else {
+                    return loaded;
+                }
+            }
+            if copies_place_value(node) {
                 // The copy has the loaded register's exact type (a
                 // public tuple field can keep a literal element where
                 // the checked expression type defaulted it).
@@ -653,6 +662,13 @@ fn copies_place_value(node: &CheckedExpr) -> bool {
     node.adjustments
         .iter()
         .any(|adjustment| matches!(adjustment, SemanticAdjustment::CopyPlaceValue))
+}
+
+/// Whether the checker bound `node` to a read parameter, read where it lies.
+fn reads_argument(node: &CheckedExpr) -> bool {
+    node.adjustments
+        .iter()
+        .any(|adjustment| matches!(adjustment, SemanticAdjustment::BorrowReadArgument))
 }
 
 /// The alternative index and alternatives of the `Variant` projection

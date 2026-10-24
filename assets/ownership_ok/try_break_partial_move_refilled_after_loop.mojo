@@ -1,3 +1,4 @@
+# requires: stdlib
 # The `break` out of the `try` carries `p.a` moved to the loop's exit, where
 # it is written back before `p` is used whole.
 struct P(Movable):

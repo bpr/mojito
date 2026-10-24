@@ -96,6 +96,7 @@ mod tests {
     use super::*;
 
     const DISPATCH: &str = include_str!("backend/vm/dispatch.rs");
+    const EXEC: &str = include_str!("backend/vm/exec.rs");
     const INVOKE: &str = include_str!("backend/vm/invoke.rs");
     const RUNTIME: &str = include_str!("runtime.rs");
 
@@ -114,6 +115,7 @@ mod tests {
     fn every_intrinsic_method_has_an_implementation() {
         for name in INTRINSIC_METHODS {
             let implemented = quoted(INVOKE, name)
+                || quoted(EXEC, name)
                 || quoted(RUNTIME, name)
                 || (*name == mojito_symbol::symbol::WRITE_FORMATTED
                     && INVOKE.contains("mojito_symbol::symbol::WRITE_FORMATTED"))

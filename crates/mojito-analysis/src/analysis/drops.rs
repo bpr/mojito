@@ -819,10 +819,14 @@ impl BlockReplay<'_> {
                 .chain(&effects.marked)
                 .flat_map(Clone::clone)
                 .chain(extra_before.iter())
+                // A retired generation's owner dies here only while it is
+                // live before: one dead on both sides has died on this path
+                // already, at its own last use or its borrower's.
                 .chain(
                     retired
                         .iter()
-                        .flat_map(|part| values.ref_bits(&live, *part)),
+                        .flat_map(|part| values.ref_bits(&live, *part))
+                        .filter(|bit| live.contains(*bit) || extra_before.contains(*bit)),
                 )
                 .filter(|bit| !live_after.contains(*bit) && !ended.contains(*bit))
                 .collect();

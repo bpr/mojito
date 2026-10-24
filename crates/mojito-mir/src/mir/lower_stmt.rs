@@ -3680,6 +3680,30 @@ impl<'a> Flatten<'a> {
             Terminator::MatchComplete => MirTerm::MatchComplete(Vec::new()),
             Terminator::Raise(value) => {
                 let src = self.expr_hir(value);
+                // `raise "message"` raises the `Error` the literal converts
+                // to, as `raise Error("message")` does.
+                let src =
+                    if self.f.reg_types.get(&src.0).map(Ty::kind) == Some(&TyKind::StringLiteral) {
+                        let error =
+                            self.fresh_typed(self.hir_node(value).location(), None, Ty::error());
+                        self.emit(MirInstr::Call {
+                            dest: error,
+                            func: FuncRef::named("Error"),
+                            raises: None,
+                            args: vec![src],
+                            kwargs: Vec::new(),
+                            arg_places: vec![None],
+                            kwarg_places: Vec::new(),
+                            capture_accesses: Vec::new(),
+                            param_arg_regs: Vec::new(),
+                            receiver: None,
+                            instantiated_args: Vec::new(),
+                            spread: None,
+                        });
+                        error
+                    } else {
+                        src
+                    };
                 self.flush_argument_anchors();
                 MirTerm::Raise {
                     src,

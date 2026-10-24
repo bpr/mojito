@@ -458,12 +458,146 @@ pub fn erase_forward_chains(
             &reads,
             &mut erased,
         );
-        if erased.len() == before {
+        if erased.len() == before && !erase_store_only_slots(function, declarations) {
             break;
         }
     }
     function.reg_types.retain(|reg, _| !erased.contains(reg));
+    retire_unnamed_storage(function);
     erased
+}
+
+/// Retire the storage no instruction of `function` names any more, which an
+/// erasure left behind: a register's type is dropped, and a local slot takes
+/// the `Int` placeholder erased callable storage takes. Neither then names
+/// a parameter an instance removed.
+pub fn retire_unnamed_storage(function: &mut MirFunction) {
+    let reads = register_reads(function);
+    let mut defined = HashSet::new();
+    defined_registers(&function.blocks, &mut defined);
+    function.reg_types.retain(|reg, _| {
+        defined.contains(reg) || reads.get(*reg as usize).is_some_and(|count| *count > 0)
+    });
+    let mut named = HashSet::new();
+    named_slots(&function.blocks, &mut named);
+    for (slot, ty) in &mut function.var_tys {
+        if (*slot as usize) >= function.n_params && !named.contains(slot) {
+            *ty = Ty::int();
+        }
+    }
+}
+
+/// Add every register an instruction of `blocks` or of their regions
+/// defines, a region's arguments included, to `defined`.
+fn defined_registers(blocks: &[MirBlock], defined: &mut HashSet<u32>) {
+    let mut results = Vec::new();
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        results.clear();
+        instruction_result_regs(instruction, &mut results);
+        defined.extend(results.iter().map(|reg| reg.0));
+        for region in instruction_regions(instruction) {
+            defined_registers(region, defined);
+        }
+    }
+}
+
+/// Erase the mentions of each typed local slot of `function` nothing reads:
+/// every mention of it a whole store (`var.store`), a declaration, or a drop
+/// or consumption of a type whose drop runs no code ([`slot_marker`]), as
+/// upstream erases an allocation that is only stored to. The stored
+/// registers become unread, and [`retire_unnamed_storage`] retires the
+/// slot. Returns whether any slot had a mention.
+fn erase_store_only_slots(function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
+    fn census(blocks: &[MirBlock], read: &mut HashSet<VarId>) {
+        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+            match instruction {
+                MirInstr::DefVar { .. }
+                | MirInstr::DeclareVar { .. }
+                | MirInstr::DropVar { .. }
+                | MirInstr::ConsumeVar { .. } => {}
+                MirInstr::DropPlace { place, .. } if place.through.is_none() => {}
+                MirInstr::Try { handler, .. } => {
+                    read.extend(instruction_slots(instruction));
+                    read.extend(handler.iter().filter_map(|(slot, _)| *slot));
+                }
+                _ => read.extend(instruction_slots(instruction)),
+            }
+            for region in instruction_regions(instruction) {
+                census(region, read);
+            }
+        }
+    }
+    fn erase(blocks: &mut [MirBlock], dead: &HashSet<VarId>) {
+        for block in blocks {
+            block.instrs.retain(|instruction| {
+                slot_marker(instruction).is_none_or(|var| !dead.contains(&var))
+            });
+            for instruction in &mut block.instrs {
+                for region in instruction_regions_mut(instruction) {
+                    erase(region, dead);
+                }
+            }
+        }
+    }
+    let mut read = HashSet::new();
+    census(&function.blocks, &mut read);
+    let dead: HashSet<VarId> = (function.n_params..function.var_names.len())
+        .filter_map(|slot| VarId::try_from(slot).ok())
+        .filter(|slot| {
+            !read.contains(slot)
+                && function
+                    .var_tys
+                    .get(slot)
+                    .is_some_and(|ty| declarations.drop_runs_no_code(ty))
+        })
+        .collect();
+    let mut marked = false;
+    for_each_slot_marker(&function.blocks, &mut |var| marked |= dead.contains(&var));
+    if !marked {
+        return false;
+    }
+    erase(&mut function.blocks, &dead);
+    true
+}
+
+/// Call `visit` with the slot of every store, declaration, drop, and
+/// consumption in `blocks` and their regions ([`slot_marker`]).
+fn for_each_slot_marker(blocks: &[MirBlock], visit: &mut dyn FnMut(VarId)) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        if let Some(var) = slot_marker(instruction) {
+            visit(var);
+        }
+        for region in instruction_regions(instruction) {
+            for_each_slot_marker(region, visit);
+        }
+    }
+}
+
+/// The slots `blocks` and their regions name, a `try`'s handler binding
+/// included.
+fn named_slots(blocks: &[MirBlock], named: &mut HashSet<VarId>) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        named.extend(instruction_slots(instruction));
+        if let MirInstr::Try { handler, .. } = instruction {
+            named.extend(handler.iter().filter_map(|(slot, _)| *slot));
+        }
+        for region in instruction_regions(instruction) {
+            named_slots(region, named);
+        }
+    }
+}
+
+/// The slot `instruction` stores whole, declares, drops, or consumes in
+/// place, if it is one of those.
+pub const fn slot_marker(instruction: &MirInstr) -> Option<VarId> {
+    match instruction {
+        MirInstr::DefVar { var, .. }
+        | MirInstr::DeclareVar { var }
+        | MirInstr::DropVar { var, .. }
+        | MirInstr::ConsumeVar { var } => Some(*var),
+        MirInstr::DropPlace { place, .. } if place.through.is_none() => Some(place.root),
+        _ => None,
+    }
 }
 
 /// How many times `function`'s body reads each of its registers.
@@ -1341,10 +1475,18 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
     /// registers.
     fn body(&mut self, function: &MirFunction) {
         self.visit(&function.blocks);
+        // A slot no instruction names holds nothing the body reads.
+        let mut named = HashSet::new();
+        named_slots(&function.blocks, &mut named);
+        let slots = function
+            .var_tys
+            .iter()
+            .filter(|(slot, _)| (**slot as usize) < function.n_params || named.contains(*slot))
+            .map(|(_, ty)| ty);
         for ty in function
             .param_types
             .iter()
-            .chain(function.var_tys.values())
+            .chain(slots)
             .chain(&function.ret_ty)
             .chain(&function.error_ty)
             .chain(function.reg_types.values())

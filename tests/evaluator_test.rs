@@ -1390,7 +1390,7 @@ fn not_in_drives_a_dedup_loop() {
 
 // --- Member-write: place assignment + mut self ---
 
-const EPT: &str = "@fieldwise_init\nstruct Point(Copyable):\n    var x: Int\n    var y: Int\n    def __copyinit__(out self, existing: Point):\n        self.x = existing.x\n        self.y = existing.y\n\n";
+const EPT: &str = "@fieldwise_init\nstruct Point(Copyable):\n    var x: Int\n    var y: Int\n    def __init__(out self, *, copy: Self):\n        self.x = copy.x\n        self.y = copy.y\n\n";
 
 #[test]
 fn field_write_mutates_in_place() {

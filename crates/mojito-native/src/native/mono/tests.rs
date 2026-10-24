@@ -428,7 +428,8 @@ fn nominal_len_inlines_the_library_overload_to_a_resolved_dunder_call() {
     assert!(
         !instrs.iter().any(|instruction| matches!(
             instruction,
-            MirInstr::Call { func, .. } if func.0 == "len" || func.0.starts_with("len$ov$")
+            MirInstr::Call { func, .. } if func.0 == "len"
+                || func.0.starts_with(&format!("len{}", mojito_symbol::symbol::OV_SEP))
         )),
         "no `len` call may survive the inlining"
     );
@@ -700,11 +701,10 @@ fn a_homogeneous_variadic_has_one_instance_for_every_arity() {
     assert_eq!(counts.len(), 2, "one instance per element type: {counts:?}");
     let total = function(&specialized, totals[0]);
     assert!(
-        total
-            .var_tys
-            .values()
-            .any(|ty| matches!(ty.kind(), TyKind::VariadicPack(element) if element == &Ty::int())),
-        "the pack stays a run-time collector: {:?}",
+        total.var_tys.values().any(|ty| matches!(ty.kind(),
+            TyKind::Struct(name, _)
+                if mojito_types::types::struct_template(name) == "VariadicList")),
+        "the collector stays the run-time `VariadicList`: {:?}",
         total.var_tys
     );
 }
@@ -714,9 +714,21 @@ fn subscript_value_parameters_join_the_accessor_instance_identity() {
     let source = "def main():\n\
                   \x20   var pair: Tuple[Int, Int] = (10, 32)\n\
                   \x20   print(pair[0] + pair[1])\n";
-    let specialized = specialized_main(source);
+    // The accessor calls as the elaborator receives them, before the
+    // pre-elaboration pipeline inlines the `@always_inline` accessor.
+    let compiled = mojito::Compiler::default()
+        .with_snippet_module_scope()
+        .with_pre_elaboration(false)
+        .compile_source(source, std::path::Path::new("mono_test.mojo"))
+        .expect("compile tuple subscripts");
+    let specialized = specialize(
+        compiled.drop_elaborated_mir(),
+        &["main".to_string()],
+        host_target().as_ref(),
+    )
+    .expect("specialize tuple subscripts");
     let main = function(&specialized, "main");
-    let targets: std::collections::HashSet<&str> = instructions(&main.blocks)
+    let targets: std::collections::HashSet<&str> = nested_instructions(&main.blocks)
         .iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Index {
@@ -1521,7 +1533,8 @@ fn dispatched_copy_through_reference_binding_is_value_copy() {
         .collect();
     assert_eq!(instances.len(), 2, "one instance per element type");
     for (name, instance) in instances {
-        let body = instructions(&instance.blocks);
+        // The copy sits in the loop's region.
+        let body = nested_instructions(&instance.blocks);
         let copy_call = body.iter().find_map(|instruction| match instruction {
             MirInstr::MethodCall {
                 method, resolved, ..
@@ -1589,8 +1602,9 @@ fn reflected_field_type_construction_closes_per_unrolled_copy() {
         .iter()
         .find(|(name, _)| name == "describe")
         .expect("the `describe` template");
+    // The construction sits in the `comptime for` and `comptime if` regions.
     assert!(
-        instructions(&template.blocks)
+        nested_instructions(&template.blocks)
             .iter()
             .any(|instruction| matches!(instruction, MirInstr::ConstructType { .. })),
         "the template constructs the reflected field type"
@@ -1812,7 +1826,10 @@ fn failed_method_instance_is_reported_only_where_reached() {
 }
 
 #[test]
-fn string_bearing_value_parameter_is_constructed_into_its_slot() {
+fn string_bearing_value_parameter_is_materialized_into_its_slot() {
+    // The instance stores its parameter value into the parameter's slot as
+    // one constant, which a backend thaws to its `String` element at run
+    // time.
     let specialized = specialized_main(
         "\
 def g[p: Tuple[Int, String]]():
@@ -1828,32 +1845,22 @@ def main():
         .iter()
         .find(|(name, _)| name.starts_with("g$mono"))
         .expect("`g` was specialized");
-    let instrs = instructions(&instance.blocks);
+    let instrs = nested_instructions(&instance.blocks);
+    let constant = instrs.iter().find_map(|instruction| match instruction {
+        MirInstr::Const {
+            dest,
+            k: Const::Value(CtValue::Tuple(elements)),
+        } if matches!(elements.as_slice(), [CtValue::Int(1), CtValue::Str(text)] if text == "a") => {
+            Some(*dest)
+        }
+        _ => None,
+    });
     assert!(
-        instrs.iter().any(|instruction| matches!(
+        constant.is_some_and(|value| instrs.iter().any(|instruction| matches!(
             instruction,
-            MirInstr::Call { func, .. }
-                if mojito_symbol::symbol::init_overload_struct(&func.0).is_some()
-                    && mojito_symbol::symbol::overload_qualifier(&func.0)
-                        .is_some_and(|qualifier| qualifier.ends_with("StringLiteral"))
-        )),
-        "the instance builds its `String` element: {instrs:?}"
-    );
-    assert!(
-        instrs
-            .iter()
-            .any(|instruction| matches!(instruction, MirInstr::DefVar { .. })),
-        "the instance stores the value into the parameter's slot"
-    );
-    assert!(
-        !instrs.iter().any(|instruction| matches!(
-            instruction,
-            MirInstr::Const {
-                k: Const::Value(_),
-                ..
-            }
-        )),
-        "no string-bearing value is folded to a constant"
+            MirInstr::DefVar { src, .. } if *src == value
+        ))),
+        "the instance stores the value into the parameter's slot: {instrs:?}"
     );
 }
 
@@ -2126,7 +2133,7 @@ fn an_erased_struct_whose_layout_reads_the_removed_parameter_is_an_error() {
          \x20   def __init__(out self, v: Int):\n\
          \x20       self.v = SIMD[DType.int64, Self.n](v)\n\
          def fa[n: Int](a: Arr[n]) -> Int:\n\
-         \x20   return 1\n\
+         \x20   return Int(a.v[0])\n\
          def main():\n\
          \x20   print(fa(Arr[2](10)))\n";
     let Err(error) = specialized_with_removed(source, &[("fa", "n")]) else {

@@ -68,15 +68,14 @@
         return_type: present(struct_type { name: Wrap, arguments: [type_arg(Int)] }),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: struct_type { name: Wrap, arguments: [type_arg(Int)] } }, reg_type { reg: %r1, type: struct_type { name: Wrap, arguments: [type_arg(Int)] } }],
-        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 213, end: 219, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 213, end: 219, origin: present($v0) }) }],
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Wrap, arguments: [type_arg(Int)] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 213, end: 219, origin: present($v0) }) }, reg_loc { reg: %r1, location: absent }],
         blocks: [
           bb0 {
             instructions: [
-              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Outer, arguments: [] }), projections: [projection { op: field(wrap), type: struct_type { name: Wrap, arguments: [type_arg(Int)] } }], type: present(struct_type { name: Wrap, arguments: [type_arg(Int)] }), through: absent } },
-              value.copy { dest: %r1, value: %r0 }
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Outer, arguments: [] }), projections: [projection { op: field(wrap), type: struct_type { name: Wrap, arguments: [type_arg(Int)] } }], type: present(struct_type { name: Wrap, arguments: [type_arg(Int)] }), through: absent } }
             ],
-            terminator: return { value: present(%r1) }
+            terminator: return { value: present(%r0) }
           }
         ]
       }

@@ -1,4 +1,5 @@
 # expect: use of uninitialized value 'tup'
+# requires: stdlib
 # A by-value tuple element argument is read at call setup, after a later
 # argument moved the tuple away: the pin rejects the read of the moved value.
 def take(var t: Tuple[Int, Int]) -> Int:

@@ -46,6 +46,11 @@ impl Checker {
         receiver: Option<(&Expr, Option<ArgConvention>)>,
     ) {
         let designates_place = |arg: &Expr| self.designates_place(arg);
+        let read_place = |arg: &Expr| match self.designates_place(arg) {
+            false => ReadPlace::Value,
+            true if self.infer_reference_value(arg).is_some() => ReadPlace::ReferenceResult,
+            true => ReadPlace::Place,
+        };
         let collected = gathered.read();
         for span in borrowable_read_arguments(
             slots,
@@ -54,7 +59,7 @@ impl Checker {
             args,
             kwargs,
             receiver,
-            designates_place,
+            read_place,
         ) {
             self.record_at(span).borrowed_read_call_place = true;
         }
@@ -527,6 +532,17 @@ pub(super) fn forwarded_arguments(
         .collect()
 }
 
+/// How a read argument names storage ([`borrowable_read_arguments`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReadPlace {
+    /// A value: a temporary, a literal, an operator result.
+    Value,
+    /// A place: a binding, or a field or subscript chain rooted at one.
+    Place,
+    /// A place an accessor's reference result names.
+    ReferenceResult,
+}
+
 /// Read-convention place arguments a call may bind by borrow instead of the
 /// implicit `__copyinit__` read. An argument qualifies when its effective
 /// convention is a shared read, it names a place, and no exclusive access
@@ -541,7 +557,7 @@ pub(super) fn borrowable_read_arguments(
     args: &[Expr],
     kwargs: &[mojito_ast::ast::KwArg],
     receiver: Option<(&Expr, Option<ArgConvention>)>,
-    designates_place: impl Fn(&Expr) -> bool,
+    read_place: impl Fn(&Expr) -> ReadPlace,
 ) -> Vec<SourceSpan> {
     let argument = |slot: &ArgSlot| match slot {
         ArgSlot::Positional(position) => Some(&args[*position]),
@@ -598,10 +614,17 @@ pub(super) fn borrowable_read_arguments(
             }
             _ => arg,
         };
-        if !designates_place(arg) {
+        let kind = read_place(arg);
+        if kind == ReadPlace::Value {
             continue;
         }
+        // An accessor's reference result over a temporary key
+        // (`d[String("k")]`) names no place path, yet the parameter reads
+        // its referent through the handle rather than copying it out.
         let Some((root, path)) = place_path(arg) else {
+            if kind == ReadPlace::ReferenceResult {
+                borrowable.push(arg.source_span());
+            }
             continue;
         };
         if exclusive

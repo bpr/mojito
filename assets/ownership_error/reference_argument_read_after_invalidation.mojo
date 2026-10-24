@@ -1,4 +1,5 @@
 # expect: use of invalidated interior reference 'lst["element"]'
+# requires: stdlib
 # A by-value `List` element argument is read at call setup, after a later
 # argument's `mut` pass may have reallocated the list's storage: the pin
 # rejects the stale element reference.

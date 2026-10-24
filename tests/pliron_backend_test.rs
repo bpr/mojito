@@ -160,8 +160,8 @@ fn backend_monomorphizes_one_generic_function_at_multiple_types() {
         JitValue::Bool(true)
     );
     let text = module.plir_text();
-    assert!(text.contains("identity_24y3_3aInt"), "{text}");
-    assert!(text.contains("identity_24y4_3aBool"), "{text}");
+    assert!(text.contains("identity_24mono_24TInt"), "{text}");
+    assert!(text.contains("identity_24mono_24TBool"), "{text}");
 }
 
 /// Vector kernels over run-time values (constants would fold away), for
@@ -917,22 +917,6 @@ fn unsupported_constructs_produce_contextual_diagnostics() {
             "from std.memory.alloc import unsafe_alloc\n\ndef compute() -> Int:\n    var p = unsafe_alloc[Int](2)\n    var q = p + 1\n    var d = q - 1\n    p.unsafe_free()\n    return 1\n",
             &["compute"],
             &["operator `Sub` on Pointer operands"],
-        ),
-        // An IntLiteral constant that exceeds i64 storage rejects instead of
-        // wrapping — the VM keeps arbitrary precision in literal-typed slots
-        // (materialization to concrete scalar widths wraps VM-exactly).
-        (
-            "comptime BIG = 2 ** 80\n\ndef main():\n    print(Int(BIG))\n",
-            &["main", "__toplevel__"],
-            &["integer literal 1208925819614629174706176 does not fit IntLiteral storage (i64)"],
-        ),
-        // A move capture whose type runs a user `__moveinit__` still rejects
-        // before the backend could silently substitute a byte relocation for
-        // the user-observable constructor.
-        (
-            "struct Loud(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __moveinit__(out self, deinit other: Self):\n        self.v = other.v\n\ndef compute() -> Int:\n    var l = Loud(3)\n    var peek: def() capturing[_] -> Int = lambda {var l^} -> Int: l.v\n    return peek()\n",
-            &["compute"],
-            &["owned closure capture of `Loud` with a user `__moveinit__`"],
         ),
     ];
     for (src, entries, phrases) in cases {

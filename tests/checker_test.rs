@@ -3503,7 +3503,7 @@ fn bounded_trait_methods_share_generic_keyword_collection_and_effect_checks() {
 fn accepts_positional_only_and_keyword_only_markers() {
     ok("def first(a: Int, b: Int, /) -> Int:\n    return a\n\nvar x: Int = first(1, 2)\n");
     ok("def scale(a: Int, *, by: Int) -> Int:\n    return a * by\n\nvar x: Int = scale(4, by=5)\n");
-    ok(
+    ok_std(
         "def total(*values: Int, scale: Int) -> Int:\n    var t: Int = 0\n    for v in values:\n        t = t + v\n    return t * scale\n\nvar x: Int = total(1, 2, 3, scale=10)\n",
     );
     ok(
@@ -3529,28 +3529,42 @@ fn accepts_positional_only_and_keyword_only_markers() {
 }
 
 #[test]
+fn a_destructured_ref_leaf_is_an_immutable_reference() {
+    // A `ref` leaf of a tuple target reads its piece through an immutable
+    // reference, as on the pin, whatever the source's mutability.
+    ok_std(
+        "def main():\n    var pr = (1, (2, 3))\n    (var q, (ref r, _)) = pr\n    print(q, r)\n",
+    );
+    assert!(matches!(
+        err_std("def main():\n    var pr = (1, 2)\n    (var q, ref r) = pr\n    r = 9\n    print(q, r)\n"),
+        TypeError::ImmutableBinding(name) if name == "r"
+    ));
+}
+
+#[test]
 fn accepts_variadic_args() {
-    // A `*args` parameter is a `List[T]` in the body; a call collects extras.
-    ok(
+    // A `*args` parameter is the bundled `VariadicList[T]` in the body; a
+    // call collects extras.
+    ok_std(
         "def sum(*values: Int) -> Int:\n    var t: Int = 0\n    for v in values:\n        t = t + v\n    return t\n\nvar a: Int = sum()\nvar b: Int = sum(1, 2, 3)\n",
     );
     // Regular params before the variadic.
-    ok(
+    ok_std(
         "def tag(label: StringLiteral, *nums: Int) -> Int:\n    return len(nums)\n\nvar a: Int = tag(\"x\", 1, 2)\n",
     );
     // Each overflow argument must match the element type.
     assert!(matches!(
-        err("def sum(*values: Int) -> Int:\n    return 0\n\nvar z: Int = sum(1, \"x\")\n"),
+        err_std("def sum(*values: Int) -> Int:\n    return 0\n\nvar z: Int = sum(1, \"x\")\n"),
         TypeError::TypeMismatch { .. }
     ));
     // A required regular parameter is still enforced.
     assert!(matches!(
-        err(
+        err_std(
             "def tag(label: StringLiteral, *nums: Int) -> Int:\n    return 0\n\nvar z: Int = tag()\n"
         ),
         TypeError::BadCall { .. }
     ));
-    ok("def f[T: AnyType](*a: T) -> Int:\n    return len(a)\n\nvar n: Int = f(1, 2, 3)\n");
+    ok_std("def f[T: AnyType](*a: T) -> Int:\n    return len(a)\n\nvar n: Int = f(1, 2, 3)\n");
 }
 
 #[test]

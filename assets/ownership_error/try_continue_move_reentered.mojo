@@ -1,4 +1,5 @@
 # expect: use of uninitialized value 's'
+# requires: stdlib
 # The `continue` out of the `try` carries `s` moved into the next iteration.
 def take(var s: String) raises:
     print(s)

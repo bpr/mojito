@@ -1,11 +1,11 @@
-# Recursive destructuring targets: nested tuple targets mixing `var`, `ref`,
-# and `_` leaves, a `var` prefix that declares every leaf, a trailing element
-# beside a nested display, and nested assignment into names in scope.
+# Recursive destructuring targets: nested tuple targets mixing `var`, `ref`
+# (an immutable reference, as on the pin), and `_` leaves, a `var` prefix
+# that declares every leaf, a trailing element beside a nested display, and
+# nested assignment into names in scope.
 def main():
     var pr = (1, (2, 3))
     (var q, (ref r, _)) = pr
     print(q, r)
-    r = 9
     print(pr[1][0])
     var (x, (y, z)) = (4, (5, 6))
     print(x, y, z)

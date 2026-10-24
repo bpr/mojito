@@ -458,7 +458,7 @@ impl ConformanceOracle {
         member: &str,
         arguments: &[(Option<String>, CtValue)],
     ) -> Option<Result<Ty, TypeError>> {
-        let info = self.package_struct(name)?.0;
+        let info = self.type_member_struct(name)?;
         let definition = info.parameterized_associated.get(member)?;
         let MemberTemplate::Type { decls, .. } = &definition.template else {
             return None;
@@ -495,9 +495,20 @@ impl ConformanceOracle {
     /// Whether `member` is a parameterized type member of package struct
     /// `name` ([`Self::package_generator_type_member`]).
     pub fn declares_package_type_member(&self, name: &str, member: &str) -> bool {
-        self.package_struct(name)
-            .and_then(|info| info.0.parameterized_associated.get(member))
+        self.type_member_struct(name)
+            .and_then(|info| info.parameterized_associated.get(member))
             .is_some_and(|definition| matches!(definition.template, MemberTemplate::Type { .. }))
+    }
+
+    /// The struct whose parameterized type members
+    /// [`Self::package_generator_type_member`] answers: one of the imported
+    /// package, or, in a program that imports none and so links the
+    /// bundled library from source, any declared struct.
+    fn type_member_struct(&self, name: &str) -> Option<&StructInfo> {
+        match self.installed() {
+            Some(_) => self.package_struct(name).map(|info| info.0),
+            None => self.checker.structs.get(name),
+        }
     }
 
     /// The compile-time member `member` of `base`, an instance of a

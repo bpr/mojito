@@ -702,7 +702,7 @@ fn variadic_constructor_rejects_argument_type_mismatch() {
         "struct Bag[T: Copyable & Movable]:\n",
         "    var count: Int\n",
         "    def __init__(out self, var *values: Self.T):\n",
-        "        self.count = len(values)\n",
+        "        self.count = 0\n",
         "\n",
         "def main():\n",
         "    var bad = Bag[Int](\"oops\")\n",

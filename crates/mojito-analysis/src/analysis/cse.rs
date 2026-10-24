@@ -50,11 +50,12 @@ use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirInstr, Reg, UseMode, instruction_regions,
+    Const, MirBlock, MirDeclarations, MirFunction, MirInstr, Reg, UseMode, instruction_regions,
     instruction_regs_mut,
 };
 use mojito_types::types::{Ty, TyKind, trivially_register_passable_leaf};
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 /// The pass, under MLIR's flag spelling.
 pub const CSE: BodyPass = BodyPass {
@@ -234,7 +235,13 @@ impl Table<'_> {
                 *reg = *renamed;
             }
         }
-        Some((dest, format!("{spelled:?} : {ty:?}")))
+        let identity = match instruction {
+            MirInstr::Const { k, .. } | MirInstr::ParamListAddress { values: k, .. } => {
+                parameter_identity(k)
+            }
+            _ => 0,
+        };
+        Some((dest, format!("{spelled:?} : {ty:?} #{identity}")))
     }
 
     /// What `instruction` may do to memory, as MLIR's
@@ -317,6 +324,20 @@ impl Table<'_> {
     fn definitions(&self, reg: Reg) -> u32 {
         self.definitions.get(reg.0 as usize).copied().unwrap_or(0)
     }
+}
+
+/// The identity hash of a parameter constant's expression, which its
+/// spelling leaves out: two `comptime for` binders spelled alike are
+/// distinct attributes, as upstream's parameter attributes are. Any other
+/// constant is its spelling, `0`.
+fn parameter_identity(k: &Const) -> u64 {
+    let mut state = std::collections::hash_map::DefaultHasher::new();
+    match k {
+        Const::Param(expr) => expr.hash(&mut state),
+        Const::Value(value) => mojito_types::param_expr::identity_hash(value, &mut state),
+        _ => return 0,
+    }
+    state.finish()
 }
 
 /// An entry of a scope of the walk: a key made available, with the entry it

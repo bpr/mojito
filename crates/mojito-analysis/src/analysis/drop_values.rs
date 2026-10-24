@@ -713,7 +713,7 @@ mod tests {
         let outer = tuple(vec![inner, droppable()]);
         let values = values(&outer, &[&[0, 1]]);
         let part = values.access(&place(&outer, &[0, 1]));
-        let mut live: DenseSet = [4].into_iter().collect();
+        let mut live: DenseSet = std::iter::once(4).collect();
         assert_eq!(values.mark_ref(&mut live, part), 0..3);
         let mut live: DenseSet = [2, 4].into_iter().collect();
         assert_eq!(values.mark_ref(&mut live, part), 1..2);
@@ -723,7 +723,7 @@ mod tests {
     fn a_part_dies_alone_under_a_live_whole_object_bit() {
         let pair = tuple(vec![droppable(), droppable()]);
         let values = values(&pair, &[&[0]]);
-        let dying: DenseSet = [0].into_iter().collect();
+        let dying: DenseSet = std::iter::once(0).collect();
         let live: DenseSet = [1, 2].into_iter().collect();
         let mut deaths = Vec::new();
         values.deaths(0, &dying, &live, true, &mut deaths);
@@ -754,7 +754,7 @@ mod tests {
         let pair = tuple(vec![droppable(), droppable()]);
         let values = values(&pair, &[&[0]]);
         let mut state: DenseSet = [1, 2, 4].into_iter().collect();
-        values.unify(&mut state, &[4].into_iter().collect());
+        values.unify(&mut state, &std::iter::once(4).collect());
         assert!(state == [0, 1, 2, 4].into_iter().collect());
     }
 

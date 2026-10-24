@@ -253,6 +253,10 @@ impl VmBackend {
                         value,
                         prog.mir.functions[function].1.reg_types.get(&dest.0),
                     )?,
+                    Const::UninitMem => Self::uninit_mem_value(
+                        prog,
+                        prog.mir.functions[function].1.reg_types.get(&dest.0),
+                    ),
                     _ => const_value(k)?,
                 };
                 regs[dest.0 as usize] = value;

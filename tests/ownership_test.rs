@@ -414,31 +414,19 @@ fn immutable_ref_subscript_argument_retains_a_read_place() {
 }
 
 #[test]
-fn dict_lookup_defines_a_new_value_generation() {
+fn dict_lookup_keeps_an_earlier_lookup_reference() {
+    // A second lookup reads the dictionary; it invalidates no reference an
+    // earlier lookup returned, as on the pin.
     let src = "def main():\n    var values = {\"a\": 10}\n    ref first = values[\"a\"]\n    print(values[\"a\"])\n    print(first)\n";
     let result = own(src);
-    assert!(
-        matches!(
-            &result,
-            Err(OwnershipError::InvalidatedInteriorReference { origin, .. })
-                if origin == "values[\"value\"]"
-        ),
-        "got {result:?}"
-    );
+    assert!(result.is_ok(), "got {result:?}");
 }
 
 #[test]
-fn dict_lookup_refresh_invalidates_fields_of_the_previous_value_generation() {
+fn dict_lookup_keeps_an_earlier_lookup_field_reference() {
     let src = "@fieldwise_init\nstruct Item(Copyable, Movable):\n    var value: Int\n\ndef main():\n    var values = {\"a\": Item(10)}\n    ref field = values[\"a\"].value\n    print(values[\"a\"].value)\n    print(field)\n";
     let result = own(src);
-    assert!(
-        matches!(
-            &result,
-            Err(OwnershipError::InvalidatedInteriorReference { origin, .. })
-                if origin == "values[\"value\"].value"
-        ),
-        "got {result:?}"
-    );
+    assert!(result.is_ok(), "got {result:?}");
 }
 
 #[test]

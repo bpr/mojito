@@ -2,6 +2,7 @@
 use super::*;
 use crate::mir::text::write;
 use crate::mir::{MirResultAdapter, Raises, TryLabel};
+use mojito_symbol::symbol::OV_SEP;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, LaneMask, VariantIndex};
 
@@ -1253,7 +1254,10 @@ fn raise_terminator_reprints() {
     };
     let program = program_with(vec![("raising".into(), function)]);
     assert_reprints(&program);
-    assert!(write::program(&program).contains("terminator: raise { src: %r0, label: absent }"));
+    assert!(
+        write::program(&program)
+            .contains("terminator: raise { src: %r0, label: absent, values: [] }")
+    );
 }
 
 #[test]
@@ -1580,7 +1584,7 @@ fn declaration_metadata_reprints_byte_identically() {
         witness_tables: vec![mojito_checked::declaration::WitnessTable {
             trait_name: "MySized".into(),
             witnesses: vec![mojito_checked::declaration::Witness {
-                requirement: "__trait_dispatch.__len__$ov$SelfRead".into(),
+                requirement: format!("__trait_dispatch.__len__{OV_SEP}SelfRead"),
                 member: "Box.__len__".into(),
             }],
         }],
@@ -1726,52 +1730,59 @@ fn declaration_metadata_reprints_byte_identically() {
     program.declarations = MirDeclarations {
         structs: vec![zebra, boxed],
         functions: vec![add, other],
-        traits: vec![
-            TraitDeclaration {
-                name: "Shape".into(),
-                refines: vec!["Copyable".into(), "needs quoting!".into()],
-                requirements: vec![
-                    TraitRequirement {
-                        name: "area".into(),
-                        arity: 0,
-                        dispatch: "__trait_dispatch.area$ov$".into(),
-                        param_names: Vec::new(),
-                        param_types: Vec::new(),
-                        param_conventions: Vec::new(),
-                        variadic_index: None,
-                        required: Vec::new(),
-                        positional_only: None,
-                        keyword_only: None,
-                        variadic: None,
-                        kw_variadic: None,
-                        variadic_convention: None,
-                    },
-                    TraitRequirement {
-                        name: "area".into(),
-                        arity: 2,
-                        dispatch: "__trait_dispatch.area$ov$Int$Self".into(),
-                        param_names: vec!["scale".into(), "other".into()],
-                        param_types: vec![Ty::int(), Ty::self_type()],
-                        param_conventions: vec![Some(ArgConvention::Mut), None],
-                        variadic_index: Some(2),
-                        required: vec![true, false],
-                        positional_only: None,
-                        keyword_only: Some(2),
-                        variadic: Some(Ty::int()),
-                        kw_variadic: None,
-                        variadic_convention: Some(ArgConvention::Var),
-                    },
-                ],
-            },
-            TraitDeclaration {
-                name: "needs quoting!".into(),
-                refines: Vec::new(),
-                requirements: Vec::new(),
-            },
-        ],
+        traits: metadata_traits(),
         imported: None,
     };
     assert_reprints(&program);
+}
+
+/// The trait declarations [`declaration_metadata_reprints_byte_identically`]
+/// reprints: a trait whose name needs quoting, and overloads of one
+/// requirement.
+fn metadata_traits() -> Vec<TraitDeclaration> {
+    vec![
+        TraitDeclaration {
+            name: "Shape".into(),
+            refines: vec!["Copyable".into(), "needs quoting!".into()],
+            requirements: vec![
+                TraitRequirement {
+                    name: "area".into(),
+                    arity: 0,
+                    dispatch: format!("__trait_dispatch.area{OV_SEP}"),
+                    param_names: Vec::new(),
+                    param_types: Vec::new(),
+                    param_conventions: Vec::new(),
+                    variadic_index: None,
+                    required: Vec::new(),
+                    positional_only: None,
+                    keyword_only: None,
+                    variadic: None,
+                    kw_variadic: None,
+                    variadic_convention: None,
+                },
+                TraitRequirement {
+                    name: "area".into(),
+                    arity: 2,
+                    dispatch: format!("__trait_dispatch.area{OV_SEP}Int$Self"),
+                    param_names: vec!["scale".into(), "other".into()],
+                    param_types: vec![Ty::int(), Ty::self_type()],
+                    param_conventions: vec![Some(ArgConvention::Mut), None],
+                    variadic_index: Some(2),
+                    required: vec![true, false],
+                    positional_only: None,
+                    keyword_only: Some(2),
+                    variadic: Some(Ty::int()),
+                    kw_variadic: None,
+                    variadic_convention: Some(ArgConvention::Var),
+                },
+            ],
+        },
+        TraitDeclaration {
+            name: "needs quoting!".into(),
+            refines: Vec::new(),
+            requirements: Vec::new(),
+        },
+    ]
 }
 
 /// A parameterized value member read through a bound, `T.get[0]`.

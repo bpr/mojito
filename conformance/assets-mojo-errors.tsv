@@ -312,7 +312,7 @@ assets/type_error/destructure_sequence_undeclared_sized.mojo	compile-reject	agre
 assets/type_error/destructure_sequence_undeclared_target.mojo	compile-reject	agree	error: implicit declaration of 'p' is not allowed; add 'var' to declare a new name
 assets/type_error/destructure_starred_discard_slices.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'i' cannot be converted from slice literal to 'Int'
 assets/type_error/destructure_starred_tuple_target.mojo	compile-reject	agree	error: cannot unpack value of type 'Span[Int, origin_of(values["element"])]' into 2 values
-assets/type_error/destructure_undeclared_target.mojo	compile-reject	agree	error: use of unknown declaration 'a'
+assets/type_error/destructure_undeclared_target.mojo	compile-reject	agree	error: implicit declaration of 'a' is not allowed; add 'var' to declare a new name
 assets/type_error/dict_display_requires_copyable_value.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/dict_requires_hashable_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Key]'
 assets/type_error/dict_view_index_rejected.mojo	compile-reject	agree	error: '_DictKeyIter[Int, Int, AHasher[SIMD[.uint64, 4](0)], origin_of(d)]' is not subscriptable, it does not implement the `__getitem__`/`__setitem__` methods

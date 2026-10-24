@@ -475,11 +475,14 @@ fn raise_erases_rest_of_block() {
         "f",
     );
     assert!(!cfg.vars.iter().any(|name| name == "dead"));
-    let statements = entry_instrs(&cfg, &cfg.root)
-        .iter()
-        .filter(|instruction| matches!(instruction, HirInstr::Stmt(_)))
-        .count();
-    assert_eq!(statements, 1, "only the `raise` lowers");
+    // The `raise` ends the block as its terminator, and nothing after it
+    // lowers.
+    assert!(
+        !entry_instrs(&cfg, &cfg.root)
+            .iter()
+            .any(|instruction| matches!(instruction, HirInstr::Stmt(_)))
+    );
+    assert!(matches!(last_term(&cfg, &cfg.root), Terminator::Raise(_)));
 }
 
 #[test]

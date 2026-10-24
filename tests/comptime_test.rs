@@ -117,16 +117,12 @@ fn comptime_if_arms_of_a_template_check_with_symbolic_parameters() {
 }
 
 #[test]
-fn a_default_that_does_io_is_rejected() {
-    // Current Mojo evaluates a default once, at compile time; one that prints
-    // would print at a different time and count, so it is rejected, used or
-    // not. An effect-free call is admitted.
+fn a_default_that_does_io_is_admitted() {
+    // The pin admits a default whose evaluation prints, used or not, as it
+    // does an effect-free one. It evaluates the default once at compile
+    // time, where Mojito evaluates it at each call that omits it (R528).
     let io = "def tick() -> Int:\n    print(\"tick\")\n    return 7\n\ndef f(x: Int = tick()) -> Int:\n    return x\n\ndef main():\n    print(f(1))\n";
-    let err = run(io).unwrap_err();
-    assert!(
-        err.contains("the default value of parameter 'x' of 'f' is not safe"),
-        "{err}"
-    );
+    assert_eq!(run(io).unwrap(), "1\n");
     let pure = "def seven() -> Int:\n    return 7\n\ndef f(x: Int = seven()) -> Int:\n    return x\n\ndef main():\n    print(f())\n";
     assert_eq!(run(pure).unwrap(), "7\n");
 }
@@ -448,7 +444,7 @@ fn runtime_pack_spread_rejects_shadowing_value_bindings() {
     let block = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    if True:\n        var args = Tuple(9, 10)\n        var local = Tuple(*args^)\n        print(local)\n\ndef main():\n    inspect(1, True)\n";
     let nested = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    def nested(var args: Tuple[Int, Int]):\n        print(Tuple(*args^))\n    nested(Tuple(9, 10))\n\ndef main():\n    inspect(1, True)\n";
     let loop_binding = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    for args in [Tuple(9, 10)]:\n        print(Tuple(*args))\n\ndef main():\n    inspect(1, True)\n";
-    let comprehension = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    var lengths = [len(Tuple(*args)) for args in [Tuple(9, 10)]]\n    print(lengths[0])\n\ndef main():\n    inspect(1, True)\n";
+    let comprehension = "def inspect[*Ts: Movable & Deinitable](var *args: *Ts):\n    var firsts = [Tuple(*args)[0] for args in [Tuple(9, 10)]]\n    print(firsts[0])\n\ndef main():\n    inspect(1, True)\n";
     let sibling_method = "struct Pair[*Ts: Copyable & Deinitable](Copyable, Movable):\n    var storage: Tuple[*Self.Ts]\n    def __init__(out self, var *args: *Self.Ts):\n        self.storage = Tuple(*args^)\n    def shadow(self, var args: Tuple[Int, Int]):\n        print(Tuple(*args^))\n\ndef main():\n    var pair = Pair[Int](1)\n    pair.shadow(Tuple(9, 10))\n";
 
     for source in [block, nested, loop_binding, comprehension, sibling_method] {

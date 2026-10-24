@@ -130,13 +130,13 @@ impl<'a> Flatten<'a> {
 
     /// Lower a ternary `then_e if cond else else_e` as upstream's `hlcf.if`
     /// on `cond`, or its `hlcf.comptime.if` when the checker found `cond` a
-    /// parameter value, so the elaborator keeps the live arm alone. Each arm
-    /// produces the owned result (a `^` arm by a move, a place arm by a
-    /// copy, a temporary arm as it stands). A result the checker proved
-    /// register-passable is yielded by the arms as the op's value; any other
-    /// is stored by each arm into a result slot, which the op's consumer
-    /// receives as a forward, as upstream stores a memory-only result into
-    /// its destination buffer.
+    /// parameter value, so the elaborator keeps the live arm alone. A result
+    /// the checker proved register-passable is yielded by the arms as the
+    /// op's value; any other is moved by each arm into a result slot, which
+    /// the op's consumer receives as a forward, as upstream moves an arm's
+    /// value into its destination buffer: a `^` arm by its own move, and any
+    /// other (a temporary, or a place arm's copy) by a move out of the
+    /// temporary that holds it.
     pub(in crate::mir) fn ternary(
         &mut self,
         node: Node<'a>,
@@ -162,6 +162,11 @@ impl<'a> Flatten<'a> {
         let arm = |this: &mut Self, value: Node<'a>| {
             this.region(|this| {
                 let src = this.expr(value);
+                let src = if value.transfer_operand().is_some() {
+                    src
+                } else {
+                    this.move_out_of_temporary(value, src)
+                };
                 this.emit(MirInstr::DefVar {
                     var: result,
                     src,
@@ -182,6 +187,30 @@ impl<'a> Flatten<'a> {
             constructor: None,
         });
         d
+    }
+
+    /// Hold `src`, the owned temporary `value` evaluated to, in a slot of
+    /// its own and move it out, which runs its move constructor.
+    fn move_out_of_temporary(&mut self, value: Node<'a>, src: Reg) -> Reg {
+        let ty = self.f.reg_types.get(&src.0).cloned().or_else(|| value.ty());
+        let slot = self.fresh_var();
+        if let Some(ty) = ty.clone() {
+            self.var_types.insert(slot, ty);
+        }
+        self.emit(MirInstr::DefVar {
+            var: slot,
+            src,
+            binding_ty: ty.clone(),
+            in_place: false,
+        });
+        let moved = self.fresh_typed(value.location(), Some(slot), ty.unwrap_or_else(Ty::error));
+        self.emit(MirInstr::UseVar {
+            dest: moved,
+            var: slot,
+            mode: UseMode::Move,
+            constructor: None,
+        });
+        moved
     }
 
     /// Lower chained comparison `chain`, `a op1 b op2 c …`, to a `Bool`, as

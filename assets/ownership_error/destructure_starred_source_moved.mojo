@@ -1,4 +1,5 @@
 # expect: conflicts with live reference
+# requires: stdlib
 # A starred remainder borrows its list: moving the list before the
 # remainder's last use is rejected.
 def main() raises:

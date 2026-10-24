@@ -426,6 +426,14 @@ impl VmBackend {
             "print" => {
                 let mut cells = Vec::with_capacity(args.len());
                 for value in args {
+                    // A tombstone a register carries (a take of storage
+                    // nothing initialized) traps at its read, as one in a
+                    // variable slot does.
+                    if matches!(value, Value::Moved) {
+                        return Err(RuntimeError::TypeError(
+                            "vm: use of a value after it was moved".to_string(),
+                        ));
+                    }
                     cells.push(self.format_value(prog, value, false)?);
                 }
                 let mut sep = " ".to_string();

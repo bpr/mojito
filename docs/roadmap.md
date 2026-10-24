@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1322**.
+Next free ID: **R1325**.
 
 ## Ordered Work
 
@@ -2590,6 +2590,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1323 A pointer cast to an unsafe any-origin keeps no owner alive**
+
+  `UnsafePointer(to=x).unsafe_origin_cast[MutUnsafeAnyOrigin]()` stored in a
+  struct and read after `x`'s last use reads a destroyed `x`: the VM traps
+  with "field access on non-struct <moved>", where the pin keeps every owner
+  alive to the end of the scope and prints its value.
+  - Natively the same program reads freed storage.
+  - Probe: the `rebinding_reference_aggregate_releases_each_owner_generation_once`
+    program of `tests/drops_test.rs` with each `Borrowed(UnsafePointer(to=x))`
+    spelled through that cast.
+  - Found in the 2026-10-24 overnight-gate triage.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
 Track: `calls`.
@@ -4206,6 +4220,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: a `Synth` per pattern for the commands it compiles, keeping
     syntax ids unique per statement.
   - Found while landing R1140 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1322 Slicing a list bound from a display is rejected**
+
+  `var xs = [1, 2, 3, 4]` then `xs[1:3]` stops with "invalid call to
+  '__getitem__': no overload matches the supplied arguments", where the pin
+  slices it (`len(xs[1:3])` prints `2`).
+  - A `List[Int]()` filled by `append` slices, so the display's inferred
+    element type is the likely difference.
+  - Found in the 2026-10-24 overnight-gate triage, beside
+    `benchmarks/compile/collections_many.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7197,21 +7223,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1107 A temporary arm of a conditional expression is built in the
-  result, where the pin moves it in**
-
-  `take(M(10) if c else M(11))` prints `take 10` in Mojito, where the pin
-  prints `take 1010`: upstream initializes the arm's temporary and then runs
-  its `__moveinit__` into the conditional's owned result.
-  - A `^` arm and a place arm's copy already match the pin.
-  - Every temporary arm differs the same way: a constructor call, a
-    `.copy()`, and a method receiver (`(M(20) if c else M(21)).eat()`).
-  - Pinned by `assets/ok/conditional_expression_transfer.mojo`, ledgered in
-    `conformance/assets-mojo-output-diffs.tsv`.
-  - Found in the 2026-10-17 overnight-gate triage.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1100 A free function with an origin binder over `Span[T, o]`
   is rejected at its call**
 
@@ -8460,6 +8471,19 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - The same body under `mut self` is accepted by both.
   - Found while landing R679 (2026-10-20).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1324 A struct over a place origin converts implicitly to one over
+  an unsafe any-origin**
+
+  `var box: Borrowed[MutUnsafeAnyOrigin] = Borrowed(UnsafePointer(to=x))`
+  compiles, where the pin rejects it: "cannot implicitly convert
+  'Borrowed[origin_of(x)]' value to 'Borrowed[MutUnsafeAnyOrigin]'".
+  - The two `Borrowed` rebinding tests of `tests/drops_test.rs` rely on the
+    conversion. Respelling them with an explicit `unsafe_origin_cast` needs
+    the owners kept alive first.
+  - Found in the 2026-10-24 overnight-gate triage.
+  - Depends on R1323, which the respelled tests need.
   - Model: Opus, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
@@ -10137,6 +10161,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `checked.rs`, and `mono/substitute.rs::list_literal_constructor`.
   - Semantics already match since R686: the elements are read before the
     collection is built.
+  - One difference shows: upstream's `Set.__init__(*ts: T, __set_literal__)`
+    copies each element in, so `{Token(3), Token(3)}` destroys `3` four
+    times on the pin and twice here
+    (`tests/vm_test.rs::discarded_set_elements_and_replaced_dictionary_values_are_destroyed`).
   - Found while landing R686 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.

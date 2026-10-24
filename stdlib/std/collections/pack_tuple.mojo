@@ -4,7 +4,7 @@
 
 from std.builtin.tuple import Tuple
 
-struct PackTuple[*Ts: Copyable & Movable & Deinitable](Copyable, Movable):
+struct PackTuple[*Ts: Copyable & Movable & Deinitable](Copyable, Movable, Sized):
     var storage: Tuple[*Self.Ts]
 
     def __init__(out self, var *args: *Self.Ts):

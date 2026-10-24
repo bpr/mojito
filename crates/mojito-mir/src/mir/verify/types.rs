@@ -107,6 +107,18 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     {
         return types_compatible(&found_reference.referent, &expected_reference.referent);
     }
+    // So do a tuple's elements' origins, element by element.
+    if let (TyKind::Tuple(found_elements), TyKind::Tuple(expected_elements))
+    | (TyKind::RuntimePack(found_elements), TyKind::RuntimePack(expected_elements)) =
+        (found.kind(), expected.kind())
+        && found_elements.len() == expected_elements.len()
+        && found_elements
+            .iter()
+            .zip(expected_elements)
+            .all(|(found, expected)| types_compatible(found, expected))
+    {
+        return true;
+    }
     // A bare `Struct(name, [])` is the established erased spelling for a
     // receiver or synthesized construction of any instantiation of `name`.
     // Otherwise the origin arguments erase from the runtime ABI like a

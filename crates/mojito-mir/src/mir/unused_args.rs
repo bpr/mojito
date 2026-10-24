@@ -558,6 +558,7 @@ fn argument_forwards_view<'a>(
         );
         erase_unpassed_defaults(&mut view, &kept, &original);
         erase_results(&mut view.blocks, &erased);
+        erase_stored_slots(&mut view.blocks, &erased);
         undefined = kept
             .into_iter()
             .filter(|&reg| erased.contains(&reg) || reg >= function.n_regs)
@@ -565,6 +566,7 @@ fn argument_forwards_view<'a>(
             .collect();
         view.reg_types
             .retain(|reg, _| !erased.contains(reg) || undefined.contains(&Reg(*reg)));
+        crate::mir::param_uses::retire_unnamed_storage(&mut view);
     }
     Some(ArgumentForwards {
         function: view,
@@ -707,6 +709,42 @@ fn drop_removed_operands<'a>(
             }
             _ => {}
         }
+    }
+}
+
+/// Erase from `blocks` and their regions each slot a store of an `erased`
+/// register defines, its stores, declarations, drops, and consumptions:
+/// a slot the view erased as only stored to, whose stored value it erased.
+fn erase_stored_slots(blocks: &mut [MirBlock], erased: &HashSet<u32>) {
+    fn stored(blocks: &[MirBlock], erased: &HashSet<u32>, slots: &mut BTreeSet<VarId>) {
+        for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+            if let MirInstr::DefVar { var, src, .. } = instruction
+                && erased.contains(&src.0)
+            {
+                slots.insert(*var);
+            }
+            for region in instruction_regions(instruction) {
+                stored(region, erased, slots);
+            }
+        }
+    }
+    fn erase(blocks: &mut [MirBlock], slots: &BTreeSet<VarId>) {
+        for block in blocks {
+            block.instrs.retain(|instruction| {
+                crate::mir::param_uses::slot_marker(instruction)
+                    .is_none_or(|var| !slots.contains(&var))
+            });
+            for instruction in &mut block.instrs {
+                for region in instruction_regions_mut(instruction) {
+                    erase(region, slots);
+                }
+            }
+        }
+    }
+    let mut slots = BTreeSet::new();
+    stored(blocks, erased, &mut slots);
+    if !slots.is_empty() {
+        erase(blocks, &slots);
     }
 }
 

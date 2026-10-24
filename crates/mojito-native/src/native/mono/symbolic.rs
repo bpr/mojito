@@ -255,7 +255,10 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
                         };
                         true
                     }
-                    MirInstr::DefVar { var, .. } => !generic_vars.contains(var),
+                    // The erased slot holds nothing, so nothing ends there.
+                    MirInstr::DefVar { var, .. }
+                    | MirInstr::DropVar { var, .. }
+                    | MirInstr::ConsumeVar { var } => !generic_vars.contains(var),
                     _ => true,
                 }
             });

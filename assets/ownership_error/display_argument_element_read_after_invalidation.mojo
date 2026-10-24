@@ -1,4 +1,5 @@
 # expect: use of invalidated interior reference 'lst["element"]'
+# requires: stdlib
 # A list display argument reads its elements at its call's setup, so an
 # element reached through `lst`'s accessor is read after `set0` writes `lst`.
 def ha(var l: List[Int], z: Int) -> Int:

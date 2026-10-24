@@ -1,4 +1,5 @@
 # expect: use of invalidated interior reference
+# requires: stdlib
 # A case's starred remainder borrows the subject: appending to it in the
 # body before the remainder's last use is rejected.
 def main():

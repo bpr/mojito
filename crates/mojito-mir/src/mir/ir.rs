@@ -4172,12 +4172,13 @@ mod tests {
                 elems: vec![Reg(0); width as usize],
             }
             .folded_constant(|_| Some(literal(7)), &reg_types, &none)
+            .and_then(|folded| match folded {
+                Const::Value(CtValue::Simd { lanes, .. }) => Some(lanes),
+                _ => None,
+            })
         };
-        assert!(matches!(
-            make(1),
-            Some(Const::Value(CtValue::Simd { lanes, .. })) if lanes == [CtLane::Int(7)]
-        ));
-        assert!(make(4).is_none());
+        assert_eq!(make(1), Some(vec![CtLane::Int(7)]));
+        assert_eq!(make(4), Some(vec![CtLane::Int(7); 4]));
         let reg_types = HashMap::from([(0, ty(TyKind::UInt)), (1, ty(TyKind::UInt))]);
         assert!(matches!(
             MirInstr::CopyValue {

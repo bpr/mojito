@@ -533,6 +533,12 @@ fn verify_rejects_an_untyped_used_slot() {
                                 mode: UseMode::Copy,
                                 constructor: None,
                             },
+                            MirInstr::DefVar {
+                                var: 1,
+                                src: Reg(0),
+                                binding_ty: None,
+                                in_place: false,
+                            },
                             MirInstr::DropVar {
                                 var: 1,
                                 destructor: None,
@@ -711,13 +717,11 @@ def main():
     let mut ops = Vec::new();
     region_ops(&mir.blocks, &mut ops);
     // `and`, the `Int` ternary, the `String` ternary (stored, not yielded),
-    // the chain's two nested `if`s, then the comprehension loop with its
-    // `__has_next__` test and its filter.
+    // the chain's two nested `if`s, then the comprehension loop, whose
+    // `__next__` call raises out of it, with its filter.
     assert_eq!(
         ops,
-        [
-            "if 1", "if 1", "if 0", "if 1", "if 1", "loop", "if 0", "if 0"
-        ]
+        ["if 1", "if 1", "if 0", "if 1", "if 1", "loop", "if 0"]
     );
 }
 
@@ -1742,10 +1746,9 @@ fn nested_calls_flatten_to_temps_in_order() {
 
 #[test]
 fn transfer_lowers_to_a_move_use() {
-    // `x^` is a move out of the variable.
-    let is = instrs(
-        "def h(var s: String):\n    pass\n\ndef main():\n    var s = String(\"a\")\n    h(s^)\n",
-    );
+    // `x^` is a move out of the variable. (An owned parameter takes the
+    // slot's storage instead, as a forward.)
+    let is = instrs("def main():\n    var s = String(\"a\")\n    var t = s^\n    print(t)\n");
     assert!(is.iter().any(|i| matches!(
         i,
         MirInstr::UseVar {
@@ -2449,7 +2452,9 @@ fn member_read_lowers_to_a_place_load() {
     // A pure field chain read (`p.a`) lowers to a `LoadPlace` (a place read), so
     // the ownership analysis sees which field is read (field-sensitivity). A
     // member of a temporary keeps the register-based `GetField`.
-    let is = instrs("var p: Foo = mk()\nreturn p.a\n");
+    let is = instrs(
+        "@fieldwise_init\nstruct Foo(Copyable):\n    var a: Int\n    var b: Int\n\ndef mk() -> Foo:\n    return Foo(1, 2)\n\ndef main():\n    var p = mk()\n    print(p.a)\n",
+    );
     let place = is.iter().find_map(|i| match i {
         MirInstr::LoadPlace { place, .. } => Some(place),
         _ => None,
@@ -2473,7 +2478,9 @@ fn member_read_lowers_to_a_place_load() {
 fn partial_move_lowers_to_a_move_place() {
     // `p.a^` (a pure field chain transfer) lowers to a `MovePlace` over that
     // field, distinct from a whole-variable `UseVar { Move }`.
-    let is = instrs("var p: Foo = mk()\nvar x: Bar = p.a^\n");
+    let is = instrs(
+        "@fieldwise_init\nstruct Bar(Movable):\n    var v: Int\n\n@fieldwise_init\nstruct Foo(Movable):\n    var a: Bar\n    var b: Int\n\ndef main():\n    var p = Foo(Bar(1), 2)\n    var x = p.a^\n    p.a = Bar(5)\n    print(x.v, p.a.v)\n",
+    );
     let place = is.iter().find_map(|i| match i {
         MirInstr::MovePlace { place, .. } => Some(place),
         _ => None,
@@ -3187,11 +3194,7 @@ fn borrowed_list_iteration_lowers_a_reference_bind_and_interior_loan() {
         .iter()
         .position(|name| name.starts_with("$iterobj"))
         .expect("iterator-object slot") as u32;
-    let instructions = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
-        .collect::<Vec<_>>();
+    let instructions = mojito::mir::nested_instructions(&main.blocks);
 
     // The retained source is a genuine reference to the whole collection place
     // (never a value copy); interior granularity lives only in the loan.
@@ -3476,10 +3479,8 @@ fn reference_row_iteration_loans_keep_the_invalidation_owner_domain() {
         .iter()
         .position(|name| name == "rows")
         .expect("rows slot") as u32;
-    let inner_loans: Vec<_> = main
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    let inner_loans: Vec<_> = mojito::mir::nested_instructions(&main.blocks)
+        .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::EstablishLoans { loans, .. } => Some(loans),
             _ => None,
@@ -3895,8 +3896,11 @@ fn recursively_lifted_reference_return_keeps_its_checked_contract() {
 
 #[test]
 fn nested_def_statement_materializes_explicit_capture_modes_once() {
-    use mojito::mir::{MirCaptureMode, UseMode};
+    use mojito::mir::UseMode;
 
+    // Each owned capture is materialized once, into a capture slot of its
+    // own, by its mode (`{var copied}` a copy, `{var moved^}` a move), and a
+    // call of the nested `def` by name passes that slot.
     let src = "def main():\n    var copied = 40\n    var moved: List[Int] = [40]\n    def snapshot() {var copied} -> Int:\n        return copied\n    def take() {var moved^} -> Int:\n        return moved[0]\n    print(snapshot(), take())\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     let main = &mir
@@ -3906,57 +3910,50 @@ fn nested_def_statement_materializes_explicit_capture_modes_once() {
         .expect("main lowered")
         .1;
     let instructions: Vec<_> = main.blocks.iter().flat_map(|block| &block.instrs).collect();
-
-    let closure = |function: &str| {
-        instructions
-            .iter()
-            .enumerate()
-            .find_map(|(index, instruction)| match instruction {
-                MirInstr::MakeClosure {
-                    function: target,
-                    captures,
-                    ..
-                } if target == function => Some((index, captures)),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("closure '{function}' materialized"))
-    };
-    let (copy_index, copy_captures) = closure("main$snapshot");
-    let (move_index, move_captures) = closure("main$take");
-    assert_eq!(copy_captures[0].mode, MirCaptureMode::Copy);
-    assert_eq!(move_captures[0].mode, MirCaptureMode::Move);
-
-    for (name, make_index) in [("snapshot", copy_index), ("take", move_index)] {
-        let slot = main
-            .var_names
+    let slot = |name: &str| {
+        main.var_names
             .iter()
             .position(|candidate| candidate == name)
-            .expect("closure slot") as u32;
-        let def_index = instructions
-            .iter()
-            .position(
-                |instruction| matches!(instruction, MirInstr::DefVar { var, .. } if *var == slot),
-            )
-            .expect("declaration stores closure");
-        assert!(make_index < def_index);
-        assert!(instructions.iter().skip(def_index + 1).any(|instruction| {
-            matches!(
-                instruction,
-                MirInstr::UseVar {
-                    var,
-                    mode: UseMode::BorrowShared,
-                    ..
-                } if *var == slot
-            )
-        }));
-    }
-    assert_eq!(
+            .unwrap_or_else(|| panic!("slot '{name}'")) as u32
+    };
+    let source_reads = |source: u32, mode: UseMode| {
         instructions
             .iter()
-            .filter(|instruction| matches!(instruction, MirInstr::MakeClosure { .. }))
-            .count(),
-        2,
-        "direct calls load declaration-created closures instead of recapturing"
+            .filter(|instruction| {
+                matches!(instruction, MirInstr::UseVar { var, mode: used, .. }
+                    if *var == source && *used == mode)
+            })
+            .count()
+    };
+    assert_eq!(source_reads(slot("copied"), UseMode::Copy), 1);
+    assert_eq!(
+        source_reads(slot("moved"), UseMode::Forward) + source_reads(slot("moved"), UseMode::Move),
+        1
+    );
+    for (capture, callee) in [
+        ("snapshot$copied", "main$snapshot"),
+        ("take$moved", "main$take"),
+    ] {
+        let capture = slot(capture);
+        assert_eq!(
+            instructions
+                .iter()
+                .filter(|instruction| matches!(instruction, MirInstr::DefVar { var, .. } if *var == capture))
+                .count(),
+            1,
+            "the capture is materialized once"
+        );
+        assert!(instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::Call { func, arg_places, .. } if func.0 == callee
+                && arg_places.iter().flatten().any(|place| place.root == capture)
+        )));
+    }
+    assert!(
+        !instructions
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::MakeClosure { .. })),
+        "a call by name materializes no closure"
     );
 }
 
@@ -4149,7 +4146,9 @@ fn nested_def_closure_is_made_at_its_first_class_use() {
 }
 
 #[test]
-fn copied_capture_keeps_the_closure_slot_and_the_indirect_call() {
+fn copied_capture_keeps_the_capture_slot_and_the_direct_call() {
+    // A call of a nested `def` by name is a direct call of its lifted body,
+    // which takes its `var` capture's copy from a capture slot of its own.
     let src = "def outer(k: Int) -> Int:\n    var m = k\n    def vc(x: Int) {var m} -> Int:\n        return m + x\n    return vc(2)\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     let outer = &mir
@@ -4163,13 +4162,21 @@ fn copied_capture_keeps_the_closure_slot_and_the_indirect_call() {
         .iter()
         .flat_map(|block| &block.instrs)
         .collect();
+    let capture = outer
+        .var_names
+        .iter()
+        .position(|name| name == "vc$m")
+        .expect("the capture slot") as u32;
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
-        MirInstr::MakeClosure { function, .. } if function == "outer$vc"
+        MirInstr::DefVar { var, .. } if *var == capture
     )));
-    assert!(outer.var_names.iter().any(|name| name == "vc"));
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::Call { func, .. } if func.0 == "outer$vc"
+    )));
     assert!(
-        instructions
+        !instructions
             .iter()
             .any(|instruction| matches!(instruction, MirInstr::CallIndirect { .. }))
     );
@@ -4986,10 +4993,9 @@ fn chained_comparison_links_name_their_dunders() {
     let mir = checked_program_mir(
         "struct S(ImplicitlyCopyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __lt__(self, o: Self) -> Bool:\n        return self.v < o.v\n\ndef main():\n    var a = S(1)\n    var b = S(2)\n    var c = S(3)\n    print(a < b < c)\n    var n = 1\n    print(0 < n < 2)\n",
     );
-    let mut resolved = mir_function(&mir, "main")
-        .blocks
-        .iter()
-        .flat_map(|block| &block.instrs)
+    // A later link runs in the `if` on the one before it.
+    let mut resolved = mojito::mir::nested_instructions(&mir_function(&mir, "main").blocks)
+        .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::BinOp { resolved, .. } => Some(resolved.as_deref()),
             _ => None,

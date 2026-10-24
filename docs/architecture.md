@@ -5047,9 +5047,11 @@ current Mojo:
   declaration is bound the same way. A raising call's result (taken from its
   error-or-value return), a prefix dunder's, an assignment, and `_ = e` are
   separate stores, so the call's temporaries die first.
-  A named-struct copy construction (`Name(copy=v)`, `Name[Args](copy=v)`)
-  whose whole owned source `v` gets its `DropVar` right after it (or after
-  its in-place binding) becomes `v`'s move (`analysis/copy_elision.rs`,
+  A named-struct copy construction (`Name(copy=v)`, `Name[Args](copy=v)`,
+  or the `value.copy` a register-passable struct's runs as) of a whole
+  owned source `v` loaded directly, not through a handle, whose `DropVar`
+  comes right after it (or after its binding) becomes `v`'s move
+  (`analysis/copy_elision.rs`,
   `elide_dying_copies`, run after `elaborate_drops`), as Mojo's lifetime
   checker turns a copy followed by the source's destruction into a move.
   The checker binds a temporary `copy=` source as a read temporary, so it
@@ -6060,7 +6062,9 @@ point where a slot declared in a loop is uninitialized again.
   current values its target needs (`insertVariants`). Where a slot holds
   nothing on an edge, the edge carries a `uninitmem` constant
   (`Const::UninitMem`, upstream's `currValueOrUndef`), which the VM reads
-  as uninitialized storage and the native backend as `llvm.undef`. A read
+  as uninitialized storage, or as the struct itself for a struct with no
+  fields, which is whole with nothing stored (an inlined `out self` of
+  `E()`), and the native backend as `llvm.undef`. A read
   needs no carrying, so one inside a `try` part or a `comptime for` body
   of a value stored outside it is promoted (the elaborator renumbers only
   the registers each clone of a body defines). A slot nothing stores or

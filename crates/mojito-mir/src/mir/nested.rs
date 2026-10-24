@@ -515,9 +515,19 @@ fn lower_nested_node(
     let registry = scope_registry(checked, &def.body, &node.children, enclosing.registry);
     let captures = &node.captures;
     let mangled = &node.mangled;
+    // A reference capture of a reference binding (a loop's reference
+    // target) is a reference parameter, typed by its referent as any is.
     let capture_types: Vec<Ty> = captures
         .iter()
-        .map(|capture| mir_nested_callable_ty(capture.ty.clone()))
+        .map(|capture| match (capture.kind, capture.ty.kind()) {
+            (
+                mojito_ast::ast::CaptureKind::Imm
+                | mojito_ast::ast::CaptureKind::Mut
+                | mojito_ast::ast::CaptureKind::Ref,
+                TyKind::Ref(reference),
+            ) => reference.referent.clone(),
+            _ => mir_nested_callable_ty(capture.ty.clone()),
+        })
         .collect();
     let named_result = dparams
         .iter()

@@ -374,6 +374,16 @@ impl VmBackend {
         }
     }
 
+    /// The value of a never-stored slot of `ty` that `mem-2-reg` reads as
+    /// `uninitmem`, upstream's `undef`: a struct with no fields is whole
+    /// with nothing stored, so it is that struct; anything else is
+    /// uninitialized storage.
+    pub(super) fn uninit_mem_value(prog: &Prog, ty: Option<&Ty>) -> Value {
+        ty.and_then(|ty| Self::uninitialized_value(prog, ty))
+            .filter(|value| matches!(value, Value::Struct { fields, .. } if fields.is_empty()))
+            .unwrap_or(Value::UninitStorage(None))
+    }
+
     /// `input()` under [`Self::set_input_override`]: append the prompt to the
     /// captured output (a native executable writes prompts to stdout, which the
     /// differential compares byte-for-byte), then serve one line from the

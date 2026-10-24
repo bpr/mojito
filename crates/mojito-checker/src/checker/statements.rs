@@ -94,12 +94,15 @@ impl Checker {
         // (`values: _MLIR.KGENParamListType[type]`) waits for that struct's
         // member types, and registers as soon as they resolve.
         let mut deferred_shells = Vec::new();
+        let mut waiting_aliases = Vec::new();
         for (index, statement) in stmts.iter().enumerate() {
             // A type-parameter default may still spell the alias it names
             // (`H: Hasher = default_hasher`): registering module-level
             // aliases in source order beside the shells lets a shell resolve
             // an earlier alias and an alias body an earlier shell.
-            self.register_module_alias(statement)?;
+            if self.register_module_alias_when_declared(statement)? {
+                waiting_aliases.push(index);
+            }
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
@@ -188,7 +191,13 @@ impl Checker {
                 Ok(()) => {
                     self.predeclared_traits.insert(name.clone());
                 }
-                Err(error) if awaits_struct_declarations(&error) => deferred_traits.push(index),
+                Err(error)
+                    if awaits_struct_declarations(&error)
+                        || matches!(&error, TypeError::UnknownType(name)
+                            if self.declared_structs.contains(name)) =>
+                {
+                    deferred_traits.push(index);
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -200,12 +209,17 @@ impl Checker {
         // earlier aliases.
         drop(phase);
         let phase = timing::span("declarations.aliases");
-        for statement in stmts {
-            self.register_module_alias(statement)?;
+        for (index, statement) in stmts.iter().enumerate() {
+            if self.register_module_alias_when_declared(statement)?
+                && !waiting_aliases.contains(&index)
+            {
+                waiting_aliases.push(index);
+            }
         }
         drop(phase);
         let phase = timing::span("declarations.types");
         let mut waiting_conformers = Vec::new();
+        let mut constructing_structs = Vec::new();
         for (index, statement) in stmts.iter().enumerate() {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
@@ -220,22 +234,56 @@ impl Checker {
                 waiting_conformers.push(index);
                 continue;
             }
-            self.check_struct_types(&declaration)?;
+            match self.check_struct_types(&declaration) {
+                Ok(()) => {}
+                Err(error) if self.awaits_construction(&error) => constructing_structs.push(index),
+                Err(error) => return Err(error),
+            }
             self.retry_deferred_shells(stmts, &mut deferred_shells);
+        }
+        // A waiting alias registers once the struct types have.
+        for index in waiting_aliases {
+            self.register_module_alias(&stmts[index])?;
         }
         drop(phase);
         let phase = timing::span("declarations.signatures");
         let parked_conformers = waiting_conformers.clone();
-        self.retry_deferred_traits(stmts, &mut deferred_traits, &mut waiting_conformers)?;
+        self.retry_deferred_traits(
+            stmts,
+            &mut deferred_traits,
+            &mut waiting_conformers,
+            &mut constructing_structs,
+        )?;
         for (index, statement) in stmts.iter().enumerate() {
             let Some(declaration) = struct_declaration(statement) else {
                 continue;
             };
-            if parked_conformers.contains(&index) {
+            if parked_conformers.contains(&index) || constructing_structs.contains(&index) {
                 continue;
             }
             self.check_struct_method_signatures(&declaration)?;
-            self.retry_deferred_traits(stmts, &mut deferred_traits, &mut waiting_conformers)?;
+            self.retry_deferred_traits(
+                stmts,
+                &mut deferred_traits,
+                &mut waiting_conformers,
+                &mut constructing_structs,
+            )?;
+        }
+        // A struct whose member type constructs another of this program's
+        // registers once the others' signatures have.
+        while !constructing_structs.is_empty() {
+            let index = constructing_structs.remove(0);
+            let Some(declaration) = struct_declaration(&stmts[index]) else {
+                continue;
+            };
+            self.check_struct_types(&declaration)?;
+            self.check_struct_method_signatures(&declaration)?;
+            self.retry_deferred_traits(
+                stmts,
+                &mut deferred_traits,
+                &mut waiting_conformers,
+                &mut constructing_structs,
+            )?;
         }
         // A trait still waiting reports its own rejection.
         for index in deferred_traits {
@@ -339,6 +387,26 @@ impl Checker {
         Ok(true)
     }
 
+    /// Whether `value` applies a member (`TypeList.of[...]`) of a struct
+    /// this program declares that the struct has yet to register.
+    fn applies_unregistered_member(&self, value: &Expr) -> bool {
+        let (ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. }) = &value.kind
+        else {
+            return false;
+        };
+        let ExprKind::Member { object, field } = &object.kind else {
+            return false;
+        };
+        let ExprKind::Identifier(base) = &object.kind else {
+            return false;
+        };
+        self.declared_structs.contains(base)
+            && !self
+                .structs
+                .get(base)
+                .is_some_and(|info| info.parameterized_associated.contains_key(field))
+    }
+
     /// Whether `value` names a module constant whose initializer applies a
     /// callable (`comptime E = A` over `comptime A = f(1)`): a parameter
     /// alias of that constant, which takes its parameter expression, not a
@@ -378,6 +446,7 @@ impl Checker {
         stmts: &[Stmt],
         deferred: &mut Vec<usize>,
         waiting: &mut Vec<usize>,
+        constructing: &mut Vec<usize>,
     ) -> Result<(), TypeError> {
         loop {
             let mut resolved = false;
@@ -425,9 +494,47 @@ impl Checker {
                 let Some(declaration) = struct_declaration(&stmts[conformer]) else {
                     continue;
                 };
-                self.check_struct_types(&declaration)?;
-                self.check_struct_method_signatures(&declaration)?;
+                match self.check_struct_types(&declaration) {
+                    Ok(()) => self.check_struct_method_signatures(&declaration)?,
+                    Err(error) if self.awaits_construction(&error) => constructing.push(conformer),
+                    Err(error) => return Err(error),
+                }
             }
+        }
+    }
+
+    /// Whether `error` is a member type's construction of a struct of this
+    /// program (`TypeList[...]()[id]` over the bundled library linked from
+    /// source) before that struct's signatures register: the declaration
+    /// waits for them.
+    fn awaits_construction(&self, error: &TypeError) -> bool {
+        matches!(error, TypeError::BadCall { func, reason }
+            if reason == "no '__init__' overload takes no arguments"
+                && self.declared_structs.contains(func))
+    }
+
+    /// [`Self::register_module_alias`], or `true` when the alias waits for
+    /// the pass after the struct types: it applies a member a struct of
+    /// this program has yet to register (`TypeList.of[...]` over the
+    /// bundled library linked from source), or it fails while some struct
+    /// shell of this program has yet to register (one waiting on another
+    /// struct's member types), whose declarations the body may need.
+    fn register_module_alias_when_declared(&mut self, statement: &Stmt) -> Result<bool, TypeError> {
+        if let StmtKind::Comptime { value, .. } = &statement.kind
+            && self.applies_unregistered_member(value)
+        {
+            return Ok(true);
+        }
+        match self.register_module_alias(statement) {
+            Err(_)
+                if self
+                    .declared_structs
+                    .iter()
+                    .any(|name| !self.predeclared_structs.contains(name)) =>
+            {
+                Ok(true)
+            }
+            registered => registered.map(|()| false),
         }
     }
 

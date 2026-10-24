@@ -458,9 +458,32 @@ const fn on_off(run: bool) -> &'static str {
     if run { "on" } else { "off" }
 }
 
+/// The fixtures the pre-elaboration pipeline itself decides, as upstream's
+/// always runs: without it, a run differs or does not elaborate by design,
+/// so only the run with it is checked.
+const PIPELINE_DECIDES: &[&str] = &[
+    // `HoistYieldResults` erases an unread `if` with its `elif` call.
+    "if_unread_elif_call_skipped",
+    // `RemoveUnusedParams` drops an unused argument's default, which prints.
+    "unused_argument_instances",
+    // `RemoveUnusedParams` removes a forwarded parameter, so `10 // n` at
+    // `n == 0` is never elaborated.
+    "forwarded_parameter_instances",
+    // `RemoveUnusedParams` removes a callable parameter no body calls, so a
+    // capturing closure is never bound as a compile-time value.
+    "unread_callable_parameter_instances",
+    // `inline-parametric` folds the bound's witness, which closes the
+    // element of the method's own pack the requirement reads.
+    "trait_requirement_indexes_own_pack",
+];
+
 /// Require the pre-elaboration pipeline to leave what the VM observes of the
 /// fixture unchanged.
 fn pipeline_preserves_behavior(path: &Path) -> Result<(), Failed> {
+    if PIPELINE_DECIDES.contains(&stem(path).as_str()) {
+        pipeline_outcome(path, true)?;
+        return Ok(());
+    }
     let ((off_output, off_error), (on_output, on_error)) = match fixture_stdin(path) {
         Some(stdin) => {
             let (off_output, off_error, off_code) = binary_outcome(path, stdin, false)?;

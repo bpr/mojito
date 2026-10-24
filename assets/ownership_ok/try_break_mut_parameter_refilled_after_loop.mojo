@@ -1,3 +1,4 @@
+# requires: stdlib
 # The `break` out of the `try` carries the `mut` parameter moved to the
 # loop's exit, where it is written back before the function returns.
 def take(var s: String) raises:

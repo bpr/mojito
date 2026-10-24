@@ -1,4 +1,5 @@
 # expect: use of invalidated interior reference 'il["element"]'
+# requires: stdlib
 # A display element is read at its construction's setup, after every element
 # has been evaluated: a later element that writes the list invalidates the
 # earlier element's reference, as the pinned Mojo rejects it.
