@@ -837,6 +837,7 @@ assets/ok/span_pointer_construction.mojo	main	exe-differential	sanitized
 assets/ok/span_temp_method_argument.mojo	main	exe-differential	sanitized
 assets/ok/span_temp_static_argument.mojo	main	exe-differential	sanitized
 assets/ok/span_view_basics.mojo	main	exe-differential	sanitized
+assets/ok/sroa_forwarded_out_self_splits.mojo	main	exe-differential	sanitized
 assets/ok/static_call_origin_application.mojo	main	exe-differential	sanitized
 assets/ok/static_call_through_self.mojo	main	exe-differential	sanitized
 assets/ok/static_call_through_shadowed_type_name.mojo	main	exe-differential	sanitized

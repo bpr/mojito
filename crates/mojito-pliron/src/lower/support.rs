@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
+use std::collections::BTreeSet;
 
 /// Emit the body of an `invoke` thunk (see [`ModuleShared::ensure_thunk`]):
 /// load/take the capture arguments out of the environment record, forward
@@ -171,6 +172,122 @@ pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
     }
     let mut output = HashMap::new();
     visit(blocks, &mut output);
+    output
+}
+
+/// The fields a body moves out of registers, as a store of upstream's
+/// `kgen.struct.extract` moves its element out of the extracted value.
+#[derive(Default)]
+pub struct MovedOutFields {
+    /// Each root register's consumed field paths, where the root, every
+    /// `field.get` on the path, and the consumer are top-level instructions
+    /// of one block.
+    pub paths: HashMap<u32, BTreeSet<Vec<String>>>,
+    /// Each root register's consumed field paths that cross a block: the
+    /// root's release, placed in its own block, cannot leave them out.
+    pub across_regions: HashMap<u32, BTreeSet<Vec<String>>>,
+}
+
+/// The fields `blocks` move out of registers ([`MovedOutFields`]): the path
+/// of each constructor-less `field.get` chain whose result a store
+/// (`var.store`, `place.store`), a `struct.create` or tuple element, or a
+/// `return`, `yield`, `break`, or `continue` value consumes, keyed by the
+/// register the chain starts from.
+pub fn collect_moved_out_fields(blocks: &[MirBlock]) -> MovedOutFields {
+    struct Extract {
+        root: u32,
+        path: Vec<String>,
+        block: usize,
+        local: bool,
+    }
+
+    fn visit(
+        blocks: &[MirBlock],
+        next_block: &mut usize,
+        extracts: &mut HashMap<u32, Extract>,
+        output: &mut MovedOutFields,
+    ) {
+        for block in blocks {
+            let key = *next_block;
+            *next_block += 1;
+            let mut defined = HashSet::new();
+            let mut results = Vec::new();
+            let consume =
+                |reg: &Reg, extracts: &HashMap<u32, Extract>, output: &mut MovedOutFields| {
+                    if let Some(extract) = extracts.get(&reg.0) {
+                        let moved = if extract.local && extract.block == key {
+                            &mut output.paths
+                        } else {
+                            &mut output.across_regions
+                        };
+                        moved
+                            .entry(extract.root)
+                            .or_default()
+                            .insert(extract.path.clone());
+                    }
+                };
+            for instruction in &block.instrs {
+                match instruction {
+                    MirInstr::GetField {
+                        dest,
+                        base,
+                        field,
+                        constructors,
+                    } if constructors.is_empty() => {
+                        let (root, mut path, local) = match extracts.get(&base.0) {
+                            Some(extract) => (
+                                extract.root,
+                                extract.path.clone(),
+                                extract.local && extract.block == key,
+                            ),
+                            None => (base.0, Vec::new(), defined.contains(&base.0)),
+                        };
+                        path.push(field.clone());
+                        extracts.insert(
+                            dest.0,
+                            Extract {
+                                root,
+                                path,
+                                block: key,
+                                local,
+                            },
+                        );
+                    }
+                    MirInstr::DefVar { src, .. } | MirInstr::Store { src, .. } => {
+                        consume(src, extracts, output);
+                    }
+                    MirInstr::MakeStruct { fields: elems, .. }
+                    | MirInstr::MakeTuple { elems, .. } => {
+                        for elem in elems {
+                            consume(elem, extracts, output);
+                        }
+                    }
+                    _ => {}
+                }
+                for region in mojito_mir::mir::instruction_regions(instruction) {
+                    visit(region, next_block, extracts, output);
+                }
+                results.clear();
+                mojito_mir::mir::verify::instruction_result_regs(instruction, &mut results);
+                defined.extend(results.iter().map(|reg| reg.0));
+            }
+            if matches!(
+                block.term,
+                MirTerm::Return(_)
+                    | MirTerm::Yield(_)
+                    | MirTerm::TryYield(_)
+                    | MirTerm::Break { .. }
+                    | MirTerm::Continue { .. }
+            ) {
+                for reg in mojito_mir::mir::terminator_regs(&block.term) {
+                    consume(&reg, extracts, output);
+                }
+            }
+        }
+    }
+
+    let mut output = MovedOutFields::default();
+    visit(blocks, &mut 0, &mut HashMap::new(), &mut output);
     output
 }
 
@@ -725,5 +842,93 @@ const fn receiver_borrows(
             has_place
         }
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn forward(dest: u32, var: u32) -> MirInstr {
+        MirInstr::UseVar {
+            dest: Reg(dest),
+            var,
+            mode: UseMode::Forward,
+            constructor: None,
+        }
+    }
+
+    fn extract(dest: u32, base: u32, field: &str) -> MirInstr {
+        MirInstr::GetField {
+            dest: Reg(dest),
+            base: Reg(base),
+            field: field.into(),
+            constructors: Vec::new(),
+        }
+    }
+
+    fn store(var: u32, src: u32) -> MirInstr {
+        MirInstr::DefVar {
+            var,
+            src: Reg(src),
+            binding_ty: None,
+            in_place: false,
+        }
+    }
+
+    fn block(instrs: Vec<MirInstr>) -> MirBlock {
+        MirBlock {
+            instrs,
+            term: MirTerm::Yield(Vec::new()),
+        }
+    }
+
+    fn paths(moved: &[&[&str]]) -> BTreeSet<Vec<String>> {
+        moved
+            .iter()
+            .map(|path| path.iter().map(|field| (*field).to_string()).collect())
+            .collect()
+    }
+
+    /// A stored `field.get` chain moves its path out of the register it
+    /// starts from; a borrowed one, here only read by another `field.get`,
+    /// moves nothing on its own.
+    #[test]
+    fn stored_field_chain_moves_its_path_out() {
+        let blocks = vec![block(vec![
+            forward(0, 0),
+            extract(1, 0, "inner"),
+            extract(2, 1, "t"),
+            store(1, 2),
+            extract(3, 0, "u"),
+            store(2, 3),
+        ])];
+        let moved = collect_moved_out_fields(&blocks);
+        assert_eq!(
+            moved.paths.get(&0),
+            Some(&paths(&[&["inner", "t"], &["u"]]))
+        );
+        assert!(moved.across_regions.is_empty());
+    }
+
+    /// A `field.get` stored in a region other than the block defining its
+    /// root crosses a region: the root's release cannot leave it out.
+    #[test]
+    fn field_stored_in_a_nested_region_crosses_it() {
+        let blocks = vec![block(vec![
+            forward(0, 0),
+            extract(1, 0, "t"),
+            MirInstr::If {
+                results: Vec::new(),
+                cond: Reg(9),
+                then: vec![block(vec![store(1, 1)])],
+                elifs: Vec::new(),
+                else_args: Vec::new(),
+                orelse: vec![block(Vec::new())],
+            },
+        ])];
+        let moved = collect_moved_out_fields(&blocks);
+        assert!(moved.paths.is_empty());
+        assert_eq!(moved.across_regions.get(&0), Some(&paths(&[&["t"]])));
     }
 }

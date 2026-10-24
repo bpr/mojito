@@ -631,6 +631,12 @@ Concrete MIR reaches `compile` structured, every region one block, as
 temporaries follow the region tree: one is released in the block defining
 it, after the instruction there that reads it last (a region op reads what
 its regions read), and on each terminator leaving that block before then.
+A `field.get` chain whose result a store, a `struct.create` or tuple
+element, or a region terminator consumes moves that field out, as a store
+of upstream's `kgen.struct.extract` moves the element, so the temporary
+releases only what is left, and nothing once every heap-owning field is
+moved (`collect_moved_out_fields`). A field moved out across a region, or
+out of a temporary its stdlib destructor releases, refuses.
 
 Variant storage lowering (the `__VariantStorage` primitive behind the
 self-hosted `std.utils.Variant`) uses the shared native tag/payload layout
@@ -5991,12 +5997,10 @@ point where a slot declared in a loop is uninitialized again.
   whole read some instruction or terminator takes other than as a store's
   source, a `struct.create` field, a `field.get` base, or a `yield`,
   `break`, `continue`, or `return` value (a call argument, a destructor's
-  `deinit self`, which `emitDestructorCall` passes by reference); and,
-  within a round until nothing more is kept, a whole store of a whole
-  read of a slot the round keeps. That last rule is no upstream one: an
-  inlined initializer's `out self` is a slot of its own the caller
-  forwards (R1308), and Pliron releases the forwarded value, which a
-  `field.get` only borrows (R1309). So `var s = S(1, String("a"))` keeps
+  `deinit self`, which `emitDestructorCall` passes by reference). A whole
+  store of a forwarded whole read splits as any other, so `var w = W(3)`
+  over an inlined initializer splits `w` beside the `out self` slot the
+  caller forwards (R1308). So `var s = S(1, String("a"))` keeps
   `s` in the first round, where its whole drop is a `S.__deinit__` call
   taking it, and splits it in the second, once `inline-parametric` has
   inlined the synthesized initializer and destructor (`AlwaysNoDebug`

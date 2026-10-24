@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
+use std::collections::BTreeSet;
 
 /// Where an owned temporary is released: in the block that defines it,
 /// after the instruction there that reads it last (itself, or the region op
@@ -14,7 +15,7 @@ pub(super) struct TempRelease {
     after: Option<usize>,
 }
 
-impl FnLowering<'_> {
+impl<'a> FnLowering<'a> {
     /// Whether the invisible-release rule can free every heap buffer a value
     /// of `ty` owns without running user code: the nominal String (one
     /// buffer), and byte-copied aggregates over such fields.
@@ -186,7 +187,11 @@ impl FnLowering<'_> {
         let Some(storage) = self.reg_values.get(&reg).copied() else {
             return Ok(());
         };
-        self.emit_release_temp(ctx, storage, ty)
+        let moved = self.moved_out_paths(reg, ty);
+        if moved.is_empty() {
+            return self.emit_release_temp(ctx, storage, ty);
+        }
+        self.emit_release_storage_except(ctx, storage, ty, &mut Vec::new(), &moved)
     }
 
     /// Free the heap buffers the `ty`-typed temporary at `storage` carries.
@@ -196,15 +201,7 @@ impl FnLowering<'_> {
         storage: Value,
         ty: &Ty,
     ) -> Result<(), PlironError> {
-        // Collection temporaries own their backing allocation through their
-        // stdlib destructor; their raw pointer field is not itself a
-        // separately owned Pointer value. MaybeUninit is deliberately
-        // excluded: its trivial wrapper destructor must never reach a live
-        // user payload held in its compiler-private storage.
-        let uninit_wrapper = matches!(ty.kind(), TyKind::Struct(name, _)
-            if name.contains("MaybeUninit")
-                || mojito_types::types::uninit_storage_element(ty).is_some());
-        if self.stdlib_deinit_temp(ty) && !self.owns_heap(ty) && !uninit_wrapper {
+        if self.released_by_destructor(ty) {
             let traced = self.trace_lifecycle;
             self.trace_lifecycle = false;
             let released = self.emit_drop_value(ctx, storage, ty);
@@ -483,6 +480,25 @@ impl FnLowering<'_> {
         {
             return Ok(());
         }
+        let across = self.moved_out.across_regions.get(&dest.0);
+        if across.is_some_and(|paths| paths.iter().any(|path| self.moved_out_matters(&ty, path))) {
+            return Err(self.unsupported_reg(
+                "field moved out of an owned temporary across a region".into(),
+                dest,
+            ));
+        }
+        let moved = self.moved_out_paths(dest.0, &ty);
+        if !moved.is_empty() {
+            if self.released_by_destructor(&ty) {
+                return Err(self.unsupported_reg(
+                    format!("field moved out of a `{ty}` temporary its destructor releases"),
+                    dest,
+                ));
+            }
+            if self.moved_out_covers(&ty, &mut Vec::new(), &moved) {
+                return Ok(());
+            }
+        }
         match self.temp_release(dest) {
             Some(release) => {
                 self.temp_releases.insert(dest.0, release);
@@ -521,5 +537,130 @@ impl FnLowering<'_> {
                 block: position.key,
                 after: Some(*index),
             })
+    }
+
+    /// The paths [`MovedOutFields`] records moved out of `reg`, a `ty`
+    /// value, that hold something its release would free or destroy.
+    fn moved_out_paths(&self, reg: u32, ty: &Ty) -> BTreeSet<Vec<String>> {
+        self.moved_out
+            .paths
+            .get(&reg)
+            .into_iter()
+            .flatten()
+            .filter(|path| self.moved_out_matters(ty, path))
+            .cloned()
+            .collect()
+    }
+
+    /// Whether the field at `path` in a `ty` value holds something a
+    /// release frees or destroys; an unresolved path conservatively does.
+    fn moved_out_matters(&self, ty: &Ty, path: &[String]) -> bool {
+        self.field_path_ty(ty, path)
+            .is_none_or(|field| self.owns_heap(&field) || self.needs_drop(&field))
+    }
+
+    /// The type of the field at `path` in a `ty` value.
+    fn field_path_ty(&self, ty: &Ty, path: &[String]) -> Option<Ty> {
+        path.iter().try_fold(ty.clone(), |ty, field| {
+            let TyKind::Struct(name, _) = ty.kind() else {
+                return None;
+            };
+            self.struct_decls
+                .get(name.as_str())?
+                .fields
+                .iter()
+                .find(|(declared, _)| declared == field)
+                .map(|(_, field_ty)| field_ty.clone())
+        })
+    }
+
+    /// Whether releasing a `ty` temporary runs its stdlib destructor rather
+    /// than freeing its buffers. Collection temporaries own their backing
+    /// allocation through their stdlib destructor; their raw pointer field
+    /// is not itself a separately owned `Pointer` value. `MaybeUninit` is
+    /// deliberately excluded: its trivial wrapper destructor must never
+    /// reach a live user payload held in its compiler-private storage.
+    fn released_by_destructor(&self, ty: &Ty) -> bool {
+        let uninit_wrapper = matches!(ty.kind(), TyKind::Struct(name, _)
+            if name.contains("MaybeUninit")
+                || mojito_types::types::uninit_storage_element(ty).is_some());
+        self.stdlib_deinit_temp(ty) && !self.owns_heap(ty) && !uninit_wrapper
+    }
+
+    /// Whether the moved-out paths `moved` leave nothing for the release of
+    /// the `ty` value at `path` to free: the path itself moved out, a value
+    /// owning no heap buffer, or a declared struct each of whose fields is
+    /// covered.
+    fn moved_out_covers(
+        &self,
+        ty: &Ty,
+        path: &mut Vec<String>,
+        moved: &BTreeSet<Vec<String>>,
+    ) -> bool {
+        if moved.contains(path) || !self.owns_heap(ty) {
+            return true;
+        }
+        let Some(decl) = self.plain_struct_decl(ty) else {
+            return false;
+        };
+        decl.fields.iter().all(|(field, field_ty)| {
+            path.push(field.clone());
+            let covered = self.moved_out_covers(field_ty, path, moved);
+            path.pop();
+            covered
+        })
+    }
+
+    /// [`Self::emit_release_storage`] of the `ty` value at `path` in `ptr`,
+    /// but for the fields `moved` names, which a consumer owns now.
+    fn emit_release_storage_except(
+        &mut self,
+        ctx: &mut Context,
+        ptr: Value,
+        ty: &Ty,
+        path: &mut Vec<String>,
+        moved: &BTreeSet<Vec<String>>,
+    ) -> Result<(), PlironError> {
+        if moved.contains(path) || !self.owns_heap(ty) {
+            return Ok(());
+        }
+        if !moved.iter().any(|taken| taken.starts_with(path)) {
+            return self.emit_release_storage(ctx, ptr, ty);
+        }
+        let Some(decl) = self.plain_struct_decl(ty) else {
+            return Err(self.unsupported(
+                format!("a field moved out of part of an owned `{ty}` temporary"),
+                None,
+            ));
+        };
+        let fields = decl.fields.clone();
+        let field_tys: Vec<Ty> = fields.iter().map(|(_, t)| t.clone()).collect();
+        let composed = self
+            .layout
+            .struct_layout(&field_tys)
+            .map_err(|error| self.unsupported(format!("release layout ({error})"), None))?;
+        for ((field, field_ty), offset) in fields.iter().zip(&composed.offsets) {
+            let address = if *offset == 0 {
+                ptr
+            } else {
+                self.gep_byte_unspanned(ctx, ptr, *offset)
+            };
+            path.push(field.clone());
+            let released = self.emit_release_storage_except(ctx, address, field_ty, path, moved);
+            path.pop();
+            released?;
+        }
+        Ok(())
+    }
+
+    /// The declaration of `ty` when it is a declared struct other than the
+    /// nominal String, whose release walks its fields.
+    fn plain_struct_decl(&self, ty: &Ty) -> Option<&'a MirStructDeclaration> {
+        match ty.kind() {
+            TyKind::Struct(name, _) if !mojito_symbol::symbol::is_stdlib_string_struct(name) => {
+                self.struct_decls.get(name.as_str()).copied()
+            }
+            _ => None,
+        }
     }
 }

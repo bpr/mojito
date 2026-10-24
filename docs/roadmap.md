@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1320**.
+Next free ID: **R1322**.
 
 ## Ordered Work
 
@@ -8517,38 +8517,56 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `inline-parametric` gives a constructed receiver (`Binding::Out`) a fresh
   slot and forwards it into the caller's `var.store` (`Returned::Out`),
   where upstream's inliner initializes the caller's allocation in place.
-  - Two allocations where the pin has one make `sroa` keep a memory-only
-    slot stored from a slot it keeps, a rule upstream's `SROA` lacks
-    (`keep_address_users`, `crates/mojito-analysis/src/analysis/sroa.rs`).
-  - Removing it removes one of that rule's two reasons. R1309 is the
-    other.
+  - Two allocations where the pin has one leave `self$inline1` whole,
+    as `self.show()` borrows it, beside a split `w`, where the pin's one
+    allocation stays whole under that borrow.
   - Probe: `tests/mir_passes/sroa/forwarded_from_kept_slot.mir`, from
     `var w = W(3)` over an `@always_inline` initializer that calls
-    `self.show()`, keeps both `self$inline1` and `w`, where the pin has
+    `self.show()`, keeps `self$inline1` and splits `w`, where the pin has
     one allocation.
   - Found while landing R1267 (2026-10-23).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1309 Pliron releases an owned temporary that `field.get` only
-  borrows**
+- [ ] **R1320 Pliron frees an owned register temporary after its last
+  read, where upstream's `CheckLifetimes` destroys it explicitly in LIT**
 
-  A whole store of a forwarded struct into a split slot becomes one
-  `field.get` per field, which Pliron lowers as a borrow of the base
-  (`borrowed_operands`, `crates/mojito-pliron/src/lower/support.rs`), so it
-  also releases the base as an owned temporary and frees each field twice.
-  - Upstream's SSA values carry no ownership once `LowerLIT` has run: a
-    `kgen.struct.extract` of a value moves its element out.
-  - `sroa` works around it by keeping a memory-only slot stored from a slot
-    it keeps (`keep_address_users`,
-    `crates/mojito-analysis/src/analysis/sroa.rs`), with R1308.
-  - Probe: dropping that fixpoint makes `w2` (an `@always_inline`
-    `W.__init__(out self, n)` that sets `self.t = String("x") + String(n)`
-    and calls `self.show()`, then `var w = W(3); w.n += 1; print(w.t)`)
-    double-free under `--backend pliron`.
-  - Depends on R1311, which erases the last ownership markers so no
-    backend tracks an owned temporary.
+  MIR names no register's destruction: Pliron marks an owned temporary
+  (`mark_owned_temp`, about 30 call sites) and frees its buffers after its
+  last read (`flush_owned_temps`, `crates/mojito-pliron/src/lower/release.rs`),
+  while upstream's `CheckLifetimes` (`ValueToDestroy`) destroys every owned
+  SSA value with an explicit destructor call before `LowerLIT`.
+  - Fix: drop elaboration places a `drop.reg` (MIR's existing
+    `MirInstr::Drop`, which nothing emits and both backends refuse) after
+    the last read of each owned register no instruction consumes.
+  - Both backends lower it as a destructor call: the VM by running it,
+    Pliron by `emit_drop_value`, and Pliron's own release skips a register
+    a `drop.reg` names.
+  - Pliron's moved-out rule (`collect_moved_out_fields`,
+    `crates/mojito-pliron/src/lower/support.rs`) then becomes drop
+    elaboration's: a consumed `field.get` leaves only the rest to destroy.
+  - Probe: `MOJITO_PLIRON_DBG_TEMPS=1` over every eighth `assets/ok`
+    fixture logged 177 releases (91 `String`, 73 `StringLiteral`, 8
+    `Error`, 4 `Tuple[Int, String]`, 1 `Wrapper[String]`), most in stdlib
+    bodies (`atol`, `_open_file`, `os.path.*`).
+  - If the drop placement and both lowerings do not fit one session, that
+    session's plan splits them into chained entries.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1321 Pliron keeps its own owned-temporary bookkeeping**
+
+  Once every owned register's destruction is a `drop.reg` (R1320),
+  Pliron's register tracking has nothing left to release.
+  - Delete `FnLowering::owned_temps`, `temp_releases`, `TempRelease`, the
+    `mark_*_owned_temp` call sites, `flush_owned_temps`,
+    `release_temps_leaving`, and `MovedOutFields`
+    (`crates/mojito-pliron/src/lower/release.rs`, `lower/support.rs`).
+  - Probe: the 73 `StringLiteral` releases R1320's probe counts free a
+    runtime descriptor (`str_runtime`) that has no MIR value to drop, so
+    they need a MIR-level owner first.
+  - Depends on R1320.
+  - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
   recognizes by spelling**

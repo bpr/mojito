@@ -274,6 +274,7 @@ pub fn lower_body(
         partially_moved: HashSet::new(),
         aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
         loaded_places: collect_loaded_places(&func.blocks),
+        moved_out: collect_moved_out_fields(&func.blocks),
         storage_reads: HashSet::new(),
         pointer_slot_refs: HashSet::new(),
         made_ref_places: HashMap::new(),
@@ -443,6 +444,10 @@ struct FnLowering<'a> {
     /// can borrow these directly even when the checker did not retain an
     /// explicit `arg_place` on the call contract.
     loaded_places: HashMap<u32, MirPlace>,
+    /// The fields each register gives up to a consumer: a store of
+    /// upstream's `kgen.struct.extract` moves the element out of the
+    /// extracted value, so an owned temporary releases only what is left.
+    moved_out: MovedOutFields,
     /// `MakeRef` results that address pointer-typed storage: a value access
     /// through such a handle first loads the stored pointer (the VM's
     /// reference-pointer boundary). A plain pointer value (a loaded pointer

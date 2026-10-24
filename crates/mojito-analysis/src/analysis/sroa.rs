@@ -182,10 +182,8 @@ type Judged<'a> = (Fields<'a>, bool);
 /// memory-only slot's whole store asks.
 #[derive(Clone, Copy)]
 enum Def {
-    /// A whole read of the slot that runs no constructor.
-    Read(VarId),
-    /// A `struct.create` or a `field.get`, which reads its operands
-    /// rather than passing them by address.
+    /// A whole read of a slot that runs no constructor, a `struct.create`,
+    /// or a `field.get`, none of which passes its operand by address.
     Value,
     /// Anything else: a call result, which upstream returns into its
     /// destination's address, an operator, a region result, a reference
@@ -217,8 +215,8 @@ impl Registers {
                 regs.clear();
                 instruction_result_regs(instruction, &mut regs);
                 let def = match (instruction, whole_mention(instruction)) {
-                    (_, Some((var, Whole::Read { .. }))) => Def::Read(var),
-                    (MirInstr::MakeStruct { .. } | MirInstr::GetField { .. }, _) => Def::Value,
+                    (_, Some((_, Whole::Read { .. })))
+                    | (MirInstr::MakeStruct { .. } | MirInstr::GetField { .. }, _) => Def::Value,
                     _ => Def::Other,
                 };
                 self.defs.extend(regs.iter().map(|reg| (reg.0, def)));
@@ -331,12 +329,7 @@ fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fie
 ///   call result, which upstream's callee initializes through the slot's
 ///   address;
 /// - a whole read whose register an instruction takes ([`Registers`]), such
-///   as a call argument or a `__deinit__` receiver;
-/// - a whole store of a whole read of a slot the round keeps, until no
-///   more is kept. Upstream has no such rule, as the two would be one
-///   allocation there, but an inlined initializer's `out self` is its own
-///   slot the caller forwards, and a backend releases the forwarded value,
-///   which a `field.get` only borrows.
+///   as a call argument or a `__deinit__` receiver.
 fn keep_address_users(
     census: &mut HashMap<VarId, Census>,
     fields: &HashMap<VarId, Judged<'_>>,
@@ -354,30 +347,6 @@ fn keep_address_users(
                     .iter()
                     .any(|dest| registers.taken.contains(&dest.0));
         }
-    }
-    loop {
-        let splits = |var: &VarId| {
-            fields.contains_key(var)
-                && census
-                    .get(var)
-                    .is_some_and(|entry| entry.defined && !entry.kept)
-        };
-        let kept: Vec<VarId> = census
-            .iter()
-            .filter(|&(var, entry)| {
-                memory_only(var)
-                    && entry.defined
-                    && !entry.kept
-                    && entry.stores.iter().any(|src| {
-                        matches!(registers.defs.get(&src.0), Some(Def::Read(from)) if !splits(from))
-                    })
-            })
-            .map(|(&var, _)| var)
-            .collect();
-        if kept.is_empty() {
-            return;
-        }
-        keep(census, kept);
     }
 }
 

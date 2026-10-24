@@ -795,6 +795,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `sroa` splits a slot stored whole from another slot's forwarded read, as
+  upstream's `SROA` does, so `var w = W(3)` over an `@always_inline`
+  initializer splits `w` (R1309). A `field.get` chain whose result a
+  store, a `struct.create` or tuple element, or a region terminator
+  consumes now moves that field out of a Pliron owned temporary, as a
+  store of upstream's `kgen.struct.extract` moves the element, so the
+  temporary releases only what is left instead of freeing each moved field
+  a second time (`assets/ok/sroa_forwarded_out_self_splits.mojo`).
+
 - An explicit destroy (`x^.finish()`, `x.f^.finish()`) is now the call
   alone: `call.method` records `deinit_receiver`, its callee's `deinit`
   receiver convention, which the verifier checks against the declaration,
