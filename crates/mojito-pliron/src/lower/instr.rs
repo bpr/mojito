@@ -542,12 +542,11 @@ impl FnLowering<'_> {
             }
             MirInstr::ConsumePlace { place, marker } => {
                 // Consumption skips the whole-value destructor and destroys
-                // only residual fields. MIR emits it after a named
-                // destructor's call on the same place, whose aggregate
-                // receiver passes by address, or after the body of one
-                // inlined there: the `deinit self` exit consume already
-                // destroyed the residual fields in place, so the place holds
-                // no value from here and its presence flag clears.
+                // nothing. MIR emits it after a named destructor's call on
+                // the same place, whose aggregate receiver passes by
+                // address, or after the body of one inlined there: that
+                // body's drops destroyed the fields in place, so the place
+                // holds no value from here and its presence flag clears.
                 self.end_presence(ctx, place);
                 self.erased.insert(marker.0);
                 Ok(())

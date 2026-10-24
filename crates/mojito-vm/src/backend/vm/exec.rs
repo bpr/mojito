@@ -1941,6 +1941,9 @@ impl VmBackend {
                     destructor.as_deref(),
                 )?;
             }
+            // The end of a value whose parts drop elaboration has already
+            // destroyed, upstream's exit `mark_destroyed`: the slot holds
+            // nothing left to destroy.
             MirInstr::ConsumeVar { var } => {
                 let value = std::mem::replace(&mut vars[*var as usize], Value::Moved);
                 let value = match prog.mir.functions[function].1.var_tys.get(var) {
@@ -1953,16 +1956,6 @@ impl VmBackend {
                     && !prog.synthesized(&prog.mir.functions[function].0)
                 {
                     self.record_lifecycle(format!("consume {name}"));
-                }
-                match value {
-                    // The named explicit destructor owns the aggregate: its
-                    // residual fields receive their ordinary declaration-order
-                    // destruction here, at the receiver's last use.
-                    Value::Struct { fields, .. } => self.drop_struct_fields(prog, fields)?,
-                    // Tuple storage `sroa` split out of a consumed struct
-                    // destroys its residual elements, left to right.
-                    Value::Tuple(_) => self.drop_value(prog, value)?,
-                    _ => {}
                 }
             }
             // The place's value was moved out through pointers: what its

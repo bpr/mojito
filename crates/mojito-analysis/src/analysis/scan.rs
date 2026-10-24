@@ -265,7 +265,8 @@ pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
     match i {
         MirInstr::UseVar { var, mode, .. } if mode.moves() => vec![*var],
         // A lowered explicit-destructor call already consumes the receiver
-        // slot (residual fields destroyed, whole-value `__deinit__` skipped);
+        // slot (its fields destroyed by the callee, whole-value `__deinit__`
+        // skipped);
         // splicing an ordinary drop as well would run the destructor the
         // named destructor replaced.
         MirInstr::ConsumeVar { var } => vec![*var],

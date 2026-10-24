@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1318**.
+Next free ID: **R1319**.
 
 ## Ordered Work
 
@@ -55,6 +55,27 @@ and Mojito does not yet. The entries below are that stage, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md),
 which names the upstream pass each one follows. Each is measured by the
 `measure` track's counters and checked by its on/off differential.
+
+- [ ] **R1318 The VM reads a promoted zero-field struct as `<uninit>`:
+  its `const uninitmem` ignores the register's type**
+
+  `raise E()` of a fieldless struct `E`, caught and printed, prints
+  `<uninit>` on the VM, where native and the pin print the value.
+  - Probe: `assets/ok/optional_raising_subscript.mojo` (the VM prints
+    `8 <uninit>` for `EmptyOptionalError[Int]()`), and any
+    `struct E(Writable)` with no fields raised from `def f() raises E`.
+  - Cause: `inline-parametric` inlines the empty `E.__init__`, and
+    `mem-2-reg` promotes its `out self` slot, which no store defines, to
+    `const uninitmem`, as upstream's `Mem2Reg` reads `undef`.
+  - The VM's `const_value` (`crates/mojito-vm/src/backend/vm.rs`) makes
+    every `uninitmem` an empty `Value::UninitStorage`, where a struct's
+    unwritten value is that struct with no field set yet, as the VM
+    already builds for a slot at its first use.
+  - Lever: build `uninitmem` from the destination register's type.
+  - With the pipeline off (`MOJITO_PRE_ELABORATION=0`) the VM prints the
+    value. Found while landing R1310 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1279 A generic struct with a `String` field does not compile:
   `inline-parametric` leaves its copy constructor reading the struct's
@@ -642,39 +663,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1310 `consume.var` destroys an ended value's residual fields at
-  run time, where upstream's exit `mark_destroyed` consumes only the
-  whole-object bit**
-
-  Both backends destroy whatever a `consume.var` ends still holds: the
-  VM's `ConsumeVar` (`drop_struct_fields`, or `drop_value` for tuple
-  storage, `crates/mojito-vm/src/backend/vm/exec.rs`) and Pliron's
-  `lower_consume_var` (`emit_surviving_leaf_drops`, `lower/drops.rs`).
-  - Upstream's `IREmitter` ends a `deinit` argument with `mark_destroyed`,
-    and `CheckLifetimes` consumes only its whole-object bit, since
-    `DestructorInsertion` has destroyed every live field by then.
-  - With the VM's residual teardown off, 12 fixtures lose 42 destructor
-    lines, all elements of tuple or pack storage. Probes:
-    `named_result_transferred`, `pack_drop_names_element_destructors`,
-    `for_destructuring_lifetimes`, `dict_display_literal_constructor`,
-    `match_cluster_lifecycle`, `match_or_failed_alternative_copies`,
-    `pack_element_read_borrowed`, `pointer_subscript_reads_in_place`,
-    `struct_operator_subscript_operand_in_place`,
-    `value_parameter_materialized_per_use`,
-    `value_parameter_method_aggregate`, `variadic_collector_len`.
-  - The cause: a public `Tuple`'s `deinit` receiver stays one bit in
-    `DropValues`, and `sroa` rewrites a split storage slot's end to
-    `consume.var`, so no `drop.place` names those elements.
-  - Lever: lay out a nominal `Tuple` by its `storage` field and that
-    storage's elements (a `Field` step, then `ConstIndex`), so the walk
-    names each element's drop (`refine_pack_drops`). Then neither
-    backend's `consume.var` destroys anything.
-  - Trap: a `ConstIndex` on a nominal `Tuple` failed `emit-mir`
-    verification while R1252 landed.
-  - Found while planning R932 (2026-10-23).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1311 `consume.place` and `ownership.mark_destroyed` reach both
   backends, where upstream's `LowerLIT` erases their counterparts**
 
@@ -702,11 +690,11 @@ which names the upstream pass each one follows. Each is measured by the
   - Then `lower-lit` erases both, the VM and Pliron arms refuse them, and
     Pliron's `end_presence` and `ended_inside` go.
   - Since R1306 the VM's `consume.place` destroys nothing, as Pliron's
-    does, and only tombstones the part. Dropping the tombstone
-    double-frees (`nominal_string_codepoint_from_byte`, `consume.place
-    $v0._text` then `consume.var $v0`) until `consume.var` destroys
-    nothing (R1310).
-  - Depends on R1310.
+    does, and only tombstones the part. The tombstone used to keep a
+    later `consume.var` of the root from destroying the part again
+    (`nominal_string_codepoint_from_byte`, `consume.place $v0._text` then
+    `consume.var $v0`); since R1310 that `consume.var` destroys nothing.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R933 A span origin can name a slot no instruction addresses**

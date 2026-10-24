@@ -638,8 +638,8 @@ and dispatches owning operations and destruction from the runtime tag. Multi-lan
 stored as a contiguous lane-aligned scalar aggregate and computed as LLVM
 fixed vectors in SSA between loads and stores; the vector representation is
 backend-private, and the VM's lane semantics remain the contract. User `__moveinit__` and `__deinit__` bodies remain
-ordinary compiled MIR calls, with a `deinit self` callee owning residual-field
-teardown.
+ordinary compiled MIR calls, with a `deinit self` callee whose elaborated
+drops destroy its receiver's fields.
 
 Optimization policy lives in one profile-to-pipeline table
 (`backend/pliron/pipeline.rs`, snapshot-pinned): every profile runs the same
@@ -5260,12 +5260,15 @@ declaration order. Struct destruction runs:
    at its own last use inside the body (an unused one at the destructor's
    entry, before its first statement; a nested projection keeps its whole
    direct field alive; a transferred field is its new owner's), and the
-   receiver's `ConsumeVar` before each exit ends what is left, the fields
-   that need no destructor work
+   receiver's `ConsumeVar` before each exit ends the receiver and destroys
+   nothing
 2. otherwise the fields, in declaration order
 
 The compiler-private tuple storage likewise drops elements left-to-right
-where it backs a `Tuple`. An owning `var *args` collector — the slot
+where it backs a `Tuple`: drop elaboration lays the nominal `Tuple` out as
+the struct it is, by its one `storage` field, so its synthesized
+`__deinit__` destroys that field by a `DropPlace`, which
+`mir::refine_pack_drops` splits into one named drop per element. An owning `var *args` collector — the slot
 `MirFunctionDeclaration::owned_pack_slot` names — drops them last to first,
 matching current Mojo's pack lifecycle, in the VM and natively. Public
 collections, including `Tuple`, are nominal structs and follow the ordinary
@@ -5283,8 +5286,9 @@ raising call's error region among them. A raise keeps live only what its
 handler reads, so a field the handler reads dies right after the body's
 last raising call, as on the pin. A field a loan roots dies after the
 loan's last use, the loan carrying that field alone. The splice then ends
-the receiver with a `ConsumeVar` before each exit, which tears down only the
-fields that need no destructor work, unless every path there has already
+the receiver with a `ConsumeVar` before each exit, which destroys nothing on
+either backend, upstream's exit `mark_destroyed` consuming only the
+whole-object bit, unless every path there has already
 ended it, as a whole transfer (`self^.finish()`) does — the forward
 `DropFacts` walk records that must-set (`DropFacts::ended`), upstream's
 `unusedMarkDestroyName`. A field read only inside a loop dies after the
@@ -5407,9 +5411,8 @@ pending `ConsumeVar` as the variable's teardown — the variable stays live up t
 it and counts as moved there — so no competing ordinary `DropVar` is spliced
 between the call and the consumption (which would re-run the whole-value
 `__deinit__` the named destructor replaced). The callee owns its `deinit`
-receiver from the call on: its own elaborated `ConsumeVar` destroys the
-residual fields at the receiver's last use inside the body (moved fields are
-tombstones, so nothing re-drops), the VM vacates the caller's receiver place
+receiver from the call on: its body's elaborated drops destroy its fields,
+each at its own last use, and its `ConsumeVar` ends the receiver, the VM vacates the caller's receiver place
 before the call, and the caller's trailing consumption therefore finds
 nothing left to destroy. Consumption is unconditional: a raising named
 destructor leaves the source uninitialized on both edges (upstream's rule),

@@ -149,11 +149,10 @@ impl<'a> FnLowering<'a> {
             .is_some_and(mojito_mir::mir::MirFunctionDeclaration::is_synthesized)
     }
 
-    /// `ConsumeVar`: skip the whole-value destructor but destroy residual
-    /// fields — a no-op unless fields carry their own destructor work. The
-    /// consumed slot is empty afterwards either way. A slot a call's `deinit`
-    /// receiver already consumed ([`FnLowering::consumed_receivers`]) is
-    /// ended by that call, so its `consume.var` does nothing.
+    /// `ConsumeVar`: end the slot, upstream's exit `mark_destroyed`, which
+    /// destroys nothing, as drop elaboration has destroyed every part the
+    /// value still held. A slot a call's `deinit` receiver already consumed
+    /// ([`FnLowering::consumed_receivers`]) is ended by that call.
     pub(super) fn lower_consume_var(
         &mut self,
         ctx: &mut Context,
@@ -162,46 +161,20 @@ impl<'a> FnLowering<'a> {
         if self.consumed_receivers.remove(&var) {
             return Ok(());
         }
-        match self.var_lower_ty(var)? {
-            LowerTy::Scalar(_) | LowerTy::ZeroSized => Ok(()),
-            LowerTy::Aggregate { ty, .. } => {
-                if self.trace_lifecycle
-                    && !self.synthesized_body()
-                    && let TyKind::Struct(name, _) = &ty.kind()
-                {
-                    let name = name.clone();
-                    self.emit_trace_text(ctx, mojito_native::native::rt_abi::TRACE_CONSUME, &name);
-                }
-                if self.fields_need_drop(&ty) {
-                    // The named explicit destructor owns the aggregate; its
-                    // surviving fields receive their ordinary declaration-
-                    // order destruction (the VM's `ConsumeVar`).
-                    // Struct and tuple-like consumption destroy their
-                    // surviving fields/elements; deeper untracked moves
-                    // reject rather than guess.
-                    if !matches!(
-                        &ty.kind(),
-                        TyKind::Struct(..) | TyKind::Tuple(..) | TyKind::RuntimePack(..)
-                    ) || (matches!(&ty.kind(), TyKind::Struct(..))
-                        && self.is_partially_moved(var))
-                    {
-                        return Err(self.unsupported(
-                            "variable consumption with droppable fields".into(),
-                            None,
-                        ));
-                    }
-                    let leaves = self.leaf_flags.get(&var).cloned().unwrap_or_default();
-                    let ptr = self.var_slots[var as usize];
-                    self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves)?;
-                }
-                Ok(())
-            }
+        if let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(var)?
+            && self.trace_lifecycle
+            && !self.synthesized_body()
+            && let TyKind::Struct(name, _) = &ty.kind()
+        {
+            let name = name.clone();
+            self.emit_trace_text(ctx, mojito_native::native::rt_abi::TRACE_CONSUME, &name);
         }
+        Ok(())
     }
 
     /// `DropPlace`: destroy one depth-1 field of an aggregate variable under
-    /// its leaf presence flag (the VM's tombstone), so the receiver's later
-    /// `ConsumeVar`/exit backstop skips it. The entry-block flag allocation
+    /// its leaf presence flag (the VM's tombstone), so a later `DropVar` of
+    /// the receiver skips it. The entry-block flag allocation
     /// tracks every depth-1 `DropPlace` place. A nested or reference-rooted
     /// place has no flag: drop elaboration emits one only where the place is
     /// statically initialized (a store about to overwrite it), so it drops
@@ -507,8 +480,8 @@ impl<'a> FnLowering<'a> {
     }
 
     /// Emit the drop of the value of type `ty` at `ptr`: a call of
-    /// `destructor`, a struct's compiled `__deinit__` (its own body consumes
-    /// the receiver's residual fields), else recurse into fields in
+    /// `destructor`, a struct's compiled `__deinit__` (its own body destroys
+    /// the receiver's fields), else recurse into fields in
     /// declaration order.
     pub(super) fn emit_drop(
         &mut self,

@@ -393,7 +393,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "consume.var",
         CapabilityStatus::Supported,
-        "clears the initialization flag; surviving droppable struct fields destroy in reverse order under the per-leaf flags",
+        "ends the slot; drop elaboration has destroyed every field",
     ),
     (
         "consume.place",

@@ -487,9 +487,9 @@ impl VmBackend {
                         && !deinit_receiver
                         && Self::function_result_carries_reference(prog, fidx));
                 // A named destructor owns its receiver from the call on: the
-                // callee's elaborated `ConsumeVar` destroys the residual fields
-                // at their last use, so the caller's slot is vacated before the
-                // call and its trailing consumption finds nothing to destroy.
+                // callee's elaborated drops destroy its fields, so the
+                // caller's slot is vacated before the call and its trailing
+                // consumption finds nothing to destroy.
                 if deinit_receiver
                     && !receiver_as_reference
                     && let Some(place) = recv_place

@@ -41,7 +41,7 @@ disappear. Four such gaps were found, and one of them reaches far outside
 | A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R890 (R733, R833, R1129, R1106, R829, R1272, R1264, R1113, R1290, R956, and R832 closed) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1278, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102, R1103, R1073 (landed) | R1304 (R1070 and R1090 closed) |
-| D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931, R1306 (landed) | R1310, R1311, R1309, R1312, R1313 (R1252, R1267, R932, and R832 closed) |
+| D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931, R1306, R1310 (landed) | R1311, R1309, R1312, R1313 (R1252, R1267, R932, and R832 closed) |
 
 Each gap's fix also removes a place where a backend looks something up by
 type instead of reading a name from MIR: the struct-named construction
@@ -159,8 +159,9 @@ entry's probe is "one instance per `n` where the pin has one".
   walk, and R1252 then folds into it.
 - R931 and R932 let `lower-lit` erase `loans.establish` and
   `ownership.mark_initialized`. The last two markers, `consume.place`
-  and `ownership.mark_destroyed`, are R1311. It needs `consume.var` to stop
-  destroying residual fields at run time (R1310). Pliron's return sweep
+  and `ownership.mark_destroyed`, are R1311. `consume.var` stopped
+  destroying residual fields at run time with R1310 (10-23), once drop
+  elaboration laid a `Tuple` out by its `storage` field. Pliron's return sweep
   went with R832 (10-23); its per-leaf presence flags go after R1311
   (R1312), and so does the trailing `consume.var` of a call's `deinit`
   receiver (R1313).
@@ -195,11 +196,11 @@ entry's probe is "one instance per `n` where the pin has one".
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1304 -n 0
    ```
 
-4. **Gap D**. R1251, R1252, R931, R932, R1306, and R832 landed. What
-   remains runs R1310 → R1311 → R1309, R1312, R1313:
+4. **Gap D**. R1251, R1252, R931, R932, R1306, R832, and R1310 landed.
+   What remains runs R1311 → R1309, R1312, R1313:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1310 --task R1311 --task R1309 --task R1312 --task R1313 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1311 --task R1309 --task R1312 --task R1313 -n 0
    ```
 
 ## Entries outside the gaps

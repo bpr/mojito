@@ -167,7 +167,7 @@ and `comptime.for`, and the VM rejects one that survives as unsupported.
 | `lifetime.keep_alive` | `KeepAlive` | Extend an owner's MIR live range without copying it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one |
 | `ownership.mark_initialized` | `MarkInitialized` | Mark a place initialized without writing it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one. A struct or tuple slot gets its unwritten storage where an instruction first stores into, reads, addresses, or passes it by address |
 | `drop.var` | `DropVar` | Destroy the value in a variable slot, running the destructor the drop names |
-| `consume.var` | `ConsumeVar` | Consume an explicitly destroyed aggregate — the named destructor's own receiver at its last use; then destroy its residual fields in declaration order, or, for tuple storage `sroa` split out of one, its residual elements left to right |
+| `consume.var` | `ConsumeVar` | End a slot whose parts drop elaboration has already destroyed (a `deinit` receiver at each exit, upstream's exit `mark_destroyed`); destroys nothing |
 | `consume.place` | `ConsumePlace` | Consume one projected subobject after its named destructor succeeds |
 | `drop.reg` | `Drop` | Reserved register-drop operation |
 

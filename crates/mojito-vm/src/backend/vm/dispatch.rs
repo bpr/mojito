@@ -61,19 +61,6 @@ impl VmBackend {
         }
     }
 
-    /// Destroy the residual fields of a consumed aggregate (a named
-    /// destructor's receiver, or a consumed place).
-    pub(super) fn drop_struct_fields(
-        &mut self,
-        prog: &Prog,
-        fields: Vec<(String, Value)>,
-    ) -> Result<(), RuntimeError> {
-        for (_, value) in fields {
-            self.drop_value(prog, value)?;
-        }
-        Ok(())
-    }
-
     /// Destroy `value`, which a `drop.var` or `drop.place` of the static
     /// type `ty` ends, by running `destructor`, the `__deinit__` the drop
     /// names, on the whole value, else by dropping its fields. A partial
@@ -237,8 +224,8 @@ impl VmBackend {
                 if let Some(idx) = prog.lifecycle_member(&name, "__deinit__") {
                     self.record_lifecycle(format!("drop {name}"));
                     // `self` is the whole struct, owned by the destructor: its
-                    // elaborated `ConsumeVar` destroys the residual fields at
-                    // their last use. The return value is discarded.
+                    // elaborated drops destroy the fields, each at its last
+                    // use. The return value is discarded.
                     let self_val = Value::Struct { name, fields };
                     self.call_function(prog, idx, vec![self_val])?;
                     return Ok(());

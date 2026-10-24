@@ -1,0 +1,67 @@
+mojito-mir 1.97
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+    struct { name: Tuple, fields: [field { name: storage, type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], mut_self_methods: [__getitem_param__], fieldwise_init: false, param_decls: [type_param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], trait_param: absent, callable_bound: absent, default: absent, infer_only: false, variadic: true, constraints: [] }], explicit_destroy_message: present("Use `deinit_with()` to explicitly destroy a `Tuple` with non-`Deinitable` elements"), explicit_destructors: [destructor { name: concat, raises: false }, destructor { name: consume_elements, raises: false }, destructor { name: deinit_with, raises: false }, destructor { name: reverse, raises: false }], explicit_destroy_declared: true, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Copyable }, conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: ImplicitlyCopyable }] }, conformance { trait: ImplicitlyCopyable, conditions: [] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Deinitable }] }, conformance { trait: IsTriviallyCopyable, conditions: [and { left: or { left: conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Copyable }, right: conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: ImplicitlyCopyable } }, right: trivial { lifecycle: copyable, operand: operand_type(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])) } }] }, conformance { trait: IsTriviallyMovable, conditions: [and { left: constraint_bool(true), right: trivial { lifecycle: movable, operand: operand_type(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])) } }] }, conformance { trait: IsTriviallyDeinitable, conditions: [and { left: conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Deinitable }, right: trivial { lifecycle: deinitable, operand: operand_type(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])) } }] }], declared: [conformance { trait: Comparable, conditions: [and { left: conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Comparable }, right: conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Equatable } }] }, conformance { trait: Copyable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Copyable }] }, conformance { trait: Defaultable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Defaultable }] }, conformance { trait: Equatable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Equatable }] }, conformance { trait: Hashable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Hashable }] }, conformance { trait: ImplicitlyCopyable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: ImplicitlyCopyable }] }, conformance { trait: Deinitable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Deinitable }] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: RegisterPassable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: RegisterPassable }] }, conformance { trait: Sized, conditions: [constraint_bool(true)] }, conformance { trait: Writable, conditions: [conforms_pack { param: binder { owner: "Tuple", slot: 0, name: Ts }, trait: Writable }] }], associated_types: [associated_type { name: element_types, type: param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent } }], parameterized_associated_types: [], associated_values: [], members: [member { name: __deinit__, symbol: "Tuple.__deinit__" }] }
+  ],
+  decls: [
+    decl { lowered_name: "Tuple.__deinit__", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(deinit), param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug, synthesized: true },
+    decl { lowered_name: "Tuple.end_storage", param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(deinit), param_conventions: [], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug }
+  ],
+  functions: [
+      fn {
+        name: "Tuple.__deinit__",
+        registers: 0,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Tuple, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [],
+        locations: [],
+        blocks: [
+          bb0 {
+            instructions: [
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Tuple.end_storage",
+        registers: 0,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Tuple, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [true],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Tuple, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [],
+        locations: [],
+        blocks: [
+          bb0 {
+            instructions: [
+              ownership.mark_destroyed { place: place { root: $v0, root_type: present(struct_type { name: Tuple, arguments: [] }), projections: [projection { op: field(storage), type: tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }]) }], type: present(tuple([param { owner: "Tuple", slot: 0, name: "*Ts", bounds: [Movable], callable_bound: absent }])), through: absent } }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]
+}

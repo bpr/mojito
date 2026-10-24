@@ -828,10 +828,8 @@ impl<'a> Flatten<'a> {
             args: regs,
             kwargs: kw,
             // An explicit-destructor call keeps its receiver place:
-            // the VM writes the callee's final `self` state back before
-            // the trailing `ConsumeVar`/`ConsumePlace`, so residual
-            // destruction sees what the named destructor left (moved
-            // fields are tombstones, drained containers are empty).
+            // the VM vacates it before the call, as the callee owns the
+            // receiver from then on and destroys its fields itself.
             recv_place: if implicitly_copied_receiver {
                 None
             } else {

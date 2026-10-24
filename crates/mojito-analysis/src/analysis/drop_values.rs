@@ -43,13 +43,7 @@ impl DropValues {
         let mut stored: BTreeMap<VarId, (Ty, Vec<Vec<OwnedStep>>)> = BTreeMap::new();
         let mut unsplit: BTreeSet<VarId> = BTreeSet::new();
         for var in (0..f.n_vars as VarId).filter(|v| splittable(*v) && fielded(*v)) {
-            // The public `Tuple`'s elements live in its compiler-private
-            // storage, which no place projects from the nominal value.
-            let Some(ty) = f
-                .var_tys
-                .get(&var)
-                .filter(|ty| mojito_types::types::tuple_elements(ty.kind()).is_none())
-            else {
+            let Some(ty) = f.var_tys.get(&var) else {
                 continue;
             };
             if let Some(fields) = level_fields(ty, declarations) {
@@ -562,18 +556,14 @@ impl Level {
 }
 
 /// The fields of a value of type `ty` in declaration order, each with its
-/// step, its projection, and its type: a tuple's elements, the public
-/// `Tuple`'s included, or a struct's fields (`MirDeclarations::field_types`,
-/// or the declared ones of a struct's own `Self`).
+/// step, its projection, and its type: a tuple's elements, or a struct's
+/// fields (`MirDeclarations::field_types`, or the declared ones of a
+/// struct's own `Self`), the public `Tuple`'s `storage` included.
 fn level_fields(ty: &Ty, declarations: &MirDeclarations) -> Option<Vec<(OwnedStep, Proj, Ty)>> {
-    let elements = match ty.kind() {
-        TyKind::Tuple(items) => Some(items.iter().collect()),
-        kind => mojito_types::types::tuple_elements(kind),
-    };
-    if let Some(elements) = elements {
+    if let TyKind::Tuple(items) = ty.kind() {
         return Some(
-            elements
-                .into_iter()
+            items
+                .iter()
                 .enumerate()
                 .map(|(index, item)| {
                     (
@@ -613,7 +603,10 @@ fn level_fields(ty: &Ty, declarations: &MirDeclarations) -> Option<Vec<(OwnedSte
 mod tests {
     use super::*;
     use mojito_mir::mir::{MirBlock, MirTerm};
-    use mojito_types::types::tuple_type;
+
+    fn tuple(items: Vec<Ty>) -> Ty {
+        Ty::new(TyKind::Tuple(items))
+    }
 
     fn droppable() -> Ty {
         Ty::new(TyKind::Struct("D".into(), Vec::new()))
@@ -624,7 +617,10 @@ mod tests {
         let mut place = MirPlace::root(0, Some(root.clone()));
         let mut ty = root.clone();
         for index in path {
-            let element = mojito_types::types::tuple_elements(ty.kind()).unwrap()[*index].clone();
+            let TyKind::Tuple(items) = ty.kind() else {
+                break;
+            };
+            let element = items[*index].clone();
             place.project(Proj::ConstIndex(*index), element.clone());
             ty = element;
         }
@@ -658,7 +654,7 @@ mod tests {
 
     #[test]
     fn a_stored_element_gets_its_own_bit_before_the_whole_object_bit() {
-        let pair = tuple_type(vec![droppable(), droppable()]);
+        let pair = tuple(vec![droppable(), droppable()]);
         let values = values(&pair, &[&[0]]);
         assert!(values.is_split(0));
         assert_eq!(values.range(0), 0..3);
@@ -671,8 +667,8 @@ mod tests {
 
     #[test]
     fn a_nested_store_lays_out_each_level_it_enters() {
-        let inner = tuple_type(vec![droppable(), droppable()]);
-        let outer = tuple_type(vec![inner, droppable()]);
+        let inner = tuple(vec![droppable(), droppable()]);
+        let outer = tuple(vec![inner, droppable()]);
         let values = values(&outer, &[&[0, 1]]);
         assert_eq!(values.range(0), 0..5);
         assert_eq!(values.part(0, &[element(0)]), Some(0..3));
@@ -682,7 +678,7 @@ mod tests {
 
     #[test]
     fn a_use_drills_into_a_level_only_while_its_whole_object_bit_is_live() {
-        let pair = tuple_type(vec![droppable(), droppable()]);
+        let pair = tuple(vec![droppable(), droppable()]);
         let values = values(&pair, &[&[0]]);
         let mut live = DenseSet::default();
         let second = values.access(&place(&pair, &[1]));
@@ -694,8 +690,8 @@ mod tests {
 
     #[test]
     fn an_access_reaches_the_deepest_laid_out_part() {
-        let inner = tuple_type(vec![droppable(), droppable()]);
-        let outer = tuple_type(vec![inner, droppable()]);
+        let inner = tuple(vec![droppable(), droppable()]);
+        let outer = tuple(vec![inner, droppable()]);
         let values = values(&outer, &[&[0, 1]]);
         assert_eq!(values.access(&place(&outer, &[0, 1])).bits(), 1..2);
         assert_eq!(values.access(&place(&outer, &[0])).bits(), 0..3);
@@ -705,16 +701,16 @@ mod tests {
 
     #[test]
     fn an_access_past_a_leaf_stops_at_the_leaf() {
-        let inner = tuple_type(vec![droppable(), droppable()]);
-        let outer = tuple_type(vec![inner, droppable()]);
+        let inner = tuple(vec![droppable(), droppable()]);
+        let outer = tuple(vec![inner, droppable()]);
         let values = values(&outer, &[&[1]]);
         assert_eq!(values.access(&place(&outer, &[0, 1])).bits(), 0..1);
     }
 
     #[test]
     fn a_part_under_a_dead_whole_object_bit_marks_its_level() {
-        let inner = tuple_type(vec![droppable(), droppable()]);
-        let outer = tuple_type(vec![inner, droppable()]);
+        let inner = tuple(vec![droppable(), droppable()]);
+        let outer = tuple(vec![inner, droppable()]);
         let values = values(&outer, &[&[0, 1]]);
         let part = values.access(&place(&outer, &[0, 1]));
         let mut live: DenseSet = [4].into_iter().collect();
@@ -725,7 +721,7 @@ mod tests {
 
     #[test]
     fn a_part_dies_alone_under_a_live_whole_object_bit() {
-        let pair = tuple_type(vec![droppable(), droppable()]);
+        let pair = tuple(vec![droppable(), droppable()]);
         let values = values(&pair, &[&[0]]);
         let dying: DenseSet = [0].into_iter().collect();
         let live: DenseSet = [1, 2].into_iter().collect();
@@ -755,7 +751,7 @@ mod tests {
 
     #[test]
     fn unify_makes_a_level_live_whole_where_one_side_drops_it() {
-        let pair = tuple_type(vec![droppable(), droppable()]);
+        let pair = tuple(vec![droppable(), droppable()]);
         let values = values(&pair, &[&[0]]);
         let mut state: DenseSet = [1, 2, 4].into_iter().collect();
         values.unify(&mut state, &[4].into_iter().collect());
@@ -764,7 +760,7 @@ mod tests {
 
     #[test]
     fn unify_takes_the_reached_side_over_an_unreached_one() {
-        let pair = tuple_type(vec![droppable(), droppable()]);
+        let pair = tuple(vec![droppable(), droppable()]);
         let values = values(&pair, &[&[0]]);
         let reached: DenseSet = [1, 2, 4].into_iter().collect();
         let mut state = reached.clone();
@@ -777,7 +773,7 @@ mod tests {
 
     #[test]
     fn a_root_with_no_stored_part_is_one_bit() {
-        let pair = tuple_type(vec![droppable(), droppable()]);
+        let pair = tuple(vec![droppable(), droppable()]);
         let values = values(&pair, &[]);
         assert!(!values.is_split(0));
         assert_eq!(values.range(0), 0..1);

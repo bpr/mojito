@@ -25,9 +25,9 @@ pub(super) const fn is_owned(c: &Option<ArgConvention>) -> bool {
 /// Whether an argument convention is `deinit` — the destructor/move-source
 /// convention (`__deinit__(deinit self)`, `__moveinit__(out self, deinit other)`).
 /// The callee is responsible for tearing the value down, but as a *consume*:
-/// its residual fields are destroyed while its whole-value `__deinit__` is skipped
-/// (its resources moved into the receiver), so drop elaboration emits
-/// `ConsumeVar` rather than `DropVar` for such a parameter.
+/// its fields die by their own drops while its whole-value `__deinit__` is
+/// skipped (its resources moved into the receiver), so drop elaboration ends
+/// such a parameter with `ConsumeVar` rather than `DropVar`.
 #[allow(
     clippy::ref_option,
     clippy::trivially_copy_pass_by_ref,
@@ -3200,9 +3200,9 @@ pub struct MirFunction {
     pub owned_params: Vec<bool>,
     /// Whether each parameter is a `deinit` (destructor/move-source) parameter.
     /// Same order/length as the params. Such a parameter is *consumed* at its
-    /// drop point — its residual fields are destroyed but its whole-value
+    /// drop point — its fields die by their own drops but its whole-value
     /// `__deinit__` is skipped (its resources moved into the receiver), so drop
-    /// elaboration lowers its teardown to `ConsumeVar` instead of `DropVar`.
+    /// elaboration ends it with `ConsumeVar` instead of `DropVar`.
     pub deinit_params: Vec<bool>,
     /// Whether each parameter is a `mut`/`ref` **reference** (its final value is
     /// written back to the caller). Same order as the params, `self` included:

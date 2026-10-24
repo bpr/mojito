@@ -795,6 +795,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `consume.var` destroys nothing on either backend, as upstream's exit
+  `mark_destroyed` consumes only the whole-object bit (R1310). Drop
+  elaboration lays a nominal `Tuple` out as the one-field struct it is, so
+  its synthesized `__deinit__` destroys `storage` by a named drop that
+  `refine_pack_drops` splits per element, where the VM's `ConsumeVar` and
+  Pliron's `lower_consume_var` used to tear the elements down at run time.
+  Output is unchanged on both backends; a native run no longer leaks the
+  elements of a consumed `Tuple`'s split storage
+  (`assets/ok/pack_struct_explicit_in_generic_body.mojo`). The MIR text and
+  package formats are unchanged.
+
 - The array of element pointers a call builds for its callee's `*xs: T` is
   now upstream's `!pop.array<n, Pointer[T, origin]>`, built by one
   `array.create` (`pop.array.create`) and stored in the caller's

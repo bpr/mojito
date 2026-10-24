@@ -71,7 +71,7 @@ instruction	comptime.assert	unsupported	the elaborator judges it; concrete MIR c
 instruction	match	supported	lowered to LLVM blocks as `LowerControlFlow` lowers `hlcf.match`: each case a block entered with its arguments, its results arguments of the block after it
 instruction	drop.reg	unsupported	reserved for the future assembler VM; the VM rejects it too
 instruction	drop.var	partial	flag-guarded compiled destructors, including destructor-bearing structs with droppable fields; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject
-instruction	consume.var	supported	clears the initialization flag; surviving droppable struct fields destroy in reverse order under the per-leaf flags
+instruction	consume.var	supported	ends the slot; drop elaboration has destroyed every field
 instruction	consume.place	partial	no droppable residual fields
 instruction	drop.place	supported	destroys one depth-1 struct field under its leaf flag and clears the flag
 instruction	ownership.mark_initialized	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects

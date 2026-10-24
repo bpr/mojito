@@ -115,14 +115,13 @@ pub(super) fn elaborate_drops(
         prepend_drops(&mut entry.instrs, entry_dead, receiver);
     }
 
-    // A `deinit` parameter is *consumed*, not destroyed: the spliced teardown
-    // for it must skip the value's whole-value `__deinit__` (its resources already
-    // moved into the receiver) while still destroying any residual fields. Where
-    // one dies whole — one not laid out per field, at its last use, or one whose
-    // whole-object bit dies on a path reaching no exit — drop elaboration emits
-    // an ordinary `DropVar`; rewrite those to `ConsumeVar`. Their
-    // `^`-transferred fields are `Value::Moved` and a no-op to drop, so this
-    // cannot double-free.
+    // A `deinit` parameter is *consumed*, not destroyed: its whole-value
+    // `__deinit__` never runs (its resources already moved into the receiver),
+    // and its fields die by their own drops in the walk. Where one dies whole —
+    // one not laid out per field, as no field of it needs destroying, or one
+    // whose whole-object bit dies on a path reaching no exit — drop
+    // elaboration emits an ordinary `DropVar`; rewrite those to `ConsumeVar`,
+    // which destroys nothing.
     if function.deinit_params.iter().any(|&d| d) {
         let is_deinit_param = |var: VarId| {
             (var as usize) < function.n_params
