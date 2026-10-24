@@ -1261,6 +1261,7 @@ assets/extensions/ok/ref_field_view_plain_self.mojo	main	exe-differential	saniti
 assets/extensions/ok/ref_field_view_read_parameter.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_view_ref_yield.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_field_wrapper_iterator_protocol.mojo	main	exe-differential	sanitized
+assets/extensions/ok/ref_field_written_init_chained_view.mojo	main	exe-differential	sanitized
 assets/extensions/ok/ref_result_field_value_copy.mojo	main	exe-differential	sanitized
 assets/extensions/ok/reference_carrier_collection.mojo	main	exe-differential	sanitized
 assets/extensions/ok/reference_element_chained_read.mojo	main	exe-differential	sanitized

@@ -525,9 +525,7 @@ which names the upstream pass each one follows. Each is measured by the
     tail of `Checker::infer_construction` skip a struct with a `ref`
     field, since a synthesized `ref` parameter would bind the argument's
     place, as a written `ref [Self.o] src: List[Int]` constructor does,
-    and that path regresses three fixtures.
-  - `ref_field_chained_view_call.mojo` (`Pane.shifted` returning
-    `Pane(self.items, …)` on a chained temporary) faults: R1277.
+    and that path regresses fixtures.
   - `returned_method_reference_loan.mojo` (`View(rx)`, then `ref a =
     v.at(0)` while `rx` is used later) conflicts with `rx`: R1082.
   - Once it lands, the struct-named construction path goes: VM
@@ -2414,32 +2412,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `origin_of(self.x)` as a concrete place, which a call site cannot
     rebase onto its receiver.
   - Found while landing R679 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1277 A `ref` parameter bound to a `ref` field's place designates
-  the field's slot, not its referent**
-
-  Problem: a written `ref [Self.o] items: List[Int]` constructor called as
-  `Pane(self.items, …)` from a `shifted(self)` method faults on a chained
-  temporary, `b.pane().shifted().first()` ("invalid reference projection
-  Field(\"items\") on None"); the handle stored in the field is never
-  forwarded.
-  - The VM binds a `ref` parameter to `reference_to_place_parts` of the
-    argument's place, which ends at the field slot holding the handle,
-    and `canonical_reference_parts`
-    (`crates/mojito-vm/src/backend/vm/references.rs`) keeps a handle
-    reached at the final segment where it is, so the constructed view
-    roots in the temporary that dies.
-  - Pliron already binds the referent
-    (`FnLowering::reference_argument_address`), as a read of the field
-    reads through it.
-  - Probe: `struct Pane[m: Bool, //, o: Origin[mut=m]]` with a written
-    `@no_inline __init__(out self, ref [Self.o] items: List[Int], start:
-    Int)` and `assets/extensions/ok/ref_field_chained_view_call.mojo`'s
-    `Board`; `q = p.shifted()` over a named `p` runs.
-  - Related: R1214 stops at a pointer value in the same walk.
-  - Found while landing R1049 (2026-10-22).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

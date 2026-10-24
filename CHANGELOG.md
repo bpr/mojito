@@ -494,6 +494,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `ref` field passed to a `mut` or `ref` argument, or as a method's
+  receiver, binds the handle the field stores on the VM, as Pliron loads
+  through it, where it bound the field's slot:
+  `b.pane().shifted().first()` over `shifted` returning
+  `Pane(self.items, …)` through a written `ref` constructor faulted on the
+  dead temporary (`invalid reference projection Field("items") on None`),
+  and a `mut` callee assigning its whole parameter overwrote the field's
+  handle instead of the referent
+  (`assets/extensions/ok/ref_field_written_init_chained_view.mojo`).
 - A destructured tuple place is no longer copied before its elements are
   read: a `for a, b in it` target over a tuple of copyable structs ran the
   tuple's copy constructor (printing `copy` lines the pin does not), where

@@ -60,10 +60,7 @@ impl VmBackend {
             else {
                 continue;
             };
-            reference_inputs.push((
-                i,
-                Self::reference_to_place_parts(frame_id, regs, vars, place)?,
-            ));
+            reference_inputs.push((i, self.reference_argument(frame_id, regs, vars, place)?));
         }
         let (result, _, _) = self.call_synchronously_with_references(
             prog,
@@ -504,10 +501,8 @@ impl VmBackend {
                             "vm: reference receiver for method '{fname}' must be a place"
                         ))
                     })?;
-                    reference_inputs.push((
-                        0,
-                        Self::reference_to_place_parts(frame_id, regs, vars, place)?,
-                    ));
+                    reference_inputs
+                        .push((0, self.reference_argument(frame_id, regs, vars, place)?));
                 }
                 for i in 1..ref_params.len() {
                     let place = bound_argument_place(
@@ -529,10 +524,8 @@ impl VmBackend {
                     else {
                         continue;
                     };
-                    reference_inputs.push((
-                        i,
-                        Self::reference_to_place_parts(frame_id, regs, vars, place)?,
-                    ));
+                    reference_inputs
+                        .push((i, self.reference_argument(frame_id, regs, vars, place)?));
                 }
                 let (ret, mut frame_vars, returned_frame_id) = self
                     .call_synchronously_with_references(

@@ -369,7 +369,12 @@ impl VmBackend {
                     else {
                         continue;
                     };
-                    bound[parameter - 1] = self.reference_to_place(caller, place)?;
+                    bound[parameter - 1] = self.reference_argument(
+                        caller.id,
+                        &caller.registers,
+                        &caller.variables,
+                        place,
+                    )?;
                 }
                 // As in the synchronous method path: a borrowed receiver whose
                 // result carries reference fields also enters as a caller-place
@@ -380,13 +385,13 @@ impl VmBackend {
                             "vm: reference receiver for callable '{function_name}' must be a place"
                         ))
                     })?;
-                    self.reference_to_place(caller, place)?
+                    self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?
                 } else if let Some(place) = callee_place.as_ref()
                     && !definition.owned_params.first().copied().unwrap_or(false)
                     && !definition.deinit_params.first().copied().unwrap_or(false)
                     && Self::function_result_carries_reference(prog, index)
                 {
-                    self.reference_to_place(caller, place)?
+                    self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?
                 } else {
                     receiver
                 };
@@ -426,7 +431,12 @@ impl VmBackend {
                     else {
                         continue;
                     };
-                    bound[parameter] = self.reference_to_place(caller, place)?;
+                    bound[parameter] = self.reference_argument(
+                        caller.id,
+                        &caller.registers,
+                        &caller.variables,
+                        place,
+                    )?;
                 }
             }
             return self
@@ -515,7 +525,12 @@ impl VmBackend {
                 else {
                     continue;
                 };
-                bound[parameter - 1] = self.reference_to_place(caller, place)?;
+                bound[parameter - 1] = self.reference_argument(
+                    caller.id,
+                    &caller.registers,
+                    &caller.variables,
+                    place,
+                )?;
             }
             // A ref-returning method's result handle roots in its receiver's
             // storage, so the receiver passes as a reference to the caller's
@@ -524,7 +539,9 @@ impl VmBackend {
             // A receiver without a place (an rvalue chain) still passes by
             // value for a read convention.
             let receiver = match recv_place.as_ref() {
-                Some(place) => self.reference_to_place(caller, place)?,
+                Some(place) => {
+                    self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?
+                }
                 None if !definition.ref_params.first().copied().unwrap_or(false) => {
                     caller.registers[recv.0 as usize].clone()
                 }
@@ -613,7 +630,8 @@ impl VmBackend {
             else {
                 continue;
             };
-            bound[parameter] = self.reference_to_place(caller, place)?;
+            bound[parameter] =
+                self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?;
         }
         self.make_frame(
             prog,

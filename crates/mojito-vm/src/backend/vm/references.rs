@@ -43,18 +43,6 @@ impl VmBackend {
             .and_then(|owner| owner.variables.get_mut(slot))
     }
 
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
-    pub(super) fn reference_to_place(
-        &self,
-        frame: &Frame,
-        place: &MirPlace,
-    ) -> Result<Value, RuntimeError> {
-        Self::reference_to_place_parts(frame.id, &frame.registers, &frame.variables, place)
-    }
-
     pub(super) fn reference_to_place_parts(
         frame_id: FrameId,
         registers: &[Value],
@@ -75,6 +63,45 @@ impl VmBackend {
             slot,
             projection,
         })
+    }
+
+    /// The handle a `mut`/`ref` argument or a reference receiver bound to
+    /// `place` passes. A place
+    /// ending at a `ref`-typed projection — a `ref` field — designates the
+    /// field's referent, so the argument is the handle stored there (made
+    /// canonical), never the field's own slot, which may belong to a
+    /// temporary that dies before the callee's result does.
+    pub(super) fn reference_argument(
+        &self,
+        frame_id: FrameId,
+        registers: &[Value],
+        variables: &[Value],
+        place: &MirPlace,
+    ) -> Result<Value, RuntimeError> {
+        let reference = Self::reference_to_place_parts(frame_id, registers, variables, place)?;
+        if place.proj.is_empty() || !matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+        {
+            return Ok(reference);
+        }
+        Ok(
+            match self.read_reference(&reference, frame_id, variables)? {
+                Value::Ref {
+                    frame,
+                    slot,
+                    projection,
+                } => {
+                    let (frame, slot, projection) = self
+                        .canonical_reference_parts(frame_id, variables, frame, slot, projection);
+                    Value::Ref {
+                        frame,
+                        slot,
+                        projection,
+                    }
+                }
+                pointer @ Value::Pointer { .. } => pointer,
+                _ => reference,
+            },
+        )
     }
 
     /// Re-root a reference at the storage it ultimately designates. Applied to a

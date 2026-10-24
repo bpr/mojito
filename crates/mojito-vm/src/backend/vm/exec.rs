@@ -491,7 +491,7 @@ impl VmBackend {
                                     func.0
                                 ))
                             })?;
-                        *value = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
+                        *value = self.reference_argument(frame_id, regs, vars, place)?;
                     }
                     if let Some(signature) = prog
                         .sigs
@@ -522,7 +522,7 @@ impl VmBackend {
                                         func.0
                                     ))
                                 })?;
-                            *value = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
+                            *value = self.reference_argument(frame_id, regs, vars, place)?;
                         }
                     }
                 }
@@ -691,7 +691,7 @@ impl VmBackend {
                         else {
                             continue;
                         };
-                        let handle = Self::reference_to_place_parts(frame_id, regs, vars, place)?;
+                        let handle = self.reference_argument(frame_id, regs, vars, place)?;
                         reference_inputs.push((parameter, handle));
                     }
                     if definition.ref_params.first().copied().unwrap_or(false) {
@@ -700,10 +700,8 @@ impl VmBackend {
                                 "vm: reference receiver for callable '{function}' must be a place"
                             ))
                         })?;
-                        reference_inputs.push((
-                            0,
-                            Self::reference_to_place_parts(frame_id, regs, vars, place)?,
-                        ));
+                        reference_inputs
+                            .push((0, self.reference_argument(frame_id, regs, vars, place)?));
                     }
                     bound.insert(0, receiver);
                 } else {
@@ -745,7 +743,7 @@ impl VmBackend {
                             else {
                                 continue;
                             };
-                            Self::reference_to_place_parts(frame_id, regs, vars, place)?
+                            self.reference_argument(frame_id, regs, vars, place)?
                         };
                         reference_inputs.push((parameter, handle));
                     }
