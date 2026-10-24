@@ -154,13 +154,14 @@ fn ref_field_ctor_argument_from_owned_place_loans_the_source() {
 
 #[test]
 fn variant_payload_reference_is_invalidated_when_the_tag_changes() {
-    // `set` is a `mut self` method of the self-hosted `Variant`: while the
-    // projected payload is borrowed, the mutating call conflicts with it.
+    // The payload reference names `origin_of(value)._get_owned_interior[
+    // "value"]`, as upstream's `__getitem_param__` declares, so the `mut self`
+    // `set` stales it and its later use is rejected, as at the pin.
     let src = "from std.utils import Variant\n\ndef main():\n    var value = Variant[Int, String](7)\n    ref payload = value[Int]\n    value.set[String](\"changed\")\n    print(payload)\n";
     assert!(matches!(
         own_linked(src),
-        Err(OwnershipError::LoanConflict { place, loan, .. })
-            if place == "value" && loan == "payload"
+        Err(OwnershipError::InvalidatedInteriorReference { reference, origin, .. })
+            if reference == "payload" && origin == "value[\"value\"]"
     ));
 }
 
@@ -384,9 +385,17 @@ fn forwarding_a_union_reference_preserves_every_interior_generation() {
 }
 
 #[test]
-fn mixed_union_return_keeps_its_ordinary_owner_loan() {
+fn mixed_union_return_keeps_its_interior_generation() {
+    // The returned reference's ordinary owner names `plain` without
+    // excluding a write to it, as at the pin; its interior part still stales
+    // when `values` reallocates.
     let src = "def choose(ref plain: Int, ref values: List[Int], flag: Bool) -> ref[plain, origin_of(values)._get_owned_interior[\"element\"]] Int:\n    if flag:\n        return values[0]\n    return plain\n\ndef main():\n    var plain = 1\n    var values: List[Int] = [2]\n    ref selected = choose(plain, values, False)\n    plain = 9\n    print(selected)\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
+    assert!(own_linked(src).is_ok());
+    let stale = src.replace("plain = 9", "values.append(3)");
+    assert!(matches!(
+        own_linked(&stale),
+        Err(OwnershipError::InvalidatedInteriorReference { .. })
+    ));
 }
 
 #[test]
@@ -402,9 +411,9 @@ fn read_only_subscript_contract_coexists_with_a_shared_field_loan() {
 }
 
 #[test]
-fn mutable_subscript_receiver_conflicts_with_a_live_shared_field_loan() {
+fn mutable_subscript_receiver_runs_beside_a_live_field_reference() {
     let src = "def borrow[origin: Origin[mut=False]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\n@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __getitem__(mut self, index: Int) -> Int:\n        self.value += index\n        return self.value\n\ndef main():\n    var box = Box(40)\n    ref alias = borrow(box.value)\n    print(box[2])\n    print(alias)\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
+    assert!(own(src).is_ok());
 }
 
 #[test]
@@ -577,13 +586,22 @@ fn local_reference_loan_ends_at_last_use() {
 }
 
 #[test]
-fn local_reference_blocks_owner_access_while_live() {
-    let src = "def main():\n    var value: Int = 1\n    ref alias = value\n    value = 2\n    print(alias)\n";
-    assert!(matches!(
-        own(src),
-        Err(OwnershipError::LoanConflict { place, loan, .. })
-            if place == "value" && loan == "alias"
-    ));
+fn local_reference_permits_owner_access_while_live() {
+    // A `ref` binding names an origin, as upstream's does, rather than
+    // borrowing its owner exclusively: a read, a write, a mutating call, or
+    // a capture's write of the owner beside it, on either side of a CFG
+    // join, all run at the pin.
+    let sources = [
+        "def main():\n    var value: Int = 1\n    ref alias = value\n    value = 2\n    print(alias)\n",
+        "def main():\n    var value: Int = 1\n    ref alias = value\n    var a = value + 1\n    print(a, alias)\n",
+        "def replace(mut value: Int):\n    value = 2\n\ndef main():\n    var value: Int = 1\n    ref alias = value\n    replace(value)\n    print(alias)\n",
+        "def main():\n    var value: Int = 1\n    var flag: Bool = True\n    ref alias = value\n    if flag:\n        print(0)\n    value = 2\n    print(alias)\n",
+        "def main():\n    var value = 1\n    def replace() {mut value}:\n        value = 2\n    ref alias = value\n    replace()\n    print(alias)\n",
+        "def main():\n    var t = (1, 2)\n    ref a = t[0]\n    ref b = t[1]\n    print(a, b)\n",
+    ];
+    for src in sources {
+        assert!(own(src).is_ok(), "rejected: {src}");
+    }
 }
 
 #[test]
@@ -593,34 +611,22 @@ fn local_reference_loans_are_field_sensitive() {
 }
 
 #[test]
-fn local_reference_loan_flows_through_cfg_join() {
-    let src = "def main():\n    var value: Int = 1\n    var flag: Bool = True\n    ref alias = value\n    if flag:\n        print(0)\n    value = 2\n    print(alias)\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
-}
-
-#[test]
-fn local_reference_blocks_mutating_calls_between_uses() {
-    let src = "def replace(mut value: Int):\n    value = 2\n\ndef main():\n    var value: Int = 1\n    ref alias = value\n    replace(value)\n    print(alias)\n";
-    assert!(matches!(own(src), Err(OwnershipError::LoanConflict { .. })));
-}
-
-#[test]
-fn callable_capture_effects_conflict_with_live_reference_loans() {
-    let direct = "def main():\n    var value = 1\n    def replace() {mut value}:\n        value = 2\n    ref alias = value\n    replace()\n    print(alias)\n";
+fn callable_capture_effects_conflict_with_live_view_loans() {
+    let direct = "def main():\n    var xs: List[Int] = [1, 2]\n    def grow() {mut xs}:\n        xs.append(3)\n    var view = Span(xs)\n    grow()\n    print(view[0])\n";
     assert!(matches!(
-        own(direct),
+        own_linked(direct),
         Err(OwnershipError::LoanConflict { place, loan, .. })
-            if place == "value" && loan == "alias"
+            if place == "xs" && loan == "view"
     ));
 
     // The same concrete environment access must cross an indirect downward
     // funarg boundary. Merely checking the ordinary `invoke` argument place
     // would miss the write performed later through `callback()`.
-    let indirect = "def invoke(callback: def() capturing[_]):\n    callback()\n\ndef main():\n    var value = 1\n    def replace() {mut value}:\n        value = 2\n    ref alias = value\n    invoke(replace)\n    print(alias)\n";
+    let indirect = "def invoke(callback: def() capturing[_]):\n    callback()\n\ndef main():\n    var xs: List[Int] = [1, 2]\n    def grow() {mut xs}:\n        xs.append(3)\n    var view = Span(xs)\n    invoke(grow)\n    print(view[0])\n";
     assert!(matches!(
-        own(indirect),
+        own_linked(indirect),
         Err(OwnershipError::LoanConflict { place, loan, .. })
-            if place == "value" && loan == "alias"
+            if place == "xs" && loan == "view"
     ));
 }
 
@@ -631,12 +637,12 @@ fn callable_capture_effects_end_at_the_call_boundary() {
 }
 
 #[test]
-fn returned_reference_establishes_a_persistent_caller_loan() {
+fn returned_reference_binding_permits_owner_writes() {
+    // The `ref` binding of a returned reference names its origin without
+    // excluding writes to the owner, before or after its last use; the pin
+    // runs both.
     let source = "def borrow(ref value: Int) -> ref[value] Int:\n    return value\n\ndef main():\n    var value = 1\n    ref alias = borrow(value)\n    value = 2\n    print(alias)\n";
-    assert!(matches!(
-        own(source),
-        Err(OwnershipError::LoanConflict { .. })
-    ));
+    assert!(own(source).is_ok());
 
     let after_last_use = "def borrow(ref value: Int) -> ref[value] Int:\n    return value\n\ndef main():\n    var value = 1\n    ref alias = borrow(value)\n    print(alias)\n    value = 2\n    print(value)\n";
     assert!(own(after_last_use).is_ok());
@@ -933,11 +939,12 @@ fn transferred_carrier_loans_keep_the_source_alive() {
 #[test]
 fn mutable_element_loop_conflicts_with_a_live_whole_place_view() {
     // A `for ref` loop lends the list's elements mutably, which is exclusive
-    // against a live whole-place view of the list (a `Span`, or a shared
-    // reference returned by an immutable-origin def), in both orders. A
-    // value loop reads only and coexists with the view; iterating the view
-    // itself writes through to the list; and an interior read inside the
-    // `for ref` loop keeps its generation semantics.
+    // against a live whole-place view of the list (a `Span`), in both
+    // orders. A `ref` binding of a shared reference returned by an
+    // immutable-origin def names an origin and excludes nothing, as at the
+    // pin. A value loop reads only and coexists with the view; iterating the
+    // view itself writes through to the list; and an interior read inside
+    // the `for ref` loop keeps its generation semantics.
     let rejected = [
         "def main():\n    var xs: List[Int] = [1, 2]\n    var view = Span(xs)\n    for ref x in xs:\n        x += 1\n    print(view[0])\n",
         "def main():\n    var xs: List[Int] = [1, 2]\n    for ref x in xs:\n        var v = Span(xs)\n        x += v[0]\n    print(xs[1])\n",
@@ -946,11 +953,7 @@ fn mutable_element_loop_conflicts_with_a_live_whole_place_view() {
         assert!(own_linked(src).is_err(), "accepted: {src}");
     }
     let borrowed_view = "def borrow[origin: Origin[mut=False]](ref[origin] values: List[Int]) -> ref[origin] List[Int]:\n    return values\n\ndef main():\n    var values: List[Int] = [1, 2, 3]\n    ref view = borrow(values)\n    for ref x in values:\n        x += 1\n    print(view[0])\n";
-    assert!(matches!(
-        own_linked(borrowed_view),
-        Err(OwnershipError::LoanConflict { place, loan, .. })
-            if place == "values" && loan == "view"
-    ));
+    assert!(own_linked(borrowed_view).is_ok());
     let accepted = "def main():\n    var xs: List[Int] = [1, 2]\n    var view = Span(xs)\n    var total = 0\n    for x in xs:\n        total += x\n    print(total, view[0])\n    for ref y in view:\n        y += 10\n    print(xs[0], xs[1])\n    for ref z in xs:\n        print(len(xs), z)\n    for ref a in xs:\n        for ref b in xs:\n            b += 1\n        a += 1\n    print(xs[0], xs[1])\n";
     assert!(own_linked(accepted).is_ok());
 }

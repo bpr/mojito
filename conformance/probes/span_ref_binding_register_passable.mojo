@@ -4,9 +4,8 @@
 #   error: value of type 'Span[Int, origin_of(values["element"])]' doesn't have a memory origin in 'ref' binding
 #
 # Observed 2026-10-20 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: rejects the `*ref rr` case only for an unrelated loan conflict
-# (R1082); without it, runs the `ref r` binding and prints `2`, because the
-# bundled `Span` does not declare `TrivialRegisterPassable`.
+# Mojito: runs both, printing `2` and `1 2`, because the bundled `Span`
+# does not declare `TrivialRegisterPassable` (R1226).
 # When Mojito rejects it with the pin's text, move this file to
 # `assets/type_error/` with its errors-ledger row.
 #

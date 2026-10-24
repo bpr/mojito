@@ -37,7 +37,9 @@ struct Variant[*Ts: AnyType](
 
     @__unsafe_nested_origins_read_only
     @inline(.always)
-    def __getitem_param__[T: AnyType](ref self) -> ref[origin_of(self)] T:
+    def __getitem_param__[
+        T: AnyType
+    ](ref self) -> ref[origin_of(self)._get_owned_interior["value"]] T:
         comptime if Self.Ts.contains[T]():
             pass
         return self._storage[T]

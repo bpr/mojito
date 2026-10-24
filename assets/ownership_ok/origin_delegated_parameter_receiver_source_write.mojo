@@ -1,8 +1,6 @@
-# expect: conflicts with live reference
-# The reference delegated through a carrier parameter loans the carrier's
-# source: mutating it while the reference lives is rejected. (Upstream's
-# checker permits this mutation — Mojito's loan rule is the documented
-# stricter subset.)
+# A reference delegated through a carrier parameter names the carrier's
+# source as its origin: the `ref` binding of it borrows nothing exclusively,
+# so a write to the source while the reference lives runs, as at the pin.
 @fieldwise_init
 struct Pair(Copyable, Movable):
     var key: Int

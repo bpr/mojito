@@ -1077,6 +1077,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `awaits_setup_read` routes `reference_result_value` to that slot. Both
   decisions walk the operand's accessor chain with `place_chain`, which
   stops at a static call's type receiver (`type_receiver_name`).
+  `reference_binding_loans` (`lower_stmt.rs`) gives a `ref` binding's own
+  slot setup loans at its `EstablishLoans`: the `RefDecl` arms of
+  `lower_stmt_dispatch`, `bind_destructured_reference`, and
+  `destructured_reference_place`.
   In `mojito-analysis`, `moves.rs`'s `MoveContext::setup_owners` reads a
   setup slot's owners at each read through it, and `loans.rs` exempts setup
   loans from access and loan exclusivity.

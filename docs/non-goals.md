@@ -129,10 +129,12 @@ divergence triage, measured the gap at 33 fixtures the pin compiles and runs
 while Mojito rejects or traps; the 2026-09-21 re-pin left 32, upstream having
 made a var-less introduction an error of its own
 (`conformance/assets-mojo-errors.tsv`, family `subset`); R196's landing
-left 31. Invariant 1 permits it:
+left 31. R1082 withdrew two more: a `ref` binding names an origin, as
+upstream's does, and borrows nothing exclusively, so an access to its owner
+beside it is no longer rejected. Invariant 1 permits it:
 Mojito may reject valid Mojo.
 
-- Eleven `ownership_error`/`origin_error` fixtures report `invalidated interior
+- Twelve `ownership_error`/`origin_error` fixtures report `invalidated interior
   reference` or `conflicts with live reference` where the pin tracks nothing and
   runs. `assets/ownership_error/reference_row_iteration_invalidated_by_row_append.mojo`
   is the one to cite: the pin runs it to completion printing dangling addresses,

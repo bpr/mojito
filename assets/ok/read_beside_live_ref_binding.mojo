@@ -1,6 +1,6 @@
-# R1082: a read of a local while a `ref` binding to it is live is rejected
-# with "access to 'kk' conflicts with live reference 'r'"; the pin prints
-# `4 5 5`.
+# A read of a local beside a live `ref` binding to it, made directly, as a
+# call argument, or through a nested function's `imm` capture: the binding
+# names an origin and borrows nothing exclusively, so each read runs.
 
 
 @no_inline

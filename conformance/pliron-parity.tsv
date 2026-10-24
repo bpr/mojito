@@ -8,6 +8,7 @@
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
 #   cargo nextest run --features backend-pliron parity_exe_manifest
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	main	exe-differential	sanitized
+assets/ok/access_beside_live_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/add.mojo	main	exe-differential	sanitized
 assets/ok/allocation_tracked_unsafe_ptr.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_nodebug_binders.mojo	main	exe-differential	sanitized
@@ -420,6 +421,7 @@ assets/ok/match_literal_forms.mojo	main	exe-differential	sanitized
 assets/ok/match_noncopyable_subject.mojo	main	exe-differential	sanitized
 assets/ok/match_or_alternatives_bind.mojo	main	exe-differential	sanitized
 assets/ok/match_or_failed_alternative_copies.mojo	main	exe-differential	sanitized
+assets/ok/match_payload_reads_beside_hidden_subject.mojo	main	exe-differential	sanitized
 assets/ok/match_raises_and_finally.mojo	main	exe-differential	sanitized
 assets/ok/match_ref_and_as_bindings.mojo	main	exe-differential	sanitized
 assets/ok/match_sequence_custom_sized.mojo	main	exe-differential	sanitized
@@ -738,6 +740,7 @@ assets/ok/raise_exit_destroys_live_values.mojo	main	exe-differential	sanitized
 assets/ok/raising_call_edge_destroys_held_values.mojo	main	exe-differential	sanitized
 assets/ok/raising_iter_call_edge.mojo	main	exe-differential	sanitized
 assets/ok/range_zero_step_empty.mojo	main	exe-differential	sanitized
+assets/ok/read_beside_live_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/read_temporary_conditional_argument_drop.mojo	main	exe-differential	sanitized
 assets/ok/rebind_assignment.mojo	main	exe-differential	sanitized
 assets/ok/rebind_augmented_assignment.mojo	main	exe-differential	sanitized
@@ -1211,6 +1214,7 @@ assets/ownership_ok/dict_value_reads_during_iteration.mojo	main	exe-differential
 assets/ownership_ok/mapping_mutation_after_iteration.mojo	main	exe-differential	sanitized
 assets/ownership_ok/move_then_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/move_without_later_use.mojo	main	exe-differential	sanitized
+assets/ownership_ok/origin_delegated_parameter_receiver_source_write.mojo	main	exe-differential	sanitized
 assets/ownership_ok/partial_move_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/shared_iterations_coexist.mojo	main	exe-differential	sanitized
 assets/ownership_ok/try_break_mut_parameter_refilled_after_loop.mojo	main	exe-differential	sanitized
@@ -1276,6 +1280,8 @@ assets/extensions/ok/template_served_iterable_def.mojo	main	exe-differential	san
 assets/extensions/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_view_consume_before_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/interior_view_drop_after_mutation.mojo	main	exe-differential	sanitized
+assets/extensions/ownership_ok/origin_delegated_alias_field_source_write.mojo	main	exe-differential	sanitized
+assets/extensions/ownership_ok/origin_delegated_multi_binder_source_write.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_reads_coexist.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_sibling_root_mutation.mojo	main	exe-differential	sanitized
 assets/extensions/ownership_ok/subtree_single_write_ok.mojo	main	exe-differential	sanitized

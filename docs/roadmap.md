@@ -526,8 +526,6 @@ which names the upstream pass each one follows. Each is measured by the
     field, since a synthesized `ref` parameter would bind the argument's
     place, as a written `ref [Self.o] src: List[Int]` constructor does,
     and that path regresses fixtures.
-  - `returned_method_reference_loan.mojo` (`View(rx)`, then `ref a =
-    v.at(0)` while `rx` is used later) conflicts with `rx`: R1082.
   - Once it lands, the struct-named construction path goes: VM
     `construct` and the struct arm of `vm/dispatch.rs`, the fieldwise
     path of Pliron's `lower/ctors.rs`, the elaborator's construct-arm
@@ -1525,15 +1523,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R536 Copying out of a `ref` binding keeps the binding's loan**
-
-  Problem: `ref a = left; var t: Int = a; left = 9; print(t, left)` is rejected with "access to 'left' conflicts with live reference 't'"; the pin prints `4 9`.
-  - The same holds for `var t = a`, `(a, 5)`, `[a, 5]`, and an `Int`-returning call `keep(a, 5)`.
-  - The copy is an owned `Int`, so it carries no loan on `left`.
-  - Found while planning R529 (2026-10-09).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1221 A `ref` binding over an owned subscript result fails MIR
   verification**
 
@@ -1607,51 +1596,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1082 A read of a local is rejected while a `ref` binding to it is
-  live**
-
-  `ref r = kk; var a = kk + 1; return a + r` is rejected with "access to
-  'kk' conflicts with live reference 'r'"; the pin runs it.
-  - The `ref` binding's loan is exclusive, so any read of its referent
-    before the binding's last use conflicts with it.
-  - Probe: the same read through a call (`reads(kk)`) and through a
-    nested `def cap(x) {imm kk}` called by name beside `r`, whose `imm`
-    capture is a read parameter of the lifted body; the pin runs all
-    three (`conformance/probes/read_beside_live_ref_binding.mojo`).
-  - Probe: a second element reference beside a live one (`ref a = t[0];
-    ref b = t[1]`), a temporary `match` subject's two element bindings
-    (`match (1, 2): case (p, q)` and `case [p, q]`, and `if case (x, y) =
-    (1, 2)`), a reference or write
-    taken through the live binding itself (`ref m = a[1]; m = 20; a[0] =
-    5`, `ref d = c; d.append(4); c.append(5)`), and a `match` case with a
-    `ref` binding reading two elements through the hidden subject (`case
-    (1, ref m, var z)`, `case [1, ref m, var z]`); the pin runs all
-    (`conformance/probes/access_beside_live_ref_binding.mojo`).
-  - Probe: the aliasing swap `[xs[1], xs[0]] = xs`, whose desugar
-    borrows `xs` as the hidden `$seq<id>` while its leaves write `xs`; the
-    pin runs it and prints `1 1`, and Mojito's rejection names the hidden
-    binding. Add it to `access_beside_live_ref_binding.mojo` when fixing.
-  - Probe: an `as` binding beside a binding of one of its parts, `case
-    (v, _) as whole: print(v, whole[1])` and `case .Some(v) as whole:
-    print(v, whole.value())`; the pin prints both.
-  - Probe: a temporary tuple subject whose case reads an enum payload and
-    then tests a later element, `match (r, s): case (.Node(x), 1)`, fails
-    with "access to '$match<id>' conflicts with live reference
-    '$elem<id>'", where the pin prints `disc`, `payload 1`, `eq 2 1`; over
-    a place (`var t = (r, s); match t`) it runs.
-  - Probe: a guard reading an `as` binding, `case .Node(6 as z) if z >
-    10`, keeps the subject's anchor live past the match, so `print(r.n)`
-    after it fails ("access to 'r' conflicts with live reference
-    '$match<id>'"); the pin prints `5`.
-  - Probe: a view built from a `ref` binding by a written `ref [Self.o]`
-    constructor, `ref rx = xs; var v = View(rx); ref a = v.at(0);
-    print(a); print(len(rx))`, fails at `ref a` ("access to 'xs'
-    conflicts with live reference 'rx'"); a `@fieldwise_init` `View`
-    fails the same way at `View(rx)`. It blocks R1278.
-  - Found while landing R1037 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1240 A getter on a field of a read-only `match` anchor conflicts
   with the anchor**
 
@@ -1660,8 +1604,13 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   '$match<id>'", where the pin runs both.
   - No case binds by `ref` or `as`, so the anchor `ref $match<id> = w` is
     made immutable after its check (`make_reference_immutable`,
-    `checker/patterns.rs`); a `ref self` getter on `$match<id>.l` is then
-    an access to `w.l` that the anchor's loan forbids.
+    `checker/patterns.rs`); the `ref self` `List.__getitem__` on
+    `$match<id>.l` then counts as a write through it, since
+    `loan_accesses`' `access_for_convention` (`analysis/loans.rs`) treats
+    every `ref` receiver as a write, and `check_loans_at` rejects a write
+    through an immutable reference.
+  - The anchor's loan itself excludes nothing since R1082, so this
+    through-reference rule is the whole rejection.
   - With a `ref` binding in any case the anchor stays mutable and the same
     reads run, and a getter on the anchor itself (`$match<id>[0]`) runs.
   - Probe: `conformance/probes/match_field_getter_read_anchor.mojo`.
@@ -7119,8 +7068,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     becomes an ordinary declaration.
   - Lever: reject a nested convention when the prefix already declares;
     Mojito may reject what the pin only accepts unused.
-  - Probe: `var (ref a, b) = pair; print(a, b)` is rejected only by the
-    R1082 loan ("access to 'pair' conflicts with live reference 'a'"),
+  - Probe: `var (ref a, b) = pair; print(a, b)` runs and prints `1 2`,
     since `a` exists.
   - Probe: `for var (var a, b) in pairs: print(a, b)` runs, where the pin
     warns "nested 'var' or 'ref' patterns are redundant" and rejects the

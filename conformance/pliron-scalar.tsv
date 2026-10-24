@@ -8,6 +8,7 @@
 # Regenerate: UPDATE_EXPECT=1 CARGO_WORKSPACE_DIR=$PWD \
 #   cargo nextest run --features backend-pliron scalar_capability_manifest
 assets/ok/abstract_dispatch_effect_free_conformers.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/access_beside_live_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/add.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/allocation_tracked_unsafe_ptr.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_binders.mojo	-	ineligible	no-scalar-entry-shape
@@ -420,6 +421,7 @@ assets/ok/match_literal_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_noncopyable_subject.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_or_alternatives_bind.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_or_failed_alternative_copies.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/match_payload_reads_beside_hidden_subject.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_raises_and_finally.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_ref_and_as_bindings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_sequence_custom_sized.mojo	-	ineligible	no-scalar-entry-shape
@@ -738,6 +740,7 @@ assets/ok/raise_exit_destroys_live_values.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/raising_call_edge_destroys_held_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/raising_iter_call_edge.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/range_zero_step_empty.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/read_beside_live_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/read_temporary_conditional_argument_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/rebind_augmented_assignment.mojo	-	ineligible	no-scalar-entry-shape

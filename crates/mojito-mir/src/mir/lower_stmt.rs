@@ -2190,13 +2190,13 @@ impl<'a> Flatten<'a> {
                             Some(loans[0].place.root),
                             Ty::none(),
                         );
-                        self.aggregate_loans.insert(reference, loans.clone());
                         self.emit(MirInstr::EstablishLoans {
                             reference,
-                            loans,
+                            loans: reference_binding_loans(&loans),
                             marker,
                             dest_interior: None,
                         });
+                        self.aggregate_loans.insert(reference, loans);
                     }
                     return;
                 }
@@ -2302,13 +2302,13 @@ impl<'a> Flatten<'a> {
                     if let Some(first) = loans.first() {
                         let marker =
                             self.fresh_typed(node.location(), Some(first.place.root), Ty::none());
-                        self.aggregate_loans.insert(reference, loans.clone());
                         self.emit(MirInstr::EstablishLoans {
                             reference,
-                            loans,
+                            loans: reference_binding_loans(&loans),
                             marker,
                             dest_interior: None,
                         });
+                        self.aggregate_loans.insert(reference, loans);
                     }
                     return;
                 }
@@ -2408,14 +2408,14 @@ impl<'a> Flatten<'a> {
                     in_place: false,
                 });
                 self.aliases.insert(reference, loans[0].clone());
-                self.aggregate_loans.insert(reference, loans.clone());
                 let marker = self.fresh_typed(node.location(), Some(place.root), Ty::none());
                 self.emit(MirInstr::EstablishLoans {
                     reference,
-                    loans,
+                    loans: reference_binding_loans(&loans),
                     marker,
                     dest_interior: None,
                 });
+                self.aggregate_loans.insert(reference, loans);
             }
             // --- Writes through a place (any nesting) --------------------------
             (CheckedStmtOp::SetPlace { .. }, &[place, value]) => {
@@ -3108,7 +3108,7 @@ impl<'a> Flatten<'a> {
             );
             self.emit(MirInstr::EstablishLoans {
                 reference: variable,
-                loans: loans.clone(),
+                loans: reference_binding_loans(&loans),
                 marker,
                 dest_interior: None,
             });
@@ -3155,13 +3155,13 @@ impl<'a> Flatten<'a> {
             let marker = self.fresh_typed(frame.value.location(), Some(place.root), Ty::none());
             self.emit(MirInstr::EstablishLoans {
                 reference: var,
-                loans: vec![MirLoan {
+                loans: reference_binding_loans(&[MirLoan {
                     place,
                     mutable,
                     interior: None,
                     shared: false,
                     setup: false,
-                }],
+                }]),
                 marker,
                 dest_interior: None,
             });
@@ -3867,4 +3867,22 @@ impl<'a> Flatten<'a> {
 enum SetArguments<'a> {
     Slice([Option<mojito_checked::checked::CheckedNodeId>; 3]),
     Multi(&'a [mojito_checked::checked::CheckedSubscriptArg]),
+}
+
+/// The loans a `ref` binding's own slot holds. Upstream's `ref` binding names
+/// an origin rather than taking an exclusive borrow: it keeps its owner live
+/// and carries the interior generation it designates, but excludes no access
+/// to the owner and no other reference, so each loan is a `setup` loan. The
+/// lowering facts a borrower built from the binding copies (`aggregate_loans`,
+/// `aliases`) keep the exclusive form, so a view of the binding borrows the
+/// owner as a view of the owner does.
+fn reference_binding_loans(loans: &[MirLoan]) -> Vec<MirLoan> {
+    loans
+        .iter()
+        .cloned()
+        .map(|loan| MirLoan {
+            setup: true,
+            ..loan
+        })
+        .collect()
 }

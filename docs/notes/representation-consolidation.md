@@ -195,8 +195,8 @@ entry's probe is "one instance per `n` where the pin has one".
 ## Recommended order
 
 1. **Gap B**, for size. R1049, R1050, R1052, R1029, R1097, R988, and
-   R1075 landed 10-22, and R1283 on 10-23. What remains is R1278, which
-   waits on R1277 and R1082.
+   R1075 landed 10-22, and R1283 on 10-23. What remains is R1278, whose
+   prerequisites R1277 and R1082 landed 10-24.
 
 2. **Gap A**, for leverage. Its core has landed (R906, R831, R20, R884),
    and the 10-23 re-check closed R733 and reworded R1113 and R890.

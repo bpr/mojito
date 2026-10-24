@@ -494,6 +494,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `ref` binding names an origin, as upstream's does, instead of
+  borrowing its owner exclusively (R1082): a read, write, mutating call,
+  capture, or second reference of the owner beside a live `ref` binding
+  runs, as do a `match` over a temporary tuple reading an enum payload, a
+  guard reading an `as` binding before a later read of the subject, the
+  aliasing swap `[xs[1], xs[0]] = xs`, and a view built from a `ref`
+  binding read beside the binding. Each binding's slot now holds setup loans:
+  they keep the owner live and carry its interior generation, so an element
+  reference still stales under a structural mutation. `Variant`'s
+  `__getitem_param__` returns `ref[origin_of(self)._get_owned_interior[
+  "value"]]` as upstream's does, so a payload reference used after `set`
+  is rejected as an invalidated interior reference, the pin's diagnostic.
+  Four `subset` error fixtures the pin runs move to the `ok` folders.
+
 - A `ref` field passed to a `mut` or `ref` argument, or as a method's
   receiver, binds the handle the field stores on the VM, as Pliron loads
   through it, where it bound the field's slot:

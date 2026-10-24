@@ -4355,22 +4355,30 @@ generation; every `MirLoan` retains the executable owner `MirPlace`, permission,
 optional canonical `MirInteriorOrigin`, and whether it is a shared alias (a
 `Pointer(to=place)` loan: two shared loans of overlapping storage coexist,
 while owner accesses and exclusive loans treat each as an ordinary borrow), and
-whether it is a setup loan. A setup loan holds a by-value call operand's
-reference result in its hidden `$call_ref_r` slot until the call's setup
-reads it: it keeps its owners live for drop elaboration and carries its
-interior generation, but excludes no access and no other loan, since Mojo
-judges argument exclusivity at the call itself; the move analysis reads its
-owners at each read through the slot (`MoveContext::setup_owners`), so a
-later argument's move makes the read a use of the moved value.
+whether it is a setup loan. A setup loan keeps its owners live for drop
+elaboration and carries its interior generation, but excludes no access and
+no other loan; the move analysis reads its owners at each read through the
+slot (`MoveContext::setup_owners`), so a move of an owner before that read
+makes it a use of the moved value. A by-value call operand's reference result
+holds setup loans in its hidden `$call_ref_r` slot until the call's setup
+reads it, since Mojo judges argument exclusivity at the call itself. A `ref`
+binding's own slot (a declared `ref`, a destructuring `ref` leaf, and the
+hidden `match` subject, element, and sequence references) holds setup loans
+for its whole life, since upstream's `ref` binding names an origin rather
+than borrowing its owner: the owner may be read, written, or referenced
+again beside it, and only an interior invalidation stales it. The lowering
+facts a borrower built from the binding copies (`aggregate_loans`,
+`aliases`) keep the exclusive form, so a view of a `ref` binding borrows the
+owner as a view of the owner does.
 Statically resolvable aliases use the frozen place, while cross-call aliases
 use explicit reference operations.
 `MirPlace::through` records which reference authorized an access. The VM erases
 both loan and interior-generation metadata after checking.
 
 Reference variables participate in backward CFG liveness. A loan is active from
-its binding through its last use, including joins and loop back-edges. While it
-is active, direct or differently-authorized overlapping mutation, replacement,
-move, drop, or mutating call is rejected. Establishing an interior-generation
+its binding through its last use, including joins and loop back-edges. While a
+loan that is not a setup loan is active, direct or differently-authorized
+overlapping mutation, replacement, move, drop, or mutating call is rejected. Establishing an interior-generation
 loan (a `for ref` loop's element loan) beside a whole-place loan of the same
 storage, or the reverse, conflicts when either side is mutable; two interior
 loans stay generation-tracked rather than exclusive. Projection overlap is

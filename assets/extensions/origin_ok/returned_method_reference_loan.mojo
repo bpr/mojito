@@ -2,11 +2,23 @@
 # origin parameter, keeps its ultimate source alive when bound to a `ref` local.
 # The struct origin parameter resolves to the origin the receiver's `ref[Self.o]` field
 # borrows, so the loan roots at the owner (`xs`/`ys`) and it is not dropped while
-# the reference is still live. Previously the returned reference recorded no loan
-# on its source, which was dropped early and left the handle dangling.
+# the reference is still live. Neither the view nor the returned reference
+# borrows the `ref` binding it was built from exclusively, so the binding is
+# read beside them, through a fieldwise or a written `ref[Self.o]`
+# constructor alike.
 @fieldwise_init
 struct View[o: Origin[mut=False]]:
     var src: ref[o] List[Int]
+
+    def at(self, i: Int) -> ref[Self.o] Int:
+        return self.src[i]
+
+
+struct WrittenView[o: Origin[mut=False]]:
+    var src: ref[o] List[Int]
+
+    def __init__(out self, ref[Self.o] src: List[Int]):
+        self.src = src
 
     def at(self, i: Int) -> ref[Self.o] Int:
         return self.src[i]
@@ -42,6 +54,12 @@ def main():
     var v = View(rx)
     ref a = v.at(0)   # loan on xs keeps it alive past the binding's use
     print(a)          # 10
+    print(len(rx))    # 3
+
+    var wv = WrittenView(rx)
+    ref d = wv.at(2)
+    print(d)          # 30
+    print(len(rx))    # 3
 
     var cursor = Cursor(rx, 1)
     ref b = cursor.take()
