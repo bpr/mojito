@@ -2195,6 +2195,123 @@ fn verifier_accepts_a_drop_of_a_slot_every_path_holds() {
     assert_eq!(slot_end_findings(raising), Vec::<String>::new());
 }
 
+/// The part-end findings `verify` reports for a function over slot 0
+/// (`x`) and the registers of [`slot_end_findings`].
+fn part_end_findings(blocks: Vec<MirBlock>) -> Vec<String> {
+    let f = function(
+        blocks,
+        5,
+        &[
+            (0, Ty::int()),
+            (1, Ty::bool()),
+            (2, Ty::int()),
+            (3, Ty::bool()),
+            (4, Ty::int()),
+        ],
+    );
+    verify(&program(f))
+        .into_iter()
+        .filter(|finding| finding.contains("some path reaching it has ended"))
+        .collect()
+}
+
+/// The place `x.<field>`.
+fn x_field(field: &str) -> MirPlace {
+    let mut place = MirPlace::root(0, Some(Ty::int()));
+    place.project(Proj::Field(field.to_string()), Ty::int());
+    place
+}
+
+/// `x.<field>` moved into r2.
+fn move_x_field(field: &str) -> MirInstr {
+    MirInstr::MovePlace {
+        dest: Reg(2),
+        place: x_field(field),
+    }
+}
+
+/// A destroy of a value a part of which some path has ended — a whole
+/// `drop.var`, or a `drop.place` of that part — destroys the part twice,
+/// as upstream's `ValueSet` rejects a destroy of a value with an
+/// uninitialized field.
+#[test]
+fn verifier_rejects_a_destroy_after_a_part_end() {
+    let whole = [define_x(), vec![move_x_field("a"), DROP_X]].concat();
+    assert_eq!(
+        part_end_findings(vec![block(whole, MirTerm::Return(None))]),
+        [
+            "MIR function 'test' block 0: drop.var of slot $v0 ('x') whose part `a` some path reaching it has ended"
+        ]
+    );
+    let one_arm = vec![block(
+        [
+            define_x(),
+            vec![
+                if_region(yields(vec![move_x_field("a")]), yields(Vec::new())),
+                DROP_X,
+            ],
+        ]
+        .concat(),
+        MirTerm::Return(None),
+    )];
+    assert_eq!(part_end_findings(one_arm).len(), 1);
+    let part = [
+        define_x(),
+        vec![
+            move_x_field("a"),
+            MirInstr::DropPlace {
+                place: x_field("a"),
+                destructor: None,
+            },
+        ],
+    ]
+    .concat();
+    let findings = part_end_findings(vec![block(part, MirTerm::Return(None))]);
+    assert!(
+        findings[0].contains("drop.place of slot $v0"),
+        "{findings:?}"
+    );
+}
+
+/// A part stored again before the whole drop, a `var.consume` (which
+/// destroys nothing) after a part's end, and a drop of a part beside an
+/// ended one find every part they destroy held.
+#[test]
+fn verifier_accepts_a_destroy_of_every_part_held() {
+    let refilled = [
+        define_x(),
+        vec![
+            move_x_field("a"),
+            MirInstr::Store {
+                place: x_field("a"),
+                src: Reg(0),
+            },
+            DROP_X,
+        ],
+    ]
+    .concat();
+    assert_eq!(
+        part_end_findings(vec![block(refilled, MirTerm::Return(None))]),
+        Vec::<String>::new()
+    );
+    let consumed = [
+        define_x(),
+        vec![
+            move_x_field("a"),
+            MirInstr::DropPlace {
+                place: x_field("b"),
+                destructor: None,
+            },
+            MirInstr::ConsumeVar { var: 0 },
+        ],
+    ]
+    .concat();
+    assert_eq!(
+        part_end_findings(vec![block(consumed, MirTerm::Return(None))]),
+        Vec::<String>::new()
+    );
+}
+
 const LOOP: Option<LoopLabel> = Some(LoopLabel(0));
 
 /// An `if` on r1 with `then` and `orelse` as its arms.

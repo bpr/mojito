@@ -1755,9 +1755,10 @@ impl VmBackend {
             }
             MirInstr::MovePlace { dest, place } => {
                 // A partial move `p.a^`: transfer the field's value out, leaving a
-                // `Moved` tombstone so a later drop of the whole struct skips it (no
-                // double-drop) and any stray use fails loudly. The ownership analysis
-                // has already proven the moved field is not read again.
+                // `Moved` tombstone so any stray use fails loudly. The ownership
+                // analysis has proven the moved field is not read again, and
+                // `mir::verify` that no destroy of the whole follows unless the
+                // field is stored again.
                 let reference = self.extend_reference(&vars[place.root as usize], place, regs)?;
                 let value = if let Some(reference) = reference {
                     let old = self.read_reference(&reference, frame_id, vars)?;

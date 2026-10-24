@@ -85,9 +85,8 @@ impl<'a> FnLowering<'a> {
     /// call `destructor`, the compiled `__deinit__` the drop names (its body
     /// consumes the receiver's fields), else destroy the fields in
     /// declaration order. The slot holds its value on every path reaching
-    /// the drop (`mir::verify`'s slot-end rule), so the drop is
-    /// unconditional. A slot some part of which an instruction ended
-    /// ([`FnLowering::partially_moved`]) rejects instead of guessing.
+    /// the drop, and every part of it (`mir::verify`'s slot-end rule), so
+    /// the drop is unconditional.
     pub(super) fn lower_drop_var(
         &mut self,
         ctx: &mut Context,
@@ -99,18 +98,6 @@ impl<'a> FnLowering<'a> {
             LowerTy::Aggregate { ty, .. } => {
                 if !self.needs_named_drop(&ty, destructor) {
                     return Ok(());
-                }
-                if self.partially_moved.contains(&var) {
-                    return Err(self.unsupported(
-                        format!(
-                            "drop of partially-moved variable `{}`",
-                            self.func
-                                .var_names
-                                .get(var as usize)
-                                .map_or("?", String::as_str)
-                        ),
-                        None,
-                    ));
                 }
                 let ptr = self.var_slots[var as usize];
                 self.emit_drop(ctx, ptr, &ty, destructor)
@@ -194,15 +181,6 @@ impl<'a> FnLowering<'a> {
         let jump = BrOp::new(ctx, cont, vec![]);
         self.append(ctx, jump.get_operation(), None);
         self.current = Some(cont);
-    }
-
-    /// Record that an instruction ended the part `place` names, so a whole
-    /// drop of its slot refuses rather than destroy the part twice. A whole
-    /// place ends nothing a later drop could repeat.
-    pub(super) fn end_part(&mut self, place: &MirPlace) {
-        if !place.proj.is_empty() {
-            self.partially_moved.insert(place.root);
-        }
     }
 
     /// Emit the VM's `drop_value` over storage no instruction names a

@@ -63,11 +63,11 @@ impl VmBackend {
 
     /// Destroy `value`, which a `drop.var` or `drop.place` of the static
     /// type `ty` ends, by running `destructor`, the `__deinit__` the drop
-    /// names, on the whole value, else by dropping its fields. A partial
-    /// aggregate drops only its residual fields, as [`Self::drop_value`].
-    /// A field, and what a cleanup list or any other teardown ends, still
-    /// finds its destructor in its struct's member table. A destructor the
-    /// compiler synthesized runs untraced: the source declares none.
+    /// names, on the whole value, else by dropping its fields: the value
+    /// holds every part (`mir::verify`'s slot-end rule). A field, and what
+    /// a cleanup list or any other teardown ends, still finds its
+    /// destructor in its struct's member table. A destructor the compiler
+    /// synthesized runs untraced: the source declares none.
     pub(super) fn drop_named(
         &mut self,
         prog: &Prog,
@@ -80,11 +80,7 @@ impl VmBackend {
             None => value,
         };
         match value {
-            Value::Struct { name, fields }
-                if !fields
-                    .iter()
-                    .any(|(_, value)| matches!(value, Value::Moved)) =>
-            {
+            Value::Struct { name, fields } => {
                 let Some(destructor) = destructor else {
                     for (_, value) in fields {
                         self.drop_value(prog, value)?;
@@ -203,24 +199,6 @@ impl VmBackend {
     pub(super) fn drop_value(&mut self, prog: &Prog, v: Value) -> Result<(), RuntimeError> {
         match v {
             Value::Struct { name, fields, .. } => {
-                // A partial aggregate cannot run its whole-value destructor:
-                // that method may inspect a field already transferred or
-                // explicitly destroyed. Drop only the initialized residual
-                // fields. Checked explicit-destroy obligations guarantee that
-                // an intact linear value never reaches an automatic DropVar, so
-                // this rule does not need to reconstruct generic conditional
-                // deletability from the runtime struct name.
-                if fields
-                    .iter()
-                    .any(|(_, value)| matches!(value, Value::Moved))
-                {
-                    for (_, value) in fields {
-                        if !matches!(value, Value::Moved) {
-                            self.drop_value(prog, value)?;
-                        }
-                    }
-                    return Ok(());
-                }
                 if let Some(idx) = prog.lifecycle_member(&name, "__deinit__") {
                     self.record_lifecycle(format!("drop {name}"));
                     // `self` is the whole struct, owned by the destructor: its

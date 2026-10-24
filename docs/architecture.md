@@ -5538,7 +5538,13 @@ raise's too. The verifier rejects a `drop.var` or `var.consume` of a slot
 some path reaching it does not hold, ended there or never initialized
 (`mir::verify`'s slot-end rule, upstream's `UninitializedValueScan` applied
 to destroys), so no pass may emit either, and every slot's state at its end
-is static: a backend destroys it with no drop flag.
+is static: a backend destroys it with no drop flag. The rule is field
+sensitive, as upstream's `ValueSet`: a `place.move`, `drop.place`,
+`deinit` receiver call, or `move` capture of a field or tuple element ends
+that part until a write to it, and a `drop.var`, `drop.place`, or `deinit`
+receiver call that would destroy an ended part is rejected. A `var.consume`
+destroys nothing, so it ends a slot whatever parts are ended — the end of a
+`deinit` body whose fields died singly.
 
 Iterator-driven loops also place an explicit drop at their common exhaustion or
 `break` exit. A `return` cannot reach that block, so HIR lists its current

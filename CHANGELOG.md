@@ -818,6 +818,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The MIR verifier's slot-end rule is field sensitive, as upstream's
+  `ValueSet` in `CheckLifetimes`: a field or tuple element a `place.move`,
+  `drop.place`, `deinit` receiver call, or `move` capture ends stays ended
+  until a write names it, and a `drop.var`, `drop.place`, or `deinit`
+  receiver call that would destroy an ended part is rejected (R1319). With
+  that proof, Pliron's flow-insensitive refusal of a whole drop after any
+  part's end (`partially_moved`) and the VM's skip of a whole destructor
+  over a moved-field tombstone are gone. Output is unchanged on both
+  backends.
+
 - `sroa` splits a slot stored whole from another slot's forwarded read, as
   upstream's `SROA` does, so `var w = W(3)` over an `@always_inline`
   initializer splits `w` (R1309). A `field.get` chain whose result a

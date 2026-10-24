@@ -292,15 +292,6 @@ impl FnLowering<'_> {
                 kwarg_places,
             )?);
         }
-        // The call consumes its aliased `deinit` receiver (the callee
-        // destroys its fields, each at its last use); a part's end is
-        // recorded so a whole drop of its slot refuses.
-        if deinit_receiver
-            && receiver_alias
-            && let Some(place) = recv_place
-        {
-            self.end_part(place);
-        }
         self.emit_bound_call(ctx, dest, resolved, lowered)?;
         // `mut self` (the struct's mut_self_methods set — keyed by either the
         // overload-qualified or the source method name) and named destructors

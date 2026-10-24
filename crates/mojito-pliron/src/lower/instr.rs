@@ -319,7 +319,6 @@ impl FnLowering<'_> {
                 self.load_from(ctx, address, &ty, *dest)
             }
             MirInstr::MovePlace { dest, place } => {
-                self.end_part(place);
                 let (address, ty) = self.place_address(ctx, place, *dest)?;
                 // A move relocates the bytes — ownership transfers to the
                 // destination (the VM's `mem::replace`; no clone runs), so

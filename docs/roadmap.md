@@ -978,35 +978,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1319 Pliron refuses a whole drop after a part's end, where
-  upstream's `UninitializedValueScan` proves field by field that none
-  exists**
-
-  `FnLowering::partially_moved` (`crates/mojito-pliron/src/lower.rs`)
-  records every slot a part of which an instruction ended, anywhere in the
-  body, and `lower_drop_var` refuses a whole drop of such a slot.
-  - It is flow-insensitive: a part refilled before the whole drop still
-    refuses, where upstream's `ValueSet` bits in `CheckLifetimes.cpp` see
-    every field held again.
-  - The verifier's slot-end rule (`verify_slot_ends`,
-    `crates/mojito-mir/src/mir/verify/drops.rs`) keeps one bit per slot,
-    and a `place.move` of a part fills the slot rather than emptying a
-    part, so nothing proves the backstop never fires.
-  - Fix: the verifier tracks each part some instruction ends (a
-    `place.move`, a `drop.place`, a `deinit` receiver call on a part), a
-    `drop.var` or `var.consume` requires every part held, and
-    `partially_moved` and its refusal go.
-  - The VM keeps the same backstop at run time: `drop_named` and
-    `drop_value` (`crates/mojito-vm/src/backend/vm/dispatch.rs`) skip a
-    whole destructor when a field holds the `Value::Moved` tombstone a part
-    move or a `deinit` receiver call on a part leaves; the same proof
-    retires that test.
-  - The corpus reaches the refusal nowhere (2026-10-23 instrumentation
-    while planning R1312), so this is a missing proof, not a wrong run.
-  - Found while landing R1312 (2026-10-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R987 Native code drops every function's inline level**
 
   A `nodebug`, `builtin`, or `always` callee the elaborator leaves as a

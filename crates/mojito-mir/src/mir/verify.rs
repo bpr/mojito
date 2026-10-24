@@ -27,7 +27,8 @@
 //! - reference invariants: `StoreRef` initializes reference storage, and a
 //!   declared write-back parameter receives a caller place.
 //! - slot ends: a `drop.var` or `var.consume` of a slot every path reaching
-//!   it already dropped, consumed, or moved.
+//!   it already dropped, consumed, or moved, and a destroy of a value a
+//!   field or tuple element of which some path reaching it has ended.
 
 use super::{
     FuncRef, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr,

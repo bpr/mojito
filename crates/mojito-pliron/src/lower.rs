@@ -271,7 +271,6 @@ pub fn lower_body(
         lazy_values: Vec::new(),
         erased: HashSet::new(),
         print_sink: None,
-        partially_moved: HashSet::new(),
         aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
         loaded_places: collect_loaded_places(&func.blocks),
         moved_out: collect_moved_out_fields(&func.blocks),
@@ -427,11 +426,6 @@ struct FnLowering<'a> {
     /// The C `int` descriptor a `print(file=)` currently routes its bytes
     /// through (`None` outside such a call: `mjrt_write_stdout`).
     print_sink: Option<Value>,
-    /// Slots a part of which some instruction ended (a `place.move` of a
-    /// projection, or an aliased `deinit` receiver call on one). Drop
-    /// elaboration never leaves a whole unnamed drop after a part's end, so
-    /// lowering refuses one rather than destroy the part twice.
-    partially_moved: HashSet<u32>,
     /// `LoadPlace` results whose every consumer borrows them: the register
     /// holds its place's address and no copy lifecycle runs (MIR's aggregate
     /// load is a shallow read; `CopyValue` is the copy boundary).

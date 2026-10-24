@@ -6,8 +6,18 @@
 //! drop flag; a slot some path has ended — dropped, consumed, or moved — or
 //! never initialized would be destroyed twice, or uninitialized.
 //!
+//! A `drop.var`, a `drop.place`, or a `deinit`-receiver call destroys
+//! what it names whole, so it must also find every part of it held, as
+//! upstream's `ValueSet` proves field by field that a destroyed value has
+//! no uninitialized field. A `var.consume` destroys nothing — drop
+//! elaboration has destroyed every part the value still held — so it ends
+//! a slot whatever parts some path has ended.
+//!
 //! The analysis is a must-analysis over one bit per slot ("held on every
-//! path"), joined by AND as upstream's `tracked &=`, over the function's
+//! path"), joined by AND as upstream's `tracked &=`, and the parts of held
+//! slots some path has ended (a `place.move`, a `drop.place`, a
+//! `deinit`-receiver call, or a `move` capture of a field or tuple
+//! element), joined by union, over the function's
 //! structured body, as `CheckLifetimes` walks `hlcf`: an `if` or `match` joins its
 //! arms, a loop or `comptime for` iterates its body to a fixpoint and
 //! leaves in the join of its `break`s, a `match` case enters the next as
@@ -16,32 +26,109 @@
 //! region op through [`RegionFrame`] and [`region_exit`], and a labelled
 //! `raise` to its `try`'s body frame. A function enters holding its
 //! parameters, a `var.declare` empties a slot, and anything else that names
-//! a slot fills it: a read of an empty slot is the checker's error, and
-//! over-filling hides a finding, never invents one.
+//! a slot fills it, and fills the part its place names: a read of an empty
+//! slot or an ended part is the checker's error, and over-filling hides a
+//! finding, never invents one.
 
-use super::{MirBlock, MirFunction, MirInstr, MirTerm};
+use super::{MirBlock, MirFunction, MirInstr, MirTerm, instruction_places};
 use crate::mir::{
-    MirCaptureMode, RegionFrame, VarId, instruction_regions, instruction_slots, region_exit,
+    MirCaptureMode, MirPlace, OwnedStep, Proj, RegionFrame, VarId, instruction_regions,
+    instruction_slots, region_exit,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 /// Report every slot end in `function` (a `drop.var`, a `var.consume`, or
-/// a `deinit`-receiver call) whose slot some path reaching it does not hold. A finding names the block of the block
-/// list holding it: the function's, or a region's.
+/// a `deinit`-receiver call) whose slot some path reaching it does not
+/// hold, and every destroy (a `drop.var`, a `drop.place`, or a
+/// `deinit`-receiver call) of a value a part of which some path reaching
+/// it has ended. A finding names the block of the block list holding it:
+/// the function's, or a region's.
 pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut Vec<String>) {
     if !ends_slots(&function.blocks) {
         return;
     }
     let mut walk = Walk::new(name, function);
-    let entry: Held = (0..function.n_vars)
-        .map(|v| v < function.n_params)
-        .collect();
+    let entry = Held {
+        slots: (0..function.n_vars)
+            .map(|v| v < function.n_params)
+            .collect(),
+        ended: BTreeSet::new(),
+    };
     walk.region(&entry, &function.blocks, true);
     errors.extend(walk.findings);
 }
 
-/// One bit per slot: whether every path reaching this point holds it.
-type Held = Vec<bool>;
+/// What every path reaching a point holds.
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
+struct Held {
+    /// One bit per slot: whether every path reaching this point holds it.
+    slots: Vec<bool>,
+    /// The parts of slots some path reaching this point has ended, each
+    /// the path of fields and tuple elements from its slot
+    /// ([`MirPlace::owned_path`]); no entry lies inside another.
+    ended: BTreeSet<(VarId, Vec<OwnedStep>)>,
+}
+
+impl Held {
+    /// Join `other` into this state: a slot is held where both hold it,
+    /// and a part is ended where either ended it.
+    fn meet(&mut self, other: &Self) {
+        for (held, other) in self.slots.iter_mut().zip(&other.slots) {
+            *held &= *other;
+        }
+        self.ended.extend(other.ended.iter().cloned());
+    }
+
+    /// Whether every path holds `slot`; a slot out of range is the bounds
+    /// check's finding.
+    fn holds(&self, slot: VarId) -> bool {
+        self.slots.get(slot as usize) != Some(&false)
+    }
+
+    /// Fill the part of `slot` at `path` (the whole slot when empty), and
+    /// every part inside it.
+    fn fill(&mut self, slot: VarId, path: &[OwnedStep]) {
+        if let Some(bit) = self.slots.get_mut(slot as usize) {
+            *bit = true;
+        }
+        self.ended
+            .retain(|(at, part)| *at != slot || !part.starts_with(path));
+    }
+
+    /// End `slot` whole: no path holds it or any part of it.
+    fn end(&mut self, slot: VarId) {
+        if let Some(bit) = self.slots.get_mut(slot as usize) {
+            *bit = false;
+        }
+        self.ended.retain(|(at, _)| *at != slot);
+    }
+
+    /// End the part of `slot` at `path`, unless a part holding it is
+    /// already ended.
+    fn end_part(&mut self, slot: VarId, path: Vec<OwnedStep>) {
+        if self.parts(slot).any(|part| path.starts_with(part)) {
+            return;
+        }
+        self.ended
+            .retain(|(at, part)| *at != slot || !part.starts_with(&path));
+        self.ended.insert((slot, path));
+    }
+
+    /// An ended part of `slot` that overlaps its part at `path`: one
+    /// inside it, or one holding it.
+    fn ended_within(&self, slot: VarId, path: &[OwnedStep]) -> Option<&[OwnedStep]> {
+        self.parts(slot)
+            .find(|part| part.starts_with(path) || path.starts_with(part))
+    }
+
+    /// The ended parts of `slot`.
+    fn parts(&self, slot: VarId) -> impl Iterator<Item = &[OwnedStep]> {
+        self.ended
+            .iter()
+            .filter(move |(at, _)| *at == slot)
+            .map(|(_, part)| part.as_slice())
+    }
+}
 
 /// The states a region (or one block) leaves by: falling off, raising out
 /// of the function, leaving the function, and leaving or resuming an
@@ -75,11 +162,7 @@ impl Flow {
             .iter_mut()
             .find(|(at, resumes, _)| *at == depth && *resumes == resume)
         {
-            Some((.., joined)) => {
-                for (held, other) in joined.iter_mut().zip(state) {
-                    *held &= *other;
-                }
-            }
+            Some((.., joined)) => joined.meet(state),
             None => self.frame_exits.push((depth, resume, state.clone())),
         }
     }
@@ -108,9 +191,9 @@ type Memo = HashMap<(*const MirInstr, Held, usize), Flow>;
 struct Walk<'a> {
     name: &'a str,
     function: &'a MirFunction,
-    /// The slot a reference register was made from: a write through it
-    /// stores into that slot again.
-    refills: HashMap<u32, VarId>,
+    /// The place a reference register was made from: a write through it
+    /// stores into that place again.
+    refills: HashMap<u32, &'a MirPlace>,
     findings: Vec<String>,
     /// The region ops enclosing the region being walked, innermost last.
     frames: Vec<RegionFrame>,
@@ -390,7 +473,7 @@ impl<'a> Walk<'a> {
         }
         if let (Some((binding, handler)), Some(mut start)) = (handler, body_raises) {
             if let Some(binding) = binding {
-                set(&mut start, *binding, true);
+                start.fill(*binding, &[]);
             }
             let arm = self.enter(&mut flow, &start, handler, report);
             meet(&mut flow.normal, arm.as_ref());
@@ -399,15 +482,23 @@ impl<'a> Walk<'a> {
     }
 
     /// Record one finding: `what` ends slot `var`, which some path reaching
-    /// it does not hold.
-    fn report(&mut self, index: usize, what: &str, var: VarId) {
+    /// it does not hold whole: not at all when `part` is `None`, else not
+    /// the part at that path.
+    fn report(&mut self, index: usize, what: &str, var: VarId, part: Option<&[OwnedStep]>) {
         let slot_name = self
             .function
             .var_names
             .get(var as usize)
             .map_or("?", String::as_str);
+        let missing = match part {
+            None => String::from("that some path reaching it does not hold"),
+            Some(part) => format!(
+                "whose part `{}` some path reaching it has ended",
+                part_text(part)
+            ),
+        };
         let finding = format!(
-            "MIR function '{}' block {index}: {what} of slot $v{var} ('{slot_name}') that some path reaching it does not hold",
+            "MIR function '{}' block {index}: {what} of slot $v{var} ('{slot_name}') {missing}",
             self.name
         );
         if !self.findings.contains(&finding) {
@@ -415,65 +506,98 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// One instruction's effect, reporting a drop or consume of a slot some
-    /// path does not hold when `report`.
-    fn step(&mut self, index: usize, state: &mut Held, instruction: &MirInstr, report: bool) {
-        if let MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } = instruction {
-            if report && state.get(*var as usize) == Some(&false) {
-                let spelling = if matches!(instruction, MirInstr::DropVar { .. }) {
-                    "drop.var"
-                } else {
-                    "var.consume"
-                };
-                self.report(index, spelling, *var);
+    /// Report a destroy, spelled `what`, of the value `place` names, which
+    /// some path reaching it does not hold whole. A place through a
+    /// reference, or past a step that is no field or tuple element, names
+    /// no part of its slot.
+    fn report_destroy(&mut self, index: usize, state: &Held, what: &str, place: &MirPlace) {
+        let path = if place.is_whole_root() {
+            Vec::new()
+        } else {
+            match place.owned_path() {
+                Some(path) => path,
+                None => return,
             }
-            set(state, *var, false);
+        };
+        if !state.holds(place.root) {
+            self.report(index, what, place.root, None);
+        } else if let Some(part) = state.ended_within(place.root, &path) {
+            let part = part.to_vec();
+            self.report(index, what, place.root, Some(&part));
+        }
+    }
+
+    /// One instruction's effect, reporting when `report` an end of a slot
+    /// some path does not hold, or a destroy of a value a part of which
+    /// some path has ended.
+    fn step(&mut self, index: usize, state: &mut Held, instruction: &'a MirInstr, report: bool) {
+        if let MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } = instruction {
+            if report {
+                let drop = matches!(instruction, MirInstr::DropVar { .. });
+                let spelling = if drop { "drop.var" } else { "var.consume" };
+                if !state.holds(*var) {
+                    self.report(index, spelling, *var, None);
+                } else if drop && let Some(part) = state.ended_within(*var, &[]) {
+                    let part = part.to_vec();
+                    self.report(index, spelling, *var, Some(&part));
+                }
+            }
+            state.end(*var);
             return;
         }
         if let MirInstr::DeclareVar { var } = instruction {
-            set(state, *var, false);
+            state.end(*var);
             return;
         }
-        // A `deinit`-receiver call ends its receiver slot as a
-        // `var.consume` does, after the call has read it.
-        let consumed = instruction.consumed_receiver_slot();
-        if let Some(var) = consumed
-            && report
-            && state.get(var as usize) == Some(&false)
-        {
-            self.report(index, "call.method deinit receiver", var);
+        // A `deinit`-receiver call ends its receiver as a `drop.place`
+        // does, after the call has read it.
+        let consumed = instruction.consumed_receiver();
+        if report {
+            if let MirInstr::DropPlace { place, .. } = instruction {
+                self.report_destroy(index, state, "drop.place", place);
+            }
+            if let Some(place) = consumed {
+                self.report_destroy(index, state, "call.method deinit receiver", place);
+            }
+        }
+        let places = instruction_places(instruction);
+        for place in &places {
+            state.fill(place.root, &owned_prefix(place));
         }
         for slot in instruction_slots(instruction) {
-            set(state, slot, true);
-        }
-        if let Some(var) = consumed {
-            set(state, var, false);
+            if !places.iter().any(|place| place.root == slot) {
+                state.fill(slot, &[]);
+            }
         }
         if let MirInstr::WriteRef { reference, .. } = instruction
-            && let Some(&slot) = self.refills.get(&reference.0)
+            && let Some(place) = self.refills.get(&reference.0)
         {
-            set(state, slot, true);
+            state.fill(place.root, &owned_prefix(place));
         }
         if let Some(source) = instruction.consumed_iteration_source() {
-            set(state, source, false);
+            state.end(source);
         }
-        match instruction {
-            MirInstr::UseVar { var, mode, .. } if mode.moves() => set(state, *var, false),
+        let ended: Vec<&MirPlace> = match instruction {
+            MirInstr::UseVar { var, mode, .. } if mode.moves() => {
+                state.end(*var);
+                Vec::new()
+            }
             MirInstr::MovePlace { place, .. }
             | MirInstr::DropPlace { place, .. }
-            | MirInstr::MarkDestroyed { place }
-                if place.is_whole_root() =>
-            {
-                set(state, place.root, false);
+            | MirInstr::MarkDestroyed { place } => vec![place],
+            MirInstr::MakeClosure { captures, .. } => captures
+                .iter()
+                .filter(|capture| capture.mode == MirCaptureMode::Move)
+                .map(|capture| &capture.place)
+                .collect(),
+            _ => Vec::new(),
+        };
+        for place in ended.into_iter().chain(consumed) {
+            if place.is_whole_root() {
+                state.end(place.root);
+            } else if let Some(path) = place.owned_path() {
+                state.end_part(place.root, path);
             }
-            MirInstr::MakeClosure { captures, .. } => {
-                for capture in captures {
-                    if capture.mode == MirCaptureMode::Move && capture.place.is_whole_root() {
-                        set(state, capture.place.root, false);
-                    }
-                }
-            }
-            _ => {}
         }
     }
 }
@@ -484,31 +608,47 @@ fn meet(target: &mut Option<Held>, source: Option<&Held>) {
         return;
     };
     match target {
-        Some(target) => {
-            for (held, other) in target.iter_mut().zip(source) {
-                *held &= *other;
-            }
-        }
+        Some(target) => target.meet(source),
         None => *target = Some(source.clone()),
     }
 }
 
-/// Set one slot's bit; a slot out of range is the bounds check's finding.
-fn set(state: &mut Held, slot: VarId, held: bool) {
-    if let Some(bit) = state.get_mut(slot as usize) {
-        *bit = held;
+/// The part of its slot a place reaches through its leading fields and
+/// tuple elements: what a write to it fills, at the least.
+fn owned_prefix(place: &MirPlace) -> Vec<OwnedStep> {
+    let mut path = Vec::new();
+    for step in &place.proj {
+        match step {
+            Proj::Field(name) => path.push(OwnedStep::Field(name.clone())),
+            Proj::ConstIndex(index) => path.push(OwnedStep::Element(*index)),
+            Proj::Rebind => {}
+            Proj::Index(_) | Proj::Variant(_) | Proj::UninitPayload => break,
+        }
     }
+    path
 }
 
-/// Whether some block of `blocks`, at any depth, ends a slot: a `drop.var`,
-/// a `var.consume`, or a `deinit`-receiver call consuming a whole slot.
+/// A part's path as source spells it: its fields and elements, dotted.
+fn part_text(part: &[OwnedStep]) -> String {
+    part.iter()
+        .map(|step| match step {
+            OwnedStep::Field(name) => name.clone(),
+            OwnedStep::Element(index) => index.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// Whether some block of `blocks`, at any depth, ends a slot or destroys a
+/// part: a `drop.var`, a `var.consume`, a `drop.place`, or a
+/// `deinit`-receiver call.
 fn ends_slots(blocks: &[MirBlock]) -> bool {
     blocks.iter().any(|block| {
         block.instrs.iter().any(|instruction| {
             matches!(
                 instruction,
-                MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. }
-            ) || instruction.consumed_receiver_slot().is_some()
+                MirInstr::DropVar { .. } | MirInstr::ConsumeVar { .. } | MirInstr::DropPlace { .. }
+            ) || instruction.consumed_receiver().is_some()
                 || instruction_regions(instruction)
                     .into_iter()
                     .any(|region| ends_slots(region))
@@ -516,12 +656,12 @@ fn ends_slots(blocks: &[MirBlock]) -> bool {
     })
 }
 
-/// The slot each reference register of `blocks`, at any depth, was made
+/// The place each reference register of `blocks`, at any depth, was made
 /// from.
-fn collect_refills(blocks: &[MirBlock], refills: &mut HashMap<u32, VarId>) {
+fn collect_refills<'a>(blocks: &'a [MirBlock], refills: &mut HashMap<u32, &'a MirPlace>) {
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
         if let MirInstr::MakeRef { dest, place } = instruction {
-            refills.insert(dest.0, place.root);
+            refills.insert(dest.0, place);
         }
         for region in instruction_regions(instruction) {
             collect_refills(region, refills);
