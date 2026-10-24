@@ -100,11 +100,62 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// The `String(x)` builtin — the VM's `format_value` over one argument:
-    /// a literal stays compile-time; scalars format through `mjrt_fmt_*`
-    /// into a dedicated allocation (an owned runtime string); a nominal
-    /// String reads back as a borrowed runtime string.
+    /// The `String(x)` builtin — the VM's `format_value` over one argument.
     pub(super) fn lower_string_builtin(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        args: &[Reg],
+        kwargs: &[(String, Reg)],
+    ) -> Result<(), PlironError> {
+        self.lower_stringify(ctx, dest, args, kwargs)?;
+        self.own_string_result(ctx, dest)
+    }
+
+    /// Give a text-producing builtin's nominal `String` result (`String(x)`,
+    /// `repr`) its storage over the text the lowering left in `dest`: an
+    /// owned buffer moves into the struct, which drop elaboration destroys,
+    /// and a borrowed or compile-time one is copied into a fresh allocation.
+    /// A `StringLiteral` result (an unlinked seam) keeps the text as it is.
+    pub(super) fn own_string_result(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+    ) -> Result<(), PlironError> {
+        if !matches!(
+            self.func.reg_types.get(&dest.0).map(Ty::kind),
+            Some(TyKind::Struct(name, _)) if mojito_symbol::symbol::is_stdlib_string_struct(name)
+        ) {
+            return Ok(());
+        }
+        let owned = self
+            .str_runtime
+            .get(&dest.0)
+            .copied()
+            .filter(|descriptor| descriptor.owned);
+        let (data, len) = if let Some(descriptor) = owned {
+            (descriptor.data, descriptor.len)
+        } else {
+            let (text, len) = self.writer_argument_text(ctx, dest, dest)?;
+            let copy = self.emit_alloc(ctx, len, 1, dest);
+            self.mem_copy_dynamic(ctx, copy, text, len, dest);
+            (copy, len)
+        };
+        self.str_runtime.remove(&dest.0);
+        self.str_consts.remove(&dest.0);
+        self.owned_temps.remove(&dest.0);
+        self.temp_releases.remove(&dest.0);
+        let layout = self.layout.mj_string();
+        let storage = self.entry_alloca(ctx, layout.size, layout.align);
+        self.store_string_fields(ctx, storage, data, len, len, dest);
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
+    /// The text of `String(x)`: a literal stays compile-time; scalars format
+    /// through `mjrt_fmt_*` into a dedicated allocation (an owned runtime
+    /// string); a nominal String reads back as a borrowed runtime string.
+    fn lower_stringify(
         &mut self,
         ctx: &mut Context,
         dest: Reg,
@@ -210,17 +261,17 @@ impl FnLowering<'_> {
     /// reads out of `arg`. A borrowed descriptor aliases `arg`'s buffer, so
     /// when `arg` is an owned register temporary — released right after this
     /// instruction, its final use — the buffer transfers to `dest` instead
-    /// (owned, released after `dest`'s own final use, or stolen by a String
-    /// constructor).
+    /// (owned, moved into a nominal result by [`Self::own_string_result`], or
+    /// released after `dest`'s own final use).
     ///
     /// A register that aliases a *place*, or snapshots one
     /// ([`FnLowering::load_from`]), copies out instead. MIR types this
     /// builtin's result as a fresh owned string carrying no loans, so the
     /// ownership analysis reads the call as the place's last use and drops it
-    /// between this instruction and the constructor that reads the
-    /// descriptor. `String` is the one borrow-classified builtin
-    /// (`support::borrowed_operands`) whose result outlives its call, so it is
-    /// the one that cannot leave the descriptor pointing into that place.
+    /// right after this instruction. `String` is the one borrow-classified
+    /// builtin (`support::borrowed_operands`) whose result outlives its call,
+    /// so it is the one that cannot leave the descriptor pointing into that
+    /// place.
     fn borrow_or_adopt_string(
         &mut self,
         ctx: &mut Context,

@@ -508,6 +508,7 @@ assets/ok/optional_dict_keys.mojo	main	exe-differential	sanitized
 assets/ok/optional_is_none.mojo	main	exe-differential	sanitized
 assets/ok/optional_owning_api.mojo	main	exe-differential	sanitized
 assets/ok/optional_raising_subscript.mojo	main	exe-differential	sanitized
+assets/ok/optional_string_from_stringify.mojo	main	exe-differential	sanitized
 assets/ok/optional_value_protocols.mojo	main	exe-differential	sanitized
 assets/ok/origin_argument_alias_bodies.mojo	main	exe-differential	sanitized
 assets/ok/origin_argument_direct_applications.mojo	main	exe-differential	sanitized

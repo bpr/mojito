@@ -717,15 +717,15 @@ fn a1_reference_field_arithmetic_matches_vm() {
 
 /// `String(x)` over a live place copies the bytes rather than aliasing them.
 ///
-/// MIR types the stringify builtin's result as a fresh owned string carrying
-/// no loans, so the ownership analysis reads the call as the place's last use
-/// and drops it between the builtin and the `String.__init__$ov$StringLiteral`
-/// that reads the descriptor. `String` is the one borrow-classified builtin
-/// (`lower::support::borrowed_operands`) whose result outlives its call, so a
-/// borrowed descriptor there dangles.
+/// MIR types the stringify builtin's result as a fresh owned `String`
+/// carrying no loans, so the ownership analysis reads the call as the
+/// place's last use and drops it right after the builtin. `String` is the
+/// one borrow-classified builtin (`lower::support::borrowed_operands`) whose
+/// result outlives its call, so a result aliasing the place's buffer would
+/// dangle.
 ///
 /// Only a sanitized executable catches this: stdout is correct either way,
-/// because the freed bytes are still intact when the constructor copies them.
+/// because the freed bytes are still intact when the result is read.
 /// The whole-corpus `ASan` lane that first caught it (`tests/heavy/`) costs
 /// 30-60 minutes and sits outside the overnight gate, so the shape is pinned
 /// here too. `detect_leaks=1` keeps the copy from being the other bug.

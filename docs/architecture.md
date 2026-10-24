@@ -630,8 +630,8 @@ Concrete MIR reaches `compile` structured, every region one block, as
 `mir::verify` requires. MIR destroys every register it owns
 (`mir::RegisterEnds`): drop elaboration places a `drop.reg` at each owned
 register's death, so Pliron marks an owned temporary of its own only for a
-register MIR does not own, which today is a `StringLiteral` runtime
-descriptor and its `String` materialization (R1327). Those temporaries
+register MIR does not own, which today is the `StringLiteral` runtime
+descriptor an inverted `write_repr_to` writes through (R1336). Those temporaries
 follow the region tree: one is released in the block defining
 it, after the instruction there that reads it last (a region op reads what
 its regions read), and on each terminator leaving that block before then.
@@ -4585,11 +4585,13 @@ the nominal String is expected through the ordinary implicit-conversion
 engine (the `@implicit` literal constructor), including operator operands
 (mixed literal/nominal comparisons and concatenation normalize onto the
 struct's dunders), tuple-display and fieldwise-construction elements, and
-specialized-pack constructor arguments. Builtin string producers retarget:
-`String(x)` stringify, `input()`, `repr(x)`, and `.format(...)` type as the
-nominal String by routing the underlying call to the VM's conversion builtin
-(a `ResolveCallable` adjustment where needed) and wrapping the buffered
-result through the literal constructor. `Error(msg)`/`raise` and the Writer
+specialized-pack constructor arguments. The builtin string producers
+`String(x)` stringify (routed to the `"String"` conversion builtin by a
+`ResolveCallable` adjustment), `input()`, and `repr(x)` return the nominal
+String itself, as upstream's initializer and functions do: MIR types the
+call's register as the struct, so drop elaboration destroys the buffer it
+owns, and each backend builds the struct directly (the VM's
+`nominal_string_value`, Pliron's `own_string_result`). `Error(msg)`/`raise` and the Writer
 `write_string` contract accept either spelling; the VM bridges read a
 nominal message back and materialize a nominal payload for a
 nominally-declared `write_string`. Overload symbols spell the two types

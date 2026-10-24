@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1336**.
+Next free ID: **R1337**.
 
 ## Ordered Work
 
@@ -794,18 +794,29 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1327 The `String(x)` builtin's `StringLiteral` result owns a
-  runtime buffer that MIR does not name**
+- [ ] **R1336 `x.write_repr_to(w)` on a built-in `Writable` writes through
+  a `StringLiteral` temporary that owns a buffer MIR does not name**
 
-  A `call String(x)` returning a `StringLiteral` allocates a runtime
-  descriptor (`str_runtime`, `crates/mojito-pliron/src/lower/`) that only
-  Pliron's owned-temporary release frees, since the register's type is
-  trivially destructible and no MIR value owns the buffer.
-  - It is the largest share of Pliron's releases: 385 of the 960 a
-    whole-corpus `MOJITO_PLIRON_DBG_TEMPS=1` run logged (2026-10-24).
-  - Fix: give the buffer a MIR owner (the builtin returns a nominal
-    `String`, or the descriptor is a value drop elaboration destroys), so
-    R1321 can delete the release.
+  The inverted representation write (`SemanticAdjustment::InvertedReprWrite`,
+  `crates/mojito-mir/src/mir/lower_expr/expr_method.rs`) lowers to a `repr`
+  call whose register MIR types `StringLiteral`, then a write of that text,
+  where upstream's `write_repr_to` writes the representation into the writer
+  itself.
+  - The register is trivially destructible, so only Pliron's owned-temporary
+    release frees its runtime descriptor.
+  - Probes: the 22 releases a `MOJITO_PLIRON_DBG_TEMPS=1` run over the
+    `String(`/`repr(`/`input(` fixtures logged (2026-10-24), from
+    `assets/ok/string_format_declared.mojo`,
+    `assets/ok/tstring_template_served.mojo`,
+    `assets/ok/value_pack_parameter_list_writable.mojo`,
+    `assets/ok/tstring_forms.mojo`, `assets/ok/parameter_list_raw_values.mojo`,
+    and `assets/ok/path_operations.mojo` (`Path.write_repr_to`).
+  - Fix: write the representation straight into the writer (a repr form of
+    the formatted write), or type the temporary as the nominal `String` the
+    call form `repr(x)` now returns, which needs the adjustment to carry the
+    checked type, since MIR lowering cannot tell whether the struct is
+    linked.
+  - Found while landing R1327 (2026-10-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4125,21 +4136,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A constructor spread is a call, not a method call, so serving the
     spreading `def` once it checks is R316's.
   - Found while landing R256 (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R437 `o = String(x)` into an `Optional[String]` fails MIR
-  verification**
-
-  Problem: `var o = Optional[String](None); o = String(3)` prints `3` at the
-  pin, while Mojito stops with "argument 0 of
-  'Optional$mono$TString.__init__$ov$T$AnyType' has type StringLiteral,
-  declared String".
-  - The checker records the `String` wrap of the builtin conversion and the
-    `Optional` conversion at the same span, and `implicit_conversions` keeps
-    one of them.
-  - Workaround: spell `Optional[String](String(3))`.
-  - Found while landing R421 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8635,11 +8631,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `mark_*_owned_temp` call sites, `flush_owned_temps`,
     `release_temps_leaving`, and `MovedOutFields`
     (`crates/mojito-pliron/src/lower/release.rs`, `lower/support.rs`).
-  - Probe: 385 of the 960 releases a whole-corpus
-    `MOJITO_PLIRON_DBG_TEMPS=1` run logged (2026-10-24) free a
-    `StringLiteral` runtime descriptor (`str_runtime`) that has no MIR
-    value to drop (R1327).
-  - Depends on R1329 and R1327.
+  - Probe: the `StringLiteral` runtime descriptors (`str_runtime`) an
+    inverted `write_repr_to` leaves have no MIR value to drop (R1336);
+    `String(x)`, `repr(x)`, and `input()` return a MIR-owned `String`
+    since R1327.
+  - Depends on R1329, R1327, and R1336.
   - Model: Opus, Not Planned.
 
 - [ ] **R1328 A memory-only owned value lives in an SSA register, where

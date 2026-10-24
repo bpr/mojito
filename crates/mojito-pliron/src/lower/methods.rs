@@ -384,13 +384,10 @@ impl FnLowering<'_> {
                 ScalarTy::Float64 => Some("Float64("),
                 _ => None,
             };
-            let (source, len) = if let Some(label) = label {
-                self.wrap_repr_scalar(ctx, source, len, label, dest)
-            } else {
-                (source, len)
+            let (data, len) = match label {
+                Some(label) => self.wrap_repr_scalar(ctx, source, len, label, dest),
+                None => self.owned_copy(ctx, source, len, dest),
             };
-            let data = self.emit_alloc(ctx, len, 1, dest);
-            self.mem_copy_dynamic(ctx, data, source, len, dest);
             self.str_runtime.insert(
                 dest.0,
                 RuntimeStr {
@@ -419,13 +416,10 @@ impl FnLowering<'_> {
                 ScalarTy::Sized(dtype) => dtype.repr_alias(),
                 _ => None,
             };
-            let (source, len) = if let Some(label) = label {
-                self.wrap_repr_scalar(ctx, source, len, &format!("{label}("), dest)
-            } else {
-                (source, len)
+            let (data, len) = match label {
+                Some(label) => self.wrap_repr_scalar(ctx, source, len, &format!("{label}("), dest),
+                None => self.owned_copy(ctx, source, len, dest),
             };
-            let data = self.emit_alloc(ctx, len, 1, dest);
-            self.mem_copy_dynamic(ctx, data, source, len, dest);
             self.str_runtime.insert(
                 dest.0,
                 RuntimeStr {
@@ -569,6 +563,19 @@ impl FnLowering<'_> {
         };
         self.reg_values.insert(dest.0, result);
         Ok(())
+    }
+
+    /// A fresh allocation holding the `len` bytes at `source`.
+    fn owned_copy(
+        &mut self,
+        ctx: &mut Context,
+        source: Value,
+        len: Value,
+        dest: Reg,
+    ) -> (Value, Value) {
+        let data = self.emit_alloc(ctx, len, 1, dest);
+        self.mem_copy_dynamic(ctx, data, source, len, dest);
+        (data, len)
     }
 
     fn wrap_repr_scalar(

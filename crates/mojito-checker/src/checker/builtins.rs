@@ -529,9 +529,9 @@ impl Checker {
         let nominal_prompt = matches!((tys[0]).kind(), TyKind::Struct(name, args)
             if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name));
         if tys[0] == TyKind::StringLiteral || nominal_prompt {
-            self.record_call_effect(span.clone(), Ty::error());
+            self.record_call_effect(span, Ty::error());
             self.require_error("call to raising function 'input'", Ty::error())?;
-            self.nominal_string_wrap(span)
+            Ok(self.builtin_string_result())
         } else {
             Err(TypeError::TypeMismatch {
                 expected: "String".to_string(),

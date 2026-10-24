@@ -829,6 +829,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `String(x)`, `repr(x)`, and `input()` return an owned nominal `String`,
+  as upstream's `String.__init__[T: Writable]`, `repr`, and `input` do,
+  where each returned a runtime `StringLiteral` the literal constructor then
+  copied (R1327). MIR types the call's register as the struct, so drop
+  elaboration destroys the buffer it owns and Pliron no longer releases it
+  behind MIR's back; a native `String(n)` makes one allocation where it
+  made two. `o = String(3)` into an `Optional[String]` now converts as any
+  `String` value does, where MIR verification rejected it (R437,
+  `assets/ok/optional_string_from_stringify.mojo`), and a native
+  `repr(5)` no longer leaks its unwrapped digits.
+
 - Drop elaboration destroys every owned register nothing takes, as
   upstream's `CheckLifetimes` destroys an owned SSA value at its death
   (R1329): `DropValues` numbers the owned registers after the variables,

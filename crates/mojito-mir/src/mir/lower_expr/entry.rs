@@ -555,13 +555,12 @@ impl<'a> Flatten<'a> {
         }]
     }
 
-    /// A builtin string producer (`String("abc")`, `repr(x)`, `input(...)`)
-    /// is typed as the compile-time string plus a nominal-String wrap
-    /// conversion at its own span; a view conversion of that temporary
-    /// (`f(String("abc"))` at a `StringSpan` parameter) shares the span and
-    /// supersedes the wrap in the recorded conversions. The view constructor
-    /// borrows a nominal `String`, so the wrap is re-emitted here: the
-    /// materialized slot must hold the struct the constructor lends.
+    /// A compile-time string value the checker wraps into the nominal
+    /// `String` at its own span (`Checker::nominal_string_wrap`) loses that
+    /// wrap to a view conversion sharing the span, which supersedes it in
+    /// the recorded conversions. The view constructor borrows a nominal
+    /// `String`, so the wrap is re-emitted here: the materialized slot must
+    /// hold the struct the constructor lends.
     fn nominal_string_view_source(&mut self, e: Node<'a>, value: Reg, target: &str) -> Reg {
         if !matches!(
             self.f.reg_types.get(&value.0).map(Ty::kind),

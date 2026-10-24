@@ -495,12 +495,29 @@ impl VmBackend {
                 Some(Value::Str(message)) => format!("function instantiation failed: {message}"),
                 _ => "function instantiation failed".to_string(),
             })),
-            "String" => Ok(Value::Str(match args.into_iter().next() {
-                Some(value) => self.format_value(prog, value, false)?,
-                None => String::new(),
-            })),
+            // The stringify conversion: a nominal `String` result owns a
+            // fresh buffer, as upstream's `String.__init__[T: Writable]`
+            // builds; the unlinked seam keeps the builtin string.
+            "String" => {
+                let text = match args.into_iter().next() {
+                    Some(value) => self.format_value(prog, value, false)?,
+                    None => String::new(),
+                };
+                if constructed == Some(mojito_symbol::symbol::STDLIB_STRING_STRUCT) {
+                    self.nominal_string_value(prog, &text)
+                } else {
+                    Ok(Value::Str(text))
+                }
+            }
             "repr" => match args.into_iter().next() {
-                Some(value) => Ok(Value::Str(self.format_value(prog, value, true)?)),
+                Some(value) => {
+                    let text = self.format_value(prog, value, true)?;
+                    if constructed == Some(mojito_symbol::symbol::STDLIB_STRING_STRUCT) {
+                        self.nominal_string_value(prog, &text)
+                    } else {
+                        Ok(Value::Str(text))
+                    }
+                }
                 None => Err(RuntimeError::ArityMismatch {
                     name: "repr".to_string(),
                     expected: 1,
@@ -619,10 +636,19 @@ impl VmBackend {
                 {
                     prompt = self.string_struct_literal(&prompt)?;
                 }
-                if self.input_override.is_some() {
-                    return self.input_from_override(prompt);
+                let line = if self.input_override.is_some() {
+                    self.input_from_override(prompt)?
+                } else {
+                    builtin_input(prompt)?
+                };
+                match line {
+                    Value::Str(text)
+                        if constructed == Some(mojito_symbol::symbol::STDLIB_STRING_STRUCT) =>
+                    {
+                        self.nominal_string_value(prog, &text)
+                    }
+                    line => Ok(line),
                 }
-                builtin_input(prompt)
             }
             // The elaborator rewrites a conversion of a struct value into
             // a call of its member, so a struct reaching here fails in

@@ -114,13 +114,13 @@ impl Checker {
         match name {
             _ if self.structs.contains_key(name) => {
                 // `String(x)` on a non-literal argument stringifies through
-                // the builtin conversion and materializes the result as the
-                // nominal struct: the call routes to the `"String"` builtin
-                // (a `ResolveCallable` adjustment) and the recorded
-                // implicit literal-constructor wrap builds the struct from
-                // the buffered text. A single string-literal argument (or a
-                // keyword construction such as `String(copy: s)`) is the
-                // ordinary constructor path.
+                // the builtin conversion, which builds the nominal struct
+                // itself: the call routes to the `"String"` builtin (a
+                // `ResolveCallable` adjustment) and yields an owned
+                // `String`, as upstream's `String.__init__[T: Writable]`
+                // does. A single string-literal argument (or a keyword
+                // construction such as `String(copy: s)`) is the ordinary
+                // constructor path.
                 if mojito_symbol::symbol::is_stdlib_string_struct(name)
                     && !args.is_empty()
                     && kwargs.is_empty()
@@ -129,7 +129,8 @@ impl Checker {
                         && matches!((self.infer(&args[0])?).kind(), TyKind::StringLiteral))
                 {
                     self.infer_stringify(args)?;
-                    return self.retarget_string_result(span, name);
+                    self.record_at(span).overload_target = Some("String".to_string());
+                    return Ok(Ty::new(TyKind::Struct(name.to_string(), Vec::new())));
                 }
                 let constructed = self.infer_construction(&span, name, param_args, args, kwargs)?;
                 self.type_runtime_param_args(param_args)?;
@@ -316,7 +317,7 @@ impl Checker {
                 let tys = self.builtin_args("repr", 1, args)?;
                 if self.conforms_to(&tys[0], "Writable") {
                     self.record_at(args[0].source_span()).call_place_use = true;
-                    return self.nominal_string_wrap(span);
+                    return Ok(self.builtin_string_result());
                 }
                 Err(TypeError::TypeMismatch {
                     expected: "Writable".to_string(),
@@ -555,36 +556,28 @@ impl Checker {
         Ok(())
     }
 
-    /// Record the conversion plumbing that makes a builtin string-producing
-    /// call yield the nominal `String` struct: route the call itself to the
-    /// `"String"` conversion builtin (a `ResolveCallable` adjustment) and
-    /// wrap its buffered result through the `@implicit` literal constructor.
-    /// Falls back to the compile-time string result when the literal
-    /// constructor is unavailable (a replaced stdlib root).
-    pub(super) fn retarget_string_result(
-        &self,
-        span: SourceSpan,
-        name: &str,
-    ) -> Result<Ty, TypeError> {
-        let nominal = Ty::new(TyKind::Struct(name.to_string(), Vec::new()));
-        let Some((target, _)) = self.implicit_conversion_target(&Ty::string_literal(), &nominal)?
-        else {
-            return Ok(Ty::string_literal());
-        };
-        self.record_at(span.clone()).overload_target = Some("String".to_string());
-        // As in `nominal_string_wrap`: a view conversion already recorded at
-        // this span supersedes the wrap.
-        self.record_at(span)
-            .implicit_conversion
-            .get_or_insert(target);
-        Ok(nominal)
+    /// The result of a builtin that builds the nominal `String` itself
+    /// (`repr`, `input`), as upstream's functions return one: the stdlib
+    /// struct, or the compile-time string on an unlinked seam without it.
+    pub(super) fn builtin_string_result(&self) -> Ty {
+        if self
+            .structs
+            .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
+        {
+            Ty::new(TyKind::Struct(
+                mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
+                Vec::new(),
+            ))
+        } else {
+            Ty::string_literal()
+        }
     }
 
-    /// The wrap-only sibling of [`Self::retarget_string_result`] for builtin
-    /// string producers whose callee stays itself (`input`, `repr`,
-    /// `.format`): record the literal-constructor wrap at `span` and report
-    /// the nominal `String`, falling back to the compile-time string when the
-    /// stdlib constructor is unavailable (an unlinked seam).
+    /// The nominal-`String` wrap of a compile-time string that materializes
+    /// as a runtime value (an inferred binding, a collection element):
+    /// record the literal-constructor wrap at `span` and report the nominal
+    /// `String`, falling back to the compile-time string when the stdlib
+    /// constructor is unavailable (an unlinked seam).
     pub(super) fn nominal_string_wrap(&self, span: SourceSpan) -> Result<Ty, TypeError> {
         let nominal = Ty::new(TyKind::Struct(
             mojito_symbol::symbol::STDLIB_STRING_STRUCT.to_string(),
@@ -594,9 +587,8 @@ impl Checker {
         else {
             return Ok(Ty::string_literal());
         };
-        // A view conversion of the produced temporary (`s.startswith(String(5))`
-        // at a `StringSpan` parameter) shares this span and supersedes the wrap;
-        // re-inferring the argument must not revert it.
+        // A view conversion already recorded at this span supersedes the
+        // wrap; re-inferring the expression must not revert it.
         self.record_at(span)
             .implicit_conversion
             .get_or_insert(target);

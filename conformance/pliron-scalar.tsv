@@ -508,6 +508,7 @@ assets/ok/optional_dict_keys.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_is_none.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_owning_api.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_raising_subscript.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/optional_string_from_stringify.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/optional_value_protocols.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_argument_alias_bodies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/origin_argument_direct_applications.mojo	-	ineligible	no-scalar-entry-shape

@@ -66,7 +66,8 @@ impl FnLowering<'_> {
                 "round" => return self.lower_round_builtin(ctx, dest, args, kwargs),
                 "divmod" => return self.lower_divmod_builtin(ctx, dest, args, kwargs),
                 "repr" if args.len() == 1 && kwargs.is_empty() => {
-                    return self.lower_repr_builtin(ctx, dest, args[0]);
+                    self.lower_repr_builtin(ctx, dest, args[0])?;
+                    return self.own_string_result(ctx, dest);
                 }
                 "input" => return self.lower_input_builtin(ctx, dest, args, kwargs),
                 "UnsafePointer.alloc" if kwargs.is_empty() && args.len() == 1 => {

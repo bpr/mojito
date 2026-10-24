@@ -589,11 +589,10 @@ impl<'a> Flatten<'a> {
         // compile-time string; route those back to the VM's
         // conversion builtin instead of the nominal constructor.
         // A retargeted `String(x)` stringify carries a
-        // `ResolveCallable("String")` adjustment (production path) or
-        // keeps the compile-time string checked type (the unlinked
-        // seam): both route to the VM's `"String"` conversion builtin
-        // with an explicitly literal-typed result — the surrounding
-        // implicit-conversion wrap materializes the nominal struct.
+        // `ResolveCallable("String")` adjustment and its checked nominal
+        // `String` result (production path), or keeps the compile-time
+        // string checked type (the unlinked seam): both route to the
+        // `"String"` conversion builtin, typed as checked.
         let stringify = mojito_symbol::symbol::is_stdlib_string_struct(name)
             && (callable_target(&node.adjustments).as_deref() == Some("String")
                 || node.ty.clone() == Some(Ty::string_literal()));
@@ -631,22 +630,13 @@ impl<'a> Flatten<'a> {
                 .fieldwise_keywords_positional(constructed, (regs, arg_places, kw, kwarg_places)),
             _ => (regs, arg_places, kw, kwarg_places),
         };
-        // Builtin string producers wrapped by the nominal-String
-        // conversion keep their own callee but type their register
-        // as the compile-time string the wrap consumes.
-        let literal_result =
-            stringify || (matches!(name, "input" | "repr") && call.implicit_conversion().is_some());
         let target = if stringify {
             "String".to_string()
         } else {
             callable_target(&node.adjustments)
                 .unwrap_or_else(|| self.overloaded_name(name, args.len()))
         };
-        let d = if literal_result {
-            self.fresh_typed(call.location(), None, Ty::string_literal())
-        } else {
-            self.fresh(call.location(), None)
-        };
+        let d = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
         let capture_accesses = self.call_capture_accesses(call);
         let transfer_arg_places = arg_places.clone();

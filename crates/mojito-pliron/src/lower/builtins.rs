@@ -388,11 +388,11 @@ impl FnLowering<'_> {
         if !kwargs.is_empty() || args.len() != 1 {
             return Err(self.unsupported_reg("`input` call contract".into(), dest));
         }
-        // The checker types the call result `StringLiteral` (a separate
-        // constructor conversion wraps it into the nominal String when
-        // needed). The 24-byte `MjString` the runtime fills starts with the
-        // same `{data, len}` words an `MjStrDesc` reads, so one storage
-        // shape serves either destination type.
+        // The checker types the call result as the nominal String, or as
+        // `StringLiteral` on an unlinked seam. The 24-byte `MjString` the
+        // runtime fills starts with the same `{data, len}` words an
+        // `MjStrDesc` reads, so one storage shape serves either destination
+        // type.
         let dest_ty = self.func.reg_types.get(&dest.0).cloned();
         let Some(dest_ty) = dest_ty.filter(|ty| {
             matches!(ty.kind(), TyKind::StringLiteral)
@@ -415,10 +415,9 @@ impl FnLowering<'_> {
         );
         self.append(ctx, call.get_operation(), Some(dest));
         self.reg_values.insert(dest.0, storage);
-        // The line buffer is owned: a StringLiteral result registers the
-        // owned runtime descriptor (the release rule frees StringLiteral
-        // temporaries through `str_runtime`, exactly like `String(x)`
-        // stringify); a nominal String result releases through its storage.
+        // The line buffer is owned: a nominal String result is destroyed by
+        // drop elaboration, and a StringLiteral result registers the owned
+        // runtime descriptor the release rule frees through `str_runtime`.
         if matches!(dest_ty.kind(), TyKind::StringLiteral) {
             let (data, len) = self.string_parts(ctx, storage, dest);
             self.str_runtime.insert(
