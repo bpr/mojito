@@ -829,6 +829,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `x.write_repr_to(w)` on a built-in `Writable` writes a `repr(x)` text
+  that is an owned nominal `String`, as upstream's `repr` returns, so drop
+  elaboration destroys it, where it was a `StringLiteral` register only
+  Pliron's own temporary tracking freed (R1336). The inverted write's
+  `SemanticAdjustment::InvertedReprWrite` carries the checked `repr` type.
+  A t-string segment, a literal or a captured place, is now the linked
+  `String`'s own construction, as a user's `String(…)` is, where it was a
+  `StringLiteral` stringify the literal constructor then copied, so a
+  native t-string makes one allocation per segment fewer.
+
 - `String(x)`, `repr(x)`, and `input()` return an owned nominal `String`,
   as upstream's `String.__init__[T: Writable]`, `repr`, and `input` do,
   where each returned a runtime `StringLiteral` the literal constructor then

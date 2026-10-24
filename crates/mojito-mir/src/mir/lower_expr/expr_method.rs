@@ -319,18 +319,22 @@ impl<'a> Flatten<'a> {
             return Some(d);
         }
         // `write_repr_to` on a bounded or intrinsic Writable has no
-        // concrete receiver body. Produce `repr(receiver)` once and
-        // feed the text through the supplied Writer's ordinary
-        // `write` path.
-        if node.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
-            )
-        }) {
+        // concrete receiver body. Produce `repr(receiver)` once, typed
+        // as the checked `repr` result, and feed the text through the
+        // supplied Writer's ordinary `write` path.
+        if let Some(repr_ty) = node
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::InvertedReprWrite { repr } => {
+                    Some(repr.clone())
+                }
+                _ => None,
+            })
+        {
             let writer = *args.first().expect("checked write_repr_to has one writer");
             let value = self.expr(object);
-            let repr = self.fresh_typed(object.location(), None, Ty::string_literal());
+            let repr = self.fresh_typed(object.location(), None, repr_ty);
             let value_place = self.simple_place(object);
             self.emit(MirInstr::Call {
                 dest: repr,

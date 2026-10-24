@@ -797,8 +797,13 @@ pub enum SemanticAdjustment {
     InvertedWrite,
     /// `x.write_repr_to(writer)` on a `Writable`-bounded receiver: format the
     /// receiver through `repr(x)`, then feed that text to `writer.write`.
-    /// This is the representation twin of [`Self::InvertedWrite`].
-    InvertedReprWrite,
+    /// This is the representation twin of [`Self::InvertedWrite`]. `repr` is
+    /// the checked type of the `repr(x)` text — the nominal `String` upstream's
+    /// `repr` returns, so drop elaboration destroys it, or the compile-time
+    /// string on an unlinked seam without the stdlib.
+    InvertedReprWrite {
+        repr: Ty,
+    },
     /// An instance method called through its type with the receiver as the
     /// first argument (`List[Int].__len__(xs)`, current Mojo's
     /// `T.method(value, …)` spelling): the checker typed it as

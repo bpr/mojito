@@ -282,7 +282,9 @@ impl Checker {
             self.infer_print(std::slice::from_ref(object), &[])?;
             self.record_at(span.clone()).adjustment =
                 Some(Box::new(if method == "write_repr_to" {
-                    mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
+                    mojito_checked::checked::SemanticAdjustment::InvertedReprWrite {
+                        repr: self.builtin_string_result(),
+                    }
                 } else {
                     mojito_checked::checked::SemanticAdjustment::InvertedWrite
                 }));
@@ -368,7 +370,9 @@ impl Checker {
             .borrowed_read_call_place = true;
         self.infer_print(std::slice::from_ref(object), &[])?;
         self.record_at(span.clone()).adjustment = Some(Box::new(if method == "write_repr_to" {
-            mojito_checked::checked::SemanticAdjustment::InvertedReprWrite
+            mojito_checked::checked::SemanticAdjustment::InvertedReprWrite {
+                repr: self.builtin_string_result(),
+            }
         } else {
             mojito_checked::checked::SemanticAdjustment::InvertedWrite
         }));

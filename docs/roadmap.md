@@ -794,32 +794,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1336 `x.write_repr_to(w)` on a built-in `Writable` writes through
-  a `StringLiteral` temporary that owns a buffer MIR does not name**
-
-  The inverted representation write (`SemanticAdjustment::InvertedReprWrite`,
-  `crates/mojito-mir/src/mir/lower_expr/expr_method.rs`) lowers to a `repr`
-  call whose register MIR types `StringLiteral`, then a write of that text,
-  where upstream's `write_repr_to` writes the representation into the writer
-  itself.
-  - The register is trivially destructible, so only Pliron's owned-temporary
-    release frees its runtime descriptor.
-  - Probes: the 22 releases a `MOJITO_PLIRON_DBG_TEMPS=1` run over the
-    `String(`/`repr(`/`input(` fixtures logged (2026-10-24), from
-    `assets/ok/string_format_declared.mojo`,
-    `assets/ok/tstring_template_served.mojo`,
-    `assets/ok/value_pack_parameter_list_writable.mojo`,
-    `assets/ok/tstring_forms.mojo`, `assets/ok/parameter_list_raw_values.mojo`,
-    and `assets/ok/path_operations.mojo` (`Path.write_repr_to`).
-  - Fix: write the representation straight into the writer (a repr form of
-    the formatted write), or type the temporary as the nominal `String` the
-    call form `repr(x)` now returns, which needs the adjustment to carry the
-    checked type, since MIR lowering cannot tell whether the struct is
-    linked.
-  - Found while landing R1327 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1069 Natively, a place's type carries an origin that varies from
   run to run**
 
@@ -8631,10 +8605,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `mark_*_owned_temp` call sites, `flush_owned_temps`,
     `release_temps_leaving`, and `MovedOutFields`
     (`crates/mojito-pliron/src/lower/release.rs`, `lower/support.rs`).
-  - Probe: the `StringLiteral` runtime descriptors (`str_runtime`) an
-    inverted `write_repr_to` leaves have no MIR value to drop (R1336);
-    `String(x)`, `repr(x)`, and `input()` return a MIR-owned `String`
-    since R1327.
+  - Probe: `String(x)`, `repr(x)`, `input()` (R1327), an inverted
+    `write_repr_to`'s `repr` text, and a t-string segment (R1336) are
+    MIR-owned `String`s; a `MOJITO_PLIRON_DBG_TEMPS=1` run over
+    `assets/ok/tstring_forms.mojo` and `assets/ok/path_operations.mojo`
+    logs no mark.
   - Depends on R1329, R1327, and R1336.
   - Model: Opus, Not Planned.
 
@@ -9921,6 +9896,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The texts match the pin; the shape does not.
   - A bundled `struct SIMD` needs everything R160 needs for `DType`, plus
     `Ty::Simd`'s slots served by a nominal struct.
+  - Probe: `x.write_repr_to(w)` on an `Int`, `UInt`, or `Float64`
+    (`SemanticAdjustment::InvertedReprWrite`, `mir/lower_expr/expr_method.rs`)
+    builds `repr(x)` into an owned `String` and writes that, where
+    upstream's `SIMD.write_repr_to` writes into the writer itself.
+  - Probe: `Int8(4).write_repr_to(t)`, `Float32(1.5).write_repr_to(t)`, and
+    `Int8(4).write_to(t)` stop with "type 'Int8' has no method
+    'write_repr_to'" (or `'write_to'`), where the pin writes `Int8(4)` and
+    `Float32(1.5)`: a sized scalar's host method table has neither.
   - Depends on R160.
   - Model: Fable, Not Planned.
 

@@ -385,7 +385,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mir/lower_expr/expr_method.rs` lowers as the writer's host primitive
   `mojito-symbol`'s `WRITE_FORMATTED` (`$write_formatted`, the formatted
   text through `write_string`), and `x.write_repr_to(writer)` records
-  `InvertedReprWrite`, lowered as the same primitive over `repr(x)`; a
+  `InvertedReprWrite { repr }`, lowered as the same primitive over
+  `repr(x)`, whose register takes the checked `repr` type (the nominal
+  `String`) so drop elaboration destroys it; a
   plain `writer.write(...)` resolves to the bundled `Writer` trait's
   declared `write` like any method; an instance method called through its type with
   the receiver as the first argument — `infer_type_receiver_instance_call`

@@ -2100,12 +2100,13 @@ fn production_tstrings_call_the_bundled_entry_point() {
         )),
         "expected a call of {entry} in main"
     );
+    let string_init = format!("{}.__init__", mojito::symbol::STDLIB_STRING_STRUCT);
     assert_eq!(
         instrs
             .iter()
             .filter(|instruction| matches!(
                 instruction,
-                MirInstr::Call { func, .. } if func.0 == "String"
+                MirInstr::Call { func, .. } if func.0 == "String" || func.0.starts_with(&string_init)
             ))
             .count(),
         1,

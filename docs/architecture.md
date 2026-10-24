@@ -630,8 +630,7 @@ Concrete MIR reaches `compile` structured, every region one block, as
 `mir::verify` requires. MIR destroys every register it owns
 (`mir::RegisterEnds`): drop elaboration places a `drop.reg` at each owned
 register's death, so Pliron marks an owned temporary of its own only for a
-register MIR does not own, which today is the `StringLiteral` runtime
-descriptor an inverted `write_repr_to` writes through (R1336). Those temporaries
+register MIR does not own (R1321 deletes that bookkeeping). Those temporaries
 follow the region tree: one is released in the block defining
 it, after the instruction there that reads it last (a region op reads what
 its regions read), and on each terminator leaving that block before then.

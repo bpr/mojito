@@ -35,12 +35,22 @@ impl Checker {
             ordinal += 1;
             initializer_list::spelled_node(expression, ordinal, kind, span)
         };
+        // The linked `String`, so each segment is the construction a user's
+        // `String(…)` is; a seam without the stdlib struct keeps the builtin.
+        let string = if self
+            .structs
+            .contains_key(mojito_symbol::symbol::STDLIB_STRING_STRUCT)
+        {
+            mojito_symbol::symbol::STDLIB_STRING_STRUCT
+        } else {
+            "String"
+        };
         let mut args = Vec::with_capacity(parts.len());
         for part in parts {
             match part {
                 TStringPart::Literal(text) => {
                     let text = spelled(ExprKind::Str(text.clone()), expression.span);
-                    args.push(spelled(string_call(text), expression.span));
+                    args.push(spelled(string_call(string, text), expression.span));
                 }
                 TStringPart::Expr(value) => {
                     let ty = self.infer(value)?;
@@ -55,7 +65,7 @@ impl Checker {
                     let value = value.as_ref().clone();
                     if is_place_expr(&value) && !self.is_implicitly_copyable(&ty) {
                         let span = value.span;
-                        args.push(spelled(string_call(value), span));
+                        args.push(spelled(string_call(string, value), span));
                     } else {
                         args.push(value);
                     }
@@ -82,10 +92,10 @@ impl Checker {
 /// The bundled module declaring the entry point a template string calls.
 const TSTRING_MODULE: &str = "std.format.tstring";
 
-/// The conversion `String(value)`.
-fn string_call(value: Expr) -> ExprKind {
+/// The conversion `String(value)`, calling `string` by its linked name.
+fn string_call(string: &str, value: Expr) -> ExprKind {
     ExprKind::Call {
-        name: "String".to_string(),
+        name: string.to_string(),
         param_args: Vec::new(),
         args: vec![value],
         kwargs: Vec::new(),
