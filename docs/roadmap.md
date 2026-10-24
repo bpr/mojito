@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1314**.
+Next free ID: **R1318**.
 
 ## Ordered Work
 
@@ -8938,28 +8938,77 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R743.
   - Model: Opus, Not Planned.
 
-- [ ] **R1304 The call builds a `VariadicList`'s span itself, where
+- [ ] **R1315 A `!pop.array` size cannot be a parameter, so
+  `_MLIR.POPArrayType` cannot be declared**
+
+  Problem: MIR's `!pop.array` (`TyKind::PopArray`) holds a concrete size
+  only, and the checker resolves no ``__mlir_type[`!pop.array<`, size, `,
+  `, T, `>`]`` spelling, so the bundled `_MLIR` cannot declare upstream's
+  `POPArrayType[size: __mlir_type.index, elt_type: AnyType]`.
+  - Probe: adding upstream's `POPArrayType` member to `_MLIR`
+    (`stdlib/std/builtin/variadics.mojo`) is rejected with "only ...
+    '__mlir_type[`!kgen.param_list<`, T, `>`]' are accepted"
+    (`checker/type_resolution.rs::mlir_param_list_type`).
+  - The size needs the `Known`/`Expr` shape `SimdWidth` has, substituted
+    by the elaborator and refused symbolic by the concrete verifier.
+  - Found while landing R1304 (2026-10-23).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1316 `!lit.ref` and `!kgen.pointer` values have no spelling**
+
+  Problem: upstream's `VariadicList` constructor takes its array as a
+  `Pointer[...]._mlir_lit_ref` (`!lit.ref<T, origin>`), turns it into a
+  `Pointer` with `Pointer(_mlir_value=value)`, and reads its address with
+  `_get_kgen_pointer()` (`!kgen.pointer<T>`), and Mojito accepts none of
+  the three.
+  - Probe: `def f[o: ImmOrigin](r: Pointer[Int, o]._mlir_lit_ref)` is
+    rejected.
+  - `Pointer` is a compiler built-in here (`TyKind::Pointer`), so each is a
+    built-in member, as `unsafe_origin_cast` is
+    (`checker/method_calls/builtin_types.rs`).
+  - Found while landing R1304 (2026-10-23).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1317 `pop.array.gep` and the `index` conversions are not
+  accepted**
+
+  Problem: upstream's `VariadicList` constructor addresses its array's
+  first element with ``__mlir_op.`pop.array.gep`(array_up._get_kgen_pointer(),
+  Int(0).__mlir_index__())`` and reads its size parameter with
+  `Int(mlir_value=size)`, and Mojito's `__mlir_op` admits only the two
+  ownership markers (`checker/method_calls/mlir_op.rs`).
+  - `__mlir_type.index` already resolves to `Int`, so `__mlir_index__` and
+    `Int(mlir_value=)` are identities here.
+  - The gep would be a `ref.make` of the array's element place, as the
+    call's builder takes the span's pointer today
+    (`mir::variadic_list::build_variadic_list`).
+  - Found while landing R1304 (2026-10-23).
+  - Depends on R1316 (the `!kgen.pointer` operand) and R221 (the
+    constructor's `unsafe_bitcast` of the element pointer).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1314 The call builds a `VariadicList`'s span itself, where
   upstream calls the list's `@implicit` constructor from the `!pop.array`**
 
-  Every call of a `*xs: T` callee builds the element pointers, a
-  `tuple.make` of them bound to a caller slot, and the `Span` and the list
-  over it as two `struct.create`s
-  (`mir::variadic_list::build_variadic_list`), where upstream's call builds
-  a `!pop.array<n, !lit.ref<T>>` and calls `VariadicList.__init__[size,
-  container_origin](value: Pointer[_MLIR.POPArrayType[...],
-  ...]._mlir_lit_ref)`, inlined.
-  - The gap is the vocabulary that constructor is written in: no
-    `_MLIR.POPArrayType` (`!pop.array`), no `__mlir_type.index` parameter,
-    no `pop.array.gep`, and no `Pointer(_mlir_value=)` over a `!lit.ref`.
-  - Probe: the bundled `VariadicList` declares no constructor, and
-    `_MLIR` no `POPArrayType` (`stdlib/std/builtin/variadics.mojo`'s header
-    lists both).
+  Problem: every call of a `*xs: T` callee stores its element pointers'
+  `!pop.array` in `__passed_varargs__`, as upstream's does, then builds the
+  `Span` and the list over it as two `struct.create`s
+  (`mir::variadic_list::build_variadic_list`), where upstream calls
+  `VariadicList.__init__[size, container_origin]` on a reference to that
+  slot, inlined.
+  - Probe: the bundled `VariadicList` declares no constructor
+    (`stdlib/std/builtin/variadics.mojo`'s header).
   - Probe: the elaborator's `Array` display construction
-    (`mono/substitute.rs::array_literal_construction`) builds the same
-    `struct.create`s.
-  - Found while landing R1073 (2026-10-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
+    (`mono/substitute.rs::array_literal_construction`) shares the builder.
+  - Probe: an empty list's array holds one uninitialized pointer, where
+    upstream passes a null `!lit.ref` to a `!pop.array<0, …>`, which the
+    constructor's gep addresses without reading.
+  - Found while landing R1073 (2026-10-23); the array became a
+    `!pop.array` with R1304.
+  - Depends on R1315, R1316, and R1317 (the constructor's vocabulary).
+  - Model: Fable, Not Planned.
 
 - [ ] **R662 A value binder read is a frame slot, not a parameter
   reference**
@@ -10897,6 +10946,9 @@ residue found inside a task moves to the task that owns its fix.
 
   Problem: `Pointer.unsafe_bitcast[U]()` is not typed: an origin-cast-style
   forwarding leaves the MIR register at the old element type.
+  - Probe: upstream's `VariadicList` constructor ends with
+    `.unsafe_bitcast[Self._EltPointerType]()` over the array's first
+    element (R1317).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

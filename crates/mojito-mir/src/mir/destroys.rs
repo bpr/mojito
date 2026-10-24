@@ -86,7 +86,9 @@ pub(super) fn close_over_fields(
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
                 pending.extend(items.iter().map(|item| (item.clone(), true)));
             }
-            TyKind::ComptimeList(item) | TyKind::VariadicPack(item) => {
+            TyKind::ComptimeList(item)
+            | TyKind::VariadicPack(item)
+            | TyKind::PopArray { element: item, .. } => {
                 pending.push((item.clone(), true));
             }
             TyKind::Infer

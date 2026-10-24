@@ -369,7 +369,7 @@ impl VmBackend {
                 name: name.clone(),
                 fields: uninitialized_fields(&prog.structs.get(name)?.fields),
             }),
-            TyKind::Tuple(_) => Some(uninitialized_field(ty)),
+            TyKind::Tuple(_) | TyKind::PopArray { .. } => Some(uninitialized_field(ty)),
             _ => None,
         }
     }
@@ -865,11 +865,17 @@ fn uninitialized_fields(fields: &[(String, Ty)]) -> Vec<(String, Value)> {
 }
 
 /// The placeholder an `out self` skeleton holds for a field of type `ty`
-/// until the initializer assigns it. Compiler-private Tuple storage is built
-/// one element at a time, so it starts as one placeholder per element.
+/// until the initializer assigns it. Compiler-private Tuple storage and a
+/// `!pop.array` are built one element at a time, so each starts as one
+/// placeholder per element.
 fn uninitialized_field(ty: &Ty) -> Value {
     match ty.kind() {
         TyKind::Tuple(elements) => Value::Tuple(vec![Value::None; elements.len()]),
+        TyKind::PopArray { size, .. } => Value::Tuple(vec![
+            Value::None;
+            usize::try_from(*size)
+                .unwrap_or_default()
+        ]),
         _ => Value::None,
     }
 }

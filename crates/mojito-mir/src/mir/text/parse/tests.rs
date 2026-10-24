@@ -334,6 +334,15 @@ fn type_families_reprint_byte_identically() {
                 TyKind::RuntimePack(vec![Ty::int(), Ty::bool()]).into(),
                 TyKind::VariadicPack(Ty::int()).into(),
                 TyKind::Variant(vec![Ty::int(), Ty::none()]).into(),
+                TyKind::PopArray {
+                    size: 2,
+                    element: TyKind::Pointer {
+                        element: Ty::int(),
+                        origin: PointerOrigin::Untracked { mutable: false },
+                    }
+                    .into(),
+                }
+                .into(),
                 TyKind::Pointer {
                     element: Ty::int(),
                     origin: PointerOrigin::Place {
@@ -1077,6 +1086,10 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::MakeStruct {
             dest: Reg(26),
             fields: Vec::new(),
+        },
+        MirInstr::MakeArray {
+            dest: Reg(26),
+            elems: vec![Reg(1), Reg(2)],
         },
         MirInstr::MakeVariant {
             dest: Reg(27),

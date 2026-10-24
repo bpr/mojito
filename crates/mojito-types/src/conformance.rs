@@ -188,7 +188,9 @@ pub fn leaf_conforms(
     Some(match trait_name {
         "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" | "RegisterPassable" => {
             match ty.kind() {
-                TyKind::ComptimeList(item) => element(item, trait_name),
+                TyKind::ComptimeList(item) | TyKind::PopArray { element: item, .. } => {
+                    element(item, trait_name)
+                }
                 TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
                     items.iter().all(|item| element(item, trait_name))
                 }

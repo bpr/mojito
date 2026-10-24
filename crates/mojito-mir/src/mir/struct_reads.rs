@@ -257,7 +257,9 @@ impl<'d, 'a> StructReads<'d, 'a> {
                     self.member_symbols_in(item, member, visiting, symbols);
                 }
             }
-            TyKind::ComptimeList(item) | TyKind::VariadicPack(item) => {
+            TyKind::ComptimeList(item)
+            | TyKind::VariadicPack(item)
+            | TyKind::PopArray { element: item, .. } => {
                 self.member_symbols_in(item, member, visiting, symbols);
             }
             _ => {}

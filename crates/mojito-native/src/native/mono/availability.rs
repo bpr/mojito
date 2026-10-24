@@ -203,7 +203,9 @@ impl Specializer<'_> {
                         .map(|element| self.trivially(kind, element, visiting)),
                 )
             }
-            TyKind::ComptimeList(element) => self.trivially(kind, element, visiting),
+            TyKind::ComptimeList(element) | TyKind::PopArray { element, .. } => {
+                self.trivially(kind, element, visiting)
+            }
             _ if is_symbolic(ty) => None,
             _ => self.type_conforms(ty, capability, visiting),
         }

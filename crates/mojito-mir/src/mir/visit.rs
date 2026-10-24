@@ -390,6 +390,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             ..
         }
         | I::MakeStruct { .. }
+        | I::MakeArray { .. }
         | I::InvalidateInteriors { .. }
         | I::ReadRef { .. }
         | I::Rebind { .. }

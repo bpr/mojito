@@ -281,6 +281,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "the struct's storage built from its field values",
     ),
     (
+        "array.create",
+        CapabilityStatus::Supported,
+        "the `!pop.array` storage built from its element values",
+    ),
+    (
         "variant.make",
         CapabilityStatus::Supported,
         "tagged aggregate construction over the normative Variant layout",
@@ -519,6 +524,11 @@ pub const TYPE_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "tuple",
+        CapabilityStatus::Partial,
+        "concrete element layouts only",
+    ),
+    (
+        "pop_array",
         CapabilityStatus::Partial,
         "concrete element layouts only",
     ),

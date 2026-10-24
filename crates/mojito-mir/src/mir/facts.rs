@@ -1466,7 +1466,9 @@ fn carries_references(ty: &Ty) -> bool {
         TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
             items.iter().any(carries_references)
         }
-        TyKind::VariadicPack(item) | TyKind::ComptimeList(item) => carries_references(item),
+        TyKind::VariadicPack(item)
+        | TyKind::ComptimeList(item)
+        | TyKind::PopArray { element: item, .. } => carries_references(item),
         _ => false,
     }
 }

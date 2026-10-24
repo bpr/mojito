@@ -150,14 +150,16 @@ Rules:
   pointers are aligned sentinels, never null.
 - `Tuple`/`RuntimePack`/nominal structs are ordinary aggregates of their
   element/field types.
+- A `!pop.array<n, T>` (MIR's `pop_array`) is `n` elements of `T` at its
+  stride, aligned like one element.
 - A homogeneous run-time collector is the bundled `VariadicList[T,
   is_owned]`, an ordinary struct whose one field is upstream's
   `Span[Pointer[T, origin], ImmUntrackedOrigin]`: `{ data: ptr to [len x
   ptr], size: Int }` (16/8), passed as an aggregate parameter. The call
   builds it in MIR: each element is the caller's own place for a `read`
   collector, or a caller slot the element is moved into, and `data` points
-  at a caller slot holding the array of their addresses (one unread slot
-  when `len == 0`). An owned list's callee owns the elements: a consuming
+  at the caller's `__passed_varargs__` slot, the `!pop.array` of their
+  addresses (one unread element when `len == 0`). An owned list's callee owns the elements: a consuming
   iterator narrows its copy of the span past each element it moves out,
   and the list's `__deinit__` destroys the elements the span still covers,
   last to first, through their addresses.

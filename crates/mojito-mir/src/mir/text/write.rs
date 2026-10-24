@@ -1353,6 +1353,9 @@ fn instruction_value(instruction: &MirInstr) -> String {
         MirInstr::MakeStruct { dest, fields } => {
             record(tag, &[("dest", reg_value(*dest)), ("fields", regs(fields))])
         }
+        MirInstr::MakeArray { dest, elems } => {
+            record(tag, &[("dest", reg_value(*dest)), ("elems", regs(elems))])
+        }
         MirInstr::MakeVariant {
             dest,
             alternatives,
@@ -2193,6 +2196,10 @@ fn ty_value(ty: &Ty) -> String {
         }
         TyKind::Trait(traits) => positional("trait_type", &list(traits.iter().map(|v| symbol(v)))),
         TyKind::Tuple(values) => positional("tuple", &list(values.iter().map(ty_value))),
+        TyKind::PopArray { size, element } => record(
+            "pop_array",
+            &[("size", size.to_string()), ("element", ty_value(element))],
+        ),
         TyKind::RuntimePack(values) => {
             positional("runtime_pack", &list(values.iter().map(ty_value)))
         }

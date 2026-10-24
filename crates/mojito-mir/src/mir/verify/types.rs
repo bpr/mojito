@@ -235,9 +235,9 @@ pub(super) fn declared<'a>(
 pub(super) fn contains_runtime_pack(ty: &Ty) -> bool {
     match ty.kind() {
         TyKind::RuntimePack(_) => true,
-        TyKind::ComptimeList(inner) | TyKind::Pointer { element: inner, .. } => {
-            contains_runtime_pack(inner)
-        }
+        TyKind::ComptimeList(inner)
+        | TyKind::PopArray { element: inner, .. }
+        | TyKind::Pointer { element: inner, .. } => contains_runtime_pack(inner),
         TyKind::Tuple(elements) | TyKind::Variant(elements) | TyKind::Overload(elements) => {
             elements.iter().any(contains_runtime_pack)
         }
@@ -371,6 +371,16 @@ pub(super) fn instantiate_checked_type(
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         )
+        .into(),
+        TyKind::PopArray { size, element } => TyKind::PopArray {
+            size: *size,
+            element: instantiate_checked_type(
+                element,
+                type_arguments,
+                value_arguments,
+                bound_values,
+            )?,
+        }
         .into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(instantiate_checked_type(
             element,
@@ -540,6 +550,7 @@ pub(super) fn contains_type_param(ty: &Ty) -> bool {
         TyKind::ComptimeList(inner)
         | TyKind::ParamList(inner)
         | TyKind::VariadicPack(inner)
+        | TyKind::PopArray { element: inner, .. }
         | TyKind::Pointer { element: inner, .. } => contains_type_param(inner),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().any(contains_type_param)

@@ -181,6 +181,7 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         TyKind::ComptimeList(v)
         | TyKind::ParamList(v)
         | TyKind::VariadicPack(v)
+        | TyKind::PopArray { element: v, .. }
         | TyKind::Pointer { element: v, .. } => is_symbolic(v),
         TyKind::Ref(v) => is_symbolic(&v.referent),
         TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
@@ -350,6 +351,7 @@ pub(super) fn collect_nested_types(ty: &Ty, output: &mut Vec<Ty>) {
         TyKind::ComptimeList(v)
         | TyKind::ParamList(v)
         | TyKind::VariadicPack(v)
+        | TyKind::PopArray { element: v, .. }
         | TyKind::Pointer { element: v, .. } => {
             output.push((*v).clone());
         }

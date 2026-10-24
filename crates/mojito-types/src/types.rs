@@ -621,6 +621,14 @@ pub enum TyKind {
     /// Compiler-private `__RuntimeTuple[T1, ..., Tn]` storage. Public
     /// `Tuple[T1, ..., Tn]` values are nominal standard-library structs.
     Tuple(Vec<Ty>),
+    /// Upstream's fixed-size array `!pop.array<size, element>`
+    /// (`_MLIR.POPArrayType[size, element]`): the array of element pointers
+    /// a call builds for a `*xs: T` callee's `VariadicList`, in a slot of
+    /// its own (`__passed_varargs__`).
+    PopArray {
+        size: u64,
+        element: Ty,
+    },
     /// Internal checked ABI type for a compile-time-specialized heterogeneous
     /// runtime parameter pack. Unlike a source `Tuple[...]` used as the element
     /// type of an ordinary homogeneous `*args`, each entry describes one
@@ -1489,6 +1497,11 @@ pub fn expand_pack_spread(ty: &Ty, pack: &str, elements: &[Ty]) -> Ty {
         TyKind::Tuple(list) => TyKind::Tuple(expand(list)).into(),
         TyKind::RuntimePack(list) => TyKind::RuntimePack(expand(list)).into(),
         TyKind::Variant(list) => TyKind::Variant(expand(list)).into(),
+        TyKind::PopArray { size, element } => TyKind::PopArray {
+            size: *size,
+            element: expand_pack_spread(element, pack, elements),
+        }
+        .into(),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
             element: expand_pack_spread(element, pack, elements),
             origin: origin.clone(),
@@ -2319,6 +2332,7 @@ impl fmt::Display for TyKind {
                 }
                 write!(f, "]")
             }
+            Self::PopArray { size, element } => write!(f, "!pop.array<{size}, {element}>"),
             Self::RuntimePack(elems) => {
                 write!(f, "$pack[")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -2421,6 +2435,11 @@ pub fn erase_origin_arguments(ty: &Ty) -> Ty {
         TyKind::ComptimeList(element) => TyKind::ComptimeList(recur(element)).into(),
         TyKind::ParamList(element) => TyKind::ParamList(recur(element)).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
+        TyKind::PopArray { size, element } => TyKind::PopArray {
+            size: *size,
+            element: recur(element),
+        }
+        .into(),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
             element: recur(element),
             origin: origin.clone(),
@@ -2481,6 +2500,11 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
             TyKind::RuntimePack(elements.iter().map(recur).collect()).into()
         }
         TyKind::VariadicPack(element) => TyKind::VariadicPack(recur(element)).into(),
+        TyKind::PopArray { size, element } => TyKind::PopArray {
+            size: *size,
+            element: recur(element),
+        }
+        .into(),
         TyKind::Variant(alternatives) => {
             TyKind::Variant(alternatives.iter().map(recur).collect()).into()
         }
@@ -3634,6 +3658,11 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             TyKind::RuntimePack(elems.iter().map(|t| substitute(t, subst)).collect()).into()
         }
         TyKind::VariadicPack(element) => TyKind::VariadicPack(substitute(element, subst)).into(),
+        TyKind::PopArray { size, element } => TyKind::PopArray {
+            size: *size,
+            element: substitute(element, subst),
+        }
+        .into(),
         TyKind::Variant(alternatives) => TyKind::Variant(
             alternatives
                 .iter()
@@ -3838,6 +3867,11 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         TyKind::ComptimeList(element) => TyKind::ComptimeList(rewrite_ty(element, rewrite)?).into(),
         TyKind::ParamList(element) => TyKind::ParamList(rewrite_ty(element, rewrite)?).into(),
         TyKind::VariadicPack(element) => TyKind::VariadicPack(rewrite_ty(element, rewrite)?).into(),
+        TyKind::PopArray { size, element } => TyKind::PopArray {
+            size: *size,
+            element: rewrite_ty(element, rewrite)?,
+        }
+        .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(list(elements, rewrite)?).into(),
         TyKind::RuntimePack(elements) => TyKind::RuntimePack(list(elements, rewrite)?).into(),
         TyKind::Variant(alternatives) => TyKind::Variant(list(alternatives, rewrite)?).into(),
@@ -4390,6 +4424,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
+        | TyKind::PopArray { element, .. }
         | TyKind::Pointer { element, .. } => is_symbolic(element),
         TyKind::Ref(reference) => is_symbolic(&reference.referent),
         TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
@@ -4583,6 +4618,7 @@ fn mentions_below(ty: &Ty, predicate: &dyn Fn(&Ty) -> bool, skip_closed: bool) -
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
+        | TyKind::PopArray { element, .. }
         | TyKind::Pointer { element, .. } => mentions(element, predicate),
         TyKind::Dependent(dependent) => expr_mentions(dependent.expr(), predicate),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
@@ -4645,6 +4681,7 @@ fn decorated(ty: &Ty) -> bool {
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
         | TyKind::VariadicPack(element)
+        | TyKind::PopArray { element, .. }
         | TyKind::Pointer { element, .. } => element.carries_decorations(),
         TyKind::Ref(reference) => reference.referent.carries_decorations(),
         TyKind::Dependent(dependent) => dependent.expr().carries_decorations(),
@@ -4747,7 +4784,8 @@ fn closed_kind(kind: &TyKind) -> bool {
         }
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
-        | TyKind::VariadicPack(element) => element.is_closed(),
+        | TyKind::VariadicPack(element)
+        | TyKind::PopArray { element, .. } => element.is_closed(),
         _ => false,
     }
 }
@@ -4898,6 +4936,11 @@ fn expand_packs<S: std::hash::BuildHasher>(
         TyKind::Tuple(list) => TyKind::Tuple(expand(list)).into(),
         TyKind::RuntimePack(list) => TyKind::RuntimePack(expand(list)).into(),
         TyKind::Variant(list) => TyKind::Variant(expand(list)).into(),
+        TyKind::PopArray { size, element } => TyKind::PopArray {
+            size: *size,
+            element: recurse(element),
+        }
+        .into(),
         TyKind::Pointer { element, origin } => TyKind::Pointer {
             element: recurse(element),
             origin: origin.clone(),

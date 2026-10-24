@@ -705,6 +705,10 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 fields: self.req(value, fields, "fields", |d, v| Some(d.regs(v)))?,
             }),
+            "array.create" => Some(MirInstr::MakeArray {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                elems: self.req(value, fields, "elems", |d, v| Some(d.regs(v)))?,
+            }),
             "variant.make" => Some(MirInstr::MakeVariant {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 alternatives: self.req(value, fields, "alternatives", |d, v| Some(d.types(v)))?,

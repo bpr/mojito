@@ -903,6 +903,44 @@ fn verifier_rejects_an_invalid_constant_tuple_projection() {
 }
 
 #[test]
+fn verifier_checks_constant_array_element_projections() {
+    let array = |index: usize, element: Ty| {
+        let mut place = MirPlace::root(
+            0,
+            Some(
+                TyKind::PopArray {
+                    size: 2,
+                    element: Ty::int(),
+                }
+                .into(),
+            ),
+        );
+        place.project(Proj::ConstIndex(index), element.clone());
+        program(function(
+            vec![block(
+                vec![MirInstr::LoadPlace {
+                    dest: Reg(0),
+                    place,
+                }],
+                MirTerm::Return(None),
+            )],
+            1,
+            &[(0, element)],
+        ))
+    };
+    let errors = verify(&array(1, Ty::int()));
+    assert!(
+        !errors.iter().any(|error| error.contains("array element")),
+        "{errors:?}"
+    );
+    expect_finding(&array(2, Ty::int()), "projects array element 2 out of 2");
+    expect_finding(
+        &array(0, Ty::bool()),
+        "place array element 0 typed Bool, declared Int",
+    );
+}
+
+#[test]
 fn verifier_rejects_malformed_dynamic_place_projections() {
     let pointer = Ty::new(TyKind::Pointer {
         element: Ty::int(),

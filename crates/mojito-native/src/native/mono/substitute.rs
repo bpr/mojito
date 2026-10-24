@@ -470,6 +470,11 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             ty.reusing(TyKind::Struct(concrete_name, args))
         }
         TyKind::Tuple(v) => TyKind::Tuple(sub_spread_types(v, bindings)?).into(),
+        TyKind::PopArray { size, element } => TyKind::PopArray {
+            size: *size,
+            element: substitute_ty(element, bindings)?,
+        }
+        .into(),
         TyKind::RuntimePack(v) => TyKind::RuntimePack(sub_spread_types(v, bindings)?).into(),
         TyKind::Variant(v) => TyKind::Variant(sub_spread_types(v, bindings)?).into(),
         TyKind::Overload(v) => TyKind::Overload(sub_types(v, bindings)?).into(),
@@ -719,7 +724,9 @@ fn erases_whole(arg: &TyArg, bindings: &Bindings) -> bool {
     fn names_outside_structs(ty: &Ty, removed: &[ParamRef]) -> bool {
         match ty.kind() {
             TyKind::Struct(..) => false,
-            TyKind::Pointer { element, .. } => names_outside_structs(element, removed),
+            TyKind::Pointer { element, .. } | TyKind::PopArray { element, .. } => {
+                names_outside_structs(element, removed)
+            }
             TyKind::Ref(reference) => names_outside_structs(&reference.referent, removed),
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
                 elements

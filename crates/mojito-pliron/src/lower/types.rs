@@ -156,6 +156,7 @@ pub fn lower_ty(
         TyKind::Error
         | TyKind::Struct(..)
         | TyKind::Tuple(_)
+        | TyKind::PopArray { .. }
         | TyKind::RuntimePack(_)
         | TyKind::Variant(_)
         | TyKind::Simd { .. }

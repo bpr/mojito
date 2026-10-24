@@ -5,10 +5,11 @@
 //! element pointers in a `!pop.array` in the caller's frame, and passes the
 //! `VariadicList` whose `@implicit` constructor wraps that array in a
 //! `Span[Pointer[element_type, origin], ImmUntrackedOrigin]`. The call here
-//! builds the same values: a pointer per element, a `tuple.make` of them
-//! bound to a slot of the caller's (the array), and the `Span` over its
-//! first element and the list over the span, each a `struct.create`, which
-//! stands for the inlined constructor.
+//! builds the same values: a pointer per element, their `!pop.array`
+//! (`array.create`) stored in a slot of the caller's
+//! (`__passed_varargs__`), and the `Span` over its first element and the
+//! list over the span, each a `struct.create`, which stands for the inlined
+//! constructor.
 //!
 //! A `read` collector's element is the caller's own place, borrowed, or a
 //! value the call binds to a slot of its own; an owned (`var`) collector's
@@ -117,14 +118,17 @@ pub fn build_variadic_list(
         });
         pointers.push(placeholder);
     }
-    let array_ty: Ty = TyKind::Tuple(vec![pointer_ty.clone(); pointers.len()]).into();
+    let array_ty: Ty = TyKind::PopArray {
+        size: u64::try_from(pointers.len()).expect("a call's argument count fits a u64"),
+        element: pointer_ty.clone(),
+    }
+    .into();
     let array = tables.fresh_register(array_ty.clone());
-    before.push(MirInstr::MakeTuple {
+    before.push(MirInstr::MakeArray {
         dest: array,
         elems: pointers,
-        element_types: None,
     });
-    let array_slot = tables.fresh_slot(format!("$list_array_r{}", array.0), array_ty.clone());
+    let array_slot = tables.fresh_slot("__passed_varargs__".to_string(), array_ty.clone());
     before.push(MirInstr::DefVar {
         var: array_slot,
         src: array,

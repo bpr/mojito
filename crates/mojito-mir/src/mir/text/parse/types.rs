@@ -136,6 +136,12 @@ impl Decoder {
                     self.unknown(fields, &["element", "origin"]);
                     TyKind::Pointer { element, origin }.into()
                 }
+                "pop_array" => {
+                    let size = self.req(value, fields, "size", Self::uint64)?;
+                    let element = self.req(value, fields, "element", Self::ty)?;
+                    self.unknown(fields, &["size", "element"]);
+                    TyKind::PopArray { size, element }.into()
+                }
                 "ref" => TyKind::Ref(self.ref_ty(value)?).into(),
                 other => {
                     self.error(value.span, format!("unknown type `{other}`"));

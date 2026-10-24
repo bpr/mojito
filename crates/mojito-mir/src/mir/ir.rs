@@ -829,6 +829,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         }
         MirInstr::MakeTuple { dest, elems, .. }
         | MirInstr::MakeSimd { dest, elems, .. }
+        | MirInstr::MakeArray { dest, elems }
         | MirInstr::MakeStruct {
             dest,
             fields: elems,
@@ -2239,15 +2240,21 @@ pub enum MirInstr {
     /// Source Tuple/List/Set/Dict values are nominal structs and therefore use
     /// ordinary `Call`/`MethodCall` instructions instead of aggregate opcodes.
     /// One typed the elements' tuple is a heterogeneous collector bound to a
-    /// list, a typed `Tuple[T, ...]` construction, or the array of element
-    /// pointers a call builds for its callee's `*xs: T`, which upstream
-    /// builds as a `!pop.array` ([`crate::mir::variadic_list`]).
+    /// list or a typed `Tuple[T, ...]` construction.
     MakeTuple {
         dest: Reg,
         elems: Vec<Reg>,
         /// Resolved element types when available. Typed `Tuple[T, ...](...)`
         /// construction uses these to materialize each argument precisely.
         element_types: Option<Vec<Ty>>,
+    },
+    /// Build `dest`'s `!pop.array` from one register per element, in
+    /// order: upstream's `pop.array.create`, which a call emits for the
+    /// element pointers of its callee's `*xs: T`
+    /// ([`crate::mir::variadic_list`]).
+    MakeArray {
+        dest: Reg,
+        elems: Vec<Reg>,
     },
     /// Build a struct value of `dest`'s type from one register per field,
     /// in declaration order, running no constructor: upstream's
@@ -2708,6 +2715,7 @@ impl MirInstr {
             | Self::VariantIs { .. }
             | Self::MakeSimd { .. }
             | Self::MakeStruct { .. }
+            | Self::MakeArray { .. }
             | Self::SimdCast { .. }
             | Self::SimdBitcast { .. }
             | Self::SimdShuffle { .. } => true,

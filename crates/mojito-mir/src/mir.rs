@@ -462,6 +462,7 @@ impl MirDeclarations {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
                 items.iter().all(|item| self.register_passable(item))
             }
+            TyKind::PopArray { element, .. } => self.register_passable(element),
             TyKind::Struct(name, _) => self.structure(name).is_some_and(|declaration| {
                 declaration.declared.iter().any(|row| {
                     ["RegisterPassable", "TrivialRegisterPassable"]
@@ -503,6 +504,7 @@ impl MirDeclarations {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => items
                 .iter()
                 .all(|item| self.drop_runs_no_code_within(item, visiting)),
+            TyKind::PopArray { element, .. } => self.drop_runs_no_code_within(element, visiting),
             TyKind::Struct(name, _) if !visiting.contains(name) => {
                 let Some(declaration) = self.structure(name) else {
                     return false;

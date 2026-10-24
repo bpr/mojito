@@ -24,11 +24,12 @@
 #
 # `VariadicList`, the run-time homogeneous collector a `*xs: T` parameter is
 # in its body, and its `_VariadicListIter` are upstream's, except:
-# - the call builds the list itself, the element pointers, their array in a
-#   slot of the caller's, and the `Span` over it and the list over the span
-#   (`struct.create`s), standing for upstream's `@implicit` constructor from
-#   the compiler-built `!pop.array` of element pointers, so neither that
-#   constructor nor `_MLIR.POPArrayType`, its one use, is declared;
+# - the call builds the element pointers' `!pop.array` in its
+#   `__passed_varargs__` slot, as upstream's does, but then builds the
+#   `Span` over it and the list over the span itself (`struct.create`s),
+#   standing for upstream's `@implicit` constructor from that array, so
+#   neither that constructor nor `_MLIR.POPArrayType`, its one use, is
+#   declared;
 # - `__getitem__` returns `ref[origin_of(self)]` rather than upstream's union
 #   of the elements' and the list's origins, and binds the span's pointer
 #   before indexing it;

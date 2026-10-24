@@ -49,6 +49,7 @@ instruction	place.store_ref	supported	stores the reference handle
 instruction	place.load	partial	layoutable, typed places
 instruction	tuple.make	supported	typed element lists; variadic call sites build packs by relocation
 instruction	struct.create	supported	the struct's storage built from its field values
+instruction	array.create	supported	the `!pop.array` storage built from its element values
 instruction	variant.make	supported	tagged aggregate construction over the normative Variant layout
 instruction	variant.is	supported	checked tag comparison
 instruction	variant.get	supported	checked payload projection
@@ -102,6 +103,7 @@ type	simd	supported	width-1 scalar aliases; multi-lane values compute as LLVM fi
 type	Error	supported	MjError storage
 type	comptime_list	unsupported	CTFE bridge; no runtime values
 type	tuple	partial	concrete element layouts only
+type	pop_array	partial	concrete element layouts only
 type	runtime_pack	partial	concrete element layouts only
 type	variadic_pack	partial	monomorphization reifies call-site arities into concrete runtime packs; unspecialized packs never reach lowering
 type	variant	supported	normative tag/payload layout with dynamic active-payload destruction

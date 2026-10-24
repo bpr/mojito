@@ -663,6 +663,7 @@ impl ScopeCx<'_> {
             TyKind::ComptimeList(element)
             | TyKind::ParamList(element)
             | TyKind::VariadicPack(element)
+            | TyKind::PopArray { element, .. }
             | TyKind::Pointer { element, .. } => {
                 self.walk_in(role, element, nested);
             }

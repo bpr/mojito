@@ -392,8 +392,19 @@ pub(super) fn verify_place(
                     ),
                     Some(_) => {}
                 },
+                Some(TyKind::PopArray { size, element }) => {
+                    if u64::try_from(*index).map_or(true, |index| index >= *size) {
+                        errors.push(format!(
+                            "{prefix} place projects array element {index} out of {size}"
+                        ));
+                    } else if !types_compatible(projected, element) {
+                        errors.push(format!(
+                            "{prefix} place array element {index} typed {projected}, declared {element}"
+                        ));
+                    }
+                }
                 Some(other) => errors.push(format!(
-                    "{prefix} constant element projection requires compiler-private Tuple storage, got {other}"
+                    "{prefix} constant element projection requires compiler-private Tuple or array storage, got {other}"
                 )),
                 None => {}
             },

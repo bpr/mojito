@@ -347,7 +347,9 @@ pub(super) fn erase_callable_environments(ty: &mut Ty) {
                 erase_callable_environments(element);
             }
         }
-        TyKind::ComptimeList(element) | TyKind::VariadicPack(element) => {
+        TyKind::ComptimeList(element)
+        | TyKind::VariadicPack(element)
+        | TyKind::PopArray { element, .. } => {
             erase_callable_environments(element);
         }
         TyKind::Pointer { element, .. } => erase_callable_environments(element),

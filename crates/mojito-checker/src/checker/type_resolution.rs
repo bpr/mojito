@@ -4034,7 +4034,8 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::Variant(types) => types.iter().any(type_is_symbolic),
         TyKind::ComptimeList(element)
         | TyKind::ParamList(element)
-        | TyKind::VariadicPack(element) => type_is_symbolic(element),
+        | TyKind::VariadicPack(element)
+        | TyKind::PopArray { element, .. } => type_is_symbolic(element),
         TyKind::Pointer { element, .. } => type_is_symbolic(element),
         TyKind::Ref(reference) => type_is_symbolic(&reference.referent),
     }

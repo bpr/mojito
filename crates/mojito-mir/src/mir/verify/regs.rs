@@ -39,6 +39,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::LoadPlace { dest, .. }
         | MirInstr::MakeTuple { dest, .. }
         | MirInstr::MakeStruct { dest, .. }
+        | MirInstr::MakeArray { dest, .. }
         | MirInstr::MakeVariant { dest, .. }
         | MirInstr::MakeSimd { dest, .. }
         | MirInstr::SimdCast { dest, .. }
@@ -320,6 +321,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         }
         MirInstr::MakeTuple { elems, .. }
         | MirInstr::MakeSimd { elems, .. }
+        | MirInstr::MakeArray { elems, .. }
         | MirInstr::MakeStruct { fields: elems, .. } => {
             out.extend(elems.iter().copied());
         }

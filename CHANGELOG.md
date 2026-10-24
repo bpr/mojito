@@ -795,6 +795,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The array of element pointers a call builds for its callee's `*xs: T` is
+  now upstream's `!pop.array<n, Pointer[T, origin]>`, built by one
+  `array.create` (`pop.array.create`) and stored in the caller's
+  `__passed_varargs__` slot, where it was compiler-private tuple storage
+  (R1304, partly). MIR gains the `pop_array` type and the `array.create`
+  instruction (MIR text 1.97, package format 87), which the VM and Pliron
+  lower. The call still builds the `Span` and the list itself, where
+  upstream calls `VariadicList`'s `@implicit` constructor: R1314, after the
+  constructor's vocabulary (R1315–R1317).
 - Native drops carry no whole-slot flag, and no return or propagate block
   sweeps the slots still flagged, as upstream's destructor insertion leaves
   only static destroys (R832). The MIR verifier now requires every path

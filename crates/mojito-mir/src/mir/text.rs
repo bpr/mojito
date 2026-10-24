@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 96;
+pub const VERSION_MINOR: u16 = 97;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -215,6 +215,7 @@ pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "place.load",
     "tuple.make",
     "struct.create",
+    "array.create",
     "variant.make",
     "variant.is",
     "variant.get",
@@ -293,6 +294,7 @@ pub const TYPE_SPELLINGS: &[&str] = &[
     "Error",
     "comptime_list",
     "tuple",
+    "pop_array",
     "runtime_pack",
     "variadic_pack",
     "variant",
@@ -369,6 +371,7 @@ pub const fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
         MirInstr::LoadPlace { .. } => "place.load",
         MirInstr::MakeTuple { .. } => "tuple.make",
         MirInstr::MakeStruct { .. } => "struct.create",
+        MirInstr::MakeArray { .. } => "array.create",
         MirInstr::MakeVariant { .. } => "variant.make",
         MirInstr::VariantIs { .. } => "variant.is",
         MirInstr::VariantGet { .. } => "variant.get",
@@ -499,6 +502,7 @@ pub fn type_spelling(ty: &Ty) -> &'static str {
         TyKind::TypeType => "TypeType",
         TyKind::KgenString => "KgenString",
         TyKind::Tuple(_) => "tuple",
+        TyKind::PopArray { .. } => "pop_array",
         TyKind::RuntimePack(_) => "runtime_pack",
         TyKind::VariadicPack(_) => "variadic_pack",
         TyKind::Variant(_) => "variant",

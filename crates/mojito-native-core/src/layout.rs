@@ -120,6 +120,11 @@ impl LayoutCx<'_> {
             TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
                 Ok(self.struct_layout(elements)?.layout)
             }
+            // `!pop.array<n, T>`: `n` elements, each padded to its alignment.
+            TyKind::PopArray { size, element } => {
+                let element = self.layout_of(element)?;
+                Ok(Layout::new(element.size * size, element.align))
+            }
             TyKind::Variant(alternatives) => Ok(self.variant_layout(alternatives)?.layout),
             TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(self.pointer()),
             // A retained callable is the two-word `{ invoke: ptr, env: ptr }`

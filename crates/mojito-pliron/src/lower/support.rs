@@ -217,6 +217,7 @@ pub fn is_aggregate_ty(ty: &Ty) -> bool {
         ty.kind(),
         TyKind::Struct(..)
             | TyKind::Tuple(..)
+            | TyKind::PopArray { .. }
             | TyKind::RuntimePack(..)
             | TyKind::Variant(..)
             | TyKind::Func(_)
@@ -394,7 +395,9 @@ pub fn operand_regs(instr: &MirInstr) -> Vec<Reg> {
             out.push(*src);
         }
         MirInstr::GetField { base, .. } => out.push(*base),
-        MirInstr::MakeTuple { elems, .. } | MirInstr::MakeStruct { fields: elems, .. } => {
+        MirInstr::MakeTuple { elems, .. }
+        | MirInstr::MakeArray { elems, .. }
+        | MirInstr::MakeStruct { fields: elems, .. } => {
             out.extend(elems.iter().copied());
         }
         MirInstr::Index { base, index, .. } => out.extend([*base, *index]),
@@ -526,6 +529,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::LoadPlace { .. } => "LoadPlace",
         MirInstr::MakeTuple { .. } => "MakeTuple",
         MirInstr::MakeStruct { .. } => "MakeStruct",
+        MirInstr::MakeArray { .. } => "MakeArray",
         MirInstr::MakeVariant { .. } => "MakeVariant",
         MirInstr::VariantIs { .. } => "VariantIs",
         MirInstr::VariantGet { .. } => "VariantGet",

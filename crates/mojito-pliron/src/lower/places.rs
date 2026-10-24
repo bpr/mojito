@@ -143,6 +143,28 @@ impl FnLowering<'_> {
                     };
                 }
                 Proj::ConstIndex(index) => {
+                    if let TyKind::PopArray { size, element } = ty.kind() {
+                        let element = element.clone();
+                        if u64::try_from(*index).map_or(true, |index| index >= *size) {
+                            return Err(self.unsupported_reg(
+                                format!("array-element projection index {index} out of range"),
+                                dest,
+                            ));
+                        }
+                        let stride = self
+                            .layout
+                            .layout_of(&element)
+                            .map_err(|error| {
+                                self.unsupported_reg(
+                                    format!("array element layout ({error})"),
+                                    dest,
+                                )
+                            })?
+                            .size;
+                        offset += stride * *index as u64;
+                        ty = element;
+                        continue;
+                    }
                     let (TyKind::Tuple(elements) | TyKind::RuntimePack(elements)) = ty.kind()
                     else {
                         return Err(self
@@ -545,6 +567,24 @@ impl FnLowering<'_> {
                 return Err(self.unsupported_reg("untyped tuple construction".into(), dest));
             }
         };
+        let storage = self.collect_pack_elements(ctx, &elements, elems, dest)?;
+        self.reg_values.insert(dest.0, storage);
+        Ok(())
+    }
+
+    /// `array.create`: fresh `!pop.array` storage holding `elems` in order,
+    /// laid out as that many fields of the element type are.
+    pub(super) fn lower_array_create(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        elems: &[Reg],
+    ) -> Result<(), PlironError> {
+        let Some(TyKind::PopArray { element, .. }) = self.func.reg_types.get(&dest.0).map(Ty::kind)
+        else {
+            return Err(self.unsupported_reg("untyped array construction".into(), dest));
+        };
+        let elements = vec![element.clone(); elems.len()];
         let storage = self.collect_pack_elements(ctx, &elements, elems, dest)?;
         self.reg_values.insert(dest.0, storage);
         Ok(())

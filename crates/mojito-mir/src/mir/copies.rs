@@ -95,7 +95,9 @@ fn close_over_fields(
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
                 pending.extend(items.iter().cloned());
             }
-            TyKind::ComptimeList(item) | TyKind::VariadicPack(item) => pending.push(item.clone()),
+            TyKind::ComptimeList(item)
+            | TyKind::VariadicPack(item)
+            | TyKind::PopArray { element: item, .. } => pending.push(item.clone()),
             TyKind::Infer
             | TyKind::Param { .. }
             | TyKind::Assoc { .. }

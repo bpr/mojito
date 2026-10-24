@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.96
+# Mojito Textual MIR Format, Version 1.97
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.96 is implemented end to end for inspection and loading: canonical
+Version 1.97 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.96
+mojito-mir 1.97
 ```
 
-The writer emits 1.96. The reader accepts 1.0 through 1.96; *Schema 1.0*
+The writer emits 1.97. The reader accepts 1.0 through 1.97; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -448,6 +448,13 @@ Schema 1.96 adds `variadic_convention` after a trait requirement's
 collector a call builds is now the `struct.create` of its
 `VariadicList[T, is_owned]` over the `tuple.make` of the overflow operands,
 the call's `spread` naming the list.
+
+Schema 1.97 adds upstream's fixed-size array type `pop_array { size,
+element }` (`!pop.array<size, element>`) and its constructor `array.create
+{ dest, elems }` (`pop.array.create`). The array of element pointers a call
+builds for its callee's `*xs: T` is now one, stored in the caller's
+`__passed_varargs__` slot, where 1.96 built a `tuple.make`. A 1.96 consumer
+rejects both as unknown, which is the intended failure.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -952,7 +959,7 @@ dependent_parameter(param-expr)
 struct_type { name, arguments }
 simd { dtype, width }
 comptime_list(type) param_list(type) tuple([type...]) runtime_pack([type...])
-variadic_pack(type) variant([type...])
+pop_array { size, element } variadic_pack(type) variant([type...])
 pointer { element, origin }
 ref { referent, origin, mutability }
 ```
@@ -964,6 +971,11 @@ slot is a dtype or an integer, or `ct_expr(<param-expr>)` for a lane still
 symbolic; the verifier keeps a symbolic slot out of every artifact, so that
 form only serves lossless round trips, and a closed expression folds back to
 the canonical concrete type on read.
+
+`pop_array { size, element }` (schema 1.97) is upstream's fixed-size array
+`!pop.array<size, element>`: `size` elements of one type, laid out at the
+element's stride. A constant element projection (`[i]`) into one must stay
+below `size`. Its one producer is `array.create`.
 
 `param_list(type)` (schema 1.75) is upstream's raw parameter list
 `!kgen.param_list<type>`, the type of `ParameterList`'s `values` parameter. It
@@ -1148,7 +1160,8 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Index` / `Slice` / `MultiIndex` / `MultiSet` | `index.get` / `slice.get` / `index.multi` / `index.multi_set` |
 | `Store` / `StoreRef` | `place.store` / `place.store_ref` |
 | `MakeStruct` | `struct.create { dest, fields: [%rA, …] }` (schema 1.87: upstream's `kgen.struct.create`, a struct value of `dest`'s register type built from one register per declared field, in declaration order, running no constructor; `sroa` emits it for a whole read of a split slot, and the verifier checks the result is a declared struct, the operand count, and, for a non-generic struct, each operand's type) |
-| `MakeTuple` | `tuple.make` — one whose `dest` register is typed `$variadic[T]` is the storage of the homogeneous collector a call builds for its callee's `*xs: T`, which a `struct.create` makes its `VariadicList` (schema 1.96), and one typed a tuple with `element_types` the elements a heterogeneous collector's or a typed `Tuple[T, ...]` construction's (schema 1.95: every call builds its callee's collector so, not only an inlined one) |
+| `MakeTuple` | `tuple.make` — the elements of a heterogeneous collector or of a typed `Tuple[T, ...]` construction (schema 1.95: every call builds its callee's collector so, not only an inlined one) |
+| `MakeArray` | `array.create { dest, elems: [%rA, …] }` (schema 1.97: upstream's `pop.array.create`, the `!pop.array` of `dest`'s register type built from one register per element, in order; a call builds the element pointers of its callee's `*xs: T` so, stored in its `__passed_varargs__` slot) |
 | `MakeVariant` / `VariantIs` / `VariantGet` / `VariantSet` | `variant.make` / `variant.is` / `variant.get` / `variant.set` (schema 1.71: `variant.make` and `variant.set` carry `constructor: "<symbol>"` after their operands when the payload copy names the `__copyinit__` it runs, as `value.copy` does; schema 1.73: `variant.set` carries `destructors: [present("<symbol>") | absent, ...]`, one entry per alternative, naming the `__deinit__` the replaced payload runs under that tag, omitted while it names none) |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.73: `variant.set_init_with` carries `destructors` as `variant.set` does) |
 | `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_shuffle { lanes: [<param_expr>, ...] }`, `lane_slice { offset: <param_expr>, width: <width> }`, or `lane_join {}`, which elaboration closes (schema 1.26) |

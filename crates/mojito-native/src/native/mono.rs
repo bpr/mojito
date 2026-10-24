@@ -686,6 +686,11 @@ fn origin_erased(ty: &Ty) -> Ty {
         }
         .into(),
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
+        TyKind::PopArray { size, element } => TyKind::PopArray {
+            size: *size,
+            element: recur(element),
+        }
+        .into(),
         TyKind::RuntimePack(elements) => {
             TyKind::RuntimePack(elements.iter().map(recur).collect()).into()
         }

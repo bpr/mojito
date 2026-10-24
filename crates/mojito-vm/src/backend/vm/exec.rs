@@ -1278,6 +1278,10 @@ impl VmBackend {
                 };
                 regs[dest.0 as usize] = Value::Tuple(items);
             }
+            MirInstr::MakeArray { dest, elems } => {
+                regs[dest.0 as usize] =
+                    Value::Tuple(elems.iter().map(|r| regs[r.0 as usize].clone()).collect());
+            }
             MirInstr::MakeStruct { dest, fields } => {
                 let name = prog
                     .declared_struct(prog.mir.functions[function].1.reg_types.get(&dest.0))

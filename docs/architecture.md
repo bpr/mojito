@@ -1901,8 +1901,10 @@ no argument for is read off the operands), or a homogeneous collector's
 operand's position (`mir/call_defaults.rs`'s private `build_collector`).
 The list is built as upstream's call and inlined constructor build it
 (`mir::variadic_list::build_variadic_list`, which the elaborator's
-display construction shares): a `ref.make` per element, a `tuple.make` of
-those pointers bound to a caller slot (upstream's `!pop.array`), and a
+display construction shares): a `ref.make` per element, their
+`!pop.array` (`array.create`, MIR's `TyKind::PopArray`) stored in the
+caller's `__passed_varargs__` slot, as upstream's call stores its
+`pop.array.create`, and a
 `struct.create` of the `Span` over its first element and one of the list
 over the span. A `read` collector's element is the caller's own place, its
 read load turned into the `ref.make` (the private `borrowed_element`), kept
