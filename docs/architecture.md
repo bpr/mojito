@@ -5338,8 +5338,8 @@ pass drops it first, as upstream's indirect `checkDef` does: a `WriteRef` throug
 a place pointer (`q[] = v`) or a whole-variable `ref` binding. A `WriteRef`
 names only its handle register, so the place comes from the `MakeRef` that
 defined it. Such a write qualifies only where the whole subtree is intact:
-dropping a partially moved value whole would free a hole, and a reference-
-rooted place has no leaf flag to guard it natively (reassigning a partially
+dropping a partially moved value whole would free a hole, and no backend
+guards a drop at run time (reassigning a partially
 moved value is a checker error in any case). It replays the move checker's place-tree flow
 (`observe_move_states`) from a different entry: parameters initialized, every
 other slot uninitialized, and an initializer's `out self` receiver with each
@@ -5360,14 +5360,15 @@ through a pointer (`Tuple.consume_elements`), so no destructor runs on the
 storage. `lower-lit` erases it too, as upstream's `LowerLIT` erases its
 counterpart, and both backends refuse one that survives: drop elaboration
 has already left no drop of the ended place. A field wholly moved out is
-reinitialized without a drop; a depth-one field moved on only some paths drops
-under the VM's tombstone and the native leaf flag. The `DropPlace` touches the
+reinitialized without a drop, and one moved on only some paths is too, since
+no decided drop can destroy it (module scope, which has no drop walk, rejects
+that refill: `module_scope_maybe_moved_refill`). The `DropPlace` touches the
 same root at the same position as its `Store`, so liveness, loans, and the
 variable pass are unchanged by it. On the VM it follows a reference root (a
 `mut` receiver or parameter) into the caller's storage, and equally a handle
 the place reaches below its root (the value `p.src[].v = …` replaces lives
-wherever `p.src` points); natively a nested or reference-rooted place drops
-unguarded at its address.
+wherever `p.src` points); natively every part drops at its address, with no
+run-time flag (R1312).
 
 An initializer's `out self` receiver is a drop root too, which every `return`
 reads as the value it returns (`DropLiveness::terminate`, and the block

@@ -181,7 +181,7 @@ impl FnLowering<'_> {
             dest_layout.size,
             Reg(u32::MAX),
         );
-        self.restore_leaves(ctx, dest);
+        self.refill_slot(dest);
         Ok(())
     }
 
@@ -322,7 +322,7 @@ impl FnLowering<'_> {
             let from = self.var_slots[source as usize];
             let to = self.var_slots[dest as usize];
             self.mem_copy(ctx, to, from, composed.layout.size, Reg(u32::MAX));
-            self.restore_leaves(ctx, dest);
+            self.refill_slot(dest);
         }
         Ok(())
     }
@@ -378,13 +378,21 @@ impl FnLowering<'_> {
                     // statically false).
                     return self.define_zeroed(ctx, dest);
                 };
+                // A run-time cursor would leave the visited elements moved
+                // out under a teardown that drop elaboration decided for the
+                // whole pack, so droppable elements refuse.
+                if elements.iter().any(|element| self.needs_drop(element)) {
+                    return Err(self.unsupported_reg(
+                        "pack-cursor advance over droppable elements".into(),
+                        dest,
+                    ));
+                }
                 let stride = self.homogeneous_pack_stride(&elements, "pack advance", dest)?;
                 let slot = self.var_slots[iter as usize];
                 let position_slot = self.pack_position_slot(ctx, iter);
                 let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
                 let position = LoadOp::new(ctx, position_slot, i64_handle);
                 self.append(ctx, position.get_operation(), Some(dest));
-                self.clear_pack_leaf_flag(ctx, iter, position.get_result(ctx));
                 let source =
                     self.strided_element_address(ctx, slot, position.get_result(ctx), stride, dest);
                 let one = self.int_constant(ctx, 1);
@@ -420,7 +428,7 @@ impl FnLowering<'_> {
             let from = self.var_slots[source as usize];
             let to = self.var_slots[dest as usize];
             self.mem_copy(ctx, to, from, layout.size, Reg(u32::MAX));
-            self.restore_leaves(ctx, dest);
+            self.refill_slot(dest);
         }
         Ok(())
     }

@@ -1,7 +1,7 @@
-//! Drop elaboration lowering: drop/consume vars, pack leaf flags, and
-//! recursive value drops. A slot's own drop is static, as the MIR verifier
+//! Drop elaboration lowering: drop/consume vars and recursive value drops.
+//! Every drop is static, as drop elaboration decided it: the MIR verifier
 //! holds every `drop.var` and `var.consume` to a slot every path reaching
-//! it holds; only the leaves a partial move tracks carry a run-time flag.
+//! it holds, and a part's drop destroys at the address it names.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -86,8 +86,8 @@ impl<'a> FnLowering<'a> {
     /// consumes the receiver's fields), else destroy the fields in
     /// declaration order. The slot holds its value on every path reaching
     /// the drop (`mir::verify`'s slot-end rule), so the drop is
-    /// unconditional. A partially-moved variable whose leaves no presence
-    /// flag tracks rejects instead of guessing.
+    /// unconditional. A slot some part of which an instruction ended
+    /// ([`FnLowering::partially_moved`]) rejects instead of guessing.
     pub(super) fn lower_drop_var(
         &mut self,
         ctx: &mut Context,
@@ -113,28 +113,6 @@ impl<'a> FnLowering<'a> {
                     ));
                 }
                 let ptr = self.var_slots[var as usize];
-                if let Some(leaves) = self.leaf_flags.get(&var).cloned() {
-                    // Tracked depth-1 moves: destroy the surviving leaves;
-                    // any absent leaf suppresses the whole-value destructor
-                    // (the VM's partial-aggregate rule).
-                    if destructor.is_some() {
-                        // `__deinit__` runs only when every tracked leaf
-                        // survives. Its compiled `deinit self` epilogue
-                        // consumes the receiver and destroys its residual
-                        // fields, so the caller must not repeat that work.
-                        let guards: Vec<Ptr<BasicBlock>> = leaves
-                            .values()
-                            .map(|&leaf| self.begin_flag_guard(ctx, leaf))
-                            .collect();
-                        self.emit_drop(ctx, ptr, &ty, destructor)?;
-                        for guard in guards.into_iter().rev() {
-                            self.end_flag_guard(ctx, guard);
-                        }
-                    } else {
-                        self.emit_surviving_leaf_drops(ctx, ptr, &ty, &leaves)?;
-                    }
-                    return Ok(());
-                }
                 self.emit_drop(ctx, ptr, &ty, destructor)
             }
         }
@@ -172,91 +150,27 @@ impl<'a> FnLowering<'a> {
         Ok(())
     }
 
-    /// `DropPlace`: destroy one depth-1 field of an aggregate variable under
-    /// its leaf presence flag (the VM's tombstone), so a later `DropVar` of
-    /// the receiver skips it. The entry-block flag allocation
-    /// tracks every depth-1 `DropPlace` place. A nested or reference-rooted
-    /// place has no flag: drop elaboration emits one only where the place is
-    /// statically initialized (a store about to overwrite it), so it drops
-    /// unguarded at its address. `destructor` is the place value's own
-    /// `__deinit__` the drop names.
+    /// `DropPlace`: destroy one part at its address, unconditionally, as
+    /// drop elaboration emits a part's drop only where the part holds its
+    /// value. `destructor` is the place value's own `__deinit__` the drop
+    /// names.
     pub(super) fn lower_drop_place(
         &mut self,
         ctx: &mut Context,
         place: &MirPlace,
         destructor: Option<&str>,
     ) -> Result<(), PlironError> {
-        let flagged = self.leaf_position(place).and_then(|position| {
-            self.leaf_flags
-                .get(&place.root)
-                .and_then(|leaves| leaves.get(&position))
-                .map(|flag| (position, *flag))
-        });
-        let Some((position, flag)) = flagged else {
-            let (address, ty) = self.place_address(ctx, place, Reg(0))?;
-            return if self.needs_named_drop(&ty, destructor) {
-                self.emit_drop(ctx, address, &ty, destructor)
-            } else {
-                Ok(())
-            };
-        };
-        let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(place.root)? else {
-            return Ok(());
-        };
-        let element_tys: Vec<Ty> = match &ty.kind() {
-            TyKind::Struct(name, _) => match self.struct_decls.get(name.as_str()).copied() {
-                Some(decl) => decl.fields.iter().map(|(_, field)| field.clone()).collect(),
-                None => return Ok(()),
-            },
-            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
-            _ => return Ok(()),
-        };
-        let element = element_tys[position].clone();
-        if !self.needs_named_drop(&element, destructor) {
-            return Ok(());
-        }
-        let composed = self
-            .layout
-            .struct_layout(&element_tys)
-            .map_err(|error| self.unsupported(format!("drop layout ({error})"), None))?;
-        let ptr = self.var_slots[place.root as usize];
-        let offset = composed.offsets[position];
-        let address = if offset == 0 {
-            ptr
+        let (address, ty) = self.place_address(ctx, place, Reg(0))?;
+        if self.needs_named_drop(&ty, destructor) {
+            self.emit_drop(ctx, address, &ty, destructor)
         } else {
-            self.gep_byte_unspanned(ctx, ptr, offset)
-        };
-        let cont = self.begin_flag_guard(ctx, flag);
-        self.emit_drop(ctx, address, &element, destructor)?;
-        let absent = self.bool_constant(ctx, false);
-        let store = StoreOp::new(ctx, absent, flag);
-        self.append(ctx, store.get_operation(), None);
-        self.end_flag_guard(ctx, cont);
-        Ok(())
-    }
-
-    /// Branch on `flag` into a fresh guarded-work block, returning the
-    /// continuation block. The caller emits the guarded work into the current
-    /// block, then closes with [`Self::end_flag_guard`].
-    pub(super) fn begin_flag_guard(&mut self, ctx: &mut Context, flag: Value) -> Ptr<BasicBlock> {
-        let i1: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-        let load = LoadOp::new(ctx, flag, i1);
-        self.append(ctx, load.get_operation(), None);
-        let region = self.region.expect("lowering is inside a function");
-        let work = BasicBlock::new(ctx, None, vec![]);
-        work.insert_at_back(region, ctx);
-        let cont = BasicBlock::new(ctx, None, vec![]);
-        cont.insert_at_back(region, ctx);
-        let branch = CondBrOp::new(ctx, load.get_result(ctx), work, vec![], cont, vec![]);
-        self.append(ctx, branch.get_operation(), None);
-        self.current = Some(work);
-        cont
+            Ok(())
+        }
     }
 
     /// Branch on `value != null` into a fresh guarded-work block, returning
-    /// the continuation block — the pointer analogue of
-    /// [`Self::begin_flag_guard`], closed by the same
-    /// [`Self::end_flag_guard`].
+    /// the continuation block. The caller emits the guarded work into the
+    /// current block, then closes with [`Self::end_guard`].
     pub(super) fn begin_nonnull_guard(
         &mut self,
         ctx: &mut Context,
@@ -278,156 +192,26 @@ impl<'a> FnLowering<'a> {
         cont
     }
 
-    /// Close a [`Self::begin_flag_guard`] region: jump to and continue in the
-    /// continuation block.
-    pub(super) fn end_flag_guard(&mut self, ctx: &mut Context, cont: Ptr<BasicBlock>) {
+    /// Close a [`Self::begin_nonnull_guard`] region: jump to and continue in
+    /// the continuation block.
+    pub(super) fn end_guard(&mut self, ctx: &mut Context, cont: Ptr<BasicBlock>) {
         let jump = BrOp::new(ctx, cont, vec![]);
         self.append(ctx, jump.get_operation(), None);
         self.current = Some(cont);
     }
 
-    /// A whole-value (re)initialization of `var`: every tracked leaf is
-    /// present again, and a `deinit` receiver's consumption is over.
-    pub(super) fn restore_leaves(&mut self, ctx: &mut Context, var: u32) {
+    /// A whole-value (re)initialization of `var` ends a `deinit` receiver's
+    /// consumption.
+    pub(super) fn refill_slot(&mut self, var: u32) {
         self.consumed_receivers.remove(&var);
-        if let Some(leaves) = self.leaf_flags.get(&var) {
-            let leaves: Vec<Value> = leaves.values().copied().collect();
-            let present = self.bool_constant(ctx, true);
-            for flag in leaves {
-                let store = StoreOp::new(ctx, present, flag);
-                self.append(ctx, store.get_operation(), None);
-            }
-        }
     }
 
-    /// Clear the presence flag selected by a runtime pack cursor. Pack
-    /// iteration moves that element out; later cleanup must destroy only the
-    /// leaves which were not visited (including an early-break suffix).
-    pub(super) fn clear_pack_leaf_flag(&mut self, ctx: &mut Context, var: u32, position: Value) {
-        let Some(leaves) = self.leaf_flags.get(&var).cloned() else {
-            return;
-        };
-        let region = self.region.expect("pack leaf update is inside a function");
-        let continuation = BasicBlock::new(ctx, None, vec![]);
-        continuation.insert_at_back(region, ctx);
-        let mut next = self.current.expect("pack leaf update has a current block");
-        for (index, flag) in leaves {
-            self.current = Some(next);
-            let clear = BasicBlock::new(ctx, None, vec![]);
-            clear.insert_at_back(region, ctx);
-            let rest = BasicBlock::new(ctx, None, vec![]);
-            rest.insert_at_back(region, ctx);
-            let expected = self.int_constant(ctx, index as i64);
-            let matches = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, position, expected);
-            self.append(ctx, matches.get_operation(), None);
-            let branch = CondBrOp::new(ctx, matches.get_result(ctx), clear, vec![], rest, vec![]);
-            self.append(ctx, branch.get_operation(), None);
-            self.current = Some(clear);
-            let absent = self.bool_constant(ctx, false);
-            let store = StoreOp::new(ctx, absent, flag);
-            self.append(ctx, store.get_operation(), None);
-            let jump = BrOp::new(ctx, continuation, vec![]);
-            self.append(ctx, jump.get_operation(), None);
-            next = rest;
-        }
-        self.current = Some(next);
-        let jump = BrOp::new(ctx, continuation, vec![]);
-        self.append(ctx, jump.get_operation(), None);
-        self.current = Some(continuation);
-    }
-
-    /// Destroy the surviving droppable top-level leaves of partially-tracked
-    /// storage: leaves with a presence flag drop under that flag's guard, the
-    /// rest unconditionally. Struct fields and tuple storage destroy in
-    /// declaration order (left-to-right) — the VM's `drop_value` order.
-    pub(super) fn emit_surviving_leaf_drops(
-        &mut self,
-        ctx: &mut Context,
-        ptr: Value,
-        ty: &Ty,
-        leaves: &std::collections::BTreeMap<usize, Value>,
-    ) -> Result<(), PlironError> {
-        let element_tys = match ty.kind() {
-            TyKind::Struct(name, _) => {
-                let Some(decl) = self.struct_decls.get(name.as_str()).copied() else {
-                    return Ok(());
-                };
-                decl.fields.iter().map(|(_, field)| field.clone()).collect()
-            }
-            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements.clone(),
-            _ => return Ok(()),
-        };
-        let composed = self
-            .layout
-            .struct_layout(&element_tys)
-            .map_err(|error| self.unsupported(format!("drop layout ({error})"), None))?;
-        for (position, element) in element_tys.iter().enumerate() {
-            if !self.needs_drop(element) {
-                continue;
-            }
-            let offset = composed.offsets[position];
-            let address = if offset == 0 {
-                ptr
-            } else {
-                self.gep_byte_unspanned(ctx, ptr, offset)
-            };
-            match leaves.get(&position).copied() {
-                Some(flag) => {
-                    let cont = self.begin_flag_guard(ctx, flag);
-                    self.emit_drop_value(ctx, address, element)?;
-                    self.end_flag_guard(ctx, cont);
-                }
-                None => self.emit_drop_value(ctx, address, element)?,
-            }
-        }
-        Ok(())
-    }
-
-    /// The top-level leaf position a depth-1 projection addresses — a
-    /// declared field of a struct-typed variable or a constant element of
-    /// tuple/pack storage. These are the only shapes the per-leaf presence
-    /// flags track; anything else keeps the blanket partially-moved marker.
-    pub(super) fn leaf_position(&self, place: &MirPlace) -> Option<usize> {
-        if place.proj.len() != 1 || place.through.is_some() {
-            return None;
-        }
-        let ty = self.func.var_tys.get(&place.root)?;
-        match (ty.kind(), &place.proj[0]) {
-            (TyKind::Struct(name, _), Proj::Field(field)) => self
-                .struct_decls
-                .get(name.as_str())
-                .and_then(|decl| decl.fields.iter().position(|(name, _)| name == field)),
-            (TyKind::Tuple(elements) | TyKind::RuntimePack(elements), Proj::ConstIndex(index)) => {
-                (*index < elements.len()).then_some(*index)
-            }
-            _ => None,
-        }
-    }
-
-    /// Record that the projection `place` no longer holds a value: a tracked
-    /// top-level leaf clears its presence flag (later drops skip it, like the
-    /// VM's `Value::Moved` tombstone); anything deeper records the blanket
-    /// marker, so a whole-variable drop refuses destructor work instead of
-    /// double-freeing. A whole variable has no flag to clear.
-    pub(super) fn clear_presence(&mut self, ctx: &mut Context, place: &MirPlace) {
-        if place.proj.is_empty() {
-            return;
-        }
-        let flagged = self.leaf_position(place).and_then(|position| {
-            self.leaf_flags
-                .get(&place.root)
-                .and_then(|leaves| leaves.get(&position))
-                .copied()
-        });
-        match flagged {
-            Some(flag) => {
-                let absent = self.bool_constant(ctx, false);
-                let store = StoreOp::new(ctx, absent, flag);
-                self.append(ctx, store.get_operation(), None);
-            }
-            None => {
-                self.partially_moved.insert(place.root);
-            }
+    /// Record that an instruction ended the part `place` names, so a whole
+    /// drop of its slot refuses rather than destroy the part twice. A whole
+    /// place ends nothing a later drop could repeat.
+    pub(super) fn end_part(&mut self, place: &MirPlace) {
+        if !place.proj.is_empty() {
+            self.partially_moved.insert(place.root);
         }
     }
 
@@ -493,8 +277,8 @@ impl<'a> FnLowering<'a> {
                     vec![env],
                 );
                 self.append(ctx, call.get_operation(), None);
-                self.end_flag_guard(ctx, cont_thunk);
-                self.end_flag_guard(ctx, cont_env);
+                self.end_guard(ctx, cont_thunk);
+                self.end_guard(ctx, cont_env);
                 Ok(())
             }
             TyKind::Struct(name, _) => {

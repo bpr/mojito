@@ -293,15 +293,14 @@ impl FnLowering<'_> {
             )?);
         }
         // A named destructor owns its aliased receiver from the call on (the
-        // callee destroys its fields, each at its last use), so the
-        // caller's presence flags clear before the call: the raise edge must
-        // not destroy that storage again.
+        // callee destroys its fields, each at its last use), so the raise
+        // edge must not destroy that storage again.
         if deinit_receiver && receiver_alias {
             let place = recv_place.expect("aliased deinit receiver has a place");
             if place.proj.is_empty() {
                 self.consumed_receivers.insert(place.root);
             } else {
-                self.clear_presence(ctx, place);
+                self.end_part(place);
             }
         }
         self.emit_bound_call(ctx, dest, resolved, lowered)?;

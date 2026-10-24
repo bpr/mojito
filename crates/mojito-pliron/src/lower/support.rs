@@ -97,31 +97,6 @@ pub fn c_abi_type(ctx: &Context, ty: mojito_native::native::rt_abi::CAbiTy) -> T
     }
 }
 
-/// Collect every `MovePlace` with a projection under `blocks`, recursing
-/// into every region — the pre-scan that decides which variables need
-/// per-leaf presence flags in the entry block.
-pub fn collect_projected_move_places<'m>(
-    blocks: &'m [mojito_mir::mir::MirBlock],
-    out: &mut Vec<&'m MirPlace>,
-) {
-    for block in blocks {
-        for instr in &block.instrs {
-            match instr {
-                MirInstr::MovePlace { place, .. } if !place.proj.is_empty() => out.push(place),
-                MirInstr::DropPlace { place, .. } => out.push(place),
-                MirInstr::MethodCall {
-                    recv_place: Some(place),
-                    ..
-                } if !place.proj.is_empty() => out.push(place),
-                _ => {}
-            }
-            for region in mojito_mir::mir::instruction_regions(instr) {
-                collect_projected_move_places(region, out);
-            }
-        }
-    }
-}
-
 /// The `LoadPlace` results that alias their place instead of materializing a
 /// copy: an aggregate register whose every consumer borrows it. MIR's
 /// aggregate load is a shallow read whose owner stays live through every

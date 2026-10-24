@@ -178,7 +178,7 @@ fn droppable_static_subplace(place: &MirPlace) -> bool {
 /// parameter or `mut self` receiver writes through its own handle) or in
 /// another slot (a place pointer's pointee, a whole-variable `ref` binding).
 /// Only an intact subtree qualifies — dropping a partially moved value whole
-/// would free a hole, which the native lowering has no leaf flag to guard.
+/// would free a hole, and no backend guards a drop at run time.
 fn overwrites_through_reference(state: &[Node], place: &MirPlace, f: &MirFunction) -> bool {
     let Some(through) = place.through.filter(|_| place.is_whole_root()) else {
         return false;

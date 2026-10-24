@@ -100,7 +100,7 @@ impl FnLowering<'_> {
                 self.copy_value(ctx, slot, ptr, &ty, layout, src);
                 // The variable owns the value now; the temporary transfers.
                 self.owned_temps.remove(&src.0);
-                self.restore_leaves(ctx, var);
+                self.refill_slot(var);
                 Ok(())
             }
             LowerTy::ZeroSized => Ok(()),

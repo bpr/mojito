@@ -388,7 +388,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "drop.var",
         CapabilityStatus::Partial,
-        "flag-guarded compiled destructors, including destructor-bearing structs with droppable fields; depth-1 partial moves drop surviving leaves under per-leaf presence flags (any tombstone suppresses `__deinit__`); deeper moves reject",
+        "destroys a whole slot unconditionally, through its destructor or field by field; a slot some part of which an instruction ended rejects",
     ),
     (
         "consume.var",
@@ -403,7 +403,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "drop.place",
         CapabilityStatus::Supported,
-        "destroys one depth-1 struct field under its leaf flag and clears the flag",
+        "destroys one part at its address, unconditionally",
     ),
     (
         "ownership.mark_initialized",

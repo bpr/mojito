@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1319**.
+Next free ID: **R1320**.
 
 ## Ordered Work
 
@@ -910,9 +910,9 @@ change that needs a new `MJRT_ABI_VERSION`.
     (2026-10-06).
   - An argument of `Int`s is clean, and so is one whose element is a struct
     with a destructor (`assets/ok/named_result_transferred.mojo`).
-  - The member takes each element of `other` through a pointer and marks
-    `other.storage` destroyed, so the suspect is the presence flag of a
-    `deinit` parameter that is not the receiver.
+  - The probe ran clean natively on 2026-10-23 (`x 4`, exit 0, one
+    allocation and one free), before and after R1312 removed the per-leaf
+    presence flags; recheck and fold it as its header says.
   - Pinned by `conformance/probes/native_tuple_transform_string_element.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -978,26 +978,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1312 Native partial moves keep a run-time presence flag per
-  moved leaf, where upstream tracks each field statically**
-
-  Pliron gives each top-level leaf a depth-1 move or a pack element
-  touches an `i1` flag, and the drops of that slot test it at run time.
-  - Upstream's `DestructorInsertion` keeps per-field bits, so each field's
-    destroy is decided at compile time.
-  - What goes: `leaf_flags`, `clear_pack_leaf_flag`, the leaf guards in
-    `lower_drop_var`, `lower_drop_place`, and `emit_surviving_leaf_drops`
-    (`crates/mojito-pliron/src/lower/drops.rs`), and the entry `mem_zero`
-    of droppable locals (`lower/instr.rs`).
-  - Cause: a `place.move` of a part, a `drop.place`, and a call on an
-    aliased `deinit` receiver part (`clear_presence`, `lower/methods.rs`)
-    still clear a flag at run time, and a whole `drop.var` after one tests
-    them, where drop elaboration already splits the slot's death.
-  - Found while landing R832 (2026-10-23), which removed the whole-slot
-    drop flags.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1313 A call's whole-slot `deinit` receiver is ended by a trailing
   `consume.var`, where upstream's call consumes its `deinit` operand**
 
@@ -1021,6 +1001,30 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Found while landing R832 (2026-10-23).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1319 Pliron refuses a whole drop after a part's end, where
+  upstream's `UninitializedValueScan` proves field by field that none
+  exists**
+
+  `FnLowering::partially_moved` (`crates/mojito-pliron/src/lower.rs`)
+  records every slot a part of which an instruction ended, anywhere in the
+  body, and `lower_drop_var` refuses a whole drop of such a slot.
+  - It is flow-insensitive: a part refilled before the whole drop still
+    refuses, where upstream's `ValueSet` bits in `CheckLifetimes.cpp` see
+    every field held again.
+  - The verifier's slot-end rule (`verify_slot_ends`,
+    `crates/mojito-mir/src/mir/verify/drops.rs`) keeps one bit per slot,
+    and a `place.move` of a part fills the slot rather than emptying a
+    part, so nothing proves the backstop never fires.
+  - Fix: the verifier tracks each part some instruction ends (a
+    `place.move`, a `drop.place`, a `deinit` receiver call on a part), a
+    `drop.var` or `var.consume` requires every part held, and
+    `partially_moved` and its refusal go.
+  - The corpus reaches the refusal nowhere (2026-10-23 instrumentation
+    while planning R1312), so this is a missing proof, not a wrong run.
+  - Found while landing R1312 (2026-10-23).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R987 Native code drops every function's inline level**
 
@@ -1476,8 +1480,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `self`).
   - A field set on some paths only is maybe initialized where the receiver
     dies, and `refine_receiver_drops` leaves it alone.
-  - A drop there could not be guarded natively: Pliron's leaf flags start
-    present below an initializer's receiver and an inlined receiver slot.
+  - Native drops carry no run-time flag (R1312), so the receiver's fields
+    must die as statically as upstream's per-field bits decide them.
   - Probe: `if c: self.a = Tracer("a")`, then `self.b = Tracer("b")`,
     `print("stored")`, `raise`. The pin prints `del a`, `del b`, `stored`
     for `c = True`, and Mojito leaks `a`.

@@ -795,6 +795,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Native drops no longer test a per-leaf presence flag, as upstream's
+  `DestructorInsertion` destroys each field statically (R1312): every
+  `drop.var` and `drop.place` Pliron lowers destroys unconditionally at the
+  address it names, a part's end only records the slot so that a whole
+  drop after it refuses (R1319 replaces that backstop with a verifier
+  proof), and droppable locals are no longer zeroed at entry. The flags
+  were written on every partially moved slot and tuple, but no corpus
+  fixture ever read one false. Output is unchanged on both backends; the MIR text and package
+  formats are unchanged.
+
 - `lower-lit` now erases `ownership.mark_destroyed` and `consume.place`
   too, as upstream's `LowerLIT` erases `lit.ownership.mark_destroyed` and
   `lit.ownership.mark_consumed`, so no backend sees one: concrete

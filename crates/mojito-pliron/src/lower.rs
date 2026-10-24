@@ -272,7 +272,6 @@ pub fn lower_body(
         erased: HashSet::new(),
         print_sink: None,
         partially_moved: HashSet::new(),
-        leaf_flags: HashMap::new(),
         aliased_load_regs: collect_aliased_load_regs(func, env.declarations, env.mir_declarations),
         loaded_places: collect_loaded_places(&func.blocks),
         storage_reads: HashSet::new(),
@@ -428,16 +427,11 @@ struct FnLowering<'a> {
     /// The C `int` descriptor a `print(file=)` currently routes its bytes
     /// through (`None` outside such a call: `mjrt_write_stdout`).
     print_sink: Option<Value>,
-    /// Variables a `MovePlace` moved a projection out of. Dropping such a
-    /// variable must skip the moved parts (the VM tombstones them); when the
-    /// drop would emit destructor work, lowering rejects instead of guessing.
+    /// Slots a part of which some instruction ended (a `place.move` of a
+    /// projection, or an aliased `deinit` receiver call on one). Drop
+    /// elaboration never leaves a whole unnamed drop after a part's end, so
+    /// lowering refuses one rather than destroy the part twice.
     partially_moved: HashSet<u32>,
-    /// Per-variable `i1` presence flags for top-level leaves (struct fields
-    /// or pack elements) that a depth-1 `MovePlace` moves out somewhere in
-    /// the body — the VM's `Value::Moved` tombstones. Drops and consumption
-    /// destroy exactly the surviving leaves and suppress the whole-value
-    /// destructor when any tracked leaf is absent.
-    leaf_flags: HashMap<u32, std::collections::BTreeMap<usize, Value>>,
     /// `LoadPlace` results whose every consumer borrows them: the register
     /// holds its place's address and no copy lifecycle runs (MIR's aggregate
     /// load is a shallow read; `CopyValue` is the copy boundary).

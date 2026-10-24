@@ -164,7 +164,7 @@ entry's probe is "one instance per `n` where the pin has one".
   `consume.var` stopped destroying residual fields at run time with R1310
   (10-23), once drop elaboration laid a `Tuple` out by its `storage`
   field. Pliron's return sweep went with R832 (10-23); its per-leaf
-  presence flags are R1312, and the trailing `consume.var` of a call's
+  presence flags went with R1312 (10-23), and the trailing `consume.var` of a call's
   `deinit` receiver, and `consume.place` of an explicit destroy's part, are
   R1313.
 - R1306 closed 10-23: every drop is decided where drop elaboration places

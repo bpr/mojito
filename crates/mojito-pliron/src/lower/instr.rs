@@ -3,7 +3,6 @@
 use super::variants::VariantStoreMembers;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
     pub(super) fn run(&mut self, ctx: &mut Context, func_op: FuncOp) -> Result<(), PlironError> {
@@ -120,63 +119,6 @@ impl FnLowering<'_> {
             let value = entry.deref(ctx).get_argument(physical_index(param));
             let store = StoreOp::new(ctx, value, self.var_slots[param]);
             self.append(ctx, store.get_operation(), None);
-        }
-        // Local droppable storage zeroes at entry (parameters alias caller
-        // storage and arrive initialized): a field-wise teardown of a partly
-        // moved aggregate reads leaves with no presence flag.
-        for var in self.func.n_params..self.func.n_vars {
-            let LowerTy::Aggregate { ty, layout } = self.var_lower_ty(var as u32)? else {
-                continue;
-            };
-            if self.needs_drop(&ty) {
-                let slot = self.var_slots[var];
-                self.mem_zero(ctx, slot, layout.size);
-            }
-        }
-        // Depth-1 projected moves leave a variable partially initialized;
-        // give each moved top-level leaf a presence flag so later drops and
-        // consumption destroy exactly the surviving leaves.
-        let mut move_places = Vec::new();
-        collect_projected_move_places(&self.func.blocks, &mut move_places);
-        let mut leaf_targets: Vec<(u32, usize)> = move_places
-            .iter()
-            .filter_map(|place| self.leaf_position(place).map(|pos| (place.root, pos)))
-            .collect();
-        for (var, ty) in &self.func.var_tys {
-            if let TyKind::Tuple(elements) | TyKind::RuntimePack(elements) = ty.kind() {
-                leaf_targets.extend(
-                    elements
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, element)| self.needs_drop(element))
-                        .map(|(position, _)| (*var, position)),
-                );
-            }
-        }
-        let i1: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
-        for (var, position) in leaf_targets {
-            let LowerTy::Aggregate { ty, .. } = self.var_lower_ty(var)? else {
-                continue;
-            };
-            if !self.needs_drop(&ty) {
-                continue;
-            }
-            if self
-                .leaf_flags
-                .get(&var)
-                .is_some_and(|leaves| leaves.contains_key(&position))
-            {
-                continue;
-            }
-            let alloca = AllocaOp::new(ctx, i1, one, 0);
-            self.append(ctx, alloca.get_operation(), None);
-            let init = self.bool_constant(ctx, true);
-            let store = StoreOp::new(ctx, init, alloca.get_result(ctx));
-            self.append(ctx, store.get_operation(), None);
-            self.leaf_flags
-                .entry(var)
-                .or_default()
-                .insert(position, alloca.get_result(ctx));
         }
         let jump = BrOp::new(ctx, body, vec![]);
         self.append(ctx, jump.get_operation(), None);
@@ -362,9 +304,7 @@ impl FnLowering<'_> {
                 self.load_from(ctx, address, &ty, *dest)
             }
             MirInstr::MovePlace { dest, place } => {
-                // Moving out of a projection leaves the variable partially
-                // initialized.
-                self.clear_presence(ctx, place);
+                self.end_part(place);
                 let (address, ty) = self.place_address(ctx, place, *dest)?;
                 // A move relocates the bytes — ownership transfers to the
                 // destination (the VM's `mem::replace`; no clone runs), so
@@ -409,19 +349,8 @@ impl FnLowering<'_> {
                     let flag_store = StoreOp::new(ctx, present, storage);
                     self.append(ctx, flag_store.get_operation(), Some(*src));
                 }
-                // A whole-variable store (re)initializes the slot; a store
-                // into a tracked leaf restores that leaf's presence.
                 if place.proj.is_empty() && place.through.is_none() {
-                    self.restore_leaves(ctx, place.root);
-                } else if let Some(position) = self.leaf_position(place)
-                    && let Some(&flag) = self
-                        .leaf_flags
-                        .get(&place.root)
-                        .and_then(|leaves| leaves.get(&position))
-                {
-                    let present = self.bool_constant(ctx, true);
-                    let store = StoreOp::new(ctx, present, flag);
-                    self.append(ctx, store.get_operation(), None);
+                    self.refill_slot(place.root);
                 }
                 Ok(())
             }
