@@ -69,7 +69,7 @@ instruction	comptime.if	unsupported	the elaborator decides it; concrete MIR carr
 instruction	comptime.for	unsupported	the elaborator decides it; concrete MIR carries none
 instruction	comptime.assert	unsupported	the elaborator judges it; concrete MIR carries none
 instruction	match	supported	lowered to LLVM blocks as `LowerControlFlow` lowers `hlcf.match`: each case a block entered with its arguments, its results arguments of the block after it
-instruction	drop.reg	unsupported	reserved for the future assembler VM; the VM rejects it too
+instruction	drop.reg	supported	drop elaboration's death of an owned register; MIR lowers a named one to its destructor call, and an unnamed one destroys at the register's storage as `drop.var` does
 instruction	drop.var	partial	destroys a whole slot unconditionally, through its destructor or field by field; a slot some part of which an instruction ended rejects
 instruction	consume.var	supported	ends the slot; drop elaboration has destroyed every field
 instruction	drop.place	supported	destroys one part at its address, unconditionally

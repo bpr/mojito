@@ -284,6 +284,7 @@ assets/ok/float16_semantics.mojo	main	exe-differential	sanitized
 assets/ok/for_destructuring_closure_capture.mojo	main	exe-differential	sanitized
 assets/ok/for_destructuring_lifetimes.mojo	main	exe-differential	sanitized
 assets/ok/for_destructuring_targets.mojo	main	exe-differential	sanitized
+assets/ok/for_destructuring_tuple_not_copied.mojo	main	exe-differential	sanitized
 assets/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/ok/forwarded_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/forwarded_parameter_instances.mojo	main	exe-differential	sanitized

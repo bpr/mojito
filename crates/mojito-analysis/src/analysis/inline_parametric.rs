@@ -2583,7 +2583,9 @@ fn instruction_cost<'i>(
     match instruction {
         MirInstr::Const { k, .. } => usize::from(constants.insert(format!("{k:?}"))),
         MirInstr::UseVar { constructor, .. } => usize::from(constructor.is_some()),
-        MirInstr::DropVar { destructor, .. } => usize::from(destructor.is_some()),
+        MirInstr::DropVar { destructor, .. } | MirInstr::Drop { destructor, .. } => {
+            usize::from(destructor.is_some())
+        }
         MirInstr::LoadPlace { place, .. } => {
             loaded.push(place);
             1 + address_cost(place)
@@ -2595,7 +2597,6 @@ fn instruction_cost<'i>(
         },
         MirInstr::DefVar { .. }
         | MirInstr::DeclareVar { .. }
-        | MirInstr::Drop { .. }
         | MirInstr::KeepAlive { .. }
         | MirInstr::ComptimeAssert { .. } => 0,
         MirInstr::GetIter { prepare, .. } => prepare

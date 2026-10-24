@@ -13,10 +13,13 @@
 //! `deinit self` receiver, which is what an explicit `x^.finish()` lowers
 //! to; a dying part becomes a load of the part and the call on it with the
 //! part as its receiver's place, whose `deinit` receiver consumes the part
-//! in place, as upstream's call consumes the field's address.
+//! in place, as upstream's call consumes the field's address; a dying
+//! register is the call's receiver itself, as upstream's destructor call
+//! consumes an owned SSA value.
 
 use super::{
-    MirBlock, MirFunction, MirInstr, UseMode, VarId, fresh_register, instruction_regions_mut,
+    MirBlock, MirFunction, MirInstr, MirPlace, Reg, UseMode, VarId, fresh_register,
+    instruction_regions_mut,
 };
 use mojito_common::token::SourceSpan;
 use mojito_types::types::TyKind;
@@ -61,26 +64,50 @@ fn lowered(
     unconditional: &dyn Fn(&str) -> bool,
     function: &mut MirFunction,
 ) -> Option<Vec<MirInstr>> {
-    let (var, place, destructor) = match instruction {
+    let (dying, destructor) = match instruction {
         MirInstr::DropVar {
             var,
             destructor: Some(destructor),
-        } => (*var, None, destructor),
+        } => (Dying::Var(*var), destructor),
         MirInstr::DropPlace {
             place,
             destructor: Some(destructor),
-        } => (place.root, Some(place), destructor),
+        } => (Dying::Place(place), destructor),
+        MirInstr::Drop {
+            reg,
+            destructor: Some(destructor),
+        } => (Dying::Reg(*reg), destructor),
         _ => return None,
     };
     if !unconditional(destructor) {
         return None;
     }
-    let ty = match place {
-        Some(place) => place.ty.clone(),
-        None => function.var_tys.get(&var).cloned(),
-    }?;
-    let span = death_span(function, var);
-    let recv = fresh_register(function, ty, span.as_ref());
+    let (recv, place, load) = match dying {
+        Dying::Reg(reg) => (reg, None, None),
+        Dying::Var(var) => {
+            let ty = function.var_tys.get(&var).cloned()?;
+            let span = death_span(function, var);
+            let recv = fresh_register(function, ty, span.as_ref());
+            let load = MirInstr::UseVar {
+                dest: recv,
+                var,
+                mode: UseMode::Forward,
+                constructor: None,
+            };
+            (recv, None, Some(load))
+        }
+        Dying::Place(place) => {
+            let ty = place.ty.clone()?;
+            let span = death_span(function, place.root);
+            let recv = fresh_register(function, ty, span.as_ref());
+            let load = MirInstr::LoadPlace {
+                dest: recv,
+                place: place.clone(),
+            };
+            (recv, Some(place), Some(load))
+        }
+    };
+    let span = function.spans.0.get(&recv.0).map(|(span, _)| span.clone());
     let dest = fresh_register(function, TyKind::None.into(), span.as_ref());
     let call = MirInstr::MethodCall {
         dest,
@@ -103,24 +130,14 @@ fn lowered(
         instantiated_args: Vec::new(),
         spread: None,
     };
-    Some(match place {
-        Some(place) => vec![
-            MirInstr::LoadPlace {
-                dest: recv,
-                place: place.clone(),
-            },
-            call,
-        ],
-        None => vec![
-            MirInstr::UseVar {
-                dest: recv,
-                var,
-                mode: UseMode::Forward,
-                constructor: None,
-            },
-            call,
-        ],
-    })
+    Some(load.into_iter().chain([call]).collect())
+}
+
+/// What a named drop destroys.
+enum Dying<'i> {
+    Var(VarId),
+    Place(&'i MirPlace),
+    Reg(Reg),
 }
 
 /// Where the slot `var` dies: the location of its last read, which a drop

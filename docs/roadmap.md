@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1325**.
+Next free ID: **R1329**.
 
 ## Ordered Work
 
@@ -791,6 +791,21 @@ change that needs a new `MJRT_ABI_VERSION`.
     does for an erased op, until a pliron release dedups its queue; draft
     the upstream report as a local file.
   - Found while landing R927 (2026-10-21).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1327 The `String(x)` builtin's `StringLiteral` result owns a
+  runtime buffer that MIR does not name**
+
+  A `call String(x)` returning a `StringLiteral` allocates a runtime
+  descriptor (`str_runtime`, `crates/mojito-pliron/src/lower/`) that only
+  Pliron's owned-temporary release frees, since the register's type is
+  trivially destructible and no MIR value owns the buffer.
+  - It is the largest share of Pliron's releases: 385 of the 960 a
+    whole-corpus `MOJITO_PLIRON_DBG_TEMPS=1` run logged (2026-10-24).
+  - Fix: give the buffer a MIR owner (the builtin returns a nominal
+    `String`, or the descriptor is a value drop elaboration destroys), so
+    R1321 can delete the release.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8523,45 +8538,96 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1320 Pliron frees an owned register temporary after its last
-  read, where upstream's `CheckLifetimes` destroys it explicitly in LIT**
+- [ ] **R1325 Drop elaboration does not destroy an owned register that
+  nothing consumes**
 
-  MIR names no register's destruction: Pliron marks an owned temporary
-  (`mark_owned_temp`, about 30 call sites) and frees its buffers after its
-  last read (`flush_owned_temps`, `crates/mojito-pliron/src/lower/release.rs`),
-  while upstream's `CheckLifetimes` (`ValueToDestroy`) destroys every owned
-  SSA value with an explicit destructor call before `LowerLIT`.
-  - Fix: drop elaboration places a `drop.reg` (MIR's existing
-    `MirInstr::Drop`, which nothing emits and both backends refuse) after
-    the last read of each owned register no instruction consumes.
-  - Both backends lower it as a destructor call: the VM by running it,
-    Pliron by `emit_drop_value`, and Pliron's own release skips a register
-    a `drop.reg` names.
-  - Pliron's moved-out rule (`collect_moved_out_fields`,
-    `crates/mojito-pliron/src/lower/support.rs`) then becomes drop
-    elaboration's: a consumed `field.get` leaves only the rest to destroy.
-  - Probe: `MOJITO_PLIRON_DBG_TEMPS=1` over every eighth `assets/ok`
-    fixture logged 177 releases (91 `String`, 73 `StringLiteral`, 8
-    `Error`, 4 `Tuple[Int, String]`, 1 `Wrapper[String]`), most in stdlib
-    bodies (`atol`, `_open_file`, `os.path.*`).
-  - If the drop placement and both lowerings do not fit one session, that
-    session's plan splits them into chained entries.
+  An owned register no instruction consumes (a call result only a `read`
+  parameter borrows, a copy only `print` reads) dies silently on the VM
+  and through Pliron's own release, where upstream's `CheckLifetimes`
+  destroys every owned SSA value at its death (`ValueToDestroy`).
+  - `drop.reg` already names its destructor and both backends lower it;
+    the verifier already rejects a register ended twice
+    (`mir::register_ends`, `verify/drops.rs`).
+  - Fix: `DropValues` (`analysis/drop_values.rs`) gets one bit per owned
+    register (`mir::owned_result_regs`, region results and arguments) whose
+    drop runs code; a definition clears it, a read keeps it live, and a
+    consuming read (`mir::consumed_operand_regs`, a terminator) moves it,
+    so `Splice` places `drop.reg` at its death and `name_destructors`
+    lowers it to the destructor call.
+  - Then Pliron marks an owned temporary only for a `StringLiteral`
+    runtime descriptor (`mark_temp`, `lower/release.rs`), and
+    `docs/architecture.md` §Native Backend Contract says MIR destroys the
+    rest.
+  - The classification must first be exact, or a consumed register is
+    destroyed twice: `consumed_operand_regs` binds only a declared callee,
+    so an owned argument of a call through a trait bound (the
+    `__trait_dispatch.*` symbol, `MirDeclarations::bound_requirement`), of
+    a subscript call (`index.get`, `slice.get`, `index.multi`), or of a
+    resolved `unary` (which records no `resolved`) is read as borrowed.
+  - An anchored loan-carrying temporary (`$arg_loan_r`) passed to an owned
+    parameter is a read of a slot that still destroys it at the
+    statement's end; check that no such call survives.
+  - Probe: `print(make("b"))` with `def make(s: String) -> String: return
+    s + "!"` leaves `make`'s result destroyed by no instruction.
+  - Probe: `MaybeUninit[String](mk("hello"))` then `b^.unsafe_assume_init()`
+    double-frees natively ("vm: double free of Pointer allocation"), as
+    Pliron releases `uninit.make`'s consumed `init`.
+  - Probe: a whole-corpus `MOJITO_PLIRON_DBG_TEMPS=1` run (2026-10-24)
+    logged 960 releases: 385 `StringLiteral` (R1327), 142 `String` from a
+    forwarding `var.use`, 139 from `call.method`, 125 `Error` from a
+    copying `var.use`, 90 from `call`, 79 other.
+  - Re-check R469 and R277 once it lands.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1326 An operand that is only borrowed is copied into a register
+  first**
+
+  MIR copies a value into a fresh owned register before a `read` use,
+  where upstream borrows the value in place, so the copy is one more owned
+  register that R1325 then has to destroy.
+  - Probe: `except e: print("caught", e)` and `var e = Error("boom");
+    print(e)` read `e` by `var.use { mode: copy }` before `print`.
+  - Probe: `s + "!"` over a `read` `String` parameter `s` copies `s`
+    (`String.__copyinit__`) when the right operand is converted
+    (`lower_operator_operand`, `lower_setup_operand` in
+    `crates/mojito-mir/src/mir/calls.rs`).
+  - Split it in two if the causes differ.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1321 Pliron keeps its own owned-temporary bookkeeping**
 
-  Once every owned register's destruction is a `drop.reg` (R1320),
+  Once every owned register's destruction is a `drop.reg` (R1325),
   Pliron's register tracking has nothing left to release.
   - Delete `FnLowering::owned_temps`, `temp_releases`, `TempRelease`, the
     `mark_*_owned_temp` call sites, `flush_owned_temps`,
     `release_temps_leaving`, and `MovedOutFields`
     (`crates/mojito-pliron/src/lower/release.rs`, `lower/support.rs`).
-  - Probe: the 73 `StringLiteral` releases R1320's probe counts free a
-    runtime descriptor (`str_runtime`) that has no MIR value to drop, so
-    they need a MIR-level owner first.
-  - Depends on R1320.
+  - Probe: 385 of the 960 releases a whole-corpus
+    `MOJITO_PLIRON_DBG_TEMPS=1` run logged (2026-10-24) free a
+    `StringLiteral` runtime descriptor (`str_runtime`) that has no MIR
+    value to drop (R1327).
+  - Depends on R1325 and R1327.
   - Model: Opus, Not Planned.
+
+- [ ] **R1328 A memory-only owned value lives in an SSA register, where
+  upstream keeps it in a temporary allocation**
+
+  Upstream never holds a `String`, a `List`, or a tuple holding one in an
+  SSA register: it materializes such a value in a temporary allocation
+  and destroys that as an indirect value, field by field, while Mojito's
+  registers hold them whole.
+  - So `drop.reg` (R1325) destroys a memory-only register whole, where
+    upstream's register values are one bit (`numValueBits = 1` in
+    `ValueSet::addValue`, `CheckLifetimes.cpp`) and only register-passable
+    types reach them.
+  - Fix, first step: a memory-only call result bound to no slot is stored
+    into a hidden temporary slot that drop elaboration destroys like any
+    variable, and its readers read the slot.
+  - Related: R677 (a memory-only `read` argument passed by value).
+  - Depends on R1325.
+  - Model: Fable, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
   recognizes by spelling**

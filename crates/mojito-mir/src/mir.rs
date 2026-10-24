@@ -86,6 +86,11 @@ pub use param_uses::{
     method_owner_params, named_lifted_bodies, unread_parameters, unread_parameters_of,
     with_removed_forwards_erased, without_removed_forwards,
 };
+mod register_ends;
+pub use register_ends::{
+    ArgumentBinding, BoundArgument, CallArguments, ParameterContract, consumed_operand_regs,
+    consumed_terminator_regs, owned_register, owned_result_regs,
+};
 mod struct_reads;
 pub use struct_reads::{
     DISPATCHED_MEMBERS, LIFECYCLE_MEMBERS, LayoutReads, StructReads, struct_layout_reads,

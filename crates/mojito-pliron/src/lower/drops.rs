@@ -105,6 +105,34 @@ impl<'a> FnLowering<'a> {
         }
     }
 
+    /// `Drop`: destroy the owned value in `reg`, drop elaboration's death of
+    /// a register, at the storage it addresses, as [`Self::lower_drop_var`]
+    /// destroys a slot's. `lower_drops` has lowered a named one to its
+    /// destructor's call, so the value's type usually has none and its
+    /// fields drop by their types. The register is no owned temporary of
+    /// Pliron's own from here.
+    pub(super) fn lower_drop_reg(
+        &mut self,
+        ctx: &mut Context,
+        reg: Reg,
+        destructor: Option<&str>,
+    ) -> Result<(), PlironError> {
+        self.owned_temps.remove(&reg.0);
+        let Some(ty) = self.func.reg_types.get(&reg.0).cloned() else {
+            return Err(self.unsupported_reg(format!("untyped register %r{}", reg.0), reg));
+        };
+        match lower_ty(self.name, &ty, &self.layout, self.reg_span(reg))? {
+            LowerTy::Scalar(_) | LowerTy::ZeroSized => Ok(()),
+            LowerTy::Aggregate { ty, .. } => {
+                if !self.needs_named_drop(&ty, destructor) {
+                    return Ok(());
+                }
+                let ptr = self.reg_value(ctx, reg, ScalarTy::Ptr)?;
+                self.emit_drop(ctx, ptr, &ty, destructor)
+            }
+        }
+    }
+
     /// Whether the body being lowered is one the compiler synthesized (a
     /// struct's fieldwise `__deinit__`), whose lifecycle events the trace
     /// leaves out, as the VM's does.

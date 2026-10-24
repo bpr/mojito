@@ -1970,14 +1970,20 @@ impl VmBackend {
                 let value = self.take_place(frame_id, place, regs, vars)?;
                 self.drop_named(prog, value, place.ty.as_ref(), destructor.as_deref())?;
             }
+            // An owned register's death, its value's fields dropped by
+            // their types when it names no destructor.
+            MirInstr::Drop { reg, destructor } => {
+                let value = std::mem::replace(&mut regs[reg.0 as usize], Value::Moved);
+                self.drop_named(
+                    prog,
+                    value,
+                    prog.mir.functions[function].1.reg_types.get(&reg.0),
+                    destructor.as_deref(),
+                )?;
+            }
             MirInstr::Unsupported(what) => {
                 return Err(RuntimeError::Unsupported(format!(
                     "vm backend does not support {what} yet"
-                )));
-            }
-            MirInstr::Drop { .. } => {
-                return Err(RuntimeError::Unsupported(format!(
-                    "vm backend does not support this operation yet: {i:?}"
                 )));
             }
         }

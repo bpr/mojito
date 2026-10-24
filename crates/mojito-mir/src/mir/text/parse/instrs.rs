@@ -888,6 +888,7 @@ impl Decoder {
             }),
             "drop.reg" => Some(MirInstr::Drop {
                 reg: self.req(value, fields, "reg", Self::reg)?,
+                destructor: self.lifecycle_symbol(fields, "destructor"),
             }),
             "var.declare" => Some(MirInstr::DeclareVar {
                 var: self.req(value, fields, "var", Self::var)?,

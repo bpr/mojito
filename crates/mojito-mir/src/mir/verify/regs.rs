@@ -379,7 +379,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::Loop { operands, .. } | MirInstr::ComptimeFor { operands, .. } => {
             out.extend(operands.iter().copied());
         }
-        MirInstr::Drop { reg } => out.push(*reg),
+        MirInstr::Drop { reg, .. } => out.push(*reg),
         MirInstr::DefVar { src, .. } => out.push(*src),
         MirInstr::InvalidateInteriors { .. }
         | MirInstr::Const { .. }

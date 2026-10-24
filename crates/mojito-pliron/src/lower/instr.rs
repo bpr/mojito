@@ -465,6 +465,9 @@ impl FnLowering<'_> {
             MirInstr::DropVar { var, destructor } => {
                 self.lower_drop_var(ctx, *var, destructor.as_deref())
             }
+            MirInstr::Drop { reg, destructor } => {
+                self.lower_drop_reg(ctx, *reg, destructor.as_deref())
+            }
             MirInstr::ConsumeVar { var } => self.lower_consume_var(ctx, *var),
             MirInstr::DropPlace { place, destructor } => {
                 self.lower_drop_place(ctx, place, destructor.as_deref())
@@ -931,9 +934,6 @@ impl FnLowering<'_> {
             } => {
                 let index = self.known_variant_index(index)?;
                 self.lower_variant_deinit_with(ctx, *dest, *variant, *handler, index)
-            }
-            MirInstr::Drop { .. } => {
-                Err(self.unsupported(format!("instruction `{}`", instr_name(instr)), None))
             }
             MirInstr::Unsupported(message) => {
                 Err(self.unsupported(format!("lowering-marked construct: {message}"), None))

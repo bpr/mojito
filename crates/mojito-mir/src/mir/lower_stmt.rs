@@ -532,13 +532,14 @@ impl<'a> Flatten<'a> {
     /// t.rstrip()`) anchors its borrowed source through the call.
     fn lower_augmented_operand(&mut self, rhs_expression: Node<'a>, inplace: bool) -> Reg {
         let rhs = self.expr(rhs_expression);
-        if inplace {
-            let adjustments = rhs_expression.adjustments();
-            let saved_anchor_permission = std::mem::replace(&mut self.allow_argument_anchors, true);
-            self.anchor_temporary_argument(rhs_expression, rhs, adjustments, false);
-            self.allow_argument_anchors = saved_anchor_permission;
+        if !inplace {
+            return rhs;
         }
-        rhs
+        let adjustments = rhs_expression.adjustments();
+        let saved_anchor_permission = std::mem::replace(&mut self.allow_argument_anchors, true);
+        let anchored = self.anchor_temporary_argument(rhs_expression, rhs, adjustments, false);
+        self.allow_argument_anchors = saved_anchor_permission;
+        anchored.unwrap_or(rhs)
     }
 
     pub(super) fn place(&mut self, e: Node<'a>) -> MirPlace {
@@ -2797,7 +2798,27 @@ impl<'a> Flatten<'a> {
             })
             .collect();
         let mut base_place = self.simple_place(value);
-        let tuple = self.expr(value);
+        // A tuple place is read where it stands, as upstream's unpacking
+        // projects each element from the tuple's address; only a temporary
+        // is evaluated.
+        let tuple = match &base_place {
+            Some(place) => {
+                let loaded = self.fresh_typed(
+                    value.location(),
+                    Some(place.root),
+                    value
+                        .ty()
+                        .or_else(|| place.ty.clone())
+                        .unwrap_or_else(Ty::error),
+                );
+                self.emit(MirInstr::LoadPlace {
+                    dest: loaded,
+                    place: place.clone(),
+                });
+                loaded
+            }
+            None => self.expr(value),
+        };
         // A temporary read through element references lives in a hidden
         // slot under the owner the checker minted for it, the root those
         // references name.

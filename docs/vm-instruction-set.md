@@ -169,7 +169,7 @@ and `comptime.for`, and the VM rejects one that survives as unsupported.
 | `ownership.mark_destroyed` | `MarkDestroyed` | End a place's value without destroying it; absent from concrete MIR (erased by `lower-lit`), so the VM refuses one |
 | `drop.var` | `DropVar` | Destroy the value in a variable slot, running the destructor the drop names |
 | `consume.var` | `ConsumeVar` | End a slot whose parts drop elaboration has already destroyed (a `deinit` receiver at each exit, upstream's exit `mark_destroyed`); destroys nothing |
-| `drop.reg` | `Drop` | Reserved register-drop operation |
+| `drop.reg` | `Drop` | Destroy an owned register's value |
 
 Verification requires every `ref.make` destination to be a reference capability
 whose target and permission are available from the source place. `ref.read` must
@@ -889,15 +889,18 @@ the variable's last use or on an appropriate control-flow edge. Runtime teardown
 then follows the value recursively; this also releases heap-backed storage whose
 destruction has no user-visible output.
 
-### `drop.reg` — Reserved Register Drop
+### `drop.reg` — Register Drop
 
 ```text
-drop.reg %register
+drop.reg { reg: %register }
+drop.reg { reg: %register, destructor: "S.__deinit__" }
 ```
 
-Represents destruction of a register temporary. It is reserved for a future
-operation or assembler VM and is currently rejected by the register VM as
-unsupported. Current lifetime elaboration uses `drop.var`.
+Destroys the owned value in a register, upstream's direct `ValueToDestroy`,
+and leaves the register moved. A named destructor is lowered before
+execution to the `deinit`-receiver call on the register; the VM runs an
+unnamed one by dropping the value's fields by their types, as `drop.var`
+does. No pass places one yet (R1325): lifetime elaboration uses `drop.var`.
 
 ## Block Terminators
 

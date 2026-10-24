@@ -295,6 +295,10 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
             destructor: Some(destructor),
             ..
         }
+        | MirInstr::Drop {
+            destructor: Some(destructor),
+            ..
+        }
         | MirInstr::DropPlace {
             destructor: Some(destructor),
             ..

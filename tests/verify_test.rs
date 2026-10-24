@@ -2138,6 +2138,93 @@ fn verifier_rejects_a_drop_of_a_slot_some_path_does_not_hold() {
     assert_eq!(slot_end_findings(never_stored).len(), 1);
 }
 
+/// The findings of `blocks` about owned registers ended twice, in a
+/// function whose parameter `x` and local `y` hold a struct `S` whose drop
+/// runs code; `%r0` is `S` and `%r1` is `Bool`.
+fn register_end_findings(blocks: Vec<MirBlock>) -> Vec<String> {
+    let s = Ty::new(TyKind::Struct("S".into(), Vec::new()));
+    let mut f = function(blocks, 2, &[(0, s.clone()), (1, Ty::bool())]);
+    f.n_vars = 2;
+    f.var_names = vec!["x".to_string(), "y".to_string()];
+    f.n_params = 1;
+    f.param_types = vec![s.clone()];
+    f.owned_params = vec![false];
+    f.deinit_params = vec![false];
+    f.ref_params = vec![false];
+    f.var_tys = HashMap::from([(0, s.clone()), (1, s)]);
+    f.ret_ty = Some(Ty::none());
+    verify(&program(f))
+        .into_iter()
+        .filter(|finding| finding.contains("ends owned register"))
+        .collect()
+}
+
+/// `%r0`, an owned copy of `x`, and `%r1`, a `Bool` condition.
+fn copy_x_and_condition() -> Vec<MirInstr> {
+    vec![
+        MirInstr::UseVar {
+            dest: Reg(0),
+            var: 0,
+            mode: UseMode::Copy,
+            constructor: None,
+        },
+        MirInstr::Const {
+            dest: Reg(1),
+            k: Const::Bool(true),
+        },
+    ]
+}
+
+const STORE_R0_IN_Y: MirInstr = MirInstr::DefVar {
+    var: 1,
+    src: Reg(0),
+    binding_ty: None,
+    in_place: false,
+};
+
+/// An owned register ends once on every path, as upstream's
+/// `CheckLifetimes` rejects a use of an owned SSA value after its
+/// consumption: a register stored once, or once in each arm, ends once,
+/// and one stored twice ends twice.
+#[test]
+fn verifier_rejects_an_owned_register_ended_twice() {
+    let once = [copy_x_and_condition(), vec![STORE_R0_IN_Y]].concat();
+    assert!(register_end_findings(vec![block(once, MirTerm::Return(None))]).is_empty());
+    let each_arm = [
+        copy_x_and_condition(),
+        vec![if_region(
+            yields(vec![STORE_R0_IN_Y]),
+            yields(vec![STORE_R0_IN_Y]),
+        )],
+    ]
+    .concat();
+    assert!(register_end_findings(vec![block(each_arm, MirTerm::Return(None))]).is_empty());
+    let twice = [copy_x_and_condition(), vec![STORE_R0_IN_Y, STORE_R0_IN_Y]].concat();
+    assert_eq!(
+        register_end_findings(vec![block(twice, MirTerm::Return(None))]),
+        [
+            "MIR function 'test' block 0: var.store ends owned register %r0, which some path reaching it has ended"
+        ]
+    );
+    let after_one_arm = [
+        copy_x_and_condition(),
+        vec![
+            if_region(yields(vec![STORE_R0_IN_Y]), yields(Vec::new())),
+            MirInstr::Drop {
+                reg: Reg(0),
+                destructor: None,
+            },
+        ],
+    ]
+    .concat();
+    assert_eq!(
+        register_end_findings(vec![block(after_one_arm, MirTerm::Return(None))]),
+        [
+            "MIR function 'test' block 0: drop.reg ends owned register %r0, which some path reaching it has ended"
+        ]
+    );
+}
+
 /// `x` stored from r0.
 fn store_x() -> Vec<MirInstr> {
     vec![MirInstr::DefVar {

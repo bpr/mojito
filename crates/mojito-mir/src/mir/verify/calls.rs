@@ -705,7 +705,7 @@ pub(super) fn verify_function(
         }
     }
     verify_scope(name, function, declarations, errors);
-    verify_slot_ends(name, function, errors);
+    verify_slot_ends(name, function, declarations, errors);
     if function.blocks.len() != 1 {
         errors.push(format!(
             "MIR function '{name}' body holds {} blocks",

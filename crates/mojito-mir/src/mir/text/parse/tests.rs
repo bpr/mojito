@@ -1191,7 +1191,10 @@ fn instruction_families_reprint_byte_identically() {
             other: Some(Reg(36)),
             mask: LaneMask::Join,
         },
-        MirInstr::Drop { reg: Reg(2) },
+        MirInstr::Drop {
+            reg: Reg(2),
+            destructor: Some("D.__deinit__".into()),
+        },
         MirInstr::DeclareVar { var: 1 },
         MirInstr::UseVar {
             dest: Reg(3),

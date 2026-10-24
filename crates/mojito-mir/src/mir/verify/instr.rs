@@ -140,6 +140,14 @@ pub(super) fn verify_instruction(
             destructor.as_deref(),
             errors,
         ),
+        MirInstr::Drop { reg, destructor } => verify_lifecycle_symbol(
+            &cx,
+            "drop",
+            function.reg_types.get(&reg.0),
+            Some("__deinit__"),
+            destructor.as_deref(),
+            errors,
+        ),
         MirInstr::DropPlace { place, destructor } => verify_lifecycle_symbol(
             &cx,
             "drop",

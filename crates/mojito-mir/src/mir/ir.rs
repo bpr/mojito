@@ -880,7 +880,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             out.extend([dest, value]);
             out.extend(other.iter_mut());
         }
-        MirInstr::Drop { reg } => out.push(reg),
+        MirInstr::Drop { reg, .. } => out.push(reg),
         MirInstr::DropPlace { place: target, .. }
         | MirInstr::MarkInitialized { place: target }
         | MirInstr::MarkDestroyed { place: target } => place_regs_mut(target, &mut out),
@@ -2517,9 +2517,16 @@ pub enum MirInstr {
         else_args: Vec<Reg>,
         orelse: Vec<MirBlock>,
     },
-    /// An ASAP destructor on a register (reserved for the future Op/assembler VM).
+    /// Destroy the owned value in `reg`, upstream's direct `ValueToDestroy`:
+    /// drop elaboration's death of an owned register that no instruction
+    /// consumes. `destructor` names the `__deinit__` the drop runs, as on
+    /// [`MirInstr::DropVar`]; `lower_drops` rewrites a named one into that
+    /// call on `reg`, so a backend sees only an unnamed one, whose value's
+    /// fields are dropped by their types.
     Drop {
         reg: Reg,
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
+        destructor: Option<String>,
     },
     /// Drop the value in a variable slot — placed by drop elaboration at a
     /// variable's last use (ASAP destruction) — and leave the slot empty.

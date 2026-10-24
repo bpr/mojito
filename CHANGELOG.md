@@ -494,6 +494,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A destructured tuple place is no longer copied before its elements are
+  read: a `for a, b in it` target over a tuple of copyable structs ran the
+  tuple's copy constructor (printing `copy` lines the pin does not), where
+  upstream projects each element from the tuple's address
+  (`assets/ok/for_destructuring_tuple_not_copied.mojo`).
+- A loan-carrying temporary argument anchored in its `$arg_loan_r` slot is
+  passed as a read of that slot, as upstream materializes a temporary and
+  the call borrows it, where the register the slot had taken was passed as
+  well, giving the value two owners (an origin-bearing `Named(...)` in a
+  `*args` pack).
+
 - The 2026-10-24 overnight gate's failures. A raised error of a struct with
   no fields prints again instead of `<uninit>`: the VM reads a `uninitmem`
   of such a struct as the struct. A read of a direct `ref` field where a
@@ -817,6 +828,17 @@ to evolve under the `0.x` compatibility rules.
   the referent is not a conflict.
 
 ### Changed
+
+- `drop.reg` names its destructor, as `drop.var` does (MIR text 1.99,
+  package 89): it is the death of an owned register, upstream's direct
+  `ValueToDestroy`, which `lower_drops` writes as the `deinit`-receiver
+  call on the register, and which the VM and Pliron now run when it names
+  none. No pass emits one yet (R1325).
+- The MIR verifier rejects an owned register ended twice on some path, as
+  `CheckLifetimes` rejects a use of a consumed owned SSA value: the slot-end
+  walk keeps the owned registers some path has stored, passed to an owned
+  parameter, built into an aggregate, carried out of a region, or dropped
+  (`mir::register_ends`).
 
 - The MIR verifier's slot-end rule is field sensitive, as upstream's
   `ValueSet` in `CheckLifetimes`: a field or tuple element a `place.move`,

@@ -1673,7 +1673,14 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("else", blocks_value(orelse)),
             ],
         ),
-        MirInstr::Drop { reg } => record(tag, &[("reg", reg_value(*reg))]),
+        MirInstr::Drop { reg, destructor } => record(
+            tag,
+            &with_symbol(
+                vec![("reg", reg_value(*reg))],
+                "destructor",
+                destructor.as_deref(),
+            ),
+        ),
         MirInstr::DeclareVar { var } | MirInstr::ConsumeVar { var } => {
             record(tag, &[("var", var_value(*var))])
         }

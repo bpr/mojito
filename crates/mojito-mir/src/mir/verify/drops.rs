@@ -13,6 +13,15 @@
 //! elaboration has destroyed every part the value still held — so it ends
 //! a slot whatever parts some path has ended.
 //!
+//! An owned register ends at most once on every path, as `CheckLifetimes`
+//! rejects a use of an owned SSA value after its consumption: an operand
+//! that takes ownership of it ([`consumed_operand_regs`]), a terminator
+//! carrying it out of its region, a `drop.reg`, or a `deinit`-receiver call
+//! on it ends it, and its definition (each time a loop reaches it, a
+//! region argument at its region's entry) starts it again. The walk keeps
+//! the owned registers some path has ended beside the slots, joined by
+//! union.
+//!
 //! The analysis is a must-analysis over one bit per slot ("held on every
 //! path"), joined by AND as upstream's `tracked &=`, and the parts of held
 //! slots some path has ended (a `place.move`, a `drop.place`, a
@@ -30,29 +39,42 @@
 //! slot or an ended part is the checker's error, and over-filling hides a
 //! finding, never invents one.
 
-use super::{MirBlock, MirFunction, MirInstr, MirTerm, instruction_places};
-use crate::mir::{
-    MirCaptureMode, MirPlace, OwnedStep, Proj, RegionFrame, VarId, instruction_regions,
-    instruction_slots, region_exit,
+use super::{
+    MirBlock, MirFunction, MirInstr, MirTerm, instruction_places, instruction_result_regs,
 };
-use std::collections::{BTreeSet, HashMap};
+use crate::mir::text::instruction_mnemonic;
+use crate::mir::{
+    MirCaptureMode, MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, VarId,
+    consumed_operand_regs, consumed_terminator_regs, instruction_regions, instruction_slots,
+    owned_register, owned_result_regs, region_exit,
+};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// Report every slot end in `function` (a `drop.var`, a `var.consume`, or
 /// a `deinit`-receiver call) whose slot some path reaching it does not
 /// hold, and every destroy (a `drop.var`, a `drop.place`, or a
 /// `deinit`-receiver call) of a value a part of which some path reaching
-/// it has ended. A finding names the block of the block list holding it:
-/// the function's, or a region's.
-pub(super) fn verify_slot_ends(name: &str, function: &MirFunction, errors: &mut Vec<String>) {
-    if !ends_slots(&function.blocks) {
+/// it has ended, and every end of an owned register some path reaching it
+/// has ended. A finding names the block of the block list holding it: the
+/// function's, or a region's.
+pub(super) fn verify_slot_ends(
+    name: &str,
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    errors: &mut Vec<String>,
+) {
+    let mut owned = HashSet::new();
+    collect_owned(&function.blocks, function, declarations, &mut owned);
+    if owned.is_empty() && !ends_slots(&function.blocks) {
         return;
     }
-    let mut walk = Walk::new(name, function);
+    let mut walk = Walk::new(name, function, declarations, owned);
     let entry = Held {
         slots: (0..function.n_vars)
             .map(|v| v < function.n_params)
             .collect(),
         ended: BTreeSet::new(),
+        ended_regs: BTreeSet::new(),
     };
     walk.region(&entry, &function.blocks, true);
     errors.extend(walk.findings);
@@ -67,6 +89,9 @@ struct Held {
     /// the path of fields and tuple elements from its slot
     /// ([`MirPlace::owned_path`]); no entry lies inside another.
     ended: BTreeSet<(VarId, Vec<OwnedStep>)>,
+    /// The owned registers some path reaching this point has ended since
+    /// it last defined them.
+    ended_regs: BTreeSet<u32>,
 }
 
 impl Held {
@@ -77,6 +102,14 @@ impl Held {
             *held &= *other;
         }
         self.ended.extend(other.ended.iter().cloned());
+        self.ended_regs.extend(other.ended_regs.iter().copied());
+    }
+
+    /// Start the registers `regs` again: their definition is reached.
+    fn define(&mut self, regs: &[Reg]) {
+        for reg in regs {
+            self.ended_regs.remove(&reg.0);
+        }
     }
 
     /// Whether every path holds `slot`; a slot out of range is the bounds
@@ -191,6 +224,9 @@ type Memo = HashMap<(*const MirInstr, Held, usize), Flow>;
 struct Walk<'a> {
     name: &'a str,
     function: &'a MirFunction,
+    declarations: &'a MirDeclarations,
+    /// The registers holding an owned value whose end matters.
+    owned: HashSet<u32>,
     /// The place a reference register was made from: a write through it
     /// stores into that place again.
     refills: HashMap<u32, &'a MirPlace>,
@@ -204,12 +240,19 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    fn new(name: &'a str, function: &'a MirFunction) -> Self {
+    fn new(
+        name: &'a str,
+        function: &'a MirFunction,
+        declarations: &'a MirDeclarations,
+        owned: HashSet<u32>,
+    ) -> Self {
         let mut refills = HashMap::new();
         collect_refills(&function.blocks, &mut refills);
         Self {
             name,
             function,
+            declarations,
+            owned,
             refills,
             findings: Vec::new(),
             frames: Vec::new(),
@@ -224,7 +267,11 @@ impl<'a> Walk<'a> {
         let Some(block) = blocks.first() else {
             return flow;
         };
-        let out = self.block(0, entry.clone(), block, report);
+        let mut out = self.block(0, entry.clone(), block, report);
+        if let Some(state) = out.normal.as_mut() {
+            let carried = consumed_terminator_regs(&block.term);
+            self.end_registers(0, state, &carried, "terminator", report);
+        }
         match (&block.term, out.normal.as_ref()) {
             (
                 MirTerm::TryYield(_)
@@ -269,6 +316,7 @@ impl<'a> Walk<'a> {
         let mut flow = Flow::default();
         for instruction in &block.instrs {
             if !instruction_regions(instruction).is_empty() {
+                self.instruction_registers(index, &mut state, instruction, report);
                 let mut regions = self.region_op(state, instruction, report);
                 let normal = regions.normal.take();
                 flow.absorb(regions);
@@ -354,19 +402,27 @@ impl<'a> Walk<'a> {
                     meet(&mut flow.normal, arm.as_ref());
                 }
             }
-            MirInstr::Loop { label, body, .. } => {
-                return self.loop_body(state, RegionFrame::Loop(*label), body, report);
+            MirInstr::Loop {
+                label, args, body, ..
+            } => {
+                return self.loop_body(state, RegionFrame::Loop(*label), args, body, report);
             }
-            MirInstr::ComptimeFor { body, .. } => {
-                return self.loop_body(state, RegionFrame::ComptimeFor, body, report);
+            MirInstr::ComptimeFor { args, body, .. } => {
+                return self.loop_body(state, RegionFrame::ComptimeFor, args, body, report);
             }
-            MirInstr::Match { cases, orelse, .. } => {
+            MirInstr::Match {
+                cases,
+                else_args,
+                orelse,
+                ..
+            } => {
                 let depth = self.frames.len();
                 let mut next = Some(state);
                 for case in cases {
-                    let Some(start) = next.take() else {
+                    let Some(mut start) = next.take() else {
                         break;
                     };
+                    start.define(&case.args);
                     self.frames.push(RegionFrame::MatchCase);
                     let mut case = self.region(&start, &case.body, report);
                     self.frames.pop();
@@ -376,7 +432,8 @@ impl<'a> Walk<'a> {
                     case.normal = None;
                     flow.absorb(case);
                 }
-                if let Some(next) = next {
+                if let Some(mut next) = next {
+                    next.define(else_args);
                     let arm = self.enter(&mut flow, &next, orelse, report);
                     meet(&mut flow.normal, arm.as_ref());
                 }
@@ -410,14 +467,20 @@ impl<'a> Walk<'a> {
         &mut self,
         state: Held,
         frame: RegionFrame,
+        args: &[Reg],
         body: &'a [MirBlock],
         report: bool,
     ) -> Flow {
         let depth = self.frames.len();
         self.frames.push(frame);
+        let entered = |resume: &Held| {
+            let mut entry = resume.clone();
+            entry.define(args);
+            entry
+        };
         let mut resume = state;
         let (mut flow, broken) = loop {
-            let mut flow = self.region(&resume, body, false);
+            let mut flow = self.region(&entered(&resume), body, false);
             let (broken, continued) = flow.take_frame(depth);
             let mut next = Some(resume.clone());
             meet(&mut next, continued.as_ref());
@@ -428,7 +491,7 @@ impl<'a> Walk<'a> {
             resume = next;
         };
         if report {
-            flow = self.region(&resume, body, true);
+            flow = self.region(&entered(&resume), body, true);
             flow.take_frame(depth);
         }
         self.frames.pop();
@@ -445,7 +508,9 @@ impl<'a> Walk<'a> {
         let MirInstr::Try {
             label,
             body,
+            handler_args,
             handler,
+            else_args,
             orelse,
             ..
         } = instruction
@@ -464,7 +529,8 @@ impl<'a> Walk<'a> {
         let mut flow = body_flow;
         match orelse {
             Some(orelse) => {
-                if let Some(start) = body_normal {
+                if let Some(mut start) = body_normal {
+                    start.define(else_args);
                     let arm = self.enter(&mut flow, &start, orelse, report);
                     meet(&mut flow.normal, arm.as_ref());
                 }
@@ -475,10 +541,61 @@ impl<'a> Walk<'a> {
             if let Some(binding) = binding {
                 start.fill(*binding, &[]);
             }
+            start.define(handler_args);
             let arm = self.enter(&mut flow, &start, handler, report);
             meet(&mut flow.normal, arm.as_ref());
         }
         flow
+    }
+
+    /// The owned registers `instruction` ends, reported when some path
+    /// reaching it has ended one already, then the registers it defines,
+    /// which start again.
+    fn instruction_registers(
+        &mut self,
+        index: usize,
+        state: &mut Held,
+        instruction: &MirInstr,
+        report: bool,
+    ) {
+        let mut consumed = Vec::new();
+        consumed_operand_regs(instruction, self.function, self.declarations, &mut consumed);
+        self.end_registers(
+            index,
+            state,
+            &consumed,
+            instruction_mnemonic(instruction),
+            report,
+        );
+        let mut defined = Vec::new();
+        instruction_result_regs(instruction, &mut defined);
+        state.define(&defined);
+    }
+
+    /// End each owned register of `regs`, which `what` takes ownership of,
+    /// reporting one some path reaching it has ended already.
+    fn end_registers(
+        &mut self,
+        index: usize,
+        state: &mut Held,
+        regs: &[Reg],
+        what: &str,
+        report: bool,
+    ) {
+        for reg in regs {
+            if !self.owned.contains(&reg.0) {
+                continue;
+            }
+            if !state.ended_regs.insert(reg.0) && report {
+                let finding = format!(
+                    "MIR function '{}' block {index}: {what} ends owned register %r{}, which some path reaching it has ended",
+                    self.name, reg.0
+                );
+                if !self.findings.contains(&finding) {
+                    self.findings.push(finding);
+                }
+            }
+        }
     }
 
     /// Record one finding: `what` ends slot `var`, which some path reaching
@@ -531,6 +648,7 @@ impl<'a> Walk<'a> {
     /// some path does not hold, or a destroy of a value a part of which
     /// some path has ended.
     fn step(&mut self, index: usize, state: &mut Held, instruction: &'a MirInstr, report: bool) {
+        self.instruction_registers(index, state, instruction, report);
         if let MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } = instruction {
             if report {
                 let drop = matches!(instruction, MirInstr::DropVar { .. });
@@ -665,6 +783,47 @@ fn collect_refills<'a>(blocks: &'a [MirBlock], refills: &mut HashMap<u32, &'a Mi
         }
         for region in instruction_regions(instruction) {
             collect_refills(region, refills);
+        }
+    }
+}
+
+/// The registers of `blocks`, at any depth, holding an owned value whose
+/// end matters: an owned result ([`owned_result_regs`]) or a region
+/// argument, of a type [`owned_register`] answers for.
+fn collect_owned(
+    blocks: &[MirBlock],
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    owned: &mut HashSet<u32>,
+) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        let mut defined = Vec::new();
+        owned_result_regs(instruction, &mut defined);
+        match instruction {
+            MirInstr::Loop { args, .. } | MirInstr::ComptimeFor { args, .. } => {
+                defined.extend(args.iter().copied());
+            }
+            MirInstr::Match {
+                cases, else_args, ..
+            } => {
+                defined.extend(cases.iter().flat_map(|case| case.args.iter().copied()));
+                defined.extend(else_args.iter().copied());
+            }
+            MirInstr::Try {
+                handler_args,
+                else_args,
+                ..
+            } => defined.extend(handler_args.iter().chain(else_args).copied()),
+            _ => {}
+        }
+        owned.extend(defined.into_iter().map(|reg| reg.0).filter(|reg| {
+            function
+                .reg_types
+                .get(reg)
+                .is_some_and(|ty| owned_register(ty, declarations))
+        }));
+        for region in instruction_regions(instruction) {
+            collect_owned(region, function, declarations, owned);
         }
     }
 }

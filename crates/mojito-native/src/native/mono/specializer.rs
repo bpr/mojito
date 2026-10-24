@@ -4284,7 +4284,7 @@ fn name_variant_destructors(
         .try_for_each(|(alternative, destructor)| name(alternative, "__deinit__", destructor))
 }
 
-/// Call `name` on each `drop.var`, `drop.place`, cleanup-list drop,
+/// Call `name` on each `drop.var`, `drop.place`, `drop.reg`, cleanup-list drop,
 /// storage destroy, variant store (per alternative), owned closure capture
 /// (its constructor and its destructor), copying or moving `var.use`, and
 /// `value.copy` of `blocks`, regions included, with the value's type, the
@@ -4304,6 +4304,9 @@ fn for_each_lifecycle_site_mut(
                 MirInstr::DropPlace { place, destructor } => {
                     place.ty.as_ref().map(|ty| (ty, "__deinit__", destructor))
                 }
+                MirInstr::Drop { reg, destructor } => reg_types
+                    .get(&reg.0)
+                    .map(|ty| (ty, "__deinit__", destructor)),
                 MirInstr::UseVar {
                     var,
                     mode,

@@ -382,8 +382,8 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     ),
     (
         "drop.reg",
-        CapabilityStatus::Unsupported,
-        "reserved for the future assembler VM; the VM rejects it too",
+        CapabilityStatus::Supported,
+        "drop elaboration's death of an owned register; MIR lowers a named one to its destructor call, and an unnamed one destroys at the register's storage as `drop.var` does",
     ),
     (
         "drop.var",

@@ -151,8 +151,8 @@ impl<'a> Flatten<'a> {
                         value,
                         expression.adjustments(),
                         false,
-                    );
-                    this.bind_read_temporary(expression, value)
+                    )
+                    .unwrap_or_else(|| this.bind_read_temporary(expression, value))
                 })
         });
         self.allow_argument_anchors = saved_anchor_permission;
@@ -569,7 +569,11 @@ impl<'a> Flatten<'a> {
             // copy, are setup work too.
             let read = |this: &mut Self| {
                 let value = this.expr(expression);
-                this.anchor_temporary_argument(expression, value, adjustments, converted);
+                if let Some(anchored) =
+                    this.anchor_temporary_argument(expression, value, adjustments, converted)
+                {
+                    return anchored;
+                }
                 let value = this.bind_forwarded_temporary(expression, value);
                 this.bind_read_temporary(expression, value)
             };
@@ -657,7 +661,9 @@ impl<'a> Flatten<'a> {
         // stays total so the verifier can diagnose corrupt checked input
         // without manufacturing a caller place.
         let value = self.expr(expression);
-        self.anchor_temporary_argument(expression, value, adjustments, converted);
+        let value = self
+            .anchor_temporary_argument(expression, value, adjustments, converted)
+            .unwrap_or(value);
         (value, None)
     }
 
@@ -1937,13 +1943,13 @@ impl<'a> Flatten<'a> {
 
     /// Anchor a loan-carrying temporary *argument* in a hidden retained slot
     /// (`$arg_loan_r`) whose loans keep its borrowed sources alive through the
-    /// consuming call. Unlike the receiver anchor below, the value is NOT read
-    /// back out of the slot — a native re-read would run the aggregate's
-    /// lifecycle copy where the VM's shallow read does not. Instead the
-    /// original register keeps carrying the value (`DefVar` clones on both
-    /// backends), and the statement-end `KeepAlive` flush (the temporary's
-    /// upstream lifetime is the full statement) extends the slot's — and so
-    /// the loans' — liveness across the call.
+    /// consuming call, and read it back out of that slot, as upstream
+    /// materializes a temporary in memory and the call borrows it: the slot
+    /// owns the value, so the argument is a shallow read of it rather than
+    /// the register the slot consumed, and the statement-end `KeepAlive`
+    /// flush (the temporary's upstream lifetime is the full statement)
+    /// extends the slot's — and so the loans' — liveness across the call.
+    /// Returns that read, or `None` when the temporary needs no anchor.
     /// Anchor a temporary argument that borrows caller storage (a
     /// constructor or call result holding references/pointers into live
     /// places) in a hidden slot, as a chained view receiver is, or its
@@ -1968,7 +1974,7 @@ impl<'a> Flatten<'a> {
         value: Reg,
         adjustments: &[mojito_checked::checked::SemanticAdjustment],
         converted: bool,
-    ) {
+    ) -> Option<Reg> {
         let subscript_view = matches!(
             expression.op(),
             CheckedOp::Index { .. } | CheckedOp::MultiIndex { .. } | CheckedOp::Slice { .. }
@@ -1995,12 +2001,18 @@ impl<'a> Flatten<'a> {
         {
             let loans = self.aggregate_borrows(expression);
             if !loans.is_empty() {
-                self.anchor_borrowing_argument(expression, value, loans);
+                return Some(self.anchor_borrowing_argument(expression, value, loans));
             }
         }
+        None
     }
 
-    fn anchor_borrowing_argument(&mut self, expression: Node<'a>, value: Reg, loans: Vec<MirLoan>) {
+    fn anchor_borrowing_argument(
+        &mut self,
+        expression: Node<'a>,
+        value: Reg,
+        loans: Vec<MirLoan>,
+    ) -> Reg {
         let view_ty = self
             .f
             .reg_types
@@ -2014,7 +2026,7 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::DefVar {
             var: variable,
             src: value,
-            binding_ty: view_ty,
+            binding_ty: view_ty.clone(),
             in_place: false,
         });
         let marker = self.fresh_typed(expression.location(), Some(loans[0].place.root), Ty::none());
@@ -2026,6 +2038,14 @@ impl<'a> Flatten<'a> {
         });
         self.aggregate_loans.insert(variable, loans);
         self.pending_argument_anchors.push(variable);
+        let place = MirPlace::root(variable, view_ty);
+        let read = self.fresh_typed(
+            expression.location(),
+            Some(variable),
+            place.ty.clone().unwrap_or_else(Ty::error),
+        );
+        self.emit(MirInstr::LoadPlace { dest: read, place });
+        read
     }
 
     /// Bind a loan-carrying temporary into a hidden retained slot whose loans

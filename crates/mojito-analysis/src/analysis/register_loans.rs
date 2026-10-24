@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_mir::mir::TraitRequirement;
+use mojito_mir::mir::{ArgumentBinding, CallArguments, ParameterContract, TraitRequirement};
 use mojito_symbol::symbol::is_trait_dispatch_symbol;
 use mojito_types::types::{Ty, TyKind};
 
@@ -136,7 +136,7 @@ impl<'a> ArgumentPassing<'a> {
                         kwarg_places,
                         spread: *spread,
                     };
-                    arguments.by_value(&declaration.into(), 0, &mut loaded);
+                    arguments_by_value(&arguments, &declaration.into(), 0, &mut loaded);
                     loaded
                 })
                 .unwrap_or_default(),
@@ -170,7 +170,7 @@ impl<'a> ArgumentPassing<'a> {
                         kwarg_places,
                         spread: *spread,
                     };
-                    arguments.by_value(&callee.contract(), 1, &mut loaded);
+                    arguments_by_value(&arguments, &callee.contract(), 1, &mut loaded);
                     loaded
                 })
                 .unwrap_or_default(),
@@ -188,7 +188,7 @@ impl<'a> ArgumentPassing<'a> {
                         args: std::slice::from_ref(b),
                         ..CallArguments::default()
                     };
-                    arguments.by_value(&callee.contract(), 1, &mut loaded);
+                    arguments_by_value(&arguments, &callee.contract(), 1, &mut loaded);
                     loaded
                 })
                 .unwrap_or_default(),
@@ -217,12 +217,12 @@ impl<'a> ArgumentPassing<'a> {
                 if let Some(mojito_types::types::TyKind::Func(function)) =
                     contract.map(mojito_types::types::Ty::kind)
                 {
-                    arguments.by_value(&function.as_ref().into(), 0, &mut loaded);
+                    arguments_by_value(&arguments, &function.as_ref().into(), 0, &mut loaded);
                 } else if let Some(declaration) = resolved
                     .as_deref()
                     .and_then(|name| self.declarations.function(name))
                 {
-                    arguments.by_value(&declaration.into(), 1, &mut loaded);
+                    arguments_by_value(&arguments, &declaration.into(), 1, &mut loaded);
                 }
                 loaded
             }
@@ -243,7 +243,7 @@ impl<'a> ArgumentPassing<'a> {
                     if base_place.is_none() {
                         callee.receiver_by_value(*base, register_types, &mut loaded);
                     }
-                    if index_place.is_none() && callee.contract().loads_positional(0) {
+                    if index_place.is_none() && loads_positional(&callee.contract(), 0) {
                         loaded.push((index.0, 1));
                     }
                     loaded
@@ -838,116 +838,40 @@ impl<'a> Callee<'a> {
     }
 }
 
-/// The parameters a call binds its arguments to, as a declaration, a
-/// requirement, or a function type spells them.
-struct ParameterContract<'c> {
-    names: &'c [String],
-    types: &'c [mojito_types::types::Ty],
-    conventions: &'c [Option<mojito_ast::ast::ArgConvention>],
-    /// The first positional argument the variadic collector takes.
-    collector: Option<usize>,
+/// Whether positional argument `index` binds a parameter of `contract`
+/// that receives it by value, rather than the variadic collector.
+fn loads_positional(contract: &ParameterContract, index: usize) -> bool {
+    contract.collector.is_none_or(|collector| index < collector) && loads(contract, index)
 }
 
-impl<'c> From<&'c MirFunctionDeclaration> for ParameterContract<'c> {
-    fn from(declaration: &'c MirFunctionDeclaration) -> Self {
-        Self {
-            names: &declaration.param_names,
-            types: &declaration.param_types,
-            conventions: &declaration.param_conventions,
-            collector: declaration.variadic_index,
-        }
-    }
+/// Whether parameter `slot` of `contract` receives its argument by value: a
+/// `read` or `var` convention over a concrete register-passable type.
+fn loads(contract: &ParameterContract, slot: usize) -> bool {
+    use mojito_ast::ast::ArgConvention;
+    contract
+        .types
+        .get(slot)
+        .is_some_and(|ty| !may_alias_owned_storage(ty))
+        && matches!(
+            contract.conventions.get(slot).copied().flatten(),
+            None | Some(ArgConvention::Imm | ArgConvention::Var)
+        )
 }
 
-impl<'c> From<&'c TraitRequirement> for ParameterContract<'c> {
-    fn from(requirement: &'c TraitRequirement) -> Self {
-        Self {
-            names: &requirement.param_names,
-            types: &requirement.param_types,
-            conventions: &requirement.param_conventions,
-            collector: requirement.variadic_index,
-        }
-    }
-}
-
-impl<'c> From<&'c mojito_types::types::FuncTy> for ParameterContract<'c> {
-    fn from(function: &'c mojito_types::types::FuncTy) -> Self {
-        Self {
-            names: &function.names,
-            types: &function.params,
-            conventions: &function.conventions,
-            collector: function
-                .variadic
-                .as_ref()
-                .map(|_| function.keyword_only.unwrap_or(function.params.len())),
-        }
-    }
-}
-
-impl ParameterContract<'_> {
-    /// Whether positional argument `index` binds a parameter that receives
-    /// it by value, rather than the variadic collector.
-    fn loads_positional(&self, index: usize) -> bool {
-        self.collector.is_none_or(|collector| index < collector) && self.loads(index)
-    }
-
-    /// Whether parameter `slot` receives its argument by value: a `read` or
-    /// `var` convention over a concrete register-passable type.
-    fn loads(&self, slot: usize) -> bool {
-        use mojito_ast::ast::ArgConvention;
-        self.types
-            .get(slot)
-            .is_some_and(|ty| !may_alias_owned_storage(ty))
-            && matches!(
-                self.conventions.get(slot).copied().flatten(),
-                None | Some(ArgConvention::Imm | ArgConvention::Var)
-            )
-    }
-}
-
-/// A call's argument registers and their retained caller places.
-#[derive(Default)]
-struct CallArguments<'c> {
-    args: &'c [Reg],
-    kwargs: &'c [(String, Reg)],
-    arg_places: &'c [Option<MirPlace>],
-    kwarg_places: &'c [Option<MirPlace>],
-    spread: Option<usize>,
-}
-
-impl CallArguments<'_> {
-    /// Push each argument `contract` loads by value, ranked by its parameter
-    /// slot after `offset` receiver slots: a retained place, a spread pack,
-    /// and a variadic element are addressed.
-    fn by_value(
-        &self,
-        contract: &ParameterContract,
-        offset: usize,
-        loaded: &mut Vec<(u32, usize)>,
-    ) {
-        let placed = |places: &[Option<MirPlace>], index: usize| {
-            places.get(index).is_some_and(Option::is_some)
-        };
-        for (index, argument) in self.args.iter().enumerate() {
-            if self.spread != Some(index)
-                && !placed(self.arg_places, index)
-                && contract.loads_positional(index)
-            {
-                loaded.push((argument.0, offset + index));
-            }
-        }
-        for (index, (name, argument)) in self.kwargs.iter().enumerate() {
-            if placed(self.kwarg_places, index) {
-                continue;
-            }
-            if let Some(slot) = contract
-                .names
-                .iter()
-                .position(|parameter| parameter == name)
-                && contract.loads(slot)
-            {
-                loaded.push((argument.0, offset + slot));
-            }
+/// Push each argument of `arguments` that `contract` loads by value,
+/// ranked by its parameter slot after `offset` receiver slots: a retained
+/// place, a spread pack, and a variadic element are addressed.
+fn arguments_by_value(
+    arguments: &CallArguments,
+    contract: &ParameterContract,
+    offset: usize,
+    loaded: &mut Vec<(u32, usize)>,
+) {
+    for argument in arguments.bindings(contract) {
+        if let (false, ArgumentBinding::Slot(slot)) = (argument.placed, argument.binding)
+            && loads(contract, slot)
+        {
+            loaded.push((argument.reg.0, offset + slot));
         }
     }
 }
@@ -977,7 +901,7 @@ fn subscript_indices_loaded(
         let placed = arg_places.get(index).is_some_and(Option::is_some);
         if let MirSubscriptArg::Index(register) = argument
             && !placed
-            && contract.loads_positional(index)
+            && loads_positional(contract, index)
         {
             loaded.push((register.0, index + 1));
         }

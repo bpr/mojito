@@ -3,7 +3,7 @@
 //!
 //! Upstream leaves, at each death, a call naming the `__del__` of the dead
 //! value's type, in the unwind blocks too. Each `drop.var`, `drop.place`,
-//! and cleanup-list drop here names that destructor as its `destructor`
+//! `drop.reg`, and cleanup-list drop here names that destructor as its `destructor`
 //! operand, and the teardown primitives a library body runs name theirs
 //! again (`mir::name_teardown_destructors`, which a pass that retypes one
 //! reruns), so the symbol walk, the elaborator's respell, and
@@ -28,7 +28,12 @@ use std::collections::HashMap;
 /// Name the destructor of every drop in `function`, regions included, and
 /// lower each named drop to the call of its destructor.
 pub fn name_destructors(function: &mut MirFunction, declarations: &MirDeclarations) {
-    name_in_blocks(&mut function.blocks, &function.var_tys, declarations);
+    name_in_blocks(
+        &mut function.blocks,
+        &function.var_tys,
+        &function.reg_types,
+        declarations,
+    );
     name_teardown_destructors(function, declarations);
     lower_drops(function, &|destructor| {
         declarations
@@ -40,6 +45,7 @@ pub fn name_destructors(function: &mut MirFunction, declarations: &MirDeclaratio
 fn name_in_blocks(
     blocks: &mut [MirBlock],
     var_tys: &HashMap<VarId, Ty>,
+    reg_tys: &HashMap<u32, Ty>,
     declarations: &MirDeclarations,
 ) {
     let named = |ty: Option<&Ty>| {
@@ -51,10 +57,11 @@ fn name_in_blocks(
             match instruction {
                 MirInstr::DropVar { var, destructor } => *destructor = named(var_tys.get(var)),
                 MirInstr::DropPlace { place, destructor } => *destructor = named(place.ty.as_ref()),
+                MirInstr::Drop { reg, destructor } => *destructor = named(reg_tys.get(&reg.0)),
                 _ => {}
             }
             for region in instruction_regions_mut(instruction) {
-                name_in_blocks(region, var_tys, declarations);
+                name_in_blocks(region, var_tys, reg_tys, declarations);
             }
         }
     }

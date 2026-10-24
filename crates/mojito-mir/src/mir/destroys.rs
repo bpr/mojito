@@ -2,9 +2,9 @@
 //!
 //! Upstream's destructor insertion leaves a call to the destructor at each
 //! point a value dies, so a symbol walk reaches it. A `drop.var`, a
-//! `drop.place`, a cleanup-list drop, a storage destroy, a variant store
-//! (per alternative), and an owned closure capture name the destructor
-//! they run on the whole value, which a symbol walk follows, and that
+//! `drop.place`, a `drop.reg`, a cleanup-list drop, a storage destroy, a
+//! variant store (per alternative), and an owned closure capture name the
+//! destructor they run on the whole value, which a symbol walk follows, and that
 //! destructor's body names its fields'; the rest of what a body tears down
 //! names none, and the VM and the native backend find the struct's
 //! `__deinit__` from the value's type. This module answers which structs
@@ -43,6 +43,7 @@ pub struct Destroyed {
 pub fn destroyed_structs(function: &MirFunction, fields: &StructFields<'_>) -> Destroyed {
     let mut walk = Walk {
         var_tys: &function.var_tys,
+        reg_tys: &function.reg_types,
         pending: Vec::new(),
         named: Vec::new(),
     };
@@ -106,6 +107,7 @@ pub(super) fn close_over_fields(
 /// whole value dies (its destructor may run) or only its fields.
 struct Walk<'f> {
     var_tys: &'f HashMap<VarId, Ty>,
+    reg_tys: &'f HashMap<u32, Ty>,
     pending: Vec<(Ty, bool)>,
     named: Vec<(Ty, String)>,
 }
@@ -129,6 +131,14 @@ impl Walk<'_> {
             MirInstr::DropVar { var, destructor } => match destructor {
                 Some(destructor) => self.named(self.var_tys.get(var), Some(destructor)),
                 None => self.var(*var, true),
+            },
+            MirInstr::Drop { reg, destructor } => match destructor {
+                Some(destructor) => self.named(self.reg_tys.get(&reg.0), Some(destructor)),
+                None => {
+                    if let Some(ty) = self.reg_tys.get(&reg.0) {
+                        self.pending.push((ty.clone(), true));
+                    }
+                }
             },
             MirInstr::ConsumeVar { var } => self.var(*var, false),
             MirInstr::DropPlace { place, destructor } => match destructor {

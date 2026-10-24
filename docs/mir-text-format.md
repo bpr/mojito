@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.98
+# Mojito Textual MIR Format, Version 1.99
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
@@ -6,7 +6,7 @@ in-memory authority; this format is its stable inspection and interchange
 boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
 document defines syntax and serialized data.
 
-Version 1.98 is implemented end to end for inspection and loading: canonical
+Version 1.99 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.98
+mojito-mir 1.99
 ```
 
-The writer emits 1.98. The reader accepts 1.0 through 1.98; *Schema 1.0*
+The writer emits 1.99. The reader accepts 1.0 through 1.99; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -465,6 +465,13 @@ declared receiver convention. An explicit destroy is the call alone: no
 ended a part, is withdrawn. An older `call.method` reads as consuming
 nothing, so an older artifact holding a `deinit`-receiver call fails
 verification at load, as does one holding a `consume.place`.
+
+Schema 1.99 gives `drop.reg { reg }` a `destructor`, as `drop.var` has:
+the death of an owned register (upstream's direct `ValueToDestroy`), whose
+named destructor `lower_drops` writes as the `deinit`-receiver
+`call.method` on the register itself. Both backends run an unnamed one.
+The verifier now also rejects an owned register ended twice on some path.
+An older artifact holds no `drop.reg`, so it reads unchanged.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1177,7 +1184,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_shuffle { lanes: [<param_expr>, ...] }`, `lane_slice { offset: <param_expr>, width: <width> }`, or `lane_join {}`, which elaboration closes (schema 1.26) |
 | `Try` | `try { label: tryN, results: [%rN...], body, handler_arguments: [%rN...], handler, else_arguments: [%rN...], orelse }` — `lit.try` after `lowerTryFinally`: `label` names it for the raises in its body (schema 1.92; before, a `try` named nothing and held `finalbody` and `cleanup`, see *Compatibility*); `results` are the op's, `handler_arguments` the handler's, which every raise naming it defines, and `else_arguments` the `else`'s, which the body's `try.yield` defines (schema 1.93) |
 | `DeclareVar` | `var.declare` (schema 1.50: a `var x: T` slot's declaration point; no def, no use, a no-op on both backends, counted as a def site by region locality; unlike the lifetime markers it survives `lower-lit`, as upstream lowers `lit.var.decl` to an allocation) |
-| `Drop` / `DropVar` / `DropPlace` | `drop.reg` / `drop.var { var }` / `drop.place { place }` — a `drop.var` or `drop.place` carries `destructor: "<symbol>"` after its operand when it names the `__deinit__` it runs on the whole value, as upstream's destructor insertion names the `__del__` at each death: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the drop names none, the reader takes an absent field as none, and the verifier reports a drop naming an undeclared function or other than the destructor its struct's member table records (schema 1.67) |
+| `Drop` / `DropVar` / `DropPlace` | `drop.reg { reg }` / `drop.var { var }` / `drop.place { place }` — each carries `destructor: "<symbol>"` after its operand when it names the `__deinit__` it runs on the whole value, as upstream's destructor insertion names the `__del__` at each death: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the drop names none, the reader takes an absent field as none, and the verifier reports a drop naming an undeclared function or other than the destructor its struct's member table records (schema 1.67) |
 | `ConsumeVar` | `consume.var` (a `deinit` parameter's or pack's end before the exit, upstream's exit `mark_destroyed`; schema 1.98 withdraws `consume.place`, as a `deinit`-receiver `call.method` consumes its receiver itself) |
 | `Unsupported` | `unsupported { message: string }` |
 | `If` | `if { results: [reg...], condition: %rN, then: [block...], elifs: [elif { condition_arguments: [reg...], condition: [block...], then_arguments: [reg...], then: [block...] }...], else_arguments: [reg...], else: [block...] }` — `hlcf.if` (schema 1.54); the region arguments (schema 1.84) are defined by the `if.elifcond.yield` entering each region, and the op enters `then`, the first elif's condition, and an `else` without elifs with none |

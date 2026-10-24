@@ -3659,6 +3659,7 @@ VariantDeinitWith
 VariantReplace
 MakeSimd
 Try
+Drop
 DropVar
 HasNext
 Next
@@ -4884,7 +4885,14 @@ and a whole value a store through a reference replaces. A destructor
 available only under a `where` clause stays a drop before elaboration, for
 the elaborator to name per instance (R302); the concrete verifier refuses
 a named drop, so a backend sees a `drop.var` or `drop.place` only for a
-type with no `__deinit__` of its own. Since no drop is tested, every
+type with no `__deinit__` of its own. A `drop.reg` is the death of an
+owned register (upstream's direct `ValueToDestroy`, MIR text 1.99): it
+names its destructor as a `drop.var` does, and a named one becomes the
+`MethodCall` of the destructor with the register itself as its `deinit`
+receiver; the VM runs an unnamed one through `drop_named`, and Pliron
+destroys it at the register's storage (`lower_drop_reg`). No pass places
+one yet: Pliron still frees an owned temporary after its last read
+(R1325). Since no drop is tested, every
 producer emits only decided drops: a store's overwrite drop only where the
 move scan's replay says the replaced value is initialized on every path
 (`analysis/store_drops.rs`), so module scope, which has no drop walk,
@@ -5544,7 +5552,16 @@ sensitive, as upstream's `ValueSet`: a `place.move`, `drop.place`,
 that part until a write to it, and a `drop.var`, `drop.place`, or `deinit`
 receiver call that would destroy an ended part is rejected. A `var.consume`
 destroys nothing, so it ends a slot whatever parts are ended — the end of a
-`deinit` body whose fields died singly.
+`deinit` body whose fields died singly. The same walk keeps the owned
+registers some path has ended, as upstream's `ValueSet` holds an owned SSA
+value beside memory values: an owned register (a fresh owned result,
+`mir::owned_result_regs`, or a region argument, of a type whose drop runs
+code) ends at an operand that takes ownership of it
+(`mir::consumed_operand_regs`: a store, an argument an owned parameter or
+collector binds, an owned receiver without a retained place, an
+aggregate's element, a variant payload), a terminator carrying it out of
+its region, or a `drop.reg`, and the verifier rejects a second end on some
+path, as `CheckLifetimes` rejects a use after consumption.
 
 Iterator-driven loops also place an explicit drop at their common exhaustion or
 `break` exit. A `return` cannot reach that block, so HIR lists its current
