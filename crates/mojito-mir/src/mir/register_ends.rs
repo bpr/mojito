@@ -113,6 +113,36 @@ impl<'f> RegisterEnds<'f> {
             | MirInstr::ComptimeFor {
                 operands: elems, ..
             } => out.extend(elems.iter().copied()),
+            _ => self.taken(instruction, true, out),
+        }
+    }
+
+    /// Push the operands `instruction` hands its callee by storage: an
+    /// argument an owned parameter binds with no retained place, a
+    /// receiver taken `var` or `deinit` with no retained place, and an
+    /// operator's owned operand, as upstream's `lit.call` passes an owned
+    /// argument's memory to its callee. An owning collector's element, a
+    /// stored value, and an aggregate's element move into storage of their
+    /// own and are not among them.
+    pub fn forwarded(&self, instruction: &MirInstr, out: &mut Vec<Reg>) {
+        self.taken(instruction, false, out);
+    }
+
+    /// The registers `term` takes ownership of: every value it carries out
+    /// of its region (a result, a region argument, a returned value) and a
+    /// raised error; an `elif` condition is only read.
+    pub fn consumed_by(&self, term: &MirTerm) -> Vec<Reg> {
+        match term {
+            MirTerm::ElifCond { values, .. } => values.clone(),
+            _ => super::terminator_regs(term),
+        }
+    }
+
+    /// Push the operands a call, method, operator, or subscript call
+    /// `instruction` takes ownership of, with the arguments an owning
+    /// collector binds when `collectors` holds.
+    fn taken(&self, instruction: &MirInstr, collectors: bool, out: &mut Vec<Reg>) {
+        match instruction {
             MirInstr::Call {
                 func,
                 args,
@@ -130,7 +160,7 @@ impl<'f> RegisterEnds<'f> {
                         kwarg_places,
                         spread: *spread,
                     }
-                    .consumed(&callee.contract(), out);
+                    .consumed(&callee.contract(), collectors, out);
                 }
             }
             MirInstr::CallIndirect {
@@ -157,7 +187,7 @@ impl<'f> RegisterEnds<'f> {
                     .or_else(|| self.function.reg_types.get(&callee.0))
                     .and_then(callable_contract)
                 {
-                    arguments.consumed(&function.into(), out);
+                    arguments.consumed(&function.into(), collectors, out);
                 } else if let Some(target) = resolved.as_deref().and_then(|name| {
                     Callee::resolve(
                         self.declarations,
@@ -168,7 +198,7 @@ impl<'f> RegisterEnds<'f> {
                     if callee_place.is_none() && owned_convention(target.receiver_convention()) {
                         out.push(*callee);
                     }
-                    arguments.consumed(&target.contract(), out);
+                    arguments.consumed(&target.contract(), collectors, out);
                 }
             }
             MirInstr::MethodCall {
@@ -200,7 +230,7 @@ impl<'f> RegisterEnds<'f> {
                         kwarg_places,
                         spread: *spread,
                     }
-                    .consumed(&callee.contract(), out);
+                    .consumed(&callee.contract(), collectors, out);
                 }
             }
             MirInstr::BinOp {
@@ -237,6 +267,7 @@ impl<'f> RegisterEnds<'f> {
                     arg_places: &[index_place.as_deref().cloned()],
                     ..SubscriptArguments::default()
                 },
+                collectors,
                 out,
             ),
             MirInstr::Slice {
@@ -248,6 +279,7 @@ impl<'f> RegisterEnds<'f> {
                 call,
                 (*object, object_place.as_deref()),
                 SubscriptArguments::default(),
+                collectors,
                 out,
             ),
             MirInstr::MultiIndex {
@@ -268,6 +300,7 @@ impl<'f> RegisterEnds<'f> {
                     kwargs,
                     kwarg_places,
                 },
+                collectors,
                 out,
             ),
             MirInstr::MultiSet {
@@ -291,7 +324,7 @@ impl<'f> RegisterEnds<'f> {
                     arg_places,
                     ..SubscriptArguments::default()
                 }
-                .consumed(&contract, out);
+                .consumed(&contract, collectors, out);
                 if value_place.is_none()
                     && let Some(slot) = contract.names.len().checked_sub(1)
                     && contract.consumes(slot)
@@ -300,16 +333,6 @@ impl<'f> RegisterEnds<'f> {
                 }
             }
             _ => {}
-        }
-    }
-
-    /// The registers `term` takes ownership of: every value it carries out
-    /// of its region (a result, a region argument, a returned value) and a
-    /// raised error; an `elif` condition is only read.
-    pub fn consumed_by(&self, term: &MirTerm) -> Vec<Reg> {
-        match term {
-            MirTerm::ElifCond { values, .. } => values.clone(),
-            _ => super::terminator_regs(term),
         }
     }
 
@@ -371,19 +394,21 @@ impl<'f> RegisterEnds<'f> {
 
     /// Push what a subscript read `call` takes ownership of: its receiver
     /// register, when it retains no place and the call takes it `var` or
-    /// `deinit`, and each index its parameter takes ownership of.
+    /// `deinit`, and each index its parameter, or with `collectors` its
+    /// owning collector, takes ownership of.
     fn subscript_consumed(
         &self,
         call: &MirSubscriptCall,
         (receiver, place): (Reg, Option<&MirPlace>),
         arguments: SubscriptArguments<'_>,
+        collectors: bool,
         out: &mut Vec<Reg>,
     ) {
         if place.is_none() && owned_convention(call.receiver_convention) {
             out.push(receiver);
         }
         if let Some(callee) = self.subscript_callee(call, receiver, place) {
-            arguments.consumed(&callee.contract(), out);
+            arguments.consumed(&callee.contract(), collectors, out);
         }
     }
 }
@@ -583,12 +608,17 @@ impl CallArguments<'_> {
     }
 
     /// The argument registers `contract` takes ownership of: those bound
-    /// by value to an owned parameter or an owned collector.
-    fn consumed(&self, contract: &ParameterContract<'_>, out: &mut Vec<Reg>) {
+    /// by value to an owned parameter, or with `collectors` to an owned
+    /// collector.
+    fn consumed(&self, contract: &ParameterContract<'_>, collectors: bool, out: &mut Vec<Reg>) {
         out.extend(
             self.bindings(contract)
                 .into_iter()
-                .filter(|argument| !argument.placed && contract.consumes_binding(argument.binding))
+                .filter(|argument| {
+                    !argument.placed
+                        && (collectors || matches!(argument.binding, ArgumentBinding::Slot(_)))
+                        && contract.consumes_binding(argument.binding)
+                })
                 .map(|argument| argument.reg),
         );
     }
@@ -778,10 +808,10 @@ struct SubscriptArguments<'c> {
 
 impl SubscriptArguments<'_> {
     /// Push each plain index `contract` takes ownership of with no
-    /// retained place: a positional one binding its slot or, from there,
-    /// the collector, and a keyword one the slot of its name. A slice
-    /// descriptor is built by the call.
-    fn consumed(&self, contract: &ParameterContract<'_>, out: &mut Vec<Reg>) {
+    /// retained place: a positional one binding its slot or, from there
+    /// and with `collectors`, the collector, and a keyword one the slot of
+    /// its name. A slice descriptor is built by the call.
+    fn consumed(&self, contract: &ParameterContract<'_>, collectors: bool, out: &mut Vec<Reg>) {
         let placed = |places: &[Option<MirPlace>], index: usize| {
             places.get(index).is_some_and(Option::is_some)
         };
@@ -796,6 +826,7 @@ impl SubscriptArguments<'_> {
             };
             if let MirSubscriptArg::Index(reg) = argument
                 && !placed(self.arg_places, index)
+                && (collectors || binding != ArgumentBinding::Collector)
                 && contract.consumes_binding(binding)
             {
                 out.push(*reg);
@@ -971,6 +1002,29 @@ mod tests {
             consumed(&call(vec![Reg(1), Reg(2)]), &declarations),
             vec![Reg(1)]
         );
+    }
+
+    #[test]
+    fn an_owned_parameter_takes_its_argument_by_storage_and_a_collector_does_not() {
+        let mut declarations = declarations_with(vec![Some(ArgConvention::Var), None]);
+        declarations.functions[0].variadic_index = Some(1);
+        declarations.functions[0].variadic_convention = Some(ArgConvention::Var);
+        let call = call(vec![Reg(1), Reg(2)]);
+        let function = MirFunction::default();
+        let ends = RegisterEnds::new(&function, &declarations);
+        let mut forwarded = Vec::new();
+        ends.forwarded(&call, &mut forwarded);
+        assert_eq!(forwarded, vec![Reg(1)]);
+        assert_eq!(consumed(&call, &declarations), vec![Reg(1), Reg(2)]);
+        let store = MirInstr::DefVar {
+            var: 0,
+            src: Reg(3),
+            binding_ty: None,
+            in_place: false,
+        };
+        forwarded.clear();
+        ends.forwarded(&store, &mut forwarded);
+        assert!(forwarded.is_empty());
     }
 
     #[test]

@@ -625,6 +625,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An implicit copy at its source's last use no longer runs an
+  initializer the pin does not (R136): an owned parameter (`take(c)`,
+  `take_kw(c=c)`, past a raising later argument too), an owned receiver
+  (`c.consume()`, which printed `copy`), and an owned operator operand
+  (`f + g`) take the dying source's storage, and a chained comparison's
+  first middle (`b == c == d`) moves into its temporary instead of copying.
+  A consuming receiver over a borrowed loop or `ref` binding now copies
+  its element instead of destroying it twice. Copy elision's "cannot
+  raise" now reads `MirInstr::raise_edge` (R827).
 - A loop-free `@always_inline("nodebug")` callee of a homogeneous `read`
   collector (`def cnt(*xs: Int) -> Int: return len(xs)` called as
   `cnt(1, 2, 3)`) no longer fails verification after `inline-parametric`

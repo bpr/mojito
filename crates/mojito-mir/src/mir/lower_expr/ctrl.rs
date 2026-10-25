@@ -842,10 +842,36 @@ impl<'a> Flatten<'a> {
             return ChainMiddle::Read(value);
         };
         let owned = if place {
+            // A whole slot the first link read is read again for the copy,
+            // so the copy reads its source's memory as upstream's does, and
+            // copy elision sees the source's death right after it.
+            let source = self.f.blocks[self.cur]
+                .instrs
+                .iter()
+                .rev()
+                .find_map(|instruction| match instruction {
+                    MirInstr::LoadPlace { dest, place }
+                        if *dest == value && place.proj.is_empty() && place.through.is_none() =>
+                    {
+                        Some(place.clone())
+                    }
+                    _ => None,
+                });
+            let copied_from = match source {
+                Some(place) => {
+                    let reread = self.fresh_typed(operand.location(), Some(place.root), ty.clone());
+                    self.emit(MirInstr::LoadPlace {
+                        dest: reread,
+                        place,
+                    });
+                    reread
+                }
+                None => value,
+            };
             let copied = self.fresh_typed(operand.location(), None, ty.clone());
             self.emit(MirInstr::CopyValue {
                 dest: copied,
-                value,
+                value: copied_from,
                 constructor: None,
             });
             copied

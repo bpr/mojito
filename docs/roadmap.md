@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1417**.
+Next free ID: **R1418**.
 
 ## Ordered Work
 
@@ -1462,6 +1462,16 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     once, and `_ = xs[0]` is rejected ("cannot be implicitly copied …
     (discard assignment)"); the pin neither copies nor destroys in either
     form. Found while planning R1137.
+  - Today (2026-10-25) a `Copyable`-only `Q` is rejected ("cannot be
+    implicitly copied … (discard assignment)"), where the pin runs it and
+    prints `del 1`: the pin's discard demands no copy.
+  - Probe: over an `ImplicitlyCopyable` `C` printing its move initializer
+    and destructor, `_ = w` at `w`'s last use prints `move 3`, `del 3`,
+    where the pin prints `del 3` alone.
+  - Probe: `var u2 = t2` with `u2` never read and `t2` dying there prints
+    `move 2`, `del 2`, where the pin destroys `t2` alone (`del 2`). Copy
+    elision makes the copy `t2`'s move, but no rule deletes a move into
+    storage that dies unread, the slot form of `delete_dead_copies`.
   - Found while landing R467 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2630,21 +2640,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R136 An implicit copy at a binding's last use is not turned into
-  a move**
-
-  Problem: `var e = c` where `c` is never read again prints the
-  `ImplicitlyCopyable` struct's `copy` in Mojito; the pin prints nothing.
-  - The pin transfers a place at its last use instead of copying it; a
-    chained comparison's middle operand (`b == d == c` as `c`'s last use)
-    shows the same difference.
-  - Mojito's ownership analysis knows each last use, but lowering has
-    already chosen a copy, and a copy constructor with a side effect makes
-    the choice observable.
-  - Found while closing the chained-comparison copies (2026-10-03).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R266 A view of a whole local's owned interior is lent as the whole
   local**
 
@@ -2948,23 +2943,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     from the contract.
   - It is a verifier-facing inaccuracy in `ref.make` typing.
   - Found while landing R672 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R827 Copy elision takes every instruction outside a short list as
-  raising**
-
-  `copy_elision.rs`'s `cannot_raise` accepts only a few silent
-  instructions and non-raising calls, where drop elaboration and field
-  drops seed a handler only at a `raise`, a raising instruction's in its
-  error region (`MirInstr::raise_edge`, R831).
-  - A non-raising operator, subscript, or other instruction between a
-    dying copy and the call that takes it keeps the copy as a move instead
-    of a forward or a loan.
-  - Fix: build `cannot_raise` on `MirInstr::raise_edge` and on region ops
-    holding a `raise`, and compare `mojito run` output on the copy-elision
-    fixtures against the old binary.
-  - Found while landing R825 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7970,6 +7948,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - `analysis/copy_elision.rs` keys on a `DropVar` directly after the copy
     construction; the binding's `var.store` comes first here, and a match
     binding reads through the hidden `$match` slot.
+  - The `var u = t` form now moves as at the pin (R136's fixture
+    `assets/ok/implicit_copy_last_use_forwards.mojo`); the match-binding
+    forms remain.
   - Probes: `conformance/probes/match_binding_kinds_on_temporary.mojo`,
     `match_guard_copy_drop.mojo`, and
     `match_temporary_subject_survives_failed_var_case.mojo` keep the traces;
@@ -12699,6 +12680,22 @@ residue found inside a task moves to the task that owns its fix.
   - Upstream's table destroys entries in slot order.
   - `Int` keys happened to match insertion order in every probe.
   - Found while landing R694 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1417 An empty `List` starts at capacity 4, where the pin's starts
+  at 0**
+
+  The bundled `List()` allocates four slots and doubles, where upstream's
+  starts with dangling storage and grows to `capacity * 2 | (capacity ==
+  0)`: 1, 2, 4, and so on.
+  - An element type printing its move initializer shows it: three appends
+    print each element's `move` once in Mojito, where the pin also prints
+    `move 1` at the second append and `move 1`, `move 2` at the third.
+  - `capacity()` differs too.
+  - Lever: `__init__(out self)` and `grow` in
+    `stdlib/std/collections/list.mojo`.
+  - Found while planning R136 (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

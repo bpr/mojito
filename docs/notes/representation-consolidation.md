@@ -17,16 +17,15 @@ the entries named. A single command cannot use both.
 
 ## Recommended order
 
-1. **Finish gap D** (size). Two entries remain from the first pass (gap
-   B closed with R1338 on 10-25):
+1. **Finish gap D** (size). One entry remains from the first pass (gap
+   B closed with R1338 and R136 with its copy elision on 10-25):
    - R1355 gives a memory-only call result one slot, chosen at the call.
      That closes or shrinks about 13 `ownership` entries (gap D′ below).
-   - R136 turns a copy at a binding's last use into a move.
 
    R1356, the verifier rule, comes last, behind the copy entries it names.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1355 --only R136 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1355 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1356 -n 0
    ```
 
@@ -187,7 +186,7 @@ are conformance only.
 
 | gap | upstream's shape | core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
-| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, R136, then R1356 | about 25 (below) | yes |
+| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1356 | about 25 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662 (= R950), R663, R471 | R788, R378, R472, R508, R602, R1194 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1360–R1363, R705, R424, R578 → R577; R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376 → R1377 → R1378; R533, R1344 → R1345 for the other closure forms | R1104, R100, R534, R176 | yes |
@@ -215,8 +214,9 @@ are conformance only.
     R1336.
 - **R1355 shrinks** R691, R1234, R118, R54, R1221, R718, and R121's
   second probe.
-- **R136** (copy versus move chosen before last uses are known) closes
-  R473 and shrinks R1353, R688, and R827.
+- **R136** landed 10-25: an implicit copy at its source's last use
+  forwards or moves, and R827 closed with it. R473 stays open: its
+  discard still copies, and a move into storage that dies unread runs.
 - **R1356 then rejects the class.** It waits on R1157, R1158, R1249, R117,
   R677, R1353, R1354, R1334, and R1293.
 

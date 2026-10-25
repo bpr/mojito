@@ -5142,6 +5142,23 @@ current Mojo:
   construction keeps the move, as at the pin. A type parameter's
   `T(copy=x)` (still `ConstructTypeParam` at that point), a field source,
   `.copy()`, and a source that dies only on a successor edge stay copies.
+  An implicit copy of a dying whole slot (a `var.use` copy, or a struct's
+  `value.copy` of a fresh load, whatever constructor it already names)
+  gets the same treatment: one an owned parameter, an owned receiver, or
+  an owned operator operand takes unbound at its setup, with nothing
+  between the copy and that call that can raise or names the source
+  (`taken_at_setup`), becomes the source's `UseVar Forward`, so the callee
+  takes the source's storage with no initializer, as upstream's
+  `optimizeCopyDestroys` hands a dying source to an owned `lit.call`
+  argument; one bound to storage (a binding, an owning collector's
+  element, a chain's `$chain_middle_r`) becomes its move. Which operands a
+  call takes by storage is `mir::RegisterEnds::forwarded`, the slot-bound
+  subset of `RegisterEnds::consumed`. A consuming receiver's implicit copy
+  of a named receiver is the slot's copying read, as an owned argument's
+  is, and a chain's first middle copies from a fresh load of its slot, so
+  both copies sit right before their source's death. A scan's "cannot
+  raise" is `MirInstr::raise_edge` being absent on an instruction holding
+  no region.
   A `_ = e` statement is the same discard: HIR binds its value to a fresh
   per-statement `$discard_s` slot, typed by that value alone and dead at its
   definition, so `_` never names a function-wide local.

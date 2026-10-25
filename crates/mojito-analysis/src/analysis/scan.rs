@@ -285,28 +285,6 @@ pub(super) fn vars_moved(i: &MirInstr) -> Vec<VarId> {
     }
 }
 
-/// Whether executing this instruction can surface a caught
-/// `RuntimeError::Raised`, transferring control to an enclosing handler.
-/// Minimal allowlist of provably silent instructions; everything else — calls,
-/// subscripts, nested `Try`, ... — counts as a potential raise.
-/// Copy elision and field-drop placement use it; raising→silent could let a
-/// handler observe a vacated slot, so the allowlist stays minimal.
-/// (Non-`Raised` runtime errors abort the program, so drops are unobservable
-/// on those paths.)
-pub(super) const fn may_raise(instr: &MirInstr) -> bool {
-    !matches!(
-        instr,
-        MirInstr::DefVar { .. }
-            | MirInstr::StoreToMem { .. }
-            | MirInstr::DeclareVar { .. }
-            | MirInstr::UseVar { .. }
-            | MirInstr::DropVar { .. }
-            | MirInstr::Drop { .. }
-            | MirInstr::ConsumeVar { .. }
-            | MirInstr::KeepAlive { .. }
-    )
-}
-
 /// Whether this instruction is a nested `try`, whose regions may raise
 /// outward: a walk that does not enter it seeds the raise channel here. A
 /// raising call raises through its error region's `raise` terminator.

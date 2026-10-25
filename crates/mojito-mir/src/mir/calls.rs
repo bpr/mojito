@@ -1496,7 +1496,9 @@ impl<'a> Flatten<'a> {
     /// setup frame ([`Self::open_call_setup`]). A receiver the method reads
     /// or owns by value is read at setup, after the arguments, as Mojo's
     /// call setup reads it; a `mut`/`ref`/`deinit` receiver binds its place
-    /// and stays where written.
+    /// and stays where written. A copied named receiver is read as an owned
+    /// argument is, by its slot's copying use, as upstream copies argument
+    /// 0 from the name's memory.
     pub(super) fn lower_setup_receiver(
         &mut self,
         call: Node<'a>,
@@ -1504,6 +1506,20 @@ impl<'a> Flatten<'a> {
         copied: bool,
     ) -> (Reg, Option<MirPlace>) {
         self.lower_setup_receiver_with(call, receiver, |this| {
+            if copied
+                && matches!(receiver.checked.op, CheckedOp::Identifier(_))
+                && !receiver.is_fresh_temporary()
+            {
+                let value = this.expr(receiver);
+                let read_copied = matches!(
+                    this.f.blocks[this.cur].instrs.last(),
+                    Some(MirInstr::UseVar { dest, mode: UseMode::Copy, .. }) if *dest == value
+                );
+                if read_copied {
+                    return (value, None);
+                }
+                return (this.copy_consuming_receiver(receiver, value, None), None);
+            }
             let (value, place) = this.lower_method_receiver(call, receiver);
             let value = if copied {
                 this.copy_consuming_receiver(receiver, value, place.as_ref())

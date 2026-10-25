@@ -283,7 +283,7 @@ pub fn elaborate_drops_function(
     });
     let mut elaborated = elaborate_drops(function, &slots, receiver, &values, declarations);
     refine_receiver_drops(&mut elaborated, name, declarations);
-    elide_dying_copies(&mut elaborated);
+    elide_dying_copies(&mut elaborated, declarations);
     mojito_mir::mir::refine_pack_drops(&mut elaborated, pack, &|ty| {
         declarations.drop_runs_no_code(ty)
     });
