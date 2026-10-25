@@ -1,0 +1,73 @@
+  functions: [
+      fn {
+        name: bump,
+        registers: 7,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r6, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 52, end: 53, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 52, end: 53, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 57, end: 58, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 57, end: 58, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 52, end: 53, origin: absent }) }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 52, end: 53, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r1, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
+              ref.read { dest: %r0, reference: %r1 },
+              const { dest: %r2, value: int_literal(1) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              binary { op: add, dest: %r4, a: %r0, b: %r3, resolved: absent, raises: absent },
+              ref.make { dest: %r6, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
+              ref.write { reference: %r6, value: %r4 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: ref_field,
+        registers: 14,
+        vars: 3,
+        var_names: [x, v, "x$inline2"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: View, arguments: [] } }, var_type { var: $v2, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r7, type: IntLiteral }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r11, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r12, type: ref { referent: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable }, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r13, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: absent }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int(1) },
+              var.store { var: $v0, src: %r0, binding_type: present(Int), in_place: false },
+              var.declare { var: $v1 },
+              ref.make { dest: %r1, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              place.store_ref { place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(src), type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }], type: present(ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable }), through: absent }, reference: %r1 },
+              place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(src), type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }], type: present(ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable }), through: absent } },
+              ref.make { dest: %r12, place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(src), type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }], type: present(ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable }), through: absent } },
+              ref.read { dest: %r13, reference: %r12 },
+              var.store { var: $v2, src: %r13, binding_type: present(ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable }), in_place: false },
+              loop { results: [], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [ref.make { dest: %r6, place: place { root: $v2, root_type: present(ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable }), projections: [], type: present(Int), through: present($v2) } }, ref.read { dest: %r5, reference: %r6 }, const { dest: %r7, value: int_literal(1) }, literal.materialize { dest: %r8, value: %r7, target: Int }, binary { op: add, dest: %r9, a: %r5, b: %r8, resolved: absent, raises: absent }, ref.make { dest: %r11, place: place { root: $v2, root_type: present(ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable }), projections: [], type: present(Int), through: present($v2) } }, ref.write { reference: %r11, value: %r9 }], terminator: break { label: present(loop4294967295), values: [] } }] },
+              const { dest: %r3, value: none },
+              drop.var { var: $v1 },
+              var.use { dest: %r4, var: $v0, mode: copy },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]

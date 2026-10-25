@@ -1,0 +1,35 @@
+  functions: [
+      fn {
+        name: read,
+        registers: 4,
+        vars: 2,
+        var_names: [p, v],
+        params: 1,
+        param_types: [struct_type { name: Pt, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Pt, arguments: [] } }, var_type { var: $v1, type: struct_type { name: View, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: ref { referent: struct_type { name: Pt, arguments: [] }, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.declare { var: $v1 },
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [], type: present(struct_type { name: Pt, arguments: [] }), through: absent } },
+              place.store_ref { place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(src), type: ref { referent: struct_type { name: Pt, arguments: [] }, origin: origin_untracked { mutable: true }, mutability: mutable } }], type: present(ref { referent: struct_type { name: Pt, arguments: [] }, origin: origin_untracked { mutable: true }, mutability: mutable }), through: absent }, reference: %r0 },
+              const { dest: %r1, value: int(0) },
+              place.store { place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(index), type: Int }], type: present(Int), through: absent }, src: %r1 },
+              place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(src), type: ref { referent: struct_type { name: Pt, arguments: [] }, origin: origin_untracked { mutable: true }, mutability: mutable } }, projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r3, place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(index), type: Int }], type: present(Int), through: absent } },
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      }
+  ]

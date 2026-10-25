@@ -92,21 +92,16 @@ impl CheckedProgram {
     /// declares one for every `@fieldwise_init` struct: one parameter per
     /// field, named after it, with the convention the check recorded
     /// ([`crate::checked::CheckedField::fieldwise_convention`]), storing
-    /// each argument into its field. A struct that also declares an
-    /// `__init__` gets none, and so does one with a `ref` field, which
-    /// upstream has no counterpart of: its construction builds the value.
+    /// each argument into its field. A `ref` field's parameter is the
+    /// `ref [Self.o] field: T` a written constructor spells
+    /// ([`crate::checked::CheckedField::fieldwise_ref`]). A struct that also
+    /// declares an `__init__` gets none.
     pub fn synthesizes_fieldwise_constructor(&self, declaration: &CheckedStruct) -> bool {
         declaration.fieldwise_init
             && !declaration
                 .methods
                 .iter()
                 .any(|method| method.registered == "__init__")
-            && !declaration.fields.iter().any(|field| {
-                field
-                    .ty
-                    .as_ref()
-                    .is_some_and(|ty| matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
-            })
     }
 
     /// Whether the compiler synthesizes `declaration`'s destructor, as

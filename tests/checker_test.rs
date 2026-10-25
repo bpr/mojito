@@ -8687,3 +8687,30 @@ fn comptime_assert_rejects_a_dynamic_condition_and_a_computed_message() {
         "{message}"
     );
 }
+
+#[test]
+fn fieldwise_ref_field_construction_binds_as_its_synthesized_init_call() {
+    // The construction is the synthesized `View.__init__`'s call, whose
+    // `ref` parameter retains the argument's place and lends it to the
+    // constructed view, as a written `ref [Self.o]` constructor's does.
+    let source = "@fieldwise_init\nstruct View[o: MutOrigin]:\n    var src: ref[Self.o] Int\n    var index: Int\n\ndef main():\n    var n = 1\n    var v = View(n, 0)\n    v.src = 2\n    print(n)\n";
+    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let has = |predicate: &dyn Fn(&SemanticAdjustment) -> bool| {
+        checked
+            .expressions()
+            .iter()
+            .any(|expression| expression.adjustments.iter().any(predicate))
+    };
+    assert!(has(&|adjustment| matches!(
+        adjustment,
+        SemanticAdjustment::ResolveCallable(target) if target == "View.__init__"
+    )));
+    assert!(has(&|adjustment| matches!(
+        adjustment,
+        SemanticAdjustment::BorrowRefArguments { arguments, .. } if arguments == &[(0, true)]
+    )));
+    assert!(has(&|adjustment| matches!(
+        adjustment,
+        SemanticAdjustment::RetainCallPlace
+    )));
+}

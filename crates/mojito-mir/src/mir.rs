@@ -1420,7 +1420,12 @@ fn lower_synthesized_member(
 /// named after it, with the convention the check recorded, and an
 /// `out self` it stores each argument into. An owned (`var`) argument
 /// moves in by its type's move constructor, which [`name_constructors`]
-/// names, and a read one is copied as the value itself.
+/// names, and a read one is copied as the value itself. A `ref` field's
+/// parameter is the `ref` one of its referent type a written
+/// `ref [Self.o] field: T` declares, its contract the check's
+/// ([`mojito_checked::checked::CheckedField::fieldwise_ref`]), and the
+/// field stores a reference to it, as the written constructor's
+/// `self.field = field` does.
 fn lower_fieldwise_constructor(
     declaration: &mojito_checked::checked::CheckedStruct,
     parameters: &[ParamDecl],
@@ -1440,15 +1445,56 @@ fn lower_fieldwise_constructor(
             ))
         })
         .collect();
-    let param_types: Vec<Ty> = fields.iter().map(|(_, ty, _)| ty.clone()).collect();
+    let referent = |ty: &Ty| match ty.kind() {
+        TyKind::Ref(reference) => Some(reference.referent.clone()),
+        _ => None,
+    };
+    let param_types: Vec<Ty> = fields
+        .iter()
+        .map(|(_, ty, _)| referent(ty).unwrap_or_else(|| ty.clone()))
+        .collect();
     let mut instrs = Vec::new();
     let mut reg_types = HashMap::new();
     for (position, (field, ty, convention)) in fields.iter().enumerate() {
-        let reg = Reg(position as u32);
+        let reg = Reg(reg_types.len() as u32);
+        let var = (position + 1) as VarId;
+        let place = MirPlace {
+            root: 0,
+            root_ty: Some(receiver.clone()),
+            proj: vec![Proj::Field((*field).to_string())],
+            projection_tys: vec![ty.clone()],
+            ty: Some(ty.clone()),
+            through: None,
+        };
+        if let Some(referent) = referent(ty) {
+            let reference: Ty = TyKind::Ref(mojito_types::origin::RefTy {
+                referent: referent.clone(),
+                origin: mojito_types::origin::Origin::Untracked { mutable: true },
+                mutability: mojito_types::origin::Mutability::Mutable,
+            })
+            .into();
+            reg_types.insert(reg.0, reference);
+            instrs.push(MirInstr::MakeRef {
+                dest: reg,
+                place: MirPlace {
+                    root: var,
+                    root_ty: Some(referent.clone()),
+                    proj: Vec::new(),
+                    projection_tys: Vec::new(),
+                    ty: Some(referent),
+                    through: Some(var),
+                },
+            });
+            instrs.push(MirInstr::StoreRef {
+                place,
+                reference: reg,
+            });
+            continue;
+        }
         reg_types.insert(reg.0, ty.clone());
         instrs.push(MirInstr::UseVar {
             dest: reg,
-            var: (position + 1) as VarId,
+            var,
             mode: if is_owned(convention) {
                 UseMode::Move
             } else {
@@ -1456,20 +1502,20 @@ fn lower_fieldwise_constructor(
             },
             constructor: None,
         });
-        instrs.push(MirInstr::Store {
-            place: MirPlace {
-                root: 0,
-                root_ty: Some(receiver.clone()),
-                proj: vec![Proj::Field((*field).to_string())],
-                projection_tys: vec![ty.clone()],
-                ty: Some(ty.clone()),
-                through: None,
-            },
-            src: reg,
-        });
+        instrs.push(MirInstr::Store { place, src: reg });
     }
     let symbol = format!("{name}.__init__");
     let conventions: Vec<Option<ArgConvention>> = fields.iter().map(|field| field.2).collect();
+    let fieldwise_refs: Vec<Option<mojito_types::origin::RefSig>> = declaration
+        .fields
+        .iter()
+        .filter(|field| field.ty.is_some())
+        .map(|field| field.fieldwise_ref.clone())
+        .collect();
+    let ref_params: Vec<bool> = fields
+        .iter()
+        .map(|(_, ty, _)| matches!(ty.kind(), TyKind::Ref(_)))
+        .collect();
     let arity = fields.len();
     declarations.functions.push(MirFunctionDeclaration {
         lowered_name: symbol.clone(),
@@ -1496,8 +1542,11 @@ fn lower_fieldwise_constructor(
         returns_reference: false,
         raises: false,
         error_ty: None,
-        ref_params: vec![false; arity],
-        param_writes: conventions.iter().map(is_owned).collect(),
+        ref_params: ref_params.clone(),
+        param_writes: mojito_checked::checked::DeclarationEffect::param_writes(
+            &conventions,
+            &fieldwise_refs,
+        ),
         availability: Vec::new(),
         enclosing: None,
         region_binders: Vec::new(),
@@ -1526,7 +1575,7 @@ fn lower_fieldwise_constructor(
                 .chain(conventions.iter().map(is_owned))
                 .collect(),
             deinit_params: vec![false; n_params],
-            ref_params: vec![false; n_params],
+            ref_params: std::iter::once(false).chain(ref_params).collect(),
             var_tys: var_types
                 .into_iter()
                 .enumerate()

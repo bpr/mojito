@@ -3166,19 +3166,9 @@ impl Checker {
         }
         // The construction calls the synthesized fieldwise `__init__`
         // (`CheckedProgram::synthesizes_fieldwise_constructor`), whose
-        // parameters bind the field-ordered arguments by its conventions: an
-        // owned one takes its argument as a written `var` parameter does.
-        // A struct with a `ref` field has none, and builds its value itself.
-        if !info
-            .fields
-            .iter()
-            .any(|(_, ty)| matches!(ty.kind(), TyKind::Ref(_)))
-        {
-            self.record_at(span.clone()).overload_target = Some(format!("{name}.__init__"));
-            let conventions = self.fieldwise_conventions(&info.fields);
-            let slots: Vec<ArgSlot> = (0..args.len()).map(ArgSlot::Positional).collect();
-            self.record_argument_borrows(&slots, &conventions, Gathered::NONE, args, &[], None);
-        }
+        // parameters bind the field-ordered arguments by its conventions
+        // (bound below, once each field's type is solved).
+        self.record_at(span.clone()).overload_target = Some(format!("{name}.__init__"));
         let field_names: Vec<String> = info.fields.iter().map(|(name, _)| name.clone()).collect();
         self.record_construction_instantiation(
             span,
@@ -3203,6 +3193,13 @@ impl Checker {
             ids: mojito_types::param_expr::ParamBindings::new(),
             origins: HashMap::new(),
         };
+        // The type each synthesized parameter binds: a `ref` field's is its
+        // referent, as a written `ref [Self.o] field: T` parameter's is.
+        let parameter_ty = |ty: Ty| match ty.kind() {
+            TyKind::Ref(reference) => reference.referent.clone(),
+            _ => ty,
+        };
+        let mut bound = Vec::with_capacity(args.len());
         for (i, (aty, fty)) in arg_tys.iter().zip(&field_tys).enumerate() {
             // Origin binders first, as for a constructor's parameters.
             let expected = substitute_assoc(
@@ -3228,17 +3225,42 @@ impl Checker {
                     context: format!("field {} of '{}'", i + 1, name),
                 });
             }
-            if self.type_contains_reference(&expected) {
-                self.mark_reference_storage_uses(&args[i], &expected);
-            }
+            bound.push(parameter_ty(expected.clone()));
+            // A `ref` field's argument binds its place, as the parameter's
+            // `ref` convention retains it ([`Self::record_constructor_call`]).
             if matches!(expected.kind(), TyKind::Ref(_)) {
                 continue;
+            }
+            if self.type_contains_reference(&expected) {
+                self.mark_reference_storage_uses(&args[i], &expected);
             }
             // A constructor stores each argument in a field by value — a consuming
             // position.
             self.check_consuming(&args[i], aty, &format!("field {} of '{}'", i + 1, name))?;
         }
-        Ok(self.constructed_type(name, tyargs, &partitioned.tail, &origin_bindings))
+        let constructed = self.constructed_type(name, tyargs, &partitioned.tail, &origin_bindings);
+        let conventions = self.fieldwise_conventions(&info.fields);
+        let ref_params = Self::fieldwise_ref_params(info);
+        let slots: Vec<ArgSlot> = (0..args.len()).map(ArgSlot::Positional).collect();
+        let exclusivity = ConstructorExclusivity {
+            callee: constructed.to_string(),
+            parameter_names: &field_names,
+            declared: field_tys
+                .iter()
+                .map(|ty| parameter_ty(origin_bindings.substitute(ty)))
+                .collect(),
+            bound,
+            nested_origins: NestedOrigins::AsDeclared,
+            gathered: CollectedArguments::none(),
+        };
+        self.record_constructor_call(
+            span,
+            name,
+            &ConstructorBinding::fieldwise(&slots, &conventions, &ref_params, exclusivity),
+            args,
+            &[],
+        )?;
+        Ok(constructed)
     }
 
     /// The values a spread of a type list binds a pack to: one type per
@@ -4473,6 +4495,28 @@ impl<'a> ConstructorBinding<'a> {
             collected,
             raises: sig.raises,
             error: sig.error.as_ref(),
+            exclusivity,
+        }
+    }
+
+    /// The synthesized fieldwise `__init__`'s binding of the field-ordered
+    /// arguments, by the conventions and `ref` contracts the check gives its
+    /// parameters ([`Checker::fieldwise_conventions`],
+    /// [`Checker::fieldwise_ref_params`]): it gathers nothing and never
+    /// raises.
+    const fn fieldwise(
+        slots: &'a [ArgSlot],
+        conventions: &'a [Option<ArgConvention>],
+        ref_params: &'a [Option<mojito_types::origin::RefSig>],
+        exclusivity: ConstructorExclusivity<'a>,
+    ) -> Self {
+        Self {
+            slots,
+            conventions,
+            ref_params,
+            collected: Gathered::NONE,
+            raises: false,
+            error: None,
             exclusivity,
         }
     }

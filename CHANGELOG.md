@@ -852,6 +852,28 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `@fieldwise_init` struct with a `ref` field now gets its synthesized
+  `nodebug` `__init__`, as every other fieldwise struct does (R1278): a
+  `ref` field's parameter is the `ref [Self.o] field: T` a written
+  constructor spells, so the construction binds the argument's place,
+  lends it to the value, and is alias-checked as that `__init__`'s call;
+  `Two(x, x)` over two mutable `ref` fields is now rejected as the written
+  constructor's call is
+  (`assets/extensions/type_error/ref_field_fieldwise_aliasing_arguments.mojo`).
+  No call names a struct for its fieldwise value any more, so the VM's
+  struct-named `construct` arm, Pliron's `lower_constructor`, and the
+  struct-name mappings in `inline-parametric` and the loan analysis's
+  `CalleeRefParams` are gone; a display's empty collection still names
+  its struct, which the elaborator resolves by arity (R1338).
+- Inlining a `nodebug` callee with a `ref` parameter no longer breaks on a
+  `ref` field: `sroa` keeps a struct with a `ref` field whole, where
+  splitting it crashed the native executable, and `inline-parametric`
+  binds a `mut` or `ref` parameter passed a `ref` field (`Pane(self.items,
+  …)`, `bump(v.src)`) to the handle the field stores, where the VM had
+  bound the field's own slot
+  (`assets/extensions/ok/ref_field_written_nodebug_init.mojo`,
+  `ref_field_written_nodebug_chained_view.mojo`,
+  `ref_field_nodebug_mut_argument.mojo`).
 - Pliron no longer tracks or releases owned register temporaries of its
   own: every owned register's end is MIR's, a `drop.reg` or the operand
   that takes it, as upstream's `CheckLifetimes` has it (R1321). The

@@ -63,7 +63,7 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              call { dest: %r1, func: Box, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(4))], spread: absent },
+              call { dest: %r1, func: "Box.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(4))], spread: absent },
               var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), in_place: true },
               place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: Box, arguments: [value_arg(ct_int(4))] }), projections: [projection { op: field(value), type: Int }], type: present(Int), through: absent } },
               drop.var { var: $v1 },

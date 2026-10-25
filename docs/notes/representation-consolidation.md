@@ -39,13 +39,15 @@ disappear. Four such gaps were found, and one of them reaches far outside
 | gap | upstream's shape | core entries | entries that shrink or vanish |
 |---|---|---|---|
 | A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R890 (R733, R833, R1129, R1106, R829, R1272, R1264, R1113, R1290, R956, and R832 closed) |
-| B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988 (landed) | R1278, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
+| B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988, R1278 (landed) | R1338, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102, R1103, R1073 (landed) | R1304 (R1070 and R1090 closed) |
 | D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931, R1306, R1310, R1311, R1312, R1313, R1309, R1319, R1320, R1325, R1329, R1327, R1336, R1321 (landed) | R1326, R1328, R1330, R1337 (R1252, R1267, R932, R832, and R1064 closed) |
 
 Each gap's fix also removes a place where a backend looks something up by
 type instead of reading a name from MIR: the struct-named construction
-(R1278; R1029 removed the by-arity lookup and R1283 the struct-named copy), and the keyword collector at binding (R1070; R1102 had the call build the positional one); R832 removed the flag sweep at
+(R1029 removed the backends' by-arity lookup, R1283 the struct-named copy,
+and R1278 the fieldwise construction; a display's empty collection is the
+last, which the elaborator resolves by arity, R1338), and the keyword collector at binding (R1070; R1102 had the call build the positional one); R832 removed the flag sweep at
 return, and R1090 had each pack element's drop name its destructor. R1031 → R1109 is the one
 remaining lookup of that kind outside the four gaps.
 
@@ -120,8 +122,10 @@ entry's probe is "one instance per `n` where the pin has one".
 - R1050 makes a copy constructor restate its struct's parameters, as
   `__init__` does.
 - Together they left R1029 a deletion, and it landed: neither backend
-  resolves a constructor by arity. A call naming a struct remains only for
-  a fieldwise struct with a `ref` field (R1278).
+  resolves a constructor by arity. R1278 (10-24) gave a fieldwise struct
+  with a `ref` field its synthesized `__init__` too, so a call naming a
+  struct remains only for a display's empty collection, which the
+  elaborator resolves by arity before either backend sees it (R1338).
   R1097 moved `T()`/`T(copy=x)` into the shared
   `mir::construct_type_parameters`, and R1283 (10-23) made its struct arm
   name the `Defaultable` witness and the `__copyinit__` member rather than
@@ -195,8 +199,8 @@ entry's probe is "one instance per `n` where the pin has one".
 ## Recommended order
 
 1. **Gap B**, for size. R1049, R1050, R1052, R1029, R1097, R988, and
-   R1075 landed 10-22, and R1283 on 10-23. What remains is R1278, whose
-   prerequisites R1277 and R1082 landed 10-24.
+   R1075 landed 10-22, R1283 on 10-23, and R1278 on 10-24. What remains
+   is R1338, the display's struct-named empty collection.
 
 2. **Gap A**, for leverage. Its core has landed (R906, R831, R20, R884),
    and the 10-23 re-check closed R733 and reworded R1113 and R890.

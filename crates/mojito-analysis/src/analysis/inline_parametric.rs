@@ -14,10 +14,9 @@
 //! pin inlines (R1288).
 //!
 //! A callee this pass inlines is a function, a method, a subscript's
-//! accessor, which calls it on the subscripted base, a struct's one
-//! `__init__`, which a call naming the struct calls, or a nested `def`,
-//! which a call through a closure the caller makes calls, whose own
-//! compile-time parameters the call binds in full; it takes its arguments
+//! accessor, which calls it on the subscripted base, an initializer, or a
+//! nested `def`, which a call through a closure the caller makes calls,
+//! whose own compile-time parameters the call binds in full; it takes its arguments
 //! into `read`, owned, `mut`, or `ref` parameters, or into a `deinit`
 //! one, which takes the slot the argument forwards or loads whole in
 //! place, as a destructor takes the slot a drop of it forwards, or the
@@ -88,7 +87,10 @@
 //! An owned parameter, or a `read` one of a type no destructor tears down,
 //! is a fresh slot the argument initializes, and so is a `read` one passed
 //! a trivial copy of a slot of a closed type; a `mut` or `ref` parameter,
-//! a `mut self` included, is the caller's place the call passes, and any
+//! a `mut self` included, is the caller's place the call passes, or, when
+//! that place is a `ref` field, a fresh `ref` slot holding the handle the
+//! field stores, through which the body's places go, since the handle is
+//! the address the call passes (R1278); and any
 //! other `read` parameter the caller's place the call retained for it or
 //! the argument was loaded from, directly or through a reference the same
 //! block made (`self.copy()` reading `self` through a `ref.make`), as
@@ -361,6 +363,11 @@ enum Binding {
     /// passes by address: the body's places compose with it, and the
     /// call's consumption of it is the body's end of the parameter.
     Part { place: MirPlace, argument: Reg },
+    /// A `mut` or `ref` parameter whose caller's place is a `ref` field:
+    /// a fresh `ref` slot initialized with the handle the field stores,
+    /// the address the call passes, and every body place on the parameter
+    /// goes through the slot ([`handle_place`]).
+    Handle(MirPlace),
     /// A constructor's `out self`: a fresh slot the body initializes and
     /// the call's result takes forwarded.
     Out,
@@ -862,8 +869,8 @@ impl<'c> Inliner<'_, 'c> {
     /// parameters and its owner's bound to the call's, and the binding of
     /// each of its parameters, when the pass inlines the call.
     ///
-    /// A call naming an initializer, or a struct (a call of its `__init__`),
-    /// constructs: the initializer's `out self` is the call's result. A
+    /// A call naming an initializer constructs: the initializer's
+    /// `out self` is the call's result. A
     /// nested `def`'s direct call binds its leading capture parameters to
     /// the captured places it passes; a call through a closure the caller
     /// makes is a call of the nested `def` it lifts, whose captures bind
@@ -899,18 +906,11 @@ impl<'c> Inliner<'_, 'c> {
                 spread,
                 ..
             } => {
-                let struct_named = self.declarations.structure(&func.0).is_some();
-                let target = if struct_named {
-                    Cow::Owned(format!("{}.__init__", func.0))
-                } else {
-                    Cow::Borrowed(func.0.as_str())
-                };
-                let constructed =
-                    struct_named || mojito_symbol::symbol::is_initializer_symbol(&func.0);
-                let receiver = constructed.then_some(Receiver::Constructed);
+                let receiver = mojito_symbol::symbol::is_initializer_symbol(&func.0)
+                    .then_some(Receiver::Constructed);
                 (
                     *dest,
-                    target,
+                    Cow::Borrowed(func.0.as_str()),
                     CallArguments {
                         args,
                         arg_places,
@@ -1424,9 +1424,23 @@ impl<'c> Inliner<'_, 'c> {
             Some(Binding::Slot(slot)) => *slot,
             _ => var + base,
         });
-        let bound = |var: VarId| match bindings.get(var.checked_sub(base)? as usize)? {
-            Binding::Place(place) | Binding::Part { place, .. } => Some(place),
-            Binding::Value(_) | Binding::Default { .. } | Binding::Out | Binding::Slot(_) => None,
+        let handles: Vec<Option<MirPlace>> = bindings
+            .iter()
+            .enumerate()
+            .map(|(param, binding)| match binding {
+                Binding::Handle(field) => Some(handle_place(base + param as VarId, field)),
+                _ => None,
+            })
+            .collect();
+        let bound = |var: VarId| {
+            let param = var.checked_sub(base)? as usize;
+            match bindings.get(param)? {
+                Binding::Place(place) | Binding::Part { place, .. } => Some(place),
+                Binding::Handle(_) => handles[param].as_ref(),
+                Binding::Value(_) | Binding::Default { .. } | Binding::Out | Binding::Slot(_) => {
+                    None
+                }
+            }
         };
         // The call's consumption of a part-bound parameter's place is the
         // body's end of it.
@@ -1612,6 +1626,39 @@ impl<'c> Inliner<'_, 'c> {
                     }
                     caller.instrs.push(MirInstr::DeclareVar {
                         var: var + var_base,
+                    });
+                }
+                // The handle the field stores, read through a reference to
+                // the field, as the synthesized copy of a `ref` field reads
+                // it, since a load of the field reads through the handle.
+                Binding::Handle(field) => {
+                    let Some(handle_ty) = field.ty.clone() else {
+                        continue;
+                    };
+                    let TyKind::Ref(reference) = handle_ty.kind() else {
+                        continue;
+                    };
+                    let field_ref = TyKind::Ref(mojito_types::origin::RefTy {
+                        referent: handle_ty.clone(),
+                        ..reference.clone()
+                    })
+                    .into();
+                    let field_ref = fresh_register(function, field_ref, call_span.as_ref());
+                    caller.instrs.push(MirInstr::MakeRef {
+                        dest: field_ref,
+                        place: field.clone(),
+                    });
+                    let handle = fresh_register(function, handle_ty.clone(), call_span.as_ref());
+                    caller.instrs.push(MirInstr::ReadRef {
+                        dest: handle,
+                        reference: field_ref,
+                    });
+                    function.var_tys.insert(var + var_base, handle_ty.clone());
+                    caller.instrs.push(MirInstr::DefVar {
+                        var: var + var_base,
+                        src: handle,
+                        binding_ty: Some(handle_ty),
+                        in_place: false,
                     });
                 }
                 Binding::Place(_) | Binding::Slot(_) | Binding::Part { .. } => {}
@@ -2010,6 +2057,12 @@ fn argument_binding(
     let owned = callee.owned_params.get(param).copied().unwrap_or(false);
     let deinit = callee.deinit_params.get(param).copied().unwrap_or(true);
     let reference = is_reference_parameter(callee, param);
+    if reference
+        && let Some(place) = place
+        && stores_handle(place)
+    {
+        return Some(Binding::Handle(place.clone()));
+    }
     if (reference || (callee.returns_reference && !owned && !deinit))
         && let Some(place) = place
     {
@@ -2047,6 +2100,36 @@ fn argument_binding(
         .cloned()
         .or_else(|| loaded_place(block, index, argument))
         .map(Binding::Place)
+}
+
+/// Whether `place` is a `ref` field, a projected place of a `ref` type
+/// reached directly, which designates the field's referent: a reference to
+/// it is the handle the field stores, not the field's own storage. A place
+/// reached through a local reference (`through`) already designates the
+/// referent behind that reference's handle.
+fn stores_handle(place: &MirPlace) -> bool {
+    place.through.is_none()
+        && !place.proj.is_empty()
+        && matches!(place.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+}
+
+/// The place a [`Binding::Handle`] parameter's slot `slot` binds the body's
+/// places to: the referent of the handle the slot holds, read through it,
+/// as a `ref` binding's place is.
+fn handle_place(slot: VarId, field: &MirPlace) -> MirPlace {
+    let handle_ty = field.ty.clone();
+    let referent = handle_ty.as_ref().and_then(|ty| match ty.kind() {
+        TyKind::Ref(reference) => Some(reference.referent.clone()),
+        _ => None,
+    });
+    MirPlace {
+        root: slot,
+        root_ty: handle_ty,
+        proj: Vec::new(),
+        projection_tys: Vec::new(),
+        ty: referent,
+        through: Some(slot),
+    }
 }
 
 /// Where the straight-line run holding `block`'s instruction `index`
@@ -2554,10 +2637,15 @@ fn rebind_blocks<'b>(
                 }
                 _ => {}
             }
-            if instruction_slots(instruction)
+            // A handle-bound parameter's places are rooted at its own slot,
+            // which the instruction may name only as such a place.
+            let placed: Vec<VarId> = instruction_places(instruction)
                 .into_iter()
-                .any(|var| bound(var).is_some())
-            {
+                .flat_map(|place| std::iter::once(place.root).chain(place.through))
+                .collect();
+            if instruction_slots(instruction).into_iter().any(|var| {
+                bound(var).is_some_and(|outer| outer.root != var || !placed.contains(&var))
+            }) {
                 return None;
             }
         }

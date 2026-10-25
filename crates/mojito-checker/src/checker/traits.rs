@@ -9,6 +9,7 @@ use super::*;
 use mojito_checked::declaration::{Witness, WitnessTable, compiler_trait_declaration};
 use mojito_symbol::symbol::{TRAIT_DISPATCH, qualified_method_symbol};
 use mojito_types::conformance::{LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule};
+use mojito_types::origin::{Mutability, Origin, RefSig, SigMutability, SigOrigin};
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 
 /// How a consuming position takes its value: an ownership **move** into new
@@ -2249,14 +2250,13 @@ impl Checker {
             .collect();
         let fieldwise_conventions = own
             .iter()
-            .filter(|(_, info)| {
-                info.fieldwise_init
-                    && !info
-                        .fields
-                        .iter()
-                        .any(|(_, ty)| matches!(ty.kind(), TyKind::Ref(_)))
-            })
+            .filter(|(_, info)| info.fieldwise_init)
             .map(|(name, info)| (name.clone(), self.fieldwise_conventions(&info.fields)))
+            .collect();
+        let fieldwise_ref_params = own
+            .iter()
+            .filter(|(_, info)| info.fieldwise_init)
+            .map(|(name, info)| (name.clone(), Self::fieldwise_ref_params(info)))
             .collect();
         let witness_tables = own
             .iter()
@@ -2272,6 +2272,7 @@ impl Checker {
             associated_values,
             parameterized_values,
             fieldwise_conventions,
+            fieldwise_ref_params,
             witness_tables,
         }
     }
@@ -2281,7 +2282,9 @@ impl Checker {
     /// declares them from each field type's register passability: a read
     /// for a register-passable-trivial field (`ImmReg`), whose copy is the
     /// value itself, and `var` (`OwnedMem`) for any other, so a copy
-    /// happens in the caller, where a transfer or temporary elides it.
+    /// happens in the caller, where a transfer or temporary elides it. A
+    /// `ref` field's parameter is `ref`, as a written constructor's
+    /// `ref [Self.o] field: T` is, binding the argument's place.
     pub(super) fn fieldwise_conventions(
         &self,
         fields: &[(String, Ty)],
@@ -2289,8 +2292,63 @@ impl Checker {
         fields
             .iter()
             .map(|(_, ty)| {
-                (!self.is_trivial_register_passable(ty))
-                    .then_some(mojito_ast::ast::ArgConvention::Var)
+                if matches!(ty.kind(), TyKind::Ref(_)) {
+                    Some(mojito_ast::ast::ArgConvention::Ref)
+                } else {
+                    (!self.is_trivial_register_passable(ty))
+                        .then_some(mojito_ast::ast::ArgConvention::Var)
+                }
+            })
+            .collect()
+    }
+
+    /// The `ref` contract of each parameter of the fieldwise `__init__`
+    /// synthesized for `info`, as `lower_ref_sig` lowers a written
+    /// `ref [Self.o] field: T`: for a field whose origin is the struct's
+    /// binder `o`, the union of the parameters whose fields name `o`, with
+    /// `o`'s declared mutability; for a concrete origin, that origin and
+    /// the field's mutability. Every other field's is absent.
+    pub(super) fn fieldwise_ref_params(info: &StructInfo) -> Vec<Option<RefSig>> {
+        info.fields
+            .iter()
+            .map(|(_, ty)| {
+                let TyKind::Ref(reference) = ty.kind() else {
+                    return None;
+                };
+                if let Origin::Param(binder) = &reference.origin {
+                    let mut members = info
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, (_, other))| {
+                            matches!(other.kind(), TyKind::Ref(other) if other.origin == reference.origin)
+                        })
+                        .map(|(index, _)| SigOrigin::Param(index))
+                        .collect::<Vec<_>>();
+                    let origin = if members.len() == 1 {
+                        members.remove(0)
+                    } else {
+                        SigOrigin::union(members)
+                    };
+                    let mutability = info
+                        .source_params
+                        .get(binder.0 as usize)
+                        .map_or(SigMutability::Infer, |parameter| {
+                            super::origins::origin_param_mutability(
+                                parameter,
+                                &info.source_params,
+                            )
+                        });
+                    return Some(RefSig { origin, mutability });
+                }
+                Some(RefSig {
+                    origin: concrete_sig_origin(&reference.origin),
+                    mutability: match reference.mutability {
+                        Mutability::Mutable => SigMutability::Mutable,
+                        Mutability::Immutable => SigMutability::Immutable,
+                        Mutability::Param(_) => SigMutability::Infer,
+                    },
+                })
             })
             .collect()
     }
@@ -3761,6 +3819,20 @@ pub(super) fn names_member_type(params: &[mojito_ast::ast::TypeParam]) -> bool {
             Some(SourceType::Assoc { .. } | SourceType::IndexedProjection { .. })
         )
     })
+}
+
+/// The contract origin a `ref` field's concrete (non-binder) origin
+/// declares, as `lower_ref_sig` lowers the same origin spelled in a
+/// parameter's clause.
+fn concrete_sig_origin(origin: &Origin) -> SigOrigin {
+    match origin {
+        Origin::Static => SigOrigin::Static,
+        Origin::Untracked { mutable } => SigOrigin::Untracked { mutable: *mutable },
+        Origin::Union(members) => SigOrigin::union(members.iter().map(concrete_sig_origin)),
+        Origin::Param(_) | Origin::SelfParam | Origin::Place(_) | Origin::Unbound => {
+            SigOrigin::Infer
+        }
+    }
 }
 
 fn unfoldable_requirement_default() -> TypeError {

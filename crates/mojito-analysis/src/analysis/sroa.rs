@@ -4,7 +4,8 @@
 //!
 //! A MIR variable slot is the allocation. One is split when it is a local
 //! of a declared struct type whose fields its arguments resolve, none of
-//! them a pointer, whatever its fields' types and whatever its drop runs,
+//! them a pointer or a `ref`, whatever its fields' types and whatever its
+//! drop runs,
 //! as upstream tests only that the element types resolve, and every
 //! mention of it is one of:
 //! - a whole store (`var.store`, or `place.store` on the whole slot), which
@@ -296,9 +297,11 @@ fn splittable_slots(function: &MirFunction, declarations: &MirDeclarations) -> V
 /// they resolve, as upstream's only test is that the element types are,
 /// whatever its fields' types and whatever its drop runs. A slice
 /// descriptor, which both backends build as their own value, is never one,
-/// nor is a struct with a pointer field: the VM reads a place on a whole
-/// slot that holds a reference handle through the handle, so the field's
-/// own slot would not read as the field did.
+/// nor is a struct with a pointer or `ref` field: the VM reads a place on
+/// a whole slot that holds a reference handle through the handle, and a
+/// place past a `ref` field's own slot would need that slot as its
+/// `through`, which the rewrite does not give it, so the field's own slot
+/// would not read as the field did.
 fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fields<'a>> {
     let TyKind::Struct(name, _) = ty.kind() else {
         return None;
@@ -316,7 +319,7 @@ fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fie
     let fields = declarations.field_types(ty)?;
     fields
         .iter()
-        .all(|(_, field)| !matches!(field.kind(), TyKind::Pointer { .. }))
+        .all(|(_, field)| !matches!(field.kind(), TyKind::Pointer { .. } | TyKind::Ref(_)))
         .then_some(fields)
 }
 

@@ -119,11 +119,6 @@ pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> 
                 )
             })
             .collect(),
-        structs: declarations
-            .structs
-            .iter()
-            .map(|declaration| declaration.name.as_str())
-            .collect(),
         imported: declarations.imported.as_ref(),
     };
     timing::count("functions", functions.len() as u64);
@@ -152,16 +147,14 @@ pub fn check_ownership_program(prog: &MirProgram) -> Result<(), OwnershipError> 
 /// convention, or an immutable, parametric, or bare `ref` (a borrowing-view
 /// constructor, `Named`) — is a shared read. A callee without a declaration
 /// falls back to its function's `ref_params` mask (receiver at slot zero), and
-/// an unknown callee stays exclusive. `structs` resolves a single-`__init__`
-/// construction, which calls the bare struct name, to its `<name>.__init__`
-/// declaration. `ref_params`, `param_writes`, and `structs` cover the
+/// an unknown callee stays exclusive. A construction calls its `__init__`,
+/// whose declaration it names. `ref_params` and `param_writes` cover the
 /// program's own functions and declarations; a name they miss is looked up
 /// in the package it imports.
 #[derive(Default)]
 pub struct CalleeRefParams<'a> {
     pub ref_params: HashMap<&'a str, &'a [bool]>,
     pub param_writes: HashMap<&'a str, &'a [bool]>,
-    pub structs: HashSet<&'a str>,
     pub imported: Option<&'a mojito_mir::mir::link::ImportedDeclarations>,
 }
 
@@ -174,19 +167,10 @@ impl CalleeRefParams<'_> {
     /// `callee` performs; `receiver` says the callee is a method whose
     /// function-level mask carries `self` at slot zero.
     fn retained_access(&self, callee: &str, argument: usize, receiver: bool) -> LoanAccess {
-        let init_name;
         let imported = self.imported;
-        let declared = if self.structs.contains(callee)
-            || imported.is_some_and(|imported| imported.structure(callee).is_some())
-        {
-            init_name = format!("{callee}.__init__");
-            init_name.as_str()
-        } else {
-            callee
-        };
-        let mask = self.param_writes.get(declared).copied().or_else(|| {
+        let mask = self.param_writes.get(callee).copied().or_else(|| {
             imported?
-                .function(declared)
+                .function(callee)
                 .map(|declaration| declaration.param_writes.as_slice())
         });
         if let Some(mask) = mask {

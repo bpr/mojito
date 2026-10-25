@@ -1037,12 +1037,11 @@ struct SynchronousCall<'a> {
 }
 
 /// A struct type's runtime shape, gathered from the program AST (the MIR doesn't
-/// keep field layout): field names + types (for constructor coercion), and which
+/// keep field layout): field names + types (for `struct.create` coercion), and which
 /// methods take `mut self` (so their receiver is written back).
 struct StructDef {
     fields: Vec<(String, Ty)>,
     mut_self_methods: std::collections::HashSet<String>,
-    fieldwise_init: bool,
     /// The lifecycle members the struct owns, with their symbols.
     members: Vec<(String, String)>,
 }
@@ -1278,7 +1277,6 @@ fn build_structs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<Str
                 StructDef {
                     fields: declaration.fields.clone(),
                     mut_self_methods: declaration.mut_self_methods.clone(),
-                    fieldwise_init: declaration.fieldwise_init,
                     members: declaration
                         .members
                         .iter()

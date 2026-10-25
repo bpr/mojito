@@ -112,23 +112,9 @@ pub(super) fn bind_args(
     Ok((out, frame_slots))
 }
 
-/// Build a struct instance (fieldwise), coercing each argument to its field type.
-pub(super) fn construct(
-    def: &StructDef,
-    name: &str,
-    args: Vec<Value>,
-) -> Result<Value, RuntimeError> {
-    if !def.fieldwise_init {
-        return Err(RuntimeError::TypeError(format!(
-            "struct '{name}' has no constructor"
-        )));
-    }
-    struct_value(def, name, args)
-}
-
 /// The struct value `name` of one value per field, in declaration order,
-/// each coerced to its field type, running no constructor: a fieldwise
-/// construction, or a `struct.create`.
+/// each coerced to its field type, running no constructor: a
+/// `struct.create`.
 pub(super) fn struct_value(
     def: &StructDef,
     name: &str,

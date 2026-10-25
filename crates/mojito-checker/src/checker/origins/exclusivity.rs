@@ -80,6 +80,15 @@ pub(in crate::checker) struct CollectedArguments<'a> {
 }
 
 impl<'a> CollectedArguments<'a> {
+    /// No collector: a callee that gathers no arguments.
+    pub(in crate::checker) const fn none() -> Self {
+        Self {
+            name: "args",
+            convention: None,
+            elements: Vec::new(),
+        }
+    }
+
     /// A tuple literal's elements, gathered by `Tuple.__init__(out self, var
     /// *args: *element_types)`, each bound to its own type.
     pub(in crate::checker) fn tuple_literal(elements: &'a [Expr], types: &[Ty]) -> Self {

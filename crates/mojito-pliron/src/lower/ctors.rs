@@ -6,54 +6,8 @@ use super::*;
 use mojito_types::types::{TyKind, erase_origin_arguments};
 
 impl FnLowering<'_> {
-    /// A call naming the declared struct `name`, which names no constructor:
-    /// fieldwise per-field stores, as the VM builds it.
-    pub(super) fn lower_constructor(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        name: &str,
-        args: &[Reg],
-        kwargs: &[(String, Reg)],
-    ) -> Result<(), PlironError> {
-        let struct_ty = match self.func.reg_types.get(&dest.0) {
-            Some(ty) if matches!(ty.kind(), TyKind::Struct(..)) => ty.clone(),
-            _ => TyKind::Struct(name.to_string(), Vec::new()).into(),
-        };
-        let lowered = lower_ty(self.name, &struct_ty, &self.layout, self.reg_span(dest))?;
-        let LowerTy::Aggregate { layout, .. } = lowered else {
-            return Err(self.unsupported_reg(format!("constructor for `{name}`"), dest));
-        };
-        let decl = self.struct_decls[name];
-        if !decl.fieldwise_init {
-            return Err(self.unsupported_reg(
-                format!("a call naming `{name}`, which names no constructor and is not fieldwise"),
-                dest,
-            ));
-        }
-        if !kwargs.is_empty() {
-            return Err(self.unsupported_reg(
-                format!("keyword arguments in the fieldwise constructor of `{name}`"),
-                dest,
-            ));
-        }
-        if args.len() != decl.fields.len() {
-            return Err(self.unsupported_reg(
-                format!(
-                    "fieldwise constructor of `{name}` expects {} arguments, got {}",
-                    decl.fields.len(),
-                    args.len()
-                ),
-                dest,
-            ));
-        }
-        let field_tys: Vec<Ty> = decl.fields.iter().map(|(_, t)| t.clone()).collect();
-        self.store_fields(ctx, dest, layout, &field_tys, args)
-    }
-
     /// A `struct.create`: fresh storage of `dest`'s struct type with each
-    /// field operand stored at its offset, as a fieldwise constructor
-    /// builds it.
+    /// field operand stored at its offset.
     pub(super) fn lower_struct_create(
         &mut self,
         ctx: &mut Context,

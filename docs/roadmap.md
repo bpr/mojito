@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1338**.
+Next free ID: **R1339**.
 
 ## Ordered Work
 
@@ -515,24 +515,29 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1278 A fieldwise struct with a `ref` field gets no synthesized
-  `__init__`**
+- [ ] **R1338 A display's empty collection is a call naming the struct,
+  whose `__init__` the elaborator resolves by arity**
 
-  `@fieldwise_init struct View[o: …]: var src: ref[o] List[Int]` still
-  builds its value at a struct-named `call { func: View }`, where every
-  other fieldwise struct calls its synthesized `nodebug` `View.__init__`.
-  - `CheckedProgram::synthesizes_fieldwise_constructor` and the fieldwise
-    tail of `Checker::infer_construction` skip a struct with a `ref`
-    field, since a synthesized `ref` parameter would bind the argument's
-    place, as a written `ref [Self.o] src: List[Int]` constructor does,
-    and that path regresses fixtures.
-  - Once it lands, the struct-named construction path goes: VM
-    `construct` and the struct arm of `vm/dispatch.rs`, the fieldwise
-    path of Pliron's `lower/ctors.rs`, the elaborator's construct-arm
-    respell, and the struct-named callee mapping in `inline_parametric`
-    and `CalleeRefParams::retained_access`.
-  - Found while landing R1049 (2026-10-22).
-  - Depends on R1277, R1082.
+  MIR lowering builds a collection display's empty value as `call { func:
+  List }`, naming no constructor, where upstream's call names the
+  `__init__` overload the check selected.
+  - `Flatten::begin_nominal_collection` (`mir/lower_expr/ctrl.rs`) emits
+    it, and `tuple_literal` (`lower_expr/expr.rs`) falls back to the
+    struct name when the check recorded no constructor.
+  - The elaborator's construct arm (`native/mono/specializer.rs`) respells
+    each by `resolve_callable_symbol` over the argument count, so neither
+    backend sees one, but the by-arity lookup is a Mojito-only resolution.
+  - The check should record the empty constructor it selects for the
+    display, as `ConstructCollection` records a tuple's `constructor`, and
+    lowering should name it.
+  - Then the construct arm's struct test, and `Callee::direct`'s struct
+    mapping (`mir/register_ends.rs`), go, and so does
+    `MirStructDeclaration::fieldwise_init`, which no phase has read since
+    R1278 but the MIR text still writes.
+  - Probes: `[1, 2]`, `{1, 2}`, and `{"a": 1}` reach the arm (240, 18, and
+    2 corpus calls in R1278's tripwire).
+  - Found while landing R1278 (2026-10-24).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1280 An iteration step through a bound keeps its abstract
@@ -8401,6 +8406,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `assets/ok/keyed_def_builds_loan_carrying_instance.mojo` fail with
     "use of variable slot 0 after it was moved": the split `Box[Pointer]`
     field's `drop.place` takes `xs` through the handle.
+  - `sroa` keeps a struct with a `ref` field whole for the same reason:
+    a place past the split field would need `through: Some(slot)` and a
+    `ref` root type, where the rewrite leaves `through: absent`, which
+    Pliron reads as the referent itself (native SIGSEGV on
+    `assets/extensions/ok/ref_field_written_nodebug_init.mojo`).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

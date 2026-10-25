@@ -1,0 +1,84 @@
+mojito-mir 1.101
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: View, fields: [field { name: src, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, field { name: index, type: Int }], mut_self_methods: [], fieldwise_init: false, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [], declared: [], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: bump, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [present(mut)], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [true], param_writes: [true], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: ref_field, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: bump,
+        registers: 7,
+        vars: 1,
+        var_names: [x],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r6, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 52, end: 53, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 52, end: 53, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 57, end: 58, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 57, end: 58, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 52, end: 53, origin: absent }) }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 52, end: 53, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r1, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
+              ref.read { dest: %r0, reference: %r1 },
+              const { dest: %r2, value: int_literal(1) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              binary { op: add, dest: %r4, a: %r0, b: %r3, resolved: absent, raises: absent },
+              ref.make { dest: %r6, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: present($v0) } },
+              ref.write { reference: %r6, value: %r4 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: ref_field,
+        registers: 5,
+        vars: 2,
+        var_names: [x, v],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: View, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: None }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int(1) },
+              var.store { var: $v0, src: %r0, binding_type: present(Int), in_place: false },
+              var.declare { var: $v1 },
+              ref.make { dest: %r1, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              place.store_ref { place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(src), type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }], type: present(ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable }), through: absent }, reference: %r1 },
+              place.load { dest: %r2, place: place { root: $v1, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(src), type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }], type: present(ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable }), through: absent } },
+              call { dest: %r3, func: bump, raises: absent, args: [%r2], kwargs: [], arg_places: [present(place { root: $v1, root_type: present(struct_type { name: View, arguments: [] }), projections: [projection { op: field(src), type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable } }], type: present(ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutable }), through: absent })], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              drop.var { var: $v1 },
+              var.use { dest: %r4, var: $v0, mode: copy },
+              drop.var { var: $v0 }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]
+}

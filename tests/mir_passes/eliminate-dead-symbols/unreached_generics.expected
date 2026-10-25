@@ -185,7 +185,7 @@
         blocks: [
           bb0 {
             instructions: [
-              call { dest: %r0, func: Held, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(2))], spread: absent },
+              call { dest: %r0, func: "Held.__init__", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(2))], spread: absent },
               var.store { var: $v0, src: %r0, binding_type: present(struct_type { name: Held, arguments: [value_arg(ct_int(2))] }), in_place: true },
               drop.var { var: $v0 },
               call { dest: %r1, func: used, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_int(1))], spread: absent },

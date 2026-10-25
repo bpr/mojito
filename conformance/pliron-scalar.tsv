@@ -1238,6 +1238,7 @@ assets/extensions/ok/ref_field_ctor_owned_source.mojo	-	ineligible	no-scalar-ent
 assets/extensions/ok/ref_field_ctor_temporary_explicit_init.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_ctor_temporary_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_drain_mut_method.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_nodebug_mut_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_parametric_mut_subscript_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_parametric_mut_write_generic_wrapper.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_reborrow_read.mojo	-	ineligible	no-scalar-entry-shape
@@ -1250,6 +1251,8 @@ assets/extensions/ok/ref_field_view_read_parameter.mojo	-	ineligible	no-scalar-e
 assets/extensions/ok/ref_field_view_ref_yield.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_wrapper_iterator_protocol.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_field_written_init_chained_view.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_written_nodebug_chained_view.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/ref_field_written_nodebug_init.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/ref_result_field_value_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/reference_carrier_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape

@@ -5010,16 +5010,26 @@ parameter's convention once (`Checker::fieldwise_conventions`, recorded as
 `ConformanceFacts::fieldwise_conventions` and carried on each
 `CheckedField::fieldwise_convention` into the unit): a read for a
 register-passable-trivial field (upstream's `ImmReg`) and `var` for any
-other (`OwnedMem`), whose body moves the argument in. The fieldwise tail of
+other (`OwnedMem`), whose body moves the argument in. A `ref` field's
+parameter, which upstream has no counterpart of, is the `ref [Self.o]
+field: T` a written constructor spells: `ref`, of the referent type, its
+contract the one `lower_ref_sig` gives that spelling
+(`Checker::fieldwise_ref_params`: the union of the parameters whose fields
+name the same origin binder, with the binder's declared mutability),
+recorded as `ConformanceFacts::fieldwise_ref_params` and carried on each
+`CheckedField::fieldwise_ref`; its body stores a `ref.make` of the
+parameter into the field. The fieldwise tail of
 `Checker::infer_construction` names `S.__init__` as the construction's
-`overload_target` and binds the arguments by those conventions
-(`record_argument_borrows`), so a copied place is copied in the caller and
-moved in, and a transfer or temporary is moved in once, as the pin runs
-them (`assets/ok/fieldwise_init_owned_arguments.mojo`). The constructor
-inlines like any `nodebug` one, so `sroa` and `mem-2-reg` see its field
-stores and an unread struct parameter leaves the caller's instance key
-(`assets/ok/fieldwise_constructor_instances.mojo`). A struct with a `ref`
-field gets none yet and builds its value at the struct-named call (R1278).
+`overload_target` and binds the arguments as that `__init__`'s call
+(`record_constructor_call` over `ConstructorBinding::fieldwise`), so a
+copied place is copied in the caller and moved in, a transfer or temporary
+is moved in once, as the pin runs them
+(`assets/ok/fieldwise_init_owned_arguments.mojo`), and a `ref` field's
+argument retains its place, lends it to the value, and is alias-checked as
+a written constructor's. The constructor inlines like any `nodebug` one,
+so `sroa` and `mem-2-reg` see its field stores and an unread struct
+parameter leaves the caller's instance key
+(`assets/ok/fieldwise_constructor_instances.mojo`).
 
 A named copy or move is then the call upstream's copy/move insertion
 leaves (`mir::lower_copies_and_moves`, `mir/copy_calls.rs`): a `var.use
@@ -5850,7 +5860,14 @@ point where a slot declared in a loop is uninitialized again.
   call retained for it or the argument was `place.load`ed from, directly or
   through a `ref.read` of a `ref.make` the same block made (the private
   `loaded_place`), composed into each of the callee's places rooted at it,
-  as upstream substitutes the borrowed address. A `read` argument with no
+  as upstream substitutes the borrowed address. A `mut` or `ref` parameter
+  is the caller's place the call passes, except a `ref` field reached
+  directly (a projected place of a `ref` type with no `through`), whose
+  address is the handle the field stores: the parameter is then its own
+  slot, which the call's block initializes with that handle (a `ref.make`
+  of the field and a `ref.read`, as the synthesized copy of a `ref` field
+  reads it), and each callee place on it goes `through` that slot, as the
+  VM and Pliron bind such an argument at a call (R1277). A `read` argument with no
   such place, an owned temporary such as a call's result, binds as a value
   when its parameter type's drop runs no code
   (`MirDeclarations::drop_runs_no_code`), as upstream substitutes a
@@ -6092,7 +6109,8 @@ point where a slot declared in a loop is uninitialized again.
   at most ten rounds (upstream's `loopLimit`), so a nested struct splits a
   level a round. A pointer field keeps the slot, as the VM reads through
   it when it is a
-  slot's whole value (R1269), and so does a slice descriptor, which both backends
+  slot's whole value (R1269), and so does a `ref` field, whose own slot
+  would need each place past it to go `through` it, and so does a slice descriptor, which both backends
   build as their own value (R1158). The `--timings` counters are `split_slots`
   and `split_field_slots`.
 - **`mem-2-reg` runs before each round's `canonicalize`**
@@ -6348,8 +6366,9 @@ point where a slot declared in a loop is uninitialized again.
   reaches, and also every call it makes itself that names a struct,
   `make[String]()`'s `T()` included, so no backend resolves an overload by
   arity for it; a fieldwise construction calls the struct's synthesized
-  `S.__init__` the same way, and only a fieldwise struct with a `ref` field
-  (R1278) and a synthesized `T(copy=x)` keep the struct's name. A constructor that removed one of its
+  `S.__init__` the same way. Only a collection display's empty value is
+  still a call naming the struct, which the elaborator's construct arm
+  resolves by arity (R1338). A constructor that removed one of its
   struct's parameters is owner-less like any other method, and the VM builds the call's destination
   type through it (`Prog::lifecycle_constructor`, `CallTypes::constructed`),
   so `Box[1](1)` and `Box[2](2)` share one `Box.__init__$mono`. No

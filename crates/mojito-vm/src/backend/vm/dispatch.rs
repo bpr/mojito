@@ -673,17 +673,6 @@ impl VmBackend {
                 }
                 builtin_error(argument)
             }
-            // A call naming a struct names no constructor: it builds the
-            // fieldwise struct value from its positional arguments.
-            _ if prog.structs.contains_key(name) => {
-                if kwargs.is_empty() {
-                    construct(&prog.structs[name], name, args)
-                } else {
-                    Err(RuntimeError::Unsupported(format!(
-                        "vm: keyword arguments to '{name}' are not supported"
-                    )))
-                }
-            }
             // `UnsafePointer[T].alloc(n)` — reserve `n` slots in the heap arena and
             // return a pointer to the base (the element type is erased).
             "UnsafePointer.alloc" => {

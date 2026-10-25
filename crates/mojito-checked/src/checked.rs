@@ -2569,6 +2569,10 @@ pub struct CheckedField {
     /// fieldwise `__init__` ([`ConformanceFacts::fieldwise_conventions`]);
     /// absent for a read, and for a struct with no such constructor.
     pub fieldwise_convention: Option<ArgConvention>,
+    /// The `ref` contract of a `ref` field's parameter in that `__init__`
+    /// ([`ConformanceFacts::fieldwise_ref_params`]); absent for any other
+    /// field.
+    pub fieldwise_ref: Option<mojito_types::origin::RefSig>,
 }
 
 /// A struct's associated `comptime` member.
@@ -4231,9 +4235,14 @@ pub struct ConformanceFacts {
     /// `StructEmitter::synthesizeFieldwiseInit` declares them from each
     /// field type's register passability: a read (`None`, upstream's
     /// `ImmReg`) for a register-passable-trivial field, and `var`
-    /// (`OwnedMem`) for any other. A struct with a `ref` field has none
-    /// ([`CheckedProgram::synthesizes_fieldwise_constructor`]).
+    /// (`OwnedMem`) for any other. A `ref` field's parameter is `ref`, as a
+    /// written constructor's `ref [Self.o] field: T` is.
     pub fieldwise_conventions: HashMap<String, Vec<Option<ArgConvention>>>,
+    /// The `ref` contract of each parameter of a struct's synthesized
+    /// fieldwise `__init__`, aligned with
+    /// [`Self::fieldwise_conventions`]: a `ref` field's is the one a written
+    /// `ref [Self.o]` parameter declares, and every other field's is absent.
+    pub fieldwise_ref_params: HashMap<String, Vec<Option<mojito_types::origin::RefSig>>>,
     /// Each own struct's witness tables; see
     /// [`crate::declaration::StructDeclaration::witness_tables`].
     pub witness_tables: HashMap<String, Vec<crate::declaration::WitnessTable>>,
@@ -4595,6 +4604,7 @@ impl CheckedProgram {
             overloads: &overloads,
             constants: &constants,
             fieldwise_conventions: &conformances.fieldwise_conventions,
+            fieldwise_ref_params: &conformances.fieldwise_ref_params,
         };
         for wrapper in &mut default_wrappers {
             wrapper.signature = signatures.method(
@@ -4913,6 +4923,7 @@ pub(crate) struct Signatures<'a> {
     pub(crate) overloads: &'a crate::package::ProgramOverloads,
     pub(crate) constants: &'a crate::package::ProgramConstants,
     pub(crate) fieldwise_conventions: &'a HashMap<String, Vec<Option<ArgConvention>>>,
+    pub(crate) fieldwise_ref_params: &'a HashMap<String, Vec<Option<mojito_types::origin::RefSig>>>,
 }
 
 impl Signatures<'_> {
@@ -5863,6 +5874,7 @@ impl<'a> ArenaBuilder<'a> {
                     })
                     .collect();
                 let conventions = self.signatures.fieldwise_conventions.get(name);
+                let ref_params = self.signatures.fieldwise_ref_params.get(name);
                 let fields = fields
                     .iter()
                     .enumerate()
@@ -5870,6 +5882,8 @@ impl<'a> ArenaBuilder<'a> {
                         name: declared.name.clone(),
                         fieldwise_convention: conventions
                             .and_then(|conventions| conventions.get(field).copied().flatten()),
+                        fieldwise_ref: ref_params
+                            .and_then(|ref_params| ref_params.get(field).cloned().flatten()),
                         ty: self
                             .signatures
                             .checked_types
