@@ -2362,13 +2362,25 @@ fn constraint(value: &GenericConstraint) -> String {
                 ("message", quote(message)),
             ],
         ),
-        GenericConstraint::Conforms { param, trait_name } => record(
+        GenericConstraint::Conforms {
+            operand,
+            trait_name,
+        } => record(
             "conforms",
-            &[("param", binder_ref(param)), ("trait", symbol(trait_name))],
+            &[
+                ("operand", constraint_operand(operand)),
+                ("trait", symbol(trait_name)),
+            ],
         ),
-        GenericConstraint::ConformsPack { param, trait_name } => record(
+        GenericConstraint::ConformsPack {
+            operand,
+            trait_name,
+        } => record(
             "conforms_pack",
-            &[("param", binder_ref(param)), ("trait", symbol(trait_name))],
+            &[
+                ("operand", constraint_operand(operand)),
+                ("trait", symbol(trait_name)),
+            ],
         ),
         GenericConstraint::PackPredicate {
             param,

@@ -510,14 +510,16 @@ impl ScopeCx<'_> {
                 self.constraint(role, left);
                 self.constraint(role, right);
             }
-            Conforms { param, .. } | ConformsPack { param, .. } | PackPredicate { param, .. } => {
+            PackPredicate { param, .. } => {
                 self.reference(role, &param.id, &param.name, None, &[]);
             }
             PackContains { param, element } => {
                 self.reference(role, &param.id, &param.name, None, &[]);
                 self.operand(role, element);
             }
-            Trivial(_, operand) => self.operand(role, operand),
+            Trivial(_, operand) | Conforms { operand, .. } | ConformsPack { operand, .. } => {
+                self.operand(role, operand);
+            }
             Eq(left, right)
             | Ne(left, right)
             | Lt(left, right)

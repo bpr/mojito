@@ -161,7 +161,7 @@ fn type_families_reprint_byte_identically() {
                     GenericConstraint::WithMessage(
                         Box::new(GenericConstraint::And(
                             Box::new(GenericConstraint::Conforms {
-                                param: test_binder("T"),
+                                operand: ConstraintOperand::Param(test_binder("T")),
                                 trait_name: "Movable".into(),
                             }),
                             Box::new(GenericConstraint::Trivial(
@@ -176,7 +176,7 @@ fn type_families_reprint_byte_identically() {
                             false,
                         )))),
                         Box::new(GenericConstraint::ConformsPack {
-                            param: test_binder("Ts"),
+                            operand: ConstraintOperand::Param(test_binder("Ts")),
                             trait_name: "Movable".into(),
                         }),
                     ),
@@ -1494,10 +1494,10 @@ fn declaration_metadata_reprints_byte_identically() {
             mojito_checked::checked::StructConformance {
                 trait_name: "Copyable".into(),
                 conditions: vec![GenericConstraint::Conforms {
-                    param: ParamRef {
+                    operand: ConstraintOperand::Param(ParamRef {
                         id: test_id("T"),
                         name: "T".into(),
-                    },
+                    }),
                     trait_name: "Copyable".into(),
                 }],
             },
@@ -1514,10 +1514,10 @@ fn declaration_metadata_reprints_byte_identically() {
             mojito_checked::checked::StructConformance {
                 trait_name: "Copyable".into(),
                 conditions: vec![GenericConstraint::Conforms {
-                    param: ParamRef {
+                    operand: ConstraintOperand::Param(ParamRef {
                         id: test_id("T"),
                         name: "T".into(),
-                    },
+                    }),
                     trait_name: "Copyable".into(),
                 }],
             },
@@ -1654,10 +1654,10 @@ fn declaration_metadata_reprints_byte_identically() {
         param_writes: vec![false, false, true],
         availability: vec![GenericConstraint::WithMessage(
             Box::new(GenericConstraint::Conforms {
-                param: ParamRef {
+                operand: ConstraintOperand::Param(ParamRef {
                     id: test_id("T"),
                     name: "T".into(),
-                },
+                }),
                 trait_name: "Defaultable".into(),
             }),
             "needs a default".into(),
@@ -2706,7 +2706,7 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
                 variadic: false,
                 constraints: vec![
                     GenericConstraint::Conforms {
-                        param: test_binder("T"),
+                        operand: ConstraintOperand::Param(test_binder("T")),
                         trait_name: "Movable".into(),
                     },
                     GenericConstraint::Ne(
@@ -2764,7 +2764,10 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
         ));
         assert!(matches!(
             &constraints[0],
-            GenericConstraint::Conforms { param, .. } if param.id == test_id("T")
+            GenericConstraint::Conforms {
+                operand: ConstraintOperand::Param(param),
+                ..
+            } if param.id == test_id("T")
         ));
         assert!(matches!(
             &constraints[1],
@@ -2776,14 +2779,15 @@ fn constraint_binders_round_trip_and_read_from_older_artifacts() {
     };
     assert_bound(&read_decls(&text));
 
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
     let older = text
-        .replacen("mojito-mir 1.10", "mojito-mir 1.3", 1)
+        .replacen(&current, "mojito-mir 1.3", 1)
         .replace("binder { owner: \"$test:T\", slot: 0, name: T }", "T")
         .replace(
             "binder { owner: \"$unbound:Outer\", slot: 0, name: Outer }",
             "Outer",
         );
-    assert_ne!(older.replacen("mojito-mir 1.3", "mojito-mir 1.10", 1), text);
+    assert_ne!(older.replacen("mojito-mir 1.3", &current, 1), text);
     assert_bound(&read_decls(&older));
 }
 
@@ -3355,4 +3359,65 @@ fn a_loop_and_continue_without_arguments_read_as_carrying_none() {
     assert_ne!(old, text);
     let parsed = artifact(old.as_bytes(), "old.mir".to_string()).expect("parse artifact");
     assert_eq!(write::program(&parsed.program), text);
+}
+
+/// Schema 1.102 records the operand a conformance test asks of, an inlined
+/// one's bound type or list included; an older artifact records the binder,
+/// which reads as a parameter operand.
+#[test]
+fn conforms_reads_pre_1_102_param_field() {
+    let block = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let conforms = |operand| GenericConstraint::Conforms {
+        operand,
+        trait_name: "Copyable".into(),
+    };
+    let conforms_pack = |operand| GenericConstraint::ConformsPack {
+        operand,
+        trait_name: "Copyable".into(),
+    };
+    let conds = vec![
+        conforms(ConstraintOperand::Param(test_binder("T"))),
+        conforms_pack(ConstraintOperand::Param(test_binder("Ts"))),
+        conforms(ConstraintOperand::Type(Ty::int())),
+        conforms_pack(ConstraintOperand::Value(CtValue::Tuple(vec![
+            CtValue::Type(Ty::int()),
+            CtValue::Type(Ty::bool()),
+        ]))),
+    ];
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            Vec::new(),
+            vec![MirInstr::ComptimeIf {
+                results: Vec::new(),
+                conds: conds.clone(),
+                arms: (0..conds.len())
+                    .map(|_| block(Vec::new(), MirTerm::ComptimeYield(Vec::new())))
+                    .collect(),
+                orelse: block(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
+            }],
+        ),
+    )]);
+    assert_reprints(&program);
+    let read = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+            MirInstr::ComptimeIf { conds, .. } => conds.clone(),
+            other => panic!("expected a compile-time branch, read {other:?}"),
+        }
+    };
+    let written = write::program(&program);
+    assert_eq!(read(&written), conds);
+    let older = written
+        .replace(
+            "operand: operand_param(binder { owner: \"$test:T\", slot: 0, name: T })",
+            "param: binder { owner: \"$test:T\", slot: 0, name: T }",
+        )
+        .replace(
+            "operand: operand_param(binder { owner: \"$test:Ts\", slot: 0, name: Ts })",
+            "param: binder { owner: \"$test:Ts\", slot: 0, name: Ts }",
+        );
+    assert!(older.contains("param: binder {"));
+    assert!(!older.contains("operand: operand_param("));
+    assert_eq!(read(&older), conds);
 }

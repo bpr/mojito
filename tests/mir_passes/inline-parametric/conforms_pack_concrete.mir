@@ -1,0 +1,69 @@
+mojito-mir 1.102
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: all_copy, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [type_param { owner: "all_copy", slot: 0, name: "*Ts", bounds: [AnyType], trait_param: absent, callable_bound: absent, default: absent, infer_only: false, variadic: true, constraints: [] }], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: conforms_pack_concrete, param_names: [], param_types: [], defaults: [], required: [], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [], param_writes: [], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: all_copy,
+        registers: 4,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 74, end: 75, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 117, end: 118, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 74, end: 118, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 74, end: 118, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              comptime.if { results: [%r2], conditions: [conforms_pack { operand: operand_param(binder { owner: "all_copy", slot: 0, name: Ts }), trait: Copyable }], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }], terminator: comptime.yield { values: [%r0] } }]], else: [bb0 { instructions: [const { dest: %r1, value: int_literal(2) }], terminator: comptime.yield { values: [%r1] } }] },
+              literal.materialize { dest: %r3, value: %r2, target: Int }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: conforms_pack_concrete,
+        registers: 1,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 169, end: 190, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              call { dest: %r0, func: all_copy, raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: absent, expr: absent }, param_arg { name: absent, value: absent, expr: absent }], receiver: absent, instantiated_args: [value_arg(ct_tuple([ct_type(Int), ct_type(Bool)]))], spread: absent }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      }
+  ]
+}

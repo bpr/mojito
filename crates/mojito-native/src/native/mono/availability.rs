@@ -93,11 +93,18 @@ impl Specializer<'_> {
                 self.constraint_holds(left, bindings, visiting),
                 self.constraint_holds(right, bindings, visiting),
             ]),
-            Conforms { param, trait_name } => {
-                self.type_conforms(bindings.types.get(param)?, trait_name, visiting)
-            }
-            ConformsPack { param, trait_name } => every(
-                pack_types(param, bindings)?
+            Conforms {
+                operand,
+                trait_name,
+            } => match operand_value(operand, bindings)? {
+                TyArg::Ty(ty) => self.type_conforms(&ty, trait_name, visiting),
+                TyArg::Val(_) | TyArg::Origin(_) => Some(false),
+            },
+            ConformsPack {
+                operand,
+                trait_name,
+            } => every(
+                pack_operand_types(operand, bindings)?
                     .iter()
                     .map(|ty| self.type_conforms(ty, trait_name, visiting)),
             ),
@@ -374,7 +381,24 @@ fn operand_value(operand: &ConstraintOperand, bindings: &Bindings) -> Option<TyA
 
 /// The element types a pack binder is bound to.
 fn pack_types(param: &ParamRef, bindings: &Bindings) -> Option<Vec<Ty>> {
-    let CtValue::Tuple(elements) = bindings.values.get(param)? else {
+    type_list(bindings.values.get(param)?)
+}
+
+/// The element types of a pack operand: a pack binder's bound list (its
+/// value binding, not the runtime pack its type binding is), or a list the
+/// operand itself holds.
+fn pack_operand_types(operand: &ConstraintOperand, bindings: &Bindings) -> Option<Vec<Ty>> {
+    match operand {
+        ConstraintOperand::Param(param) => pack_types(param, bindings),
+        operand => match operand_value(operand, bindings)? {
+            TyArg::Val(list) => type_list(&list),
+            TyArg::Ty(_) | TyArg::Origin(_) => None,
+        },
+    }
+}
+
+fn type_list(value: &CtValue) -> Option<Vec<Ty>> {
+    let CtValue::Tuple(elements) = value else {
         return None;
     };
     elements

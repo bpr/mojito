@@ -3738,7 +3738,9 @@ mod tests {
                     vec![Ty::new(TyKind::Int)],
                     trivial,
                     vec![GenericConstraint::Conforms {
-                        param: mojito_types::param_expr::ParamRef::unbound("T"),
+                        operand: mojito_types::types::ConstraintOperand::Param(
+                            mojito_types::param_expr::ParamRef::unbound("T"),
+                        ),
                         trait_name: trivial.into(),
                     }],
                 ),
@@ -3853,7 +3855,9 @@ mod tests {
                     "Conditional",
                     "RegisterPassable",
                     vec![GenericConstraint::Conforms {
-                        param: mojito_types::param_expr::ParamRef::unbound("T"),
+                        operand: mojito_types::types::ConstraintOperand::Param(
+                            mojito_types::param_expr::ParamRef::unbound("T"),
+                        ),
                         trait_name: "RegisterPassable".into(),
                     }],
                 ),

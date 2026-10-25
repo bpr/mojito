@@ -2242,14 +2242,15 @@ impl Checker {
                     ));
                 };
                 self.check_trait_name(trait_name)?;
+                let operand = ConstraintOperand::Param(param);
                 if pack {
                     GenericConstraint::ConformsPack {
-                        param,
+                        operand,
                         trait_name: trait_name.clone(),
                     }
                 } else {
                     GenericConstraint::Conforms {
-                        param,
+                        operand,
                         trait_name: trait_name.clone(),
                     }
                 }
@@ -2315,7 +2316,7 @@ impl Checker {
                 self.check_trait_name(trait_name)?;
                 match receiver {
                     TypeListReceiver::Pack(param) => GenericConstraint::ConformsPack {
-                        param,
+                        operand: ConstraintOperand::Param(param),
                         trait_name: trait_name.to_string(),
                     },
                     TypeListReceiver::Concrete(types) => GenericConstraint::Bool(
@@ -2737,8 +2738,8 @@ impl Checker {
 
     /// Expand a predicate-alias application into the consuming proposition:
     /// bind each argument to the declared parameter and substitute it through
-    /// the alias's compiled body. A concrete type binding folds `conforms_to`
-    /// eagerly (the param-only `Conforms` form cannot carry it symbolically).
+    /// the alias's compiled body. A type binding folds `conforms_to` to the
+    /// answer the binding's type already has.
     pub(super) fn apply_predicate_alias(
         &self,
         name: &str,
@@ -2763,7 +2764,7 @@ impl Checker {
 
     /// Substitute predicate-alias application bindings through the compiled
     /// body. Operand parameters rename or bake in the bound operand; a
-    /// `Conforms` on a concretely bound parameter folds to its truth value.
+    /// `Conforms` over a parameter bound to a type folds to its truth value.
     fn substitute_predicate(
         &self,
         constraint: &GenericConstraint,
@@ -2797,22 +2798,23 @@ impl Checker {
                 Box::new(self.substitute_predicate(left, bindings)?),
                 Box::new(self.substitute_predicate(right, bindings)?),
             ),
-            Conforms { param, trait_name } => {
-                match operand(&ConstraintOperand::Param(param.clone()))? {
-                    ConstraintOperand::Param(param) => Conforms {
-                        param,
-                        trait_name: trait_name.clone(),
-                    },
-                    ConstraintOperand::Type(ty) => Bool(self.conforms_to(&ty, trait_name)),
-                    ConstraintOperand::Value(_)
-                    | ConstraintOperand::PackLength(_)
-                    | ConstraintOperand::Expr(_) => {
-                        return Err(TypeError::Unsupported(format!(
-                            "conforms_to in a comptime alias requires a type argument for '{param}'"
-                        )));
-                    }
+            Conforms {
+                operand: subject,
+                trait_name,
+            } => match operand(subject)? {
+                ConstraintOperand::Param(param) => Conforms {
+                    operand: ConstraintOperand::Param(param),
+                    trait_name: trait_name.clone(),
+                },
+                ConstraintOperand::Type(ty) => Bool(self.conforms_to(&ty, trait_name)),
+                ConstraintOperand::Value(_)
+                | ConstraintOperand::PackLength(_)
+                | ConstraintOperand::Expr(_) => {
+                    return Err(TypeError::Unsupported(format!(
+                        "conforms_to in a comptime alias requires a type argument for '{subject}'"
+                    )));
                 }
-            }
+            },
             ConformsPack { .. } | PackPredicate { .. } | PackContains { .. } => {
                 return Err(TypeError::Unsupported(
                     "a pack projection in a Bool-bodied comptime alias".to_string(),
@@ -2830,7 +2832,7 @@ impl Checker {
 
     /// A single argument of a comptime predicate (`IsTrivially*` or a
     /// predicate-alias application): a bare name is a generic parameter
-    /// (mirroring `conforms_to`'s param-only operand) unless it names a
+    /// (as `conforms_to` compiles its subject) unless it names a
     /// scalar; any other annotation resolves as a concrete type.
     fn predicate_operand(
         &self,
@@ -3288,8 +3290,11 @@ impl Checker {
                     self.constraint_proposition(right, environment)?,
                 ],
             )?,
-            Conforms { param, trait_name } => match environment.get(param) {
-                Some(TyArg::Ty(ty)) => context.boolean(self.conforms_to(ty, trait_name)),
+            Conforms {
+                operand,
+                trait_name,
+            } => match self.constraint_value(operand, environment) {
+                Some(TyArg::Ty(ty)) => context.boolean(self.conforms_to(&ty, trait_name)),
                 Some(TyArg::Val(_) | TyArg::Origin(_)) => context.boolean(false),
                 None => unknown(),
             },
@@ -3301,14 +3306,31 @@ impl Checker {
             // Every element of a forwarded pack conforms when that pack's
             // bound or an enclosing `where` guarantees the trait; otherwise
             // nothing is known of them.
-            ConformsPack { param, trait_name }
-                if forwarded(param).is_some_and(|pack| self.conforms_to(pack, trait_name)) =>
-            {
+            ConformsPack {
+                operand: ConstraintOperand::Param(param),
+                trait_name,
+            } if forwarded(param).is_some_and(|pack| self.conforms_to(pack, trait_name)) => {
                 context.boolean(true)
             }
-            ConformsPack { param, trait_name } => pack(param, &|types| {
+            ConformsPack {
+                operand: ConstraintOperand::Param(param),
+                trait_name,
+            } => pack(param, &|types| {
                 types.iter().all(|ty| self.conforms_to(ty, trait_name))
             }),
+            // An inlined test holds the bound element list itself.
+            ConformsPack {
+                operand,
+                trait_name,
+            } => match self.constraint_value(operand, environment) {
+                Some(TyArg::Val(CtValue::Expr(_))) | None => unknown(),
+                Some(TyArg::Val(list)) => {
+                    context.boolean(type_list(&list).is_some_and(|types| {
+                        types.iter().all(|ty| self.conforms_to(ty, trait_name))
+                    }))
+                }
+                Some(TyArg::Ty(_) | TyArg::Origin(_)) => context.boolean(false),
+            },
             PackPredicate {
                 param,
                 predicate,
@@ -3522,7 +3544,7 @@ impl Checker {
                 Some((pack, trait_name)) if declares_pack(pack) => {
                     self.check_trait_name(trait_name)?;
                     GenericConstraint::ConformsPack {
-                        param: ParamRef::unbound(pack),
+                        operand: ConstraintOperand::Param(ParamRef::unbound(pack)),
                         trait_name: trait_name.to_string(),
                     }
                 }
@@ -3782,7 +3804,15 @@ fn conjuncts(proposition: &ParamExpr) -> Vec<ParamExpr> {
 
 /// The element types of a pack parameter bound in a constraint environment.
 fn bound_pack_types(environment: &ConstraintEnvironment<'_>, param: &ParamRef) -> Option<Vec<Ty>> {
-    let TyArg::Val(CtValue::Tuple(values)) = environment.get(param)? else {
+    let TyArg::Val(list) = environment.get(param)? else {
+        return None;
+    };
+    type_list(list)
+}
+
+/// The element types of a type list value.
+fn type_list(list: &CtValue) -> Option<Vec<Ty>> {
+    let CtValue::Tuple(values) = list else {
         return None;
     };
     values
@@ -4072,8 +4102,8 @@ fn unsupported_assoc_body() -> TypeError {
 
 /// Every parameter a predicate-alias body references must be declared, so an
 /// application can never leave a dangling operand that would silently evaluate
-/// false. Pack projections are rejected here because the param-only
-/// `ConformsPack` form cannot carry a substituted single-type binding.
+/// false. Pack projections are rejected here, since an application's
+/// substitution binds no pack.
 fn validate_predicate_params(
     constraint: &GenericConstraint,
     declared: &HashSet<&ParamId>,
@@ -4108,7 +4138,7 @@ fn validate_predicate_params(
             validate_predicate_params(left, declared)?;
             validate_predicate_params(right, declared)
         }
-        Conforms { param, .. } => check_param(param),
+        Conforms { operand, .. } => check_operand(operand),
         ConformsPack { .. } | PackPredicate { .. } | PackContains { .. } => Err(
             TypeError::Unsupported("a pack projection in a Bool-bodied comptime alias".to_string()),
         ),

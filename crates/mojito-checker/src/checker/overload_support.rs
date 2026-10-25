@@ -132,11 +132,11 @@ pub(super) fn generic_constraint_implies(
     match (premise, consequence) {
         (
             GenericConstraint::Conforms {
-                param: known,
+                operand: known,
                 trait_name: available,
             },
             GenericConstraint::Conforms {
-                param: needed,
+                operand: needed,
                 trait_name: required,
             },
         ) if known == needed => builtin_trait_implies(available, required),
@@ -163,9 +163,15 @@ pub(super) fn binder_conformance_assumed(
         GenericConstraint::WithMessage(condition, _) => {
             binder_conformance_assumed(binder, required, condition)
         }
-        GenericConstraint::Conforms { param, trait_name }
-        | GenericConstraint::ConformsPack { param, trait_name } => {
-            param == binder
+        GenericConstraint::Conforms {
+            operand,
+            trait_name,
+        }
+        | GenericConstraint::ConformsPack {
+            operand,
+            trait_name,
+        } => {
+            matches!(operand, mojito_types::types::ConstraintOperand::Param(param) if param == binder)
                 && (trait_name == required || builtin_trait_implies(trait_name, required))
         }
         GenericConstraint::And(left, right) => {
@@ -267,8 +273,14 @@ pub(super) fn guaranteed_conformance_atoms(
         }
         // `conforms_to(Ts.values, Trait)` and `Ts.all_conforms_to[Trait]()`
         // guarantee the trait of every element, recorded under the pack.
-        GenericConstraint::Conforms { param, trait_name }
-        | GenericConstraint::ConformsPack { param, trait_name } => {
+        GenericConstraint::Conforms {
+            operand: mojito_types::types::ConstraintOperand::Param(param),
+            trait_name,
+        }
+        | GenericConstraint::ConformsPack {
+            operand: mojito_types::types::ConstraintOperand::Param(param),
+            trait_name,
+        } => {
             output.insert((binder(param), trait_name.clone()));
         }
         // `where IsTrivially*[T]` guarantees the facet (and, through the

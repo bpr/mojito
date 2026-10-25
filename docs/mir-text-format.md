@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.101
+mojito-mir 1.102
 ```
 
-The writer emits 1.101. The reader accepts 1.0 through 1.101; *Schema 1.0*
+The writer emits 1.102. The reader accepts 1.0 through 1.102; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -489,6 +489,14 @@ the payload's `__moveinit__`, no longer its `__copyinit__`. The spelling is
 unchanged, but an older artifact's constructor names a copy, which the
 verifier now refuses there, so the package format moves to
 `mojito-package 91` and an older package is rebuilt.
+
+Schema 1.102 gives `conforms` and `conforms_pack` an `operand:
+constraint-operand` in place of their `param` binder, upstream's
+`type_conforms_to_trait` operand, so a test `inline-parametric` substitutes
+at a concrete binding holds the bound type (`operand_type`) or a pack's
+bound list (`operand_value` of a type tuple, or `operand_expr` over the
+caller's binders). An older artifact's `param` reads as `operand_param`.
+The package format moves to `mojito-package 92`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1067,7 +1075,8 @@ parameter list, or an associated member's own parameter — is an unbound
 reference: owner `$unbound:<name>`, slot `0`, identified by its spelling.
 
 `GenericConstraint` is a prefix tree. Its tags map one-to-one to the public
-variants: `with_message { condition, message }`, `conforms`, `conforms_pack`,
+variants: `with_message { condition, message }`, `conforms { operand, trait }`,
+`conforms_pack { operand, trait }`,
 `pack_predicate` (whose predicate is `predicate_trivial` or
 `predicate_alias`), `pack_contains`, `trivial`, `eq`, `ne`, `lt`, `le`, `gt`,
 `ge`, `and`, `or`, `not`, `constraint_bool`. Constraint operands are

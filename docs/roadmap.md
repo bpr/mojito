@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1342**.
+Next free ID: **R1344**.
 
 ## Ordered Work
 
@@ -234,34 +234,50 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1096 `conforms_to(T, Trait)` over a concrete binding keeps its
-  call inlined**
+- [ ] **R1342 `TypeList` pack queries over a concrete pack keep their
+  inlined call**
 
-  `GenericConstraint::Conforms` names a binder, so a `comptime if
-  conforms_to(T, Copyable)` in a `nodebug` callee cannot be substituted at
-  a concrete `T` and `inline-parametric` keeps the call
-  (`tag[Int]()` over `def tag[T: AnyType]() -> Int: return 1 if
-  conforms_to(T, Copyable) else 2`).
-  - `ParamKind::Conforms { subject, trait_name }` already takes a type
-    expression and the elaborator answers it (`specializer.rs`); only the
-    constraint form lacks an operand, and `replace_constraint_parameters`
-    fails it with "a proposition over `T` at a binding that is no
-    parameter".
-  - The lever: `Conforms { operand: ConstraintOperand, trait_name }` and
-    `ConformsPack` likewise, mapped through `try_map`'s `leaf`, read by
-    `availability.rs`'s `constraint_holds` as a type when concrete; the
-    checker keeps folding a concrete test to `Bool`, so only the inliner
-    emits a type operand.
-  - Text format: `conforms { operand, trait }`, the reader accepting the
-    1.73 `param:` field as a `Param` operand, and a note in
-    `docs/mir-text-format.md`.
-  - Done when `tag[Int]()` inlines in a pass test
-    (`tests/mir_passes/inline-parametric/conforms_concrete.mir`) and
-    `assets/ok/conditional_expression_parameter_condition.mojo`,
-    `assets/ok/template_method_generic_witness.mojo`, and
-    `assets/ok/bool_alias_predicate_where.mojo` print as before.
+  `GenericConstraint::PackPredicate`, `PackContains`, and the
+  `ConstraintOperand::PackLength` operand name a pack binder, so a
+  `nodebug` callee testing one at a concrete pack keeps its call:
+  `replace_constraint_parameters` fails it with "a proposition over `Ts`
+  at a binding that is no parameter".
+  - Upstream's `TypeList` queries take the type list as an attribute
+    operand, so substituting the pack yields the bound list.
+  - Lever: an operand on each, as R1096 gave `ConformsPack` (a pack binder,
+    or the bound list as `operand_value`/`operand_expr`); once none is
+    binder-keyed, `GenericConstraint::try_map`'s `binder` closure goes.
+  - Probe: `has_int[Int, String]()` over a `nodebug`
+    `def has_int[*Ts: AnyType]() -> Int: return 1 if
+    TypeList[Ts.values]().contains[Int]() else 2`.
+  - Probe: `TypeList[Ts.values]().all[IsTriviallyCopyable]()` in the same
+    shape (`pack_predicate`).
+  - Probe: `comptime if TypeList[Ts.values]().length == 2` in the same
+    shape (`operand_pack_length`).
+  - Each prints `1 2` on the pin and in Mojito; done when a pass test
+    under `tests/mir_passes/inline-parametric/` inlines each.
+  - Found while landing R1096 (2026-10-24).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1343 `Conforms` and `ConformsPack` are one proposition upstream**
+
+  Upstream's `#kgen.type_conforms_to_trait` takes a type or a type list,
+  and `TypeConformsToTraitAttr::get` splits a list into an `and` of single
+  tests, folds an empty one to `True`, and unwraps a one-element one;
+  Mojito keeps two `GenericConstraint` variants.
+  - The split survives because a `ConstraintOperand::Param` does not say
+    whether its binder is a pack, so the reader cannot tell
+    `conforms_to(T, X)` from `conforms_to(Ts.values, X)`.
+  - Lever: one `Conforms` whose operand carries that kind, normalized as
+    upstream's `get` normalizes it, with MIR text reading
+    `conforms_pack` as the merged form.
+  - Probe: `tests/mir_passes/inline-parametric/conforms_pack_concrete.mir`
+    holds a `conforms_pack` over a bound list, which upstream would hold
+    as an `and` of two single tests.
+  - Found while landing R1096 (2026-10-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1098 `canonicalize` keeps a `call.indirect` whose callee is a
   function constant**
@@ -8342,6 +8358,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: `conformance/probes/optional_reg_without_import.mojo`.
     `OptionalReg` is a prelude name the pin's prelude lacks too ("did you
     mean to import it from 'std.collections'?").
+  - Probe: `conformance/probes/is_trivially_without_import.mojo`.
+    `IsTriviallyCopyable[Int]` runs without an import, since the checker
+    recognizes the `IsTrivially*` spellings (`types::trivial_predicate_name`)
+    whatever is in scope; the pin asks for `from std.traits import …`.
   - Found while landing R774 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.

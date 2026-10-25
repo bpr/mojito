@@ -1751,7 +1751,7 @@ impl Checker {
         }
         if let TyKind::Param { binder, .. } = ty.kind() {
             let needed = GenericConstraint::Conforms {
-                param: binder.clone(),
+                operand: ConstraintOperand::Param(binder.clone()),
                 trait_name: required.to_string(),
             };
             return assumption.is_some_and(|known| generic_constraint_implies(known, &needed));
@@ -1803,20 +1803,26 @@ impl Checker {
                 assumption,
                 visiting,
             ),
-            Conforms { param, trait_name } => environment
-                .get(param)
+            Conforms {
+                operand,
+                trait_name,
+            } => self
+                .constraint_value(operand, environment)
                 .is_some_and(|argument| match argument {
                     TyArg::Ty(ty) => self.conforms_to_under_assumption_inner(
-                        ty,
+                        &ty,
                         trait_name,
                         assumption,
                         visiting,
                     ),
                     TyArg::Val(_) | TyArg::Origin(_) => false,
                 }),
-            ConformsPack { param, trait_name } => environment
-                .get(param)
-                .is_some_and(|argument| match argument {
+            ConformsPack {
+                operand,
+                trait_name,
+            } => self
+                .constraint_value(operand, environment)
+                .is_some_and(|argument| match &argument {
                     TyArg::Val(CtValue::Tuple(values)) => values.iter().all(|value| {
                         matches!(value, CtValue::Type(ty) if self.conforms_to_under_assumption_inner(
                             ty,

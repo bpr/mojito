@@ -871,6 +871,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `conforms_to` test holds its subject as an operand, as upstream's
+  `type_conforms_to_trait` does, so a `nodebug` callee testing
+  `conforms_to(T, Trait)` or `conforms_to(Ts.values, Trait)` now inlines
+  at a call binding `T` to a type or `Ts` to a list, its test decided in
+  the caller's instance, where the call used to be kept (R1096; MIR text
+  1.102, package 92). A `TypeList` pack query at a concrete pack still
+  keeps the call (R1342).
 - A `@fieldwise_init` struct with a `ref` field now gets its synthesized
   `nodebug` `__init__`, as every other fieldwise struct does (R1278): a
   `ref` field's parameter is the `ref [Self.o] field: T` a written

@@ -442,13 +442,29 @@ impl Decoder {
                     Some(GenericConstraint::WithMessage(condition, message))
                 }
                 "conforms" | "conforms_pack" => {
-                    let param = self.req(value, fields, "param", Self::constraint_binder)?;
+                    // Schema 1.102 records the tested operand; an older
+                    // artifact records the binder it tests.
+                    let operand = match self.field(fields, "operand") {
+                        Ok(found) => self.constraint_operand(found)?,
+                        Err(()) => ConstraintOperand::Param(self.req(
+                            value,
+                            fields,
+                            "param",
+                            Self::constraint_binder,
+                        )?),
+                    };
                     let trait_name = self.req(value, fields, "trait", Self::symbol)?;
-                    self.unknown(fields, &["param", "trait"]);
+                    self.unknown(fields, &["operand", "param", "trait"]);
                     Some(if tag == "conforms" {
-                        GenericConstraint::Conforms { param, trait_name }
+                        GenericConstraint::Conforms {
+                            operand,
+                            trait_name,
+                        }
                     } else {
-                        GenericConstraint::ConformsPack { param, trait_name }
+                        GenericConstraint::ConformsPack {
+                            operand,
+                            trait_name,
+                        }
                     })
                 }
                 "pack_predicate" => {

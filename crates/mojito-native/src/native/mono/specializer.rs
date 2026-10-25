@@ -1920,7 +1920,7 @@ impl<'a> Specializer<'a> {
                 pack,
                 query: PackQuery::Conforms(trait_name),
             } => Some(GenericConstraint::ConformsPack {
-                param: pack.clone(),
+                operand: ConstraintOperand::Param(pack.clone()),
                 trait_name: trait_name.clone(),
             }),
             ParamKind::PackQuery {
@@ -4191,7 +4191,7 @@ fn constraint_expressions(constraint: &GenericConstraint) -> Vec<ParamExpr> {
         _ => Vec::new(),
     };
     match constraint {
-        Bool(_) | Conforms { .. } | ConformsPack { .. } | PackPredicate { .. } => Vec::new(),
+        Bool(_) | PackPredicate { .. } => Vec::new(),
         WithMessage(inner, _) | Not(inner) => constraint_expressions(inner),
         And(left, right) | Or(left, right) => {
             let mut expressions = constraint_expressions(left);
@@ -4199,7 +4199,9 @@ fn constraint_expressions(constraint: &GenericConstraint) -> Vec<ParamExpr> {
             expressions
         }
         PackContains { element, .. } => of_operand(element),
-        Trivial(_, operand) => of_operand(operand),
+        Trivial(_, operand) | Conforms { operand, .. } | ConformsPack { operand, .. } => {
+            of_operand(operand)
+        }
         Eq(left, right)
         | Ne(left, right)
         | Lt(left, right)

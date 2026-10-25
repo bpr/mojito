@@ -885,7 +885,7 @@ and records each condition it compiles as a constraint
 (`SemanticAdjustment::ComptimeCondition`), HIR and MIR lower it as the
 `ComptimeIf` region op (`hlcf.comptime.if`), every condition first, then one
 region per arm, each condition a `GenericConstraint` over the function's
-binders, not a register, and `native::mono` decides it under the
+binders (or, once inlined, the caller's types), not a register, and `native::mono` decides it under the
 instance's bindings after drop elaboration (`select_comptime_branches`),
 keeping the taken arm and erasing the others before any call in them is
 enqueued. A condition the constraint compiler does not close (an
@@ -5950,7 +5950,7 @@ point where a slot declared in a loop is uninitialized again.
   naming a bound binder after substitution (`types::names_binder`, which
   counts a pack query), a construction of a binder the binding leaves
   open (a symbolic non-binder type, `Ts[i]()` under a loop binder, R445),
-  a conformance test of a concrete binding (R1096), or a value binder's
+  a `TypeList` pack query at a concrete pack (R1342), or a value binder's
   slot used other than as a read. A compile-time application over a bound
   type pack (`Tuple.reverse`'s `comptime for` bound, a thunk applied to
   the owner's `Ts`) is applied to the bound element list, which

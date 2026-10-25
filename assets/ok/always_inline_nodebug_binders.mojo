@@ -3,9 +3,15 @@
 # callable binder bound to a function, a `where` clause the checker judged
 # at the call, a `comptime for` over a value pack, a struct member whose
 # owner carries an origin argument (`Span.unsafe_ptr`), a `read` parameter
-# passed from a place or iterated, and a copy read through a reference the
-# body made (`range`'s `__iter__`). Each prints what the call computes
-# either way.
+# passed from a place or iterated, a copy read through a reference the body
+# made (`range`'s `__iter__`), and a `conforms_to` test at a concrete
+# binding, of a type or a pack. Each prints what the call computes either
+# way.
+
+
+@fieldwise_init
+struct Solo(Movable):
+    var x: Int
 
 
 @always_inline("nodebug")
@@ -49,6 +55,22 @@ def first_byte(s: String) -> Int:
     return Int(s.unsafe_ptr()[unsafe_offset=0])
 
 
+@always_inline("nodebug")
+def copy_tag[T: AnyType]() -> Int:
+    comptime if conforms_to(T, Copyable):
+        return 1
+    else:
+        return 2
+
+
+@always_inline("nodebug")
+def all_copy_tag[*Ts: AnyType]() -> Int:
+    comptime if conforms_to(Ts.values, Copyable):
+        return 1
+    else:
+        return 2
+
+
 def main():
     print(apply[double](3))
     print(check[2]())
@@ -66,3 +88,5 @@ def main():
     for i in range(3):
         acc += i
     print(acc)
+    print(copy_tag[Int](), copy_tag[Solo]())
+    print(all_copy_tag[Int, Bool](), all_copy_tag[Int, Solo]())

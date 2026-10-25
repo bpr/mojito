@@ -2990,14 +2990,14 @@ impl Checker {
             GenericConstraint::WithMessage(inner, _) | GenericConstraint::Not(inner) => {
                 Self::each_constraint_parameter(inner, visit)
             }
-            GenericConstraint::Conforms { param, .. }
-            | GenericConstraint::ConformsPack { param, .. }
-            | GenericConstraint::PackPredicate { param, .. } => visit(&param.name),
+            GenericConstraint::PackPredicate { param, .. } => visit(&param.name),
             GenericConstraint::PackContains { param, element } => {
                 visit(&param.name)?;
                 operand(element)
             }
-            GenericConstraint::Trivial(_, value) => operand(value),
+            GenericConstraint::Trivial(_, value)
+            | GenericConstraint::Conforms { operand: value, .. }
+            | GenericConstraint::ConformsPack { operand: value, .. } => operand(value),
             GenericConstraint::Eq(a, b)
             | GenericConstraint::Ne(a, b)
             | GenericConstraint::Lt(a, b)
@@ -3138,14 +3138,10 @@ impl Checker {
 /// concrete type, and no leaf asks a binder or a pack.
 fn constraint_is_closed(constraint: &GenericConstraint) -> bool {
     let operand = |operand: &ConstraintOperand| match operand {
-        ConstraintOperand::Value(mojito_types::ct::CtValue::Expr(_))
-        | ConstraintOperand::Param(_)
+        ConstraintOperand::Param(_)
         | ConstraintOperand::PackLength(_)
         | ConstraintOperand::Expr(_) => false,
-        ConstraintOperand::Value(mojito_types::ct::CtValue::Type(ty)) => {
-            !mojito_types::types::is_symbolic(ty)
-        }
-        ConstraintOperand::Value(_) => true,
+        ConstraintOperand::Value(value) => value_is_closed(value),
         ConstraintOperand::Type(ty) => !mojito_types::types::is_symbolic(ty),
     };
     match constraint {
@@ -3156,17 +3152,28 @@ fn constraint_is_closed(constraint: &GenericConstraint) -> bool {
         GenericConstraint::And(left, right) | GenericConstraint::Or(left, right) => {
             constraint_is_closed(left) && constraint_is_closed(right)
         }
-        GenericConstraint::Conforms { .. }
-        | GenericConstraint::ConformsPack { .. }
-        | GenericConstraint::PackPredicate { .. }
-        | GenericConstraint::PackContains { .. } => false,
-        GenericConstraint::Trivial(_, value) => operand(value),
+        GenericConstraint::PackPredicate { .. } | GenericConstraint::PackContains { .. } => false,
+        GenericConstraint::Trivial(_, value)
+        | GenericConstraint::Conforms { operand: value, .. }
+        | GenericConstraint::ConformsPack { operand: value, .. } => operand(value),
         GenericConstraint::Eq(left, right)
         | GenericConstraint::Ne(left, right)
         | GenericConstraint::Lt(left, right)
         | GenericConstraint::Le(left, right)
         | GenericConstraint::Gt(left, right)
         | GenericConstraint::Ge(left, right) => operand(left) && operand(right),
+    }
+}
+
+/// Whether a constant names no parameter: no residual expression, and no
+/// symbolic type, an element of a type list included.
+fn value_is_closed(value: &mojito_types::ct::CtValue) -> bool {
+    use mojito_types::ct::CtValue;
+    match value {
+        CtValue::Expr(_) => false,
+        CtValue::Type(ty) => !mojito_types::types::is_symbolic(ty),
+        CtValue::Tuple(elements) => elements.iter().all(value_is_closed),
+        _ => true,
     }
 }
 

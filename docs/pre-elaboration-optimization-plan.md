@@ -285,8 +285,8 @@ folds the operators over it (R840);
    owned, scalar, or trivially copied one. What still keeps a call:
    a copy- or move-capturing body a sibling captures (R1104), a raising
    `deinit` callee passed a field, which takes a copy of it (R1106),
-   `conforms_to` over a concrete binding
-   (R1096), and an argument with no place
+   a `TypeList` pack query over a concrete pack
+   (R1342), and an argument with no place
    or slot form (R1099); a small plain `@always_inline` callee inlines too
    (R923); the pin's refusals Mojito lacks are R924 (shapes it keeps as
    calls) and R925 (a recursive `@always_inline` function, an error on the

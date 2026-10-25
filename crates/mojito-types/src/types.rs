@@ -1841,12 +1841,17 @@ pub enum GenericConstraint {
     /// only the failed-specialization diagnostic; semantic operations recurse
     /// through the wrapped condition.
     WithMessage(Box<Self>, String),
+    /// `conforms_to(operand, Trait)`, upstream's `type_conforms_to_trait`:
+    /// the operand is a type binder, or once inlined at a concrete binding
+    /// the bound type.
     Conforms {
-        param: ParamRef,
+        operand: ConstraintOperand,
         trait_name: String,
     },
+    /// `conforms_to(Ts.values, Trait)`: the operand is a pack binder, or once
+    /// inlined at a concrete binding the bound element list.
     ConformsPack {
-        param: ParamRef,
+        operand: ConstraintOperand,
         trait_name: String,
     },
     /// `TypeList[Ts.values]().any[P]()` / `.all[P]()` over a symbolic pack
@@ -1901,9 +1906,10 @@ impl GenericConstraint {
         }
     }
 
-    /// This constraint with the binder of every binder-keyed proposition
-    /// (`Conforms`, a pack's) replaced by `binder` and every operand, a
-    /// parameter one included, by `leaf`; the first failure is returned.
+    /// This constraint with the binder of every binder-keyed pack proposition
+    /// (`PackPredicate`, `PackContains`) replaced by `binder` and every
+    /// operand, a parameter one included, by `leaf`; the first failure is
+    /// returned.
     pub fn try_map<E>(
         &self,
         binder: &dyn Fn(&ParamRef) -> Result<ParamRef, E>,
@@ -1914,12 +1920,18 @@ impl GenericConstraint {
             Self::WithMessage(inner, message) => {
                 Self::WithMessage(recurse(inner)?, message.clone())
             }
-            Self::Conforms { param, trait_name } => Self::Conforms {
-                param: binder(param)?,
+            Self::Conforms {
+                operand,
+                trait_name,
+            } => Self::Conforms {
+                operand: leaf(operand)?,
                 trait_name: trait_name.clone(),
             },
-            Self::ConformsPack { param, trait_name } => Self::ConformsPack {
-                param: binder(param)?,
+            Self::ConformsPack {
+                operand,
+                trait_name,
+            } => Self::ConformsPack {
+                operand: leaf(operand)?,
                 trait_name: trait_name.clone(),
             },
             Self::PackPredicate {
@@ -1968,11 +1980,17 @@ impl fmt::Display for GenericConstraint {
             Self::WithMessage(inner, message) => {
                 write!(f, "({inner}, {message:?})")
             }
-            Self::Conforms { param, trait_name } => {
-                write!(f, "conforms_to({param}, {trait_name})")
+            Self::Conforms {
+                operand,
+                trait_name,
+            } => {
+                write!(f, "conforms_to({operand}, {trait_name})")
             }
-            Self::ConformsPack { param, trait_name } => {
-                write!(f, "conforms_to({param}.values, {trait_name})")
+            Self::ConformsPack {
+                operand,
+                trait_name,
+            } => {
+                write!(f, "conforms_to({operand}.values, {trait_name})")
             }
             Self::PackPredicate {
                 param,
@@ -4081,9 +4099,11 @@ pub fn replace_argument_parameters(
 /// [`replace_parameters`] over one generic constraint.
 ///
 /// A bound value binder's operand becomes its expression, a closed one its
-/// constant; a bound type binder's becomes its type. A binder-keyed proposition
-/// (`Conforms`, a pack's) whose binder is bound to anything but another
-/// binder has no operand to hold the binding, and is an error.
+/// constant; a bound type binder's becomes its type, and a bound pack
+/// binder's its element list. A binder-keyed pack proposition
+/// (`PackPredicate`, `PackContains`, a `PackLength` operand) whose binder is
+/// bound to anything but another binder has no operand to hold the binding,
+/// and is an error.
 pub fn replace_constraint_parameters(
     context: &ParamContext,
     cond: &GenericConstraint,
@@ -4114,6 +4134,12 @@ pub fn replace_constraint_parameters(
         Ok(match leaf {
             ConstraintOperand::Param(param) => {
                 match (bindings.types().get(&param.id), bindings.lookup(param)) {
+                    // A pack bound to its elements is also bound to them as
+                    // the runtime pack a spread expands to; as an operand it
+                    // is the type list, upstream's `param_list`.
+                    (Some(ty), Some(expr)) if matches!(ty.kind(), TyKind::RuntimePack(_)) => {
+                        operand(expr.clone())
+                    }
                     (Some(ty), _) => match ty.kind() {
                         TyKind::Param { binder, .. } => ConstraintOperand::Param(binder.clone()),
                         _ => ConstraintOperand::Type(ty.clone()),
@@ -5354,7 +5380,7 @@ mod encoding_tests {
                 infer_only: false,
                 variadic: false,
                 constraints: vec![GenericConstraint::Conforms {
-                    param: n.as_decl_ref().expect("a binder").clone(),
+                    operand: ConstraintOperand::Param(n.as_decl_ref().expect("a binder").clone()),
                     trait_name: "Writable".to_string(),
                 }],
             },
@@ -5472,17 +5498,29 @@ mod parameter_replacement_tests {
                 ConstraintOperand::Value(CtValue::Int(0)),
             )
         );
-        let conforms = |param| GenericConstraint::Conforms {
-            param,
+        let conforms = |operand| GenericConstraint::Conforms {
+            operand,
             trait_name: "Stringable".to_string(),
         };
         assert_eq!(
-            replace_constraint_parameters(&context, &conforms(t.clone()), &bindings)
-                .expect("renamed"),
-            conforms(u)
+            replace_constraint_parameters(
+                &context,
+                &conforms(ConstraintOperand::Param(t.clone())),
+                &bindings
+            )
+            .expect("renamed"),
+            conforms(ConstraintOperand::Param(u))
         );
         bindings.bind_type(t.id.clone(), Ty::int());
-        assert!(replace_constraint_parameters(&context, &conforms(t), &bindings).is_err());
+        assert_eq!(
+            replace_constraint_parameters(
+                &context,
+                &conforms(ConstraintOperand::Param(t)),
+                &bindings
+            )
+            .expect("bound"),
+            conforms(ConstraintOperand::Type(Ty::int()))
+        );
     }
 }
 
