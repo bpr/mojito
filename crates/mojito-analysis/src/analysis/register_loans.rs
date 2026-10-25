@@ -65,7 +65,8 @@ pub(super) fn active_register_loan_roots(
 
 /// Whether a shallowly read value of this type can alias heap storage owned by
 /// its source place — an aggregate whose fields may hold owning pointers (the
-/// self-hosted `String`/`List` shape), or any binder, a requirement's
+/// self-hosted `String`/`List` shape, and the built-in `Error`, upstream's
+/// memory-only library struct), or any binder, a requirement's
 /// abstract `Self` among them. Scalars and compile-time values own their
 /// bits; a bare `Pointer` read aliases by design (the `unsafe_*`
 /// vocabulary makes its lifetime the user's obligation).
@@ -73,6 +74,7 @@ pub(super) fn may_alias_owned_storage(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
         TyKind::Struct(..)
+            | TyKind::Error
             | TyKind::Tuple(_)
             | TyKind::RuntimePack(_)
             | TyKind::Variant(_)

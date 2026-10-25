@@ -89,13 +89,15 @@ pub(super) fn literal_materializes_to(found: &Ty, target: &Ty) -> bool {
 }
 
 /// Whether a value of this type owns storage that destruction must release:
-/// an aggregate (a struct with a destructor or owning fields, tuple/pack
-/// storage, a variant, or a still-abstract parameter type). Kept textually
-/// aligned with the drop analysis' `may_alias_owned_storage`.
+/// an aggregate (a struct with a destructor or owning fields, the built-in
+/// `Error`, tuple/pack storage, a variant, or a still-abstract parameter
+/// type). Kept textually aligned with the drop analysis'
+/// `may_alias_owned_storage`.
 pub(super) fn owns_droppable_storage(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
         TyKind::Struct(..)
+            | TyKind::Error
             | TyKind::Tuple(_)
             | TyKind::RuntimePack(_)
             | TyKind::Variant(_)
@@ -2256,6 +2258,7 @@ impl<'a> Flatten<'a> {
         if !matches!(
             ty.kind(),
             TyKind::Struct(..)
+                | TyKind::Error
                 | TyKind::Tuple(_)
                 | TyKind::RuntimePack(_)
                 | TyKind::VariadicPack(_)

@@ -377,6 +377,14 @@ impl Checker {
                 && let Some(dispatch) = self.struct_infix_dispatch(op, &nominal_ty, &nominal_ty)?
                 && !dispatch.negated_equality
             {
+                // The literal side is a converted temporary; only the
+                // nominal side is a place the read dunder borrows.
+                if dispatch.borrows.0 {
+                    self.borrow_operator_operand(left, &lt);
+                }
+                if dispatch.borrows.1 {
+                    self.borrow_operator_operand(right, &rt);
+                }
                 self.record_operator_temporaries(left, right, dispatch.reads, dispatch.owns);
                 self.record_at(span).overload_target = Some(dispatch.target);
             }

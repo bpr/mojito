@@ -577,15 +577,18 @@ impl Checker {
         }
     }
 
-    /// A read-only builtin (`len`, `print`) over a named nominal-struct place
-    /// reads it in place, as a `read` parameter would, rather than taking
-    /// the lifecycle copy: `len(xs)` never copies the list (and never reads
-    /// slots an `unsafe_uninit_length` construction left unwritten).
+    /// A read-only builtin (`len`, `print`) over a named nominal place reads
+    /// it in place, as a `read` parameter would, rather than taking the
+    /// lifecycle copy: `len(xs)` never copies the list (and never reads
+    /// slots an `unsafe_uninit_length` construction left unwritten), and
+    /// `print(e)` never copies the `Error`, upstream's library struct.
     pub(super) fn borrow_nominal_place_argument(&self, argument: &Expr, ty: &Ty) {
-        if matches!(argument.kind, ExprKind::Identifier(_))
-            && let TyKind::Struct(name, _) = ty.kind()
-            && self.structs.contains_key(name)
-        {
+        let nominal = match ty.kind() {
+            TyKind::Struct(name, _) => self.structs.contains_key(name),
+            TyKind::Error => true,
+            _ => false,
+        };
+        if matches!(argument.kind, ExprKind::Identifier(_)) && nominal {
             self.record_at(argument.source_span())
                 .borrowed_read_call_place = true;
         }

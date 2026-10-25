@@ -265,6 +265,7 @@ assets/ok/entry_redeclares_library_names.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/enum_like_protocol.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/env_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/errno_strerror.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/error_read_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/evaluated_default_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/exceptions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/explicit_destroy_consumed_field_droppable.mojo	-	ineligible	no-scalar-entry-shape

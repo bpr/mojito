@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1352**.
+Next free ID: **R1353**.
 
 ## Ordered Work
 
@@ -8510,6 +8510,21 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on R1323, which the respelled tests need.
   - Model: Opus, Not Planned.
 
+- [ ] **R1352 `repr` of an `Error` prints its bare message**
+
+  `print(repr(Error("boom")))` prints `boom` on the VM and is rejected
+  natively ("unsupported type `Error`"), where the pin prints
+  `Error('boom')`.
+  - Upstream's `Error` is a library struct whose `write_repr_to` writes
+    the type name around the quoted message. Mojito's is the intrinsic
+    `TyKind::Error`, so `repr` is hand-rolled per backend.
+  - The VM's `repr` formats it as `str` does (`format_value` in
+    `crates/mojito-vm/src/backend/vm/dispatch.rs`), and Pliron's
+    `lower_repr_builtin` (`lower/methods.rs`) has no `Error` arm.
+  - Found while landing R1326 (2026-10-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -8633,25 +8648,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `read_temporary_conditional_argument_drop`,
     `try_finally_raise_skips_own_handler`, and
     `try_region_shadowed_binding`.
+  - Since R1326 (2026-10-24), `print(e)` reads `e` in place, so these
+    probes' handlers hold no owned register; re-run the census before
+    deciding whether the erasure below is still needed.
   - Fix: erase a handler no raise reaches before drop elaboration, as
     upstream's canonicalization of a `try` without one does, then report
     an owned register live at an exit.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1326 An operand that is only borrowed is copied into a register
-  first**
-
-  MIR copies a value into a fresh owned register before a `read` use,
-  where upstream borrows the value in place, so the copy is one more owned
-  register that R1329 then has to destroy.
-  - Probe: `except e: print("caught", e)` and `var e = Error("boom");
-    print(e)` read `e` by `var.use { mode: copy }` before `print`.
-  - Probe: `s + "!"` over a `read` `String` parameter `s` copies `s`
-    (`String.__copyinit__`) when the right operand is converted
-    (`lower_operator_operand`, `lower_setup_operand` in
-    `crates/mojito-mir/src/mir/calls.rs`).
-  - Split it in two if the causes differ.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

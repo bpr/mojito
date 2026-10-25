@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A read use of an `Error` place, and the nominal `String` operand of an
+  operator whose other side is a converted string literal, are borrowed
+  where they lie, as upstream borrows a `read` argument, instead of being
+  copied into an owned register first (R1326). So `print(e)`,
+  `print("caught", e)`, `g(e)` at a `read e: Error`, a tuple element
+  `g(t[0])`, and `s + "!"` over a `read s: String` run no copy, and
+  `g(e)` followed by `print(e)`, which used to fail MIR verification after
+  elaboration, runs (`assets/ok/error_read_in_place.mojo`), as does
+  `assets/ok/with_exit_error_swallow.mojo`.
+
 - The MIR verifier rejects an operand that reads an owned register some
   path has already ended, as upstream's `CheckLifetimes` rejects a use of
   an owned SSA value after its consumption (R1330). MIR lowering now
