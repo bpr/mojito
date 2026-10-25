@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1353**.
+Next free ID: **R1357**.
 
 ## Ordered Work
 
@@ -1194,6 +1194,24 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1353 `List.resize(n, fill)` copies `fill` twice per element**
+
+  Problem: `l.resize(2, a)` over an `a` printing its copies prints `copy
+  1`, `copy 11`, `del 11` per element and leaves elements holding `21`,
+  where the pin copies `fill` once per element.
+  - `unsafe_write(copy=fill)` (`stdlib/std/collections/list.mojo`) lowers
+    as a `var.use copy` of `fill` (`self.expr` of the value) and then the
+    `CopyValue` the `PointerWrite { copy: true }` adjustment adds
+    (`mir/lower_expr/expr_method.rs`), and drop elaboration destroys the
+    first copy with a `drop.reg`.
+  - Fix: read the `copy=` value where it lies, as upstream's
+    `init_pointee_copy` reads its `read` argument, so the one copy is the
+    `CopyValue`.
+  - Probe: `conformance/probes/list_resize_copies_fill_twice.mojo`.
+  - Found while landing R1328 (2026-10-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R731 A transferred call temporary skips the move initializer the
   pin runs**
 
@@ -2112,6 +2130,14 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     (`is_trivial_register_passable`) and would have to record it on the
     transfer.
   - Probe: `conformance/probes/trivial_struct_mut_parameter_transfer.mojo`.
+  - Probe: the MIR temporary binders (`bind_temporary_argument`,
+    `bind_forwarded_temporary`, `lower_method_receiver`,
+    `bind_discarded_result`, `mir/calls.rs`) gate on
+    `owns_droppable_storage` too, so a register-passable struct with a
+    destructor gets a `$tmp_arg_r` slot at a read parameter, where upstream
+    keeps it in a register and destroys it as one bit. The same recorded
+    fact fixes both: the checker records register passability on the node,
+    as it does for a conditional (`RegisterPassableResult`).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8629,6 +8655,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Upstream tracks no register-passable trivial value
     (`isRegisterPassableTrivial`, `CheckLifetimes.cpp`), and decides a
     parameterized destructor per instance.
+  - Probe: a capturing closure value copied before an indirect call
+    (`elt_handler(...)` in `List.deinit_with`, and `map`, `and_then`,
+    `deinit_with`, `clear_with` across `Optional`, `Set`, `Dict`, `Array`
+    and `Variant`) is a `var.use copy` a `drop.reg` destroys, where
+    upstream's `isRegisterPassableTrivial` answers true for a raw MLIR
+    value, which a closure is, so `ValueSet` never tracks it. Mojito's
+    `owned_register` (`mir/register_ends.rs`) exempts only a thin function
+    value. Check first whether a closure holding a `{var x}` capture
+    destroys its environment through the value; if so only the
+    by-reference closures are trivial.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8657,23 +8693,61 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1328 A memory-only owned value lives in an SSA register, where
-  upstream keeps it in a temporary allocation**
+- [ ] **R1354 A generic `T` a body only reads is copied into an owned
+  register**
 
-  Upstream never holds a `String`, a `List`, or a tuple holding one in an
-  SSA register: it materializes such a value in a temporary allocation
-  and destroys that as an indirect value, field by field, while Mojito's
-  registers hold them whole.
-  - So `drop.reg` (R1329) destroys a memory-only register whole, where
-    upstream's register values are one bit (`numValueBits = 1` in
-    `ValueSet::addValue`, `CheckLifetimes.cpp`) and only register-passable
-    types reach them.
-  - Fix, first step: a memory-only call result bound to no slot is stored
-    into a hidden temporary slot that drop elaboration destroys like any
-    variable, and its readers read the slot.
-  - Related: R677 (a memory-only `read` argument passed by value).
-  - Depends on R1329.
+  A generic body holds a `var.use copy` or `value.copy` of a `T` or a pack
+  element `Ts[i]` that only a read consumes, where upstream passes a
+  memory-only `T` by address and copies nothing for a read.
+  - At a last use, copy elision turns the copy into a `var.use move`,
+    which still lands in a register a `drop.reg` destroys.
+  - Probe: `print(value)` in `assets/ok/pack_element_alias_served.mojo`
+    (21 such moves across the corpus, census of 2026-10-24).
+  - Probe: `List.__hash__`, `Array.__hash__`, `String.join`, and
+    `Tuple.__contains__`'s `value.rebind` each copy a `T` they only read.
+  - Probe: `Rack.accumulate`'s `__iadd__` argument
+    (`assets/ok/template_method_parameter_built_store.mojo`).
+  - Related: R677.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1355 MIR lowering picks a memory-only temporary's slot per
+  consumer, where upstream's call emission picks it at the call**
+
+  Upstream writes every memory-only call result into its destination or a
+  synthesized `__call_result_tmp__` (`UncheckedCallEmission.cpp`, the
+  `ByRefResult` argument), and the consumer borrows or takes that storage.
+  - Mojito keeps the result in a register, and each consumer binds its own
+    hidden slot: `$tmp_arg_r`, `$fwd_arg_r`, `$tmp_recv_r`,
+    `$tmp_field_r`, `$discard_r`, `$mat_r`, `$arg_loan_r`, each through
+    `Node::is_fresh_temporary` (`mir/facts.rs`).
+  - A consumer no binder covers leaves the result in a register that a
+    `drop.reg` destroys whole, the class R1356 rejects.
+  - Fix: `Flatten::expr` returns a value or a slot, as upstream's `CValue`
+    does, call lowering binds a memory-only result with no destination to
+    one hidden slot, and the per-consumer binders collapse into reads of
+    it.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1356 The MIR verifier does not reject a `drop.reg` of a
+  memory-only register**
+
+  `verify/drops.rs` accepts a `drop.reg` of any owned register, where
+  upstream's register values are register-passable only (`numValueBits =
+  1` in `ValueSet::addValue`, `CheckLifetimes.cpp`) and a memory-only
+  value is destroyed as an indirect value.
+  - The rule: reject a `drop.reg` whose register type
+    `MirDeclarations::register_passable` answers no for.
+  - The remaining placements are copies and moves into a register, each
+    with its own entry: slice descriptors (R1157, R1158), truthiness
+    copies (R1249), `List`→`Span` copies (R117), read arguments by value
+    (R677), `List.resize`'s double copy (R1353), generic reads (R1354),
+    closure values (R1334), and a pending `Error` (R1293).
+  - Re-run the `emit-mir` census over `assets/ok` and
+    `assets/ownership_ok` before landing it.
+  - Depends on R1157, R1158, R1249, R117, R677, R1353, R1354, R1334, R1293.
+  - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
   recognizes by spelling**
@@ -8713,6 +8787,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     constructor in place of `slice_literal_binds`.
   - Probe: `conformance/probes/slice_kind_construction.mojo`.
   - Found while landing R192 (2026-10-19).
+  - Probe: a `ContiguousSlice` or `StridedSlice` parameter is copied whole
+    into a register to read `slice.start` (`String.__getitem__`'s
+    `ContiguousSlice` overloads), and a `drop.reg` destroys the copy; as
+    library structs they are read in place.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -8736,6 +8814,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `assets/ok/template_method_tuple_element.mojo` fail on the VM with
     "Slice bound access requires its declared Optional result".
   - Found while landing R192 (2026-10-19).
+  - Probe: `Slice(..) == Slice(..)` under the intrinsic `==`, and a strided
+    `slice.get` result, are owned descriptor registers a `drop.reg`
+    destroys; as a library struct the operands are read temporaries in
+    slots.
   - Depends on R1157, which ports the two kinds first.
   - Model: Fable, Planned.
 
@@ -9160,6 +9242,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `err_slot` in `lower/try_flow.rs`), since MIR names no value for it;
     with the slot declared, drop elaboration destroys it.
   - Found while landing R1264 (2026-10-23).
+  - Probe: `assets/ok/pliron_finally_overrides.mojo`'s `g`, whose
+    `finally` returns over a pending `Error`, destroys the raised register
+    with a `drop.reg`, where upstream's error lives in the slot and dies as
+    a variable.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

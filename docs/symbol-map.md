@@ -1019,7 +1019,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   implicit_conversion, index_normalization, recorded_value,
   intrinsic_index_dispatch, pointer_offset_subscript, rebound_place,
   is_fresh_temporary, …}`; a fresh temporary is a call's, a dispatched
-  operator's, or a by-value subscript's result) and
+  operator's, a by-value subscript's, or a display's or comprehension's
+  result) and
   the `Flatten` readers that also need the function being lowered
   (`name_spelled`, `expression_var`, `nested_info`, `aggregate_borrows`,
   `subscript_call_contract`, `call_capture_accesses`, `local_callee`).

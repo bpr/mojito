@@ -24,15 +24,22 @@ impl<'a> Node<'a> {
 
     /// Whether this node's value is a fresh owned temporary: a call's
     /// result, a dispatched operator's, which is its dunder's owned return,
-    /// a conditional expression's, or a subscript's whose selected getter
-    /// returns by value. A scalar
-    /// result owns no droppable storage, so binders that test this filter
-    /// it out by type.
+    /// a conditional expression's, a subscript's whose selected getter
+    /// returns by value, or a display's or comprehension's, which is its
+    /// construction's, as upstream emits a collection literal as a
+    /// constructor call. A scalar result owns no droppable storage, so
+    /// binders that test this filter it out by type.
     pub(super) fn is_fresh_temporary(self) -> bool {
         self.is_call()
             || matches!(
                 self.op(),
-                CheckedOp::Infix(..) | CheckedOp::Prefix(..) | CheckedOp::IfExpr { .. }
+                CheckedOp::Infix(..)
+                    | CheckedOp::Prefix(..)
+                    | CheckedOp::IfExpr { .. }
+                    | CheckedOp::ListLit(_)
+                    | CheckedOp::BraceLit(_)
+                    | CheckedOp::TupleLit(_)
+                    | CheckedOp::Comprehension { .. }
             )
             || (matches!(
                 self.op(),

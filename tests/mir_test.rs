@@ -270,6 +270,111 @@ fn dying_copy_at_read_receiver_lends_its_source() {
 }
 
 #[test]
+fn display_at_read_parameter_binds_a_read_temporary() {
+    // `count([M(1)])` binds the display to a read-temporary slot, as a call
+    // result at a read parameter is: the call reads the slot, which dies
+    // after it, and no register holds the list to a `drop.reg`.
+    let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef count(xs: List[M]):\n    pass\n\ndef main():\n    count([M(1)])\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    assert!(
+        reads_a_read_temporary(main, |instr| match instr {
+            MirInstr::Call { func, args, .. } if func.0 == "count" => Some(args.clone()),
+            _ => None,
+        }),
+        "{main:#?}"
+    );
+    let instrs = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    assert!(
+        !instrs.iter().any(|instr| matches!(
+            instr,
+            MirInstr::Drop { reg, .. }
+                if matches!(main.reg_types.get(&reg.0).map(Ty::kind), Some(TyKind::Struct(name, _)) if name == "List")
+        )),
+        "{main:#?}"
+    );
+}
+
+#[test]
+fn display_at_owned_parameter_binds_no_read_temporary() {
+    // `take([M(1)])` into a `var` parameter forwards the display through a
+    // forwarding slot; it binds no read temporary.
+    let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef take(var xs: List[M]):\n    pass\n\ndef main():\n    take([M(1)])\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    assert!(
+        !main
+            .var_names
+            .iter()
+            .any(|slot| slot.starts_with(mojito::mir::READ_TEMPORARY_SLOT)),
+        "{main:#?}"
+    );
+    assert!(
+        main.var_names
+            .iter()
+            .any(|slot| slot.starts_with(mojito::mir::FORWARDED_ARGUMENT_SLOT)),
+        "{main:#?}"
+    );
+}
+
+#[test]
+fn contains_temporary_container_binds_a_read_temporary() {
+    // In `"b" in strs()` the `__contains__` receiver is the checker's read
+    // temporary: the call reads its slot, which dies after it.
+    let source = "def strs() -> List[String]:\n    return [\"a\", \"b\"]\n\ndef main():\n    print(\"b\" in strs())\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    assert!(
+        reads_a_read_temporary(main, |instr| match instr {
+            MirInstr::MethodCall { method, recv, .. } if method == "__contains__" => {
+                Some(vec![*recv])
+            }
+            _ => None,
+        }),
+        "{main:#?}"
+    );
+}
+
+#[test]
+fn conversion_temporary_argument_binds_a_read_temporary() {
+    // `Bool(make())` reads its temporary argument from a read-temporary
+    // slot that dies after the conversion; `Bool(o)` over a named `o` reads
+    // `o` where it lies and binds none.
+    let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef make() -> Optional[M]:\n    return Optional(M(1))\n\ndef main():\n    print(Bool(make()))\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    let is_bool = |instr: &MirInstr| match instr {
+        MirInstr::Call { func, args, .. } if func.0 == "Bool" => Some(args.clone()),
+        _ => None,
+    };
+    assert!(reads_a_read_temporary(main, is_bool), "{main:#?}");
+    let named = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef main():\n    var o = Optional(M(1))\n    print(Bool(o))\n";
+    let compiled = Compiler::default()
+        .compile_source(named, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    assert!(
+        !main
+            .var_names
+            .iter()
+            .any(|slot| slot.starts_with(mojito::mir::READ_TEMPORARY_SLOT)),
+        "{main:#?}"
+    );
+}
+
+#[test]
 fn dying_copy_receiver_forwards_its_source() {
     // `M(copy=d).consume()` at `d`'s last use forwards `d` to the owned
     // receiver; a raising argument after the receiver keeps a move of `c`
@@ -620,6 +725,38 @@ fn mir_function<'a>(mir: &'a mojito::mir::MirProgram, name: &str) -> &'a MirFunc
         .find(|(lowered, _)| lowered == name)
         .unwrap_or_else(|| panic!("{name} MIR"))
         .1
+}
+
+/// Whether the call `operands` picks out, by returning its operands, takes
+/// one as a load of a read-temporary slot that a `DropVar` destroys after
+/// the call.
+fn reads_a_read_temporary(
+    function: &MirFunction,
+    operands: impl Fn(&MirInstr) -> Option<Vec<Reg>>,
+) -> bool {
+    let instrs = function
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
+    let Some((call_at, operands)) = instrs
+        .iter()
+        .enumerate()
+        .find_map(|(at, instr)| operands(instr).map(|regs| (at, regs)))
+    else {
+        return false;
+    };
+    operands.iter().any(|operand| {
+        instrs.iter().any(|instr| match instr {
+            MirInstr::LoadPlace { dest, place } if dest == operand => function.var_names
+                [place.root as usize]
+                .starts_with(mojito::mir::READ_TEMPORARY_SLOT)
+                && instrs[call_at..].iter().any(
+                    |later| matches!(later, MirInstr::DropVar { var, .. } if *var == place.root),
+                ),
+            _ => false,
+        })
+    })
 }
 
 /// The type of `function`'s slot named `name`.

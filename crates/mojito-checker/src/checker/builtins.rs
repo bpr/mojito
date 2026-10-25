@@ -1012,6 +1012,7 @@ impl Checker {
         {
             require_dunder_ret(result?, &target, dunder)?;
             self.borrow_nominal_place_argument(&args[0], &arg_ty);
+            self.record_read_temporary_argument(&args[0]);
             // A raising conversion dunder (`String.__int__() raises`) makes
             // the conversion a raising call.
             if let Some((_, sig, _)) = self.struct_dunder_signature_for(&arg_ty, dunder, &[])
@@ -1024,6 +1025,10 @@ impl Checker {
             return Ok(target);
         }
         let bounded = conversion.is_some_and(|(_, bound)| param_has_bound(&arg_ty, bound));
+        if bounded {
+            self.borrow_parameter_place_argument(&args[0], &arg_ty);
+            self.record_read_temporary_argument(&args[0]);
+        }
         // A width-1 SIMD value is a scalar alias (`UInt8`, `Byte`, ...);
         // Mojo's scalar conversions accept it.
         let simd_scalar = is_scalar_simd(&arg_ty);

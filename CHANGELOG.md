@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A list, dict, or set display, a tuple display, and a comprehension are
+  fresh temporaries, as a call result is, so one passed to a read
+  parameter lives in a hidden slot that dies right after the call instead
+  of in an SSA register, as upstream materializes a memory-only temporary
+  (R1328). An `in` test's temporary container is read the same way, and a
+  scalar conversion reads its argument as a read parameter does: this
+  fixes `Bool(x)`, `Int(x)`, and `Float64(x)` over a bounded `x: T`
+  copying `x` and converting the copy, where the pin copies nothing
+  (`assets/ok/generic_conversion_reads_argument_in_place.mojo`).
+
 - A read use of an `Error` place, and the nominal `String` operand of an
   operator whose other side is a converted string literal, are borrowed
   where they lie, as upstream borrows a `read` argument, instead of being

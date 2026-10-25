@@ -237,6 +237,7 @@ assets/ok/discarded_result_destruction.mojo	main	exe-differential	sanitized
 assets/ok/discarded_transfer_destroyed_in_place.mojo	main	exe-differential	sanitized
 assets/ok/display_argument_built_at_call_setup.mojo	main	exe-differential	sanitized
 assets/ok/display_element_read_at_construction.mojo	main	exe-differential	sanitized
+assets/ok/display_read_temporary_slot.mojo	main	exe-differential	sanitized
 assets/ok/docstrings.mojo	main	exe-differential	sanitized
 assets/ok/dtype_compile_time_values.mojo	main	exe-differential	sanitized
 assets/ok/dtype_default_param.mojo	main	exe-differential	sanitized
@@ -302,6 +303,7 @@ assets/ok/function_value_array_display.mojo	main	exe-differential	sanitized
 assets/ok/function_value_array_element_binding.mojo	main	exe-differential	sanitized
 assets/ok/generic_alias_type_pack.mojo	main	exe-differential	sanitized
 assets/ok/generic_constructor_literal_argument.mojo	main	exe-differential	sanitized
+assets/ok/generic_conversion_reads_argument_in_place.mojo	main	exe-differential	sanitized
 assets/ok/generic_copyable_iterator_refinement.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_associated_value.mojo	main	exe-differential	sanitized
 assets/ok/generic_ctfe_value_param.mojo	main	exe-differential	sanitized

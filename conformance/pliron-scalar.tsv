@@ -237,6 +237,7 @@ assets/ok/discarded_result_destruction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/discarded_transfer_destroyed_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/display_argument_built_at_call_setup.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/display_element_read_at_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/display_read_temporary_slot.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/docstrings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_compile_time_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_default_param.mojo	-	ineligible	no-scalar-entry-shape
@@ -302,6 +303,7 @@ assets/ok/function_value_array_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/function_value_array_element_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_alias_type_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_constructor_literal_argument.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_conversion_reads_argument_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_copyable_iterator_refinement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_associated_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_ctfe_value_param.mojo	-	ineligible	no-scalar-entry-shape

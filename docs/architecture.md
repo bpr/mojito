@@ -5151,6 +5151,22 @@ current Mojo:
   so a `ref self` receiver, which the pin moves into, is not marked; so a `var`/`deinit` slot — which moves the
   temporary into the callee — carries no marker, and MIR never guesses a
   callee's conventions.
+- A list, dict, or set display, a tuple display, and a comprehension are
+  their construction's result, as upstream emits a collection literal as a
+  constructor call into its destination or a temporary, so
+  `Node::is_fresh_temporary` answers yes for them: `count([M(1)])` binds the
+  list to a `$tmp_arg_r` slot that dies after the call, `take([M(1)])`
+  forwards it through a `$fwd_arg_r` slot, and `_ = [M(1)]` discards it
+  through a `$discard_r` slot. An `in` test's container is its
+  `__contains__` receiver, lowered by `lower_method_receiver`, so
+  `"b" in strs()` destroys the list after the test. A scalar conversion
+  (`Bool(x)`, `Int(x)`, `Float64(x)`) reads its argument as a read
+  parameter does: `infer_conversion` marks a temporary argument
+  `ReadTemporaryArgument`, so `Bool(make())` destroys `make()`'s result
+  after the conversion, from a slot, not a register, and it reads a named
+  `x: T` bounded by the conversion's trait where it lies
+  (`borrow_parameter_place_argument`), as it reads a named struct
+  (`borrow_nominal_place_argument`), so `Bool(x)` copies nothing.
 - A construction is its `__init__`'s call, so its arguments bind the same
   way: `record_constructor_call` (`checker/declarations.rs`) runs every
   `infer_construction` path through `record_argument_borrows`, so
