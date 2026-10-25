@@ -173,6 +173,17 @@ leverage is in shared causes that the entries name in prose but do not
 link. Five new gaps (E–I) affect generic code size. Another dozen clusters
 are conformance only.
 
+`enum` landed after that reading (10-25) and moves no gap:
+- Each enum is an ordinary struct. `mojito_parser::enums` generates its
+  members as Mojo text, so they elaborate and instantiate like any
+  hand-written struct's.
+- Its storage, `__EnumStorage[*Ts]`, is the `TyKind::Variant` intrinsic
+  `Variant` already used, selected by case index.
+- It closed R1236. Its seven residues joined existing blocks: R1407,
+  R1408, R1409, and R1412 (see *Blocks without a size lever*). R1410,
+  R1411, and R1413 are under *Entries outside the gaps*.
+- R1407 also waits on gap G's R1378 and the `Tuple` block's R1124.
+
 | gap | upstream's shape | core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
 | B. Construction is not a call (remainder) | the call names the checked `__init__` | R1338 | — | yes |
@@ -348,10 +359,10 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, and `StringLiteral` are compiler types | R1389–R1399 (`Int`, `UInt`, and `Float64` become width-one `SIMD`, then the library `SIMD` port, R1397), R160, R1188, R276, R1192 | R143, R339, R335, R1223, R331, R430, R850, R212, R1019, R423, R1352, R186, R185, R851, R187, R171, R330, R336, R857, R1189, R427, R432, R199 |
-| `Writable`, `repr`, and `print` are builtins each backend re-implements | R424 → R422 → R1287 (R424 is also gap F) | R433, R434, R275, R18, R159, R937 |
+| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | R1389–R1399 (`Int`, `UInt`, and `Float64` become width-one `SIMD`, then the library `SIMD` port, R1397), R160, R1188, R276, R1192 | R1408 (after R1392), R143, R339, R335, R1223, R331, R430, R850, R212, R1019, R423, R1352, R186, R185, R851, R187, R171, R330, R336, R857, R1189, R427, R432, R199 |
+| `Writable`, `repr`, and `print` are builtins each backend re-implements | R424 → R422 → R1287 (R424 is also gap F) | R1409, R433, R434, R275, R18, R159, R937 |
 | Reflection is a builtin, not `Reflected[T]` | R324 (after gap H) | R271, R497, R272, R76, R569, R270, R77, R78, R79, R75, R443, R444, R273, R900, R904 |
-| A trait requirement has no checked signature | R758, R594 | R595, R769, R640, R760, R549, R942, R419, R1165, R67, R571, R284, R550, R570 |
+| A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R419, R1165, R67, R571, R284, R550, R570 |
 | The checked handoff is rebuilt from span-keyed facts | R764 → R765 → R766 → R767 | R756, R757, R755, R626, R627, R754, R768, R521 |
 | The parser decides type versus value | R1369 → R1370 → R1371, R1372 | R377, R381, R512, R383, R482, R1203, R72, R326, R490, R134 |
 | Origins are dropped from `ParamDecl` | R761 → R762 → R763 | R1300, R1299, R1213, R674, R133, R353, R104, R242, R726 |
@@ -359,7 +370,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 | Overload identity is a partial mangled string | R600, R934 → R935 | R1172, R105, R64, R1294, R570, R1111, R91 |
 | Relocations name no `__moveinit__` | R1047, R341 | R731, R738, R732, R739, R740, R32, R1048 |
 | One-shot parameter inference | R52 | R53, R479, R382, R537, R726, R61 |
-| No evidence environment for conformance | R1364 → R1365 | R667, R792, R704, R128, R698 |
+| No evidence environment for conformance | R1364 → R1365 | R667, R792, R704, R128, R698, R1412 |
 | No single lvalue | R1373 → R1374, R1375 | R35, R690, R1247, R1224, R1233 |
 | A transfer's source is judged case by case | R1366 → R1367 | R31, R116, R120, R121, R750 |
 | Abandonment is the `explicit_destroy` walk, not `Deinitable` | R1368 (after R1364, R1365) | R30, R302, R711, R667 |
@@ -389,6 +400,8 @@ None of these unblocks another entry. Run them whenever they are useful.
 - **Inlining reach**: R1346, R1347, R1350, R1339, R1340, R1341.
 - **Bugs**: R1112, R1035, R933, R1289.
 - **Hygiene**: R944, R868, R1276.
+- **Library ports**: R1410 (`String`'s variadic constructor), R1411
+  (`std.iter.map`). **Diagnostics**: R1413 (enum declaration errors).
 - **Performance**: R896, R897. **Pin legality**: R924.
   **Canonicalizer completeness**: R1255, R1256.
 
@@ -397,6 +410,7 @@ scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1346 --only R13
   --only R1339 --only R1340 --only R1341 --only R1112 --only R1035 --only R933 --only R1289 -n 0
 scripts/claude_loop.py --model opus --plan-fable-on-opus --only R944 --only R868 --only R1276 \
   --only R896 --only R897 --only R924 --only R1255 --only R1256 -n 0
+scripts/claude_loop.py --model opus --only R1410 --only R1411 --only R1413 -n 0
 ```
 
 ## Measure
