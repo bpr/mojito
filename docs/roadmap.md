@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1349**.
+Next free ID: **R1351**.
 
 ## Ordered Work
 
@@ -708,20 +708,48 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1105 `mem-2-reg` keeps a slot that a body reads through a
-  reference the same block makes**
+- [ ] **R1350 `mem-2-reg` keeps a slot whose stored register another
+  instruction also reads**
 
-  After an inlined body reads a captured or environment slot, the caller
-  holds `ref.make` of the slot and `ref.read` through it, and the slot
-  stays in memory, where upstream's inlined `ref` parameter is the
-  allocation's own address and its loads promote.
-  - `mem-2-reg` counts a `ref.make` as a borrow, which keeps the slot.
-  - A `ref.read` of a whole-root `ref.make` the same block made, with no
-    store between, is a load of the slot.
-  - Probe: `outer(4)` over `def get() {imm y} -> Int: return y + 1`
-    (`y` a local copy of `x`) keeps a `ref.make` and a `ref.read` of `y`
-    in concrete `outer`; so does `def inc() {var x}`'s environment slot.
-  - Found while landing R1080 (2026-10-17).
+  A slot stays in memory when the register a `var.store` stores is read
+  anywhere else, where upstream's `canPromote` has no such test and its
+  `Mem2Reg` promotes every store of one SSA value.
+  - `Facts::candidate` (`analysis/mem2reg.rs`) requires each stored
+    register to be defined once and read only by the store.
+  - `canonicalize` uniques equal constants, so two locals initialized
+    from the same literal share one register and both keep their slots.
+  - Probe: `main` calling `print(outer(4))` and `print(bumped(4))`, over
+    `nodebug` nested `def`s `get() {imm y}` and `bump() {mut c}` (each
+    local a copy of the argument), keeps `var.store`s of one `const 4`
+    into two slots in concrete `main`. Without the rule `main` folds to
+    `print(5)` and `print(10)`, as at the pin.
+  - Lever: drop the read-count test for a type whose copy is the
+    identity, and check what the closure-of-references case still needs.
+  - Found while landing R1105 (2026-10-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1349 `automatic-inline` keeps a direct call of an undecorated
+  capturing nested `def`**
+
+  A plain nested `def` that captures, such as `def get() {imm y} -> Int`,
+  stays a call in concrete MIR, where upstream's `AutomaticInline`
+  inlines it below its threshold of 50 operations.
+  - The elaborator clears a concrete declaration's `enclosing`
+    (`mono/specializer.rs`), since an instance reads no enclosing binder.
+  - `instantiated_callee` (`analysis/inline_parametric.rs`) accepts a
+    call's `capture_accesses` only for a callee with an `enclosing`
+    declaration, so the instance's direct call keeps them and is refused.
+  - Lever: recognize a lifted body's direct call by its capture operands
+    (the accesses are to places the call passes as leading arguments),
+    not by the declaration's `enclosing`.
+  - Probe: `outer(4)` over `var y = x` and an undecorated
+    `def get() {imm y} -> Int: return y + 1` keeps
+    `call "outer$get"` in concrete `main`; `def bump() {mut c}: c += 3`
+    called twice keeps both calls.
+  - A `nodebug` or `@always_inline` nested `def` inlines before
+    elaboration, so only the undecorated form is affected.
+  - Found while landing R1105 (2026-10-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

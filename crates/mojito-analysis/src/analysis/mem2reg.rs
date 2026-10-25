@@ -13,6 +13,10 @@
 //! mention of it is a store (`var.store`), a read (`var.use`, or a
 //! whole-root `place.load`), or a mention with no effect on such a type
 //! once drops are elaborated (`var.declare`, `drop.var`, and `var.consume`).
+//! A whole-root `ref.make` of the slot whose register only `ref.read` and
+//! `ref.write` take as their reference is the allocation's own address, as
+//! an inlined `ref` parameter is upstream: the `ref.make` goes, each
+//! `ref.read` is a read and each `ref.write` a store, at its own position.
 //! A destructor or copy constructor would take the slot's address, so a
 //! type with either is never one, as upstream's never is; a borrow, a
 //! capture, a loan, or a projected place keeps the slot too. A slot every
@@ -224,7 +228,14 @@ enum Mention {
     /// A drop or consumption: a lifetime marker, after which the slot holds
     /// nothing.
     Kill,
+    /// A `ref.make` of the slot's address, which leaves its value.
+    Address,
 }
+
+/// The registers each holding the address of a slot, by register number:
+/// the dest of a whole-root `ref.make`, defined once, whose every read is
+/// the reference of a `ref.read` or `ref.write`.
+type Addresses = HashMap<u32, VarId>;
 
 /// The census of one slot: whether some mention keeps it, and each
 /// mention with the region holding it (numbered in preorder from the
@@ -241,6 +252,7 @@ struct Facts {
     reads: Vec<u32>,
     /// The registers defined by a `closure.make` of reference captures.
     closures: HashSet<u32>,
+    addresses: Addresses,
 }
 
 impl Facts {
@@ -250,10 +262,21 @@ impl Facts {
         count_register_reads(&mut function.blocks, &mut reads);
         let mut closures = HashSet::new();
         reference_closures(&function.blocks, &mut closures);
+        let mut made = HashMap::new();
+        let mut through = vec![0_u32; function.n_regs as usize];
+        slot_references(&function.blocks, &mut made, &mut through);
+        let addresses = made
+            .into_iter()
+            .filter(|&(dest, _)| {
+                let at = dest as usize;
+                definitions.get(at) == Some(&1) && reads.get(at) == through.get(at)
+            })
+            .collect();
         Self {
             definitions,
             reads,
             closures,
+            addresses,
         }
     }
 
@@ -273,7 +296,7 @@ impl Facts {
         let typed = function.var_tys.get(&var);
         let stores_closures = entry.mentions.iter().all(|(_, mention)| match *mention {
             Mention::Store(src) => self.closures.contains(&src.0),
-            Mention::Read { .. } | Mention::Declare | Mention::Kill => true,
+            Mention::Read { .. } | Mention::Declare | Mention::Kill | Mention::Address => true,
         });
         (var as usize >= function.n_params || entry_stored.contains(&var))
             && !entry.kept
@@ -285,7 +308,7 @@ impl Facts {
                         && self.reads.get(src.0 as usize) == Some(&1)
                 }
                 Mention::Read { dest, .. } => function.reg_types.get(&dest.0) == typed,
-                Mention::Declare | Mention::Kill => true,
+                Mention::Declare | Mention::Kill | Mention::Address => true,
             })
     }
 }
@@ -297,7 +320,7 @@ fn promote_in_regions(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> (BTreeSet<VarId>, HashSet<u32>, usize) {
-    let (slots, variants) = variance(function, declarations, &BTreeSet::new());
+    let (slots, variants, addresses) = variance(function, declarations, &BTreeSet::new());
     if slots.is_empty() {
         return (slots, HashSet::new(), 0);
     }
@@ -305,6 +328,7 @@ fn promote_in_regions(
     let mut promoter = Promoter {
         var_tys: &function.var_tys,
         slots: &slots,
+        addresses: &addresses,
         variants,
         scopes: Vec::new(),
         frames: Vec::new(),
@@ -328,9 +352,9 @@ fn promote_in_regions(
     (slots, erased_results, erased)
 }
 
-/// The slots of the structured body `function` [`mem_2_reg`] promotes, and
-/// for each region op, by its preorder number, the promoted slots variant
-/// across it, each list sorted.
+/// The slots of the structured body `function` [`mem_2_reg`] promotes, for
+/// each region op, by its preorder number, the promoted slots variant
+/// across it, each list sorted, and the registers holding a slot's address.
 ///
 /// A slot is allocated in the innermost region holding every mention of it,
 /// where its declaration sits, as upstream's `pop.stack_allocation` does.
@@ -342,13 +366,13 @@ fn variance(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
     entry_stored: &BTreeSet<VarId>,
-) -> (BTreeSet<VarId>, HashMap<usize, Vec<VarId>>) {
+) -> (BTreeSet<VarId>, HashMap<usize, Vec<VarId>>, Addresses) {
     let facts = Facts::of(function);
     let mut regions = Vec::new();
     collect_regions(&function.blocks, None, &mut regions, &mut 0);
     let mut census: HashMap<VarId, Census> = HashMap::new();
     for (list, region) in regions.iter().enumerate() {
-        take_census(list, region.blocks, &mut census);
+        take_census(list, region.blocks, &facts.addresses, &mut census);
     }
     let mut candidates: Vec<(VarId, &Census)> = census
         .iter()
@@ -398,7 +422,7 @@ fn variance(
             variants.entry(op).or_default().push(var);
         }
     }
-    (slots, variants)
+    (slots, variants, facts.addresses)
 }
 
 /// One region of a structured body, in preorder.
@@ -470,6 +494,7 @@ struct Frame {
 struct Promoter<'a> {
     var_tys: &'a HashMap<VarId, Ty>,
     slots: &'a BTreeSet<VarId>,
+    addresses: &'a Addresses,
     /// The variant slots of each region op not yet walked, by preorder
     /// number.
     variants: HashMap<usize, Vec<VarId>>,
@@ -514,7 +539,7 @@ impl Promoter<'_> {
     fn walk_block(&mut self, block: &mut MirBlock) {
         let mut out = Vec::with_capacity(block.instrs.len());
         for mut instruction in std::mem::take(&mut block.instrs) {
-            if let Some((var, mention)) = slot_use(&instruction)
+            if let Some((var, mention)) = slot_use(&instruction, self.addresses)
                 && self.slots.contains(&var)
             {
                 match mention {
@@ -530,8 +555,9 @@ impl Promoter<'_> {
                         continue;
                     }
                     // A lifetime marker leaves the value, as upstream's
-                    // `StackAllocLifetimeEndOp` does.
-                    Mention::Kill => {}
+                    // `StackAllocLifetimeEndOp` does, and so does naming
+                    // the address.
+                    Mention::Kill | Mention::Address => {}
                 }
                 let mut results = Vec::new();
                 instruction_result_regs(&instruction, &mut results);
@@ -858,13 +884,19 @@ fn reference_closures(blocks: &[MirBlock], closures: &mut HashSet<u32>) {
 }
 
 /// Record every slot mention of the region `list`'s own blocks (not of the
-/// regions they hold) in `census`.
-fn take_census(list: usize, blocks: &[MirBlock], census: &mut HashMap<VarId, Census>) {
+/// regions they hold) in `census`, a `ref.read` or `ref.write` through one
+/// of the `addresses` mentioning its slot.
+fn take_census(
+    list: usize,
+    blocks: &[MirBlock],
+    addresses: &Addresses,
+    census: &mut HashMap<VarId, Census>,
+) {
     for block in blocks {
         for instruction in &block.instrs {
             let slots = instruction_slots(instruction);
-            match (slot_use(instruction), slots.as_slice()) {
-                (Some((var, mention)), [only]) if *only == var => {
+            match slot_use(instruction, addresses) {
+                Some((var, mention)) if slots.iter().all(|&slot| slot == var) => {
                     census
                         .entry(var)
                         .or_default()
@@ -887,8 +919,10 @@ fn keep(census: &mut HashMap<VarId, Census>, slots: impl IntoIterator<Item = Var
     }
 }
 
-/// The slot `instruction` mentions as a promotable use, and how.
-const fn slot_use(instruction: &MirInstr) -> Option<(VarId, Mention)> {
+/// The slot `instruction` mentions as a promotable use, and how; a
+/// `ref.read` or `ref.write` through one of the `addresses` mentions the
+/// slot it addresses.
+fn slot_use(instruction: &MirInstr, addresses: &Addresses) -> Option<(VarId, Mention)> {
     match instruction {
         MirInstr::DefVar { var, src, .. } => Some((*var, Mention::Store(*src))),
         MirInstr::UseVar {
@@ -902,8 +936,41 @@ const fn slot_use(instruction: &MirInstr) -> Option<(VarId, Mention)> {
         MirInstr::LoadPlace { dest, place } if place.proj.is_empty() && place.through.is_none() => {
             Some((place.root, Mention::Read { dest: *dest }))
         }
+        MirInstr::MakeRef { dest, place } if addresses.contains_key(&dest.0) => {
+            Some((place.root, Mention::Address))
+        }
+        MirInstr::ReadRef { dest, reference } => addresses
+            .get(&reference.0)
+            .map(|&var| (var, Mention::Read { dest: *dest })),
+        MirInstr::WriteRef { reference, value } => addresses
+            .get(&reference.0)
+            .map(|&var| (var, Mention::Store(*value))),
         MirInstr::DeclareVar { var } => Some((*var, Mention::Declare)),
         MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } => Some((*var, Mention::Kill)),
         _ => None,
+    }
+}
+
+/// Record in `made` each whole-root `ref.make` of `blocks`, its regions
+/// included, by its dest, and count in `through` each register's reads as
+/// the reference of a `ref.read` or `ref.write`.
+fn slot_references(blocks: &[MirBlock], made: &mut Addresses, through: &mut [u32]) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        for region in instruction_regions(instruction) {
+            slot_references(region, made, through);
+        }
+        match instruction {
+            MirInstr::MakeRef { dest, place }
+                if place.proj.is_empty() && place.through.is_none() =>
+            {
+                made.insert(dest.0, place.root);
+            }
+            MirInstr::ReadRef { reference, .. } | MirInstr::WriteRef { reference, .. } => {
+                if let Some(count) = through.get_mut(reference.0 as usize) {
+                    *count += 1;
+                }
+            }
+            _ => {}
+        }
     }
 }

@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `mem-2-reg` reads a whole-root `ref.make` of a slot, whose register
+  only `ref.read` and `ref.write` take, as the allocation's own address,
+  as upstream's inlined `ref` parameter is (R1105). Each read and write
+  through it is a load and a store, so an inlined `nodebug` nested `def`
+  over `{imm y}`, `{var x}`, or `{mut c}` leaves no slot in concrete MIR.
+
 - `remove-unused-params` reads an operator on a struct as the call of its
   dunder and a subscript as the call of its accessor, as upstream's
   parser emits them (R1110): an argument a body passes only to such a
