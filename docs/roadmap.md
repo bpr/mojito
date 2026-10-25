@@ -2164,26 +2164,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R48 A `String` element copied out of a `Span` fails**
-
-  Problem: `String(span[0])` or `span[0].copy()` over a `Span[String, _]`
-  traps in the VM with "invalid reference projection Field("_data") on
-  None", and a later use of the span is refused as "access to 'items'
-  conflicts with live reference 'span'"; the pin runs both.
-  - An `Int` span, `String(items[0])` on the list, and `span[0] + "y"` all
-    run, so the gap is a whole-value read of a nominal element through the
-    view.
-  - Pinned by `conformance/probes/span_string_element_copy.mojo`.
-  - Probe: `var rest = xs[1:]; print(rest[0].v, len(rest))` over a
-    `List[D]` of a `Copyable` struct is rejected ("access to 'xs'
-    conflicts with live reference 'rest'"), where the pin prints `2 1`;
-    swapping the two arguments runs. A starred remainder (`var [*rest] =
-    xs`) read the same way hits it too, where the pin prints `1 2`. Found
-    while planning R1137.
-  - Found while deriving an annotated view binding; not root-caused.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R49 A generic method moving its `var` parameter into a sibling call's
   `mut` local argument is rejected**
 
@@ -2462,16 +2442,14 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
 
 - [ ] **R117 Converting a `List` to a `Span` copies its elements**
 
-  Problem: `var s: Span[Dup, origin_of(xs)] = xs` runs each element's copy
-  constructor twice, where the pin builds the view and copies nothing. The
-  copies are never destroyed.
-  - An element read through the view (`print(s[0])`, `g(s[0])`) copies once
-    more, where a `List`, `Tuple` or pack element is read in place.
-  - The view read keeps the copy because lending it takes the path R48
-    reports as failing.
-  - The conversion's copies are not root-caused.
+  Problem: `var s: Span[Dup, origin_of(xs)] = xs` copies the list into a
+  temporary (each element's copy constructor runs) and destroys it, where
+  the pin builds the view and copies nothing.
+  - An element read through the view (`print(s[0])`, `g(s[0])`) is lent,
+    as a `List` element is.
+  - The copy is the implicit conversion's source read; not root-caused.
   - Probe: `conformance/probes/span_conversion_copies_elements.mojo`.
-  - Depends on R48.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R118 An element of a temporary container cannot be passed to a read

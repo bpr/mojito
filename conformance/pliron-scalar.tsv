@@ -1198,6 +1198,7 @@ assets/ok/variant_payload_moved_in.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_string_literal_payload.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variant_unsafe_get_static_supported.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/view_copy_at_last_use.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/view_element_read_beside_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/view_temporaries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/view_temporary_origins.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/vm_backed_ctfe_recursive_call.mojo	-	ineligible	no-scalar-entry-shape

@@ -577,8 +577,16 @@ impl<'a> Flatten<'a> {
             return (self.expr(expression), Some(place));
         }
 
+        // A reference result (`String(span[0])`) is read at its call's setup,
+        // as a receiver is, so its handle lends through setup loans rather
+        // than an exclusive borrow of the view's referent.
         if expression.reference_result().is_some() {
-            return self.lower_call_receiver(expression);
+            return match setup {
+                Some(source) => self.defer_to_setup(expression, Some(source), true, |this| {
+                    this.lower_call_receiver(expression)
+                }),
+                None => self.lower_call_receiver(expression),
+            };
         }
 
         // `container[index].field` is not a raw place when the selected
@@ -1146,13 +1154,29 @@ impl<'a> Flatten<'a> {
                 setup,
             });
         }
+        let receiver = self
+            .place_chain(expression)
+            .into_iter()
+            .find_map(|node| self.simple_place(node));
+        // A referent a view's accessor reaches (`span[0]`) carries the view's
+        // own origin: like a `ref` binding, it names that origin rather than
+        // borrowing the owner again beside the view's own loan.
+        if let Some(receiver) = &receiver
+            && let Some(view_loans) = self.aggregate_loans.get(&receiver.root)
+        {
+            for loan in &mut loans {
+                if view_loans
+                    .iter()
+                    .any(|view_loan| view_loan.place.root == loan.place.root)
+                {
+                    loan.setup = true;
+                }
+            }
+        }
         // A setup read also keeps the accessor chain's root receiver live:
         // a view's referent (`Span.__getitem__`) is reached through it.
         if setup
-            && let Some(receiver) = self
-                .place_chain(expression)
-                .into_iter()
-                .find_map(|node| self.simple_place(node))
+            && let Some(receiver) = receiver
             && !loans.iter().any(|loan| loan.place.root == receiver.root)
         {
             loans.push(MirLoan {
@@ -2096,10 +2120,10 @@ impl<'a> Flatten<'a> {
 
     /// A borrowed element read (`f(a[0])` at a read slot): the element is
     /// read where it lies, as a field is, so its `__copyinit__` never runs
-    /// for the pass. A reference-returning accessor of an owning container
-    /// lends its referent through the receiver path. Tuple and pack storage
-    /// loads the element place, whatever the element: the ordinary read
-    /// would copy the whole storage to index it.
+    /// for the pass. A reference-returning accessor, a container's or a
+    /// view's, lends its referent through the receiver path. Tuple and pack
+    /// storage loads the element place, whatever the element: the ordinary
+    /// read would copy the whole storage to index it.
     fn lower_borrowed_element_read(
         &mut self,
         expression: Node<'a>,
@@ -2114,14 +2138,7 @@ impl<'a> Flatten<'a> {
             return None;
         }
         if let Some(reference) = expression.reference_result() {
-            // A view (`Span[T, origin]`) lends storage it does not own; its
-            // element keeps the ordinary read.
-            let view = matches!(
-                object.ty().as_ref().map(Ty::kind),
-                Some(TyKind::Struct(_, arguments))
-                    if arguments.iter().any(|argument| matches!(argument, TyArg::Origin(_)))
-            );
-            return (!view && owns_droppable_storage(&reference.referent))
+            return owns_droppable_storage(&reference.referent)
                 .then(|| self.lower_call_receiver(expression).0);
         }
         if expression.call_contract().is_some()

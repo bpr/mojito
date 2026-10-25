@@ -646,6 +646,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An element read through a view (`String(span[0])`, `span[0].copy()`,
+  `rest[0].v` over `var rest = xs[1:]` or `var [*rest] = xs`) no longer
+  conflicts with the view's own loan when the view is used again, and an
+  element of a `Span` passed to a read parameter or printed is lent rather
+  than copied, as at the pin (R48).
+
 - A condition over a `Boolable` value (`if o:`, `while c:`, a conditional
   expression, a comprehension filter) reads a named value, a field, or a
   list or tuple element where it lies, as upstream's `Bool(x)` does,
