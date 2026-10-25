@@ -354,7 +354,9 @@ pub fn with_removed_forwards_erased<'a>(
 /// Erase from `function` every instruction that only computes a value
 /// nothing reads and that may go without a trace: one
 /// [`MirInstr::would_be_trivially_dead`] allows, a copy of a slot whose
-/// type has no destructor or of a `callables` slot, or a built-in operator
+/// type has no destructor or of a `callables` slot, a `value.copy` that is
+/// the identity ([`MirDeclarations::copy_is_identity`]), as `mem-2-reg`
+/// leaves a promoted slot's read, or a built-in operator
 /// over such operands that cannot trap (integer arithmetic wraps). A
 /// built-in operator that can trap goes too when every read of it the body
 /// held before the view dropped arguments (`original`) was a dropped
@@ -412,6 +414,9 @@ pub fn erase_forward_chains(
                                     .get(var)
                                     .is_some_and(|ty| declarations.drop_runs_no_code(ty)))
                     }
+                    MirInstr::CopyValue { value, .. } => reg_types
+                        .get(&value.0)
+                        .is_some_and(|ty| declarations.copy_is_identity(ty)),
                     MirInstr::UnOp {
                         a, raises: None, ..
                     } => trivial(a),

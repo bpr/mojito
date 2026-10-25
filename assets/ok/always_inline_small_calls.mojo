@@ -3,7 +3,9 @@
 # bound: 31 `s += x` statements inline and 32 do not, ten `if`s inline and
 # eleven do not, four `while` loops inline and five do not, one `print` of
 # an `Int` inlines and two do not, and a `for` loop over `range` does not.
-# Each prints what the call computes either way.
+# Sixteen `if`s testing a copy of the argument against the argument inline,
+# since each comparison folds to `False`. Each prints what the call computes
+# either way.
 
 
 @no_inline
@@ -118,6 +120,45 @@ def bumped_sixteen(x: Int) -> Int:
 
 
 @always_inline
+def self_compares(x: Int) -> Int:
+    var s = x
+    var r = 0
+    if s < x:
+        r += 1
+    if s > x:
+        r += 2
+    if s != x:
+        r += 3
+    if s < x:
+        r += 4
+    if s > x:
+        r += 5
+    if s != x:
+        r += 6
+    if s < x:
+        r += 7
+    if s > x:
+        r += 8
+    if s != x:
+        r += 9
+    if s < x:
+        r += 10
+    if s > x:
+        r += 11
+    if s != x:
+        r += 12
+    if s < x:
+        r += 13
+    if s > x:
+        r += 14
+    if s != x:
+        r += 15
+    if s < x:
+        r += 16
+    return r
+
+
+@always_inline
 def show(x: Int):
     print(x)
 
@@ -153,6 +194,7 @@ def main():
     print(sum_to(5))
     print(ten_steps(2), eleven_steps(2))
     print(bumped_fifteen(1), bumped_sixteen(1))
+    print(self_compares(4))
     show(9)
     show_twice(10)
     var p = Pair(2, 5)

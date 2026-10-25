@@ -462,24 +462,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1076 A comparison of a register with itself is not folded**
-
-  `var s = x` then `if s < x:` tests one value against itself, which the
-  pin folds to `False` once `Mem2Reg` has promoted `s`, so a plain
-  `@always_inline` body of sixteen such `if`s inlines there and is priced
-  as live code here, keeping its call.
-  - Fold an integer `lt`, `gt`, or `ne` of one register with itself to
-    `False`, and `le`, `ge`, or `eq` to `True`, in
-    `MirInstr::folded_constant`; a float comparison stays, for NaN.
-  - `mem-2-reg` promotes `s` now, but `s < x` then compares two
-    `var.use`s of the parameter `x`, which only the post-elaboration
-    `lower-arg-conventions` makes one value.
-  - Done when such a body inlines, pin-checked, and a `canonicalize`
-    pass case pins the fold.
-  - Found while landing R923 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1255 MIR has no select instruction, so `canonicalize` cannot turn
   an `if` into one**
 
@@ -7417,6 +7399,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `MirDeclarations::copy_is_identity` answers yes for a type parameter
     whose bound is or refines `TrivialRegisterPassable`, and the slot
     promotes (found while landing R1266).
+  - Probe: `imm-arguments` leaves a `read x: T` of such a `T` in its
+    parameter slot for the same reason, so each read of `x` in the
+    generator is a separate `var.use`; once the bound holds it is read
+    once at the entry, as a concrete `Int` is (found while landing
+    R1076).
   - Found while landing R838 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.

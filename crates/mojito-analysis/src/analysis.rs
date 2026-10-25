@@ -40,7 +40,10 @@ use interior::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use loans::*;
 pub use lower_lit::{LOWER_LIT, lower_lit};
-pub use mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG, lower_arg_conventions, mem_2_reg};
+pub use mem2reg::{
+    IMM_ARGUMENTS, LOWER_ARG_CONVENTIONS, MEM_2_REG, imm_arguments, lower_arg_conventions,
+    mem_2_reg,
+};
 use mojito_common::error::OwnershipError;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;

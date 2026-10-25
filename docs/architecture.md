@@ -5652,7 +5652,7 @@ pinned compiler's `--mlir-timing` report shows them. Each of four rounds runs
 `Canonicalizer` on each generator, the second `SROA`, `Mem2Reg`, `SCCP`,
 and a `Canonicalizer`, the third an `InlineParametric`, `SROA`, `Mem2Reg`,
 and a `Canonicalizer`, and the fourth only `CSEPass`. So `PIPELINE` is
-`remove-unused-params`, `eliminate-dead-symbols`, `sroa`, `mem-2-reg`,
+`imm-arguments`; `remove-unused-params`, `eliminate-dead-symbols`, `sroa`, `mem-2-reg`,
 `canonicalize`; `inline-parametric`, `remove-unused-params`,
 `eliminate-dead-symbols`, `sroa`, `mem-2-reg`, `sccp`, `canonicalize`;
 `remove-unused-params`, `eliminate-dead-symbols`, `inline-parametric`,
@@ -5660,6 +5660,17 @@ and a `Canonicalizer`, and the fourth only `CSEPass`. So `PIPELINE` is
 `eliminate-dead-symbols`, `cse` (R869, R787, R928, R926). `pass_names`
 yields a pass that runs more than once once, and all of a pass's runs count
 into one `--timings` span.
+
+`imm-arguments` (`analysis::IMM_ARGUMENTS`, `analysis/mem2reg.rs`, R1076)
+opens the list because upstream's parser passes a `read` argument of a
+register-passable type by its `imm` convention, one SSA value from the
+generator on, where MIR lowering gives every parameter a slot: it is
+`lower-arg-conventions`' store restricted to `read` parameters, so each
+such parameter slot is read once at the entry, into a local `mem-2-reg`
+promotes, and every read of the argument is that one value. An owned
+argument keeps its slot, as upstream's `owned_in_mem` one stays in memory
+until `LowerArgConventions`. So `var s = x` then `s < x` compares one
+register with itself, which `canonicalize` folds.
 
 Before the pipeline, at both seams and whether or not the pipeline is on,
 `lower-lit` (`analysis::LOWER_LIT`, `analysis/lower_lit.rs`, R837) erases
@@ -5722,7 +5733,12 @@ point where a slot declared in a loop is uninitialized again.
   `const` (`Const::is_folded`) by that `const`, repeating until nothing
   folds (R842), as MLIR's greedy driver applies a `fold` that returns an
   attribute; a result may have several definitions, but every operand has
-  one, so each read sees its constant. The replacement is `sccp`'s own
+  one, so each read sees its constant. A built-in comparison of one
+  int-like register (`Int`, `UInt`, `Bool`, or an integral or `bool`
+  vector) with itself folds whatever it holds, `lt`, `gt`, and `ne` to
+  `False` and `le`, `ge`, and `eq` to `True`, splat across a mask, as
+  upstream's `foldSIMDCmp` folds `cmp(x, x)`; a float comparison stays,
+  for NaN (R1076, `tests/mir_passes/canonicalize/self_comparison.mir`). The replacement is `sccp`'s own
   (`analysis/fold.rs`, as MLIR's `OperationFolder` serves `SCCP` and the
   greedy driver alike), so upstream's first round folds constant operators
   with no `SCCP` in it, and Mojito's first `canonicalize` folds what
@@ -5791,7 +5807,9 @@ point where a slot declared in a loop is uninitialized again.
   the CSE paragraph); any other forwarded source (an extracted field) only
   when the fold is its sole reader, since a reader may consume it. The forwarding repeats until nothing forwards,
   as the greedy driver folds to a fixpoint, so a struct copy whose fields
-  were copies folds once they are forwarded. A `place.load` result is the place's value at the
+  were copies folds once they are forwarded; when anything forwarded, the
+  constant folding and `hlcf` patterns run again, so a comparison of two
+  copies of one value folds in the same run. A `place.load` result is the place's value at the
   read: a backend may alias it to the place (Pliron's
   `collect_aliased_load_regs`) only for a type whose copy is not the
   identity, while nothing writes the place before the register's last

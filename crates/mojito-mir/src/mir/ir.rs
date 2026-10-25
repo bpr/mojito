@@ -2934,6 +2934,19 @@ impl MirInstr {
                 b,
                 resolved: None,
                 raises: None,
+            } if a == b
+                && let Some(value) =
+                    self_comparison(*op, reg_types.get(&a.0)?, reg_types.get(&dest.0)?) =>
+            {
+                (dest, value)
+            }
+            Self::BinOp {
+                op,
+                dest,
+                a,
+                b,
+                resolved: None,
+                raises: None,
             } => {
                 let (left, right) = (operand(*a)?, operand(*b)?);
                 let bool_operands = matches!(left, CtValue::Bool(_));
@@ -3390,6 +3403,43 @@ fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
                 width: mojito_types::types::SimdWidth::Known(width),
             },
         ) if own == dtype && usize::try_from(*width) == Ok(lanes.len()) => Some(value.clone()),
+        _ => None,
+    }
+}
+
+/// The value a built-in comparison `op` of one register of type `operand`
+/// with itself always gives as a `dest`: `False` for `lt`, `gt`, and `ne`,
+/// `True` for `le`, `ge`, and `eq`, splat across a mask's lanes, as
+/// upstream's `foldSIMDCmp` folds `cmp(x, x)`. Only an int-like operand
+/// (`Int`, `UInt`, `Bool`, or an integral or `bool` vector) folds: a float
+/// may be NaN.
+fn self_comparison(op: InfixOp, operand: &Ty, dest: &Ty) -> Option<CtValue> {
+    use mojito_types::types::{SimdDtype, SimdWidth};
+    let holds = match op {
+        InfixOp::Eq | InfixOp::Le | InfixOp::Ge => true,
+        InfixOp::Ne | InfixOp::Lt | InfixOp::Gt => false,
+        _ => return None,
+    };
+    let int_like = match operand.kind() {
+        TyKind::Int | TyKind::UInt | TyKind::Bool | TyKind::IntLiteral => true,
+        TyKind::Simd {
+            dtype: SimdDtype::Known(dtype),
+            ..
+        } => !dtype.is_float(),
+        _ => false,
+    };
+    if !int_like {
+        return None;
+    }
+    match dest.kind() {
+        TyKind::Bool => Some(CtValue::Bool(holds)),
+        TyKind::Simd {
+            dtype: SimdDtype::Known(Dtype::Bool),
+            width: SimdWidth::Known(width),
+        } => Some(CtValue::Simd {
+            dtype: Dtype::Bool,
+            lanes: vec![mojito_types::ct::CtLane::Bool(holds); usize::try_from(*width).ok()?],
+        }),
         _ => None,
     }
 }
@@ -4228,6 +4278,51 @@ mod tests {
             .folded_constant(|_| Some(uint.clone()), &reg_types, &none),
             Some(Const::Value(CtValue::UInt(1)))
         ));
+    }
+
+    #[test]
+    fn folded_constant_folds_a_self_comparison_of_int_like_values() {
+        use mojito_types::ct::CtLane;
+        use mojito_types::types::{SimdDtype, SimdWidth};
+        let simd = |dtype, width| TyKind::Simd {
+            dtype: SimdDtype::Known(dtype),
+            width: SimdWidth::Known(width),
+        };
+        let compare = |op, operand: TyKind, dest: TyKind| {
+            let reg_types = HashMap::from([(0, Ty::new(operand)), (1, Ty::new(dest))]);
+            MirInstr::BinOp {
+                op,
+                dest: Reg(1),
+                a: Reg(0),
+                b: Reg(0),
+                resolved: None,
+                raises: None,
+            }
+            .folded_constant(|_| None, &reg_types, &MirDeclarations::default())
+        };
+        for (op, holds) in [
+            (InfixOp::Lt, false),
+            (InfixOp::Gt, false),
+            (InfixOp::Ne, false),
+            (InfixOp::Le, true),
+            (InfixOp::Ge, true),
+            (InfixOp::Eq, true),
+        ] {
+            for operand in [TyKind::Int, TyKind::UInt, TyKind::Bool] {
+                assert!(matches!(
+                    compare(op, operand, TyKind::Bool),
+                    Some(Const::Bool(value)) if value == holds
+                ));
+            }
+            assert!(matches!(
+                compare(op, simd(Dtype::Int32, 4), simd(Dtype::Bool, 4)),
+                Some(Const::Value(CtValue::Simd { dtype: Dtype::Bool, lanes }))
+                    if lanes == vec![CtLane::Bool(holds); 4]
+            ));
+            assert!(compare(op, TyKind::Float64, TyKind::Bool).is_none());
+            assert!(compare(op, simd(Dtype::Float32, 4), simd(Dtype::Bool, 4)).is_none());
+        }
+        assert!(compare(InfixOp::Add, TyKind::Int, TyKind::Int).is_none());
     }
 
     #[test]

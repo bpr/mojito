@@ -2,7 +2,9 @@
 //! SSA values when every user is a load, a store, or a lifetime marker, and
 //! `lower-arg-conventions`, the callee half of upstream's
 //! `LowerArgConventions`, which stores each register-passable argument into
-//! a temporary that `Mem2Reg` then promotes.
+//! a temporary that `Mem2Reg` then promotes, and `imm-arguments`, its
+//! `read` half before elaboration, where upstream's parser already passes
+//! such an argument as one value.
 //!
 //! A MIR variable slot is the allocation. One is promoted when its type is
 //! trivially register-passable ([`MirDeclarations::copy_is_identity`]),
@@ -65,6 +67,13 @@ pub const LOWER_ARG_CONVENTIONS: BodyPass = BodyPass {
     run: lower_arg_conventions,
 };
 
+/// [`imm_arguments`], which the pre-elaboration pipeline runs first, as
+/// upstream's parser hands its generators `imm` arguments.
+pub const IMM_ARGUMENTS: BodyPass = BodyPass {
+    name: "imm-arguments",
+    run: imm_arguments,
+};
+
 /// Promote each local slot of `function` that upstream's `Mem2Reg` would
 /// promote to registers, and remove it from the function; returns whether
 /// any was.
@@ -104,9 +113,42 @@ pub fn lower_arg_conventions(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> bool {
+    store_arguments(function, declarations, |_| true)
+}
+
+/// Store each `read` argument of `function` that [`mem_2_reg`] would
+/// promote into a fresh local at the entry, as [`lower_arg_conventions`]
+/// stores it; returns whether any was.
+///
+/// Upstream's parser passes a `read` argument of a register-passable type
+/// by its `imm` convention, one SSA value from the parametric generator on,
+/// so its every read is that value; a parameter slot read once at the entry
+/// is that value here. An owned argument stays in its slot, as upstream's
+/// `owned_in_mem` one stays in memory until `LowerArgConventions`.
+pub fn imm_arguments(
+    _name: &str,
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+) -> bool {
+    let owned = function.owned_params.clone();
+    store_arguments(function, declarations, |param| {
+        !owned.get(param).copied().unwrap_or(true)
+    })
+}
+
+/// Store each argument of `function` that `admitted` admits, of a `read`
+/// or owned convention and a trivially register-passable type, which
+/// [`mem_2_reg`] would promote, into a fresh local at the entry; returns
+/// whether any was.
+fn store_arguments(
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+    admitted: impl Fn(usize) -> bool,
+) -> bool {
     let eligible: BTreeSet<VarId> = (0..function.n_params)
         .filter(|&param| {
-            !function.ref_params.get(param).copied().unwrap_or(true)
+            admitted(param)
+                && !function.ref_params.get(param).copied().unwrap_or(true)
                 && !function.deinit_params.get(param).copied().unwrap_or(true)
                 && function
                     .param_types

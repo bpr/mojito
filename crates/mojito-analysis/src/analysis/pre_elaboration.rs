@@ -18,7 +18,7 @@ use super::duplicate_functions::ELIMINATE_DUPLICATE_FUNCTIONS;
 use super::elaborate_drops_function;
 use super::inline_parametric::INLINE_PARAMETRIC;
 use super::lower_lit::{LOWER_LIT, lower_lit};
-use super::mem2reg::{LOWER_ARG_CONVENTIONS, MEM_2_REG};
+use super::mem2reg::{IMM_ARGUMENTS, LOWER_ARG_CONVENTIONS, MEM_2_REG};
 use super::sccp::SCCP;
 use super::simplify_cf::SIMPLIFY_CF;
 use super::sroa::SROA;
@@ -188,8 +188,11 @@ impl Pass {
 /// the same with `SCCP` before the `Canonicalizer` in the second; an
 /// `InlineParametric`, then `SROA`, `Mem2Reg`, and `Canonicalizer` in the
 /// third; and `CSEPass` in the fourth. Mojito runs each of them, as `sroa`,
-/// `mem-2-reg`, `sccp`, `canonicalize`, and `cse`.
+/// `mem-2-reg`, `sccp`, `canonicalize`, and `cse`, after `imm-arguments`,
+/// which gives each register-passable `read` argument the one value
+/// upstream's parser passes it as.
 pub const PIPELINE: &[Pass] = &[
+    Pass::Body(IMM_ARGUMENTS),
     Pass::CallGraph(REMOVE_UNUSED_PARAMS),
     Pass::Program(ELIMINATE_DEAD_SYMBOLS),
     Pass::Body(SROA),

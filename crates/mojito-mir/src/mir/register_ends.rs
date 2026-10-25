@@ -1200,7 +1200,7 @@ mod tests {
             conventions: Vec::new(),
             ref_params: Vec::new(),
             ref_return: None,
-            transfers: Default::default(),
+            transfers: mojito_types::types::TransferSet::default(),
         })));
         assert!(!owned_register(&thin, &declarations));
         assert!(!owned_register(&Ty::new(TyKind::TypeType), &declarations));

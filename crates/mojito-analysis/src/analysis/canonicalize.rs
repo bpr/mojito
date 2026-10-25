@@ -71,25 +71,33 @@ pub fn canonicalize(
     let mut erased = HashSet::new();
     let mut folded_constants = 0;
     let mut patterns = erase_trivial_drops(&mut function.blocks, &function.reg_types, declarations);
-    loop {
-        folded_constants += fold_constants(function, declarations);
-        let rewritten = hlcf::hlcf_patterns(function, &mut erased);
-        if rewritten == 0 {
-            break;
-        }
-        patterns += rewritten;
-    }
-    timing::count("folded_constants", folded_constants as u64);
     // A fold can expose another, as a struct copy whose fields were copies
-    // does once they are forwarded: the greedy driver folds to a fixpoint.
+    // does once they are forwarded, and a forwarded copy can expose a fold,
+    // as a comparison of two copies of one value does: the greedy driver
+    // folds to a fixpoint.
     let mut forwarded_copies = 0;
     loop {
-        let forwarded = forward_copies(function, declarations);
-        if forwarded == 0 {
+        loop {
+            folded_constants += fold_constants(function, declarations);
+            let rewritten = hlcf::hlcf_patterns(function, &mut erased);
+            if rewritten == 0 {
+                break;
+            }
+            patterns += rewritten;
+        }
+        let before = forwarded_copies;
+        loop {
+            let forwarded = forward_copies(function, declarations);
+            if forwarded == 0 {
+                break;
+            }
+            forwarded_copies += forwarded;
+        }
+        if forwarded_copies == before {
             break;
         }
-        forwarded_copies += forwarded;
     }
+    timing::count("folded_constants", folded_constants as u64);
     timing::count("forwarded_copies", forwarded_copies as u64);
     let folded_callees = fold_known_callees(function, declarations);
     timing::count("folded_callees", folded_callees as u64);

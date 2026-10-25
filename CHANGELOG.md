@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `canonicalize` folds a comparison of one int-like register with
+  itself, as upstream's `foldSIMDCmp` folds `cmp(x, x)` (R1076): `lt`,
+  `gt`, and `ne` to `False`, `le`, `ge`, and `eq` to `True`, splat across
+  a mask; a float comparison stays, for NaN. A new first pre-elaboration
+  pass, `imm-arguments`, reads each register-passable `read` parameter
+  once at the entry, as upstream's parser passes it by its `imm`
+  convention, so `var s = x` then `if s < x:` tests one value against
+  itself and folds away. A plain `@always_inline` body of sixteen such
+  `if`s now inlines, as at the pin.
+
 - `inline-parametric` binds a `read` argument by the address upstream's
   inliner substitutes where it had none to bind (R1099): an owned
   temporary the caller still destroys, such as a homogeneous collector's

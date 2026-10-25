@@ -230,12 +230,12 @@ entry's probe is "one instance per `n` where the pin has one".
 None of these unblocks another entry. Run them whenever they are useful.
 
 - **Generator size and inlining reach**, for the measure: R1342,
-  R1346, R1347, R1105, R1076, R1110, R1268. R1339, R1340, and R1341 follow up R1271's
+  R1346, R1347, R1105, R1110, R1268. R1339, R1340, and R1341 follow up R1271's
   `AutomaticInline` and shrink only concrete code, not instance counts.
 
   ```sh
   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1342 --only R1346 \
-    --only R1347 --only R1105 --only R1076 --only R1110 --only R1268 --only R1339 --only R1340 \
+    --only R1347 --only R1105 --only R1110 --only R1268 --only R1339 --only R1340 \
     --only R1341 -n 0
   ```
 
