@@ -32,7 +32,8 @@ mojito currently has:
 - arbitrary-precision `IntLiteral` and exact finite `FloatLiteral` evaluation,
   with checked, explicit MIR materialization into wrapping integer and rounded
   floating runtime scalars
-- a HIR control-flow graph lowering pass
+- a HIR lowering of each checked body into a tree of structured region ops
+  (`hlcf`)
 - a MIR/A-normal lowering pass with explicit registers, variables, places, moves,
   drops, calls, method calls, exceptions, and loop control
 - complete checked contracts for method-dispatched nominal subscripts,
@@ -145,31 +146,42 @@ source
   -> module link
   -> comptime elaboration
   -> check
-  -> HIR CFG
+  -> HIR region tree
   -> MIR
   -> ownership / borrow / liveness analysis
   -> drop elaboration
-  -> register VM
+  -> elaboration to concrete MIR (native::mono)
+  -> register VM / native backend
 ```
 
 The `Compiler` driver owns this ordering for normal whole-program use and
 returns a `CompiledProgram` only after all compile stages succeed. Individual
 stage APIs remain available for syntax tools and compiler development.
 
-The major source directories are:
+The compiler is a Cargo workspace with one crate per phase under `crates/`
+(`AGENTS.md` §Workspace Layout gives their dependency order). The major ones
+are:
 
-- `src/lexer.rs`, `src/parser.rs`, `src/ast.rs`: tokens, AST, Pratt parser, and
-  statement parsing
-- `src/module.rs`: filesystem-backed module loading/linking
-- `src/comptime.rs`: compile-time elaboration and MIR/VM-backed CTFE support
-- `src/checker.rs`: type checking, trait checks, overload resolution, call
-  matching, value-parameter checks, and borrow checks
-- `src/hir/mod.rs`: control-flow graph lowering
-- `src/mir/mod.rs`: flattened register/place MIR
-- `src/analysis/mod.rs`: move analysis, liveness, and drop insertion
-- `src/backend/vm.rs`: register VM execution
-- `src/runtime/mod.rs`: shared runtime values and builtin operations
-- `stdlib/`: self-hosted mojito library types
+- `mojito-lexer`, `mojito-parser`, `mojito-ast`: tokens, AST, Pratt parser,
+  and statement parsing
+- `mojito-module`: filesystem-backed module loading and linking
+- `mojito-comptime`: compile-time elaboration above the check, which folds
+  closed values and evaluates no call
+- `mojito-checker`: type checking, trait checks, overload resolution, call
+  matching, and value-parameter checks, producing the `CheckedProgram`
+  handoff (`mojito-checked`)
+- `mojito-hir`: lowering of checked bodies into structured region ops
+- `mojito-mir`: flattened register/place MIR, its verifier, and its textual
+  form
+- `mojito-analysis`: ownership, borrow, and liveness analysis, drop
+  elaboration, and the MIR passes
+- `mojito-native`: the elaborator to concrete MIR (`native::mono`), which
+  runs compile-time applications on the VM
+- `mojito-vm`: register VM execution
+- `mojito-pliron`: the native backend, with `mojito-runtime` its C-ABI
+  runtime
+- `src/`: the `Compiler` driver and the CLI
+- `stdlib/`: the bundled `std` library, written in Mojo
 - `assets/`: executable and negative test fixtures
 - `tests/`: parser, checker, HIR, MIR, VM, ownership, and drop tests
 

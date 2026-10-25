@@ -54,7 +54,7 @@ Vec<Stmt>
   -> source validation
   -> comptime elaboration
   -> check
-  -> HIR CFG
+  -> HIR region tree
   -> MIR
   -> ownership / borrow / liveness analysis
   -> drop elaboration
@@ -118,7 +118,7 @@ import (every compilation that links the bundled library):
     -> verify + ownership (own functions)
     -> drop elaboration + pre-elaboration pipeline (own functions)
     -> native::mono, which, when it first reaches a package body,
-       lowers the body's unit (checked arena -> HIR CFG -> MIR),
+       lowers the body's unit (checked arena -> HIR region tree -> MIR),
        inserts its drops, and runs the pipeline then -> VM
 ```
 
@@ -473,7 +473,7 @@ comptime elaborator
 semantic checker
    |
    v
-HIR CFG
+HIR region tree
    |
    v
 MIR  <---- stable waist
@@ -3350,7 +3350,7 @@ upstream mangles every clone's names but the first's; slots stay shared,
 copies lying on disjoint paths. A copy goes before a `return`'s trailing
 `lifetime.keep_alive` run, so a loop's element outlives it. A `finally`
 ending in its own exit replaces the exit it is copied before, the replaced
-`return`'s owned value bound to a `$discard_r` slot
+`return`'s owned value bound to a hidden `$call_result_tmp_r` slot
 (`Flatten::discard_binding`) so it dies at its definition, as upstream's
 `CheckLifetimes` destroys it. A raising body without an `except` gets the
 handler upstream's parser synthesizes in a raising context
@@ -5099,9 +5099,10 @@ Three timing rules complete the last-use model, each pinned against the
 current Mojo:
 
 - A call result no expression consumes (an expression statement; the unbound
-  result of a non-consuming `__enter__`) is an owned temporary: MIR lowering
-  binds it to a hidden `$discard_r` slot that is dead at its definition, so
-  its `DropVar` follows the call immediately — before the next statement.
+  result of a non-consuming `__enter__`) is an owned temporary: a result
+  returned through memory sits in its call-result slot (below), which is
+  dead at its definition, so its `DropVar` follows the call immediately —
+  before the next statement.
   A non-raising call writes its result in place, as Mojo's `out` slot does:
   the binding right after it is `DefVar { in_place: true }`
   (`produced_in_place`), drop elaboration moves the call's own deaths after
@@ -5121,17 +5122,17 @@ current Mojo:
   The checker binds a temporary `copy=` source as a read temporary, so it
   gets a slot and dies there too. A copy construction an owned parameter
   or owned (`var`/`deinit`) receiver takes (`take(M(copy=y))`,
-  `M(copy=y).consume()`) is bound in place to a hidden forwarding slot
-  (`$fwd_arg_r`, `mir::FORWARDED_ARGUMENT_SLOT`) that the call takes
-  through `UseVar Forward` at its setup, as is every other fresh owned
-  temporary such a parameter takes; when `y` dies there and nothing from
+  `M(copy=y).consume()`) is bound in place to its call-result slot
+  (`mir::CALL_RESULT_SLOT`), which the call takes through `UseVar Forward`
+  at its setup, as is every other result returned through memory such a
+  parameter takes; when `y` dies there and nothing from
   `y`'s death to the call can raise or names `y` (`forwarding_use`), the
   load, construction, binding, and `DropVar` go and the call forwards `y`
   itself, so no move initializer runs, as at Mojo. A raising argument evaluated after the construction
   keeps `y`'s move into the slot, as at the pin. A copy construction a read parameter, read
   receiver, or read operator operand takes (`show(M(copy=a))`,
-  `M(copy=a).show()`) is bound to its
-  read-temporary slot (`mir::READ_TEMPORARY_SLOT`, below); when `a` dies
+  `M(copy=a).show()`) is bound in place to its call-result slot, which the
+  call reads; when `a` dies
   there, nothing from the binding to the call can raise, and only the
   binding and one whole load name the slot (`lending_use`), the load,
   construction, binding, and `a`'s `DropVar` go and the slot's load reads
@@ -5162,35 +5163,50 @@ current Mojo:
   A `_ = e` statement is the same discard: HIR binds its value to a fresh
   per-statement `$discard_s` slot, typed by that value alone and dead at its
   definition, so `_` never names a function-wide local.
-- An owning temporary receiver of a method (`B(3).show()`, `print(B(2).get())`)
-  gets frame storage in `lower_method_receiver`. One whose declared
-  convention is a read carries the checker's `ReadTemporaryArgument` marker
-  and is bound like a read argument (below), to a `$tmp_arg_r` slot whose
-  load the call takes as its receiver. Any other (a `ref self` receiver, a
-  borrowing temporary, a view) is bound to a hidden `$tmp_recv_r` slot whose
-  place the call retains, as a named receiver's is. Either way the call is
-  the slot's last use, so the temporary's `DropVar` follows the call, before
-  the enclosing expression continues. A `var`/`deinit` receiver convention binds no slot;
-  the callee owns the temporary. A receiver whose result borrows it takes the
-  `$mat_r` path above instead, and lives as long as the borrower.
-- An owning temporary at a read parameter (`take(B(2))`) is bound to a
-  hidden `$tmp_arg_r` slot (`mir::READ_TEMPORARY_SLOT`) and the call reads that slot, the shape a named
-  local takes there (`bind_temporary_argument`); the loaded register retains
-  the slot through the call, so the `DropVar` follows it. The checker decides
-  which arguments qualify: `read_temporary_arguments` (`checker/places.rs`)
-  marks each non-place argument bound to a read convention with
-  `ReadTemporaryArgument`, and `record_argument_borrows` marks a method's
-  non-place receiver by its declared convention (`read_temporary_receiver`),
-  so a `ref self` receiver, which the pin moves into, is not marked; so a `var`/`deinit` slot — which moves the
-  temporary into the callee — carries no marker, and MIR never guesses a
-  callee's conventions.
+- A result its callee returns through memory gets its storage once, at the
+  call, as upstream's call emission passes the callee's synthesized
+  `ByRefResult` argument its destination's buffer or a synthesized
+  `__call_result_tmp__`. The checker decides the convention from the
+  callee's signature (`Checker::record_result_conventions`): a declared
+  result type that is memory-only — not a compiler-known trivially
+  register-passable type and not proven `RegisterPassable`, so a generic
+  `-> T` qualifies at every instance — is `IndirectResult` on the call,
+  dispatched operator, by-value subscript, or display, and
+  `ConversionIndirectResult` on an implicit conversion; a conditional
+  expression not proven register-passable is one too
+  (`Node::indirect_result`). A consumer with a destination (a declaration,
+  a `return`, an aggregate element) lowers through `Flatten::expr` and
+  takes the value into it. Every other consumer lowers through
+  `Flatten::expr_c` (`mir/call_results.rs`), which returns upstream's
+  `CValue`: such a result is bound right after its producer to one hidden
+  slot (`$call_result_tmp_r<N>`, `mir::CALL_RESULT_SLOT`), in place when
+  the call cannot raise, and a conditional expression's value is the
+  result slot its arms move into. Each consumer then uses the slot by its
+  convention: a read argument, receiver, or operand reads it once
+  (`read_c`, a whole `LoadPlace`), an owned one takes it (`take_c`, a
+  `UseVar Forward` its call setup moves to the call), a `ref self` receiver
+  binds its place, a field read projects it (`load_temporary_field`), a
+  condition reads it for `Bool(x)` (`condition_value`), and a discarded
+  statement leaves it dead at its definition (`discard_result`). The call
+  is the slot's last use, so its `DropVar` follows the call, before the
+  enclosing expression continues. A call operand's convention is the
+  checker's marker: `read_temporary_arguments` (`checker/places.rs`) marks
+  each non-place argument bound to a read convention
+  `ReadTemporaryArgument`, `record_argument_borrows` marks a method's
+  non-place receiver by its declared convention
+  (`read_temporary_receiver`), and an owned one is `ForwardedArgument`
+  (`Flatten::operand_c`). A receiver returned in registers that a `ref
+  self` binds is materialized in a `$mat_r` slot, as upstream's
+  `getLValueForResult` gives an rvalue storage. A loan-carrying temporary
+  keeps its `$arg_loan_r` anchor, a materialized borrow source its `$mat_r`
+  slot, and an origin-bearing view at an argument its register, whose
+  provenance keeps the viewed storage live.
 - A list, dict, or set display, a tuple display, and a comprehension are
   their construction's result, as upstream emits a collection literal as a
   constructor call into its destination or a temporary, so
-  `Node::is_fresh_temporary` answers yes for them: `count([M(1)])` binds the
-  list to a `$tmp_arg_r` slot that dies after the call, `take([M(1)])`
-  forwards it through a `$fwd_arg_r` slot, and `_ = [M(1)]` discards it
-  through a `$discard_r` slot. An `in` test's container is its
+  `Node::is_fresh_temporary` answers yes for them: `count([M(1)])` reads
+  the list's call-result slot, which dies after the call, `take([M(1)])`
+  takes it, and `_ = [M(1)]` discards it. An `in` test's container is its
   `__contains__` receiver, lowered by `lower_method_receiver`, so
   `"b" in strs()` destroys the list after the test. A scalar conversion
   (`Bool(x)`, `Int(x)`, `Float64(x)`) reads its argument as a read
@@ -5214,12 +5230,12 @@ current Mojo:
   collector gathers (`Tuple(Span(xs), Span(xs))`) is judged by its own type
   (`signature_collected_arguments`).
 - A struct operator is its dunder's call, so its operands bind the same way
-  (`bind_read_temporary`): the checker marks each non-place operand the
+  (`operand_c`): the checker marks each non-place operand the
   selected dunder reads, the receiver and the argument, a prefix operator's
   operand, a reflected dunder's pair, and a comparison through a bound's
   pair, with `ReadTemporaryArgument`, and `lower_operator_operand` and
-  `prefix_op` bind a marked one to a `$tmp_arg_r` slot, so it dies when the
-  dunder returns, the argument before the receiver. A chained comparison's
+  `prefix_op` read a marked one in its call-result slot, so it dies when
+  the dunder returns, the argument before the receiver. A chained comparison's
   middles carry no marker: the chain owns them (`chain_middle`). A place
   operand the dunder reads — a named struct, or an element an accessor
   returns by reference (`xs[0]`, `t[0]`) — is marked `BorrowReadArgument`
@@ -5239,15 +5255,15 @@ current Mojo:
   `Node::is_fresh_temporary` reads the same contract, so a read argument,
   an operator operand, a method receiver (`lower_method_receiver`), a field
   read, a chain middle (`chain_middle`), and a discarded statement
-  (`bind_discarded_result`) bind it as a call result. A `ref` getter, a
+  (`discard_result`) use it as a call result. A `ref` getter, a
   pointer subscript, and a storage read stay places.
-- A field read off an owning temporary (`print(B(1).x)`, `var n = B(9).name`,
-  `(a + b).v`)
-  binds the temporary to a hidden `$tmp_field_r` slot and loads the projected
-  place (`load_temporary_field`), as `p.x` does off a named local: the load
+- A field read off a temporary returned through memory (`print(B(1).x)`,
+  `var n = B(9).name`, `(a + b).v`) projects its call-result slot
+  (`load_temporary_field`), as `p.x` does off a named local: the load
   retains the slot through the instruction consuming the field, and a
   consuming context's `CopyPlaceValue` copies an owning field out before the
-  slot dies. A reference-typed field keeps the register `GetField`.
+  slot dies. A reference-typed field and a base held in a register keep the
+  register `GetField`.
 - A scalar `LoadPlace` borrows its owner for the one instruction consuming
   the loaded register (the register-loan dataflow's single-hop retention), and
   how long depends on how that instruction receives the register, as the
@@ -5678,7 +5694,7 @@ value's function type or its resolved `__call__`. The verifier rejects a
 second end on some path, and a read of an owned register some path has
 ended, as `CheckLifetimes` rejects a use after consumption: a temporary
 lowering stores in a hidden slot (a destructured tuple's `$mat_r`, an
-immediately invoked closure's `$sc`, a receiver's `$tmp_recv_r`) is read
+immediately invoked closure's `$sc`, a call result's `$call_result_tmp_r`) is read
 back from the slot (`place.load`), never from the register the store
 consumed.
 

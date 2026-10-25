@@ -78,7 +78,7 @@ Three facts make the target reachable from here.
 ```text
 source -> lex -> parse -> link
        -> check            every body once, parameters symbolic
-       -> HIR CFG -> MIR   generators: symbolic types, compile-time regions
+       -> HIR regions -> MIR   generators: symbolic types, compile-time regions
        -> mir::verify (parametric) -> ownership/liveness -> drop elaboration
        -> elaborate        one worklist from the entries; substitution,
                            compile-time control flow, CTFE on the VM

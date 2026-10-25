@@ -14,9 +14,9 @@
 //! only at a region's entry keeps its copy, and no scan reaches past a
 //! region op other than `try`.
 //!
-//! A copy an owned parameter or owned receiver takes is bound in place to a
-//! forwarding slot ([`FORWARDED_ARGUMENT_SLOT`]) whose forwarding use sits
-//! at the call's setup, after the later operands. When its source dies there
+//! A copy an owned parameter or owned receiver takes is bound in place to
+//! its call-result slot ([`CALL_RESULT_SLOT`]), whose forwarding use sits at
+//! the call's setup, after the later operands. When its source dies there
 //! and nothing from the source's death to the call can raise or names the
 //! source, the construction, the slot, and the source's death all go, and the call takes the source's storage itself: no
 //! move initializer runs, as Mojo's lifetime checker hands a dying source to
@@ -24,7 +24,7 @@
 //! move, as at the pin.
 //!
 //! A copy a read parameter, read receiver, or read operator operand takes
-//! is bound to a read-temporary slot ([`READ_TEMPORARY_SLOT`]) the call
+//! is bound to its call-result slot ([`CALL_RESULT_SLOT`]), which the call
 //! reads once. When its source dies there and nothing evaluated between the binding and the
 //! call can raise, the source is lent instead: the construction, the
 //! binding, and the source's death go, the call reads the source where it
@@ -54,9 +54,9 @@ use super::scan::{for_each_instr_deep, var_def, var_uses, vars_moved};
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_operand_regs;
 use mojito_mir::mir::{
-    FORWARDED_ARGUMENT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace,
-    READ_TEMPORARY_SLOT, Reg, RegisterEnds, UseMode, instruction_regions, instruction_regions_mut,
-    is_environment_slot, terminator_regs,
+    CALL_RESULT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, Reg,
+    RegisterEnds, UseMode, instruction_regions, instruction_regions_mut, is_environment_slot,
+    terminator_regs,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -96,7 +96,7 @@ struct Elision<'a> {
     forwarded: HashSet<u32>,
 }
 
-/// A read-temporary slot whose binding a lent source replaced.
+/// A read call-result slot whose binding a lent source replaced.
 struct Loan {
     slot: VarId,
     source: VarId,
@@ -134,7 +134,7 @@ fn count_operand_uses(blocks: &[MirBlock], uses: &mut HashMap<u32, usize>) {
 }
 
 /// How often each slot is named outside its `DropVar`s:
-/// a read-temporary slot that only its binding and its one load name is
+/// a call-result slot that only its binding and its one load name is
 /// one a lent source can stand in for.
 fn count_slot_mentions(blocks: &[MirBlock]) -> HashMap<VarId, usize> {
     let mut mentions = HashMap::new();
@@ -272,8 +272,8 @@ fn copy_construction(instruction: &MirInstr) -> Option<(&Reg, &Reg)> {
     }
 }
 
-/// Where the call takes the forwarding slot the dying copy is bound to: the
-/// slot's one forwarding use later in the block, before any region op, when
+/// Where the call takes the call-result slot the dying copy is bound to:
+/// the slot's one forwarding use later in the block, before any region op, when
 /// nothing past the
 /// source's death up to the call that consumes the slot can raise, names
 /// the source, or names the slot.
@@ -283,7 +283,7 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) 
     };
     if !var_names
         .get(slot as usize)
-        .is_some_and(|name| name.starts_with(FORWARDED_ARGUMENT_SLOT))
+        .is_some_and(|name| name.starts_with(CALL_RESULT_SLOT))
     {
         return None;
     }
@@ -310,7 +310,7 @@ fn forwarding_use(instrs: &[MirInstr], source: DyingCopy, var_names: &[String]) 
         .then_some(forward_at)
 }
 
-/// Hand the dying source to the call that takes the forwarding slot: the
+/// Hand the dying source to the call that takes the call-result slot: the
 /// load, the construction, the slot's binding, and the source's death go,
 /// and the slot's forwarding use forwards the source instead.
 fn forward(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, forward_at: usize) {
@@ -325,7 +325,7 @@ fn forward(instrs: &mut Vec<MirInstr>, at: usize, source: DyingCopy, forward_at:
     instrs.remove(at - 1);
 }
 
-/// Where a read call takes the read-temporary slot the dying copy is bound
+/// Where a read call takes the call-result slot the dying copy is bound
 /// to.
 #[derive(Clone, Copy)]
 struct Lending {
@@ -335,7 +335,7 @@ struct Lending {
     slot: VarId,
 }
 
-/// The read-temporary slot the dying copy at `at` binds right past the run
+/// The call-result slot the dying copy at `at` binds right past the run
 /// of drops holding its source's death, when the source can stand in for
 /// it: only the binding and one whole load name the slot, that load's one
 /// use is a later instruction of the block before any region op, nothing
@@ -349,27 +349,18 @@ fn lending_use(
     elision: &Elision,
 ) -> Option<Lending> {
     let (dest, _) = copy_construction(&instrs[at])?;
-    if source.binding_at.is_some() {
-        return None;
-    }
-    let binding_at = match source.held_at {
-        Some(held_at) => held_at,
+    let binding_at = match source.binding_at.or(source.held_at) {
+        Some(binding_at) => binding_at,
         None => (source.drop_at + 1..instrs.len()).find(|&at| !is_drop(&instrs[at]))?,
     };
-    let MirInstr::DefVar {
-        var: slot,
-        src,
-        in_place: false,
-        ..
-    } = &instrs[binding_at]
-    else {
+    let MirInstr::DefVar { var: slot, src, .. } = &instrs[binding_at] else {
         return None;
     };
     let slot = *slot;
     let read_temporary = elision
         .var_names
         .get(slot as usize)
-        .is_some_and(|name| name.starts_with(READ_TEMPORARY_SLOT));
+        .is_some_and(|name| name.starts_with(CALL_RESULT_SLOT));
     if src != dest || !read_temporary || elision.mentions.get(&slot) != Some(&2) {
         return None;
     }
@@ -410,7 +401,7 @@ fn lending_use(
     })
 }
 
-/// Lend the dying source to the read call that takes the read-temporary
+/// Lend the dying source to the read call that takes the call-result
 /// slot: the load, the construction, the source's death, and the slot's
 /// binding go, and the slot's load reads the source instead. The slot's
 /// deaths become the source's once the whole function is rewritten.

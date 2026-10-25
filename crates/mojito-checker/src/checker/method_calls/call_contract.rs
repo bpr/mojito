@@ -84,6 +84,11 @@ impl Checker {
                 })
                 .collect(),
         );
+        if reference_result.is_none() {
+            self.record_at(span.clone())
+                .declared_result
+                .clone_from(&resolved.declared_return);
+        }
         self.record_at(span.clone()).selected_call =
             Some(Box::new(mojito_checked::checked::CheckedCallContract {
                 target,

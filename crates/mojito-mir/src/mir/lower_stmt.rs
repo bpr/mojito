@@ -79,10 +79,7 @@ impl<'a> Flatten<'a> {
                 };
                 self.emit(MirInstr::KeepAlive { var });
             }
-            HirInstr::Eval(e) => {
-                let value = self.expr_hir(e);
-                self.bind_discarded_result(e, value);
-            }
+            HirInstr::Eval(e) => self.discard_result(e),
             HirInstr::Stmt(s) => self.lower_hir_stmt(s),
             HirInstr::Try {
                 body,

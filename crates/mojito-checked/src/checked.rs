@@ -827,6 +827,15 @@ pub enum SemanticAdjustment {
     /// upstream's `mergeCValuesAcrossIfLikeOp` does. Any other result is
     /// stored into a result slot by each arm.
     RegisterPassableResult,
+    /// A call, dispatched operator, by-value subscript, or display whose
+    /// selected callee returns its result through memory, as upstream's
+    /// signature synthesizes a `ByRefResult` argument: the callee's declared
+    /// result type is memory-only. Lowering gives a result no destination
+    /// takes one hidden slot at the call, upstream's `__call_result_tmp__`.
+    IndirectResult,
+    /// An implicit conversion whose constructor returns the converted value
+    /// through memory, as [`Self::IndirectResult`] answers for a call.
+    ConversionIndirectResult,
     /// A conditional expression whose condition is a parameter value:
     /// lowering builds upstream's `hlcf.comptime.if`, its condition the
     /// recorded `ComptimeCondition` or a thunk, so the elaborator keeps the
@@ -6307,6 +6316,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
             if let Some(error) = &facts.conversion_raises {
                 adjustments.push(SemanticAdjustment::ConversionRaises(error.clone()));
             }
+            if facts.conversion_indirect_result {
+                adjustments.push(SemanticAdjustment::ConversionIndirectResult);
+            }
             if let Some(arguments) = &facts.conversion_instantiation {
                 adjustments.push(SemanticAdjustment::ConversionInstantiatedArguments(
                     arguments.clone(),
@@ -6361,6 +6373,23 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     }
     if facts.register_passable_result {
         adjustments.push(SemanticAdjustment::RegisterPassableResult);
+    }
+    if facts.indirect_result
+        && matches!(
+            expression.kind,
+            ExprKind::Call { .. }
+                | ExprKind::Invoke { .. }
+                | ExprKind::MethodCall { .. }
+                | ExprKind::Prefix(..)
+                | ExprKind::Infix(..)
+                | ExprKind::Index { .. }
+                | ExprKind::ListLit(_)
+                | ExprKind::BraceLit(_)
+                | ExprKind::TupleLit(_)
+                | ExprKind::Comprehension { .. }
+        )
+    {
+        adjustments.push(SemanticAdjustment::IndirectResult);
     }
     if facts.comptime_conditional {
         adjustments.push(SemanticAdjustment::ComptimeConditional);
@@ -6644,6 +6673,10 @@ node_facts! {
         /// The dunder each link of a chained comparison selected, in link
         /// order.
         compare_links: Vec<CheckedCompareLink>,
+        /// The selected callee's declared result type, its parameters
+        /// abstract, which decides its result convention
+        /// ([`SemanticAdjustment::IndirectResult`]).
+        declared_result: Ty,
     }
     flags {
         explicit_destroy_call,
@@ -6655,6 +6688,10 @@ node_facts! {
         implicitly_copied_consuming_receiver,
         truthiness_condition,
         register_passable_result,
+        /// See [`SemanticAdjustment::IndirectResult`].
+        indirect_result,
+        /// See [`SemanticAdjustment::ConversionIndirectResult`].
+        conversion_indirect_result,
         comptime_conditional,
     }
 }

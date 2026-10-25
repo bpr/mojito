@@ -1,12 +1,13 @@
-# Mojito Textual MIR Format, Version 1.99
+# Mojito Textual MIR Format, Version 1.103
 
 This document is the normative specification of Mojito's textual verified-MIR
-artifact. The Rust data model in `src/mir.rs` and `src/mir/ir.rs` remains the
-in-memory authority; this format is its stable inspection and interchange
-boundary. `docs/vm-instruction-set.md` explains execution semantics, while this
-document defines syntax and serialized data.
+artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
+`crates/mojito-mir/src/mir/ir.rs` remains the in-memory authority; this format
+is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
+explains execution semantics, while this document defines syntax and
+serialized data.
 
-Version 1.99 is implemented end to end for inspection and loading: canonical
+Version 1.103 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -508,6 +509,13 @@ payload }` compile-time value, a frozen variant whose `payload` is absent
 for an alternative of type `NoneType` (an enum case without a payload). An
 older artifact holds neither. The package format moves to `mojito-package
 93`, whose source statements also carry an `enum` declaration's cases.
+
+The package format moves to `mojito-package 94` when a checked call,
+operator, subscript, display, or implicit conversion records whether its
+callee returns its result through memory (`IndirectResult`,
+`ConversionIndirectResult`), upstream's `ByRefResult` convention, which
+MIR lowering reads to give such a result its call-result slot. The MIR
+text is unchanged.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:

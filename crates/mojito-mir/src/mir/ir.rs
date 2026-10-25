@@ -1353,22 +1353,19 @@ impl UseMode {
     }
 }
 
-/// The name prefix of a forwarding slot.
+/// The name prefix of a call-result slot, upstream's synthesized
+/// `__call_result_tmp__`.
 ///
-/// A fresh temporary an owned parameter or owned receiver takes
-/// (`take(M(copy=y))`, `take(M(7))`) is materialized in it and forwarded
-/// once, at the call, so a raise in a later operand destroys it through the
-/// slot. A copy construction is bound in place. When the copy's source dies
-/// there, copy elision forwards the source's storage instead.
-pub const FORWARDED_ARGUMENT_SLOT: &str = "$fwd_arg_r";
-
-/// The name prefix of a read-temporary slot.
-///
-/// A loan-free owned temporary a read parameter, a read receiver, or a read
-/// operator operand takes (`show(B(2))`, `B(2).show()`) is bound to it and read once by the call. When the
-/// temporary is a copy whose source dies there, copy elision lends the
-/// source's storage instead.
-pub const READ_TEMPORARY_SLOT: &str = "$tmp_arg_r";
+/// A result its callee returns through memory (the checker's
+/// `IndirectResult`) that no destination takes is bound to one such slot
+/// at its call, in place when the call cannot raise, and each consumer
+/// uses that storage by its own convention: a read parameter, receiver, or
+/// operand reads it once, an owned one takes it by a forward at the call's
+/// setup (so a raise in a later operand destroys it through the slot), a
+/// field read projects it, and a discarded result's slot is dead at its
+/// definition. When the result is a copy whose source dies there, copy
+/// elision forwards or lends the source's storage instead.
+pub const CALL_RESULT_SLOT: &str = "$call_result_tmp_r";
 
 /// Whether a slot named `name` holds an entry of a nested `def`'s
 /// environment, `{def}${capture}`.

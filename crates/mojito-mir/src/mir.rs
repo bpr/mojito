@@ -55,6 +55,7 @@ pub mod visit;
 
 mod call_defaults;
 pub use call_defaults::fill_omitted_arguments;
+mod call_results;
 mod callable_values;
 pub use callable_values::{callable_targets, nested_instructions};
 mod calls;
@@ -3074,6 +3075,9 @@ struct Flatten<'a> {
     /// deferred reads of exactly one call's immediate by-value place
     /// arguments ([`calls::CallSetup`]).
     call_setups: Vec<calls::CallSetup>,
+    /// The call-result slot each memory-returned result register was bound
+    /// to ([`call_results::CValue`]), so no result is bound twice.
+    call_result_slots: HashMap<u32, VarId>,
     /// The by-value operand being lowered whose reference result is read at
     /// its call's setup ([`calls::SetupReference`]).
     setup_reference: Option<calls::SetupReference>,
@@ -4600,6 +4604,7 @@ fn lower_cfg_nested(
             conversion_view_loans: HashMap::new(),
             pending_argument_anchors: Vec::new(),
             call_setups: Vec::new(),
+            call_result_slots: HashMap::new(),
             setup_reference: None,
             argument_depth: 0,
             allow_argument_anchors: false,

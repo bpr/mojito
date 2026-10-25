@@ -46,11 +46,12 @@ source
   -> module link
   -> comptime elaboration
   -> check
-  -> HIR CFG
+  -> HIR region tree
   -> MIR
   -> ownership / borrow / liveness analysis
   -> drop elaboration
-  -> register VM
+  -> elaboration to concrete MIR (native::mono)
+  -> register VM / native backend
 ```
 
 The `Compiler` driver owns this ordering for whole-program use; individual

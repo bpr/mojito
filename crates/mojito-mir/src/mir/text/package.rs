@@ -10,7 +10,7 @@
 //! importer resolves a declaration from bytecode on first lookup), a
 //! module's link record when its link reaches the module, and a unit only
 //! when the elaborator first reaches one of its functions: it lowers the
-//! unit then (HIR CFG, MIR) and inserts the reached body's drops. Each
+//! unit then (HIR region tree, MIR) and inserts the reached body's drops. Each
 //! unit's lowering and each body's finish read the package's declarations
 //! through a view of their own, so a record one of them reaches that does
 //! not decode is that body's verdict, never another's. Upstream's
@@ -64,7 +64,7 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The container format this compiler writes and reads.
-pub const PACKAGE_FORMAT: &str = "mojito-package 93";
+pub const PACKAGE_FORMAT: &str = "mojito-package 94";
 
 /// Who built a package from what: an importer refuses a package another
 /// compiler built, whose identity covers the library's sources.

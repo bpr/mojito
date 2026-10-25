@@ -68,22 +68,6 @@ pub(super) fn array_literal_plan(node: &CheckedExpr) -> Option<(Ty, String)> {
 }
 
 impl<'a> Flatten<'a> {
-    /// A condition whose value is a `Boolable` struct (checker-marked
-    /// `Truthiness`) converts through `Bool(x)` — the same call `Bool(x)`
-    /// spells, which both backends dispatch to the struct's `__bool__`.
-    pub(in crate::mir) fn truthiness(&mut self, condition: Node<'a>, value: Reg) -> Reg {
-        let boolable = condition.adjustments().iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::Truthiness
-            )
-        });
-        if !boolable {
-            return value;
-        }
-        self.bool_conversion(condition.location(), value)
-    }
-
     /// The `Bool(x)` call both backends dispatch to a struct's `__bool__`.
     pub(in crate::mir) fn bool_conversion(&mut self, span: SourceSpan, value: Reg) -> Reg {
         let dest = self.fresh_typed(span, None, Ty::bool());
@@ -139,11 +123,9 @@ impl<'a> Flatten<'a> {
     /// on `cond`, or its `hlcf.comptime.if` when the checker found `cond` a
     /// parameter value, so the elaborator keeps the live arm alone. A result
     /// the checker proved register-passable is yielded by the arms as the
-    /// op's value; any other is moved by each arm into a result slot, which
-    /// the op's consumer receives as a forward, as upstream moves an arm's
-    /// value into its destination buffer: a `^` arm by its own move, and any
-    /// other (a temporary, or a place arm's copy) by a move out of the
-    /// temporary that holds it.
+    /// op's value; any other is moved by each arm into a result slot
+    /// ([`Self::conditional_into_slot`]), which a consumer with a
+    /// destination receives as a forward.
     pub(in crate::mir) fn ternary(
         &mut self,
         node: Node<'a>,
@@ -152,19 +134,38 @@ impl<'a> Flatten<'a> {
         else_e: Node<'a>,
     ) -> Reg {
         let sp = node.location();
-        let test = if node.comptime_conditional() {
-            ArmTest::Comptime(self.comptime_condition_of(cond))
-        } else {
-            let rc = self.expr(cond);
-            ArmTest::Run(self.truthiness(cond, rc))
-        };
         if node.register_passable_result() {
+            let test = self.arm_test(node, cond);
             let then = self.region(|this| test.yield_values(vec![this.expr(then_e)]));
             let orelse = self.region(|this| test.yield_values(vec![this.expr(else_e)]));
             let d = self.fresh(sp, None);
             self.emit(test.op(vec![d], then, orelse));
             return d;
         }
+        let result = self.conditional_into_slot(node, cond, then_e, else_e);
+        let d = self.fresh(sp, None);
+        self.emit(MirInstr::UseVar {
+            dest: d,
+            var: result,
+            mode: UseMode::Forward,
+            constructor: None,
+        });
+        d
+    }
+
+    /// Lower ternary `node` whose result is not proven register-passable
+    /// into a result slot each arm moves its value into, as upstream moves
+    /// an arm's value into its destination buffer: a `^` arm by its own
+    /// move, and any other (a temporary, or a place arm's copy) by a move
+    /// out of the temporary that holds it. Returns the slot.
+    pub(in crate::mir) fn conditional_into_slot(
+        &mut self,
+        node: Node<'a>,
+        cond: Node<'a>,
+        then_e: Node<'a>,
+        else_e: Node<'a>,
+    ) -> VarId {
+        let test = self.arm_test(node, cond);
         let result = self.fresh_var();
         let arm = |this: &mut Self, value: Node<'a>| {
             this.region(|this| {
@@ -186,14 +187,17 @@ impl<'a> Flatten<'a> {
         let then = arm(self, then_e);
         let orelse = arm(self, else_e);
         self.emit(test.op(Vec::new(), then, orelse));
-        let d = self.fresh(sp, None);
-        self.emit(MirInstr::UseVar {
-            dest: d,
-            var: result,
-            mode: UseMode::Forward,
-            constructor: None,
-        });
-        d
+        result
+    }
+
+    /// How conditional expression `node` tests `cond`: by the parameter
+    /// condition the elaborator decides, or by its run-time `Bool`.
+    fn arm_test(&mut self, node: Node<'a>, cond: Node<'a>) -> ArmTest {
+        if node.comptime_conditional() {
+            ArmTest::Comptime(self.comptime_condition_of(cond))
+        } else {
+            ArmTest::Run(self.condition_value(cond))
+        }
     }
 
     /// Hold `src`, the owned temporary `value` evaluated to, in a slot of
@@ -492,9 +496,7 @@ impl<'a> Flatten<'a> {
 
         match &plan.clauses[index] {
             CheckedComprehensionClause::If(condition) => {
-                let condition = plan.operand(*condition);
-                let value = self.expr(condition);
-                let condition = self.truthiness(condition, value);
+                let condition = self.condition_value(plan.operand(*condition));
                 let then = self.region(|this| {
                     this.comprehension_clauses(plan, index + 1);
                     MirTerm::Yield(Vec::new())

@@ -27,8 +27,8 @@ impl<'a> Node<'a> {
     /// a conditional expression's, a subscript's whose selected getter
     /// returns by value, or a display's or comprehension's, which is its
     /// construction's, as upstream emits a collection literal as a
-    /// constructor call. A scalar result owns no droppable storage, so
-    /// binders that test this filter it out by type.
+    /// constructor call. Whether its storage is a call-result slot is
+    /// [`Self::indirect_result`]'s answer.
     pub(super) fn is_fresh_temporary(self) -> bool {
         self.is_call()
             || matches!(
@@ -645,6 +645,29 @@ impl<'a> Node<'a> {
                 mojito_checked::checked::SemanticAdjustment::RegisterPassableResult
             )
         })
+    }
+
+    /// Whether the value this node lowers to is returned through memory, as
+    /// upstream's `ByRefResult` argument: an implicit conversion's when its
+    /// constructor's is, a conditional expression's when the checker did
+    /// not prove it register-passable, and otherwise a fresh temporary's
+    /// when the checker found its selected callee's is
+    /// (`IndirectResult`).
+    pub(super) fn indirect_result(self) -> bool {
+        use mojito_checked::checked::SemanticAdjustment;
+        let recorded =
+            |wanted: fn(&SemanticAdjustment) -> bool| self.adjustments().iter().any(wanted);
+        if self.implicit_conversion().is_some() {
+            return recorded(|adjustment| {
+                matches!(adjustment, SemanticAdjustment::ConversionIndirectResult)
+            });
+        }
+        if matches!(self.op(), CheckedOp::IfExpr { .. }) {
+            return !self.register_passable_result();
+        }
+        self.is_fresh_temporary()
+            && self.reference_result().is_none()
+            && recorded(|adjustment| matches!(adjustment, SemanticAdjustment::IndirectResult))
     }
 
     /// Whether this conditional expression's condition is a parameter

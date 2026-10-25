@@ -18,11 +18,7 @@ impl<'a> Flatten<'a> {
         &mut self,
         expression: &'a mojito_hir::hir::HirExpr,
     ) -> Reg {
-        self.with_statement_loans(|this| {
-            let node = this.handle(expression);
-            let value = this.expr(node);
-            this.truthiness(node, value)
-        })
+        self.with_statement_loans(|this| this.condition_value(this.handle(expression)))
     }
 
     /// A `comptime if` condition as the constraint its branch carries: the

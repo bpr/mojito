@@ -998,6 +998,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A result its callee returns through memory gets one hidden slot at its
+  call, as upstream's call emission passes the callee's `ByRefResult`
+  argument a synthesized `__call_result_tmp__`, and each consumer without
+  a destination reads, takes, or projects that slot, replacing the
+  per-consumer read, forwarding, receiver, field, and discard slots
+  (R1355). The checker records the convention from the callee's declared
+  result type (`IndirectResult`), so a generic `-> T` returns through
+  memory at every instance, a register-passable struct result stays a
+  register, and a `Boolable` condition, a by-value subscript's base, and
+  a stringified argument now destroy their temporary from a slot. The
+  package format moves to `mojito-package 94`.
+
 - A `for` loop calls its iterable's `__iter__` once, as upstream's
   `emitForStmt` does, so an `__iter__` whose result is not itself an
   iterator is rejected, as the pin rejects it, where Mojito used to call

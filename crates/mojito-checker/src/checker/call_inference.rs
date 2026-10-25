@@ -1058,6 +1058,9 @@ impl Checker {
             self.record_at(span.clone()).overload_target = Some(target);
         }
         self.record_view_result_borrow(&span, &ret);
+        if let TyKind::GenericFunc(generic) = ty.kind() {
+            self.record_at(span.clone()).declared_result = Some(generic.ret.clone());
+        }
         self.record_free_call_result_origins(&span, &ty, origin_signatures.first(), args, kwargs);
         self.record_call_parameter_names(&span, &ty);
         let ret = self.bind_call_result_tail(&span, ret);

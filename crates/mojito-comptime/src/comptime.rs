@@ -1,27 +1,30 @@
-//! Stage 2: compile-time elaboration.
+//! Stage 2: compile-time elaboration above the check.
 //!
-//! A pass between parsing and type-checking that **resolves compile-time
-//! constructs before runtime lowering**, per `docs/notes/comptime.md`:
-//! `comptime` is a *phase distinction*, so the elaborator rewrites the AST so the
-//! checker/MIR/VM only ever see ordinary code.
+//! A pass between linking and the check that normalizes declarations and
+//! folds closed compile-time values in the AST, per `docs/notes/comptime.md`.
+//! It evaluates no call: every compile-time application runs once, below MIR,
+//! where `native::mono` runs it on the register VM
+//! (`docs/notes/ctfe-request-path.md`).
 //!
-//! - **`comptime NAME = expr`** — evaluated at compile time (a compile-time value is
-//!   required; the elaborator is the validator). Recorded in a compile-time
-//!   environment; the statement is kept as an ordinary binding.
-//! - **`comptime if`** — keeps only the taken branch. Every branch was already
-//!   checked by source validation (`mojito_checker::checker::validate_comptime_templates`,
-//!   run by [`elaborate`] and the compiler driver on the [`prepare`]d program),
-//!   so dropping the others hides no type error.
-//! - **`comptime for`** — unrolls over a compile-time `range(...)` or a compile-time
-//!   tuple/list, substituting the loop variable with its literal in each body copy;
-//!   a **fuel quota** bounds the work.
-//! - **CTFE** — a `comptime` context may call a **pure top-level function**. The
-//!   elaborator verifies a restricted helper call graph, folds compile-time-only
-//!   facts such as `T.size` and `is_same_type[T, U]()` into literals, and executes
-//!   the resulting helper through HIR/MIR on the register VM with a shared fuel
-//!   budget. This keeps function-body execution on the same path as runtime code.
-//! - **Materialization** — module-level `comptime` constants are inlined as literals
-//!   into runtime code, so a top-level comptime value is usable inside functions.
+//! - **Preparation** ([`prepare`]) — qualifies struct packs, synthesizes the
+//!   derived `copy` and `__hash__`, desugars `SIMD[_, _]` parameters, and
+//!   folds SIMD alias bounds and `!kgen.type` parameters. It selects no arm
+//!   and unrolls no loop.
+//! - **`comptime NAME = expr`** — a closed value folds here
+//!   (`comptime/eval.rs`, which refuses every call) and the declaration keeps
+//!   it as a literal; a type or reflection handle stays in the environment
+//!   only. A constant that applies a callable, asks a layout, or reads one is
+//!   kept as written (`CtMarker::Applied`) for the check to lift.
+//! - **`comptime if`, `comptime for`, and `comptime match`** in a function
+//!   body are kept for the check, their bodies elaborated with the loop
+//!   variable and pattern bindings as binders. HIR and MIR lower them as
+//!   region ops, and `native::mono` selects each arm and unrolls each loop
+//!   per instance. At module scope the parser rejects a `comptime if` or
+//!   `comptime match`, and `compiler::validate_module_scope` a `comptime
+//!   for`.
+//! - **Runtime crossings** (`comptime/crossing.rs`) — `materialize[X]()`,
+//!   `comptime(e)`, and a reflection query over a closed handle become
+//!   literals.
 //!
 //! Compile-time values are the shared [`CtValue`](mojito_types::ct::CtValue) universe:
 //! runtime-materializable `Int`/`Bool`/`String`/`Tuple`/`List`, plus
@@ -894,8 +897,8 @@ impl<'e> StructView<'e> {
     }
 }
 
-/// The compile-time elaboration engine: the CTFE-callable functions and a shared
-/// fuel budget. `top_consts` captures module-level constants for materialization.
+/// The compile-time elaboration engine: the program's own functions, structs,
+/// and module constants, and the imported package's interfaces.
 struct Elab<'a> {
     program: &'a [Stmt],
     /// The program's own `def` names; the package's are the oracle's.

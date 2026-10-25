@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1418**.
+Next free ID: **R1421**.
 
 ## Ordered Work
 
@@ -1639,7 +1639,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   Problem: `f(S(20)^)` over `def f(s: S)` prints `f 20` and no `del`,
   where the pin prints `f 20, del 20`.
   - A `^` argument is excluded from `read_temporary_arguments`, so its
-    owned operand gets no `$tmp_arg_r` slot.
+    owned operand gets no call-result slot (`Flatten::operand_c`).
   - Found while landing R713 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2496,14 +2496,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     (`is_trivial_register_passable`) and would have to record it on the
     transfer.
   - Probe: `conformance/probes/trivial_struct_mut_parameter_transfer.mojo`.
-  - Probe: the MIR temporary binders (`bind_temporary_argument`,
-    `bind_forwarded_temporary`, `lower_method_receiver`,
-    `bind_discarded_result`, `mir/calls.rs`) gate on
-    `owns_droppable_storage` too, so a register-passable struct with a
-    destructor gets a `$tmp_arg_r` slot at a read parameter, where upstream
-    keeps it in a register and destroys it as one bit. The same recorded
-    fact fixes both: the checker records register passability on the node,
-    as it does for a conditional (`RegisterPassableResult`).
+  - The checker already records a call result's register passability
+    for MIR (`IndirectResult`, `Checker::record_result_conventions`); a
+    transfer could carry the same fact.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2691,7 +2686,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The binding's loans come from `aggregate_borrows`, which sees no borrow
     for a value copied out of `Optional.value()`'s reference result.
   - Passing the same value straight to `print` works only because a view
-    argument stays in its register (`bind_temporary_argument`).
+    argument stays in its register (`Flatten::operand_expr_c`).
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -3129,8 +3124,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   values, where the pin calls `__bool__` on `o` in place and copies
   nothing.
   - The checker marks a `Boolable` condition `Truthiness`, and MIR lowers
-    it as a call `Bool(value)` over the loaded value (`truthiness`,
-    `mir/lower_expr/ctrl.rs`), which copies a non-trivial struct.
+    it as a call `Bool(value)` over the loaded value (`condition_value`,
+    `mir/call_results.rs`), which copies a non-trivial struct.
   - Upstream converts a condition with the struct's `__bool__` over the
     borrowed value.
   - A concrete `struct C(Boolable)` holding a `T` copies too: both kinds
@@ -9535,24 +9530,59 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1355 MIR lowering picks a memory-only temporary's slot per
-  consumer, where upstream's call emission picks it at the call**
+- [ ] **R1418 A loan anchor or borrow slot binds a memory-only call
+  result a second time, where upstream borrows its call-result slot**
 
-  Upstream writes every memory-only call result into its destination or a
-  synthesized `__call_result_tmp__` (`UncheckedCallEmission.cpp`, the
-  `ByRefResult` argument), and the consumer borrows or takes that storage.
-  - Mojito keeps the result in a register, and each consumer binds its own
-    hidden slot: `$tmp_arg_r`, `$fwd_arg_r`, `$tmp_recv_r`,
-    `$tmp_field_r`, `$discard_r`, `$mat_r`, `$arg_loan_r`, each through
-    `Node::is_fresh_temporary` (`mir/facts.rs`).
-  - A consumer no binder covers leaves the result in a register that a
-    `drop.reg` destroys whole, the class R1356 rejects.
-  - Fix: `Flatten::expr` returns a value or a slot, as upstream's `CValue`
-    does, call lowering binds a memory-only result with no destination to
-    one hidden slot, and the per-consumer binders collapse into reads of
-    it.
+  Upstream gives a memory-only call result one `__call_result_tmp__` at the
+  call, and every borrower's loans sit on that storage.
+  - Mojito's `$arg_loan_r` (`anchor_borrowing_argument`), `$view_recv_r`
+    (`anchor_borrowing_temporary`), `$conv_view_r`, and `$mat_r`
+    (`materialize_borrow_slot` and its copies in `mir.rs` and
+    `lower_stmt.rs`) each bind the temporary afresh, so
+    `Flatten::call_result` (`mir/call_results.rs`) skips a temporary one of
+    them carries loans for.
+  - An origin-bearing view at a call argument stays in its register
+    (`Flatten::operand_expr_c`), whose provenance keeps the viewed storage
+    live, so it gets no slot at all.
+  - Fix: register the call-result slot as the owner's var and put the
+    anchor's `EstablishLoans` on it. A register-passable source keeps its
+    own `$mat_r`, upstream's `anonymous` materialization.
+  - Depends on R1226.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1419 MIR reads a call operand's convention off the checker's
+  argument markers, where upstream reads the callee's signature**
+
+  `Flatten::operand_c` (`mir/call_results.rs`) reads or takes a call-result
+  slot by the checker's `ReadTemporaryArgument` and `ForwardedArgument`
+  markers (`checker/places.rs`), which restate the selected callee's
+  conventions.
+  - A method call's contract already carries them
+    (`CheckedCallContract::arguments`, `receiver_convention`), but a free
+    call records no contract.
+  - An operand neither marker names falls back to taking its slot.
+  - Fix: record each call's argument conventions in its checked contract,
+    read them in `operand_c`, and delete the two markers; the package
+    format moves.
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1420 A raising call's register-passable result stays a register,
+  where upstream returns every raising callee's result through memory**
+
+  Upstream's signature (`Signatures.cpp`) makes a throwing function's ABI
+  result its error flag, so its result always goes through a synthesized
+  `ByRefResult`, beside the `ByRefError` the error takes.
+  - `Checker::record_result_conventions` judges only the declared result
+    type, so `print(atol(s))` keeps its `Int` in a register.
+  - Mojito models a raise as an edge (`MirInstr::raise_edge`), so the slot
+    changes no behavior: it is the structure upstream's error ABI implies.
+  - Fix: count a raising callee's result as returned through memory, and
+    update the MIR tests that pin instruction adjacency next to a raising
+    call (`owned_operand_transfers_at_the_call_after_a_raising_operand`,
+    `tests/mir_test.rs`).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1356 The MIR verifier does not reject a `drop.reg` of a
   memory-only register**
@@ -9568,6 +9598,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     copies (R1249), `List`→`Span` copies (R117), read arguments by value
     (R677), `List.resize`'s double copy (R1353), generic reads (R1354),
     closure values (R1334), and a pending `Error` (R1293).
+  - Probe: the rule must judge a conditional conformance at closed
+    arguments, as upstream's `getRegisterPassability` does:
+    `Bool(f.try_index(42))` (`assets/ok/list_methods_growth.mojo`) keeps
+    its `Optional[Int]` in a register, which upstream passes as a
+    register-passable value, but `MirDeclarations::register_passable`
+    answers no for any conditional row.
   - Re-run the `emit-mir` census over `assets/ok` and
     `assets/ownership_ok` before landing it.
   - Depends on R1157, R1158, R1249, R117, R677, R1353, R1354, R1334, R1293.

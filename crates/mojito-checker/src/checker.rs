@@ -341,6 +341,10 @@ fn check_program_carrying(
         run_explicit_destroy(&checker, &expanded, &explicit_destroy_types)?;
         explicit_destroy_types
     };
+    {
+        let _conventions = timing::span("result_conventions");
+        checker.record_result_conventions();
+    }
     let conformances = {
         let _conformances = timing::span("conformances");
         checker.conformance_facts()
@@ -2036,6 +2040,62 @@ impl Checker {
                 value.clone().materialize_as(target).is_some()
             }
             _ => false,
+        }
+    }
+
+    /// Record each result's convention, as upstream's signature decides
+    /// whether a callee returns through a synthesized `ByRefResult`
+    /// argument: a result whose declared type (the selected callee's, an
+    /// initializer's struct at its own parameters, else the node's own) is
+    /// memory-only is returned through memory
+    /// ([`mojito_checked::checked::SemanticAdjustment::IndirectResult`]);
+    /// so is an implicit conversion's when its type is.
+    fn record_result_conventions(&self) {
+        // A compiler-known type upstream declares `TrivialRegisterPassable`
+        // (a scalar, a pointer, a literal) and a function value, which
+        // upstream holds as a raw MLIR value, are passed in registers.
+        let memory_only = |ty: &Ty| {
+            !mojito_types::types::trivially_register_passable_leaf(ty.kind())
+                && !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+                && self.register_passability(ty) != traits::RegisterPassability::Proven
+        };
+        // An initializer's declared result is its `out self`, the struct at
+        // its own parameters, so a conditional `RegisterPassable`
+        // conformance is not proven there.
+        let constructed = |target: &str| {
+            target
+                .split_once(".__init__")
+                .filter(|(_, rest)| rest.is_empty() || rest.starts_with('$'))
+                .and_then(|(name, _)| self.self_instance_ty(name))
+        };
+        let judged: Vec<(SourceSpan, bool, bool)> = {
+            let records = self.node_facts.borrow();
+            records
+                .iter()
+                .map(|(span, facts)| {
+                    let indirect = facts
+                        .declared_result
+                        .clone()
+                        .or_else(|| facts.overload_target.as_deref().and_then(constructed))
+                        .or_else(|| facts.ty.clone())
+                        .is_some_and(|ty| memory_only(&ty));
+                    let converted = facts
+                        .implicit_conversion
+                        .as_deref()
+                        .and_then(constructed)
+                        .or_else(|| facts.implicit_conversion_type.clone())
+                        .is_some_and(|ty| memory_only(&ty));
+                    (span.clone(), indirect, converted)
+                })
+                .filter(|(_, indirect, converted)| *indirect || *converted)
+                .collect()
+        };
+        let mut records = self.node_facts.borrow_mut();
+        for (span, indirect, converted) in judged {
+            if let Some(facts) = records.get_mut(&span) {
+                facts.indirect_result = indirect;
+                facts.conversion_indirect_result = converted;
+            }
         }
     }
 

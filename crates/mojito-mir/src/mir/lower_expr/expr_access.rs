@@ -270,7 +270,7 @@ impl<'a> Flatten<'a> {
             return d;
         }
         if let Some(contract) = self.type_keyed_accessor_call(e) {
-            let (recv, recv_place) = self.lower_call_receiver(object);
+            let (recv, recv_place) = self.lower_method_receiver(e, object);
             let dest = self.fresh(e.location(), None);
             self.emit_interior_invalidations(object, None);
             let raises = self.raises(e.raises(), e.location());
@@ -302,7 +302,7 @@ impl<'a> Flatten<'a> {
             return d;
         }
         let (base, base_place) = if has_call {
-            self.lower_setup_receiver_with(e, object, |this| this.lower_call_receiver(object))
+            self.lower_setup_receiver_with(e, object, |this| this.lower_method_receiver(e, object))
         } else {
             (self.expr(object), self.simple_place(object))
         };
@@ -342,7 +342,7 @@ impl<'a> Flatten<'a> {
     ) -> Reg {
         let has_call = e.call_contract().is_some();
         let (obj, object_place) = if has_call {
-            self.lower_call_receiver(object)
+            self.lower_method_receiver(e, object)
         } else {
             (self.expr(object), self.simple_place(object))
         };
@@ -398,7 +398,7 @@ impl<'a> Flatten<'a> {
         }
         let has_call = e.call_contract().is_some();
         let (object_reg, object_place) = if has_call {
-            self.lower_setup_receiver_with(e, object, |this| this.lower_call_receiver(object))
+            self.lower_setup_receiver_with(e, object, |this| this.lower_method_receiver(e, object))
         } else {
             (self.expr(object), self.simple_place(object))
         };

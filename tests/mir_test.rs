@@ -182,7 +182,7 @@ fn dying_copy_at_read_parameter_lends_its_source() {
     assert!(
         !instrs.iter().any(|instr| match instr {
             MirInstr::DefVar { var, .. } => {
-                main.var_names[*var as usize].starts_with(mojito::mir::READ_TEMPORARY_SLOT)
+                main.var_names[*var as usize].starts_with(mojito::mir::CALL_RESULT_SLOT)
             }
             MirInstr::Call { kwargs, .. } => kwargs.iter().any(|(name, _)| name == "copy"),
             _ => false,
@@ -238,8 +238,7 @@ fn dying_copy_at_read_receiver_lends_its_source() {
         !instrs.iter().any(|instr| match instr {
             MirInstr::DefVar { var, .. } => {
                 let name = &main.var_names[*var as usize];
-                name.starts_with(mojito::mir::READ_TEMPORARY_SLOT)
-                    || name.starts_with("$tmp_recv_r")
+                name.starts_with(mojito::mir::CALL_RESULT_SLOT)
             }
             MirInstr::Call { kwargs, .. } => kwargs.iter().any(|(name, _)| name == "copy"),
             _ => false,
@@ -271,7 +270,7 @@ fn dying_copy_at_read_receiver_lends_its_source() {
 
 #[test]
 fn display_at_read_parameter_binds_a_read_temporary() {
-    // `count([M(1)])` binds the display to a read-temporary slot, as a call
+    // `count([M(1)])` binds the display to its call-result slot, as a call
     // result at a read parameter is: the call reads the slot, which dies
     // after it, and no register holds the list to a `drop.reg`.
     let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef count(xs: List[M]):\n    pass\n\ndef main():\n    count([M(1)])\n";
@@ -303,24 +302,32 @@ fn display_at_read_parameter_binds_a_read_temporary() {
 
 #[test]
 fn display_at_owned_parameter_binds_no_read_temporary() {
-    // `take([M(1)])` into a `var` parameter forwards the display through a
-    // forwarding slot; it binds no read temporary.
+    // `take([M(1)])` into a `var` parameter takes the display's call-result
+    // slot by a forward; nothing reads the slot in place.
     let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef take(var xs: List[M]):\n    pass\n\ndef main():\n    take([M(1)])\n";
     let compiled = Compiler::default()
         .compile_source(source, Path::new("mir_test.mojo"))
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
+    let result_slot =
+        |var: u32| main.var_names[var as usize].starts_with(mojito::mir::CALL_RESULT_SLOT);
+    let instrs = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .collect::<Vec<_>>();
     assert!(
-        !main
-            .var_names
-            .iter()
-            .any(|slot| slot.starts_with(mojito::mir::READ_TEMPORARY_SLOT)),
+        instrs.iter().any(|instr| matches!(
+            instr,
+            MirInstr::UseVar { var, mode: UseMode::Forward, .. } if result_slot(*var)
+        )),
         "{main:#?}"
     );
     assert!(
-        main.var_names
-            .iter()
-            .any(|slot| slot.starts_with(mojito::mir::FORWARDED_ARGUMENT_SLOT)),
+        !instrs.iter().any(|instr| matches!(
+            instr,
+            MirInstr::LoadPlace { place, .. } if result_slot(place.root)
+        )),
         "{main:#?}"
     );
 }
@@ -347,8 +354,8 @@ fn contains_temporary_container_binds_a_read_temporary() {
 
 #[test]
 fn conversion_temporary_argument_binds_a_read_temporary() {
-    // `Bool(make())` reads its temporary argument from a read-temporary
-    // slot that dies after the conversion; `Bool(o)` over a named `o` reads
+    // `Bool(make())` reads its temporary argument from its call-result
+    // slot, which dies after the conversion; `Bool(o)` over a named `o` reads
     // `o` where it lies and binds none.
     let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n\ndef make() -> Optional[M]:\n    return Optional(M(1))\n\ndef main():\n    print(Bool(make()))\n";
     let compiled = Compiler::default()
@@ -365,20 +372,14 @@ fn conversion_temporary_argument_binds_a_read_temporary() {
         .compile_source(named, Path::new("mir_test.mojo"))
         .expect("compile");
     let main = mir_function(compiled.elaborated_mir(), "main");
-    assert!(
-        !main
-            .var_names
-            .iter()
-            .any(|slot| slot.starts_with(mojito::mir::READ_TEMPORARY_SLOT)),
-        "{main:#?}"
-    );
+    assert!(!reads_a_read_temporary(main, is_bool), "{main:#?}");
 }
 
 #[test]
 fn dying_copy_receiver_forwards_its_source() {
     // `M(copy=d).consume()` at `d`'s last use forwards `d` to the owned
     // receiver; a raising argument after the receiver keeps a move of `c`
-    // into the forwarding slot, which the call then forwards.
+    // into its call-result slot, which the call then forwards.
     let source = "struct M(Copyable, Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def consume(var self):\n        pass\n    def with_arg(var self, n: Int):\n        pass\n\ndef might(n: Int) raises -> Int:\n    return n\n\ndef forwards():\n    var d = M(1)\n    M(copy=d).consume()\n\ndef moves() raises:\n    var c = M(2)\n    M(copy=c).with_arg(might(3))\n";
     let compiled = Compiler::default()
         .with_exports(["forwards", "moves"])
@@ -413,7 +414,7 @@ fn dying_copy_receiver_forwards_its_source() {
         };
         (
             mode(name),
-            mode(mojito::mir::FORWARDED_ARGUMENT_SLOT),
+            mode(mojito::mir::CALL_RESULT_SLOT),
             function.var_names.clone(),
         )
     };
@@ -428,7 +429,7 @@ fn dying_copy_receiver_forwards_its_source() {
 #[test]
 fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
     // `two(x^, boom(1))` forwards `x` after `boom` runs, right before `two`,
-    // and `two(M(7), boom(1))` binds the temporary to a forwarding slot it
+    // and `two(M(7), boom(1))` binds the temporary to a call-result slot it
     // forwards there too. Inside a `try`, each `boom` call's error region
     // destroys the slot it holds, so a raise in `boom` destroys both, and
     // the `try` lists nothing.
@@ -443,7 +444,7 @@ fn owned_operand_transfers_at_the_call_after_a_raising_operand() {
             .position(|name| name.starts_with(prefix))
             .unwrap_or_else(|| panic!("{prefix} slot")) as u32
     };
-    let slots = [slot("x"), slot(mojito::mir::FORWARDED_ARGUMENT_SLOT)];
+    let slots = [slot("x"), slot(mojito::mir::CALL_RESULT_SLOT)];
     let body = main
         .blocks
         .iter()
@@ -728,8 +729,8 @@ fn mir_function<'a>(mir: &'a mojito::mir::MirProgram, name: &str) -> &'a MirFunc
 }
 
 /// Whether the call `operands` picks out, by returning its operands, takes
-/// one as a load of a read-temporary slot that a `DropVar` destroys after
-/// the call.
+/// one as a load of a call-result slot that a `DropVar` destroys after the
+/// call.
 fn reads_a_read_temporary(
     function: &MirFunction,
     operands: impl Fn(&MirInstr) -> Option<Vec<Reg>>,
@@ -750,7 +751,7 @@ fn reads_a_read_temporary(
         instrs.iter().any(|instr| match instr {
             MirInstr::LoadPlace { dest, place } if dest == operand => function.var_names
                 [place.root as usize]
-                .starts_with(mojito::mir::READ_TEMPORARY_SLOT)
+                .starts_with(mojito::mir::CALL_RESULT_SLOT)
                 && instrs[call_at..].iter().any(
                     |later| matches!(later, MirInstr::DropVar { var, .. } if *var == place.root),
                 ),

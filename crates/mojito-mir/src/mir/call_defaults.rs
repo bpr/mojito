@@ -28,11 +28,10 @@ use crate::mir::variadic_list::{
 };
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
-    Const, FORWARDED_ARGUMENT_SLOT, FuncRef, LoweredCall, MirBlock, MirDeclarations, MirFunction,
-    MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, READ_TEMPORARY_SLOT, Reg, UseMode,
-    callable_targets, calls::literal_materializes_to, calls::owns_droppable_storage,
-    fresh_register, instruction_regions, instruction_regions_mut, instruction_regs_mut,
-    instruction_slots, terminator_regs_mut,
+    CALL_RESULT_SLOT, Const, FuncRef, LoweredCall, MirBlock, MirDeclarations, MirFunction,
+    MirFunctionDeclaration, MirInstr, MirPlace, MirSubscriptArg, Reg, UseMode, callable_targets,
+    calls::literal_materializes_to, fresh_register, instruction_regions, instruction_regions_mut,
+    instruction_regs_mut, instruction_slots, terminator_regs_mut,
 };
 use mojito_ast::ast::{ArgConvention, FORWARDED_KWARGS_NAME};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
@@ -64,8 +63,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// the lifted default function (`$default$f$x`) under the binders it
 /// declares. The argument goes positionally when every earlier slot is
 /// filled by position, else by name; a subscript carrying one becomes a
-/// `MultiIndex`. A droppable borrowed default is bound to a read-temporary
-/// slot the call reads, an owned one to a forwarding slot the call takes.
+/// `MultiIndex`. A memory-only default is bound to its call-result slot
+/// ([`CALL_RESULT_SLOT`]), which a borrowed parameter reads and an owned one
+/// takes.
 ///
 /// A call through a function value the check did not name takes the
 /// function its callee register statically holds ([`callable_targets`]);
@@ -337,10 +337,10 @@ fn fill_call(
                 .variadic_index
                 .is_none_or(|collector| default.slot < collector);
         let value = evaluate_default(function, &default, location.as_ref(), prelude);
-        let argument = if owns_droppable_storage(&default.ty) {
-            bind_temporary(function, value, &default, location.as_ref(), prelude)
-        } else {
+        let argument = if declarations.register_passable(&default.ty) {
             value
+        } else {
+            bind_temporary(function, value, &default, location.as_ref(), prelude)
         };
         if positional {
             sources.push((
@@ -677,7 +677,7 @@ fn collect_through_contract(
 /// `**` operand, as upstream's call builds the dictionary its callee's
 /// `**kwargs` takes: the collector's empty constructor
 /// (`StringDict[V]()`, typed as [`keyword_collector_type`] closes it) bound
-/// to a forwarding slot, then one `_insert` per keyword no named parameter
+/// to a call-result slot, then one `_insert` per keyword no named parameter
 /// claims, in call order, each keyed by the keyword's literal and taking
 /// its operand, and the slot forwarded to the call. Return whether it built
 /// one: a call forwarding a `**kwargs^` passes that collector already, and
@@ -745,7 +745,7 @@ fn build_keyword_collector(
     function.n_vars += 1;
     function
         .var_names
-        .push(format!("{FORWARDED_ARGUMENT_SLOT}{}", collector.0));
+        .push(format!("{CALL_RESULT_SLOT}{}", collector.0));
     function.var_tys.insert(variable, ty.clone());
     prelude.push(MirInstr::DefVar {
         var: variable,
@@ -1782,10 +1782,10 @@ fn materialize(
     dest
 }
 
-/// Bind `value`, the default's result, to the slot the call reads it from:
-/// a read temporary for a borrowed parameter, which the caller destroys once
-/// the call returns, or a forwarding slot for an owned one, which the call
-/// takes.
+/// Bind `value`, the default's result, to its call-result slot, in place
+/// as the default's call writes it: a borrowed parameter reads the slot,
+/// which the caller destroys once the call returns, and an owned one takes
+/// it.
 fn bind_temporary(
     function: &mut MirFunction,
     value: Reg,
@@ -1793,20 +1793,17 @@ fn bind_temporary(
     location: Option<&SourceSpan>,
     prelude: &mut Vec<MirInstr>,
 ) -> Reg {
-    let prefix = if default.owned {
-        FORWARDED_ARGUMENT_SLOT
-    } else {
-        READ_TEMPORARY_SLOT
-    };
     let variable = u32::try_from(function.n_vars).expect("variable count fits a VarId");
     function.n_vars += 1;
-    function.var_names.push(format!("{prefix}{}", value.0));
+    function
+        .var_names
+        .push(format!("{CALL_RESULT_SLOT}{}", value.0));
     function.var_tys.insert(variable, default.ty.clone());
     prelude.push(MirInstr::DefVar {
         var: variable,
         src: value,
         binding_ty: Some(default.ty.clone()),
-        in_place: default.owned,
+        in_place: true,
     });
     let read = fresh_register(function, default.ty.clone(), location);
     prelude.push(if default.owned {
@@ -1871,7 +1868,7 @@ fn collect_producers(
                     && function
                         .var_names
                         .get(place.root as usize)
-                        .is_some_and(|name| name.starts_with(READ_TEMPORARY_SLOT)) =>
+                        .is_some_and(|name| name.starts_with(CALL_RESULT_SLOT)) =>
             {
                 producers.insert(dest.0, Producer::Temporary(place.root));
             }

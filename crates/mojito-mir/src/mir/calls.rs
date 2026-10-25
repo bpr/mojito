@@ -3,6 +3,7 @@
 //! invalidation emission.
 //! Extracted from `mir.rs`; see `docs/symbol-map.md`.
 
+use super::call_results::CValue;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::CheckedCallArgumentSource;
@@ -121,10 +122,11 @@ impl<'a> Flatten<'a> {
 
     /// Lower one operand of a struct operator, prefix or infix: a place the checker
     /// marked `BorrowReadArgument` (the dunder reads it) is read where it
-    /// lies, as a read-convention call argument is; a temporary it marked
-    /// `ReadTemporaryArgument` binds a `$tmp_arg_r` slot, as a read call
-    /// argument's does, so it dies when the dunder returns; anything else is
-    /// an ordinary value. Inside an operator's setup frame
+    /// lies, as a read-convention call argument is; a temporary returned
+    /// through memory is used in its call-result slot by the operand's
+    /// convention ([`Self::operand_c`]), as a call argument's is, so a read
+    /// one dies when the dunder returns; anything else is an ordinary
+    /// value. Inside an operator's setup frame
     /// ([`Self::open_call_setup`]) a simple place's read is deferred to the
     /// frame's setup. A temporary view operand anchors its loans as a call
     /// argument does, under the anchor permission of `operator`, the
@@ -146,22 +148,12 @@ impl<'a> Flatten<'a> {
             borrowed
                 .then(|| this.lower_borrowed_read_argument(expression))
                 .flatten()
-                .unwrap_or_else(|| {
-                    let value = this.expr(expression);
-                    this.anchor_temporary_argument(
-                        expression,
-                        value,
-                        expression.adjustments(),
-                        false,
-                    )
-                    .unwrap_or_else(|| this.bind_read_temporary(expression, value))
-                })
+                .unwrap_or_else(|| this.temporary_operand(expression, false, false))
         });
         self.allow_argument_anchors = saved_anchor_permission;
         value
     }
 
-    /// Bind `value`, the lowered `expression`, through
     /// Record the call writing `dest` for
     /// [`crate::mir::fill_omitted_arguments`]: the callee the checked call
     /// selected, whose regular parameter slots begin after `leading`
@@ -172,24 +164,6 @@ impl<'a> Flatten<'a> {
             callee,
             leading,
         });
-    }
-
-    /// [`Self::bind_temporary_argument`] when the checker marked it
-    /// `ReadTemporaryArgument`: an owned temporary a read parameter, a read
-    /// receiver, or a read dunder operand takes, which the caller destroys once the call
-    /// returns. Anything else is `value` unchanged.
-    pub(super) fn bind_read_temporary(&mut self, expression: Node<'a>, value: Reg) -> Reg {
-        let adjustments = expression.adjustments();
-        if !adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::ReadTemporaryArgument
-            )
-        }) {
-            return value;
-        }
-        let converted = expression.implicit_conversion().is_some();
-        self.bind_temporary_argument(expression, value, adjustments, converted)
     }
 
     /// Lower `display`'s elements in order. A display is its constructor's
@@ -308,8 +282,7 @@ impl<'a> Flatten<'a> {
     /// the elements of a `bound` [`Self::setup_display`]
     /// ([`Self::display_elements`]); an operand's region ops stay where
     /// written while its read defers. Otherwise an operand whose lowering ends in a `UseVar`
-    /// forward (a `^` transfer or a [`Self::bind_forwarded_temporary`]
-    /// slot) defers that forward to the frame's transfers; the slot it
+    /// forward (a `^` transfer or a taken call-result slot) defers that forward to the frame's transfers; the slot it
     /// empties is defined where written, which dominates the call.
     fn defer_to_setup<R>(
         &mut self,
@@ -569,16 +542,7 @@ impl<'a> Flatten<'a> {
             }
             // A reference result's read, and the temporary binding of its
             // copy, are setup work too.
-            let read = |this: &mut Self| {
-                let value = this.expr(expression);
-                if let Some(anchored) =
-                    this.anchor_temporary_argument(expression, value, adjustments, converted)
-                {
-                    return anchored;
-                }
-                let value = this.bind_forwarded_temporary(expression, value);
-                this.bind_read_temporary(expression, value)
-            };
+            let read = |this: &mut Self| this.temporary_operand(expression, converted, false);
             let value = match setup {
                 Some(source) => self.defer_to_setup(expression, Some(source), true, read),
                 None => read(self),
@@ -662,11 +626,7 @@ impl<'a> Flatten<'a> {
         // rejects a non-place actual for a place-requiring parameter; lowering
         // stays total so the verifier can diagnose corrupt checked input
         // without manufacturing a caller place.
-        let value = self.expr(expression);
-        let value = self
-            .anchor_temporary_argument(expression, value, adjustments, converted)
-            .unwrap_or(value);
-        (value, None)
+        (self.temporary_operand(expression, converted, true), None)
     }
 
     /// Evaluate an augmented-subscript argument before either accessor call,
@@ -1428,67 +1388,46 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// [`Self::lower_call_receiver`] for the receiver of method call `call`,
-    /// giving a fresh owned temporary receiver frame storage. A read receiver
-    /// (`B(3).show()`) the checker marked `ReadTemporaryArgument` binds a
-    /// read-temporary slot through [`Self::bind_read_temporary`], as a read
-    /// argument does. Any other temporary receiver (a `ref self`, a
-    /// borrowing temporary, a view) is bound to a hidden `$tmp_recv_r` slot
-    /// and the call receives that slot's place, exactly as a named receiver
-    /// retains its own. Either way the call is the slot's last use, so drop
-    /// elaboration destroys the temporary right after it returns —
-    /// upstream's ASAP destruction. A `var`/`deinit` receiver convention
-    /// binds no slot: the callee owns the temporary and tears it down
-    /// itself. A value that owns no droppable storage, or one the receiver
-    /// paths already gave a place, is returned unchanged.
+    /// [`Self::lower_call_receiver`] for the receiver of method call `call`.
+    /// A temporary receiver returned through memory is used in its
+    /// call-result slot: a `var`/`deinit` receiver takes it, a read receiver
+    /// the checker marked `ReadTemporaryArgument` reads it, and any other (a
+    /// `ref self`) reads it and binds the slot's place, exactly as a named
+    /// receiver retains its own; such a receiver returned in registers is
+    /// materialized ([`Self::materialize_receiver`]). A slot's last use is
+    /// the call, so drop elaboration destroys the temporary right after it
+    /// returns — upstream's ASAP destruction. A receiver the receiver paths
+    /// already gave a place is returned unchanged.
     pub(super) fn lower_method_receiver(
         &mut self,
         call: Node<'a>,
         receiver: Node<'a>,
     ) -> (Reg, Option<MirPlace>) {
         let (value, place) = self.lower_call_receiver(receiver);
+        if place.is_some() {
+            return (value, place);
+        }
         let owned = call.call_contract().is_some_and(|contract| {
             matches!(
                 contract.receiver_convention,
                 Some(mojito_ast::ast::ArgConvention::Var | mojito_ast::ast::ArgConvention::Deinit)
             )
         });
-        if owned && place.is_none() {
-            return (self.bind_forwarded_temporary(receiver, value), None);
-        }
-        if place.is_some() || !receiver.is_fresh_temporary() || owned {
-            return (value, place);
-        }
-        let read = self.bind_read_temporary(receiver, value);
-        if read != value {
-            return (read, None);
-        }
-        let Some(ty) = self
-            .f
-            .reg_types
-            .get(&value.0)
-            .cloned()
-            .or_else(|| receiver.ty())
-            .filter(owns_droppable_storage)
-        else {
-            return (value, None);
-        };
-        let variable = self.var(&format!("$tmp_recv_r{}", value.0));
-        self.var_types.insert(variable, ty.clone());
-        self.emit(MirInstr::DefVar {
-            var: variable,
-            src: value,
-            binding_ty: Some(ty.clone()),
-            in_place: false,
+        let read = receiver.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::ReadTemporaryArgument
+            )
         });
-        // The slot now owns the temporary, which the call reads from it.
-        let place = MirPlace::root(variable, Some(ty.clone()));
-        let loaded = self.fresh_typed(receiver.location(), Some(variable), ty);
-        self.emit(MirInstr::LoadPlace {
-            dest: loaded,
-            place: place.clone(),
-        });
-        (loaded, Some(place))
+        match self.call_result(receiver, value, !owned && !read) {
+            CValue::Value(value) if owned || read || !receiver.is_fresh_temporary() => {
+                (value, None)
+            }
+            CValue::Value(value) => self.materialize_receiver(receiver, value),
+            slot @ CValue::Slot(_) if owned => (self.take_c(receiver, slot), None),
+            slot @ CValue::Slot(_) if read => (self.read_c(receiver, slot).0, None),
+            slot @ CValue::Slot(_) => self.read_c(receiver, slot),
+        }
     }
 
     /// Lower method call `call`'s receiver as [`Self::lower_method_receiver`]
@@ -1530,9 +1469,8 @@ impl<'a> Flatten<'a> {
         })
     }
 
-    /// [`Self::lower_setup_receiver`] with the receiver lowered by `lower`:
-    /// a subscript's accessor receiver goes through
-    /// [`Self::lower_call_receiver`] alone.
+    /// [`Self::lower_setup_receiver`] with the receiver lowered by `lower`,
+    /// as a subscript lowers its accessor's receiver.
     pub(super) fn lower_setup_receiver_with(
         &mut self,
         call: Node<'a>,
@@ -1556,16 +1494,16 @@ impl<'a> Flatten<'a> {
         lowered
     }
 
-    /// Read a field (`B(1).x`) off a fresh owned temporary through frame
-    /// storage: bind the temporary to a hidden `$tmp_field_r` slot and load
-    /// the projected place, exactly as `p.x` reads off a named local. The
-    /// load keeps the slot alive through the instructions that consume it
-    /// (`print(B(1).x)` destroys the temporary after `print`), so drop
-    /// elaboration runs the temporary's destructor where the pinned Mojo
-    /// does; a consuming context's checked `CopyPlaceValue` copies an owning
-    /// field out before the slot dies, as it does for a named local's. `None`
-    /// — leaving the register-based `GetField` — when the base is not a
-    /// loan-free call or operator temporary with droppable storage, when the base is a
+    /// Read a field (`B(1).x`) off a temporary returned through memory by
+    /// projecting its call-result slot, exactly as `p.x` reads off a named
+    /// local. The load keeps the slot alive through the instructions that
+    /// consume it (`print(B(1).x)` destroys the temporary after `print`), so
+    /// drop elaboration runs the temporary's destructor where the pinned
+    /// Mojo does; a consuming context's checked `CopyPlaceValue` copies an
+    /// owning field out before the slot dies, as it does for a named
+    /// local's. A temporary held in a register is read by a `GetField`.
+    /// `None`, leaving the base to the caller, when the base is not a fresh
+    /// temporary, is a reference result, a materialized borrow source, or a
     /// slice descriptor, or when the field is a reference.
     pub(super) fn load_temporary_field(
         &mut self,
@@ -1591,146 +1529,27 @@ impl<'a> Flatten<'a> {
         if object.is_slice_descriptor() {
             return None;
         }
-        let object_ty = object.ty().filter(owns_droppable_storage)?;
-        if !self.aggregate_borrows(object).is_empty() {
-            return None;
-        }
-        let value = self.expr(object);
-        let variable = self.var(&format!("$tmp_field_r{}", value.0));
-        self.var_types.insert(variable, object_ty.clone());
-        self.emit(MirInstr::DefVar {
-            var: variable,
-            src: value,
-            binding_ty: Some(object_ty.clone()),
-            in_place: false,
-        });
-        let mut place = MirPlace::root(variable, Some(object_ty));
+        let slot = match self.expr_c(object) {
+            CValue::Value(base) => {
+                let loaded = self.fresh(expression.location(), None);
+                self.emit(MirInstr::GetField {
+                    dest: loaded,
+                    base,
+                    field: field.to_owned(),
+                    constructors: Vec::new(),
+                });
+                return Some(loaded);
+            }
+            CValue::Slot(slot) => slot,
+        };
+        let mut place = MirPlace::root(slot, self.var_types.get(&slot).cloned());
         place.project(Proj::Field(field.to_string()), field_ty.clone());
-        let loaded = self.fresh_typed(expression.location(), Some(variable), field_ty);
+        let loaded = self.fresh_typed(expression.location(), Some(slot), field_ty);
         self.emit(MirInstr::LoadPlace {
             dest: loaded,
             place,
         });
         Some(loaded)
-    }
-
-    /// Give a loan-free owned temporary bound to a read parameter
-    /// (`take(B(2))`, or the `String` an implicit conversion builds for
-    /// `take("abc")`) frame storage, as [`Self::lower_method_receiver`] does
-    /// for a receiver: bind it to a hidden read-temporary slot
-    /// ([`crate::mir::READ_TEMPORARY_SLOT`]) and hand the call
-    /// a shallow read of that slot — the shape a named local takes at a read
-    /// parameter. The loaded register retains the slot through the call, so
-    /// drop elaboration destroys the temporary once the callee returns. A
-    /// temporary that borrows other storage already owns its `$arg_loan_r`
-    /// anchor, a materialized borrow source its `$mat_r` slot, and a value
-    /// without droppable storage needs none: those return `value` unchanged.
-    fn bind_temporary_argument(
-        &mut self,
-        expression: Node<'a>,
-        value: Reg,
-        adjustments: &[mojito_checked::checked::SemanticAdjustment],
-        converted: bool,
-    ) -> Reg {
-        let fresh_temporary = converted || expression.is_fresh_temporary();
-        if !fresh_temporary
-            || mojito_checked::checked::materialized_borrow_owner(adjustments).is_some()
-            || !self.aggregate_borrows(expression).is_empty()
-        {
-            return value;
-        }
-        // A view over other storage (`opt.value()` of a span) names an
-        // origin: it owns nothing to destroy, and its register's provenance
-        // keeps the viewed storage alive through the call.
-        let Some(ty) = self
-            .f
-            .reg_types
-            .get(&value.0)
-            .cloned()
-            .filter(owns_droppable_storage)
-            .filter(|ty| mojito_types::types::erase_origin_arguments(ty) == *ty)
-        else {
-            return value;
-        };
-        let variable = self.var(&format!("{}{}", crate::mir::READ_TEMPORARY_SLOT, value.0));
-        self.var_types.insert(variable, ty.clone());
-        self.emit(MirInstr::DefVar {
-            var: variable,
-            src: value,
-            binding_ty: Some(ty.clone()),
-            in_place: false,
-        });
-        let read = self.fresh_typed(expression.location(), Some(variable), ty.clone());
-        self.emit(MirInstr::LoadPlace {
-            dest: read,
-            place: MirPlace::root(variable, Some(ty)),
-        });
-        read
-    }
-
-    /// Bind `value`, the lowered `expression` an owned argument or owned
-    /// receiver takes, to a forwarding slot
-    /// ([`crate::mir::FORWARDED_ARGUMENT_SLOT`]) when the checker marked it
-    /// `ForwardedArgument` and it is a fresh temporary owning droppable
-    /// storage: the call takes the slot's storage at its setup, and until
-    /// then a raise in a later operand destroys the temporary through the
-    /// slot. A non-raising call that produced the temporary initializes the
-    /// slot in place. A borrowing or origin-bearing temporary, or one already
-    /// forwarded, is `value` unchanged.
-    fn bind_forwarded_temporary(&mut self, expression: Node<'a>, value: Reg) -> Reg {
-        let forwarded = expression.adjustments().iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::ForwardedArgument
-            )
-        });
-        let in_place = matches!(
-            self.f.blocks[self.cur].instrs.last(),
-            Some(MirInstr::Call { dest, raises: None, .. }) if *dest == value
-        );
-        let forwarded_already = matches!(
-            self.f.blocks[self.cur].instrs.last(),
-            Some(MirInstr::UseVar { dest, mode: UseMode::Forward, .. }) if *dest == value
-        );
-        if !forwarded
-            || forwarded_already
-            || !expression.is_fresh_temporary()
-            || mojito_checked::checked::materialized_borrow_owner(expression.adjustments())
-                .is_some()
-            || !self.aggregate_borrows(expression).is_empty()
-        {
-            return value;
-        }
-        let Some(ty) = self
-            .f
-            .reg_types
-            .get(&value.0)
-            .cloned()
-            .filter(owns_droppable_storage)
-            .filter(|ty| mojito_types::types::erase_origin_arguments(ty) == *ty)
-        else {
-            return value;
-        };
-        let variable = self.var(&format!(
-            "{}{}",
-            crate::mir::FORWARDED_ARGUMENT_SLOT,
-            value.0
-        ));
-        self.var_types.insert(variable, ty.clone());
-        self.emit(MirInstr::DefVar {
-            var: variable,
-            src: value,
-            binding_ty: Some(ty.clone()),
-            in_place,
-        });
-        let forwarded = self.fresh_typed(expression.location(), Some(variable), ty);
-        self.emit(MirInstr::UseVar {
-            dest: forwarded,
-            var: variable,
-            mode: UseMode::Forward,
-            constructor: None,
-        });
-        forwarded
     }
 
     /// The place of a compile-time binding's read the checker materialized
@@ -1876,58 +1695,44 @@ impl<'a> Flatten<'a> {
         (loaded, Some(place))
     }
 
-    /// Bind the result of a call whose value no expression consumes (an
-    /// expression statement; the unbound result of a non-consuming
-    /// `__enter__`) to a hidden `$discard_r` slot. Mojo destroys such a
-    /// temporary before the next statement: the slot is dead at its
-    /// definition, so drop elaboration splices its `DropVar` right after the
-    /// call. A non-raising call's slot is its result storage (`in_place`), so
-    /// it drops ahead of the call's argument temporaries; a raising call's
-    /// drops after them. Only a fresh owned aggregate or a `^` transfer is
-    /// bound — a reference result, scalar, or pointer owns no storage, and a
-    /// place read is never re-owned. A transfer's storage is forwarded to the
-    /// slot (the check records the discard as its consumer), so the slot
-    /// destroys the source where it lies, before the next statement.
-    pub(super) fn bind_discarded_result(
-        &mut self,
-        expression: &'a mojito_hir::hir::HirExpr,
-        value: Reg,
-    ) {
-        use mojito_checked::checked::SemanticAdjustment;
-        let Some(node) = self.checked.expression(expression.node) else {
-            return;
-        };
+    /// Lower expression statement `expression`, whose value nothing
+    /// consumes. Mojo destroys such a temporary before the next statement:
+    /// a result returned through memory lands in its call-result slot
+    /// ([`Self::expr_c`]), dead at its definition, so drop elaboration
+    /// splices its `DropVar` right after the call. A non-raising call's slot
+    /// is its result storage (`in_place`), so it drops ahead of the call's
+    /// argument temporaries; a raising call's drops after them. A `^`
+    /// transfer's storage is forwarded to a slot of its own (the check
+    /// records the discard as its consumer), so the slot destroys the source
+    /// where it lies, before the next statement.
+    pub(super) fn discard_result(&mut self, expression: &'a mojito_hir::hir::HirExpr) {
         let handle = self.handle(expression);
-        if !handle.is_fresh_temporary() && !matches!(handle.op(), CheckedOp::Transfer(_)) {
+        if handle.transfer_operand().is_none() {
+            self.with_statement_loans(|this| {
+                this.expr_c(handle);
+            });
             return;
         }
-        if node.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                SemanticAdjustment::SelectedCall(contract) if contract.reference_result.is_some()
-            )
-        }) {
-            return;
-        }
+        let value = self.expr_hir(expression);
         let Some(ty) = self
             .f
             .reg_types
             .get(&value.0)
             .cloned()
-            .or_else(|| node.ty.clone())
+            .or_else(|| handle.ty())
         else {
             return;
         };
-        let in_place = self.produced_in_place(value, self.handle(expression).raises().is_none());
-        if let Some(binding) = self.discard_binding(value, ty, in_place) {
+        if let Some(binding) = self.discard_binding(value, ty, false) {
             self.emit(binding);
         }
     }
 
     /// The binding of `value`, an owned value of type `ty` nothing reads, to
-    /// a hidden `$discard_r` slot, dead at its definition, so drop
-    /// elaboration destroys it there; `in_place` when it is its producer's
-    /// result storage. `None` when `ty` owns no droppable storage.
+    /// a hidden slot ([`crate::mir::CALL_RESULT_SLOT`]), dead at its
+    /// definition, so drop elaboration destroys it there; `in_place` when it
+    /// is its producer's result storage. `None` when `ty` owns no droppable
+    /// storage.
     pub(super) fn discard_binding(
         &mut self,
         value: Reg,
@@ -1937,7 +1742,7 @@ impl<'a> Flatten<'a> {
         if !owns_droppable_storage(&ty) {
             return None;
         }
-        let variable = self.var(&format!("$discard_r{}", value.0));
+        let variable = self.var(&format!("{}{}", crate::mir::CALL_RESULT_SLOT, value.0));
         self.var_types.insert(variable, ty.clone());
         Some(MirInstr::DefVar {
             var: variable,
@@ -2348,5 +2153,52 @@ impl<'a> Flatten<'a> {
         );
         self.emit(MirInstr::LoadPlace { dest, place });
         Some(dest)
+    }
+
+    /// Lower call operand `expression`, a value no place holds, for a call
+    /// that reads (`reads`) or takes it by its recorded convention
+    /// ([`Self::operand_c`]): a result returned through memory is used in
+    /// its call-result slot, and a loan-carrying temporary anchors its loans
+    /// through the call ([`Self::anchor_temporary_argument`]).
+    fn temporary_operand(&mut self, expression: Node<'a>, converted: bool, reads: bool) -> Reg {
+        match self.operand_expr_c(expression) {
+            CValue::Value(value) => self
+                .anchor_temporary_argument(expression, value, expression.adjustments(), converted)
+                .unwrap_or(value),
+            slot @ CValue::Slot(_) => self.operand_c(expression, slot, reads),
+        }
+    }
+
+    /// Materialize `value`, a fresh temporary its call returned in
+    /// registers, in a hidden `$mat_r` slot whose place a `ref self` or
+    /// other place receiver binds, as upstream's `getLValueForResult` gives
+    /// an rvalue `anonymous` storage when an lvalue is required. A value
+    /// owning no droppable storage stays in its register.
+    fn materialize_receiver(&mut self, receiver: Node<'a>, value: Reg) -> (Reg, Option<MirPlace>) {
+        let Some(ty) = self
+            .f
+            .reg_types
+            .get(&value.0)
+            .cloned()
+            .or_else(|| receiver.ty())
+            .filter(owns_droppable_storage)
+        else {
+            return (value, None);
+        };
+        let variable = self.var(&format!("$mat_r{}", value.0));
+        self.var_types.insert(variable, ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: variable,
+            src: value,
+            binding_ty: Some(ty.clone()),
+            in_place: false,
+        });
+        let place = MirPlace::root(variable, Some(ty.clone()));
+        let loaded = self.fresh_typed(receiver.location(), Some(variable), ty);
+        self.emit(MirInstr::LoadPlace {
+            dest: loaded,
+            place: place.clone(),
+        });
+        (loaded, Some(place))
     }
 }

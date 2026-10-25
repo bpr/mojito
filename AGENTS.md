@@ -68,7 +68,7 @@ mojito-checked     the CheckedProgram semantic handoff
 mojito-lexer       tokenization
 mojito-parser      parsing
 mojito-module      linking + bundled stdlib root
-mojito-hir         checked-AST CFG lowering
+mojito-hir         checked-AST region-tree lowering
 mojito-native-core native target/layout/rt_abi (below the MIR waist)
 mojito-checker     semantic checking (+ explicit_destroy)
 mojito-mir         MIR lowering, verifier, textual round-trip
@@ -114,7 +114,7 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
 
    ```text
    source -> lex -> parse -> link -> prepare -> comptime elaboration
-          -> one check (CheckedProgram) -> HIR CFG -> MIR -> ownership/liveness
+          -> one check (CheckedProgram) -> HIR region tree -> MIR -> ownership/liveness
           -> drop elaboration -> concrete MIR (native::mono)
           -> post-elaboration passes -> VM
    ```
