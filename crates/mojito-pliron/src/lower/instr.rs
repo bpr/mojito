@@ -882,7 +882,7 @@ impl FnLowering<'_> {
                 dest,
                 mode: _,
                 prepare,
-            } => self.lower_get_iter(ctx, *source, *dest, prepare),
+            } => self.lower_get_iter(ctx, *source, *dest, prepare.as_deref()),
             MirInstr::VariantSet {
                 dest,
                 place,

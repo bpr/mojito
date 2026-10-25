@@ -41,7 +41,7 @@ disappear. Four such gaps were found, and one of them reaches far outside
 | A. Raises are implicit | every raise point ends a region | none left (R906, R831, R20, and R884 landed) | R890 (R733, R833, R1129, R1106, R829, R1272, R1264, R1113, R1290, R956, and R832 closed) |
 | B. Construction and witnesses are not calls | a synthesized `__init__`; the witness folded at substitution | R1049, R1050, R1052, R988, R1278 (landed) | R1338, R1283 (closed), R1021 (closed), R1075 (closed), R1287 |
 | C. Packs are built by the backends | the call builds a library pack value | R743, R1102, R1103, R1073 (landed) | R1304 (R1070 and R1090 closed) |
-| D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931, R1306, R1310, R1311, R1312, R1313, R1309, R1319, R1320, R1325, R1329, R1327, R1336, R1321, R1330, R1326 (landed) | R1328, R1337 (R1252, R1267, R932, R832, and R1064 closed) |
+| D. Drops are decided after the fact | `DestructorInsertion` decides statically, per field | R1251, R931, R1306, R1310, R1311, R1312, R1313, R1309, R1319, R1320, R1325, R1329, R1327, R1336, R1321, R1330, R1326, R1337 (landed) | R1328 (R1252, R1267, R932, R832, and R1064 closed) |
 
 Each gap's fix also removes a place where a backend looks something up by
 type instead of reading a name from MIR: the struct-named construction
@@ -192,7 +192,9 @@ entry's probe is "one instance per `n` where the pin has one".
   10-24: the inverted `write_repr_to`'s text and each t-string segment are
   MIR-owned `String`s too. R1321 landed 10-24: Pliron's own register
   tracking is gone, and a raised `String` MIR owns gives the error its
-  buffer. R1337 holds the two releases Pliron still decides itself.
+  buffer. R1337 landed 10-24: a `for` calls one `__iter__`, as upstream's
+  does, so no chain intermediate is left for Pliron to free, and the
+  empty-callee release, which no program reached, is gone.
 - Do gap D after gap A: upstream's walk destroys on each raise exit, and
   with gap A fixed this walk has those exits to work on.
 
@@ -219,10 +221,10 @@ entry's probe is "one instance per `n` where the pin has one".
 
 4. **Gap D**. R1251, R1252, R931, R932, R1306, R832, R1310, R1311, R1312,
    R1313, R1309, R1319, R1320, R1325, R1329, R1327, R1336, R1321, R1330,
-   and R1326 landed. What remains is R1328 and R1337:
+   R1326, and R1337 landed. What remains is R1328:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1328 --only R1337 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1328 -n 0
    ```
 
 ## Entries outside the gaps

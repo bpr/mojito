@@ -3259,9 +3259,8 @@ fn instruction_cost<'i>(
         | MirInstr::KeepAlive { .. }
         | MirInstr::ComptimeAssert { .. } => 0,
         MirInstr::GetIter { prepare, .. } => prepare
-            .iter()
-            .map(|method| protocol_call_cost(method, callees))
-            .sum(),
+            .as_deref()
+            .map_or(0, |method| protocol_call_cost(method, callees)),
         MirInstr::Call { func, .. } if func.0 == "print" => PRINT_COST,
         MirInstr::Try { .. } => TRY_COST + regions(constants),
         MirInstr::If { elifs, .. } => 1 + elifs.len() + regions(constants),

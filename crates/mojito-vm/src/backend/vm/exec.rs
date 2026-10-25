@@ -1775,8 +1775,8 @@ impl VmBackend {
                 }
                 regs[dest.0 as usize] = value;
             }
-            // Iterator protocol (`for`): execute the nominal normalization chain
-            // chosen by the checker. Only VM-CTFE's explicit ComptimeList and
+            // Iterator protocol (`for`): call the nominal `__iter__` the
+            // checker chose. Only VM-CTFE's explicit ComptimeList and
             // the compiler-private heterogeneous runtime-pack carrier have a
             // method-free fallback in HasNext/Next below; public Tuple values
             // are nominal structs and must use their checked methods.
@@ -1786,15 +1786,11 @@ impl VmBackend {
                 mode: _,
                 prepare,
             } => {
-                // Execute the exact normalization chain chosen by the checker,
-                // starting from the source and producing the iterator in `dest`.
-                // When `dest != source` the source stays live in its own slot (a
-                // borrowing iterator must not clobber its only owner); when they
-                // are the same slot this normalizes in place, unchanged.
-                let dynamic_prepare = prepare
-                    .iter()
-                    .find(|symbol| symbol.starts_with("__trait_dispatch."))
-                    .cloned();
+                // Call the checker-selected `__iter__` once on the source,
+                // producing the iterator in `dest`. When `dest != source` the
+                // source stays live in its own slot (a borrowing iterator must
+                // not clobber its only owner); when they are the same slot this
+                // normalizes in place, unchanged.
                 // An owned `__iter__` consumes a source in a slot of its own,
                 // leaving the slot moved.
                 let mut current = if i.consumed_iteration_source().is_some() {
@@ -1809,7 +1805,7 @@ impl VmBackend {
                 if matches!(current, Value::Ref { .. }) {
                     current = self.read_reference(&current, frame_id, vars)?;
                 }
-                for (step, selected) in prepare.iter().enumerate() {
+                if let Some(selected) = prepare {
                     let Value::Struct { name, .. } = &current else {
                         return Err(RuntimeError::TypeError(format!(
                             "vm: checked iterator preparation applied to {}",
@@ -1828,13 +1824,12 @@ impl VmBackend {
                     // SPIKE seam A: a borrowed `__iter__(ref self)` receives a handle
                     // to the source slot so the iterator's borrow roots at the loop
                     // frame; caller-reachable so that root resolves inside `__iter__`.
-                    let borrowed = step == 0
-                        && prog.mir.functions[fidx]
-                            .1
-                            .ref_params
-                            .first()
-                            .copied()
-                            .unwrap_or(false);
+                    let borrowed = prog.mir.functions[fidx]
+                        .1
+                        .ref_params
+                        .first()
+                        .copied()
+                        .unwrap_or(false);
                     let arg = if borrowed {
                         Self::reference_to_place_parts(
                             frame_id,
@@ -1843,7 +1838,7 @@ impl VmBackend {
                             &MirPlace::root(*source, None),
                         )?
                     } else {
-                        current.clone()
+                        current
                     };
                     let (value, _, _) = self.call_frame_caller_reachable(
                         prog,
@@ -1854,35 +1849,6 @@ impl VmBackend {
                         vars,
                     )?;
                     current = value;
-                }
-                // A bounded `Iterable` may expose another iterable as its
-                // associated `Iter` (the self-hosted Set yields a List). Its
-                // concrete normalization depth is known only after generic
-                // specialization, so repeat the checked trait operation until
-                // the runtime type is an iterator. Concrete source types carry
-                // their complete static `prepare` chain and skip this path.
-                if let Some(selected) = dynamic_prepare {
-                    for _ in 0..8 {
-                        let Value::Struct { name, .. } = &current else {
-                            break;
-                        };
-                        let sname = name.clone();
-                        if prog
-                            .runtime_method_name(&sname, "__next__", None, 0)
-                            .is_some_and(|next| prog.index_of(&next).is_some())
-                        {
-                            break;
-                        }
-                        let fidx = prog
-                            .runtime_method_name(&sname, "__iter__", Some(selected.as_str()), 0)
-                            .and_then(|target| prog.index_of(&target))
-                            .ok_or_else(|| {
-                                RuntimeError::Unsupported(format!(
-                                    "vm: checked iterator method '{selected}' of '{sname}' is missing from MIR"
-                                ))
-                            })?;
-                        current = self.call_function(prog, fidx, vec![current.clone()])?;
-                    }
                 }
                 vars[*dest as usize] = current;
             }

@@ -117,19 +117,18 @@ fn raising_user_iterator_types_the_split_slot_and_retargets_its_operations() {
         .expect("main normalizes its iterable");
     assert!(
         matches!(main.var_tys.get(&dest).map(Ty::kind), Some(TyKind::Struct(name, _)) if name == "RangeIter"),
-        "the split iterator slot must be typed by the prepare chain: {:?}",
+        "the split iterator slot must be typed by its `__iter__`: {:?}",
         main.var_tys.get(&dest)
     );
-    for step in prepare {
-        assert!(
-            specialized
-                .program
-                .functions
-                .iter()
-                .any(|(name, _)| name == step),
-            "prepare step `{step}` must name a specialized function"
-        );
-    }
+    let step = prepare.as_ref().expect("the loop names its `__iter__`");
+    assert!(
+        specialized
+            .program
+            .functions
+            .iter()
+            .any(|(name, _)| name == step),
+        "`__iter__` `{step}` must name a specialized function"
+    );
     let target = nested_instructions(&main.blocks)
         .into_iter()
         .find_map(|instruction| match instruction {
@@ -201,7 +200,7 @@ fn raising_range_iteration_types_the_slot_and_reaches_its_operations() {
 }
 
 #[test]
-fn generic_dispatch_iteration_unrolls_to_a_typed_concrete_chain() {
+fn generic_dispatch_iteration_resolves_a_typed_concrete_iter() {
     let source = include_str!(
         "../../../../../assets/extensions/ok/generic_borrowed_dispatch_overloaded_iter.mojo"
     );
@@ -222,9 +221,9 @@ fn generic_dispatch_iteration_unrolls_to_a_typed_concrete_chain() {
         .expect("the generic loop normalizes its iterable");
     assert!(
         !prepare
-            .iter()
-            .any(|step| step.starts_with("__trait_dispatch.")),
-        "dispatch steps must resolve statically post-mono: {prepare:?}"
+            .as_deref()
+            .is_some_and(|step| step.starts_with("__trait_dispatch.")),
+        "a dispatch `__iter__` must resolve statically post-mono: {prepare:?}"
     );
     assert!(
         matches!(

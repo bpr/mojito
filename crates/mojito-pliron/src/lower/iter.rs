@@ -6,30 +6,30 @@ use super::*;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
-    /// `GetIter`: normalize the iterable variable through its checker-selected
-    /// (and mono-retargeted) `__iter__` chain into the iterator variable.
-    /// Receiver conventions mirror the VM: a borrowed (`ref`/`mut`) step
-    /// aliases the current storage — for step 0 that is the source slot, the
-    /// VM's reference-handle seam, so a borrowing iterator roots at the loop
-    /// frame — a `read` step passes a plain byte copy (the VM's
-    /// `current.clone()`, no lifecycle copy), and an owned (`var`) step
-    /// consumes the current storage in place.
+    /// `GetIter`: call the iterable variable's checker-selected (and
+    /// mono-retargeted) `__iter__` once, into the iterator variable.
+    /// Receiver conventions mirror the VM: a borrowed (`ref`/`mut`) receiver
+    /// aliases the source slot, the VM's reference-handle seam, so a
+    /// borrowing iterator roots at the loop frame; a `read` receiver is a
+    /// plain byte copy (the VM's `current.clone()`, no lifecycle copy) the
+    /// source slot keeps owning; and an owned (`var`) one consumes the source
+    /// storage in place.
     pub(super) fn lower_get_iter(
         &mut self,
         ctx: &mut Context,
         source: u32,
         dest: u32,
-        prepare: &[String],
+        prepare: Option<&str>,
     ) -> Result<(), PlironError> {
         // An owned `VariadicList` iterates itself, narrowing its span past
         // each element it hands on. Handled before the identity check.
-        if prepare.is_empty()
+        if prepare.is_none()
             && self.owned_list_element(dest).is_some()
             && (source == dest || self.owned_list_element(source).is_some())
         {
             return self.lower_variadic_list_iter_init(ctx, source, dest);
         }
-        if prepare.is_empty()
+        if prepare.is_none()
             && let Some(elements) = self.pack_iter_elements(dest)
             && (source == dest
                 || matches!(
@@ -39,7 +39,7 @@ impl FnLowering<'_> {
         {
             return self.lower_pack_iter_init(ctx, source, dest, &elements);
         }
-        if prepare.is_empty() && source == dest {
+        if prepare.is_none() && source == dest {
             // Identity normalization: the slot already holds the iterator.
             return Ok(());
         }
@@ -65,7 +65,7 @@ impl FnLowering<'_> {
                 None,
             )
         })?;
-        let (mut current, mut current_ty) = if let TyKind::Ref(reference) = source_ty.kind() {
+        let (source_storage, current_ty) = if let TyKind::Ref(reference) = source_ty.kind() {
             let handle = ScalarTy::Ptr.handle(ctx);
             let load = LoadOp::new(ctx, self.var_slots[source as usize], handle);
             self.append(ctx, load.get_operation(), None);
@@ -73,111 +73,90 @@ impl FnLowering<'_> {
         } else {
             (self.var_slots[source as usize], source_ty)
         };
-        // Whether `current` is a chain temporary this instruction owns (the
-        // source variable owns its own storage).
-        let mut owns_current = false;
-        for selected in prepare {
-            let Some(signature) = self.signatures.get(selected) else {
+        let Some(selected) = prepare else {
+            if self.owns_heap(&current_ty) {
+                // A stepless split binds a plain clone of the source; a byte
+                // copy of heap-owning storage would double-release at the two
+                // drops.
                 return Err(self.unsupported(
-                    format!("iterator preparation via uncompiled `{selected}`"),
+                    format!("borrowed iteration of `{current_ty}` without a preparation step"),
                     None,
                 ));
-            };
-            if signature.outcome.is_some() {
-                return Err(
-                    self.unsupported(format!("raising iterator preparation `{selected}`"), None)
-                );
             }
-            let Some(receiver_param) = signature.params.first().cloned() else {
-                return Err(self.unsupported(
-                    format!("iterator preparation `{selected}` without a receiver"),
-                    None,
-                ));
-            };
-            let Some(result_layout) = signature.sret else {
-                return Err(self.unsupported(
-                    format!("iterator preparation `{selected}` without an aggregate result"),
-                    None,
-                ));
-            };
-            let callee: Identifier = signature
-                .mangled
-                .as_str()
-                .try_into()
-                .expect("mangled names are identifier-safe");
-            let func_ty = signature.func_ty;
-            let borrowed = signature.ref_params.first().copied().unwrap_or(false)
-                || matches!(
-                    self.declarations
-                        .get(selected)
-                        .and_then(|decl| decl.receiver_convention.as_ref()),
-                    Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
-                );
-            let owned = signature.owned_params.first().copied().unwrap_or(false);
-            let (receiver, release_current) = if borrowed || owned {
-                // Aliased or consumed in place; a consumed chain temporary
-                // needs no release (the callee destroyed it).
-                (current, false)
-            } else {
-                let LowerTy::Aggregate { layout, .. } = receiver_param else {
-                    return Err(self.unsupported(
-                        format!("iterator preparation `{selected}` on a scalar receiver"),
-                        None,
-                    ));
-                };
-                let copy = self.entry_alloca(ctx, layout.size, layout.align);
-                self.mem_copy(ctx, copy, current, layout.size, Reg(u32::MAX));
-                (copy, owns_current)
-            };
-            let result = self.entry_alloca(ctx, result_layout.size, result_layout.align);
-            let call = CallOp::new(
+            self.mem_copy(
                 ctx,
-                CallOpCallable::Direct(callee),
-                func_ty,
-                vec![result, receiver],
+                self.var_slots[dest as usize],
+                source_storage,
+                dest_layout.size,
+                Reg(u32::MAX),
             );
-            self.append(ctx, call.get_operation(), None);
-            if release_current {
-                // The VM's superseded intermediate drops silently (no user
-                // destructor); free its heap invisibly or reject.
-                if self.owns_heap(&current_ty) {
-                    if self.releasable(&current_ty) {
-                        self.emit_release_storage(ctx, current, &current_ty)?;
-                    } else {
-                        return Err(self.unsupported(
-                            format!(
-                                "iterator preparation abandoning `{current_ty}` with destructor work"
-                            ),
-                            None,
-                        ));
-                    }
-                }
-            }
-            current = result;
-            current_ty = self
-                .declarations
-                .get(selected)
-                .map(|decl| decl.ret_ty.clone())
-                .ok_or_else(|| {
-                    self.unsupported(
-                        format!("iterator preparation `{selected}` without declaration facts"),
-                        None,
-                    )
-                })?;
-            owns_current = true;
-        }
-        if prepare.is_empty() && self.owns_heap(&current_ty) {
-            // A stepless split binds a plain clone of the source; a byte copy
-            // of heap-owning storage would double-release at the two drops.
+            return Ok(());
+        };
+        let Some(signature) = self.signatures.get(selected) else {
             return Err(self.unsupported(
-                format!("borrowed iteration of `{current_ty}` without a preparation step"),
+                format!("iterator preparation via uncompiled `{selected}`"),
                 None,
             ));
+        };
+        if signature.outcome.is_some() {
+            return Err(
+                self.unsupported(format!("raising iterator preparation `{selected}`"), None)
+            );
         }
+        let Some(receiver_param) = signature.params.first().cloned() else {
+            return Err(self.unsupported(
+                format!("iterator preparation `{selected}` without a receiver"),
+                None,
+            ));
+        };
+        let Some(result_layout) = signature.sret else {
+            return Err(self.unsupported(
+                format!("iterator preparation `{selected}` without an aggregate result"),
+                None,
+            ));
+        };
+        let callee: Identifier = signature
+            .mangled
+            .as_str()
+            .try_into()
+            .expect("mangled names are identifier-safe");
+        let func_ty = signature.func_ty;
+        let borrowed = signature.ref_params.first().copied().unwrap_or(false)
+            || matches!(
+                self.declarations
+                    .get(selected)
+                    .and_then(|decl| decl.receiver_convention.as_ref()),
+                Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
+            );
+        let owned = signature.owned_params.first().copied().unwrap_or(false);
+        // A borrowed receiver aliases the source and an owned one consumes
+        // it in place; a `read` receiver is a byte copy the source keeps
+        // owning.
+        let receiver = if borrowed || owned {
+            source_storage
+        } else {
+            let LowerTy::Aggregate { layout, .. } = receiver_param else {
+                return Err(self.unsupported(
+                    format!("iterator preparation `{selected}` on a scalar receiver"),
+                    None,
+                ));
+            };
+            let copy = self.entry_alloca(ctx, layout.size, layout.align);
+            self.mem_copy(ctx, copy, source_storage, layout.size, Reg(u32::MAX));
+            copy
+        };
+        let result = self.entry_alloca(ctx, result_layout.size, result_layout.align);
+        let call = CallOp::new(
+            ctx,
+            CallOpCallable::Direct(callee),
+            func_ty,
+            vec![result, receiver],
+        );
+        self.append(ctx, call.get_operation(), None);
         self.mem_copy(
             ctx,
             self.var_slots[dest as usize],
-            current,
+            result,
             dest_layout.size,
             Reg(u32::MAX),
         );

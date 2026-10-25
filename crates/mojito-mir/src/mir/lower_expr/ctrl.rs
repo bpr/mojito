@@ -537,7 +537,7 @@ impl<'a> Flatten<'a> {
                         borrowed_origin: None,
                         yield_interior: Vec::new(),
                         source_retained: true,
-                        prepare: Vec::new(),
+                        prepare: None,
                         prepare_raises: None,
                         iterator_ty: iterator_ty.clone().unwrap_or_else(Ty::error),
                         next: None,
@@ -574,7 +574,7 @@ impl<'a> Flatten<'a> {
                 // storage (or the reference handle) a borrowing iterator
                 // still refers to, and an owned one empties the source.
                 let borrowed = protocol.borrowed_origin.is_some();
-                let split_source = borrowed || !protocol.prepare.is_empty();
+                let split_source = borrowed || protocol.prepare.is_some();
                 let iterator_object = if split_source {
                     let object = self.var(&format!("$compiterobj{}", self.vars.len()));
                     self.var_types.insert(object, protocol.iterator_ty.clone());

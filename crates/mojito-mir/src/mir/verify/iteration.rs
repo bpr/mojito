@@ -26,7 +26,7 @@ pub(super) fn verify_iteration_instruction(
                     "{prefix}: GetIter uses invalid destination slot {dest}"
                 ));
             }
-            let Some(first) = prepare.first() else {
+            let Some(first) = prepare else {
                 return;
             };
             let convention_matches = |convention| match mode {

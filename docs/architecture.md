@@ -4729,7 +4729,9 @@ The back-edge makes the moved state flow to the next iteration. The analysis can
 therefore reject the second iteration's attempted move.
 
 Borrowed iteration, and consuming iteration for a type with `__iter__(var self)`,
-first execute the checker-selected nominal `__iter__` normalization chain. Every
+first call the checker-selected nominal `__iter__` once, as upstream's
+`emitForStmt` does; the checker rejects an `__iter__` whose result is not
+itself an iterator, as the pin does, so `GetIter` names at most one. Every
 borrowed source is retained in its own slot — statement loops and comprehension
 clauses share the rule — and `GetIter` writes the normalized iterator into a
 distinct iterator-object slot, so the source stays live in its own slot through

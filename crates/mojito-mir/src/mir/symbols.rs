@@ -256,9 +256,10 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                 }
                 | MirInstr::MultiSet { call, .. } => replace(&mut call.target),
                 MirInstr::GetIter {
-                    prepare: symbols, ..
-                }
-                | MirInstr::GetField {
+                    prepare: Some(target),
+                    ..
+                } => replace(target),
+                MirInstr::GetField {
                     constructors: symbols,
                     ..
                 } => symbols.iter_mut().for_each(&mut *replace),

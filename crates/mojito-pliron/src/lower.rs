@@ -98,10 +98,6 @@ pub struct FnSignature {
     /// its final state writes back to the caller's receiver place, exactly
     /// like a `mut` receiver.
     pub deinit_receiver: bool,
-    /// Whether the body contains no MIR instructions. Empty lifted handlers
-    /// abandon owned arguments in the VM arena; native code releases their
-    /// storage invisibly after the call.
-    pub empty_body: bool,
     /// Whether the result is the value itself or a reference to it.
     pub result_form: ResultForm,
 }

@@ -623,19 +623,18 @@ impl Specializer<'_> {
         Ok(())
     }
 
-    /// Fold a `GetIter` normalization chain: retarget every `prepare` step to
-    /// its concrete instance, statically unroll dynamic `__trait_dispatch.`
-    /// normalization (the VM repeats that step at runtime until the value has a
-    /// `__next__`; the receiver is concrete here). A split iterator slot keeps
-    /// the type MIR declared it with, the checked `__iter__` result; a source
-    /// normalized in place takes the chain's final return type.
+    /// Retarget a `GetIter`'s `__iter__` to its concrete instance: a
+    /// dynamic `__trait_dispatch.` step resolves against the receiver, which
+    /// is concrete here. A split iterator slot keeps the type MIR declared it
+    /// with, the checked `__iter__` result; a source normalized in place
+    /// takes the `__iter__` result type.
     pub(super) fn rewrite_get_iter(
         &mut self,
         owner: &str,
         function: &mut MirFunction,
         source: mojito_hir::hir::VarId,
         dest: mojito_hir::hir::VarId,
-        prepare: &mut Vec<String>,
+        prepare: &mut Option<String>,
     ) -> Result<(), MonoError> {
         let Some(mut current) = function.var_tys.get(&source).cloned() else {
             // An untyped source belongs to a compiler-private pack loop the
@@ -655,31 +654,11 @@ impl Specializer<'_> {
         if let TyKind::Ref(reference) = current.kind() {
             current = reference.referent.clone();
         }
-        let dispatch = prepare
-            .iter()
-            .find(|symbol| symbol.starts_with("__trait_dispatch."))
-            .cloned();
-        for selected in prepare.iter_mut() {
+        if let Some(selected) = prepare {
             let (target, result) =
                 self.resolve_iterator_step(owner, &current, "__iter__", Some(selected), None)?;
             *selected = target;
             current = result;
-        }
-        if let Some(selected) = dispatch {
-            let mut budget = 8u32;
-            while !self.has_iterator_next(&current) {
-                if budget == 0 {
-                    return Err(self.error(
-                        Some(owner),
-                        "iterator normalization did not converge within the dispatch budget",
-                    ));
-                }
-                budget -= 1;
-                let (target, result) =
-                    self.resolve_iterator_step(owner, &current, "__iter__", Some(&selected), None)?;
-                prepare.push(target);
-                current = result;
-            }
         }
         if source == dest || !function.var_tys.contains_key(&dest) {
             function.var_tys.insert(dest, current);
@@ -878,22 +857,6 @@ impl Specializer<'_> {
             )
         })?;
         Ok((bindings, arguments, result))
-    }
-
-    /// Whether the concrete receiver type resolves a nullary `__next__` — the
-    /// VM's runtime convergence test for dynamic iterator normalization.
-    pub(super) fn has_iterator_next(&self, receiver: &Ty) -> bool {
-        let TyKind::Struct(name, _) = receiver.kind() else {
-            return false;
-        };
-        let target = mojito_symbol::symbol::resolve_method_symbol(
-            &self.functions,
-            nominal_template(name),
-            "__next__",
-            None,
-            0,
-        );
-        self.functions.contains_key(target.as_str())
     }
 
     /// The type arguments the checker solved for the call bind the

@@ -1862,13 +1862,13 @@ impl Lower {
         // `Bind`-bound owned temporary: a borrowing `__iter__` must not
         // clobber the source the iterator still refers to, and an owned
         // one (`__iter__(var self)`) consumes the source, whose slot is
-        // empty from then on. Only an empty-`prepare` iterable, already
+        // empty from then on. Only an iterable with no `prepare`, already
         // compiler-private iterator storage, normalizes in place.
         // A `BorrowIter`'d source (borrowed origin present) is a loan of
         // storage owned elsewhere; only a `Bind`'d borrowed temporary that
         // the iterator may refer to is kept alive and dropped by the loop.
         let borrowed = protocol.borrowed_origin.is_some();
-        let split_source = borrowed || !protocol.prepare.is_empty();
+        let split_source = borrowed || protocol.prepare.is_some();
         let loop_owns_source = split_source
             && !borrowed
             && protocol.source_retained

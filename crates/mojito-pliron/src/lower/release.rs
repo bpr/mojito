@@ -6,31 +6,6 @@ use super::*;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
-    /// Whether [`Self::emit_release_storage`] can free every heap buffer a
-    /// value of `ty` owns without running user code: the nominal String
-    /// (one buffer), and byte-copied aggregates over such fields.
-    pub(super) fn releasable(&self, ty: &Ty) -> bool {
-        match ty.kind() {
-            TyKind::Error => true,
-            TyKind::Struct(name, _) if mojito_symbol::symbol::is_stdlib_string_struct(name) => true,
-            TyKind::Struct(name, _) => {
-                self.lifecycle_symbol(name, "__copyinit__").is_none()
-                    && self.struct_decls.get(name.as_str()).is_some_and(|decl| {
-                        decl.fields
-                            .iter()
-                            .all(|(_, field)| !self.owns_heap(field) || self.releasable(field))
-                    })
-            }
-            TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => elements
-                .iter()
-                .all(|element| !self.owns_heap(element) || self.releasable(element)),
-            TyKind::Variant(alternatives) => alternatives
-                .iter()
-                .all(|alternative| !self.owns_heap(alternative) || self.releasable(alternative)),
-            _ => !self.owns_heap(ty),
-        }
-    }
-
     /// Whether a value of `ty` semantically owns heap memory (the nominal
     /// String's buffer; raw pointers are not owned).
     pub(super) fn owns_heap(&self, ty: &Ty) -> bool {

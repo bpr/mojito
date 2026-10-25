@@ -916,11 +916,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   nonraising one) and records `IterationProtocol::source_retained`, which HIR
   (`hir.rs` loop lowering) and MIR (`lower_stmt.rs` `GetIter`,
   `lower_expr/ctrl.rs` comprehensions) read to decide whether a loop keeps its
-  source alive and loaned, and `IterationProtocol::prepare_raises`, the error
-  type of a one-step chain's raising `__iter__`, which MIR's
-  `Flatten::call_raising_iter` (`lower_stmt.rs`) emits as a raising
-  `MethodCall` with its error region in place of `GetIter` (a raising step in
-  a longer chain is rejected). Each trip's raising `__next__` is
+  source alive and loaned, and `IterationProtocol::prepare`, the one
+  `__iter__` the loop calls (an `__iter__` whose result is no iterator is
+  rejected, as at the pin), and `prepare_raises`, the error type of a raising
+  one, which MIR's `Flatten::call_raising_iter` (`lower_stmt.rs`) emits as a
+  raising `MethodCall` with its error region in place of `GetIter`. Each trip's raising `__next__` is
   `Flatten::call_raising_next` (`lower_stmt.rs`, HIR's `HirInstr::CallNext`):
   a raising `MethodCall` on the iterator slot and its error region, inside
   the `try` whose handler leaves the loop, which HIR's `for_loop` builds and

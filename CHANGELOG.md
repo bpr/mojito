@@ -954,6 +954,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A `for` loop calls its iterable's `__iter__` once, as upstream's
+  `emitForStmt` does, so an `__iter__` whose result is not itself an
+  iterator is rejected, as the pin rejects it, where Mojito used to call
+  that result's own `__iter__` in turn (R1337,
+  `assets/type_error/iter_result_not_iterator.mojo`). `iter.init` names at
+  most one `__iter__`, and with no chain intermediate left, Pliron frees
+  no iterator storage itself; nor does it free a callee's owned arguments
+  after a call to an empty body, which drop elaboration already destroys.
+
 - A `conforms_to` test holds its subject as an operand, as upstream's
   `type_conforms_to_trait` does, so a `nodebug` callee testing
   `conforms_to(T, Trait)` or `conforms_to(Ts.values, Trait)` now inlines

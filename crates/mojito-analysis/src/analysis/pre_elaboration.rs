@@ -518,7 +518,7 @@ fn followed_callees(
                         resolved: Some(target),
                         ..
                     } => out.push(target.clone()),
-                    MirInstr::GetIter { prepare, .. } => out.extend(prepare.iter().cloned()),
+                    MirInstr::GetIter { prepare, .. } => out.extend(prepare.clone()),
                     MirInstr::MakeClosure { function, .. }
                     | MirInstr::Const {
                         k: Const::Function(function),

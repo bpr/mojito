@@ -163,19 +163,6 @@ impl FnLowering<'_> {
             signature.sret,
             signature.outcome.clone(),
         );
-        let abandoned = if signature.empty_body {
-            signature
-                .params
-                .iter()
-                .zip(&signature.owned_params)
-                .zip(&operands)
-                .filter_map(|((parameter, owned), operand)| {
-                    (*owned).then_some((parameter.clone(), *operand))
-                })
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
-        };
         self.emit_call_shaped(
             ctx,
             dest,
@@ -185,13 +172,7 @@ impl FnLowering<'_> {
             sret,
             outcome,
             operands,
-        )?;
-        for (parameter, storage) in abandoned {
-            if let LowerTy::Aggregate { ty, .. } = parameter {
-                self.emit_release_storage(ctx, storage, &ty)?;
-            }
-        }
-        Ok(())
+        )
     }
 
     /// Emit a direct or indirect call with fully bound operands under the

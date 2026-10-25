@@ -368,8 +368,8 @@ pub struct StructInstantiation {
 
 /// Fully resolved iterator protocol retained across the checked boundary.
 ///
-/// `prepare` contains the exact `__iter__` symbols needed to normalize a user
-/// iterable; builtin ranges/collections leave it empty.  User iterators carry
+/// `prepare` names the exact `__iter__` the loop calls, once, as upstream's
+/// `emitForStmt` does; compiler-private iterator storage names none.  User iterators carry
 /// exact iterator-operation symbols so the VM never performs name/arity
 /// overload reconstruction. `exhaustion` is the checked typed error caught by
 /// a raising `__next__`; it is absent only for compiler-private iterator
@@ -402,16 +402,15 @@ pub struct IterationProtocol {
     /// otherwise the source dies as soon as `__iter__` returns, as upstream's
     /// ASAP destruction does.
     pub source_retained: bool,
-    pub prepare: Vec<String>,
-    /// The error type a one-step `prepare` chain's `__iter__` raises, when
-    /// it raises: MIR calls that `__iter__` as an ordinary raising method
-    /// call, as upstream's `emitForStmt` does, rather than inside the
-    /// normalization. The checker rejects a raising step in a longer chain.
+    pub prepare: Option<String>,
+    /// The error type the `prepare` `__iter__` raises, when it raises: MIR
+    /// calls that `__iter__` as an ordinary raising method call, as
+    /// upstream's `emitForStmt` does, rather than inside the normalization.
     pub prepare_raises: Option<Ty>,
-    /// The type of the iterator the `prepare` chain produces: its last
-    /// `__iter__` result, resolved at the loop site (`_ListIter[Int,
+    /// The type of the iterator `prepare` produces: its `__iter__`
+    /// result, resolved at the loop site (`_ListIter[Int,
     /// origin_of(xs)]`, or `C.IteratorType[origin_of(self)]` over a generic
-    /// `C: Iterable`). An empty chain's iterator is the iterable itself.
+    /// `C: Iterable`). With no `prepare`, the iterator is the iterable itself.
     pub iterator_ty: Ty,
     pub next: Option<Box<CheckedIteratorCall>>,
     pub exhaustion: Option<Ty>,

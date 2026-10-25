@@ -1203,11 +1203,10 @@ impl<'p> CallEdges<'p, '_> {
             // Iterator instructions carry their targets as symbols rather
             // than call edges; monomorphization has already retargeted
             // them to concrete instances.
-            MirInstr::GetIter { prepare, .. } => {
-                for step in prepare {
-                    self.push_named(step);
-                }
-            }
+            MirInstr::GetIter {
+                prepare: Some(step),
+                ..
+            } => self.push_named(step),
             // Subscript instructions carry their checker-selected (and
             // mono-retargeted) targets on the instruction.
             MirInstr::Index {

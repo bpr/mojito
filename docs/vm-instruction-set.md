@@ -138,7 +138,7 @@ accessed; the compact notation omits this analysis-only field.
 
 | Mnemonic | MIR operation | Purpose |
 |---|---|---|
-| `iter.init` | `GetIter` | Normalize a value into an iterator |
+| `iter.init` | `GetIter` | Call a value's `__iter__` once, into an iterator |
 | `iter.has_next` | `HasNext` | Test compiler-private iterator storage for another element |
 | `iter.next` | `Next` | Advance compiler-private iterator storage |
 

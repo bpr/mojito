@@ -327,7 +327,6 @@ pub fn declare_function(
                 .collect(),
             ref_params: func.ref_params.clone(),
             deinit_receiver: func.deinit_params.first().copied().unwrap_or(false),
-            empty_body: func.blocks.iter().all(|block| block.instrs.is_empty()),
             result_form: if func.returns_reference {
                 ResultForm::Reference
             } else {

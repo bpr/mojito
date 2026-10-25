@@ -445,8 +445,8 @@ impl<'a> Flatten<'a> {
         protocol: &mojito_checked::checked::IterationProtocol,
     ) {
         let borrowed_place = self.iteration_sources.remove(&source);
-        match (&protocol.prepare_raises, protocol.prepare.as_slice()) {
-            (Some(error), [selected]) if source != dest => {
+        match (&protocol.prepare_raises, &protocol.prepare) {
+            (Some(error), Some(selected)) if source != dest => {
                 self.call_raising_iter(source, dest, borrowed_place, protocol, selected, error);
             }
             _ => self.emit(MirInstr::GetIter {

@@ -1224,13 +1224,13 @@ fn instruction_families_reprint_byte_identically() {
             source: 0,
             dest: 1,
             mode: IterationMode::Borrowed,
-            prepare: vec!["__iter__".into()],
+            prepare: Some("__iter__".into()),
         },
         MirInstr::GetIter {
             source: 0,
             dest: 2,
             mode: IterationMode::Owned,
-            prepare: Vec::new(),
+            prepare: None,
         },
         MirInstr::HasNext {
             dest: Reg(38),

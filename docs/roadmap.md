@@ -8657,23 +8657,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1337 Pliron frees storage MIR places no drop for**
-
-  Pliron still destroys two kinds of value itself with
-  `emit_release_storage`, where upstream's backend destroys nothing: every
-  destruction is a call `DestructorInsertion` placed.
-  - Probe: a `GetIter` whose `prepare` chain calls a by-value `__iter__`
-    step frees the superseded intermediate natively (`release_current` in
-    `lower/iter.rs`), since the chain's intermediates are no MIR registers.
-  - Probe: a call to a callee whose body has no instructions frees each
-    owned aggregate argument after the call (`empty_body` in
-    `lower/abi.rs`'s direct-call emission), where the callee's own drop
-    elaboration should have destroyed it.
-  - Split it in two if the causes differ.
-  - Found while landing R1321 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1328 A memory-only owned value lives in an SSA register, where
   upstream keeps it in a temporary allocation**
 

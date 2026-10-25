@@ -1744,8 +1744,8 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 prepare,
                 mode,
                 ..
-            } => match prepare.as_slice() {
-                [callee] => self.member_call(
+            } => match prepare {
+                Some(callee) => self.member_call(
                     declarations,
                     callee,
                     function.var_tys.get(source),

@@ -175,7 +175,7 @@ impl Checker {
     /// comprehensions: the source place, at the granularity the selected
     /// iterator's declared yielded origin proves (its `_get_owned_interior`
     /// projection, or the whole place without one), for any registered
-    /// conformer with a non-empty `__iter__` prepare chain (borrowed rather
+    /// conformer with a `prepare` `__iter__` (borrowed rather
     /// than copied; the loan keeps the source live while rejecting mutation
     /// during iteration). A temporary source has no place (`origin_place`
     /// errs) and keeps the owned value copy.
@@ -207,7 +207,7 @@ impl Checker {
             return;
         }
         if protocol.borrowed_origin.is_none()
-            && !protocol.prepare.is_empty()
+            && protocol.prepare.is_some()
             && matches!(iter_ty.kind(), TyKind::Struct(..) | TyKind::Param { .. })
             && let Some(mut origin) = source.cloned()
         {
@@ -248,7 +248,7 @@ impl Checker {
         use mojito_types::origin::{Mutability, Origin};
 
         if protocol.mode != mojito_checked::checked::IterationMode::Borrowed
-            || protocol.prepare.is_empty()
+            || protocol.prepare.is_none()
         {
             return None;
         }
@@ -318,7 +318,7 @@ impl Checker {
                     borrowed_origin: None,
                     yield_interior: Vec::new(),
                     source_retained: true,
-                    prepare: Vec::new(),
+                    prepare: None,
                     prepare_raises: None,
                     iterator_ty: ty.clone(),
                     next: None,
@@ -360,7 +360,7 @@ impl Checker {
         }
         match ty.kind() {
             TyKind::VariadicPack(element) => Ok(builtin((*element).clone())),
-            TyKind::Struct(..) => self.struct_iteration_protocol(ty, mode, 0, raises),
+            TyKind::Struct(..) => self.struct_iteration_protocol(ty, mode, raises),
             TyKind::Param { bounds, .. } => {
                 let owned = mode == IterationMode::Owned;
                 let required = if owned { "IterableOwned" } else { "Iterable" };
@@ -404,10 +404,12 @@ impl Checker {
                         borrowed_origin: None,
                         yield_interior: Vec::new(),
                         source_retained: true,
-                        prepare: vec![mojito_symbol::symbol::iterator_dispatch_symbol(match mode {
-                            IterationMode::Borrowed => mojito_ast::ast::ArgConvention::Imm,
-                            IterationMode::Owned => mojito_ast::ast::ArgConvention::Var,
-                        })],
+                        prepare: Some(mojito_symbol::symbol::iterator_dispatch_symbol(
+                            match mode {
+                                IterationMode::Borrowed => mojito_ast::ast::ArgConvention::Imm,
+                                IterationMode::Owned => mojito_ast::ast::ArgConvention::Var,
+                            },
+                        )),
                         prepare_raises: None,
                         iterator_ty,
                         next: Some(Box::new(mojito_checked::checked::CheckedIteratorCall {
@@ -440,7 +442,6 @@ impl Checker {
         &self,
         c_ty: &Ty,
         mode: mojito_checked::checked::IterationMode,
-        depth: usize,
         raises: &mut IteratorRaises,
     ) -> Result<(Ty, mojito_checked::checked::IterationProtocol), TypeError> {
         use mojito_checked::checked::IterationMode;
@@ -448,11 +449,6 @@ impl Checker {
             object_type: ty.to_string(),
             method: m.to_string(),
         };
-        if depth >= 8 {
-            return Err(TypeError::Unsupported(
-                "iterator normalization exceeded eight __iter__ steps".to_string(),
-            ));
-        }
         let TyKind::Struct(cname, ctargs) = c_ty.kind() else {
             return Err(no_method(c_ty, "__iter__"));
         };
@@ -527,7 +523,8 @@ impl Checker {
         } else {
             format!("{cname}.__iter__")
         };
-        // The iterator must itself be a struct with `__next__`, and current Mojo
+        // The loop calls `__iter__` once, as upstream's `emitForStmt` does, so
+        // its result must itself be a struct with `__next__`; current Mojo
         // terminates iteration only when that method raises the typed
         // `StopIteration`.
         let bad_iter = || TypeError::TypeMismatch {
@@ -539,25 +536,8 @@ impl Checker {
             return Err(bad_iter());
         };
         let iinfo = self.structs.get(iname).ok_or_else(bad_iter)?;
-        if !iinfo.methods.contains_key("__next__") && iinfo.methods.contains_key("__iter__") {
-            let (element, mut nested) =
-                self.struct_iteration_protocol(it_ty, mode, depth + 1, raises)?;
-            // Only a one-step chain calls its `__iter__` as a raising call;
-            // current Mojo requires `__iter__` to return an `Iterator`.
-            if iter_error.is_some() || nested.prepare_raises.is_some() {
-                return Err(TypeError::Unsupported(format!(
-                    "a raising '__iter__' in the iterator normalization of '{c_ty}', \
-                     whose '__iter__' result is not itself an iterator"
-                )));
-            }
-            nested.prepare.insert(0, prepare_symbol);
-            return Ok((element, nested));
-        }
         // `__next__(mut self)` advances, so it must mutate `self`.
-        let next_candidates = iinfo
-            .methods
-            .get("__next__")
-            .ok_or_else(|| no_method(it_ty, "__next__"))?;
+        let next_candidates = iinfo.methods.get("__next__").ok_or_else(bad_iter)?;
         let applicable_next = next_candidates
             .iter()
             .filter_map(|sig| {
@@ -644,7 +624,7 @@ impl Checker {
                 borrowed_origin: None,
                 yield_interior,
                 source_retained: reference_result.is_some() || struct_may_refer_elsewhere(iinfo),
-                prepare: vec![prepare_symbol],
+                prepare: Some(prepare_symbol),
                 prepare_raises: iter_error.clone(),
                 iterator_ty: it_ty.clone(),
                 next: Some(Box::new(checked_next)),
@@ -855,8 +835,8 @@ impl Checker {
     ) {
         use mojito_types::origin::Origin;
 
-        let (mojito_checked::checked::IterationMode::Borrowed, [_], Some(source)) =
-            (protocol.mode, protocol.prepare.as_slice(), source)
+        let (mojito_checked::checked::IterationMode::Borrowed, Some(_), Some(source)) =
+            (protocol.mode, &protocol.prepare, source)
         else {
             return;
         };
