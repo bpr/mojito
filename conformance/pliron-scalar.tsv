@@ -1212,6 +1212,14 @@ assets/extensions/ok/comprehension_borrowed_named_source.mojo	-	ineligible	no-sc
 assets/extensions/ok/container_owning_family_apis.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/copyable_iterator_reference_aggregate.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/enum_caseless.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/enum_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/enum_generic_payloads.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/enum_many_cases.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/enum_nullary_constants.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/enum_payload_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/enum_user_equality_hashing.mojo	-	ineligible	no-scalar-entry-shape
+assets/extensions/ok/enum_writable_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/forward_struct_reference_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/generic_borrowed_dispatch_overloaded_iter.mojo	-	ineligible	no-scalar-entry-shape
 assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	-	ineligible	no-scalar-entry-shape

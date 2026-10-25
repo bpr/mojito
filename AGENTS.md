@@ -94,9 +94,10 @@ the root `backend-pliron` feature) may, and `scripts/check` excludes it.
    extensions. Accepted programs use valid Mojo syntax and semantics; Mojito
    may reject valid Mojo but must not invent a different language. An
    extension is *kept* only when it tracks an announced upstream direction
-   (today: direct `ref` struct fields, and `Origin._subtree` origin casts —
+   (today: direct `ref` struct fields; `Origin._subtree` origin casts —
    upstream's own experimental spelling, which the pinned build parses but
-   rejects at the use) and is listed in `docs/non-goals.md`; every other
+   rejects at the use; and the `enum` keyword of upstream's enum proposal,
+   which the pin spells `__enum`) and is listed in `docs/non-goals.md`; every other
    Mojito-only acceptance is a divergence on `docs/roadmap.md`'s `divergences` track,
    waiting to be withdrawn. Both kinds keep their fixtures under
    `assets/extensions/`, where `scripts/sweep-assets-mojo --extensions`

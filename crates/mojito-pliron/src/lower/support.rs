@@ -331,6 +331,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::MakeArray { .. } => "MakeArray",
         MirInstr::MakeVariant { .. } => "MakeVariant",
         MirInstr::VariantIs { .. } => "VariantIs",
+        MirInstr::VariantTag { .. } => "VariantTag",
         MirInstr::VariantGet { .. } => "VariantGet",
         MirInstr::VariantSet { .. } => "VariantSet",
         MirInstr::VariantTake { .. } => "VariantTake",
@@ -379,6 +380,7 @@ fn borrowed_operands(
         MirInstr::CopyValue { value, .. }
         | MirInstr::GetField { base: value, .. }
         | MirInstr::VariantIs { variant: value, .. }
+        | MirInstr::VariantTag { variant: value, .. }
         | MirInstr::VariantGet { variant: value, .. } => vec![value.0],
         MirInstr::Index {
             base,

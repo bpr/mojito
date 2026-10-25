@@ -47,6 +47,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::SimdShuffle { dest, .. }
         | MirInstr::MakeClosure { dest, .. }
         | MirInstr::VariantIs { dest, .. }
+        | MirInstr::VariantTag { dest, .. }
         | MirInstr::VariantGet { dest, .. }
         | MirInstr::VariantSet { dest, .. }
         | MirInstr::VariantSetInitWith { dest, .. }
@@ -335,7 +336,9 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
                 index_regs(&capture.place, out);
             }
         }
-        MirInstr::VariantIs { variant, .. } | MirInstr::VariantGet { variant, .. } => {
+        MirInstr::VariantIs { variant, .. }
+        | MirInstr::VariantTag { variant, .. }
+        | MirInstr::VariantGet { variant, .. } => {
             out.push(*variant);
         }
         MirInstr::VariantTake { variant, .. } => out.push(*variant),

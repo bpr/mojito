@@ -296,6 +296,23 @@ impl FnLowering<'_> {
         self.define(ctx, dest, equal.get_operation(), equal.get_result(ctx))
     }
 
+    /// The index of the active alternative, as an `Int`: an `enum`
+    /// storage's discriminant.
+    pub(super) fn lower_variant_tag(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        variant: Reg,
+    ) -> Result<(), PlironError> {
+        let (ptr, _, _) = self.variant_parts(ctx, variant, dest)?;
+        let handle: TypeHandle = IntegerType::get(ctx, 32, Signedness::Signless).into();
+        let tag = LoadOp::new(ctx, ptr, handle);
+        self.append(ctx, tag.get_operation(), Some(dest));
+        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
+        let wide = ZExtOp::new_with_nneg(ctx, tag.get_result(ctx), i64_ty, false);
+        self.define(ctx, dest, wide.get_operation(), wide.get_result(ctx))
+    }
+
     pub(super) fn lower_variant_get(
         &mut self,
         ctx: &mut Context,

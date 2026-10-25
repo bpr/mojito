@@ -2005,6 +2005,7 @@ fn rewrite_stmt(
             fields,
             associated,
             methods,
+            enum_cases,
             ..
         } => {
             rename(name, names);
@@ -2026,6 +2027,11 @@ fn rewrite_stmt(
             }
             for f in fields {
                 rewrite_type(&mut f.ty, names, namespaces);
+            }
+            for case in enum_cases.iter_mut().flatten() {
+                for ty in &mut case.payload {
+                    rewrite_type(ty, names, namespaces);
+                }
             }
             for a in associated {
                 for parameter in &mut a.params {
@@ -2308,7 +2314,8 @@ fn read_and_parse(path: &Path) -> Result<Vec<Stmt>, ModuleError> {
 }
 
 /// Fail-fast parse of one linked source file (the root crate's `parse`
-/// convenience, restated here so linking depends on the parser directly).
+/// convenience, restated here so linking depends on the parser directly),
+/// with each `enum`'s members generated from its cases.
 fn parse(source: &str) -> Result<Vec<Stmt>, mojito_common::error::ParseError> {
-    mojito_parser::parser::Parser::new(mojito_lexer::lexer::Lexer::new(source)).parse_program()
+    mojito_parser::enums::parse_module(source)
 }

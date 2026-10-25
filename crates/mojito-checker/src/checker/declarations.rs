@@ -438,6 +438,11 @@ fn init_field_flow(
             {
                 initialized = true;
             }
+            // `self = value` initializes every field, as upstream's
+            // `__init__` may assign its whole `out self`.
+            StmtKind::Assign { name, .. } if name == "self" => {
+                initialized = true;
+            }
             // `__mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(
             // self.field))`, or over `self` whole, initializes the field.
             StmtKind::Expr(expr) if marks_initialized(expr, field) => {

@@ -832,22 +832,9 @@ impl Checker {
                     .iter()
                     .map(|argument| self.eval_associated_ct(argument, associated))
                     .collect::<Result<Vec<_>, _>>()?;
-                let width = width as usize;
-                let lanes = mojito_types::ct::simd_construction_lanes(dtype, width, &values)
-                    .map_err(|error| {
-                        TypeError::NotComptime(match error {
-                            SimdConstructionError::Arity => format!(
-                                "SIMD[DType.{}, {width}] construction expects one lane or {width} lanes",
-                                dtype.name()
-                            ),
-                            SimdConstructionError::Lane => format!(
-                                "a SIMD[DType.{}, {width}] lane needs a compile-time scalar",
-                                dtype.name()
-                            ),
-                        })
-                    })?;
-                Ok(CtValue::Simd { dtype, lanes })
+                simd_construction(dtype, width as usize, &values)
             }
+            _ if let Some(frozen) = self.frozen_enum_case(expr) => frozen,
             // The fieldwise construction of a non-generic struct from
             // compile-time values (`Extent(2, 3)`) is a frozen struct value,
             // the form a struct-typed parameter argument takes (the
@@ -1040,6 +1027,87 @@ impl Checker {
                     }
                 }),
         }
+    }
+
+    /// An `enum`'s case without a payload (`comptime eof: Self =
+    /// Self.__enum_init(__EnumStorage[...](None, index=0))`): the frozen enum
+    /// whose storage holds that case, as upstream's parameter domain holds
+    /// the value `__enum_init` builds. `None` for any other expression.
+    fn frozen_enum_case(&self, expr: &Expr) -> Option<Result<CtValue, TypeError>> {
+        let ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        let [storage] = args.as_slice() else {
+            return None;
+        };
+        let ExprKind::Call {
+            name,
+            param_args,
+            args: payload,
+            kwargs: index,
+        } = &storage.kind
+        else {
+            return None;
+        };
+        let [
+            mojito_ast::ast::KwArg {
+                name: index_name,
+                value:
+                    Expr {
+                        kind: ExprKind::Int(index),
+                        ..
+                    },
+            },
+        ] = index.as_slice()
+        else {
+            return None;
+        };
+        let Some(TyKind::Struct(enum_name, enum_arguments)) = self.self_ty.as_ref().map(Ty::kind)
+        else {
+            return None;
+        };
+        let index = index
+            .to_u64()
+            .and_then(|index| usize::try_from(index).ok())?;
+        (self.enum_declaration
+            && method == "__enum_init"
+            && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+            && kwargs.is_empty()
+            && name == mojito_types::types::ENUM_STORAGE_TYPE_NAME
+            && matches!(
+                payload.as_slice(),
+                [Expr {
+                    kind: ExprKind::None,
+                    ..
+                }]
+            )
+            && index_name == "index"
+            && enum_arguments.is_empty())
+        .then(|| {
+            let (storage, _) = self.enum_storage_type(param_args)?;
+            let TyKind::Variant(alternatives) = storage.kind() else {
+                return Err(TypeError::InvariantViolation(
+                    "an enum's storage is not a variant".to_string(),
+                ));
+            };
+            Ok(CtValue::Struct {
+                name: enum_name.clone(),
+                fields: vec![(
+                    "__enum_storage".to_string(),
+                    CtValue::Variant {
+                        alternatives: alternatives.clone(),
+                        index,
+                        payload: None,
+                    },
+                )],
+            })
+        })
     }
 
     /// The `(dtype, width)` a call constructs when it names `SIMD[DType.d, w]`
@@ -4264,4 +4332,27 @@ fn struct_valued_operand(operand: &ConstraintOperand) -> bool {
             .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..))),
         _ => false,
     }
+}
+
+/// The compile-time vector `SIMD[DType.d, w](values...)` builds: one lane per
+/// value, or one value splatted across the width.
+fn simd_construction(
+    dtype: mojito_ast::ast::Dtype,
+    width: usize,
+    values: &[CtValue],
+) -> Result<CtValue, TypeError> {
+    let lanes =
+        mojito_types::ct::simd_construction_lanes(dtype, width, values).map_err(|error| {
+            TypeError::NotComptime(match error {
+                SimdConstructionError::Arity => format!(
+                    "SIMD[DType.{}, {width}] construction expects one lane or {width} lanes",
+                    dtype.name()
+                ),
+                SimdConstructionError::Lane => format!(
+                    "a SIMD[DType.{}, {width}] lane needs a compile-time scalar",
+                    dtype.name()
+                ),
+            })
+        })?;
+    Ok(CtValue::Simd { dtype, lanes })
 }

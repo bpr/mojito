@@ -166,7 +166,9 @@ Rules:
 - `Variant[T1..Tn]` is a `u32` tag at offset 0 (the alternative's index in
   the type — the ordering is part of the type) with every payload overlaid at
   the first offset aligned to the widest alternative; size pads to
-  `max(4, payload align)`.
+  `max(4, payload align)`. An `enum`'s `__EnumStorage[T1..Tn]` is the
+  same layout over its case payload types, its tag the case index; upstream
+  sizes that tag `u8`/`u16`/`u32` by case count (`docs/notes/enums.md`).
 - `SIMD[dtype, width]` with `width > 1` is a contiguous scalar aggregate of
   `width` lanes (one byte per `bool` lane), aligned like one lane. Width-one
   SIMD aliases retain their scalar ABI. This storage form is the only

@@ -730,6 +730,10 @@ impl Decoder {
                 value: self.req(value, fields, "value", Self::reg)?,
                 constructor: self.lifecycle_symbol(fields, "constructor"),
             }),
+            "variant.tag" => Some(MirInstr::VariantTag {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                variant: self.req(value, fields, "variant", Self::reg)?,
+            }),
             "variant.is" | "variant.get" => {
                 let dest = self.req(value, fields, "dest", Self::reg)?;
                 let variant = self.req(value, fields, "variant", Self::reg)?;

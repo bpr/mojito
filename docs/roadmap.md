@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1407**.
+Next free ID: **R1414**.
 
 ## Ordered Work
 
@@ -1200,6 +1200,10 @@ change that needs a new `MJRT_ABI_VERSION`.
     calls per element, so every element type instantiates the repr branch.
   - The reflective default `write_repr_to` is synthesized in the checker
     (R424) and has no native body.
+  - Probe: an `enum` declaring `Writable` with a case over a struct that
+    declares `Writable` without `write_repr_to` stops natively at its
+    generated `write_repr_to` ("unsupported repr of `Tracked` without
+    compiled write_repr_to"), where the VM and the pin print it.
   - Found while landing R421 (2026-10-06).
   - Depends on R424.
   - Model: Opus, Not Planned.
@@ -4791,6 +4795,35 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1412 A struct field of a generic library type is not implicitly
+  copyable under its struct's conditional `ImplicitlyCopyable`**
+
+  `struct R[T, E](Copyable, ImplicitlyCopyable where conforms_to(T,
+  ImplicitlyCopyable) and conforms_to(E, ImplicitlyCopyable))` with `var v:
+  Variant[Self.T, Self.E]` is rejected ("field 'v' has type 'Variant[T, E]',
+  which is not ImplicitlyCopyable"), where the pin runs it.
+  - `struct_implicitly_copyable_conformance_ok` (`checker/traits.rs`)
+    assumes the condition for a field of a parameter's type and for private
+    storage over parameters, not for a library struct whose own conditional
+    conformance the condition implies.
+  - Found while landing `enum` (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1413 Enum declaration errors a payload's type causes use Mojito's
+  words**
+
+  The pin's "case 'list' has non-'ImplicitlyCopyable' payload type
+  'List[Int]'", "enum case payloads do not support trait types; 'AnyType' is
+  a trait, ...", and "deriving `__eq__` is not yet supported for enums;
+  write `__eq__`" are reported as a field conformance failure, a
+  conformance-oracle failure, and an undefined operator.
+  - The verdicts agree
+    (`assets/type_error/enum_payload_not_implicitly_copyable.mojo`).
+  - Found while landing `enum` (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Compile-Time Parameters, Packs, And Reflection
 
 Track: `comptime`.
@@ -6037,25 +6070,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `trait Tr` with `comptime K: Int`, `struct S(Tr)` with `comptime
     K: Int = 3`, `struct Box[n: Int]`, and the `make` above returning `4`.
   - Found while landing R1201 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1236 An enum payload over a generic `Optional[T]` loses `T`'s
-  bounds**
-
-  Problem: `case .Some(x): print("some", x)` over `o: Optional[T]` in `def
-  h[T: Copyable & Writable]` fails with "an element of 'values' with type
-  'T' does not conform to trait 'Writable'", where the pin prints `some 1`.
-  - `Optional[T]._enum_case_types` folds to a tabulation over the
-    substituted `TypeList`, and its element resolves to
-    `Dependent(Parameter(T))`, a parameter with no bounds, rather than
-    `h`'s `T` (`ParamContext::list_elements`, `DependentType::resolve`).
-  - The payload getter's result type, `TypeList[Trait=AnyType,
-    Self._enum_case_types]()[id]`, loses `T` the same way
-    (`IndexedProjection` over `SourceType::Value`,
-    `checker/type_resolution.rs`).
-  - Probe: `conformance/probes/match_enum_case_generic_payload.mojo`.
-  - Found while landing R1133 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11047,6 +11061,63 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1397.
   - Model: Fable, Not Planned.
 
+- [ ] **R1407 An `enum`'s `__Enum` members are generated on each enum,
+  where upstream's are `__Enum`'s trait defaults**
+
+  `mojito_parser::enums` writes `__enum_init`, `__get_enum_storage`,
+  `_get_enum_discriminant`, and `_unsafe_get_enum_payload` into every enum,
+  and each case constructor writes its own storage, where upstream's
+  `std/builtin/_enum.mojo` declares the four as defaults of `trait
+  __Enum(EnumLike)` and the case constructors call `__enum_init[id,
+  Case](payload0^, ...)`.
+  - Upstream's `__enum_init` is a `@staticmethod` with an `out` result over
+    a `var *payload: *Ts` pack, writing each element in place through
+    `consume_elements` and a capture-list closure, and two of the others
+    return `ref[self]`.
+  - Move the four into `_enum.mojo` as defaults, delete their generation and
+    `comptime::synth::stamp_enum_storage_writes`, and have each case
+    constructor call `__enum_init` as upstream's do.
+  - Found while landing `enum` (2026-10-25); see `docs/notes/enums.md`.
+  - Depends on R942 (static trait members), R549 (`out` results in
+    defaults), R571 (`ref`-returning defaults), R1124 (a runtime
+    `consume_elements` handler), and R1378 (a capture-list closure as a
+    value).
+  - Model: Fable, Planned.
+
+- [ ] **R1408 `__EnumStorage` is a compiler intrinsic with a `u32` tag,
+  where upstream's is a library struct over `!kgen.variant`**
+
+  An enum's storage is the intrinsic `TyKind::Variant` its operations select
+  by case index (`__EnumStorage[...](payload, index=i)`, `storage[i]`,
+  `get_discriminant()`), where upstream's `__EnumStorage[case_types]` is a
+  struct in `std/builtin/_enum.mojo` over `!kgen.variant`, read through
+  `pop.variant.discr_gep` and `pop.variant.bitcast`.
+  - Its tag is the variant's `u32`, where upstream's
+    `__enum_discriminant_dtype` picks `u8`, `u16`, or `u32` by case count,
+    so `size_of` of an enum differs from the pin's.
+  - Port upstream's struct, with its conditional conformances and lifecycle
+    bodies, once `__mlir_type` and `__mlir_op` accept the variant type and
+    ops, and delete the intrinsic's checker arms.
+  - Found while landing `enum` (2026-10-25).
+  - Depends on R1392 (`pop` ops in `__mlir_op`), R221
+    (`Pointer.unsafe_bitcast`), and R1316 (`!kgen.pointer` values).
+  - Model: Fable, Planned.
+
+- [ ] **R1409 An enum's default `Writable` text is generated per enum, where
+  upstream's `_enum_reflection_write_to` writes any `EnumLike`**
+
+  `mojito_parser::enums` generates `write_to` and `write_repr_to` for an
+  `enum` declaring `Writable` without them, where upstream's `Writable`
+  defaults call `_enum_reflection_write_to` for every `EnumLike` conformer,
+  `Optional` included.
+  - The generated bodies have upstream's shape (`Name.case(payload)`), so
+    the text matches; a hand-written `EnumLike` conformer without its own
+    `write_to` still prints the reflective field form.
+  - Delete the generation once `Writable`'s defaults are library code.
+  - Found while landing `enum` (2026-10-25).
+  - Depends on R424 (`Writable` declared in `std/format`).
+  - Model: Opus, Not Planned.
+
 - [ ] **R324 `reflect[T]` is a compiler builtin where upstream's is a
   stdlib struct over parameter attributes**
 
@@ -12596,6 +12667,28 @@ residue found inside a task moves to the task that owns its fix.
   - Once the VM computes them, add them to `ct::float_lane_binop`, so
     `sccp` folds them too.
   - Found while landing R846 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1410 `String`'s variadic constructor is rejected**
+
+  `String("word:", name)` stops with "'String' expects 1 argument(s), got
+  2", where upstream's `String.__init__[*Ts: Writable](out self, *args:
+  *Ts)` writes every argument, as the pin's enum integration test does.
+  - Probe: `print(String("span:", 3, "..", 7))` prints `span:3..7` at the
+    pin.
+  - Found while landing `enum` (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1411 `std.iter.map` is not ported**
+
+  `from std.iter import map` fails with "module 'std.iter' has no
+  declaration named 'map'", where the pin's `map[Token.integer]([1, 2, 3])`
+  maps a list through a static method.
+  - Probe: the pin's enum integration test's `test_function_value`, `for
+    token in map[Token.integer]([1, 2, 3])`.
+  - Found while landing `enum` (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

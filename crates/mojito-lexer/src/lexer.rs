@@ -26,6 +26,9 @@ pub struct Lexer<'a> {
     /// Whether the preceding significant token can participate in Mojo's
     /// indentation-based adjacent-string continuation.
     last_token_was_string: bool,
+    /// Where the next token stands: at a statement's start (nothing, a line
+    /// break, a layout token, or `;` precedes it) or within one.
+    position: TokenPosition,
 
     // Queue for when a single character (or EOF) produces multiple tokens. Each
     // entry carries the token's source span (see `emit`).
@@ -43,6 +46,7 @@ impl<'a> Lexer<'a> {
             at_line_start: true,
             eof_emitted: false,
             last_token_was_string: false,
+            position: TokenPosition::StatementStart,
             pending_tokens: VecDeque::new(),
         }
     }
@@ -394,8 +398,34 @@ impl<'a> Lexer<'a> {
             &token,
             Token::StringLiteral(..) | Token::TripleStringLiteral(..) | Token::TString { .. }
         );
+        self.position = if matches!(
+            &token,
+            Token::Newline | Token::Indent | Token::Dedent | Token::Semicolon
+        ) {
+            TokenPosition::StatementStart
+        } else {
+            TokenPosition::WithinStatement
+        };
         self.pending_tokens
             .push_back((token, (self.token_start, self.pos)));
+    }
+
+    /// Whether the word `enum` just scanned declares an enum: it starts a
+    /// statement and a name, not a keyword, follows it (`enum Color:`).
+    fn declares_enum(&self) -> bool {
+        let rest = self.remainder();
+        let name = rest.trim_start_matches([' ', '\t']);
+        let word: String = name
+            .chars()
+            .take_while(|&c| c.is_alphanumeric() || c == '_')
+            .collect();
+        self.position == TokenPosition::StatementStart
+            && name.len() < rest.len()
+            && word
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_alphabetic() || c == '_')
+            && Token::keyword(&word).is_none()
     }
 
     /// The source text scanned since this token began, as a literal token
@@ -917,7 +947,11 @@ impl Iterator for Lexer<'_> {
                             Err(err) => return Some(Err(err)),
                         }
                     }
-                    let token = Token::keyword(&text).unwrap_or(Token::Identifier(text));
+                    let token = if text == "enum" && self.declares_enum() {
+                        Token::Enum
+                    } else {
+                        Token::keyword(&text).unwrap_or(Token::Identifier(text))
+                    };
                     self.emit(token);
                     continue;
                 }
@@ -1006,4 +1040,11 @@ impl Iterator for Lexer<'_> {
             }
         }
     }
+}
+
+/// Where the lexer's next token stands within the statement structure.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TokenPosition {
+    StatementStart,
+    WithinStatement,
 }

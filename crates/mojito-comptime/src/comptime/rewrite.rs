@@ -1233,6 +1233,7 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
             fields,
             associated,
             methods,
+            enum_cases,
             ..
         } => {
             if into_defs {
@@ -1262,6 +1263,13 @@ fn rewrite_stmt(s: &mut Stmt, subs: Subs, into_defs: bool) {
                 }
                 for field in fields {
                     rewrite_type(&mut field.ty, inner);
+                }
+                for ty in enum_cases
+                    .iter_mut()
+                    .flatten()
+                    .flat_map(|case| &mut case.payload)
+                {
+                    rewrite_type(ty, inner);
                 }
                 for member in associated {
                     let member_shadowed: HashSet<String> = member
@@ -1599,6 +1607,7 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             fields,
             associated,
             methods,
+            enum_cases,
             ..
         } => {
             let inner = without_shadowed(subs, type_params);
@@ -1617,6 +1626,13 @@ fn retype_stmt(s: &mut Stmt, subs: TypeSubs) {
             }
             for field in fields {
                 substitute_type_bindings_in_type(&mut field.ty, &inner);
+            }
+            for ty in enum_cases
+                .iter_mut()
+                .flatten()
+                .flat_map(|case| &mut case.payload)
+            {
+                substitute_type_bindings_in_type(ty, &inner);
             }
             for member in associated {
                 let member_inner = without_shadowed(&inner, &member.params);

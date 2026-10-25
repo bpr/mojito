@@ -132,7 +132,10 @@ impl DependentType {
         match expr.as_constant() {
             Some(CtValue::Type(ty)) => (*ty).clone(),
             Some(CtValue::Trait(traits)) => TyKind::Trait(traits.clone()).into(),
-            _ => TyKind::Dependent(Self::Parameter(expr)).into(),
+            _ => match expr.kind() {
+                ParamKind::TypeShape(ty) => ty.clone(),
+                _ => TyKind::Dependent(Self::Parameter(expr)).into(),
+            },
         }
     }
 
@@ -1125,6 +1128,14 @@ pub const UNINIT_STORAGE_TYPE_NAME: &str = "__UninitStorage";
 /// The intrinsic `TyKind::Variant` spelled from bundled standard-library sources
 /// only (`var _storage: __VariantStorage[*Ts]`).
 pub const VARIANT_STORAGE_TYPE_NAME: &str = "__VariantStorage";
+
+/// Compiler-private case-indexed storage, the field type of every `enum`.
+///
+/// It is the intrinsic `TyKind::Variant` over the case payload types
+/// (`__EnumStorage[*Ts]`), which its operations select by case index, never
+/// by type, so cases may share a payload type; upstream's is a library
+/// struct over `!kgen.variant`.
+pub const ENUM_STORAGE_TYPE_NAME: &str = "__EnumStorage";
 
 /// Construct a nominal standard-library type from ordinary type arguments.
 pub fn nominal_type(name: impl Into<String>, arguments: Vec<Ty>) -> Ty {
@@ -4032,6 +4043,21 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
                 .map(|(field, value)| Ok((field.clone(), rewrite_value(value, rewrite)?)))
                 .collect::<Result<_, ParamError>>()?,
         },
+        CtValue::Variant {
+            alternatives,
+            index,
+            payload,
+        } => CtValue::Variant {
+            alternatives: alternatives
+                .iter()
+                .map(|ty| rewrite_ty(ty, rewrite))
+                .collect::<Result<_, _>>()?,
+            index: *index,
+            payload: payload
+                .as_deref()
+                .map(|payload| rewrite_value(payload, rewrite).map(Box::new))
+                .transpose()?,
+        },
         CtValue::Int(_)
         | CtValue::UInt(_)
         | CtValue::Float(_)
@@ -4549,6 +4575,14 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         CtValue::Type(ty) | CtValue::Reflected(ty) => is_symbolic(ty),
         CtValue::Struct { fields, .. } => {
             fields.iter().any(|(_, value)| ct_value_is_symbolic(value))
+        }
+        CtValue::Variant {
+            alternatives,
+            payload,
+            ..
+        } => {
+            alternatives.iter().any(is_symbolic)
+                || payload.as_deref().is_some_and(ct_value_is_symbolic)
         }
         CtValue::Int(_)
         | CtValue::UInt(_)

@@ -498,6 +498,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::MakeArray { .. }
         | MirInstr::MakeVariant { .. }
         | MirInstr::VariantIs { .. }
+        | MirInstr::VariantTag { .. }
         | MirInstr::VariantGet { .. }
         | MirInstr::VariantTake { .. }
         | MirInstr::VariantDeinitWith { .. }

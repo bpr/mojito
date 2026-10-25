@@ -1397,6 +1397,10 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("index", variant_index(index)),
             ],
         ),
+        MirInstr::VariantTag { dest, variant } => record(
+            tag,
+            &[("dest", reg_value(*dest)), ("variant", reg_value(*variant))],
+        ),
         MirInstr::VariantSet {
             dest,
             place,
@@ -2799,6 +2803,20 @@ fn ct_value(value: &CtValue) -> String {
                 ),
             ],
         ),
+        CtValue::Variant {
+            alternatives,
+            index,
+            payload,
+        } => {
+            let mut fields = vec![
+                ("alternatives", list(alternatives.iter().map(ty_value))),
+                ("index", index.to_string()),
+            ];
+            if let Some(payload) = payload {
+                fields.push(("payload", ct_value(payload)));
+            }
+            record("ct_variant", &fields)
+        }
         CtValue::Dict { spelling, entries } => {
             let mut fields = Vec::new();
             if let Some(ty) = spelling {

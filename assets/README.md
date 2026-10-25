@@ -33,9 +33,9 @@ starts compiling is the signal that upstream caught up.
 
 Two kinds live there. An extension **kept on purpose** — today, direct `ref`
 struct fields (`var f: ref[o] T`), which upstream rejects and may adopt later,
-and `Origin._subtree` casts, which upstream parses but rejects at the use; in
-future, experiments such as pattern matching or enums — is listed in
-`docs/non-goals.md`. A **ledgered divergence** is one Mojito means to withdraw:
+`Origin._subtree` casts, which upstream parses but rejects at the use, and the
+`enum` keyword of upstream's enum proposal, which the pin spells `__enum` — is
+listed in `docs/non-goals.md`. A **ledgered divergence** is one Mojito means to withdraw:
 its program uses an acceptance the pin refuses outright — origin-parameter
 erasure, a cross-origin field store, a parametric-mut pointer write, a partial
 field move, a capturing-lambda local, a `mut self` `__call__`, an owned-interior

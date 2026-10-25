@@ -5032,6 +5032,7 @@ fn close_register_types(
                         ))
                     }
                     MirInstr::VariantIs { dest, .. } => Some((dest, Some(Ty::bool()))),
+                    MirInstr::VariantTag { dest, .. } => Some((dest, Some(Ty::int()))),
                     MirInstr::VariantSetInitWith { dest, .. }
                     | MirInstr::VariantDeinitWith { dest, .. } => Some((dest, Some(Ty::none()))),
                     MirInstr::VariantGet {

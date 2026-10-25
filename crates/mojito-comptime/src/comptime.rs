@@ -391,6 +391,7 @@ fn elaborate_in<'a>(
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
         }
     }
+    stamp_enum_storage_writes(&mut result);
     Ok((result, elab))
 }
 

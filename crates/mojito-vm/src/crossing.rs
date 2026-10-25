@@ -82,6 +82,18 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
                 .map(|(field, value)| Ok::<_, RuntimeError>((field.clone(), ct_to_vm(value)?)))
                 .collect::<Result<Vec<_>, _>>()?,
         }),
+        CtValue::Variant {
+            alternatives,
+            index,
+            payload,
+        } => Ok(Value::Variant {
+            alternatives: alternatives.clone(),
+            index: *index,
+            value: Box::new(thawed_payload(
+                alternatives.get(*index),
+                payload.as_deref().map_or(Ok(Value::None), ct_to_vm)?,
+            )),
+        }),
         CtValue::Simd { dtype, lanes } => Ok(Value::Simd {
             dtype: *dtype,
             lanes: lanes_of(lanes)?,
@@ -147,4 +159,28 @@ pub fn vm_to_ct(value: Value) -> Result<CtValue, RuntimeError> {
             "VM CTFE returned unsupported runtime value {other}"
         ))),
     }
+}
+
+/// A thawed variant payload at its alternative's type: a nominal `Tuple`
+/// froze as its elements (`freeze_value`), which its storage field holds.
+pub(crate) fn thawed_payload(alternative: Option<&mojito_types::types::Ty>, value: Value) -> Value {
+    match (alternative.map(mojito_types::types::Ty::kind), value) {
+        (Some(mojito_types::types::TyKind::Struct(name, _)), Value::Tuple(elements))
+            if is_nominal_tuple(name) =>
+        {
+            Value::Struct {
+                name: name.clone(),
+                fields: vec![("storage".to_string(), Value::Tuple(elements))],
+            }
+        }
+        (_, value) => value,
+    }
+}
+
+/// Whether the struct `name` is an instance of the nominal `Tuple`.
+pub(crate) fn is_nominal_tuple(name: &str) -> bool {
+    let template = name.split_once("$mono$").map_or(name, |(base, _)| base);
+    template
+        .strip_suffix(mojito_types::types::TUPLE_TYPE_NAME)
+        .is_some_and(|module| module.is_empty() || module.ends_with('$'))
 }

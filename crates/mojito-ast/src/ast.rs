@@ -997,6 +997,18 @@ pub struct TraitComptime {
     pub default: Option<Expr>,
 }
 
+/// One `case` of an `enum`: `case name` carries no payload, `case
+/// name(T, U)` a payload of the written types (a `Tuple` of them when there
+/// are several).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct EnumCase {
+    pub name: String,
+    pub payload: Vec<Type>,
+    /// The `case` declaration's source span, where each member it generates
+    /// is located.
+    pub span: Span,
+}
+
 /// A `comptime NAME = expr` associated compile-time fact inside a `struct` body.
 /// These are declarations on the type, not runtime statements.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -1673,6 +1685,11 @@ pub enum StmtKind {
         methods: Vec<Method>,
         /// Whether `@fieldwise_init` was present (so `Name(...)` constructs).
         fieldwise_init: bool,
+        /// The cases of an `enum` declaration, in order; `None` for a
+        /// `struct`. An enum is a struct whose members the compiler generates
+        /// from these (`comptime::synthesize_enum_members`), as upstream's
+        /// `StructDeclOp` carries `isEnum` and its case ops.
+        enum_cases: Option<Vec<EnumCase>>,
     },
     /// `trait Name[(Super, …)]: <members>` — declares method (and `comptime`
     /// member) requirements that a conforming struct must implement. `refines` is
@@ -3066,6 +3083,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     conformance_conditions,
                     callable_conformance,
                     where_clauses,
+                    enum_cases,
                     ..
                 } => {
                     self.type_params(type_params);
@@ -3077,6 +3095,13 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     }
                     for field in fields {
                         self.ty(&mut field.ty);
+                    }
+                    for ty in enum_cases
+                        .iter_mut()
+                        .flatten()
+                        .flat_map(|case| &mut case.payload)
+                    {
+                        self.ty(ty);
                     }
                     for member in associated {
                         self.type_params(&mut member.params);

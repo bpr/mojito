@@ -89,7 +89,8 @@ impl Elab<'_> {
                 continue;
             }
             let first_new = out.len();
-            self.stmt(stmt, env, in_fn, &mut out)?;
+            let resolved = contextual_comptime(stmt);
+            self.stmt(resolved.as_ref().unwrap_or(stmt), env, in_fn, &mut out)?;
             // Runtime uses of the bindings elaborated so far cross explicitly
             // (`materialize[X]()`, `comptime(e)`) or are rejected.
             self.fold_runtime_crossings(&mut out[first_new..], env)?;
@@ -404,16 +405,9 @@ impl Elab<'_> {
             }
             StmtKind::Struct {
                 name,
-                decorators,
                 type_params,
-                conforms,
-                callable_conformance,
-                conformance_conditions,
-                where_clauses,
-                fields,
-                associated,
                 methods,
-                fieldwise_init,
+                ..
             } => {
                 let methods = methods
                     .iter()
@@ -443,22 +437,17 @@ impl Elab<'_> {
                         Ok(m)
                     })
                     .collect::<Result<Vec<_>, ComptimeError>>()?;
-                out.push(rebuilt(
-                    stmt,
-                    StmtKind::Struct {
-                        name: name.clone(),
-                        decorators: decorators.clone(),
-                        type_params: type_params.clone(),
-                        conforms: conforms.clone(),
-                        callable_conformance: callable_conformance.clone(),
-                        conformance_conditions: conformance_conditions.clone(),
-                        where_clauses: where_clauses.clone(),
-                        fields: fields.clone(),
-                        associated: associated.clone(),
-                        methods,
-                        fieldwise_init: *fieldwise_init,
-                    },
-                ));
+                // The struct keeps every declaration part but its methods'
+                // elaborated bodies.
+                let mut kind = stmt.kind.clone();
+                if let StmtKind::Struct {
+                    methods: elaborated,
+                    ..
+                } = &mut kind
+                {
+                    *elaborated = methods;
+                }
+                out.push(rebuilt(stmt, kind));
             }
             // A default is its trait's member, a function over the trait's
             // `Self` (`_Self`): its body is elaborated in place as that
@@ -2008,4 +1997,52 @@ fn intrinsic_statement(callee: &str, message: String, method: &Method) -> Stmt {
         )),
         span,
     )
+}
+
+/// A `comptime` binding whose leading-dot initializer (`comptime shape: Shape
+/// = .rect(2, 5)`) names a member of its annotated type, as it does in a typed
+/// `var`, with that type spelled; `None` for any other statement.
+fn contextual_comptime(stmt: &Stmt) -> Option<Stmt> {
+    let StmtKind::Comptime {
+        ty: Some(Type::Named(base, args)),
+        value,
+        ..
+    } = &stmt.kind
+    else {
+        return None;
+    };
+    let resolved = with_contextual_base(value, base, args)?;
+    let mut rewritten = stmt.clone();
+    if let StmtKind::Comptime { value, .. } = &mut rewritten.kind {
+        *value = resolved;
+    }
+    Some(rewritten)
+}
+
+/// `expression` with its leading-dot root (`$contextual`) named as the type
+/// `base[args]`; `None` when it has no such root.
+fn with_contextual_base(expression: &Expr, base: &str, args: &[ParamArg]) -> Option<Expr> {
+    fn replace(expression: &mut Expr, root: &ExprKind) -> bool {
+        match &mut expression.kind {
+            ExprKind::Identifier(name) if name == mojito_ast::ast::CONTEXTUAL_SENTINEL => {
+                expression.kind = root.clone();
+                true
+            }
+            ExprKind::Member { object, .. }
+            | ExprKind::MethodCall { object, .. }
+            | ExprKind::Index { object, .. } => replace(object, root),
+            ExprKind::Invoke { callee, .. } => replace(callee, root),
+            _ => false,
+        }
+    }
+    let root = if args.is_empty() {
+        ExprKind::Identifier(base.to_string())
+    } else {
+        ExprKind::TypeApply {
+            name: base.to_string(),
+            args: args.to_vec(),
+        }
+    };
+    let mut resolved = expression.clone();
+    replace(&mut resolved, &root).then_some(resolved)
 }

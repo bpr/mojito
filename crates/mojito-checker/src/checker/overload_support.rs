@@ -568,6 +568,7 @@ pub(super) fn is_bundled_private_storage_source(source: Option<&str>) -> bool {
     let stdlib = root.join("stdlib");
     let source = Path::new(stamped_source_module(source));
     source == stdlib.join("std/builtin/tuple.mojo")
+        || source == stdlib.join("std/builtin/_enum.mojo")
         || source == stdlib.join("std/builtin/variadics.mojo")
         || source == stdlib.join("std/memory/maybe_uninit.mojo")
         || source == stdlib.join("std/utils/variant.mojo")
@@ -636,6 +637,7 @@ pub(super) fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
         methods,
         fieldwise_init,
         decorators,
+        enum_cases,
     } = &stmt.kind
     else {
         return None;
@@ -653,6 +655,7 @@ pub(super) fn struct_declaration(stmt: &Stmt) -> Option<StructDeclaration<'_>> {
         methods,
         fieldwise_init: *fieldwise_init,
         decorators,
+        enum_cases: enum_cases.as_deref(),
     })
 }
 

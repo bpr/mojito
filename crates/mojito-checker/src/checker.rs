@@ -397,6 +397,17 @@ pub fn resolve_overload_targets(stmts: &[Stmt]) -> Result<HashMap<SourceSpan, St
     Ok(check_program(stmts)?.overload_targets().clone())
 }
 
+/// The bundled `std/builtin/_enum.mojo`, whose source an `enum`'s
+/// generated storage writes carry: they mark the result initialized and
+/// write its storage, as the module implementing enums does upstream.
+pub fn enum_support_source() -> Option<String> {
+    mojito_module::module::bundled_root().map(|root| {
+        root.join("stdlib/std/builtin/_enum.mojo")
+            .to_string_lossy()
+            .into_owned()
+    })
+}
+
 /// The linked name of the `std.builtin._stubs` function `name`, which no
 /// user spelling reaches: the compiler calls these by module path, as
 /// upstream's `getBuiltinFunction` names them (`list_length_matches` for a
@@ -746,6 +757,9 @@ pub struct Checker {
     /// declarations may name compiler-private storage types (`__UninitStorage`)
     /// in sourceless type-annotation positions.
     bundled_stdlib_declaration: bool,
+    /// The declaration currently being checked is an `enum`, whose
+    /// generated members name the compiler's case-indexed `__EnumStorage`.
+    enum_declaration: bool,
     /// Every fact the check decided at an occurrence, in the occurrence's one
     /// record (`node_facts`): the checked handoff, written as it is decided.
     node_facts: RefCell<FactMap<SourceSpan, mojito_checked::checked::NodeFacts>>,
@@ -1035,6 +1049,7 @@ impl Checker {
             self_initializing: false,
             parametric_write_frames: RefCell::new(Vec::new()),
             bundled_stdlib_declaration: false,
+            enum_declaration: false,
             node_facts: RefCell::new(FactMap::default()),
             nested_origins_read_only_functions: declaration_table::DeclarationSet::default(),
             simd_length_binders: HashSet::from([builtins::hasher_simd_update_binders().1.id]),
@@ -3061,6 +3076,8 @@ struct StructDeclaration<'a> {
     methods: &'a [Method],
     fieldwise_init: bool,
     decorators: &'a [mojito_ast::ast::Decorator],
+    /// The cases of an `enum`; `None` for a `struct`.
+    enum_cases: Option<&'a [mojito_ast::ast::EnumCase]>,
 }
 
 /// A method's own parameters instantiated at one call: its parameter,

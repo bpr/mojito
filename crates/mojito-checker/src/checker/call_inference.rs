@@ -143,6 +143,17 @@ impl Checker {
             // `__VariantStorage[T0, ...](value^)` selects the alternative
             // by the payload's type; `(init_with=factory)` by the
             // factory's result type.
+            // An `enum`'s storage: `__EnumStorage[T0, ...](payload,
+            // index=i)` builds case `i` from its payload, by index, since
+            // cases may share a payload type.
+            _ if name == mojito_types::types::ENUM_STORAGE_TYPE_NAME => {
+                if !self.enum_storage_allowed() {
+                    return Err(TypeError::Unsupported(format!(
+                        "'{name}' is the storage of an 'enum'; declare one instead"
+                    )));
+                }
+                self.infer_enum_storage_construction(span, param_args, args, kwargs)
+            }
             _ if name == mojito_types::types::VARIANT_STORAGE_TYPE_NAME => {
                 if !self.bundled_stdlib_declaration {
                     return Err(TypeError::Unsupported(format!(

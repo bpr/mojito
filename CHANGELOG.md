@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `enum` declarations, the pinned Mojo's experimental `__enum` spelled as
+  upstream's enum proposal spells it (a kept extension, `docs/non-goals.md`):
+  `case name` and `case name(T, ...)` declarations become an ordinary struct
+  whose members the compiler generates, as upstream's
+  `StructEmitter::synthesizeEnumMembers` declares them, over a case-indexed
+  storage. Construction by name and by leading dot, `match` through
+  `EnumLike`, generic, register-passable, caseless, and open enums, payload
+  lifecycles, and the default `Writable` text run on the VM and natively as
+  the pin runs the same programs spelled `__enum`, and malformed
+  declarations are rejected with the pin's words
+  (`assets/extensions/ok/enum_*.mojo`, `docs/notes/enums.md`).
+
+- A case payload matched over a generic enum-like type (`case .Some(x)` over
+  `Optional[T]`, `case .success(value)` over `Result[T, E]`) keeps `T`'s
+  bounds, where it used to lose them (R1236).
+
 - A list, dict, or set display, a tuple display, and a comprehension are
   fresh temporaries, as a call result is, so one passed to a read
   parameter lives in a hidden slot that dies right after the call instead

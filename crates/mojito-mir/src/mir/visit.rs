@@ -410,6 +410,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         | I::Unsupported(_)
         | I::GetIter { .. }
         | I::HasNext { .. }
+        | I::VariantTag { .. }
         | I::Next { .. } => Ok(()),
     }
 }

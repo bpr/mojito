@@ -755,6 +755,7 @@ impl FnLowering<'_> {
                 let index = self.known_variant_index(index)?;
                 self.lower_variant_get(ctx, *dest, *variant, index, true)
             }
+            MirInstr::VariantTag { dest, variant } => self.lower_variant_tag(ctx, *dest, *variant),
             MirInstr::VariantTake {
                 dest,
                 variant,

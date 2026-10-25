@@ -68,13 +68,17 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
         let (raises, raises_type) = copy_constructor.map_or((false, None), |constructor| {
             (constructor.raises, constructor.raises_type.clone())
         });
+        // The member is as available as the struct's `Copyable` conformance:
+        // unconditionally when it declares `Copyable` without a condition,
+        // under `ImplicitlyCopyable`'s condition when only that refines it.
+        let declares_copyable = conforms.iter().any(|conformance| conformance == "Copyable");
         let where_clauses = conformance_conditions
             .iter()
             .find(|(trait_name, _)| trait_name == "Copyable")
             .or_else(|| {
-                conformance_conditions
-                    .iter()
-                    .find(|(trait_name, _)| trait_name == "ImplicitlyCopyable")
+                conformance_conditions.iter().find(|(trait_name, _)| {
+                    !declares_copyable && trait_name == "ImplicitlyCopyable"
+                })
             })
             .map(|(_, condition)| vec![condition.clone()])
             .unwrap_or_default();
@@ -101,6 +105,39 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
             body,
             provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,
         });
+    }
+}
+
+/// Give the members of an `enum` that upstream's `__Enum` supplies, and
+/// its case constructors, the source of the module implementing enums,
+/// `std.builtin._enum`, where upstream writes their bodies: they mark the
+/// result initialized, write the storage, and return references into it,
+/// which only that module's bodies may do. Elaboration stamps every statement with its own module; this
+/// runs after.
+pub(super) fn stamp_enum_storage_writes(program: &mut [Stmt]) {
+    const ENUM_MEMBERS: [&str; 4] = [
+        "__enum_init",
+        "__get_enum_storage",
+        "_get_enum_discriminant",
+        "_unsafe_get_enum_payload",
+    ];
+    let Some(source) = mojito_checker::checker::enum_support_source() else {
+        return;
+    };
+    for statement in program {
+        if let StmtKind::Struct {
+            methods,
+            enum_cases: Some(cases),
+            ..
+        } = &mut statement.kind
+        {
+            for method in methods.iter_mut().filter(|method| {
+                ENUM_MEMBERS.contains(&method.name.as_str())
+                    || cases.iter().any(|case| case.name == method.name)
+            }) {
+                mojito_ast::ast::stamp_source(&mut method.body, &source);
+            }
+        }
     }
 }
 

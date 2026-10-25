@@ -201,7 +201,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         })
     }
 
-    /// `[@fieldwise_init] struct Name: <fields and methods>`
+    /// `[@fieldwise_init] struct Name: <fields and methods>`, or `enum
+    /// Name: <cases and methods>`, an ordinary struct whose members the
+    /// compiler generates from its cases (upstream's `parseStructStmt`
+    /// parses both, telling them apart by `isEnum`).
     pub(super) fn parse_struct(
         &mut self,
         decorators: Vec<Decorator>,
@@ -211,22 +214,48 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         let fieldwise_init = decorators
             .iter()
             .any(|d| d.path.len() == 1 && d.path[0] == "fieldwise_init");
+        let is_enum = matches!(self.peek_token()?, Some(Token::Enum));
+        let start = self.peek_start();
+        if is_enum && fieldwise_init {
+            return Err(ParseError::Message(
+                "'@fieldwise_init' cannot be applied to an enum".to_string(),
+            )
+            .at((start, start)));
+        }
 
-        self.expect(&Token::Struct, "Expected 'struct'")?;
-        let name = self.expect_identifier("Expected a struct name after 'struct'")?;
+        // The lexer emits `enum` only before a name.
+        let name = if is_enum {
+            self.next_token()?;
+            self.expect_identifier("expected enum name")?
+        } else {
+            self.expect(&Token::Struct, "Expected 'struct'")?;
+            self.expect_identifier("Expected a struct name after 'struct'")?
+        };
         let type_params = self.parse_type_params()?;
         let (conforms, conformance_conditions, callable_conformance) =
             self.parse_struct_conformance()?;
         let where_clauses = self.parse_where_clauses()?;
-        self.expect(&Token::Colon, "Expected ':' after the struct name")?;
+        if is_enum {
+            if !matches!(self.peek_token()?, Some(Token::Colon)) {
+                return Err(
+                    ParseError::Message("expected ':' in enum definition".to_string())
+                        .at((start, self.last_span.1)),
+                );
+            }
+            self.next_token()?;
+        } else {
+            self.expect(&Token::Colon, "Expected ':' after the struct name")?;
+        }
         self.expect_stmt_end()?;
 
-        // Body: an indented block of `var` fields, `comptime` associated facts,
-        // and `def` methods.
+        // Body: an indented block of `var` fields (a struct) or `case`
+        // declarations (an enum), `comptime` associated facts, and `def`
+        // methods.
         self.expect(&Token::Indent, "Expected an indented struct body")?;
         let mut fields = Vec::new();
         let mut associated = Vec::new();
         let mut methods = Vec::new();
+        let mut cases = Vec::new();
         while let Some(token) = self.peek_token()? {
             match token {
                 Token::Dedent => {
@@ -240,6 +269,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.next_token()?;
                     self.expect_stmt_end()?;
                 }
+                Token::Var if is_enum => {
+                    let at = self.peek_start();
+                    return Err(ParseError::Message(
+                        "enums do not support 'var' fields; store state in a case payload"
+                            .to_string(),
+                    )
+                    .at((at, at)));
+                }
                 Token::Var => {
                     self.expect(&Token::Var, "Expected 'var'")?;
                     let fname = self.expect_identifier("Expected a field name")?;
@@ -252,27 +289,52 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.expect_stmt_end()?;
                     fields.push(Param { name: fname, ty });
                 }
+                Token::Case if is_enum => cases.push(self.parse_enum_case()?),
+                Token::Enum => {
+                    let at = self.peek_start();
+                    return Err(
+                        ParseError::Message("nested enum not supported here".to_string())
+                            .at((at, at)),
+                    );
+                }
                 Token::Pass => {
                     self.next_token()?;
                     self.expect_stmt_end()?;
                 }
                 Token::Comptime => associated.push(self.parse_struct_comptime()?),
-                Token::Def => methods.push(self.parse_method(Vec::new())?),
+                Token::Def => methods.push(self.parse_member_method(Vec::new(), is_enum)?),
                 // Decorators before a method (`@staticmethod`, …).
                 Token::At => {
+                    let at = self.peek_start();
                     let decos = self.parse_decorators()?;
-                    if !matches!(self.peek_token()?, Some(Token::Def)) {
-                        return Err(ParseError::UnexpectedToken(
-                            self.peek_token()?.cloned().unwrap_or(Token::Eof),
-                            "a decorator in a struct body must precede a 'def' method".into(),
-                        ));
+                    match self.peek_token()? {
+                        Some(Token::Def) => {
+                            methods.push(self.parse_member_method(decos, is_enum)?);
+                        }
+                        Some(Token::Case) if is_enum => {
+                            return Err(ParseError::Message(
+                                "'case' statement does not support decorators; remove the decorator"
+                                    .to_string(),
+                            )
+                            .at((at, at)));
+                        }
+                        other => {
+                            return Err(ParseError::UnexpectedToken(
+                                other.cloned().unwrap_or(Token::Eof),
+                                "a decorator in a struct body must precede a 'def' method".into(),
+                            ));
+                        }
                     }
-                    methods.push(self.parse_method(decos)?);
                 }
                 other => {
                     return Err(ParseError::UnexpectedToken(
                         other.clone(),
-                        "struct body may only contain 'var' fields, 'comptime' associated facts, and 'def' methods".into(),
+                        if is_enum {
+                            "enum body may only contain 'case' declarations, 'comptime' associated facts, and 'def' methods"
+                        } else {
+                            "struct body may only contain 'var' fields, 'comptime' associated facts, and 'def' methods"
+                        }
+                        .into(),
                     ));
                 }
             }
@@ -290,6 +352,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             associated,
             methods,
             fieldwise_init,
+            enum_cases: is_enum.then_some(cases),
         })
     }
 
@@ -447,6 +510,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     methods.push(self.parse_trait_method(decorators)?);
                 }
                 Token::Comptime => comptime_members.push(self.parse_trait_comptime()?),
+                Token::Enum => {
+                    let at = self.peek_start();
+                    return Err(ParseError::Message(
+                        "nested enum in a trait not supported here".to_string(),
+                    )
+                    .at((at, at)));
+                }
                 other => {
                     return Err(ParseError::UnexpectedToken(
                         other.clone(),
@@ -762,5 +832,104 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
         }
         Ok(())
+    }
+}
+
+impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
+    /// A method of a struct or enum body. An enum method whose body is only
+    /// `...` is rejected as upstream rejects it, since `...` is reserved
+    /// there; an `@unavailable` method keeps the placeholder.
+    fn parse_member_method(
+        &mut self,
+        decorators: Vec<Decorator>,
+        is_enum: bool,
+    ) -> Result<Method, ParseError> {
+        let start = self.peek_start();
+        let unavailable = decorators
+            .iter()
+            .any(|decorator| decorator.path.as_slice() == ["unavailable"]);
+        let method = self.parse_method(decorators)?;
+        if is_enum && !unavailable && self.body_is_placeholder(&method.body) {
+            return Err(ParseError::Message(
+                "enum methods must have a body; '...' is reserved".to_string(),
+            )
+            .at((start, self.last_span.1)));
+        }
+        Ok(method)
+    }
+
+    /// Whether a body holds a `...` and nothing else but docstrings.
+    fn body_is_placeholder(&self, body: &[Stmt]) -> bool {
+        body.iter()
+            .any(|statement| self.placeholder_statements.contains(&statement.span.0))
+            && body.iter().all(|statement| {
+                self.placeholder_statements.contains(&statement.span.0)
+                    || self.docstring_statements.contains(&statement.span.0)
+            })
+    }
+
+    /// `case name` or `case name(T, ...)`, the only two forms upstream's
+    /// `parseEnumCaseStmt` accepts. A labeled payload has its own
+    /// diagnostic; every other spelling after `case` is one malformed case.
+    fn parse_enum_case(&mut self) -> Result<EnumCase, ParseError> {
+        let start = self.peek_start();
+        self.expect(&Token::Case, "Expected 'case'")?;
+        let malformed = |end: usize| {
+            ParseError::Message(
+                "enum case must have the form 'case name' or 'case name(T, ...)'".to_string(),
+            )
+            .at((start, end))
+        };
+        let labeled = |end: usize| {
+            ParseError::Message(
+                "labeled payloads in enum cases are not supported; use positional types, e.g. 'case C(T, U)'"
+                    .to_string(),
+            )
+            .at((start, end))
+        };
+        let name = match self.peek_token()? {
+            Some(Token::Identifier(name)) => name.clone(),
+            _ => return Err(malformed(self.last_span.1)),
+        };
+        self.next_token()?;
+        let mut payload = Vec::new();
+        if matches!(self.peek_token()?, Some(Token::LParen)) {
+            self.next_token()?;
+            if matches!(self.peek_token()?, Some(Token::RParen)) {
+                return Err(malformed(self.last_span.1));
+            }
+            loop {
+                payload.push(self.parse_type()?);
+                match self.peek_token()? {
+                    Some(Token::Colon | Token::Assign) => return Err(labeled(self.last_span.1)),
+                    Some(Token::Comma) => {
+                        self.next_token()?;
+                        if matches!(self.peek_token()?, Some(Token::RParen)) {
+                            self.next_token()?;
+                            break;
+                        }
+                    }
+                    Some(Token::RParen) => {
+                        self.next_token()?;
+                        break;
+                    }
+                    _ => return Err(malformed(self.last_span.1)),
+                }
+            }
+        }
+        if !matches!(
+            self.peek_token()?,
+            Some(Token::Newline | Token::Semicolon | Token::Eof | Token::Dedent) | None
+        ) {
+            return Err(malformed(self.last_span.1));
+        }
+        if !matches!(self.peek_token()?, Some(Token::Dedent) | None) {
+            self.expect_stmt_end()?;
+        }
+        Ok(EnumCase {
+            name,
+            payload,
+            span: (start, self.last_significant_end),
+        })
     }
 }

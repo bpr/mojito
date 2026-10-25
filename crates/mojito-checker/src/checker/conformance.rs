@@ -255,6 +255,7 @@ impl ConformanceOracle {
                 associated,
                 conformance_conditions,
                 methods,
+                enum_cases,
                 ..
             } = &statement.kind
             else {
@@ -292,6 +293,7 @@ impl ConformanceOracle {
                     methods,
                 )),
             );
+            let saved_enum = std::mem::replace(&mut checker.enum_declaration, enum_cases.is_some());
             // Best-effort associated-member lowering BEFORE field resolution,
             // so a field type may apply the struct's own comptime alias
             // (`var iter: Self.dict_entry_iter`). A body this signature-only
@@ -322,6 +324,7 @@ impl ConformanceOracle {
             checker.enclosing_type_params = saved_type_params;
             checker.self_ty = saved_self_ty;
             checker.bundled_stdlib_declaration = saved_bundled;
+            checker.enum_declaration = saved_enum;
             if let Some(info) = checker.structs.get_mut(name) {
                 info.fields = field_types?;
             }

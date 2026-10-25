@@ -51,13 +51,13 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Some(Token::Var) => self.parse_var_decl()?,
                 Some(Token::Identifier(word)) if word == "ref" => self.parse_ref_decl()?,
                 Some(Token::Def) => self.parse_def(Vec::new())?,
-                Some(Token::Struct) => self.parse_struct(Vec::new())?,
-                // A decorator list precedes a `def` or `struct`.
+                Some(Token::Struct | Token::Enum) => self.parse_struct(Vec::new())?,
+                // A decorator list precedes a `def`, `struct`, or `enum`.
                 Some(Token::At) => {
                     let decorators = self.parse_decorators()?;
                     match self.peek_token()? {
                         Some(Token::Def) => self.parse_def(decorators)?,
-                        Some(Token::Struct) => self.parse_struct(decorators)?,
+                        Some(Token::Struct | Token::Enum) => self.parse_struct(decorators)?,
                         other => {
                             return Err(ParseError::UnexpectedToken(
                                 other.cloned().unwrap_or(Token::Eof),
@@ -102,6 +102,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Some(Token::Ellipsis) => {
                     self.next_token()?;
                     self.expect_stmt_end()?;
+                    self.placeholder_statements.insert(start);
                     StmtKind::Pass
                 }
                 // Mojo docstrings are triple-quoted string statements placed at
@@ -110,6 +111,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Some(Token::TripleStringLiteral(..)) => {
                     self.next_token()?;
                     self.expect_stmt_end()?;
+                    self.docstring_statements.insert(start);
                     StmtKind::Pass
                 }
                 _ => self.parse_expr_or_assign()?,

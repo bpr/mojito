@@ -1891,6 +1891,7 @@ impl Checker {
                 methods,
                 fieldwise_init,
                 decorators,
+                enum_cases,
             } => {
                 if self.lookup(name).is_some() {
                     return Err(TypeError::Redeclaration(name.clone()));
@@ -1908,6 +1909,7 @@ impl Checker {
                     methods,
                     fieldwise_init: *fieldwise_init,
                     decorators,
+                    enum_cases: enum_cases.as_deref(),
                 };
                 if self.predeclared_structs.remove(name) {
                     self.check_struct_completion(&declaration)

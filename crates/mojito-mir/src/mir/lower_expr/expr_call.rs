@@ -503,6 +503,7 @@ impl<'a> Flatten<'a> {
                 matches!(
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::VariantIs { .. }
+                        | mojito_checked::checked::SemanticAdjustment::VariantTag { .. }
                         | mojito_checked::checked::SemanticAdjustment::VariantProject { .. }
                         | mojito_checked::checked::SemanticAdjustment::VariantSet { .. }
                         | mojito_checked::checked::SemanticAdjustment::VariantSetInitWith { .. }
@@ -686,6 +687,12 @@ impl<'a> Flatten<'a> {
             unreachable!("checked Variant operation has a member callee")
         };
         match operation.clone() {
+            mojito_checked::checked::SemanticAdjustment::VariantTag { .. } => {
+                let variant = self.expr(object);
+                let dest = self.fresh(call.location(), None);
+                self.emit(MirInstr::VariantTag { dest, variant });
+                dest
+            }
             mojito_checked::checked::SemanticAdjustment::VariantIs { index, .. } => {
                 let variant = self.expr(object);
                 let dest = self.fresh(call.location(), None);

@@ -758,6 +758,17 @@ The public entry points for each compiler phase remain in its root module.
 
 ## Stage 1: Module Linking
 
+**Enum declarations.** Parsing a module generates each `enum`'s members
+from its cases before linking (`mojito_parser::enums`), so the generated
+case lists, storage field, case constructors, and `EnumLike` members link,
+check, and lower as written members do; the `StmtKind::Struct` keeps its
+`enum_cases` for diagnostics. The storage is the case-indexed
+`__EnumStorage` intrinsic (a `TyKind::Variant` its operations select by
+index: `ConstructVariant` with an `index=` literal, a `storage[id]`
+projection, and `get_discriminant()`, MIR `variant.tag`), and a case
+without a payload is a frozen `CtValue::Variant` inside the enum's frozen
+struct. See `docs/notes/enums.md`.
+
 Module:
 
 ```rust

@@ -62,7 +62,9 @@ Following the reference tree-sitter Mojo grammar, reserved words split into the 
 continue raise try except finally import from as`, plus the `True`/`False` literals) and
 the **Mojo-only** ones (`var struct trait comptime raises`). `Token::keyword` is the single
 lookup table. Soft/contextual words such as `mut` (in `mut self`) are **not** reserved — they
-lex as identifiers, so they stay usable as ordinary names, matching Mojo.
+lex as identifiers, so they stay usable as ordinary names, matching Mojo. `enum` is one too:
+the lexer emits the `enum` keyword only where a statement starts with `enum` followed by a
+name that is not a keyword (`enum Color:`), and lexes it as an identifier everywhere else.
 
 The words of syntax Mojito does not implement — `match` and `case` (pattern
 matching), `class`, `del`, and `yield` — are keywords too, as in current Mojo:
@@ -110,6 +112,7 @@ mlir_ownership_op: '`lit.ownership.mark_initialized`' | '`lit.ownership.mark_des
 compound_stmt:
     | function_def
     | struct_def
+    | enum_def
     | trait_def
     | if_stmt
     | while_stmt
@@ -576,6 +579,29 @@ when it is a type. A parameterized associated
 member is checked when projected with concrete arguments; its availability may
 depend on either the enclosing struct parameters or its own parameters. The
 diagnostic tuple form retains its message through those checks.
+
+### enum_def
+
+```
+enum_def: decorators 'enum' NAME [params_decl] [conformance] where_clause* ':' enum_block
+enum_block: NEWLINE INDENT enum_member+ DEDENT
+enum_member: enum_case | struct_comptime | method | 'pass' NEWLINE
+enum_case: 'case' NAME ['(' ','.type+ [','] ')'] NEWLINE
+```
+
+`enum` is the spelling of upstream's enum proposal (`Mojo/proposals/enums.md`). The
+pinned Mojo implements the same declaration under the experimental keyword `__enum`,
+which Mojito does not accept: `enum` is a kept extension (`docs/non-goals.md`), and its
+fixtures live under `assets/extensions/`. The header is a `struct_def` header. The body holds
+`case` declarations, associated `comptime` members, and methods, in any order,
+and may be empty (`pass`). A case without parentheses carries no payload;
+`case span(Int, Int)` carries one payload of type `Tuple[Int, Int]`, and
+`case ident(String)` one of type `String`. The parser rejects, with the pin's
+words, a labeled payload (`case c(a: Int)`), an empty `case x()`, several names
+in one `case`, a decorated `case`, a `var` field, a method whose body is `...`,
+`@fieldwise_init`, and an `enum` declared inside a function, a struct, or a
+trait. The declaration is an ordinary struct whose
+members the compiler generates from its cases (see `docs/notes/enums.md`).
 
 ### trait_def
 

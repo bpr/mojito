@@ -381,6 +381,17 @@ pub enum CtValue {
         name: String,
         fields: Vec<(String, Self)>,
     },
+    /// A frozen tagged union — an `enum`'s storage, or a `Variant`'s —
+    /// over `alternatives`, holding the payload of alternative `index`, as
+    /// upstream's parameter domain holds a `!kgen.variant` value; `None`
+    /// for an alternative of type `NoneType`, a case without a payload. An
+    /// enum's frozen case (`Token.eof`) is the struct whose one field this
+    /// is.
+    Variant {
+        alternatives: Vec<Ty>,
+        index: usize,
+        payload: Option<Box<Self>>,
+    },
     /// The frozen allocation a pointer field of a compile-time value points
     /// into — what VM compile-time evaluation leaves in its heap behind an
     /// `Optional`'s or a `List`'s storage pointer — and the pointer's
@@ -775,6 +786,9 @@ impl CtValue {
                 format!("SIMD[DType.{}, {}]", dtype.name(), lanes.len())
             }
             Self::Struct { name, .. } => name.clone(),
+            Self::Variant { alternatives, .. } => {
+                Ty::from(crate::types::TyKind::Variant(alternatives.clone())).to_string()
+            }
             Self::Tuple(values) => format!(
                 "Tuple[{}]",
                 values
@@ -1155,6 +1169,7 @@ impl CtValue {
             },
             // Frozen memory has no source spelling: a backend writes it.
             Self::Pointer { .. }
+            | Self::Variant { .. }
             | Self::StoreToMem(_)
             | Self::Type(_)
             | Self::Reflected(_)
@@ -1186,6 +1201,8 @@ impl CtValue {
             | Self::FloatLiteral(_)
             | Self::Bool(_)
             | Self::Dtype(_) => true,
+            // A frozen enum case: its payload, if any, is a closed leaf.
+            Self::Variant { payload, .. } => payload.as_deref().is_none_or(Self::is_closed_leaf),
             Self::Pointer { memory, .. } => memory
                 .iter()
                 .flatten()
@@ -1375,6 +1392,10 @@ impl fmt::Display for CtValue {
                 write!(f, ")")
             }
             Self::StoreToMem(value) => write!(f, "store_to_mem({value})"),
+            Self::Variant { index, payload, .. } => match payload {
+                Some(payload) => write!(f, "variant[{index}]({payload})"),
+                None => write!(f, "variant[{index}]"),
+            },
             Self::Type(ty) => write!(f, "{ty}"),
             Self::Reflected(ty) => write!(f, "reflect[{ty}]"),
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),

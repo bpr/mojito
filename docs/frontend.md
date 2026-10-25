@@ -342,7 +342,12 @@ makes it one, and otherwise hands the display back to expression parsing):
 - `var` -> variable declaration
 - `def` -> function declaration
 - `struct` -> struct declaration
-- decorators -> decorated `def` or `struct`
+- `enum` -> enum declaration (a contextual keyword the lexer emits only
+  where a statement starts with `enum Name`), the struct parser with `case`
+  members
+  (`Parser::parse_struct`); `mojito_parser::enums` then generates the
+  enum's members from its cases, parsing them as Mojo text
+- decorators -> decorated `def`, `struct`, or `enum`
 - `trait` -> trait declaration
 - `comptime` -> comptime declaration/if/for/match
 - `if`, `while`, `for`, `with`, `try`

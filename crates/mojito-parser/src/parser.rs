@@ -9,9 +9,9 @@ use std::iter::Peekable;
 
 use mojito_ast::ast::{
     ArgConvention, BindingMode, Capture, CaptureKind, CaptureList, Condition, Decorator,
-    DestructureTarget, DestructureTargetKind, Expr, ExprKind, FnParam, FunctionTypeParam, InfixOp,
-    KwArg, Method, Param, ParamKind, PrefixOp, Stmt, StmtKind, SubscriptArg, TStringPart, Type,
-    WithItem,
+    DestructureTarget, DestructureTargetKind, EnumCase, Expr, ExprKind, FnParam, FunctionTypeParam,
+    InfixOp, KwArg, Method, Param, ParamKind, PrefixOp, Stmt, StmtKind, SubscriptArg, TStringPart,
+    Type, WithItem,
 };
 use mojito_common::error::{LexError, ParseError};
 use mojito_common::token::{Span, TStringChunk, Token};
@@ -278,6 +278,11 @@ pub struct Parser<I: Iterator<Item = Result<(Token, Span), LexError>>> {
     /// Whether the most recent statement terminator was `;` rather than a newline
     /// or EOF. Used for one-line suites like `def f(): a(); b()`.
     last_stmt_ended_with_semicolon: bool,
+    /// The start offsets of the statements spelled `...` and of the
+    /// docstrings, both parsed as `pass`, so an enum method whose body is
+    /// only `...` can be told from one that says `pass`.
+    placeholder_statements: std::collections::HashSet<usize>,
+    docstring_statements: std::collections::HashSet<usize>,
 }
 
 /// Whether a type is the qualified struct binder (`Self.o`) or a projection

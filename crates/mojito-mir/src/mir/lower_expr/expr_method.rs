@@ -437,6 +437,19 @@ impl<'a> Flatten<'a> {
             self.emit_nested_closure_argument_keepalives(args, kwargs);
             return Some(dest);
         }
+        // An `enum` storage's discriminant (`storage.get_discriminant()`)
+        // reads the tag, as `isa[T]()` tests it.
+        if node.adjustments.iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::VariantTag { .. }
+            )
+        }) {
+            let variant = self.expr(object);
+            let dest = self.fresh(call.location(), None);
+            self.emit(MirInstr::VariantTag { dest, variant });
+            return Some(dest);
+        }
         // The parameterless Variant owning operation
         // (`v^.deinit_with(handler)`) is spelled as an ordinary method
         // call rather than a parameterized invoke.

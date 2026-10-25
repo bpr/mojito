@@ -11,9 +11,9 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    ComprehensionClause, Condition, Decorator, DestructureTarget, DestructureTargetKind, Expr,
-    ExprKind, FnParam, FunctionTypeParam, MatchCase, MatchPattern, MatchPatternKind, Method, Param,
-    ParamArg, SequenceTarget, Stmt, StmtKind, StructComptime, SubscriptArg, TStringPart,
+    ComprehensionClause, Condition, Decorator, DestructureTarget, DestructureTargetKind, EnumCase,
+    Expr, ExprKind, FnParam, FunctionTypeParam, MatchCase, MatchPattern, MatchPatternKind, Method,
+    Param, ParamArg, SequenceTarget, Stmt, StmtKind, StructComptime, SubscriptArg, TStringPart,
     TraitComptime, TraitMethod, Type, TypeParam,
 };
 
@@ -111,6 +111,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
             fields,
             associated,
             methods,
+            enum_cases,
             ..
         } => {
             walk_decorators(visitor, decorators);
@@ -130,6 +131,7 @@ pub fn walk_stmt<V: Visitor>(visitor: &mut V, statement: &Stmt) {
             for field in fields {
                 walk_field(visitor, field);
             }
+            walk_enum_cases(visitor, enum_cases.as_deref());
             for member in associated {
                 walk_struct_comptime(visitor, member);
             }
@@ -1006,6 +1008,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             methods,
             decorators,
             where_clauses,
+            enum_cases,
             ..
         } => {
             walk_type_params_mut(visitor, type_params);
@@ -1021,6 +1024,7 @@ pub fn walk_stmt_mut<V: MutVisitor>(visitor: &mut V, statement: &mut Stmt) {
             for field in fields {
                 walk_type_mut(visitor, &mut field.ty);
             }
+            walk_enum_cases_mut(visitor, enum_cases.as_deref_mut());
             for member in associated {
                 walk_type_params_mut(visitor, &mut member.params);
                 if let Some(ty) = &mut member.ty {
@@ -1458,5 +1462,23 @@ fn walk_decorators_mut<V: MutVisitor>(visitor: &mut V, decorators: &mut [Decorat
         for arg in &mut decorator.kwargs {
             walk_expr_mut(visitor, &mut arg.value);
         }
+    }
+}
+
+/// The payload types of an `enum`'s cases; nothing for a `struct`.
+fn walk_enum_cases<V: Visitor>(visitor: &mut V, cases: Option<&[EnumCase]>) {
+    for ty in cases.into_iter().flatten().flat_map(|case| &case.payload) {
+        walk_type(visitor, ty);
+    }
+}
+
+/// [`walk_enum_cases`] in place.
+fn walk_enum_cases_mut<V: MutVisitor>(visitor: &mut V, cases: Option<&mut [EnumCase]>) {
+    for ty in cases
+        .into_iter()
+        .flatten()
+        .flat_map(|case| &mut case.payload)
+    {
+        walk_type_mut(visitor, ty);
     }
 }

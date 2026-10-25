@@ -88,7 +88,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexError> {
 /// Parse `source` into the program AST (the **parse-only** front end — no type
 /// checking or evaluation). Surfaces lexer errors as `ParseError::LexerError`.
 pub fn parse(source: &str) -> Result<Vec<Stmt>, ParseError> {
-    Parser::new(Lexer::new(source)).parse_program()
+    mojito_parser::enums::parse_module(source)
 }
 
 /// Parse for human-facing diagnostics, collecting up to `max_errors`. A report

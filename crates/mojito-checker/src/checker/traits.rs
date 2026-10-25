@@ -563,6 +563,10 @@ impl Checker {
                     declaration.methods,
                 )),
             ),
+            enum_declaration: std::mem::replace(
+                &mut self.enum_declaration,
+                declaration.enum_cases.is_some(),
+            ),
         };
         Ok((self_ty, saved))
     }
@@ -572,6 +576,7 @@ impl Checker {
         self.enclosing_type_params = saved.type_params;
         self.self_ty = saved.self_ty;
         self.bundled_stdlib_declaration = saved.bundled_stdlib;
+        self.enum_declaration = saved.enum_declaration;
     }
 
     /// Resolve field, associated-member, and callable-conformance types into
@@ -1903,6 +1908,9 @@ impl Checker {
                 lanes.len() as i64,
             )),
             CtValue::Struct { name, .. } => Some(TyKind::Struct(name.clone(), Vec::new()).into()),
+            CtValue::Variant { alternatives, .. } => {
+                Some(TyKind::Variant(alternatives.clone()).into())
+            }
             CtValue::Tuple(values) => values
                 .iter()
                 .map(|v| self.ct_value_ty(v, self_ty))
@@ -3224,17 +3232,33 @@ impl Checker {
         let Some(info) = self.structs.get(name) else {
             return false;
         };
+        let assumed = |element: &Ty| {
+            matches!(element.kind(), TyKind::Param { binder, .. }
+            if assumption.is_some_and(|known| {
+                binder_conformance_assumed(binder, "ImplicitlyCopyable", known)
+            }))
+        };
         info.methods.contains_key("__copyinit__")
             || info.fields.iter().all(|(_, ty)| {
                 self.is_implicitly_copyable(ty)
-                    // Private pack storage (`__RuntimeTuple[*Self.Ts]`,
-                    // copies as its elements do, which the conformance's own
-                    // `where` clause states.
-                    || matches!(ty.kind(), TyKind::Tuple(elements) | TyKind::Variant(elements)
-                        if matches!((mojito_types::types::pack_spread(elements)).map(Ty::kind),
-                            Some(TyKind::Param { binder, .. }) if assumption.is_some_and(|known| {
-                                binder_conformance_assumed(binder, "ImplicitlyCopyable", known)
-                            })))
+                    // A field of a parameter's type the conformance's own
+                    // `where` clause states is implicitly copyable.
+                    || assumed(ty)
+                    // Private storage (`__RuntimeTuple[*Self.Ts]`, an
+                    // enum's `__EnumStorage[Self.T, Self.E]`) copies as its
+                    // elements do, which the conformance's own `where`
+                    // clause states.
+                    || match ty.kind() {
+                        TyKind::Tuple(elements) | TyKind::Variant(elements) => {
+                            match mojito_types::types::pack_spread(elements) {
+                                Some(pack) => assumed(pack),
+                                None => elements.iter().all(|element| {
+                                    self.is_implicitly_copyable(element) || assumed(element)
+                                }),
+                            }
+                        }
+                        _ => false,
+                    }
             })
     }
 
@@ -3770,6 +3794,7 @@ pub(super) struct SavedStructScope {
     self_decls: Vec<ParamDecl>,
     self_ty: Option<Ty>,
     bundled_stdlib: bool,
+    enum_declaration: bool,
 }
 
 /// The resolved member types of one struct declaration: fields, associated

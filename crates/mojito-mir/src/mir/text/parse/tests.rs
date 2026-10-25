@@ -567,6 +567,43 @@ fn const_value_and_param_field_round_trip() {
     assert_reprints(&program);
 }
 
+/// A frozen `enum` case reprints as its struct over a `ct_variant`, with
+/// or without a payload.
+#[test]
+fn frozen_enum_case_constant_round_trip() {
+    let token = Ty::new(TyKind::Struct("Token".into(), Vec::new()));
+    let case = |index: usize, payload: Option<CtValue>| {
+        Const::Value(CtValue::Struct {
+            name: "Token".into(),
+            fields: vec![(
+                "__enum_storage".into(),
+                CtValue::Variant {
+                    alternatives: vec![Ty::none(), Ty::int()],
+                    index,
+                    payload: payload.map(Box::new),
+                },
+            )],
+        })
+    };
+    let instrs = vec![
+        MirInstr::Const {
+            dest: Reg(0),
+            k: case(0, None),
+        },
+        MirInstr::Const {
+            dest: Reg(1),
+            k: case(1, Some(CtValue::Int(5))),
+        },
+    ];
+    let program = program_with(vec![(
+        "cases".into(),
+        function_with(vec![token.clone(), token], instrs),
+    )]);
+    let text = write::program(&program);
+    assert!(text.contains("ct_variant"));
+    assert_reprints(&program);
+}
+
 #[test]
 fn frozen_pointer_constant_round_trip() {
     let values = vec![
@@ -1104,6 +1141,10 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(28),
             variant: Reg(27),
             index: VariantIndex::Known(0),
+        },
+        MirInstr::VariantTag {
+            dest: Reg(28),
+            variant: Reg(27),
         },
         MirInstr::VariantGet {
             dest: Reg(29),

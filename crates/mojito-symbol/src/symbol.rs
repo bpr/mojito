@@ -2831,6 +2831,9 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
             .flatten()
             .all(specialization_value_is_closed),
         CtValue::StoreToMem(referent) => specialization_value_is_closed(referent),
+        CtValue::Variant { payload, .. } => payload
+            .as_deref()
+            .is_none_or(specialization_value_is_closed),
         CtValue::Type(ty) | CtValue::Reflected(ty) => {
             let mut open = std::collections::HashSet::new();
             mojito_types::types::referenced_parameters(ty, &mut open);
@@ -2877,6 +2880,13 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::StoreToMem(referent) => {
             out.push('M');
             encode_specialization_value(referent, out);
+        }
+        // The case index and its payload; the alternatives are the type's.
+        CtValue::Variant { index, payload, .. } => {
+            out.push_str(&format!("e{index}:"));
+            if let Some(payload) = payload {
+                encode_specialization_value(payload, out);
+            }
         }
         CtValue::Int(value) => out.push_str(&format!("i{value};")),
         CtValue::UInt(value) => out.push_str(&format!("u{value};")),

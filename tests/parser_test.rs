@@ -251,6 +251,7 @@ fn parses_struct_with_field_and_method() {
                 provenance: mojito::ast::MethodProvenance::Source,
             }],
             fieldwise_init: true,
+            enum_cases: None,
         })
     );
 }
@@ -693,6 +694,7 @@ fn parses_generic_struct_header_and_self_param_field() {
             associated: vec![],
             methods: vec![],
             fieldwise_init: true,
+            enum_cases: None,
         })
     );
 }
@@ -4684,4 +4686,121 @@ fn rejects_comptime_assert_outside_a_function() {
             "missing placement diagnostic for {source:?}: {error}"
         );
     }
+}
+
+#[test]
+fn parses_enum_cases_as_a_struct_declaration() {
+    let statements = parse(
+        "enum Token[T: AnyType](Copyable):\n    \"\"\"Doc.\"\"\"\n    case eof\n    case ident(String)\n    case span(Int, Self.T,)\n\n    def m(self) -> Int:\n        return 1\n\nenum Empty:\n    pass\n",
+    );
+    let StmtKind::Struct {
+        name,
+        enum_cases: Some(cases),
+        methods,
+        fields,
+        ..
+    } = &statements[0].kind
+    else {
+        panic!("expected an enum");
+    };
+    assert_eq!(name, "Token");
+    assert!(fields.is_empty());
+    assert_eq!(methods.len(), 1);
+    let shapes = cases
+        .iter()
+        .map(|case| (case.name.as_str(), case.payload.len()))
+        .collect::<Vec<_>>();
+    assert_eq!(shapes, [("eof", 0), ("ident", 1), ("span", 2)]);
+    assert!(matches!(
+        &statements[1].kind,
+        StmtKind::Struct { enum_cases: Some(cases), .. } if cases.is_empty()
+    ));
+    assert!(matches!(
+        &parse("struct S:\n    pass\n")[0].kind,
+        StmtKind::Struct {
+            enum_cases: None,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn rejects_malformed_enum_declarations_with_upstream_diagnostics() {
+    let main = "\ndef main():\n    pass\n";
+    for (body, expected) in [
+        (
+            "case labeled(x: Int)",
+            "labeled payloads in enum cases are not supported",
+        ),
+        (
+            "case keyword(Int, y=Int)",
+            "labeled payloads in enum cases are not supported",
+        ),
+        (
+            "case typed: Int",
+            "enum case must have the form 'case name' or 'case name(T, ...)'",
+        ),
+        ("case several, names", "enum case must have the form"),
+        ("case empty()", "enum case must have the form"),
+        ("case trailing(Int) junk", "enum case must have the form"),
+        (
+            "case missing_comma(Int Int)",
+            "enum case must have the form",
+        ),
+        ("case 1", "enum case must have the form"),
+        (
+            "@always_inline\n    case decorated",
+            "'case' statement does not support decorators",
+        ),
+        (
+            "var x: Int",
+            "enums do not support 'var' fields; store state in a case payload",
+        ),
+        (
+            "def f(self): ...",
+            "enum methods must have a body; '...' is reserved",
+        ),
+        (
+            "def f(self):\n        \"\"\"Doc.\"\"\"\n        ...",
+            "enum methods must have a body",
+        ),
+    ] {
+        let source = format!("enum E:\n    case a\n    {body}\n{main}");
+        let error = mojito::parse(&source).unwrap_err().to_string();
+        assert!(error.contains(expected), "{body:?}: {error}");
+    }
+    for (source, expected) in [
+        (
+            "struct S:\n    enum I:\n        case a\n",
+            "nested enum not supported here",
+        ),
+        (
+            "trait T:\n    enum I:\n        case a\n",
+            "nested enum in a trait not supported here",
+        ),
+        (
+            "def f():\n    enum I:\n        case a\n",
+            "enum inside a function not supported here",
+        ),
+        (
+            "enum NoColon\n    case a\n",
+            "expected ':' in enum definition",
+        ),
+        (
+            "@fieldwise_init\nenum E:\n    case a\n",
+            "'@fieldwise_init' cannot be applied to an enum",
+        ),
+    ] {
+        let error = mojito::parse(&format!("{source}{main}"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(expected), "{source:?}: {error}");
+    }
+    // `enum` names a binding wherever it does not start a declaration.
+    parse("def f(enum: Int) -> Int:\n    var x = enum\n    enum = x + 1\n    return enum\n");
+    // `...` beside a real statement, and an `@unavailable` placeholder, are
+    // bodies.
+    parse(
+        "enum E:\n    case a\n\n    def f(self):\n        ...\n        pass\n\n    @unavailable(\"use 'a'\")\n    def g(self):\n        ...\n",
+    );
 }

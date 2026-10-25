@@ -304,6 +304,11 @@ pub enum Token {
     Trait,
     Comptime,
     Raises,
+    /// `enum`, the declaration of a sum type, as upstream's enum proposal
+    /// spells it (the pinned Mojo spells it `__enum`). A contextual keyword:
+    /// the lexer emits it only where a statement starts with `enum Name`, so
+    /// `enum` elsewhere stays an ordinary name.
+    Enum,
 
     // --- Keywords shared with Python ---
     Def,

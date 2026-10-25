@@ -1351,6 +1351,15 @@ impl VmBackend {
                 }
                 regs[dest.0 as usize] = Value::Bool(active == index);
             }
+            MirInstr::VariantTag { dest, variant } => {
+                let Value::Variant { index, .. } = &regs[variant.0 as usize] else {
+                    return Err(RuntimeError::TypeError(format!(
+                        "an enum's discriminant read from {}",
+                        crate::runtime::type_name(&regs[variant.0 as usize])
+                    )));
+                };
+                regs[dest.0 as usize] = Value::Int(*index as i64);
+            }
             MirInstr::VariantGet {
                 dest,
                 variant,

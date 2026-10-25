@@ -106,7 +106,26 @@ casts to a subtree origin is accepted here and rejected there — the
 fifteen fixtures to `assets/extensions/<folder>/`, because the ordinary folders
 hold only programs the pinned Mojo compiles.
 
-These are the two admitted extensions under the match-or-subset rule
+### `enum` is spelled as upstream's proposal spells it
+
+Not to be removed: Mojito declares enums with `enum`, the spelling of
+upstream's enum proposal (`Mojo/proposals/enums.md`), where the pinned Mojo
+implements the same declaration under its experimental keyword `__enum`
+(owner's decision, 2026-10-25). The declaration, its generated members, and
+its semantics follow the pin's `__enum` (`docs/notes/enums.md`); only the
+spelling differs, so every `enum` program is rejected at the pin, and
+Mojito does not accept `__enum`.
+
+- `enum` is a contextual keyword: only `enum Name` starting a statement
+  declares one, so `enum` stays an ordinary name elsewhere, as it is at the
+  pin.
+- The fixtures live under `assets/extensions/<folder>/enum_*.mojo`; each was
+  checked against the pin's output under the `__enum` spelling.
+- Reopen when upstream settles the keyword: if it keeps `__enum`, accept
+  that spelling beside or instead of `enum`; if it adopts `enum`, promote
+  the fixtures to the ordinary folders.
+
+These are the three admitted extensions under the match-or-subset rule
 (`AGENTS.md` invariant 1).
 
 - Fixtures that use `ref` fields live under `assets/extensions/<folder>/`;

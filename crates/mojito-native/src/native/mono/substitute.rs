@@ -1087,9 +1087,10 @@ fn reject_unconstructed(instruction: &MirInstr) -> Result<(), MonoError> {
 }
 
 /// Close a template's `_get_type_index[T, *Ts]()` once the instance binds
-/// the pack and `T`. A `T` the pack lacks fails the instance, as upstream's
-/// `Variant._check[T]()` does; an index the bindings leave open stays for
-/// the concreteness check to name.
+/// the pack and `T`, or an `enum` storage's case index (`id` in
+/// `_unsafe_get_enum_payload[id]`) once it binds the index. A `T` the pack
+/// lacks fails the instance, as upstream's `Variant._check[T]()` does; an
+/// index the bindings leave open stays for the concreteness check to name.
 fn close_variant_index(index: &mut VariantIndex, bindings: &Bindings) -> Result<(), MonoError> {
     let VariantIndex::Expr(expr) = &*index else {
         return Ok(());
@@ -1099,6 +1100,13 @@ fn close_variant_index(index: &mut VariantIndex, bindings: &Bindings) -> Result<
         query: PackQuery::IndexOf(element),
     } = expr.kind()
     else {
+        if let Ok(value) = eval_ct(expr, bindings)
+            && let Some(case) = mojito_types::param_expr::fold::integer_value(&value)
+                .and_then(|case| case.to_u64())
+                .and_then(|case| usize::try_from(case).ok())
+        {
+            *index = VariantIndex::Known(case);
+        }
         return Ok(());
     };
     let Some(TyKind::RuntimePack(alternatives)) = bindings.types.get(pack).map(Ty::kind) else {

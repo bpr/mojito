@@ -882,6 +882,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         }
         MirInstr::MakeVariant { dest, value, .. } => out.extend([dest, value]),
         MirInstr::VariantIs { dest, variant, .. }
+        | MirInstr::VariantTag { dest, variant }
         | MirInstr::VariantGet { dest, variant, .. }
         | MirInstr::VariantTake { dest, variant, .. } => out.extend([dest, variant]),
         MirInstr::VariantSet {
@@ -2343,6 +2344,12 @@ pub enum MirInstr {
         variant: Reg,
         index: mojito_types::types::VariantIndex,
     },
+    /// The index of the active alternative, an `Int`: the discriminant an
+    /// `enum`'s storage reads, as upstream's `pop.variant.discr_gep`.
+    VariantTag {
+        dest: Reg,
+        variant: Reg,
+    },
     /// Extract the active alternative, trapping on a tag mismatch.
     VariantGet {
         dest: Reg,
@@ -2807,6 +2814,7 @@ impl MirInstr {
             | Self::GetField { .. }
             | Self::ReadRef { .. }
             | Self::VariantIs { .. }
+            | Self::VariantTag { .. }
             | Self::MakeSimd { .. }
             | Self::MakeStruct { .. }
             | Self::MakeArray { .. }

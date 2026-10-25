@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_ast::visit::{Visitor, walk_stmt};
 
 impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
     pub fn new(tokens: I) -> Self {
@@ -10,6 +11,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             last_span: (0, 0),
             last_significant_end: 0,
             last_stmt_ended_with_semicolon: false,
+            placeholder_statements: std::collections::HashSet::new(),
+            docstring_statements: std::collections::HashSet::new(),
         }
     }
 
@@ -159,6 +162,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 _ => {
                     let statement = self.parse_statement()?;
                     reject_comptime_statement_outside_function(&statement)?;
+                    reject_enum_inside_function(&statement)?;
                     stmts.push(statement);
                 }
             }
@@ -192,7 +196,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 Token::Eof => break,
                 Token::Newline | Token::Indent | Token::Dedent => self.discard_one(),
                 _ => match self.parse_statement().and_then(|stmt| {
-                    reject_comptime_statement_outside_function(&stmt).map(|()| stmt)
+                    reject_comptime_statement_outside_function(&stmt)?;
+                    reject_enum_inside_function(&stmt).map(|()| stmt)
                 }) {
                     Ok(stmt) => program.push(stmt),
                     Err(err) => {
@@ -267,4 +272,36 @@ fn reject_comptime_statement_outside_function(statement: &Stmt) -> Result<(), Pa
         }
         _ => Ok(()),
     }
+}
+
+/// Upstream declares an `enum` only at module scope. A struct or trait body
+/// rejects one as its member parser meets it, so an `enum` below a
+/// module-level statement sits in a function body.
+fn reject_enum_inside_function(statement: &Stmt) -> Result<(), ParseError> {
+    struct NestedEnum<'a> {
+        root: &'a Stmt,
+        found: Option<Span>,
+    }
+    impl Visitor for NestedEnum<'_> {
+        fn visit_stmt(&mut self, statement: &Stmt) {
+            let is_enum = matches!(
+                &statement.kind,
+                StmtKind::Struct {
+                    enum_cases: Some(_),
+                    ..
+                }
+            );
+            if is_enum && !std::ptr::eq(statement, self.root) && self.found.is_none() {
+                self.found = Some(statement.span);
+            }
+        }
+    }
+    let mut walk = NestedEnum {
+        root: statement,
+        found: None,
+    };
+    walk_stmt(&mut walk, statement);
+    walk.found.map_or(Ok(()), |span| {
+        Err(ParseError::Message("enum inside a function not supported here".to_string()).at(span))
+    })
 }

@@ -570,7 +570,7 @@ impl VmBackend {
             Value::Struct { name, fields } => {
                 if let [(storage, Value::Tuple(elements))] = fields.as_slice()
                     && storage == "storage"
-                    && is_nominal_tuple(&name)
+                    && crate::crossing::is_nominal_tuple(&name)
                 {
                     return elements
                         .iter()
@@ -591,6 +591,18 @@ impl VmBackend {
                 .map(|value| self.freeze_value(value, active))
                 .collect::<Result<Vec<_>, _>>()
                 .map(CtValue::Tuple),
+            Value::Variant {
+                alternatives,
+                index,
+                value,
+            } => Ok(CtValue::Variant {
+                alternatives,
+                index,
+                payload: match *value {
+                    Value::None => None,
+                    value => Some(Box::new(self.freeze_value(value, active)?)),
+                },
+            }),
             Value::ComptimeList(elements) => elements
                 .into_iter()
                 .map(|value| self.freeze_value(value, active))
@@ -1050,14 +1062,6 @@ struct StructDef {
     members: Vec<(String, String)>,
 }
 
-/// Whether the struct `name` is an instance of the nominal `Tuple`.
-fn is_nominal_tuple(name: &str) -> bool {
-    let template = name.split_once("$mono$").map_or(name, |(base, _)| base);
-    template
-        .strip_suffix(mojito_types::types::TUPLE_TYPE_NAME)
-        .is_some_and(|module| module.is_empty() || module.ends_with('$'))
-}
-
 fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
     Some(match value {
         CtValue::Int(value) => Value::Int(value),
@@ -1119,6 +1123,23 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
                 .into_iter()
                 .map(|(field, value)| Some((field, ct_value_as_runtime(value)?)))
                 .collect::<Option<Vec<_>>>()?,
+        },
+        CtValue::Variant {
+            alternatives,
+            index,
+            payload,
+        } => Value::Variant {
+            value: Box::new(match payload {
+                Some(payload) => {
+                    crate::crossing::thawed_payload(
+                        alternatives.get(index),
+                        ct_value_as_runtime(*payload)?,
+                    )
+                }
+                None => Value::None,
+            }),
+            alternatives,
+            index,
         },
         CtValue::Pointer { .. }
         | CtValue::StoreToMem(_)

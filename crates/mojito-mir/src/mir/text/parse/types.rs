@@ -1288,6 +1288,25 @@ impl Decoder {
                     fields: entries,
                 })
             }
+            ValueKind::Record(tag, fields) if tag == "ct_variant" => {
+                let alternatives =
+                    self.req(value, fields, "alternatives", |d, v| Some(d.types(v)))?;
+                let index = self
+                    .field(fields, "index")
+                    .ok()
+                    .and_then(|v| self.int64(v))
+                    .and_then(|index| usize::try_from(index).ok())?;
+                let payload = match self.field(fields, "payload") {
+                    Ok(payload) => Some(Box::new(self.ct_value(payload)?)),
+                    Err(()) => None,
+                };
+                self.unknown(fields, &["alternatives", "index", "payload"]);
+                Some(CtValue::Variant {
+                    alternatives,
+                    index,
+                    payload,
+                })
+            }
             ValueKind::Record(tag, fields) if tag == "ct_dict" => {
                 let spelling = match self.field(fields, "spelling") {
                     Ok(spelling) => Some(self.ty(spelling)?),

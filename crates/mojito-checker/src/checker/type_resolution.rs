@@ -1165,6 +1165,16 @@ impl Checker {
             }
             return self.variant_type(args).map(Some);
         }
+        // The case-indexed storage of an `enum`: the intrinsic union over
+        // the case payload types, which may repeat and may be none at all.
+        if name == mojito_types::types::ENUM_STORAGE_TYPE_NAME {
+            if !self.enum_storage_allowed() {
+                return Err(TypeError::Unsupported(format!(
+                    "'{name}' is the storage of an 'enum'; declare one instead"
+                )));
+            }
+            return self.enum_storage_type(args).map(Some);
+        }
         // Compiler-private inline uninit storage (`MaybeUninit`'s
         // field), reachable only from the bundled crossing module.
         if name == mojito_types::types::UNINIT_STORAGE_TYPE_NAME {
@@ -3783,6 +3793,27 @@ impl Checker {
         Self::reject_mixed_spread("Variant", &alternatives)?;
         let attributes = types_attributes(args, &alternatives);
         Ok((TyKind::Variant(alternatives).into(), attributes))
+    }
+
+    /// Resolve the case payload types of `__EnumStorage[T1, ..., Tn]`. Unlike
+    /// a `Variant`'s alternatives they may repeat, since every operation
+    /// selects a case by index, and an enum without cases has none.
+    pub(super) fn enum_storage_type(
+        &self,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<(Ty, BracketAttributes), TypeError> {
+        let alternatives = args
+            .iter()
+            .map(|arg| self.type_param_argument(arg, "enum case payload"))
+            .collect::<Result<Vec<_>, _>>()?;
+        let attributes = types_attributes(args, &alternatives);
+        Ok((TyKind::Variant(alternatives).into(), attributes))
+    }
+
+    /// Whether the declaration being checked may name `__EnumStorage`: an
+    /// `enum`, whose generated members do, or the bundled library.
+    pub(super) const fn enum_storage_allowed(&self) -> bool {
+        self.enum_declaration || self.bundled_stdlib_declaration
     }
 
     pub(super) fn type_param_argument(

@@ -32,3 +32,6 @@ from std.builtin._stubs import (
     paramfor_next_iter,
     paramfor_next_value,
 )
+# Every `enum` conforms to `__Enum`, by its linked name, as upstream's
+# compiler finds the module implementing enums by path.
+from std.builtin._enum import __Enum

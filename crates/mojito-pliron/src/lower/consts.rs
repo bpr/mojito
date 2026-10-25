@@ -286,6 +286,21 @@ impl FnLowering<'_> {
                 self.store_string_fields(ctx, address, data, length, length, dest);
                 return Ok(());
             }
+            // A frozen enum case: its tag, then its payload, if any, at the
+            // variant's payload offset.
+            (CtValue::Variant { index, payload, .. }, TyKind::Variant(alternatives)) => {
+                let layout = self.layout.variant_layout(alternatives).map_err(|error| {
+                    self.unsupported_reg(format!("frozen variant layout ({error})"), dest)
+                })?;
+                let tag = self.tag_constant(ctx, *index as u32);
+                let store = StoreOp::new(ctx, tag, address);
+                self.append(ctx, store.get_operation(), Some(dest));
+                if let (Some(payload), Some(payload_ty)) = (payload, alternatives.get(*index)) {
+                    let payload_address = self.gep_byte(ctx, address, layout.payload_offset, dest);
+                    self.store_parameter_value(ctx, payload_address, payload, payload_ty, dest)?;
+                }
+                return Ok(());
+            }
             (CtValue::Struct { .. } | CtValue::Tuple(_), TyKind::Struct(name, _)) => {
                 let Some(decl) = self.struct_decls.get(name.as_str()) else {
                     return Err(self.unsupported_reg(format!("parameter value of `{name}`"), dest));

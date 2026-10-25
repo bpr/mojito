@@ -287,6 +287,7 @@ impl Table<'_> {
             | MirInstr::TypeName { .. }
             | MirInstr::ParamListAddress { .. }
             | MirInstr::VariantIs { .. }
+            | MirInstr::VariantTag { .. }
             | MirInstr::MakeSimd { .. }
             | MirInstr::SimdCast { .. }
             | MirInstr::SimdBitcast { .. }

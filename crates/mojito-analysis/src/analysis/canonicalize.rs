@@ -300,8 +300,19 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
                 .is_some_and(|ty| declarations.copy_is_identity(ty))
     };
     let sole_reader = |reg: &Reg| reads.get(reg.0 as usize) == Some(&1);
+    // A field read of a `struct.create` forwards the field's operand, which
+    // the creation reads: an owned operand forwards only when that read is
+    // the struct's last, so the creation dies with it.
+    let sole_struct_reader = |dest: &u32| {
+        structs
+            .extracts
+            .get(dest)
+            .is_none_or(|(base, _)| sole_reader(base))
+    };
     folds.retain(|dest: &u32, operand: &mut Reg| {
-        single(*dest, 1) && single(operand.0, 1) && (in_register(operand) || sole_reader(operand))
+        single(*dest, 1)
+            && single(operand.0, 1)
+            && (in_register(operand) || (sole_reader(operand) && sole_struct_reader(dest)))
     });
     // A trivial struct copy's container keeps the copy's readers alone: the
     // extracts that were its only other readers go with the copy.

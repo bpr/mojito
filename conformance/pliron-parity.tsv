@@ -1228,6 +1228,14 @@ assets/extensions/ok/comprehension_borrowed_named_source.mojo	main	exe-different
 assets/extensions/ok/container_owning_family_apis.mojo	main	exe-differential	sanitized
 assets/extensions/ok/copyable_iterator_reference_aggregate.mojo	main	exe-differential	sanitized
 assets/extensions/ok/delegated_ref_return_projection.mojo	main	exe-differential	sanitized
+assets/extensions/ok/enum_caseless.mojo	main	exe-differential	sanitized
+assets/extensions/ok/enum_construction.mojo	main	exe-differential	sanitized
+assets/extensions/ok/enum_generic_payloads.mojo	main	exe-differential	sanitized
+assets/extensions/ok/enum_many_cases.mojo	main	exe-differential	sanitized
+assets/extensions/ok/enum_nullary_constants.mojo	main	exe-differential	sanitized
+assets/extensions/ok/enum_payload_lifecycle.mojo	main	exe-differential	sanitized
+assets/extensions/ok/enum_user_equality_hashing.mojo	main	exe-differential	sanitized
+assets/extensions/ok/enum_writable_default.mojo	main	exe-differential	sanitized
 assets/extensions/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/extensions/ok/generic_borrowed_dispatch_overloaded_iter.mojo	main	exe-differential	sanitized
 assets/extensions/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized

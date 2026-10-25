@@ -1216,6 +1216,7 @@ impl Checker {
         self.enum_like_list(ty, "_enum_case_types")?
             .and_then(|types| types.into_iter().nth(index))
             .map(mojito_types::types::DependentType::resolve)
+            .map(|payload| subject_binder(payload, ty))
             .ok_or_else(|| {
                 TypeError::MatchPattern(
                     "'_enum_case_types' must be a parameter list covering every case".into(),
@@ -1971,4 +1972,31 @@ fn substitute_bindings(guard: &Expr, bindings: &[ComptimeBinding]) -> Expr {
     let mut guard = guard.clone();
     mojito_ast::visit::walk_expr_mut(&mut Substitute(bindings), &mut guard);
     guard
+}
+
+/// A payload type that names one of the subject's own parameters (`T` of
+/// `Result[T, E]`), as the subject's argument for it, which carries the
+/// bounds the declaration states. Folding the case types reads the
+/// parameter only by its declaration.
+fn subject_binder(payload: Ty, subject: &Ty) -> Ty {
+    let TyKind::Dependent(mojito_types::types::DependentType::Parameter(expr)) = payload.kind()
+    else {
+        return payload;
+    };
+    let (mojito_types::param_expr::ParamKind::DeclRef(reference), TyKind::Struct(_, arguments)) =
+        (expr.kind(), subject.kind())
+    else {
+        return payload;
+    };
+    arguments
+        .iter()
+        .find_map(|argument| match argument {
+            mojito_types::types::TyArg::Ty(argument)
+                if matches!(argument.kind(), TyKind::Param { binder, .. } if binder.id == reference.id) =>
+            {
+                Some(argument.clone())
+            }
+            _ => None,
+        })
+        .unwrap_or(payload)
 }

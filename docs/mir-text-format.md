@@ -22,10 +22,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.102
+mojito-mir 1.103
 ```
 
-The writer emits 1.102. The reader accepts 1.0 through 1.102; *Schema 1.0*
+The writer emits 1.103. The reader accepts 1.0 through 1.103; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -500,6 +500,14 @@ at a concrete binding holds the bound type (`operand_type`) or a pack's
 bound list (`operand_value` of a type tuple, or `operand_expr` over the
 caller's binders). An older artifact's `param` reads as `operand_param`.
 The package format moves to `mojito-package 92`.
+
+Schema 1.103 adds `variant.tag { dest, variant }`, the index of a variant's
+active alternative as an `Int`, which an `enum` storage's
+`get_discriminant()` reads, and the `ct_variant { alternatives, index,
+payload }` compile-time value, a frozen variant whose `payload` is absent
+for an alternative of type `NoneType` (an enum case without a payload). An
+older artifact holds neither. The package format moves to `mojito-package
+93`, whose source statements also carry an `enum` declaration's cases.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1209,6 +1217,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeTuple` | `tuple.make` — the elements of a heterogeneous collector or of a typed `Tuple[T, ...]` construction (schema 1.95: every call builds its callee's collector so, not only an inlined one) |
 | `MakeArray` | `array.create { dest, elems: [%rA, …] }` (schema 1.97: upstream's `pop.array.create`, the `!pop.array` of `dest`'s register type built from one register per element, in order; a call builds the element pointers of its callee's `*xs: T` so, stored in its `__passed_varargs__` slot) |
 | `MakeVariant` / `VariantIs` / `VariantGet` / `VariantSet` | `variant.make` / `variant.is` / `variant.get` / `variant.set` (schema 1.71: `variant.make` and `variant.set` carry `constructor: "<symbol>"` after their operands when the payload names the constructor it runs, the `__copyinit__` through schema 1.100 and the `__moveinit__` from 1.101, which takes `value` by move; schema 1.73: `variant.set` carries `destructors: [present("<symbol>") | absent, ...]`, one entry per alternative, naming the `__deinit__` the replaced payload runs under that tag, omitted while it names none) |
+| `VariantTag` | `variant.tag { dest, variant }` (schema 1.103: the active alternative's index as an `Int`, an `enum` storage's discriminant) |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.73: `variant.set_init_with` carries `destructors` as `variant.set` does) |
 | `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_shuffle { lanes: [<param_expr>, ...] }`, `lane_slice { offset: <param_expr>, width: <width> }`, or `lane_join {}`, which elaboration closes (schema 1.26) |
 | `Try` | `try { label: tryN, results: [%rN...], body, handler_arguments: [%rN...], handler, else_arguments: [%rN...], orelse }` — `lit.try` after `lowerTryFinally`: `label` names it for the raises in its body (schema 1.92; before, a `try` named nothing and held `finalbody` and `cleanup`, see *Compatibility*); `results` are the op's, `handler_arguments` the handler's, which every raise naming it defines, and `else_arguments` the `else`'s, which the body's `try.yield` defines (schema 1.93) |

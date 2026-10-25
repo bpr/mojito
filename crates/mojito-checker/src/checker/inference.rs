@@ -1273,6 +1273,14 @@ impl Checker {
                     }
                     return Ok(result);
                 }
+                if self.enum_storage_allowed()
+                    && let Some(TyKind::Variant(alternatives)) = self
+                        .variant_projection_receiver(object)?
+                        .as_ref()
+                        .map(Ty::kind)
+                {
+                    return self.infer_enum_payload_projection(expr, alternatives, index);
+                }
                 self.infer_index(expr.source_span(), object, index)
             }
             // A dynamic/indexed expression does not designate independently
@@ -1581,6 +1589,25 @@ impl Checker {
         let TyKind::Variant(alternatives) = object_ty.kind() else {
             return None;
         };
+        // An `enum`'s storage reads the index of its active case.
+        if field == "get_discriminant" && self.enum_storage_allowed() {
+            return Some(
+                if param_args.is_empty() && args.is_empty() && kwargs.is_empty() {
+                    self.record_at(span).adjustment = Some(Box::new(
+                        mojito_checked::checked::SemanticAdjustment::VariantTag {
+                            alternatives: alternatives.clone(),
+                        },
+                    ));
+                    Ok(Ty::int())
+                } else {
+                    Err(TypeError::ArityMismatch {
+                        name: "get_discriminant".to_string(),
+                        expected: 0,
+                        got: args.len() + kwargs.len(),
+                    })
+                },
+            );
+        }
         if !matches!(
             field,
             "isa"
@@ -2035,7 +2062,26 @@ impl Checker {
                     });
                 }
             };
-            let rewritten = with_contextual_root(expression, &base);
+            // An expected type that applies parameters (`Result[Int,
+            // String]`) roots the chain at that application, so a static
+            // member call binds them as the spelled form does.
+            let root = match expected.kind() {
+                TyKind::Struct(_, arguments) if !arguments.is_empty() => arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => mojito_types::ct::source_type(ty, expression.span)
+                            .map(mojito_ast::ast::ParamArg::Type),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()
+                    .map(|args| ExprKind::TypeApply {
+                        name: base.clone(),
+                        args,
+                    }),
+                _ => None,
+            }
+            .unwrap_or_else(|| ExprKind::Identifier(base.clone()));
+            let rewritten = with_contextual_root(expression, &root);
             let ty = self.infer_with_expected(&rewritten, expected, record)?;
             if record {
                 self.record_at(root_span).contextual_base = Some(base);
@@ -2817,6 +2863,115 @@ impl Checker {
         Ok(mojito_types::types::tuple_type(elements))
     }
 
+    /// `storage[id]` over an `enum`'s storage: the payload of case `id`, a
+    /// compile-time `Int` (the generated `_unsafe_get_enum_payload[id]`'s
+    /// own parameter), as upstream's `payload_ptr[id]()` addresses it. Over
+    /// a symbolic `id` the payload's type is the selection of `id` among the
+    /// case types, which each instance closes.
+    fn infer_enum_payload_projection(
+        &self,
+        expr: &Expr,
+        alternatives: &[Ty],
+        index: &Expr,
+    ) -> Result<Ty, TypeError> {
+        let case = self.compile_dependent_ct_expr(index)?;
+        let (index, payload) =
+            if let Some(known) = case.as_i64().and_then(|case| usize::try_from(case).ok()) {
+                (
+                    VariantIndex::Known(known),
+                    alternatives.get(known).cloned().ok_or_else(|| {
+                        TypeError::InvariantViolation(format!(
+                            "enum case {known} is out of range for {} case(s)",
+                            alternatives.len()
+                        ))
+                    })?,
+                )
+            } else {
+                let selected = self
+                    .param_context
+                    .select(alternatives.to_vec(), &case)
+                    .map_err(param_error)?;
+                (
+                    VariantIndex::Expr(case),
+                    mojito_types::types::DependentType::resolve(selected),
+                )
+            };
+        self.record_at(expr.source_span()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::VariantProject {
+                alternatives: alternatives.to_vec(),
+                index,
+            },
+        ));
+        self.record_interior_reference(expr.source_span(), expr, "value");
+        Ok(payload)
+    }
+
+    /// `__EnumStorage[T0, ...](payload, index=i)`: case `i` of an enum's
+    /// storage, whose payload converts to `Ti` as an argument does. The
+    /// index is a literal the generated case member spells.
+    pub(super) fn infer_enum_storage_construction(
+        &self,
+        span: SourceSpan,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        let (storage, attributes) = self.enum_storage_type(param_args)?;
+        self.record_bracket_attributes(span.clone(), attributes);
+        let TyKind::Variant(alternatives) = storage.kind() else {
+            return Err(TypeError::InvariantViolation(
+                "enum storage construction did not produce a variant".to_string(),
+            ));
+        };
+        let index = match (args, kwargs) {
+            (
+                [_],
+                [
+                    mojito_ast::ast::KwArg {
+                        name,
+                        value:
+                            Expr {
+                                kind: ExprKind::Int(index),
+                                ..
+                            },
+                    },
+                ],
+            ) if name == "index" => index.to_u64().and_then(|index| usize::try_from(index).ok()),
+            _ => None,
+        };
+        let Some((index, payload)) =
+            index.and_then(|index| alternatives.get(index).map(|payload| (index, payload)))
+        else {
+            return Err(TypeError::BadCall {
+                func: mojito_types::types::ENUM_STORAGE_TYPE_NAME.to_string(),
+                reason: "expected one payload and a literal 'index' naming a case".to_string(),
+            });
+        };
+        let actual = self.infer(&args[0])?;
+        if !self.record_implicit_conversion(&args[0], &actual, payload)? {
+            return Err(TypeError::TypeMismatch {
+                expected: payload.to_string(),
+                found: actual.to_string(),
+                context: "enum case payload".to_string(),
+            });
+        }
+        self.check_consuming(&args[0], &actual, "enum case payload")?;
+        // The payload binds the storage's owned slot as an argument binds a
+        // `var` parameter: a transferred local hands over its storage, and
+        // the construction moves it in once, as upstream's
+        // `init_pointee_move` does.
+        if matches!(args[0].kind, ExprKind::Transfer(_)) {
+            self.record_at(args[0].source_span()).forwarded_argument = true;
+        }
+        self.record_at(span).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::ConstructVariant {
+                alternatives: alternatives.clone(),
+                index: VariantIndex::Known(index),
+            },
+        ));
+        Ok(storage)
+    }
+
     pub(super) fn infer_variant_construction(
         &self,
         span: SourceSpan,
@@ -3119,11 +3274,11 @@ fn contextual_member_name(expression: &Expr) -> String {
 /// A clone of `expression` whose `$contextual` chain root is replaced by the
 /// resolved base type name. Spans and syntax ids are untouched, so recorded
 /// facts key identically to the original nodes.
-fn with_contextual_root(expression: &Expr, base: &str) -> Expr {
-    fn replace(expression: &mut Expr, base: &str) {
+fn with_contextual_root(expression: &Expr, base: &ExprKind) -> Expr {
+    fn replace(expression: &mut Expr, base: &ExprKind) {
         match &mut expression.kind {
             ExprKind::Identifier(name) if name == mojito_ast::ast::CONTEXTUAL_SENTINEL => {
-                *name = base.to_string();
+                expression.kind = base.clone();
             }
             ExprKind::Member { object, .. }
             | ExprKind::MethodCall { object, .. }

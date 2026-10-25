@@ -1003,6 +1003,12 @@ pub enum SemanticAdjustment {
         /// `MaterializeBorrowSource`), and one span carries one adjustment.
         materialized: Option<mojito_types::origin::OwnerId>,
     },
+    /// Read the index of an `enum` storage's active case
+    /// (`storage.get_discriminant()`), as upstream reads its
+    /// `!kgen.variant`'s discriminant.
+    VariantTag {
+        alternatives: Vec<Ty>,
+    },
     /// Test the active runtime tag (`value.isa[T]()`).
     VariantIs {
         alternatives: Vec<Ty>,
