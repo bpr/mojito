@@ -1,0 +1,78 @@
+  functions: [
+      fn {
+        name: cnt,
+        registers: 2,
+        vars: 1,
+        var_names: [xs],
+        params: 1,
+        param_types: [struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] } }, reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 67, end: 69, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 63, end: 70, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), projections: [], type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), through: absent } },
+              call { dest: %r1, func: "len$ov$T$Sized", raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] })], spread: absent }
+            ],
+            terminator: return { value: present(%r1) }
+          }
+        ]
+      },
+      fn {
+        name: main,
+        registers: 20,
+        vars: 5,
+        var_names: ["$list_element_r1", "$list_element_r3", "$list_element_r5", __passed_varargs__, "xs$inline4"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: pop_array { size: 3, element: pointer { element: Int, origin: pointer_untracked { mutable: false } } } }, var_type { var: $v4, type: struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: IntLiteral }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: None }, reg_type { reg: %r8, type: pointer { element: Int, origin: pointer_untracked { mutable: false } } }, reg_type { reg: %r9, type: pointer { element: Int, origin: pointer_untracked { mutable: false } } }, reg_type { reg: %r10, type: pointer { element: Int, origin: pointer_untracked { mutable: false } } }, reg_type { reg: %r11, type: pop_array { size: 3, element: pointer { element: Int, origin: pointer_untracked { mutable: false } } } }, reg_type { reg: %r12, type: pointer { element: pointer { element: Int, origin: pointer_untracked { mutable: false } }, origin: pointer_untracked { mutable: false } } }, reg_type { reg: %r13, type: Int }, reg_type { reg: %r14, type: struct_type { name: Span, arguments: [type_arg(pointer { element: Int, origin: pointer_untracked { mutable: false } }), origin_arg(origin_untracked { mutable: false })] } }, reg_type { reg: %r15, type: struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] } }, reg_type { reg: %r16, type: None }, reg_type { reg: %r17, type: struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] } }, reg_type { reg: %r18, type: Int }, reg_type { reg: %r19, type: struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 99, end: 100, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 99, end: 100, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 102, end: 103, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 102, end: 103, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 105, end: 106, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 105, end: 106, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 89, end: 108, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r15, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }, reg_loc { reg: %r19, location: present(loc { file: file0, start: 95, end: 107, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: int_literal(1) },
+              literal.materialize { dest: %r1, value: %r0, target: Int },
+              const { dest: %r2, value: int_literal(2) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              const { dest: %r4, value: int_literal(3) },
+              literal.materialize { dest: %r5, value: %r4, target: Int },
+              var.store { var: $v0, src: %r1, binding_type: present(Int), in_place: false },
+              ref.make { dest: %r8, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              var.store { var: $v1, src: %r3, binding_type: present(Int), in_place: false },
+              ref.make { dest: %r9, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              var.store { var: $v2, src: %r5, binding_type: present(Int), in_place: false },
+              ref.make { dest: %r10, place: place { root: $v2, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              array.create { dest: %r11, elems: [%r8, %r9, %r10] },
+              var.store { var: $v3, src: %r11, binding_type: present(pop_array { size: 3, element: pointer { element: Int, origin: pointer_untracked { mutable: false } } }), in_place: false },
+              ref.make { dest: %r12, place: place { root: $v3, root_type: present(pop_array { size: 3, element: pointer { element: Int, origin: pointer_untracked { mutable: false } } }), projections: [projection { op: const_index(0), type: pointer { element: Int, origin: pointer_untracked { mutable: false } } }], type: present(pointer { element: Int, origin: pointer_untracked { mutable: false } }), through: absent } },
+              const { dest: %r13, value: int(3) },
+              struct.create { dest: %r14, fields: [%r12, %r13] },
+              struct.create { dest: %r15, fields: [%r14] },
+              var.store { var: $v4, src: %r15, binding_type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), in_place: false },
+              loop { results: [%r6], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [place.load { dest: %r17, place: place { root: $v4, root_type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), projections: [], type: present(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] }), through: absent } }, call { dest: %r18, func: "len$ov$T$Sized", raises: absent, args: [%r17], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [type_arg(struct_type { name: VariadicList, arguments: [type_arg(Int), value_arg(ct_bool(false))] })], spread: absent }], terminator: break { label: present(loop4294967295), values: [%r18] } }] },
+              var.use { dest: %r19, var: $v4, mode: forward },
+              call.method { dest: %r16, recv: %r19, method: __deinit__, resolved: present("VariadicList.__deinit__"), raises: absent, reference_result: absent, result_adapter: absent, args: [], kwargs: [], recv_place: absent, recv_writes: true, receiver_convention: present(deinit), arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent },
+              drop.var { var: $v3 },
+              call { dest: %r7, func: print, raises: absent, args: [%r6], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]

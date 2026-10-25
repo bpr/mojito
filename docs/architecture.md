@@ -5859,8 +5859,13 @@ point where a slot declared in a loop is uninitialized again.
   is made and no move initializer runs; an initializer's call takes its
   `out self` slot forwarded, `UseMode::Forward`. A value-less return in a
   callee returning a value (after a raise, or the checker's fall-off) is
-  `unreachable`. A returned reference, and one a break of a loop whose
-  result the body returns carries, takes the call's reference type. The
+  `unreachable`. A returned reference, and each one a region result it
+  returns merges (a loop's breaks, a loop argument's operands and
+  continues, an `if`'s yields: the private `carried_values`), takes the
+  call's reference type. A reference-returning callee inlines when each
+  returned reference, or each one so merged, is made to a place-bound
+  parameter's place, to a pointee (an index of a pointer at any depth of
+  the place), or is of static origin (`returns_bound_place`). The
   body's registers and slots move past the caller's
   (`mir::renumber_block_slots`), regions included, and its slot names gain
   `$inline{n}`, so no binder name or `self` matches them. The call's block binds each owned
@@ -5869,10 +5874,15 @@ point where a slot declared in a loop is uninitialized again.
   copy of a closed-type slot (a `var.use copy` naming no constructor) or a
   `struct.create`, with a `var.store` of the argument into the parameter's
   fresh slot, and every other `read` parameter is the caller's place the
-  call retained for it or the argument was `place.load`ed from, directly or
+  call retained for it or the argument was `place.load`ed from, directly,
   through a `ref.read` of a `ref.make` the same block made (the private
-  `loaded_place`), composed into each of the callee's places rooted at it,
-  as upstream substitutes the borrowed address. A `mut` or `ref` parameter
+  `loaded_place`), or as a whole slot past region ops that never name it
+  (`loaded_slot_across_regions`: a temporary receiver loaded before a later
+  argument's inlined body), composed into each of the callee's places
+  rooted at it, as upstream substitutes the borrowed address. One read
+  through a `ref`-typed register (`read_through_register`, only shallow
+  reads between) binds that register as its handle, as below; one read
+  through a pointer keeps the call (R1346). A `mut` or `ref` parameter
   is the caller's place the call passes, except a `ref` field reached
   directly (a projected place of a `ref` type with no `through`), whose
   address is the handle the field stores: the parameter is then its own
@@ -5884,7 +5894,15 @@ point where a slot declared in a loop is uninitialized again.
   when its parameter type's drop runs no code
   (`MirDeclarations::drop_runs_no_code`), as upstream substitutes a
   register-passable SSA value; `sroa` leaves such arguments where it
-  splits the temporary they were loaded from. A whole-slot copy of a place-bound
+  splits the temporary they were loaded from. Any other such argument, an
+  owned register (`RegisterEnds`) the call's block defines before the call
+  and passes once, is lent (`Binding::Lent`): the block stores it into the
+  parameter's fresh slot, forwards the slot into a fresh register past the
+  body and before the call's error region, and every later read of the
+  argument register reads that one (`replace_register_reads`), as upstream
+  passes the address of the temporary its caller materializes and still
+  destroys. A homogeneous `read` collector the call builds as an owned
+  `VariadicList` is lent the same way. A whole-slot copy of a place-bound
   parameter becomes a `place.load` of the caller's place and a
   `value.copy` of the loaded register (the private
   `copy_bound_parameters`, taking a fresh callee register), which
@@ -5892,7 +5910,8 @@ point where a slot declared in a loop is uninitialized again.
   as it names any copy; an `iter.init` over one iterates the caller's
   slot, and a loan's interior of one is an interior of that slot; a
   parameter bound so that the callee names it otherwise as a slot keeps
-  the call (R1099). In a wrapped body every return, at any depth, is a
+  the call, a shape lowering never emits, since a `for` iterates a slot of
+  its own. In a wrapped body every return, at any depth, is a
   `break` of the wrapper carrying the returned value, which defines the
   wrapper's one result, the call's register, as upstream's `hlcf.break`
   carries it. A `None` result is a constant, and

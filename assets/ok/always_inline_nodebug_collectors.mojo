@@ -1,14 +1,25 @@
-# Each call that collects or spreads arguments into an `@always_inline("nodebug")`
-# callee is inlined: a homogeneous collector, a heterogeneous one, an owned
-# one, a spread of the caller's pack, a forwarded `**kwargs^`, and the
-# consuming `Tuple` members, whose bodies apply a compile-time function to
-# the owner's pack, on a copied receiver.
+# Calls that collect or spread arguments into an `@always_inline("nodebug")`
+# callee: a homogeneous collector, which a loop-free body borrows from the
+# caller's temporary (`cnt`, `second`), a heterogeneous one, an owned one, a
+# spread of the caller's pack, a forwarded `**kwargs^`, and the consuming
+# `Tuple` members, whose bodies apply a compile-time function to the owner's
+# pack, on a copied receiver.
 @always_inline("nodebug")
 def total(*xs: Int) -> Int:
     var s = 0
     for x in xs:
         s += x
     return s
+
+
+@always_inline("nodebug")
+def cnt(*xs: Int) -> Int:
+    return len(xs)
+
+
+@always_inline("nodebug")
+def second(*values: Int) -> Int:
+    return values[1]
 
 
 @always_inline("nodebug")
@@ -64,6 +75,8 @@ struct Sink:
 
 def main():
     print(total(1, 2, 3), total())
+    print(cnt(1, 2, 3), cnt())
+    print(second(4, 5, 6))
     var a = String("ab")
     print(names(a, String("cde")), owned(a, String("f")))
     var s = String()

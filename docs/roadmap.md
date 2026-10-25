@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1346**.
+Next free ID: **R1348**.
 
 ## Ordered Work
 
@@ -145,6 +145,12 @@ which names the upstream pass each one follows. Each is measured by the
     in concrete MIR.
   - Probe: `d["x"]` on a `var d: Dict[String, Int]` keeps its
     `Dict.__getitem__` call (`assets/ok/template_method_element_field_result.mojo`).
+  - Probe: a `ref` parameter passed on has the same cause:
+    `through(ref x) -> ref [x] Int` returning `pick(x)` types the result
+    `immutable`, so `through(y) += 3` keeps its call in
+    `assets/ok/always_inline_nodebug_reference_results.mojo`.
+  - Probe: `Optional.unsafe_value(ref self)` returning
+    `self._unsafe_unchecked_value()` keeps its call at a mutable caller.
   - `tests/mir_passes/automatic-inline/ref_result_immutable_kept_for_mut_call.mir`
     pins the rule; a body spelling the receiver's parameter inlines
     (`ref_result_param_mutability_inlined.mir`).
@@ -327,29 +333,48 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1344, which makes the shape reachable from source.
   - Model: Opus, Not Planned.
 
-- [ ] **R1099 `inline-parametric` keeps a call whose argument has no place
-  or slot form to bind**
+- [ ] **R1346 A `read` argument read through a pointer register keeps
+  its `nodebug` call**
 
-  A `read` parameter binds the caller's place or a fresh slot, and a
-  place-bound parameter stands only where the body names it as a place's
-  root, a whole-slot copy, a whole-root iteration, or a loan interior
-  (`inlined_blocks`), so a body using it otherwise keeps the call, where
-  upstream substitutes the argument's address for every use.
-  - Probe: `for x in self.items` in a `nodebug` method whose `self` is
-    bound through a projection iterates a projected place
-    (`iter.init { source }` takes a slot).
-  - Probe: a `read` argument read through a reference the block did not
-    make (a `ref` parameter's handle passed on) has no place
-    (`loaded_place` follows a `ref.make` of the same block only).
-  - Probe: `vals[1]` in a `*values: Int` callee keeps
-    `ParameterList.__getitem__`, whose returned reference is to a
-    temporary span of its own, not to a bound place
-    (`returns_bound_place`); on the pin the reference is static.
-  - The lever: a slot the caller's block stores the place's value into
-    for a borrowed use, as a `read` argument's temporary, and a returned
-    reference admitted when its register's origin is static.
+  A pointer's value is the address upstream passes for its pointee, but a
+  MIR place cannot root at a pointer register, so `inline-parametric`
+  has no address to bind the parameter to.
+  - Probe: `len(self.src[])` in `_SetIter.__len__`, `_SetIter.__next__`,
+    `_DictEntryIter.__next__`, and `_VariadicListIter.__next__` keeps its
+    `len` call (`ref.read` of the pointer `self.src` loads).
+  - Binding the parameter through a fresh pointer-typed slot fails
+    verification: `place_base_ty` (`mir/verify/places.rs`) unwraps only a
+    `ref` through-root, so a pointer root reports "place terminal type
+    List[Int] does not match projected type Pointer[List[Int], …]".
+  - Lever: a pointer-typed through-root designates its pointee, in
+    `place_base_ty` and in the VM's and Pliron's place walkers; then
+    `read_through_register` (`analysis/inline_parametric.rs`) admits a
+    pointer register too.
+  - Regression set: `assets/ok/pointer_field_deref_index.mojo`,
+    `pointer_field_view_for_temporary.mojo`,
+    `pointer_field_view_ref_yield.mojo`,
+    `pointer_origin_cast_reads_pointee.mojo`,
+    `pointer_field_wrapper_iterator_protocol.mojo`, and
+    `template_served_loan_carrying_instance.mojo`.
+  - Found while landing R1099 (2026-10-24).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1347 A callee returning a reference through a local `ref` slot
+  keeps its `nodebug` call**
+
+  `returns_bound_place` admits a returned reference made to a place-bound
+  parameter, a pointee, or a static origin, but not one made through a
+  local `ref` slot an inner reference-returning call fills, which names
+  the caller's place only through that call's result.
+  - Probe: `Dict.setdefault` returning `ref.make $local.value`, `$local`
+    holding an inner `List.__getitem__` result, keeps its call in
+    `assets/ok/dict_methods_growth.mojo`.
+  - Lever: follow the local slot's one store to the reference it holds,
+    and admit the slot's place when that reference is itself admitted.
+  - Found while landing R1099 (2026-10-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1031 The VM still dispatches an indirect call on a struct value
   by name**
@@ -428,6 +453,11 @@ which names the upstream pass each one follows. Each is measured by the
     `docs/pre-elaboration-optimization-plan.md` say the pin refuses such a
     callee, which neither the 2026-09-21 nor the 2026-10-17 pin does.
   - Done when the probes inline and a pass case pins one.
+  - Once this lands, a homogeneous `read` collector a `for` body iterates
+    (`total(1, 2, 3)` in `assets/ok/always_inline_nodebug_collectors.mojo`)
+    inlines as a lent slot, as the loop-free `cnt` does since R1099; a
+    `for` body's place-bound receiver composes through its `$iter` slot,
+    so `rebind_blocks`' whole-root `GetIter` rule needs no change.
   - Found while landing R1075 (2026-10-22).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2389,6 +2419,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   copied ... (ordinary value read through a reference result)", where the
   pin binds the element by reference.
   - The generic `ref x: T` form fails the same way.
+  - Probe: a `read` parameter too: `value(pick(r))` over a `Movable`
+    `Res`, `pick(ref r: Res) -> ref [r] Res`, is rejected, where the pin
+    borrows the referent and prints its value.
   - The rejection is the checker's implicit-copy test on a reference
     result (`crates/mojito-checker/src/checker.rs`), which treats the
     `ref` slot as a consuming read.

@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `inline-parametric` binds a `read` argument by the address upstream's
+  inliner substitutes where it had none to bind (R1099): an owned
+  temporary the caller still destroys, such as a homogeneous collector's
+  `VariadicList` or a call's result, is lent through a slot the caller
+  takes back forwarded after the body; a receiver loaded before a later
+  argument's inlined body binds its slot (`String("a b c").split(" ")`);
+  and one read through a `ref` register binds that register as its handle
+  (`String.__copyinit__` over a tuple element). A reference-returning
+  callee inlines when its returns merge through an `if` (`either`) or
+  return a pointee or a static-origin reference
+  (`ParameterList.__getitem__`, `List.__getitem__` in `_ListIter.__next__`).
+  A `read` argument read through a pointer (R1346) and a reference returned
+  through a local `ref` slot (R1347) still keep their calls.
+
 - `canonicalize` folds a known callee, as KGEN's `CallParamOp` and
   `CallIndirectOp` canonicalizers do (R1098): a `call.indirect` whose
   callee register is defined once by a function constant or a capture-free
@@ -521,6 +535,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A loop-free `@always_inline("nodebug")` callee of a homogeneous `read`
+  collector (`def cnt(*xs: Int) -> Int: return len(xs)` called as
+  `cnt(1, 2, 3)`) no longer fails verification after `inline-parametric`
+  with "call.method ends owned register …": the collector is lent to the
+  body instead of consumed by its slot, so the caller's
+  `VariadicList.__deinit__` ends it once (R1099).
 - A `ref` binding names an origin, as upstream's does, instead of
   borrowing its owner exclusively (R1082): a read, write, mutating call,
   capture, or second reference of the owner beside a live `ref` binding
