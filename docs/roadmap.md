@@ -1495,24 +1495,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1353 `List.resize(n, fill)` copies `fill` twice per element**
-
-  Problem: `l.resize(2, a)` over an `a` printing its copies prints `copy
-  1`, `copy 11`, `del 11` per element and leaves elements holding `21`,
-  where the pin copies `fill` once per element.
-  - `unsafe_write(copy=fill)` (`stdlib/std/collections/list.mojo`) lowers
-    as a `var.use copy` of `fill` (`self.expr` of the value) and then the
-    `CopyValue` the `PointerWrite { copy: true }` adjustment adds
-    (`mir/lower_expr/expr_method.rs`), and drop elaboration destroys the
-    first copy with a `drop.reg`.
-  - Fix: read the `copy=` value where it lies, as upstream's
-    `init_pointee_copy` reads its `read` argument, so the one copy is the
-    `CopyValue`.
-  - Probe: `conformance/probes/list_resize_copies_fill_twice.mojo`.
-  - Found while landing R1328 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R731 A transferred call temporary skips the move initializer the
   pin runs**
 

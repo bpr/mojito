@@ -238,6 +238,19 @@ impl Checker {
                     args,
                     kwargs,
                 )?;
+                // `copy=` binds upstream's `init_pointee_copy(value: T)` read
+                // slot: a place is lent where it lies, so the write's copy
+                // is the one copy.
+                if copy {
+                    self.record_argument_borrows(
+                        &[slot],
+                        &[convention],
+                        Gathered::NONE,
+                        args,
+                        kwargs,
+                        None,
+                    );
+                }
                 self.record_at(span.clone()).adjustment = Some(Box::new(
                     mojito_checked::checked::SemanticAdjustment::PointerWrite {
                         element: elem.clone(),

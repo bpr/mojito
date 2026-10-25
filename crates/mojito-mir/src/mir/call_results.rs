@@ -145,18 +145,25 @@ impl<'a> Flatten<'a> {
         if !boolable {
             return self.expr(condition);
         }
-        let borrowed = condition
+        let value = self.read_operand(condition);
+        self.bool_conversion(condition.location(), value)
+    }
+
+    /// `e` read by a consumer with a read convention: a place the checker
+    /// marked `BorrowReadArgument` where it lies, and anything else in its
+    /// call-result slot, so no copy of `e` runs for the read.
+    pub(super) fn read_operand(&mut self, e: Node<'a>) -> Reg {
+        let borrowed = e
             .adjustments()
             .iter()
             .any(|adjustment| matches!(adjustment, SemanticAdjustment::BorrowReadArgument));
-        let value = borrowed
-            .then(|| self.lower_borrowed_read_argument(condition))
+        borrowed
+            .then(|| self.lower_borrowed_read_argument(e))
             .flatten()
             .unwrap_or_else(|| {
-                let value = self.expr_c(condition);
-                self.read_c(condition, value).0
-            });
-        self.bool_conversion(condition.location(), value)
+                let value = self.expr_c(e);
+                self.read_c(e, value).0
+            })
     }
 
     fn expr_c_holding(&mut self, e: Node<'a>, views: bool) -> CValue {

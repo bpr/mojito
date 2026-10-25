@@ -718,16 +718,18 @@ impl<'a> Flatten<'a> {
                 .first()
                 .or_else(|| kwargs.first().map(|(_, value)| value))
                 .expect("checked unsafe_write has one value");
-            let mut src = self.expr(*value_expr);
-            if copy {
+            let src = if copy {
+                let value = self.read_operand(*value_expr);
                 let copied = self.fresh_typed(call.location(), None, element.clone());
                 self.emit(MirInstr::CopyValue {
                     dest: copied,
-                    value: src,
+                    value,
                     constructor: None,
                 });
-                src = copied;
-            }
+                copied
+            } else {
+                self.expr(*value_expr)
+            };
             if let Some(target) = self.pointer_deref_place(object) {
                 self.emit(MirInstr::Store { place: target, src });
             } else if object.is_origin_bearing_pointer() {

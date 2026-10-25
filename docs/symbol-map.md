@@ -1070,7 +1070,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   its producer, in place when a non-raising call made it, and the
   consumer readers `read_c`, `take_c`, `operand_c` (by the checker's
   `ReadTemporaryArgument`/`ForwardedArgument` marker), and
-  `condition_value`; a taken slot's `UseVar Forward` moves to its call's
+  `read_operand` (a `BorrowReadArgument` place where it lies, as
+  `condition_value` and a `copy=` pointer write read their operand); a taken slot's `UseVar Forward` moves to its call's
   setup (`defer_to_setup`). `calls.rs`'s `temporary_operand`,
   `lower_method_receiver` (with `materialize_receiver` for a `ref self`
   over a register result), `load_temporary_field`, and `discard_result`

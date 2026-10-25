@@ -646,6 +646,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `List.resize(n, fill)`, `List(length=n, fill=x)`, and `List.copy()` copy
+  each element once, as at the pin, instead of copying it twice and
+  destroying the first copy: `unsafe_write(copy=v)` reads `v` where it lies
+  (R1353).
+
 - Converting a `List` to a `Span` (`var s: Span[T, origin_of(xs)] = xs`,
   a list passed to a `Span` parameter, a field source) builds the view over
   the list where it lies, as at the pin: no element's copy constructor
