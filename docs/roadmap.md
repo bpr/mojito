@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1357**.
+Next free ID: **R1407**.
 
 ## Ordered Work
 
@@ -126,6 +126,200 @@ which names the upstream pass each one follows. Each is measured by the
     `result_adapter` applied when the frame finishes.
   - Found while landing R1272 (2026-10-23).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1379 A closed local `comptime` value binding is folded by the
+  elaborator above the check**
+
+  `Elab::stmt` folds a local `comptime` binding that names no binder and
+  applies no callable through `Elab::eval` (`comptime/eval.rs`), where
+  upstream builds every local `comptime` as a typed parameter expression
+  (`StmtParser::parseAliasDeclStmtBody`,
+  `getParamEmitter(EC_AliasValue).emitExprPValue`).
+  - The lever: `keep_template_comptime_binding` keeps every value binding of
+    a function body. The check binds it through `bind_template_comptime`,
+    and `lifted_application` stops leaving a closed expression to the
+    elaborator.
+  - The template route already serves these shapes: `comptime x = n + 1 if c
+    else n` and `comptime d = UInt8(n)` inside `def g[n: Int]` both run.
+  - Probe: R1245's `t[1] if c else t[0]` and R853's `comptime d =
+    UInt8(250)` in `main` are rejected. The pin prints `5` and `250`.
+  - Closes R1245 (a closed conditional is rejected) and R853 (a sized-scalar
+    local binding is refused). Shrinks R518 (its local form) and R1191 (a
+    local string constant).
+  - Depends on R386, so a closed `String` or float binding is lifted instead
+    of regressing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1380 A local `comptime` type alias is substituted by the
+  elaborator's alias table**
+
+  The elaborator puts a body's `comptime S = <type>` in the block's
+  `TypeAliases` and rewrites the statements after it, where upstream
+  resolves the alias by name lookup to its parameter value.
+  - The lever: every local alias goes into the check's `local_type_aliases`,
+    as template bodies' aliases already do.
+  - `comptime_type_operand` (`checker/comptime_validation.rs`) learns
+    `Scalar[dt]`, `SIMD[dt, n]`, `Self`, and `Self.<type member>`. A
+    `Self.<value>` goes to R1379's value route.
+  - The block-local `TypeAliases` substitution goes. The pack-element
+    spelling stays for the pack entries (R1169).
+  - Probe: `comptime S = Scalar[DType.float64]`, then `S(2) * 1.25`. The pin
+    prints `2.5`. Mojito fails, in `main` and in `def g[n: Int]` alike.
+  - Closes R475 (a local `Scalar` or `SIMD` alias), R476 (`comptime k =
+    Self.n` read as a type), and R1170's alias half.
+  - Depends on R1379, whose value route takes what this route declines.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1381 A closed module constant is folded by `Elab::eval`, not by the
+  check's parameter-expression folder**
+
+  Closed module constants are folded before the check by `Elab::eval`, with
+  its own name resolution, where upstream emits a module `comptime` through
+  `IREmitter` in `AliasASTDecl::resolveSignature` (`DeclResolution.cpp`).
+  - The lever: `Elab` hands every module value constant to the check. The
+    check's pre-pass builds each one with `compile_dependent_ct_expr` and
+    folds it with `param_expr::fold`, and anything left over becomes the
+    `ParamKind::Apply` request applied constants already use.
+  - The elaborator's `top_consts` values, `fold_default_bindings`' constant
+    reads, and the crossing folds over constants go.
+  - Merge `program_constants`, `comptimes`, `module_values`, and
+    `comptime_literals` into one table.
+  - Probe: R135's module `comptime K = Int32(4)` is refused. The pin prints
+    `4`.
+  - Closes R135 (a sized-scalar module constant) and R518's constant half.
+    Shrinks R1191 and R1171.
+  - Depends on R1379.
+  - Model: Fable, Planned.
+
+- [ ] **R1382 Module type aliases and generic aliases live in an elaborator
+  table the package exports**
+
+  `TypeAliases`, `generic_aliases`, and `apply_generic_alias` resolve module
+  aliases above the check, and a package build exports them as
+  `ElaboratedConstant`, where upstream holds an alias only as its
+  `AliasDeclOp`.
+  - The lever: the check's `comptime_aliases` is the only table, and an
+    importer reads a package's aliases from the check's installed
+    interfaces.
+  - `apply_generic_alias`, `apply_generic_alias_values`,
+    `keyword_application_params`, the alias `check_where_clauses` path,
+    `elaborate_exporting`'s constants, and the `ElaboratedConstants` type
+    go.
+  - Probe: `comptime MyTr = Copyable & Movable`, then `g[MyTr]()`, stops at
+    "'Copyable' is not a compile-time type". The pin prints `1`.
+  - Shrinks R1171 to its checker half (a trait-valued constant).
+  - Depends on R1380 and R1381.
+  - Model: Fable, Planned.
+
+- [ ] **R1383 A reflection query is answered by the elaborator above the
+  check**
+
+  `Elab::eval_reflection_method`, `eval_reflected_field_handle`,
+  `resolve_reflected_type`, and the crossing pass's `reflection_query` fold
+  `reflect[...]` before the check, where the check (`checker/reflection.rs`)
+  and `ParamKind::Reflect` already answer the same queries through
+  `ReflectQuery::answer`.
+  - The lever: a reflection handle in any position is the check's, and only
+    the check and mono answer it.
+  - Probe: `comptime r = reflect[Self]` in a plain struct's method fails
+    with "unsupported compile-time type argument". The pin prints the field
+    count.
+  - Closes R269 (`reflect[Self]` in a plain struct). Unblocks R324.
+  - Depends on R1379.
+  - Model: Opus, Planned.
+
+- [ ] **R1384 A struct-valued bracket argument is frozen to its fieldwise
+  construction above the check**
+
+  `Elab::freeze_struct_value_arguments` evaluates `Tagged[Extent.square(4)]`
+  to `Tagged[Extent(4, 4)]`, where upstream keeps the argument symbolic as a
+  `kgen.param.apply` its elaborator interprets.
+  - The lever: `lifted_application` already lifts a struct-valued call in a
+    body. Signatures and field types take the `called_application` arm, and
+    mono freezes the result (`VmBackend::freeze`).
+  - `freeze_struct_value_arguments`, `freeze_arguments`, and
+    `explicit_parameters` go.
+  - Probe: R1175's `T[k=3, Extent.square(2)]`, which prints `23` only
+    because CTFE later evaluates the construction the freeze failed on.
+  - Shrinks R1175 (its `freeze_arguments` bullet).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1385 A struct's associated `comptime` member that applies a
+  callable is not a parameter expression**
+
+  `Checker::eval_associated_ct` refuses `comptime V = f(Self.k)` with "not
+  an associated comptime expression", where upstream emits a member through
+  the same `EC_AliasValue` emitter as any alias, with an apply the
+  elaborator runs per instance.
+  - The lever: the applied-constant shape over the generator's binders. The
+    fallback arm binds a call as `ParamKind::Apply` and reads
+    `Self.<sibling>` through the generator.
+  - `Elab::associated_value_at` then has no reader the check does not own.
+  - Probe: R489's `S[3].get()` returning `Self.V`. The pin prints `4`.
+  - Closes R489 (a member applies a function), R802 (a `len(Self.values)`
+    member), R518's member bullet, and R1206's sibling probes. Shrinks R1178
+    and R1194.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1386 Bracket arguments and associated members are evaluated by a
+  second per-shape folder**
+
+  `eval_associated_ct` (`checker/constraints.rs`) repeats
+  `compile_dependent_ct_expr`'s arms with its own name lookup, where
+  upstream checks each compile-time expression once into a typed parameter
+  value.
+  - The lever: `eval_associated_ct` becomes `compile_dependent_ct_expr`
+    followed by `param_expr::fold`.
+  - `member_type_operand` reads a member through a construction's type.
+  - Probe: R1191's `bind[lit]()` over a string constant fails with "not a
+    compile-time Int constant". The pin prints `So`.
+  - Closes R1191 (a string constant in a bracket) and R1194 (a member read
+    through a `TypeList` construction). Shrinks R1199.
+  - Depends on R1385.
+  - Model: Fable, Planned.
+
+- [ ] **R1387 A type operand in a condition and in a value are built by
+  different evaluators**
+
+  `constraint_operand` reads `T == Int` in a `comptime if`, the value
+  evaluators read `T` as a variable, and `comptime_type_operand` is a third
+  reader, where upstream's type comparison is one parameter operator over
+  type-valued parameter expressions.
+  - The lever: `constraint_operand` and `comptime_type_operand` take their
+    operands from R1386's builder, which then returns type-valued
+    expressions too.
+  - Probe: R1180's `comptime b = T == Int` in `def g[T: Movable]` fails with
+    "Undefined variable 'T'". The pin prints `True`.
+  - Closes R1180 (a type comparison as a `Bool`) and R1170's `comptime if
+    Self.First == Int`. Shrinks R1178 (the `W[U].Get[0] == Int` site).
+  - Depends on R1386.
+  - Model: Fable, Planned.
+
+- [ ] **R1388 `mojito-comptime` still carries a compile-time evaluator and a
+  type resolver**
+
+  Once every site is the check's, the elaborator above the check still holds
+  `comptime/eval.rs`, `type_from_name`, `type_from_anno`, `resolve_ct_arg`,
+  `param_arg_type`, `associated_value_at`, `generator_member`, and the
+  remaining closed-literal crossing folds, where upstream evaluates
+  parameter expressions only in its elaborator, after sema.
+  - Delete them. The elaborator's `ConformanceOracle`, built only for
+    `Elab`, goes too.
+  - The type-member construction rewrite (`S.Of[Int]()`) goes once R603
+    resolves every alias receiver.
+  - Update `docs/architecture.md`'s compile-time-call and
+    checker-interaction sections.
+  - Probe: R1179's `struct P[*Ts: Movable] where Ts.length == 2` stops while
+    the oracle is built. The pin prints `2`.
+  - Closes R1179 (the oracle stops the elaborator). Shrinks R1175
+    (`type_from_name` and `bind_subscript_arguments`) and R207's elaborator
+    bullet.
+  - Done when `rg 'fn eval\b|type_from_name' crates/mojito-comptime` is
+    empty.
+  - Depends on R1380, R1382, R1383, R1384, and R603.
   - Model: Opus, Not Planned.
 
 - [ ] **R1339 A `ref self` body types a reference reached through `self`
@@ -1177,6 +1371,33 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R1406 Eight `ownership` entries name gone code or predate R1328 and
+  R1329**
+
+  These entries cite removed machinery or were filed before the temporary
+  and register-drop work changed the code they describe.
+  - Cite gone code: R302 (`ERASED_VM_RESIDUE`; its residual-field claim
+    falls under R1368), R88 (`MOJITO_VERIFY_TEMPLATE_FACTS`), and R115
+    (`record_replacing_interior_reference`).
+  - Overtaken: R111 by defaults filled at call binding (R1077, R1060). Also
+    R473 and R688 by R1329's register drops and copy elision, and R716 by
+    R1328 and R1336.
+  - Add `Depends on R1364` to R129: the pin rejects it when checking the
+    conformance ("lacking evidence"), so it follows the three-valued query.
+  - For each entry, run its probe (or the program its first sentence names)
+    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
+    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
+  - Delete an entry whose probe now matches the pin, and record it in
+    `CHANGELOG.md`.
+  - Rewrite an entry that still fails so its cause names today's code, and
+    keep its ID.
+  - Merge a duplicate into the entry it restates, carrying its probes, and
+    delete it.
+  - Done when every entry listed here is deleted, rewritten against today's
+    code, or merged.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R473 A discard `_ = x` copies its source instead of taking it**
 
   Problem: `var x = Q(1, "y")` then `_ = x` as `x`'s last use prints
@@ -1612,6 +1833,90 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     (`CheckedTables::live_statements`).
   - Found while landing R906 (2026-10-22).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1368 A value's abandonment is keyed by struct name or
+  `TyKind::Param`, not by its type's `Deinitable` verdict**
+
+  The checker marks a value linear by type shape, where upstream's
+  `TypeDeclInfo::getDestructorForType` (`LowerLIT/CheckLifetimes.cpp`) asks
+  each value's type.
+  - Three switches handle a `TyKind::Param` or a struct only:
+    `record_linear_temporary`, the `VarDecl` `linear_bindings` insert, and
+    the parameter `linear_declarations` insert.
+  - `explicit_destroy.rs` keys a struct by name and every type parameter as
+    `LINEAR_TYPE_PARAMETER`, fixed at 'AnyType'.
+  - Upstream refines a parameter's or projection's bound by the function's
+    `where` facts. If every trait is linear, the message is the trait's own
+    (`getMessageIfTraitIsLinear`).
+  - Upstream judges a struct instance's `Deinitable` condition under those
+    facts (`isTypeDeinitable`). Anything short of proven is linear, with the
+    struct's message.
+  - The lever: one verdict query that returns the denying message. The
+    checker records it per binding, parameter, and temporary in
+    `CheckedDeletability`, and the walk reads the recorded message.
+  - The three switches, `LINEAR_TYPE_PARAMETER`, and the nominal
+    `explicit_destroy_types` key go away.
+  - Probe: R711's `return mk(a) < b` in `def g[T: Comparable & Copyable]`.
+    The pin names 'Comparable', Mojito names 'AnyType'.
+  - Closes R711 ('AnyType' named instead of the bound), R30 (an opaque `var`
+    is not required to be `Deinitable`), and R667's temporary half. Shrinks
+    R302.
+  - R351 (a named `out` result called abandoned) is a different cause:
+    upstream's `out` argument ends initialized.
+  - Depends on R1364 (the three-valued verdict) and R1365 (the refined
+    bound).
+  - Model: Opus, Planned.
+
+- [ ] **R1366 A `^` source is admitted per shape, not by upstream's origin
+  rule**
+
+  `check_transfer_source` (`checker/places.rs`) and the `Transfer` arm of
+  `infer` (`checker/inference.rs`) admit `^` by special cases, where
+  upstream's `UnaryOpNode::emitTransfer` (`ExprNodes.cpp`) applies one
+  ordered rule.
+  - The rule, in upstream's order:
+    - An owned rvalue is passed through, with "no effect".
+    - A trivial register type is copied, with "no effect".
+    - Otherwise the source must reach a tracked root through field
+      projections only (`OriginTrackable::findUnderlyingValueFromField`), or
+      the error is "expression does not designate a value with an origin".
+    - An immutable root is rejected: "cannot transfer out of immutable
+      reference".
+  - A subscript result, a `ref` binding, and a borrowed loop binder have no
+    tracked root. Today `check_transfer_source` lets a `ref` binding
+    through.
+  - A capture is an indirect reference: "cannot consume indirect references
+    to values" (`checkConsume` in `CheckLifetimes.cpp`).
+  - Replace the per-shape tests: the `is_implicitly_copyable` indexed
+    element and the `ref`-binding skip.
+  - Keep the private `Tuple` storage element as a place until R341 lands.
+  - Probe: `conformance/probes/reference_binding_transfer.mojo`. The pin
+    says "does not designate a value with an origin". Mojito fails at run
+    time with "vm: use of a value after it was moved".
+  - Closes R31 (an implicitly copyable indexed element is transferred), R116
+    (a `ref` binding transfer fails late), and R120 (a `mut` capture is
+    transferred and refilled).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1367 MIR lowering re-decides whether a transfer copies or moves**
+
+  MIR `transfer` (`mir/lower_expr/expr.rs`) and the temporary binders in
+  `mir/calls.rs` choose copy or move by `owns_droppable_storage`, where
+  every struct counts as owning, while upstream decides once, in
+  `emitTransfer`, from the type's triviality.
+  - The lever: R1366 records its verdict as a node fact (pass-through,
+    trivial copy, or place move), and lowering reads it.
+  - The temporary binders read the same fact, so a register-passable struct
+    stays in a register.
+  - Probe: `conformance/probes/trivial_struct_mut_parameter_transfer.mojo`.
+    The pin prints `3 3`. Mojito says "'v' is uninitialized at return from
+    this function".
+  - Closes R121 (a trivial struct transferred out of a `mut` parameter).
+    Shrinks R750 (a field transfer lowered as a move before the discard fact
+    is read).
+  - Depends on R1366, which records the verdict.
   - Model: Opus, Not Planned.
 
 - [ ] **R30 A `var` of an opaque type is not required to be `Deinitable`**
@@ -2648,6 +2953,44 @@ Track: `calls`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R1404 Thirteen `calls` entries are fixed, assume per-instance
+  clones, or lack their new cores' Depends links**
+
+  Some `calls` entries were fixed by later work, three assume re-checked
+  per-instance method clones the template no longer makes, and four members
+  of the cores filed 10-25 do not yet depend on them.
+  - Fixed: R719. A raising `__neg__` in a non-raising `main` is rejected as
+    at the pin.
+  - Partly fixed: R81. Built-in mixed tuples such as `(1, String("b")) <
+    ...` run. Only a user-`Comparable` element remains, which R1359 closes.
+  - Cite gone code: R409 (`comptime/unparse.rs`) and R119
+    (`generate_instance_clones`).
+  - Assume per-instance clones that are re-checked: R112, R91, and R420.
+  - Wait on landed entries: R1242 (R1241 landed with R1140 and R1237).
+  - Overtaken: R1249 by R1328, which fixed `Bool(x)` copying a bounded `x`.
+    Also R548, by R1103 and R743, though its diagnostic remains in
+    `inference.rs`.
+  - Add `Depends on R1364` to R667: its `is_deinitable` half is the
+    three-valued conformance query.
+  - Add `Depends on R1374` to R1224: the nested sequence store goes through
+    the destructuring lvalue.
+  - R128's rejection comes from the compiler-side `Tuple`, not missing
+    evidence: upstream's `Tuple[*Ts: AnyType]` has no `Movable` bound.
+    Rewrite its cause, and add `Depends on R341`.
+  - For each entry, run its probe (or the program its first sentence names)
+    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
+    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
+  - Delete an entry whose probe now matches the pin, and record it in
+    `CHANGELOG.md`.
+  - Rewrite an entry that still fails so its cause names today's code, and
+    keep its ID.
+  - Merge a duplicate into the entry it restates, carrying its probes, and
+    delete it.
+  - Done when every entry listed here is deleted, rewritten against today's
+    code, or merged.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1172 Overloads that differ only in compile-time parameter types
   collapse to the last one**
 
@@ -2664,6 +3007,67 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while planning R1166 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1373 A subscript store selects `__setitem__` without typing the
+  target through `__getitem__`**
+
+  `check_nominal_subscript_assignment` (`checker/indexing.rs`) picks the
+  setter from the right-hand side alone, and the `AugAssign` arm
+  (`checker/statements.rs`) runs its own getter-then-setter selection, where
+  upstream's `emitGetterSetterAccess` (`ExprNodes.cpp`) builds one
+  `SubscriptDLValue` for every store.
+  - Upstream requires a getter ("'T' has '__setitem__' but no '__getitem__'
+    method"), selects it over the indices, takes its result type as the
+    element type, and stores a value of that type through the setter.
+  - The lever: one checker subscript-lvalue function that both statement
+    arms call.
+  - Fixtures that declare a setter alone need a getter added.
+  - Probe: `s[1] = 4.0`, with `__getitem__(self, a: Int) -> Int` and
+    `__setitem__(mut self, a: Int, value: Float64)`, prints `4` in Mojito.
+    The pin says "value passed to 'value' cannot be converted from 'Int' to
+    'Float64'".
+  - Closes R35 (a store with a setter but no getter is accepted) and R690
+    (the getter's arity is not checked on a store).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R1374 A destructuring leaf stores through its own path, not the
+  assignment's lvalue**
+
+  `destructure_into_place` (`checker/destructure.rs`) rejects a nominal
+  subscript leaf, because the extraction plan has no setter store, where
+  upstream's `TupleDLValue::emitStore` (`DLValues.cpp`) stores each element
+  through `emitStoreToLValue`, so a subscript leaf goes through its
+  `SubscriptDLValue`.
+  - The lever: the leaf takes R1373's subscript lvalue. MIR gains a setter
+    call whose value is an element register (`lower_subscript_set` takes
+    only an expression today).
+  - Probe: R1247's `(xs[0], xs[1]) = pair`, which the pin runs, printing `3
+    4`.
+  - Closes R1247 (a nominal subscript as a destructuring target). Shrinks
+    R1224 (the order of a nested sequence store).
+  - Depends on R1373, which supplies the lvalue.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1375 An assignment target must match a list of shapes in the
+  parser**
+
+  `parse_expr_or_assign` (`parser/stmts.rs`) accepts only listed kinds as
+  plain and augmented targets, and the walrus accepts only a name
+  (`parser/exprs.rs`), where upstream parses an assignment over any
+  expression and rejects a non-lvalue in `IREmitter::emitLValue` with
+  "expression must be mutable", using `emitExprLValue` for `=`, `+=`, and
+  `:=` alike.
+  - The lever: the parser takes any expression as a target.
+    `check_place_impl` gains an `Invoke` arm, and the walrus stores through
+    the same lvalue.
+  - Update `docs/grammar.md` first (`assign_target`, `NAME ':='`).
+  - Probe: `print(xs[0] := 5)` then `print(xs[0])` prints `5` twice at the
+    pin. Mojito stops parsing at "walrus ':=' target must be a name". Also
+    `conformance/probes/invoke_assignment_target.mojo`.
+  - Closes R1233 (a call with explicit parameters as a target).
+  - Depends on R1373, so a walrus over a setter stores as `=` does.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1294 A temporary iterable takes the borrowed `__iter__` where
   the pin calls its `__iter__(var self)`**
@@ -2973,6 +3377,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1357 A struct operator is checked apart from a method call**
+
+  The checker types `a op b` and `-x` over a struct through its own
+  selection (`struct_infix_dispatch`, `struct_reflected_dispatch`,
+  `struct_dunder_signature_for` in `checker/operators.rs`), where upstream's
+  `emitBinOpCall` and `UnaryOpNode::emitArith` (`MojoParser/ExprNodes.cpp`)
+  resolve `a.__op__(b)`, then `b.__rop__(a)`, through
+  `OverloadSet::lookupAndResolve` as an ordinary method call.
+  - The lever: check a struct operator as `infer_method_call` over the
+    dunder, so it records the whole `SelectedCall` contract, its raise
+    effect, and the right operand typed by the selected parameter, as an
+    argument is.
+  - Keep the `overload_target` fact, derived from the contract, until R1348
+    lowers the call from it.
+  - `NegatedEquality` stays until R705 bundles `Equatable.__ne__`'s default.
+  - Probe: `l == [1]` over `l: List[Int]` (R697) and `print(-(n^))` over
+    `__neg__(deinit self)` (R1332) run at the pin and fail in Mojito.
+  - Closes R1332 (a prefix dunder records no call contract) and R697 (a
+    display right operand is not typed by the dunder). Shrinks R1348 and
+    R1238.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
 - [ ] **R719 A raising prefix dunder is not a raising call**
 
   Problem: `var x = -S(3)` over `def __neg__(self) raises -> S` in a
@@ -3005,6 +3432,58 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1325 (2026-10-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1364 A conformance query answers yes or no, never "lacking
+  evidence"**
+
+  `conforms_to` and the `is_copyable`/`is_movable`/`is_deinitable` family
+  (`checker/traits.rs`) answer a Bool with per-trait defaults, where
+  upstream's `ASTType::doesConformTo` returns a `TriBool` checked against
+  the scope's known assumptions
+  (`ASTDecl::getKnownAssumptionsIncludingParents`,
+  `canDischargeConstraintsInScope` in `MojoParser/Constraints.cpp`).
+  - The lever: one query returning proven, refuted, or unknown. It reads the
+    declared bounds, `projection_bounds`, and one stack of assumed facts.
+    Bool callers keep asking for proven.
+  - Merge `assumed_conformances` and `assumed_propositions` into one
+    per-scope set, as upstream keeps one `knownAssumptions` list.
+  - Delete the `leaf_conforms(..).unwrap_or(true)` fallbacks. An associated
+    projection is unknown unless its bounds prove the trait.
+  - `constraint_proposition`'s `Conforms` arm (`constraints.rs`) maps
+    unknown to a hole, so a symbolic parameter reports "lacking evidence". A
+    `comptime if` arm keeps folding.
+  - Probe: R698's `var d = {1: x.copy()}` in `def f[T: Copyable & Hashable &
+    Equatable](x: T)`. The pin says "lacking evidence to prove correctness",
+    Mojito says "violated constraint".
+  - Closes R698 (a missing conformance is reported as violated, not
+    unproven). Shrinks R667 (its `is_deinitable` half), R128, and R129 (the
+    pin rejects it when checking the conformance).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1365 A type parameter's bound is not refined by its scope's `where`
+  facts**
+
+  Method lookup over a binder widens its bounds by an assumed conformance
+  only for `copy` and `__hash__` (`resolve_bound_method`,
+  `method_calls/resolution.rs`), where upstream's `maybeRefineParamType`
+  (`ExprNodes.cpp`) merges the declared bound with
+  `getTraitBoundFromAssumptions` into one refined type every consumer sees.
+  - The lever: one effective bound per binder or projection, made of the
+    declared bounds plus every trait R1364's evidence set proves.
+  - Method lookup asks for that bound, and the `copy` and `__hash__` cases
+    go.
+  - Record the refined bound on the selected call's requirement, so
+    `MirDeclarations::bound_requirement` finds it.
+  - `CheckLifetimes` refines the same way
+    (`refineWithContextualWhereClauses`), which R1368 reuses.
+  - Probe: R704's `def run[T: Copyable](s: T) where conforms_to(T, Sh)`
+    calling `s.sh(31)`. The pin runs it, Mojito says "type 'T' has no method
+    'sh'".
+  - Closes R704 (a requirement under a `where conforms_to` clause is
+    rejected). Shrinks R30.
+  - Depends on R1364, which supplies the evidence set.
+  - Model: Fable, Planned.
 
 - [ ] **R704 A requirement called under a `where conforms_to(T, Trait)`
   clause is rejected**
@@ -3062,6 +3541,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     through `__lt__`; Mojito has no declaration to take them from.
   - Found while landing R702 (2026-10-13).
   - Depends on R705.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1358 An operator over a bound type parameter is not a call of the
+  bound's requirement**
+
+  `a + b` or `a < b` over `T: Trait` is typed by the operator's trait name
+  (`param_has_bound` with `infix_operation_trait` and
+  `prefix_operation_trait`, `has_order_bound`, `bound_comparison_target`),
+  where upstream resolves `a.__add__(b)` against the requirements the
+  bound's traits declare, as any method call through a bound.
+  - The lever: route the bound case through R1357's method-call path. A user
+    trait declaring `__add__` then works, and the comparison and `Powable`
+    special arms go.
+  - Probe: `add2[T: Addy](a, b)` returning `a + b` prints `7` at the pin,
+    where Mojito says "operator '+' is not defined for T and T".
+  - Closes R1282 (an arithmetic operator through a user trait bound is
+    rejected).
+  - Depends on R1357 (the operator is a method call) and R705 (comparisons
+    find declared requirements).
   - Model: Opus, Not Planned.
 
 - [ ] **R690 A subscript assignment is accepted without a `__getitem__`
@@ -3150,6 +3648,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     type (`[a.t] == g(a)` is rejected at the pin too).
   - Found while landing R693 (2026-10-13).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1359 Tuple comparison is decided structurally, not by `Tuple`'s
+  dunders**
+
+  The checker accepts `p < q` and `p == q` over tuples by
+  `tuple_order_compatible` and `tuple_elements_equatable_nominal`
+  (`checker/builtins.rs`, `operators.rs`), where upstream calls the bundled
+  `Tuple.__lt__` and `__eq__` under their `where conforms_to` clauses.
+  - Delete both structural arms. A tuple operand then dispatches as R1357's
+    struct operator does.
+  - Probe: `(Tag(2), 1) < (Tag(2), 3)` over a user `Comparable` `Tag` prints
+    `True` at the pin. Mojito rejects it.
+  - Mixed built-in elements, such as `(1, String("b")) < ...`, already run.
+  - Closes R81 (mixed-element tuple ordering rejected).
+  - Depends on R1357.
   - Model: Opus, Not Planned.
 
 - [ ] **R726 A constructor with its own origin parameter matches no
@@ -4283,6 +4797,77 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R1401 Fourteen `comptime` entries wait on landed work, restate each
+  other, or disagree about the pin**
+
+  These entries were filed before the work they wait on landed, or restate
+  another entry, so the track counts them twice or schedules work that may
+  be done.
+  - Wait on landed entries: R1303 (R1073), R77 (R74, R51), and R78 (R40).
+  - Overtaken: R1071 by R743 and R1103 (the caller's own pack is passed
+    whole), though its diagnostic remains in `checker/inference.rs`.
+  - Overtaken by P5, which deleted erased value-keyed `def`s, AST method
+    clones, and `$`-mangled template stubs: R70 ("compile-time call arity"
+    still exists), R68, R90, and R71.
+  - Duplicates: R848 restates R979 (`Float64`) and R790 (`String`). One edit
+    to `infer_member`'s fallback closes all three, and R979 notes it deletes
+    `intern_static_self`.
+  - R528 and R1015 contradict each other: R528 says `side` prints once
+    before `main`, R1015 says it prints when `fd2()` runs. Probe, keep the
+    one the pin agrees with, and delete the other.
+  - Add `Depends on R533` to R303: a legacy `@parameter` closure follows
+    R533's environment path, not R1376's storage struct.
+  - For each entry, run its probe (or the program its first sentence names)
+    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
+    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
+  - Delete an entry whose probe now matches the pin, and record it in
+    `CHANGELOG.md`.
+  - Rewrite an entry that still fails so its cause names today's code, and
+    keep its ID.
+  - Merge a duplicate into the entry it restates, carrying its probes, and
+    delete it.
+  - Done when every entry listed here is deleted, rewritten against today's
+    code, or merged.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1400 Nineteen `comptime` entries are fixed or name code that no
+  longer exists**
+
+  The track overstates what remains: six entries were fixed by later work,
+  and eleven cite functions or diagnostics that are gone from `crates/`, so
+  their causes cannot guide a session.
+  - Fixed, by probes run 10-25 on Mojito and the pin: R279 (its conformance
+    probe prints `3 30 1`), R337 (`g[fib(6)]` and `W[fib(6)]` run), R340,
+    R543, R98, and R278.
+  - Partly fixed: R72's call-bracket form `size[Self.n * 2]()` runs. Only
+    the alias body remains, and R1371 closes it.
+  - R395's `Bool` half is fixed: `infer_member` reads `Bool` at its declared
+    type.
+  - Cite `Elab::unroll_comptime_for` or `Elab::defer_constant`, both gone:
+    R319, R368 (`top_consts` still exists, so it is probably live), and
+    R509.
+  - Cite R7's fix and its gone diagnostics ("unspecialized type-keyed
+    method", "unknown compile-time function",
+    `is_specializable_declaration_in`): R131, R132, and R486.
+  - Cite other gone code: R82 (`resolves_top_template`), R464
+    (`check_frozen_structs`), R465 (`ctfe_struct_entry`, "is not a
+    compile-time-callable"), R450 (`inferred_param_arg_regs`), and R498
+    ("callable contract names parameter").
+  - For each entry, run its probe (or the program its first sentence names)
+    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
+    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
+  - Delete an entry whose probe now matches the pin, and record it in
+    `CHANGELOG.md`.
+  - Rewrite an entry that still fails so its cause names today's code, and
+    keep its ID.
+  - Merge a duplicate into the entry it restates, carrying its probes, and
+    delete it.
+  - Done when every entry listed here is deleted, rewritten against today's
+    code, or merged.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1115 `where <cond> else "<message>"` is the preferred constraint
   message**
 
@@ -4312,6 +4897,98 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: `parse_type` admits an empty argument list on `Tuple`, and the
     checker resolves it to the zero-element tuple.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1369 A type expression resolves by its spelling, not by what its
+  names denote**
+
+  The checker builds a type from a `Type` spelling (`ty_from_anno`) and
+  turns only a lone identifier from a value argument into a type
+  (`resolve_param_arg`), where upstream parses every annotation as an
+  expression and resolves it by what it denotes (`parseType` in
+  `DeclResolution.cpp`, then `IREmitter::emitExprType`).
+  - The lever: one checker resolver that types an expression as a type
+    through scope lookup.
+    - A struct or alias gives its type, and a subscript of a type gives its
+      application.
+    - A local `comptime` value with `__getitem_param__` gives its element.
+    - `type_of(value)` gives the value's type.
+  - Sites: `ty_from_anno` (`Type::Named`, `Type::TypeOf`) and
+    `resolve_param_arg` (`checker/type_resolution.rs`), and the receiver
+    reinterpretation in `method_calls/type_receivers.rs`.
+  - Probe: `var y: type_of(x) = 3` prints `3` at the pin. Mojito says
+    "'type_of' of a value ... not supported yet".
+  - Closes R134 (`type_of` of a value as a type) and R1203 (a `comptime`
+    `TypeList` name subscripted in an annotation).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1370 A bracket argument is a type or a value by its
+  capitalization**
+
+  `parse_param_arg` parses a capitalized `Name[` as `ParamArg::Type`, and a
+  fixed name list (`peek_starts_type`) as a type, where upstream parses
+  every bracket operand as one expression
+  (`ExprParser::parseSubscriptSuffix`, then `parseExprOrSlice`) and lets
+  sema classify it.
+  - The lever: parse every name-led operand as an expression. Only spellings
+    that just the type grammar can write stay `ParamArg::Type`: `def(...)`
+    types, `ref`, and `*Ts`.
+  - R1369's resolver turns the expression into a type wherever a type
+    parameter takes it.
+  - Pre-check consumers (`mojito-comptime`'s `params.rs` and `eval.rs`,
+    `simd_width.rs`) read a value operand's type spelling where they read
+    `ParamArg::Type` today.
+  - Update `docs/grammar.md` first (`param_arg`, the lowercase-name notes).
+  - Probe: `comptime L = [1, 2]` then `print(materialize[L[1]]())` prints
+    `2` at the pin. Mojito says "takes one compile-time value".
+  - Closes R377 (a capitalized `L[1]` in `materialize[...]`), R381 (`L[0] *
+    2` stops the parser), the capitalized half of R512, and the
+    `s[Int16(5)]()` half of R482.
+  - Depends on R1369, which supplies the resolver.
+  - Model: Opus, Planned.
+
+- [ ] **R1371 A bracket after an expression is an index, an application, or
+  a dereference by its shape**
+
+  `parse_bracket_suffix` picks `Index`, `MultiIndex`, `TypeApply`, or an
+  `EmptySubscript` dereference from the base's capitalization and the
+  operand shape, where upstream builds one `SubscriptNode` and
+  `SubscriptNode::emitLCVIR` (`ExprNodes.cpp`) classifies it by what the
+  base denotes.
+  - Upstream: an overload set binds parameters, a type is applied, and a
+    value calls `__getitem_param__` or `__getitem__`.
+  - The lever: the parser always emits `Index` or `MultiIndex`, empty
+    brackets included. The checker's subscript arms route a base that
+    denotes a type or a generic function to the existing application check.
+  - The `reflect`, `origin_of`, spread, and `None` special cases in
+    `suffix.rs` go away.
+  - Merging the four AST kinds into one node can follow in `mojo-shape`.
+  - Probe: `var f = twice[4]` over `def twice[n: Int]() -> Int` prints `8`
+    at the pin. Mojito says "cannot be indexed here".
+  - Closes R326 (`f[]()` read as a dereference), R72 (`Sized[Self.n + 1]` in
+    an alias body, which now parses and fails in the check), and the parse
+    half of R490. Shrinks R383 and R512, whose lowercase subscripts still
+    need compile-time `__getitem__` folding.
+  - Depends on R1370, so operands are already expressions.
+  - Model: Fable, Planned.
+
+- [ ] **R1372 A parameter binder is a value parameter only for a fixed list
+  of type names**
+
+  `ct_value_param_type` (`mojito-comptime/src/comptime/params.rs`) treats a
+  binder annotation as a value type only for `Int`, `Bool`, `DType`, and a
+  few others, and reads every other name as a trait bound, where upstream
+  resolves the annotation like any type expression (`emitExprType`): a trait
+  makes a type parameter, and anything else a value parameter of that type.
+  - The lever: classify by the declaration table. A struct, or an alias of
+    one, is a value type, and a trait is a bound.
+  - Probe: `comptime MyInt = Int` then `def g[n: MyInt]()` makes `g[3]()`
+    print `3` at the pin. Mojito says "unknown trait 'MyInt' in a
+    type-parameter bound".
+  - Closes R482 (a sized-scalar or alias-typed value binder is rejected),
+    together with R1370.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7151,6 +7828,48 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
+- [ ] **R1403 Nineteen entries in `divergences`, `pmir`, `native`,
+  `code-org`, and `tooling` name gone code or predate the work that touched
+  them**
+
+  These entries' causes were written before later work reworked their code,
+  so a session reading them looks for functions that no longer exist.
+  - Partly fixed: R862. Its `conforms_to` probe prints the pin's `False True
+    True False`, and `struct_trait_rule` maps `TrivialRegisterPassable` to
+    `Declared` since R1267. Only the bound half remains, which R1363 closes.
+  - Cite gone code: R245 (`unroll_comptime_for`, and R246 landed), R163
+    (`generate_def_spec`), R1018 (`Prog::selected_struct_member`), and R423
+    (`$write_formatted`).
+  - Wait on landed entries: R162 (R7) and R182 (R27).
+  - Overtaken: R1144 by R1329's copy elision, and R173
+    (`try_region_drop_timing`) by gap A's explicit raise exits.
+  - Duplicate: R1145 (`ref z = Int()`) restates R169's `RefDecl`
+    materialization fallback.
+  - `pmir`: R1279, filed before R1283 and R1278 reworked copy and
+    constructor synthesis. Add `Depends on R533` to R983.
+  - `native`: R633 (`VariadicPack(Int)`), filed before R743, and R299 (an
+    element struct layout), filed before R1102 and R1073.
+  - `code-org`: R457 (`checked_var_types` is gone, and so is R147's bullet
+    naming it) and R521 (`check_program_for_discovery` is gone,
+    `DiscoveryResult` remains).
+  - `tooling`: R823's version numbers are stale. The snapshots read 1.98,
+    and the reader accepts up to 1.102.
+  - Add `Depends on R533` to R172: its elaboration half follows R533's
+    environment path.
+  - For each entry, run its probe (or the program its first sentence names)
+    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
+    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
+  - Delete an entry whose probe now matches the pin, and record it in
+    `CHANGELOG.md`.
+  - Rewrite an entry that still fails so its cause names today's code, and
+    keep its ID.
+  - Merge a duplicate into the entry it restates, carrying its probes, and
+    delete it.
+  - Done when every entry listed here is deleted, rewritten against today's
+    code, or merged.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1128 `main()` may raise only `Error`**
 
   Problem: `def main() raises StopIteration:` is accepted and traps at run
@@ -8414,6 +9133,33 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1378 A capture-list closure is typed as a capturing function, where
+  the pin types it as its `__storage` struct, a runtime value only**
+
+  The checker types `def inner(x: Int) {var y, imm z} -> Int` as a capturing
+  `def(...)`, so it rejects `var g = inner` and passing `inner` to `f: F`
+  with `F: def(Int) -> Int` ("closures cannot escape their defining scope",
+  `inferred_binding_ty` in `checker/scopes.rs`), and accepts `inner` as a
+  compile-time callable argument. The pin does the opposite in each case,
+  because the value is a struct conforming to its `def(...)` closure trait.
+  - The lever: the closure's type is R1376's storage struct. A `F: def(...)`
+    binder is instantiated at that struct type, and a call through `f` is a
+    direct method call, as in the pin's
+    `apply[F=typevalue<...::inner::__storage>]`.
+  - Binding a capture-list closure to a compile-time `capturing[origins]`
+    parameter becomes a checker rejection matching the pin's "cannot use a
+    dynamic value in a parameter list", with an `assets/type_error` fixture
+    and its errors-TSV row.
+  - Probe: `return apply(inner, a) + g(1)` over the closure above prints 64
+    at the pin, where Mojito reports the escape error.
+  - Probe: `apply[inner](a)` with `{imm y}` and a `capturing[origins]`
+    binder fails at the pin, where Mojito prints 16.
+  - Closes R534 (broadened: the pin rejects every capturing capture-list
+    closure there). Shrinks R176 (capture-list locals run at the pin).
+  - Depends on R1377, which gives calls through the struct their method
+    shape.
+  - Model: Fable, Planned.
+
 - [ ] **R567 A user `std/` directory merges into the bundled `std`, where
   the pin binds `std` to its library package alone**
 
@@ -8561,6 +9307,42 @@ below is a candidate port toward Mojo's shape, and a port is preferred over any
 new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R1402 Seventeen `mojo-shape` entries wait on landed work, are done
+  by their own test, or lack the Depends links their new cores need**
+
+  Several entries cite code that is gone or wait on entries that have
+  landed, two meet their own done condition, and the cores filed 10-25
+  (R1357–R1399) were filed without editing their members' Depends bullets.
+  - Cite gone code: R752 (`build_seeded_checked_region`, `RegionSeed`) and
+    R346 (`infer_tuple_method`).
+  - Wait on landed entries: R306 and R903 (R74), R800 (R801), R1169 (R1168),
+    R445 (R10), R912 (R907), R1072 (R743, and the bundled `VariadicList`
+    already declares `write_to` and `write_repr_to`), and R1287 (R1102).
+  - R1335 asks for a census rerun after R1326, which has landed.
+  - Done by their own test: R638 and R639. `rg 'ExprKind::TypeApply'
+    crates/mojito-mir/src` and `rg 'ExprKind::Call|EvaluatedRange'
+    crates/mojito-mir/src` find nothing.
+  - Duplicate: R950 restates R662 (a value binder read through a slot). Fold
+    R950's `mem-2-reg` `variance` bullet into R662.
+  - Add `Depends on R1392 and R1395` to R336: upstream's `SIMDLength` is a
+    struct over `index` ops whose arithmetic must fold in a parameter
+    expression.
+  - In R276, replace `R160` with `R1397`: `SIMD`'s text moves into Mojo with
+    the library `SIMD`, which takes a `DType` parameter without R160.
+  - For each entry, run its probe (or the program its first sentence names)
+    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
+    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
+  - Delete an entry whose probe now matches the pin, and record it in
+    `CHANGELOG.md`.
+  - Rewrite an entry that still fails so its cause names today's code, and
+    keep its ID.
+  - Merge a duplicate into the entry it restates, carrying its probes, and
+    delete it.
+  - Done when every entry listed here is deleted, rewritten against today's
+    code, or merged.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R867 A conditional's literal arm reaches its carrier
   unmaterialized**
@@ -8834,6 +9616,90 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     defaults and deletes `compiler_trait_declaration`; upstream's
     reflective `__eq__` default stays out, waiting on R278 and R269.
   - Found while landing R702 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1360 `Boolable`, `Intable`, `Floatable`, `Indexer`, and
+  `Identifiable` are compiler-known, where upstream's library declares
+  them**
+
+  Upstream declares them in `std/builtin/bool.mojo`, `int.mojo`,
+  `floatable.mojo`, and `identifiable.mojo` (with a defaulted `__isnot__`)
+  and exports them from the prelude. Mojito knows them by name, so no
+  conformance records a witness table, and `StructTraitRule::Shallow`
+  answers `Boolable` and `Identifiable` as held.
+  - Bundle the declarations and drop the names from `COMPILER_TRAITS`. Move
+    the scalar answers from `leaf_conforms` to `modelled_declares`, as
+    `Sized` is answered.
+  - Delete their arms in `builtin_trait_operation` and
+    `verify_builtin_conformance`.
+  - Probe: `conformance/probes/conforms_to_undeclared_compiler_trait.mojo`.
+    Also, `conforms_to(P, Identifiable)` for a plain struct is `False` at
+    the pin and `True` in Mojito.
+  - Closes R577 (an undeclared `Boolable` is held) and R191 (`Int` is
+    `Floatable`). Shrinks R1281 and R1109.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1361 The `std.math` operation traits are compiler-known, and a
+  struct cannot conform to `Absable`, `Powable`, or `Roundable`**
+
+  `struct A(Absable)` with `__abs__(self) -> Self` is rejected ("missing
+  required operation '__abs__() -> Self'"), where the pin prints `3 True`
+  for `abs(x)` through `T: Absable` and for `conforms_to(A, Absable)`.
+  - Cause: `struct_trait_rule` answers these three as `Never`, and answers
+    `Ceilable`, `Floorable`, `Truncable`, `CeilDivable`,
+    `CeilDivableRaising`, and `DivModable` as `Shallow`. No bundled module
+    declares them.
+  - Upstream declares all nine in `std/math/math.mojo`. Only `Absable`,
+    `Powable`, and `Roundable` are prelude names.
+  - Declare them in `stdlib/std/math.mojo`, export the three from the
+    prelude, and delete `math_dunder_bound` and their
+    `builtin_trait_operation` rows.
+  - Probe: `from std.math import Ceilable` fails in Mojito ("has no
+    declaration named 'Ceilable'").
+  - Closes R579's `Ceilable` half (resolves with no import).
+  - Done when `Shallow` answers only `AnyType` and `Representable`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1362 `Hashable` and `Hasher` are compiler-known, where upstream's
+  `std/hash` declares them**
+
+  Upstream declares `Hashable` in `std/hash/hash.mojo` (prelude-exported,
+  with a reflective default `__hash__`) and `Hasher` in `hasher.mojo` (not
+  in the prelude). Mojito checks both by shape in
+  `verify_builtin_conformance`, and their conformances record no witness, so
+  a call through the bound keeps R1281's composed name.
+  - Declare both with today's requirement sets. R25 then changes the bundled
+    `Hasher` declaration, not checker code.
+  - The checker-synthesized reflective default stays until R278 and R269 let
+    the body read `reflect[Self]`, as R705 stages `__eq__`.
+  - Every fixture spelling `Hasher` bare needs the pin's import.
+  - Done when both leave `COMPILER_TRAITS` and `T: Hashable` at a struct
+    resolves through its witness table.
+  - Shrinks R25, R1281, R1109, and R987.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1363 `Defaultable`, `RegisterPassable`, and
+  `TrivialRegisterPassable` are compiler-known, where upstream's
+  `std/builtin/value.mojo` declares them**
+
+  Upstream declares `TrivialRegisterPassable(Deinitable, ImplicitlyCopyable,
+  Movable, RegisterPassable)`, and Mojito's `compiler_trait_refines` knows
+  only its `RegisterPassable` parent, so a `TrivialRegisterPassable` struct
+  is not `Copyable` and an undeclaring struct passes the bound.
+  - Bundle the three in a new `stdlib/std/builtin/value.mojo`, exported from
+    the prelude. Delete `compiler_trait_refines` and `Defaultable`'s row in
+    `compiler_trait_declaration`.
+  - Probe:
+    `conformance/probes/copyable_struct_trivial_register_passable_field.mojo`,
+    `trivial_register_passable_copy_method.mojo`, and
+    `trivial_register_passable_bound_undeclared.mojo`.
+  - Closes R861 and R863 (the missed refinement to `Copyable`) and R862 (an
+    undeclared bound is accepted). Shrinks R860 and R1119 (its default body
+    goes in this declaration).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10001,6 +10867,186 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1389 `Int`, `UInt`, and `Float64` are type kinds of their own,
+  where upstream's are `Scalar[DType.int]`, `Scalar[DType.uint]`, and
+  `Scalar[DType.float64]`**
+
+  Mojito has `TyKind::Int`, `UInt`, and `Float64` beside `TyKind::Simd`,
+  where upstream's `std/simd.mojo` declares all three as aliases of the one
+  `SIMD` struct.
+  - `canonical_simd_ty` turns width one back into the native kinds, and
+    `simd_shape` reports `UInt` as `uint64`. No `Dtype` stands for
+    upstream's `DType.uint`.
+  - The lever: make the three a width-one `TyKind::Simd` that still displays
+    its alias name, and add `DType.uint`. The VM's `Value::Int`, `UInt`, and
+    `Float64` stay as the width-one representation.
+  - Splitting `Int` from `SIMD` would be a Mojito-only split, so this merge
+    comes first and one library port (`SIMD`) then covers every scalar.
+  - Probe: `g[dt: DType](a: Scalar[dt])` called with `UInt(3)`, and `var x:
+    Scalar[DType.uint] = UInt(3)`. Mojito rejects both ("not a valid SIMD
+    element type: DType.uint"). The pin prints `6` and `3`.
+  - Shrinks R335 and R143.
+  - Done when `canonical_simd_ty` has no special arm.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1390 The VM and Pliron serve no lane method on an `Int`, `UInt`, or
+  `Float64` value**
+
+  Once the checker types `Float64(2.5).reduce_add()` and `x.ne(y)` on a
+  width-one native scalar, `runtime::simd_method` and Pliron's SIMD method
+  lowering still skip `Value::Int`, `UInt`, and `Float64`, where upstream's
+  are ordinary `SIMD` methods.
+  - Serve the width-one native values in both backends. For a NaN, `ne`
+    stays ordered (`s.ne(s)` is `False`).
+  - Probe: R335's `total(Float64(2.5))` and R143's `x.ne(y)`.
+  - Closes R335 (lane reductions on native scalars) and R143 (scalar
+    comparison methods).
+  - Depends on R1389.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1391 `__mlir_type` cannot spell `!kgen.simd`, so `SIMD`'s storage
+  field cannot be declared**
+
+  ``__mlir_type[`!kgen.simd<`, Self.length._mlir_value, `, `,
+  Self.dtype._mlir_value, `>`]``, the type of upstream's `SIMD._mlir_value`,
+  is rejected by the accepted-spellings list in `checker/type_resolution.rs`
+  (`mlir_param_list_type`).
+  - Resolve it to `TyKind::Simd`, whose known and expression slots already
+    have this shape. Share the slot resolver R1315 needs for `!pop.array`.
+  - Read `_mlir_value` of a `DType` or width parameter as the parameter
+    itself until R160 and R336 land, as `__mlir_index__` is read today.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1392 `__mlir_op` admits no `pop` or `index` op, so no `SIMD`
+  operator body can be written**
+
+  `checker/method_calls/mlir_op.rs` accepts only the two ownership markers,
+  where upstream's `SIMD`, `SIMDLength`, and `Bool` bodies are made of `pop`
+  and `index` ops.
+  - The ops: `pop.add`, `sub`, `mul`, `div`, `floordiv`, `rem`, `neg`,
+    `abs`, `shl`, `shr`, `pop.cmp`, `pop.cast`, `pop.simd.splat`,
+    `pop.simd.and`, `or`, `xor`, the rounding ops, `fma`, and `index.*`.
+  - Type each one over `!kgen.simd` operands, and lower them to the existing
+    `BinOp`, `UnOp`, and `MakeSimd` and to R857's cast instruction.
+  - Accept `__mlir_attr` for `#kgen.cmp_pred<...>` and `#pop.fmf<...>`.
+  - Keep the forms bundled-only, as the ownership markers are.
+  - Compute float `floordiv` and `rem` in the VM, R850's backend half.
+  - Depends on R1391 (the operand type) and R857 (the cast instruction
+    `pop.cast` lowers to).
+  - Model: Fable, Not Planned.
+
+- [ ] **R1393 `SIMD`'s lane ops are host methods, where upstream's are
+  `pop.simd` ops**
+
+  `select`, lane extract and insert, and `reduce_and`/`reduce_or` run in
+  `runtime::simd_method` and Pliron's per-method code, where upstream's
+  bodies call `pop.simd.select`, `extractelement`, `insertelement`,
+  `reduce_and`, `reduce_or`, and `shuffle`.
+  - Add one MIR instruction for each, next to `SimdShuffle`, and teach the
+    VM, Pliron, and `__mlir_op` typing.
+  - Depends on R1392.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1394 `llvm_intrinsic` is undefined**
+
+  Upstream's `SIMD` reaches `llvm.vector.reduce.*`, `fma`, and the bit ops
+  through `std.sys.intrinsics.llvm_intrinsic[name, T]`
+  (`pop.call_llvm_intrinsic`), and Mojito has no such call.
+  - Lower it to a MIR call that names the intrinsic. Pliron emits the LLVM
+    call. The VM serves a table by name and rejects an unknown name
+    explicitly.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1395 A call of an `@always_inline("builtin")` function is not
+  folded in a parameter expression**
+
+  `SIMD[DType.int8, twice(n)]` and `SIMD[DType.int8, n + n]` are different
+  types to Mojito ("expected SIMD[DType.int8, 2 * n], found SIMD[DType.int8,
+  twice(n)]"), where the pin folds the builtin body
+  (`SharedState::foldInlineBuiltinFunction`, called from
+  `UncheckedCallEmission.cpp`).
+  - `InlineLevel::Builtin` is read only by `inline_parametric` today.
+  - The lever: in `Checker::lifted_application`, substitute parameter
+    operands into the body's `pop` and `index` ops and fold the result to a
+    `ParamExpr`. Reject a body that does not fold, as upstream does.
+  - Every type-level `n + 1` becomes such a call once `Int` and `SIMDLength`
+    arithmetic are library code, so this lands before them. It also gives
+    R851's "could not simplify operator shr" diagnostic a home.
+  - Probe: `f[n](x: SIMD[DType.int8, twice(n)]) -> SIMD[DType.int8, n + n]`
+    over the `twice` above prints `[1, 1, 1, 1]` at the pin and is rejected
+    by Mojito.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1396 A one-field register-passable struct is a boxed struct value
+  in the VM**
+
+  Every struct is a `Value::Struct` with a name and a field vector
+  (`runtime.rs`), so a library `SIMD`, and through R1389 every `Int`, would
+  allocate per value, where upstream's `TrivialRegisterPassable` struct
+  reaches LLVM as its element after `SROA`.
+  - After builtin inlining, `canonicalize` forwards a `GetField` of a
+    `MakeStruct`.
+  - A register value of a `TrivialRegisterPassable` struct whose one field
+    is register-passable is held as that field.
+  - Done when the concrete MIR of an inlined `@always_inline("builtin")`
+    `__add__` on a one-field struct holds no `MakeStruct`.
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1397 `SIMD` is a compiler type, where upstream's is `struct
+  SIMD[dtype: DType, length: SIMDLength]` over `!kgen.simd`**
+
+  The name `SIMD`, and through R1389 `Int`, `UInt`, `Float64`, and the sized
+  aliases, resolves to `TyKind::Simd` with checker-rule members, where
+  upstream declares the struct and its aliases in `std/simd.mojo`.
+  - Bundle `stdlib/std/simd.mojo`. Port upstream's bodies for every member
+    the checker serves today, plus `__len__`, `__getitem__`, `__int__`,
+    `__floordiv__`, and `__mod__`. `TyKind::Simd` stays only as the storage
+    type.
+  - A literal still converts by the checker's coercion. Upstream's
+    `#pop.int_literal_convert` needs a parametric `IntLiteral[value]`, a
+    residue to file.
+  - This is the one step that cannot be split. The entries before and after
+    it take everything that can be.
+  - Closes R330 (lane gathers become library methods), R331 (shuffle's `2 *
+    length` bound), R1223 (`__len__` and `__getitem__`), R187 (upstream's
+    reduction tree), and R850 (float `//` and `%`). Shrinks R212 and R171.
+  - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R336 (the length
+    type), and R185 and R186 (so the port is upstream's bodies with no
+    leniency).
+  - Model: Fable, Planned.
+
+- [ ] **R1398 The checker, VM, and Pliron keep `SIMD` member rules no
+  program reaches**
+
+  After R1397, `checker/method_calls/simd_receivers.rs`, the SIMD arms of
+  `checker/operators.rs`, `LaneMask::resolve`, `runtime::simd_method`, and
+  Pliron's per-method SIMD lowering serve only the storage type, which has
+  no members upstream.
+  - Delete them.
+  - Done when `rg simd_method crates` finds nothing.
+  - Depends on R1397.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1399 `Int(x)`, `UInt(x)`, and `Float64(x)` are checker built-ins,
+  where upstream's are `SIMD.__init__` overloads**
+
+  `checker/builtins.rs` types the conversions by rule, and the VM's
+  `builtin_convert` and Pliron's `lower_convert` run them, where upstream
+  declares `__init__[T: Intable]`, `__init__[T: IntableRaising](out self:
+  Int, ...) raises`, and `__init__[T: Floatable](out self: Float64, ...)`.
+  - Port the overloads, including the refined `out self` they use, and
+    delete the scalar arms of all three sites. R857's cast becomes their
+    `pop.cast`.
+  - Probe: R430's `Int(StringSpan("12"))` and R339's `__int__`.
+  - Closes R339 (`__int__` on a scalar) and R430 (`Int` of a `StringSpan`).
+  - Depends on R1397.
+  - Model: Fable, Not Planned.
+
 - [ ] **R324 `reflect[T]` is a compiler builtin where upstream's is a
   stdlib struct over parameter attributes**
 
@@ -10320,6 +11366,56 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1376 A capture-list nested `def` keeps its captures as a list,
+  where the pin builds a `__storage` struct whose fields are the captures**
+
+  `closure.make` holds a capture-list body's environment as a list only the
+  closure value reaches, where upstream's `ClosureEmitter::emitClosure`
+  (`lib/MojoParser/ClosureEmitter.cpp`) builds a `<fn>::__storage` struct
+  through its synthesized `__init__`, one field per capture.
+  - A reference capture is a pointer field, and a `var` or moved capture is
+    an owned field. The pin's LLVM shows `inner::__storage::__init__`
+    returning `{ i64, ptr }`.
+  - The lever: when a frame makes a capture-list closure
+    (`NestedInfo::slotted`, `mir.rs`), MIR lowering constructs that struct,
+    and a call through the value passes its fields' places as the lifted
+    body's leading arguments.
+  - This slice covers uses inside the declaring frame: calls by name, and
+    calls through a sibling that captures the closure. The checker's type is
+    unchanged until R1378.
+  - The VM's `RefProjection::Capture` and the `callee_place` an owned
+    environment needs go (`backend/vm/references.rs`), and so do Pliron's
+    capture-record slots.
+  - Legacy `@parameter` closures keep upstream's environment-pointer path
+    (R533), so R1345 then serves only them.
+  - Probe: R1104's `outer(4)` over `inc() {var x}` and `twice() {inc}`
+    prints 15 on both. Mojito keeps three `call.indirect` and one
+    `closure.make` in concrete MIR, while the pin calls `__storage::inc`
+    directly.
+  - Closes R1104 (a sibling-captured copying body is called through its
+    closure). Shrinks R100.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1377 A capture-list closure's lifted body takes its captures as
+  leading arguments, where the pin makes it a `__storage` method taking the
+  struct**
+
+  The lifted body `outer$inner` takes each capture as a separate leading
+  reference argument, where upstream's `liftClosureIntoMethod` moves the
+  body into the storage struct as a method receiving it as `self`, so the
+  pin calls `__storage::inner({ i64, ptr }, i64)`.
+  - The lever: the body reads captured names as fields of `self`, and every
+    call, by name or through the value, passes the one struct.
+  - `NestedInfo::holds_environment` and the slotted/unslotted split go. The
+    declaration always builds the storage, and `sroa` and `mem-2-reg` take
+    it apart when it is register-passable.
+  - Probe: `outer(4)` over `def get() {imm y} -> Int` called twice. At the
+    pin both calls pass one `{ ptr }` value, where Mojito passes `y`'s place
+    to each.
+  - Depends on R1376, which builds the storage struct.
+  - Model: Opus, Planned.
+
 - [ ] **R538 Storage paths for reference-valued elements outlive the last spelling of one**
 
   Problem: the checker, MIR, VM, and native backend keep paths for an element whose type is itself `ref[o] T`, though `List[ref[o] T]` and `Tuple[ref[o] T]` are now rejected at parse, as at the pin.
@@ -10574,6 +11670,34 @@ I/O residues left behind the landed files, streams, paths, and tempfile stage.
 recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
+
+- [ ] **R1405 Nine `stdlib` entries are fixed or wait on landed work**
+
+  Three `stdlib` entries already run as at the pin, and the rest predate the
+  work they wait on.
+  - Fixed, by probes run 10-25: R213 (`"abc".byte_length()` prints 3), R216
+    (`isdir("/tmp")` runs), and R220 (`Array[Int8, 4]()` runs).
+  - Partly fixed: R1223. `len(5)` prints 1. `n.__getitem__(0)` and `SIMD`
+    destructuring still fail, and R1397 closes them.
+  - Cite gone code: R206 (`NestedMono`, `def_specialization_requests`,
+    `replace_templates`).
+  - Wait on landed entries: R199 (R40) and R411 (R74).
+  - Overtaken: R204 by R1052, which folds a witness at substitution, though
+    `TRAIT_DISPATCH_PREFIX` remains. R1101's `Writer.write` probe can run
+    now that R1079 has landed.
+  - For each entry, run its probe (or the program its first sentence names)
+    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
+    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
+  - Delete an entry whose probe now matches the pin, and record it in
+    `CHANGELOG.md`.
+  - Rewrite an entry that still fails so its cause names today's code, and
+    keep its ID.
+  - Merge a duplicate into the entry it restates, carrying its probes, and
+    delete it.
+  - Done when every entry listed here is deleted, rewritten against today's
+    code, or merged.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1121 `Tuple` elements need not be `Movable`**
 
