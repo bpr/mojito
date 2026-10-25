@@ -127,6 +127,12 @@ impl VmBackend {
                     _ => (frame_id.0, place.root as usize, Vec::new()),
                 };
                 projection.extend(segments);
+                // A place reached through a handle a slot stores (a `to=`
+                // pointer field, a `ref` field) designates the handle's
+                // referent, as the native address does: the reference is
+                // rooted there, so it outlives the slot holding the handle.
+                let (frame, slot, projection) =
+                    self.canonical_reference_parts(frame_id, vars, frame, slot, projection);
                 let handle = Value::Ref {
                     frame,
                     slot,

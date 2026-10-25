@@ -59,7 +59,7 @@ pub fn opt(
         match pass {
             Pass::Program(pass) => (pass.run)(&mut program, &[]),
             Pass::CallGraph(pass) => {
-                run_call_graph_pass(pass, &mut program, None);
+                run_call_graph_pass(pass, &mut program.functions, &program.declarations, None);
             }
             Pass::Body(pass) => {
                 let MirProgram {

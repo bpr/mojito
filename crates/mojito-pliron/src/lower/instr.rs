@@ -99,14 +99,14 @@ impl FnLowering<'_> {
                             alloca.get_result(ctx)
                         }
                         LowerTy::Aggregate { ty, layout } => self.value_storage(ctx, &ty, layout),
+                        // A zero-sized local, such as an inlined callee's
+                        // zero-sized parameter, holds nothing: its stores and
+                        // reads erase, as a zero-sized parameter's do.
                         LowerTy::ZeroSized => {
-                            return Err(self.unsupported(
-                                format!(
-                                    "zero-sized variable `{}`",
-                                    self.func.var_names.get(var).map_or("?", String::as_str)
-                                ),
-                                None,
-                            ));
+                            let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+                            let null = ZeroOp::new(ctx, ptr_ty);
+                            self.append(ctx, null.get_operation(), None);
+                            null.get_result(ctx)
                         }
                     };
                     self.var_slots.push(slot);

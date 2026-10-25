@@ -231,12 +231,13 @@ None of these unblocks another entry. Run them whenever they are useful.
 
 - **Generator size and inlining reach**, for the measure: R1096,
   R1098 (lets the third round inline through a known callee), R1099,
-  R1105, R1076, R1110, R1268. R1271 (`AutomaticInline`) is the largest
-  but shrinks only concrete code, not instance counts.
+  R1105, R1076, R1110, R1268. R1339, R1340, and R1341 follow up R1271's
+  `AutomaticInline` and shrink only concrete code, not instance counts.
 
   ```sh
   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1096 --only R1098 --only R1099 \
-    --only R1105 --only R1076 --only R1110 --only R1268 --only R1271 -n 0
+    --only R1105 --only R1076 --only R1110 --only R1268 --only R1339 --only R1340 \
+    --only R1341 -n 0
   ```
 
 - **Bugs**: R1112 (an elaboration failure the pin runs), R983 (hidden by

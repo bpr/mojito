@@ -80,7 +80,7 @@
 //! round runs it after every cleanup pass, so a read they removed keeps no
 //! parameter.
 
-use super::pre_elaboration::{CallGraphPass, Callees};
+use super::pre_elaboration::{CallGraphPass, Callees, Cycles};
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     Const, MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, Reg,
@@ -97,6 +97,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 pub const REMOVE_UNUSED_PARAMS: CallGraphPass = CallGraphPass {
     name: "remove-unused-params",
     follows: has_parameters,
+    cycles: Cycles::Refused,
     run: remove_unused_params,
 };
 

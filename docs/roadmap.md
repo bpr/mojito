@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1339**.
+Next free ID: **R1342**.
 
 ## Ordered Work
 
@@ -128,23 +128,60 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1271 The post-elaboration pipeline has no `AutomaticInline`, so
-  `simplify-cf` runs once where upstream's inliner runs it per function**
+- [ ] **R1339 A `ref self` body types a reference reached through `self`
+  as `immutable`, so `automatic-inline` keeps a mutable caller's call**
 
-  Upstream's first optimization pipeline after elaboration runs
-  `AutomaticInline` with a nested function pipeline (`SimplifyCF`, `SROA`,
-  `Mem2Reg`, `Canonicalizer`, `CSEPass`, `HoistTrivialInvariants`,
-  `Canonicalizer`, `SimplifyCF`, `SROA`, `Mem2Reg`, `StackReuse`,
-  `CSEPass`, `Canonicalizer`) over each function as its callees are
-  inlined (`lib/Compiler/Pipeline/Pipeline.cpp`).
-  - Mojito's `POST_ELABORATION_PIPELINE` inlines nothing after
-    elaboration and runs only the head of that nested pipeline, once.
-  - Probe: a call from `main` to a small plain `def` stays a call in
-    concrete MIR, where the pin's `AutomaticInline` inlines it.
-  - Port `AutomaticInline` as a call-graph pass over concrete functions,
-    reusing `inline-parametric`'s splice, and run the nested pipeline per
-    function; `HoistTrivialInvariants` and `StackReuse` are separate
-    entries once it lands.
+  Inside a `ref self` method, MIR spells the reference a subscript or
+  field of `self` yields at `immutable`, where upstream's carries the
+  receiver's mutability parameter (`origin_of(self)`'s `mut`).
+  - The body still returns it as the method's `ref` result, which a
+    mutable caller writes through, so no program's output changes.
+  - `automatic-inline` keeps such a call, since splicing the body would
+    raise the reference's permission (`grants_call_permission`), where
+    upstream's `AutomaticInline` inlines it.
+  - Probe: `def at(ref self, i: Int) -> ref[self.entries[0]] Int`
+    returning `self.entries[i]` over `var entries: List[Int]`: emitted MIR
+    types its subscript result `immutable`, and `t.at(0) = 5` stays a call
+    in concrete MIR.
+  - Probe: `d["x"]` on a `var d: Dict[String, Int]` keeps its
+    `Dict.__getitem__` call (`assets/ok/template_method_element_field_result.mojo`).
+  - `tests/mir_passes/automatic-inline/ref_result_immutable_kept_for_mut_call.mir`
+    pins the rule; a body spelling the receiver's parameter inlines
+    (`ref_result_param_mutability_inlined.mir`).
+  - Lever: type a reference reached through a `ref` receiver at the
+    receiver's mutability parameter, which the splice binds at the call.
+  - Found while landing R1271 (2026-10-24).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1340 The `automatic-inline` function pipeline has no
+  `HoistTrivialInvariants`**
+
+  Upstream's `AutomaticInline` nests `HoistTrivialInvariants` after its
+  first `CSEPass`, and Mojito's `AUTOMATIC_INLINE_PIPELINE` skips it.
+  - Upstream hoists each pure, region-free operation whose operands are
+    all defined outside an `if` or loop to the earliest point its operands
+    allow (`lib/Transforms/HoistTrivialInvariants.cpp`).
+  - Probe: a field read of a loop-invariant struct value inside a `while`
+    loop of an instance stays in the loop body in concrete MIR.
+  - Port it as a body pass over regions, reusing `cse`'s effect-free
+    instruction rule, and list it in `AUTOMATIC_INLINE_PIPELINE`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1341 The `automatic-inline` function pipeline has no
+  `StackReuse`**
+
+  Upstream's `AutomaticInline` nests `StackReuse` before its second
+  `CSEPass`, and Mojito's `AUTOMATIC_INLINE_PIPELINE` skips it.
+  - Upstream removes a stack allocation whose value, wherever it is read,
+    equals another live allocation's (`lib/Transforms/StackReuse.cpp`),
+    tracking each allocation's potential value.
+  - Probe: a slot stored from another slot's value and only read before
+    either is written again, as an inlined body's argument slot is, stays
+    a separate slot in concrete MIR.
+  - Port it as a body pass over slots, and list it in
+    `AUTOMATIC_INLINE_PIPELINE`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -335,6 +372,10 @@ which names the upstream pass each one follows. Each is measured by the
     (`tests/mir_passes/inline-parametric/for_protocol.mir` pins it kept).
   - Probe: R1280's `@always_inline("nodebug") def count[T: Iterable]`
     counting `for _ in a` keeps its call in `fc` here since R890.
+  - Probe: after elaboration, `automatic-inline` keeps the same calls: a
+    plain `def` holding a `try`, or a `for` loop over a raising iterator,
+    called from `main` stays a call in concrete MIR, where upstream's
+    `AutomaticInline` inlines it below its threshold of 50 operations.
   - The splice would place the callee's `try` in the caller's block, its
     parts sharing the caller's registers as an inlined `if`'s do.
   - `inline_cost` already prices a `try` as four beside its parts.
@@ -826,6 +867,10 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Give a MIR location an optional inlined-at location, emit it as a
     `DILocation` with `inlinedAt` over the callee's subprogram, and keep
     the call-count correlation counting the caller's own calls.
+  - Probe: `automatic-inline` locates every plain `def` it inlines after
+    elaboration at the call too, as `add` called from `main` in
+    `tests/mir_passes/automatic-inline/small_recursive_and_no_inline.mir`,
+    where upstream's `AutomaticInline` keeps the callee's locations.
   - Done when `clamp` in `assets/ok/always_inline_small_calls.mojo` steps
     at its own lines natively and the heavy lane's debug premise holds.
   - Found while landing R923 (2026-10-16).

@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The post-elaboration pipeline runs upstream's `AutomaticInline`
+  (`automatic-inline`, R1271): callees first over the call graph's
+  strongly connected components, each concrete function takes the bodies of
+  its always-inline callees at any size and of its undecorated callees
+  below upstream's `-O3` threshold of 50 operations, never a `@no_inline`
+  one or one on its own cycle, then runs upstream's nested function
+  pipeline (`simplify-cf`, `sroa`, `mem-2-reg`, `canonicalize`, `cse`,
+  `canonicalize`, `simplify-cf`, `sroa`, `mem-2-reg`, `cse`,
+  `canonicalize`), followed by the guaranteed `sroa`, `mem-2-reg`, and
+  `canonicalize` and the `sccp` round. A call from `main` to a small plain
+  `def` is now inlined and folded, as at the pin; a recursive callee
+  inlines once into a caller outside its cycle. Inlining a
+  reference-returning callee binds its mutability parameter to the call's,
+  and keeps the call when the body spells the reference `immutable` for a
+  `mut` caller (R1339). The VM roots a reference made through a stored
+  pointer or `ref` handle at the handle's referent, so it outlives the slot
+  holding the handle, and Pliron gives a zero-sized local a placeholder
+  slot as it gives a zero-sized parameter.
+
 - `@unavailable` on a module `def` is accepted as at the pin: the body must
   be `...`, the function has no body to lower, overload selection still
   ranks it, and a call selecting it or a reference to it as a value is

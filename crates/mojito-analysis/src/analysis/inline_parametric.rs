@@ -13,6 +13,11 @@
 //! This pass also keeps the call to a callee holding a `try`, which the
 //! pin inlines (R1288).
 //!
+//! Its splice ([`inline_calls`]) is `automatic-inline`'s too, which admits
+//! callees by upstream's `AutomaticInline` rule ([`Admission::Automatic`])
+//! over concrete bodies, and binds the mutability parameter a returned
+//! reference is spelled at to the call's.
+//!
 //! A callee this pass inlines is a function, a method, a subscript's
 //! accessor, which calls it on the subscripted base, an initializer, or a
 //! nested `def`, which a call through a closure the caller makes calls,
@@ -147,7 +152,7 @@
 //! too. Every named drop is so expanded (`mir::lower_drops`): drop
 //! elaboration decides each where it places it.
 
-use super::pre_elaboration::{CallGraphPass, Callees};
+use super::pre_elaboration::{CallGraphPass, Callees, Cycles};
 use super::region_walk::region_op;
 use mojito_ast::ast::{ArgConvention, Dtype, FORWARDED_KWARGS_NAME};
 use mojito_ast::call::{ArgSlot, CallSlots, CallVariadics, bind_spread, match_call_slots};
@@ -158,7 +163,7 @@ use mojito_common::token::SourceSpan;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::{instruction_places, instruction_places_mut};
 use mojito_mir::mir::visit::{
-    MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_function_mut,
+    MutTypeVisitor, ParamArgSite, ParamDeclSite, TySite, walk_blocks_mut, walk_function_mut,
 };
 use mojito_mir::mir::{
     Const, ConstructionTypes, FuncRef, LoopLabel, MirBlock, MirCaptureAccess, MirCaptureMode,
@@ -173,6 +178,7 @@ use mojito_mir::mir::{
     without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
+use mojito_types::origin::{Mutability, OriginParamId, RefTy};
 use mojito_types::param_expr::{
     MetaTy, ParamBindings, ParamContext, ParamError, ParamExpr, ParamId, ParamKind, ParamRef,
 };
@@ -188,6 +194,7 @@ use std::collections::{BTreeSet, HashMap};
 pub const INLINE_PARAMETRIC: CallGraphPass = CallGraphPass {
     name: "inline-parametric",
     follows: |declaration, _| is_inlined_before_elaboration(declaration),
+    cycles: Cycles::Refused,
     run: inline_parametric,
 };
 
@@ -250,6 +257,53 @@ pub fn inline_parametric(
     declarations: &MirDeclarations,
     callees: &Callees<'_>,
 ) -> bool {
+    inline_calls(name, function, declarations, callees, Admission::Parametric)
+}
+
+/// Which callees a call graph pass splicing bodies inlines, of those its
+/// [`Callees`] answers a body for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Admission {
+    /// `InlineParametric`'s: a plain `@always_inline` callee only below
+    /// [`INLINE_SIZE_BOUND`].
+    Parametric,
+    /// `AutomaticInline`'s (`shouldInlineCallee`): an always-inline callee
+    /// at any size, and an undecorated one whose [`inline_cost`] is below
+    /// `bound`; never a `@no_inline` one.
+    Automatic { bound: usize },
+}
+
+impl Admission {
+    /// Whether a call to `callee`, so declared, is inlined.
+    fn admits(
+        self,
+        declaration: &MirFunctionDeclaration,
+        callee: &MirFunction,
+        callees: &Callees<'_>,
+    ) -> bool {
+        match (self, declaration.inline) {
+            (_, InlineLevel::Never) => false,
+            (Self::Parametric, InlineLevel::Always) => {
+                inline_cost(callee, callees) < INLINE_SIZE_BOUND
+            }
+            (Self::Automatic { bound }, InlineLevel::Automatic) => {
+                inline_cost(callee, callees) < bound
+            }
+            _ => true,
+        }
+    }
+}
+
+/// Inline into `function` every call [`Callees::body`] answers whose
+/// callee `admission` admits and whose shape the splice handles, in its
+/// `try` regions too; returns whether it inlined one.
+pub fn inline_calls(
+    name: &str,
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+    callees: &Callees<'_>,
+    admission: Admission,
+) -> bool {
     let mut reads = vec![0; function.n_regs as usize];
     count_register_reads(&mut function.blocks, &mut reads);
     let function_values = callable_targets(function);
@@ -262,6 +316,7 @@ pub fn inline_parametric(
         closures,
         function_values,
         caller: name,
+        admission,
         dropped_operands: false,
         loop_binders: Vec::new(),
     };
@@ -309,6 +364,8 @@ struct Inliner<'f, 'c> {
     function_values: HashMap<u32, (String, bool)>,
     /// The caller's name: a member's body spells its own struct bare.
     caller: &'c str,
+    /// Which callees the pass inlines.
+    admission: Admission,
     /// Whether an inlined call passed an operand its inlined body does not
     /// take: one for a removed argument, or the run-time register of a
     /// compile-time argument, which the instantiated body reads as a
@@ -762,18 +819,24 @@ impl<'c> Inliner<'_, 'c> {
                         dropped || passes_value_arguments(&caller.instrs[index]);
                     changed = true;
                     // The body's loop is scanned next, its regions as any
-                    // region op's.
-                    index = self.splice(
-                        caller,
-                        &CallSite {
-                            index,
-                            dest,
-                            raises,
-                        },
-                        &callee,
-                        (&bindings, &closures),
-                        blocks,
-                    );
+                    // region op's; after elaboration it is skipped, as
+                    // upstream's `AutomaticInline` inlines only the caller's
+                    // own call sites, the callee's having been decided when
+                    // it was processed, and a recursive callee's call inside
+                    // its own body would inline again without end.
+                    let resumed = matches!(self.admission, Admission::Automatic { .. });
+                    index = usize::from(resumed)
+                        + self.splice(
+                            caller,
+                            &CallSite {
+                                index,
+                                dest,
+                                raises,
+                            },
+                            &callee,
+                            (&bindings, &closures),
+                            blocks,
+                        );
                     continue;
                 }
                 index += 1;
@@ -1070,9 +1133,7 @@ impl<'c> Inliner<'_, 'c> {
         };
         let callee = reduced.as_ref().unwrap_or(full);
         let declaration = declaration.as_ref();
-        if declaration.inline == InlineLevel::Always
-            && inline_cost(callee, self.callees) >= INLINE_SIZE_BOUND
-        {
+        if !self.admission.admits(declaration, callee, self.callees) {
             return None;
         }
         let kept = |indexes: &BTreeSet<usize>, length: usize| {
@@ -1172,7 +1233,10 @@ impl<'c> Inliner<'_, 'c> {
                 forwarded,
             },
         )?;
-        if callee.returns_reference && !returns_bound_place(&callee, &bindings) {
+        if callee.returns_reference
+            && (!returns_bound_place(&callee, &bindings)
+                || !grants_call_permission(&callee, self.function.reg_types.get(&dest.0)))
+        {
             return None;
         }
         Some(Inlinable {
@@ -1509,28 +1573,49 @@ impl<'c> Inliner<'_, 'c> {
             raises: raises.clone(),
         };
 
+        // A reference the body's breaks carry is the call's, of the
+        // caller's reference type, and so is one a break of a loop it
+        // returns the result of carries; the callee's own spells its origin
+        // untracked, and its mutability as a parameter of its own, which
+        // the call binds to its reference's.
+        let returned = match function.reg_types.get(&dest.0) {
+            Some(ty) if callee.returns_reference && result == Returned::Value => {
+                let mut returned = Vec::new();
+                references_and_returns(&blocks, &mut HashMap::new(), &mut returned);
+                carried_by_breaks(&mut blocks, &mut returned);
+                Some((returned, ty.clone()))
+            }
+            _ => None,
+        };
+        let mut mutabilities = BoundMutabilities(
+            returned
+                .as_ref()
+                .map(|(returned, ty)| {
+                    bound_mutabilities(
+                        returned.iter().filter_map(|reg| {
+                            callee.reg_types.get(&reg.0.checked_sub(registers.base)?)
+                        }),
+                        ty,
+                    )
+                })
+                .unwrap_or_default(),
+        );
+        if !mutabilities.0.is_empty() {
+            mutabilities.blocks(&mut blocks);
+        }
         let call_span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
         for reg in 0..callee.n_regs {
             let inlined = registers.of(Reg(reg));
             if let Some(ty) = callee.reg_types.get(&reg) {
-                function.reg_types.insert(inlined.0, ty.clone());
+                function.reg_types.insert(inlined.0, mutabilities.ty(ty));
             }
             if let Some(span) = &call_span {
                 function.spans.0.insert(inlined.0, (span.clone(), None));
             }
         }
         function.n_regs += callee.n_regs;
-        // A reference the body's breaks carry is the call's, of the
-        // caller's reference type, and so is one a break of a loop it
-        // returns the result of carries; the callee's own spells its origin
-        // untracked.
-        if callee.returns_reference
-            && result == Returned::Value
-            && let Some(ty) = function.reg_types.get(&dest.0).cloned()
-        {
-            let mut returned = Vec::new();
-            references_and_returns(&blocks, &mut HashMap::new(), &mut returned);
-            carried_by_breaks(&mut blocks, &mut returned);
+        if let Some((returned, ty)) = returned {
+            retype_reference_results(&mut blocks, &returned, &ty);
             for reg in returned {
                 function.reg_types.insert(reg.0, ty.clone());
             }
@@ -1538,7 +1623,9 @@ impl<'c> Inliner<'_, 'c> {
         for (var, name) in callee.var_names.iter().enumerate() {
             function.var_names.push(format!("{name}$inline{var_base}"));
             if let Some(ty) = callee.var_tys.get(&(var as VarId)) {
-                function.var_tys.insert(var as VarId + var_base, ty.clone());
+                function
+                    .var_tys
+                    .insert(var as VarId + var_base, mutabilities.ty(ty));
             }
         }
         function.n_vars += callee.n_vars;
@@ -2417,6 +2504,221 @@ fn carried_by_breaks(blocks: &mut [MirBlock], returned: &mut Vec<Reg>) {
         }
         for region in instruction_regions_mut(instruction) {
             carried_by_breaks(region, returned);
+        }
+    }
+}
+
+/// Whether every reference `callee`'s body returns grants the permission
+/// of `call`, the call's reference type: a body spelling one `Immutable`
+/// cannot take a call reading it as `mut`, while a mutability parameter of
+/// the body's own binds to the call's ([`bound_mutabilities`]).
+fn grants_call_permission(callee: &MirFunction, call: Option<&Ty>) -> bool {
+    let Some(TyKind::Ref(call)) = call.map(Ty::kind) else {
+        return true;
+    };
+    if call.mutability == Mutability::Immutable {
+        return true;
+    }
+    let mut blocks = callee.blocks.clone();
+    let mut returned = Vec::new();
+    references_and_returns(&blocks, &mut HashMap::new(), &mut returned);
+    carried_by_breaks(&mut blocks, &mut returned);
+    returned.iter().all(|reg| {
+        !matches!(
+            callee.reg_types.get(&reg.0).map(Ty::kind),
+            Some(TyKind::Ref(RefTy {
+                mutability: Mutability::Immutable,
+                ..
+            }))
+        )
+    })
+}
+
+/// The mutability parameters of a callee a call binds: the parameter each
+/// of `returned`, the types of the references its body returns, is spelled
+/// at, bound to the mutability of `ty`, the call's own reference type.
+fn bound_mutabilities<'t>(
+    returned: impl Iterator<Item = &'t Ty>,
+    ty: &Ty,
+) -> HashMap<OriginParamId, Mutability> {
+    let TyKind::Ref(call) = ty.kind() else {
+        return HashMap::new();
+    };
+    returned
+        .filter_map(|returned| match returned.kind() {
+            TyKind::Ref(RefTy {
+                mutability: Mutability::Param(id),
+                ..
+            }) if call.mutability != Mutability::Param(*id) => Some((*id, call.mutability)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// An inlined body's mutability parameters the call binds
+/// ([`bound_mutabilities`]), substituted through its types.
+struct BoundMutabilities(HashMap<OriginParamId, Mutability>);
+
+impl BoundMutabilities {
+    /// `ty` with each bound mutability substituted.
+    fn ty(&mut self, ty: &Ty) -> Ty {
+        if self.0.is_empty() {
+            return ty.clone();
+        }
+        rewrite_ty(ty, self).unwrap_or_else(|_| ty.clone())
+    }
+
+    /// Substitute each bound mutability through `blocks`: their types, and
+    /// the reference results calls and subscripts record.
+    fn blocks(&mut self, blocks: &mut [MirBlock]) {
+        let Ok(()) = walk_blocks_mut(self, blocks);
+        self.reference_results(blocks);
+    }
+
+    fn reference_results(&self, blocks: &mut [MirBlock]) {
+        let bind = |reference: &mut RefTy| {
+            if let Mutability::Param(id) = reference.mutability
+                && let Some(bound) = self.0.get(&id)
+            {
+                reference.mutability = *bound;
+            }
+        };
+        for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+            if let MirInstr::MethodCall {
+                reference_result: Some(reference),
+                ..
+            } = instruction
+            {
+                bind(reference);
+            }
+            if let Some(call) = instruction_subscript_call_mut(instruction)
+                && let Some(reference) = &mut call.reference_result
+            {
+                bind(reference);
+            }
+            for region in instruction_regions_mut(instruction) {
+                self.reference_results(region);
+            }
+        }
+    }
+}
+
+impl TyRewrite for BoundMutabilities {
+    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        let TyKind::Ref(reference) = ty.kind() else {
+            return None;
+        };
+        let Mutability::Param(id) = reference.mutability else {
+            return None;
+        };
+        let bound = *self.0.get(&id)?;
+        let referent = rewrite_ty(&reference.referent, self).ok()?;
+        Some(
+            TyKind::Ref(RefTy {
+                referent,
+                mutability: bound,
+                ..reference.clone()
+            })
+            .into(),
+        )
+    }
+
+    fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        Ok(expr.clone())
+    }
+}
+
+impl MutTypeVisitor for BoundMutabilities {
+    type Error = std::convert::Infallible;
+
+    fn visit_ty(&mut self, ty: &mut Ty, _: TySite) -> Result<(), Self::Error> {
+        *ty = self.ty(ty);
+        Ok(())
+    }
+
+    fn visit_ty_arg(&mut self, arg: &mut TyArg) -> Result<(), Self::Error> {
+        if let TyArg::Ty(ty) = arg {
+            *ty = self.ty(ty);
+        }
+        Ok(())
+    }
+
+    fn visit_variant_alternatives(
+        &mut self,
+        alternatives: &mut Vec<Ty>,
+    ) -> Result<(), Self::Error> {
+        for ty in alternatives {
+            *ty = self.ty(ty);
+        }
+        Ok(())
+    }
+
+    fn visit_variant_index(&mut self, _: &mut VariantIndex) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_lane_mask(&mut self, _: &mut LaneMask) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_param_arg(&mut self, _: &mut MirParamArg, _: ParamArgSite) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_param_decls(
+        &mut self,
+        _: &mut [ParamDecl],
+        _: ParamDeclSite,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_constant(&mut self, _: &mut Const) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_param_ref(&mut self, _: &mut ParamRef) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_constraint(&mut self, _: &mut GenericConstraint) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_sequence(&mut self, _: &mut ComptimeSequence) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+/// Give each call of `blocks`, at any depth, that defines one of
+/// `returned` the reference type `ty` as its result: a subscript's selected
+/// result and a call's reference result, which name the reference the
+/// register holds.
+fn retype_reference_results(blocks: &mut [MirBlock], returned: &[Reg], ty: &Ty) {
+    let TyKind::Ref(reference) = ty.kind() else {
+        return;
+    };
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        match instruction {
+            MirInstr::Index {
+                dest,
+                call: Some(call),
+                ..
+            } if returned.contains(dest) => {
+                call.result_ty = ty.clone();
+                if call.reference_result.is_some() {
+                    call.reference_result = Some(reference.clone());
+                }
+            }
+            MirInstr::MethodCall {
+                dest,
+                reference_result: Some(result),
+                ..
+            } if returned.contains(dest) => **result = reference.clone(),
+            _ => {}
+        }
+        for region in instruction_regions_mut(instruction) {
+            retype_reference_results(region, returned, ty);
         }
     }
 }

@@ -18,6 +18,9 @@
 //! to insert ASAP drops in the same structured regions, which every later
 //! phase reads until Pliron lowers them to LLVM blocks.
 
+pub use automatic_inline::{
+    AUTOMATIC_INLINE, AUTOMATIC_INLINE_PIPELINE, AUTOMATIC_INLINE_SIZE_BOUND, automatic_inline,
+};
 pub use canonicalize::{CANONICALIZE, canonicalize};
 use copy_elision::elide_dying_copies;
 pub use cse::{CSE, cse};
@@ -54,7 +57,7 @@ pub use post_elaboration::{
     post_elaborate_program,
 };
 pub use pre_elaboration::{
-    BodyPass, CallGraphPass, Callees, ELABORATE_DROPS, PIPELINE, Pass, ProgramPass,
+    BodyPass, CallGraphPass, Callees, Cycles, ELABORATE_DROPS, PIPELINE, Pass, ProgramPass,
     finish_package_body, finish_package_body_without_pipeline, pass_named, pass_names,
     pre_elaborate_program, run_pipeline,
 };
@@ -287,6 +290,7 @@ pub fn elaborate_drops_function(
     elaborated
 }
 
+mod automatic_inline;
 mod canonicalize;
 mod copy_elision;
 mod cse;

@@ -10,6 +10,7 @@
 //! is finished ([`finish_package_body`]), where the body and call-graph
 //! passes run. Never per instance.
 
+use super::automatic_inline::AUTOMATIC_INLINE;
 use super::canonicalize::CANONICALIZE;
 use super::cse::CSE;
 use super::dead_symbols::ELIMINATE_DEAD_SYMBOLS;
@@ -59,15 +60,31 @@ pub struct ProgramPass {
 ///
 /// A seam runs it over each body after every callee the body calls through
 /// a callee it `follows`, so the callee arrives already rewritten. A callee
-/// on a cycle of such calls has no body to read ([`Callees::body`]).
+/// on a cycle of such calls has no body to read ([`Callees::body`]), or,
+/// by its [`Cycles`], none from a caller on the same cycle.
 pub struct CallGraphPass {
     /// The pass's name, as the verifier's findings after it spell it.
     pub name: &'static str,
     /// Whether the pass reads the body of a callee so declared: the calls
     /// to one are the edges of the call graph it walks.
     pub follows: fn(&MirFunctionDeclaration, &MirDeclarations) -> bool,
+    /// Which program callees on a cycle of followed calls have no body.
+    pub cycles: Cycles,
     /// Rewrite the body, and say whether it changed, as [`BodyPass::run`].
     pub run: fn(&str, &mut MirFunction, &MirDeclarations, &Callees<'_>) -> bool,
+}
+
+/// Which program callees on a cycle of followed calls a [`CallGraphPass`]
+/// reads no body of.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Cycles {
+    /// Every one, as upstream's `InlineParametric` and `RemoveUnusedParams`
+    /// read none.
+    Refused,
+    /// Only one in the caller's own strongly connected component, as
+    /// upstream's `AutomaticInline` (`canInlineCallee`) inlines a recursive
+    /// callee into a caller outside its cycle.
+    CallerComponent,
 }
 
 /// The finished callee bodies a [`CallGraphPass`] reads: the program's own,
@@ -83,7 +100,9 @@ impl Callees<'_> {
     /// The finished body of the callee `name`, when the pass follows it and
     /// it lies on no cycle of followed calls.
     ///
-    /// A program callee comes rewritten, since the seam runs callees first.
+    /// A program callee comes rewritten, since the seam runs callees first;
+    /// one on a cycle has none, or, under [`Cycles::CallerComponent`], none
+    /// when the cycle holds the caller.
     /// A package callee is finished on first use, which runs the pass over
     /// it in turn; a package body never calls a program body, so no cycle
     /// crosses the seam. Finishing a body runs every call-graph pass, so a
@@ -97,7 +116,13 @@ impl Callees<'_> {
         if let Some(program) = &self.program
             && let Some(&row) = program.rows.get(name)
         {
-            return (program.followed.contains(&row) && !program.cyclic.contains(&row))
+            let readable = match program.cycles {
+                Cycles::Refused => !program.cyclic.contains(&row),
+                Cycles::CallerComponent => {
+                    program.components[row] != program.components[program.caller]
+                }
+            };
+            return (program.followed.contains(&row) && readable)
                 .then(|| &program.functions[row].1);
         }
         let package = self.package?;
@@ -203,7 +228,7 @@ pub const ELABORATE_DROPS: BodyPass = BodyPass {
 
 /// The pass registered under `name`: a [`PIPELINE`] pass, or one run only
 /// on request (drop elaboration, `lower-lit`, and the post-elaboration
-/// argument lowering).
+/// passes).
 pub fn pass_named(name: &str) -> Option<&'static Pass> {
     PIPELINE
         .iter()
@@ -277,7 +302,13 @@ pub fn pre_elaborate_program(
             }
             Pass::CallGraph(pass) => {
                 let _pass = timing::span(pass.name);
-                for row in run_call_graph_pass(pass, program, package) {
+                let changed = run_call_graph_pass(
+                    pass,
+                    &mut program.functions,
+                    &program.declarations,
+                    package,
+                );
+                for row in changed {
                     let MirProgram {
                         functions,
                         declarations,
@@ -341,23 +372,20 @@ pub(super) fn pass_finding(pass: &str, finding: &str) -> String {
     format!("after pre-elaboration pass `{pass}`: {finding}")
 }
 
-/// Run the call-graph pass `pass` over every function of `program` but
-/// `__toplevel__`, each after the callees it follows, and return the rows
-/// of the functions it changed.
+/// Run the call-graph pass `pass` over every function of `functions`, a
+/// program declared by `declarations`, but `__toplevel__`, each after the
+/// callees it follows, and return the rows of the functions it changed.
 ///
 /// The order is the call graph's strongly connected components bottom-up,
 /// as MLIR's inliner walks them; a function in a component of more than
-/// one, or calling itself, is no callee's body ([`Callees::body`]).
+/// one, or calling itself, is no callee's body, or no body to a caller in
+/// its component ([`Callees::body`]).
 pub(super) fn run_call_graph_pass(
     pass: &CallGraphPass,
-    program: &mut MirProgram,
+    functions: &mut [(String, MirFunction)],
+    declarations: &MirDeclarations,
     package: Option<&PackageBodies>,
 ) -> Vec<usize> {
-    let MirProgram {
-        functions,
-        declarations,
-        ..
-    } = program;
     let rows: HashMap<String, usize> = functions
         .iter()
         .enumerate()
@@ -369,7 +397,11 @@ pub(super) fn run_call_graph_pass(
         .filter(|declaration| (pass.follows)(declaration, declarations))
         .filter_map(|declaration| rows.get(&declaration.lowered_name).copied())
         .collect();
-    let (order, cyclic) = bottom_up_order(functions, declarations, &rows, &followed);
+    let BottomUp {
+        order,
+        cyclic,
+        components,
+    } = bottom_up_order(functions, declarations, &rows, &followed);
     let mut changed = Vec::new();
     for row in order {
         if functions[row].0 == "__toplevel__" {
@@ -382,6 +414,9 @@ pub(super) fn run_call_graph_pass(
                 rows: &rows,
                 followed: &followed,
                 cyclic: &cyclic,
+                components: &components,
+                caller: row,
+                cycles: pass.cycles,
             }),
             package,
             declarations,
@@ -404,6 +439,11 @@ struct ProgramCallees<'a> {
     followed: &'a HashSet<usize>,
     /// The rows of the followed functions on a cycle of followed calls.
     cyclic: &'a HashSet<usize>,
+    /// The strongly connected component of each row.
+    components: &'a [usize],
+    /// The row of the function the pass is rewriting.
+    caller: usize,
+    cycles: Cycles,
 }
 
 /// Passes outside [`PIPELINE`] that [`pass_named`] still answers.
@@ -412,6 +452,7 @@ const REGISTERED: &[Pass] = &[
     Pass::Body(LOWER_LIT),
     Pass::Body(LOWER_ARG_CONVENTIONS),
     Pass::Body(SIMPLIFY_CF),
+    Pass::CallGraph(AUTOMATIC_INLINE),
     Pass::Program(ELIMINATE_DUPLICATE_FUNCTIONS),
 ];
 
@@ -515,15 +556,24 @@ fn followed_by_a_call_graph_pass(
     })
 }
 
+/// The rows of a program callees first along the calls to followed rows.
+struct BottomUp {
+    order: Vec<usize>,
+    /// The followed rows on a cycle of followed calls.
+    cyclic: HashSet<usize>,
+    /// The strongly connected component of each row.
+    components: Vec<usize>,
+}
+
 /// The rows of `functions` callees first along the calls to `followed`
 /// rows (Tarjan's strongly connected components, which come out bottom-up),
-/// and the followed rows on a cycle of such calls.
+/// the followed rows on a cycle of such calls, and each row's component.
 fn bottom_up_order(
     functions: &[(String, MirFunction)],
     declarations: &MirDeclarations,
     rows: &HashMap<String, usize>,
     followed: &HashSet<usize>,
-) -> (Vec<usize>, HashSet<usize>) {
+) -> BottomUp {
     struct Tarjan<'a> {
         edges: Vec<Vec<usize>>,
         index: Vec<Option<usize>>,
@@ -533,6 +583,7 @@ fn bottom_up_order(
         next: usize,
         order: Vec<usize>,
         cyclic: HashSet<usize>,
+        components: Vec<usize>,
         followed: &'a HashSet<usize>,
     }
     impl Tarjan<'_> {
@@ -558,6 +609,7 @@ fn bottom_up_order(
                 let mut component = Vec::new();
                 while let Some(member) = self.stack.pop() {
                     self.on_stack[member] = false;
+                    self.components[member] = row;
                     component.push(member);
                     if member == row {
                         break;
@@ -594,6 +646,7 @@ fn bottom_up_order(
         next: 0,
         order: Vec::with_capacity(functions.len()),
         cyclic: HashSet::new(),
+        components: vec![0; functions.len()],
         followed,
     };
     for row in 0..functions.len() {
@@ -601,7 +654,11 @@ fn bottom_up_order(
             tarjan.visit(row);
         }
     }
-    (tarjan.order, tarjan.cyclic)
+    BottomUp {
+        order: tarjan.order,
+        cyclic: tarjan.cyclic,
+        components: tarjan.components,
+    }
 }
 
 /// A package body's drops inserted and its lifetime-only markers erased:
@@ -635,6 +692,7 @@ mod tests {
         assert!(pass_named("lower-arg-conventions").is_some());
         assert!(pass_named("cse").is_some());
         assert!(pass_named("eliminate-duplicate-functions").is_some());
+        assert!(pass_named("automatic-inline").is_some());
         assert!(pass_named("no-such-pass").is_none());
     }
 }

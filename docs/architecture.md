@@ -6641,19 +6641,64 @@ point where a slot declared in a loop is uninitialized again.
 
 ### Post-Elaboration Pipeline
 
-Upstream nests a per-function `'kgen.func'` pipeline after
-`ElaborateGenerators`: the pinned compiler's `--mlir-timing` report lists
-`SROA`, `Mem2Reg`, `SCCP`, `Canonicalizer`, and `CSEPass` on each concrete
-function. Mojito's is `analysis::POST_ELABORATION_PIPELINE`
+Upstream's first optimization pipeline after `ElaborateGenerators`
+(`buildFirstOptPipeline`, `lib/Compiler/Pipeline/Pipeline.cpp`) runs
+`LowerArgConventions` and `Mem2Reg` on every function, then
+`AutomaticInline` with a nested function pipeline, then `SROA`,
+`Mem2Reg`, `Canonicalizer`, and, at `-O1` and above, `SROA`, `Mem2Reg`,
+`SCCP`, `Canonicalizer`, and `CSEPass`. Mojito's is
+`analysis::POST_ELABORATION_PIPELINE`
 (`crates/mojito-analysis/src/analysis/post_elaboration.rs`, R840):
-`lower-arg-conventions`, `mem-2-reg`, `simplify-cf`, `sroa`, `mem-2-reg`,
-`sccp`, `canonicalize`, then `cse`: upstream's first post-elaboration
-pipeline, then the head of the function pipeline its `AutomaticInline`
-runs (`SimplifyCF`, `SROA`, `Mem2Reg`, `Canonicalizer`, `CSEPass`), with
-`SCCP` from its `'kgen.func'` one. Mojito has no post-elaboration
-`AutomaticInline` (R1271), so `simplify-cf` runs once. Every pass reads
-the structured instance the elaborator emits; the VM runs it as it
-stands, and Pliron lowers it at its entry.
+`lower-arg-conventions`, `mem-2-reg`, `automatic-inline`, `sroa`,
+`mem-2-reg`, `canonicalize`, `sroa`, `mem-2-reg`, `sccp`, `canonicalize`,
+then `cse`. Upstream's `RaiseForLoops` and `LoopUnrolling` between the
+last two runs are not ported. Every pass reads the structured instance the
+elaborator emits; the VM runs it as it stands, and Pliron lowers it at its
+entry.
+
+`automatic-inline` (`analysis::AUTOMATIC_INLINE`,
+`analysis/automatic_inline.rs`, R1271) is upstream's `AutomaticInline`
+(`lib/Transforms/AutomaticInline.cpp`), a call-graph pass over the
+concrete functions. The seam walks the call graph's strongly connected
+components bottom-up (`run_call_graph_pass`, every function followed), so
+each callee arrives already rewritten. Each function takes the bodies of
+its admitted callees, then runs `AUTOMATIC_INLINE_PIPELINE` whether it
+inlined anything or not, as upstream's `completeFunctionProcessing` does:
+`simplify-cf`, `sroa`, `mem-2-reg`, `canonicalize`, `cse`,
+`canonicalize`, `simplify-cf`, `sroa`, `mem-2-reg`, `cse`, then
+`canonicalize`, which is upstream's nested pipeline without
+`HoistTrivialInvariants` (R1340) and `StackReuse` (R1341).
+- **Which callees.** A callee in the caller's own component has no body
+  to read (`Cycles::CallerComponent`, upstream's `canInlineCallee`), so a
+  recursive callee inlines once into a caller outside its cycle and keeps
+  its own self-call. Upstream's `shouldInlineCallee` is
+  `Admission::Automatic`: an always-inline callee (`nodebug`, `builtin`,
+  or plain `@always_inline`) at any size, an undecorated one whose
+  `inline_cost` is below `AUTOMATIC_INLINE_SIZE_BOUND` (47: upstream's
+  threshold of 50 operations at `-O3`, its default, less the three
+  `inline_cost` leaves out, as `INLINE_SIZE_BOUND` is 35 less three), and
+  never a `@no_inline` one.
+- **The splice.** It is `inline-parametric`'s (`inline_calls`), over a
+  callee whose binders the elaborator closed, so a shape it keeps a call
+  for (a callee holding a `try`, R1288) stays a call here too. Unlike
+  `inline-parametric`, it does not rescan a spliced body: upstream inlines
+  only the caller's own call sites, and a recursive callee's call inside
+  its own body would inline without end. Inlined code takes the call's
+  location (R1074).
+- **References.** A callee returning a reference returns it in the
+  caller's reference type. Its body spells the reference's mutability as a
+  parameter of its own (a `ref self` receiver's), which the splice binds
+  to the call's (`BoundMutabilities`) through the body's types and the
+  reference results its calls and subscripts record; a body spelling it
+  `immutable` keeps a call reading it as `mut`
+  (`grants_call_permission`, R1339).
+- **Backends.** An inlined reference reached through a handle a slot
+  stores (a `to=` pointer or `ref` field) outlives that slot: the VM roots
+  a `ref.make` at the handle's referent as it makes it
+  (`canonical_reference_parts`), as the native address does, where it had
+  re-rooted a reference only when a frame returned it. An inlined
+  zero-sized parameter is a zero-sized local, which Pliron gives a null
+  placeholder slot as it gives a zero-sized parameter.
 
 `simplify-cf` (`analysis::SIMPLIFY_CF`, `analysis/simplify_cf.rs`) is
 upstream's `SimplifyCF` (`lib/Transforms/SimplifyCF.cpp`), whole. A

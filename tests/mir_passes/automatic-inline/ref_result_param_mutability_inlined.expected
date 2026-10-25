@@ -1,0 +1,93 @@
+  functions: [
+      fn {
+        name: "Counter.__init__",
+        registers: 2,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Counter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Counter, arguments: [] } }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r1, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 77, end: 78, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int(0) },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent }, src: %r1 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "Counter.get",
+        registers: 1,
+        vars: 1,
+        var_names: [self],
+        params: 1,
+        param_types: [struct_type { name: Counter, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [true],
+        returns_reference: true,
+        var_types: [var_type { var: $v0, type: struct_type { name: Counter, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: ref { referent: Int, origin: origin_untracked { mutable: true }, mutability: mutability_param(7) } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 137, end: 143, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Counter, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: main,
+        registers: 22,
+        vars: 5,
+        var_names: ["$call_ref_r5", "$call_ref_r9", "self$inline4", "self$inline5", "c.n"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable } }, var_type { var: $v1, type: ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable } }, var_type { var: $v2, type: struct_type { name: Counter, arguments: [] } }, var_type { var: $v3, type: struct_type { name: Counter, arguments: [] } }, var_type { var: $v4, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r2, type: Int }, reg_type { reg: %r11, type: Int }, reg_type { reg: %r13, type: None }, reg_type { reg: %r16, type: ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable } }, reg_type { reg: %r17, type: ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable } }, reg_type { reg: %r18, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 194, end: 195, origin: absent }) }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: absent }, reg_loc { reg: %r10, location: absent }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 206, end: 213, origin: present($v1) }) }, reg_loc { reg: %r12, location: absent }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 196, end: 214, origin: absent }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 170, end: 179, origin: absent }) }, reg_loc { reg: %r15, location: absent }, reg_loc { reg: %r16, location: present(loc { file: file0, start: 180, end: 191, origin: absent }) }, reg_loc { reg: %r17, location: present(loc { file: file0, start: 206, end: 213, origin: absent }) }, reg_loc { reg: %r18, location: present(loc { file: file0, start: 170, end: 179, origin: absent }) }, reg_loc { reg: %r19, location: absent }, reg_loc { reg: %r20, location: absent }, reg_loc { reg: %r21, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r18, value: int(0) },
+              var.store { var: $v4, src: %r18, binding_type: present(Int), in_place: false },
+              const { dest: %r2, value: int(5) },
+              ref.make { dest: %r16, place: place { root: $v4, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              var.store { var: $v0, src: %r16, binding_type: present(ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable }), in_place: false },
+              place.store { place: place { root: $v0, root_type: present(ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable }), projections: [], type: present(Int), through: present($v0) }, src: %r2 },
+              drop.var { var: $v0 },
+              ref.make { dest: %r17, place: place { root: $v4, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              var.store { var: $v1, src: %r17, binding_type: present(ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable }), in_place: false },
+              place.load { dest: %r11, place: place { root: $v1, root_type: present(ref { referent: Int, origin: origin_place { root: $v131, path: [field(n)] }, mutability: mutable }), projections: [], type: present(Int), through: present($v1) } },
+              drop.var { var: $v1 },
+              call { dest: %r13, func: print, raises: absent, args: [%r11], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              drop.var { var: $v4 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      }
+  ]
