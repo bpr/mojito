@@ -5624,8 +5624,12 @@ register-loan analysis reads too: a direct call's declaration (a struct
 name's `__init__`), a method, operator, or subscript call's declaration
 or, through a bound, the requirement it selects, and a call through a
 value's function type or its resolved `__call__`. The verifier rejects a
-second end on some path, as `CheckLifetimes` rejects a use after
-consumption.
+second end on some path, and a read of an owned register some path has
+ended, as `CheckLifetimes` rejects a use after consumption: a temporary
+lowering stores in a hidden slot (a destructured tuple's `$mat_r`, an
+immediately invoked closure's `$sc`, a receiver's `$tmp_recv_r`) is read
+back from the slot (`place.load`), never from the register the store
+consumed.
 
 Iterator-driven loops also place an explicit drop at their common exhaustion or
 `break` exit. A `return` cannot reach that block, so HIR lists its current

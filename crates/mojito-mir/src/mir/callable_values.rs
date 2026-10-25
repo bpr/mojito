@@ -15,10 +15,10 @@ use std::collections::{HashMap, HashSet};
 /// whether its value captures nothing.
 ///
 /// It is resolved through closures, function constants, copies, and
-/// variables. A variable names its callable only while nothing writes it
-/// but its definitions (see [`rebound_variables`]) and every definition
-/// holds the same callable (`var g = use; g = use`). The walk descends into
-/// every region.
+/// variables, whether used or loaded whole. A variable names its callable
+/// only while nothing writes it but its definitions (see
+/// [`rebound_variables`]) and every definition holds the same callable
+/// (`var g = use; g = use`). The walk descends into every region.
 pub fn callable_targets(function: &MirFunction) -> HashMap<u32, (String, bool)> {
     let mut rebound = rebound_variables(function);
     loop {
@@ -83,6 +83,14 @@ fn visit_callables(
                     .map(|value| (dest.0, value)),
                 MirInstr::UseVar { dest, var, .. } => {
                     variables.get(var).cloned().map(|value| (dest.0, value))
+                }
+                MirInstr::LoadPlace { dest, place }
+                    if place.through.is_none() && place.proj.is_empty() =>
+                {
+                    variables
+                        .get(&place.root)
+                        .cloned()
+                        .map(|value| (dest.0, value))
                 }
                 _ => None,
             };

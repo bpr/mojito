@@ -18,9 +18,10 @@
 //! that takes ownership of it ([`RegisterEnds::consumed`]), a terminator
 //! carrying it out of its region, a `drop.reg`, or a `deinit`-receiver call
 //! on it ends it, and its definition (each time a loop reaches it, a
-//! region argument at its region's entry) starts it again. The walk keeps
-//! the owned registers some path has ended beside the slots, joined by
-//! union.
+//! region argument at its region's entry) starts it again. No operand
+//! reads an owned register some path has ended, as a use after
+//! consumption is rejected too. The walk keeps the owned registers some
+//! path has ended beside the slots, joined by union.
 //!
 //! The analysis is a must-analysis over one bit per slot ("held on every
 //! path"), joined by AND as upstream's `tracked &=`, and the parts of held
@@ -40,12 +41,13 @@
 //! finding, never invents one.
 
 use super::{
-    MirBlock, MirFunction, MirInstr, MirTerm, instruction_places, instruction_result_regs,
+    MirBlock, MirFunction, MirInstr, MirTerm, instruction_operand_regs, instruction_places,
+    instruction_result_regs,
 };
 use crate::mir::text::instruction_mnemonic;
 use crate::mir::{
     MirCaptureMode, MirDeclarations, MirPlace, OwnedStep, Proj, Reg, RegionFrame, RegisterEnds,
-    VarId, instruction_regions, instruction_slots, region_exit,
+    VarId, instruction_regions, instruction_slots, region_exit, terminator_regs,
 };
 use std::collections::{BTreeSet, HashMap};
 
@@ -262,6 +264,9 @@ impl<'a> Walk<'a> {
         let mut out = self.block(0, entry.clone(), block, report);
         if let Some(state) = out.normal.as_mut() {
             let carried = self.owned.consumed_by(&block.term);
+            let mut read = terminator_regs(&block.term);
+            read.retain(|reg| !carried.contains(reg));
+            self.read_registers(0, state, &read, "terminator", report);
             self.end_registers(0, state, &carried, "terminator", report);
         }
         match (&block.term, out.normal.as_ref()) {
@@ -552,16 +557,41 @@ impl<'a> Walk<'a> {
     ) {
         let mut consumed = Vec::new();
         self.owned.consumed(instruction, &mut consumed);
-        self.end_registers(
-            index,
-            state,
-            &consumed,
-            instruction_mnemonic(instruction),
-            report,
-        );
+        let mut read = Vec::new();
+        instruction_operand_regs(instruction, &mut read);
+        read.retain(|reg| !consumed.contains(reg));
+        let what = instruction_mnemonic(instruction);
+        self.read_registers(index, state, &read, what, report);
+        self.end_registers(index, state, &consumed, what, report);
         let mut defined = Vec::new();
         instruction_result_regs(instruction, &mut defined);
         state.define(&defined);
+    }
+
+    /// Report each owned register of `regs`, which `what` reads without
+    /// taking ownership of, that some path reaching it has ended.
+    fn read_registers(
+        &mut self,
+        index: usize,
+        state: &Held,
+        regs: &[Reg],
+        what: &str,
+        report: bool,
+    ) {
+        if !report {
+            return;
+        }
+        for reg in regs {
+            if self.owned.owned(*reg) && state.ended_regs.contains(&reg.0) {
+                let finding = format!(
+                    "MIR function '{}' block {index}: {what} reads owned register %r{}, which some path reaching it has ended",
+                    self.name, reg.0
+                );
+                if !self.findings.contains(&finding) {
+                    self.findings.push(finding);
+                }
+            }
+        }
     }
 
     /// End each owned register of `regs`, which `what` takes ownership of,

@@ -2801,7 +2801,7 @@ impl<'a> Flatten<'a> {
         // A tuple place is read where it stands, as upstream's unpacking
         // projects each element from the tuple's address; only a temporary
         // is evaluated.
-        let tuple = match &base_place {
+        let mut tuple = match &base_place {
             Some(place) => {
                 let loaded = self.fresh_typed(
                     value.location(),
@@ -2843,7 +2843,19 @@ impl<'a> Flatten<'a> {
                 in_place: false,
             });
             self.owner_vars.insert(owner, hidden);
-            base_place = Some(MirPlace::root(hidden, ty));
+            // The slot now owns the tuple, so its elements are read from
+            // the slot, not from the register the store consumed.
+            let place = MirPlace::root(hidden, ty);
+            tuple = self.fresh_typed(
+                value.location(),
+                Some(hidden),
+                place.ty.clone().unwrap_or_else(Ty::error),
+            );
+            self.emit(MirInstr::LoadPlace {
+                dest: tuple,
+                place: place.clone(),
+            });
+            base_place = Some(place);
         }
         // A loan-carrying element (a view into the unpacked value's source)
         // inherits the value's loans, exactly as binding the whole value

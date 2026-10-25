@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The MIR verifier rejects an operand that reads an owned register some
+  path has already ended, as upstream's `CheckLifetimes` rejects a use of
+  an owned SSA value after its consumption (R1330). MIR lowering now
+  reads a temporary it stores into a hidden slot back from that slot: a
+  destructured call result (`var h, t = pair()`, which `os._makedirs`,
+  `os.removedirs`, and `path.expandvars` use), an immediately invoked
+  closure, and a temporary method receiver. No program's output changes.
+
 - `lower-arg-conventions` and `imm-arguments` store a register-passable
   struct argument read through its fields into a local that `sroa`
   splits, as upstream's `LowerArgConventions` stores it for `SROA` and

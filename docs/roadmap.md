@@ -8639,28 +8639,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1330 An operand names a register that a store already consumed**
-
-  A register stored into a slot is read again afterwards, where upstream
-  rejects a use of an owned SSA value after its consumption.
-  - A whole-corpus census (2026-10-24) found 47 such reads.
-  - `var h, t = pair()` reads the call result `%r0` in its `index.get`
-    after `var.store` put it in the `$mat_r` slot
-    (`lower_destructure_elements`, `mir/lower_stmt.rs`), in
-    `os._makedirs`, `os.removedirs`, and `path.expandvars` too.
-  - A called closure expression is read as the `call.indirect` callee
-    after it is stored into its `$sc` slot.
-  - The `call.method` receivers of `M` and `_ArrayIter` are stored, then
-    named.
-  - Each one names the slot's place beside the stale register, so nothing
-    is destroyed twice: drop elaboration scrubs a consumed register's root
-    from every provenance, so a stale read places no `drop.reg`.
-  - Lever: read the slot (`place.load`) instead, as R1320 did for
-    `$arg_loan_r`, then extend the verifier's register-end rule to reject
-    a read of an ended owned register.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1326 An operand that is only borrowed is copied into a register
   first**
 

@@ -470,8 +470,11 @@ Schema 1.99 gives `drop.reg { reg }` a `destructor`, as `drop.var` has:
 the death of an owned register (upstream's direct `ValueToDestroy`), whose
 named destructor `lower_drops` writes as the `deinit`-receiver
 `call.method` on the register itself. Both backends run an unnamed one.
-The verifier now also rejects an owned register ended twice on some path.
-An older artifact holds no `drop.reg`, so it reads unchanged.
+The verifier now also rejects an owned register ended twice on some path,
+and an operand reading an owned register some path has ended. An older
+artifact holds no `drop.reg`, so it reads unchanged, but one whose
+lowering read a register back after storing it into a slot fails
+verification at load.
 
 Schema 1.100 replaces a `call.method`'s `deinit_receiver` with
 `receiver_convention: option<convention>`, the callee's receiver

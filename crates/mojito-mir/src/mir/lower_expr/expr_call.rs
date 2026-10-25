@@ -529,7 +529,7 @@ impl<'a> Flatten<'a> {
         let mut callee_place = self.callable_receiver_place(callee);
         let callable_ty = callee.ty();
         let lambda_callee = matches!(callee.op(), CheckedOp::Lambda { .. });
-        let callee = self.expr(callee);
+        let mut callee = self.expr(callee);
         let callable_ty = callable_ty.or_else(|| self.f.reg_types.get(&callee.0).cloned());
         if lambda_callee && callee_place.is_none() {
             // An immediately invoked lambda's closure is a temporary;
@@ -547,6 +547,16 @@ impl<'a> Flatten<'a> {
                 in_place: false,
             });
             let place = MirPlace::root(slot, callable_ty.clone());
+            // The slot now owns the closure, which the call reads from it.
+            callee = self.fresh_typed(
+                call.location(),
+                Some(slot),
+                callable_ty.clone().unwrap_or_else(Ty::error),
+            );
+            self.emit(MirInstr::LoadPlace {
+                dest: callee,
+                place: place.clone(),
+            });
             callee_place = place.is_typed().then_some(place);
         }
         let param_arg_regs = self.indirect_param_arg_regs(call);

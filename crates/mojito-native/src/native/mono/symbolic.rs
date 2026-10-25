@@ -247,6 +247,7 @@ pub(super) fn erase_specialized_generic_callable_storage(function: &mut MirFunct
                     | MirInstr::Const { dest, .. }
                     | MirInstr::CopyValue { dest, .. }
                     | MirInstr::UseVar { dest, .. }
+                    | MirInstr::LoadPlace { dest, .. }
                         if generic_regs.contains(&dest.0) =>
                     {
                         *instruction = MirInstr::Const {

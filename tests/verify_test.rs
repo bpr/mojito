@@ -2152,6 +2152,29 @@ fn register_end_findings_in(
     more: &[(u32, Ty)],
     declarations: MirDeclarations,
 ) -> Vec<String> {
+    owned_register_findings(blocks, more, declarations)
+        .into_iter()
+        .filter(|finding| finding.contains("ends owned register"))
+        .collect()
+}
+
+/// The findings of `blocks` about owned registers read after their end,
+/// in [`register_end_findings`]' function; `%r2` is `S` too.
+fn register_read_findings(blocks: Vec<MirBlock>) -> Vec<String> {
+    let s = Ty::new(TyKind::Struct("S".into(), Vec::new()));
+    owned_register_findings(blocks, &[(2, s)], MirDeclarations::default())
+        .into_iter()
+        .filter(|finding| finding.contains("reads owned register"))
+        .collect()
+}
+
+/// Every verifier finding of `blocks` in [`register_end_findings`]'
+/// function.
+fn owned_register_findings(
+    blocks: Vec<MirBlock>,
+    more: &[(u32, Ty)],
+    declarations: MirDeclarations,
+) -> Vec<String> {
     let s = Ty::new(TyKind::Struct("S".into(), Vec::new()));
     let mut types = vec![(0, s.clone()), (1, Ty::bool())];
     types.extend_from_slice(more);
@@ -2169,9 +2192,6 @@ fn register_end_findings_in(
     let mut program = program(f);
     program.declarations = declarations;
     verify(&program)
-        .into_iter()
-        .filter(|finding| finding.contains("ends owned register"))
-        .collect()
 }
 
 /// `%r0`, an owned copy of `x`, and `%r1`, a `Bool` condition.
@@ -2236,6 +2256,49 @@ fn verifier_rejects_an_owned_register_ended_twice() {
         register_end_findings(vec![block(after_one_arm, MirTerm::Return(None))]),
         [
             "MIR function 'test' block 0: drop.reg ends owned register %r0, which some path reaching it has ended"
+        ]
+    );
+}
+
+/// An owned register stored into a slot is not read again, as upstream's
+/// `CheckLifetimes` rejects a use of an owned SSA value after its
+/// consumption: a read before the store, or of the slot after it, is
+/// accepted, and a read of the register after it, on one path or both, is
+/// rejected.
+#[test]
+fn verifier_rejects_a_read_of_an_ended_owned_register() {
+    let copy_r0 = MirInstr::CopyValue {
+        dest: Reg(2),
+        value: Reg(0),
+        constructor: None,
+    };
+    let load_y = MirInstr::LoadPlace {
+        dest: Reg(2),
+        place: MirPlace::root(1, Some(Ty::new(TyKind::Struct("S".into(), Vec::new())))),
+    };
+    let before = [copy_x_and_condition(), vec![copy_r0.clone(), STORE_R0_IN_Y]].concat();
+    assert!(register_read_findings(vec![block(before, MirTerm::Return(None))]).is_empty());
+    let slot = [copy_x_and_condition(), vec![STORE_R0_IN_Y, load_y]].concat();
+    assert!(register_read_findings(vec![block(slot, MirTerm::Return(None))]).is_empty());
+    let after = [copy_x_and_condition(), vec![STORE_R0_IN_Y, copy_r0.clone()]].concat();
+    assert_eq!(
+        register_read_findings(vec![block(after, MirTerm::Return(None))]),
+        [
+            "MIR function 'test' block 0: value.copy reads owned register %r0, which some path reaching it has ended"
+        ]
+    );
+    let after_one_arm = [
+        copy_x_and_condition(),
+        vec![
+            if_region(yields(vec![STORE_R0_IN_Y]), yields(Vec::new())),
+            copy_r0,
+        ],
+    ]
+    .concat();
+    assert_eq!(
+        register_read_findings(vec![block(after_one_arm, MirTerm::Return(None))]),
+        [
+            "MIR function 'test' block 0: value.copy reads owned register %r0, which some path reaching it has ended"
         ]
     );
 }

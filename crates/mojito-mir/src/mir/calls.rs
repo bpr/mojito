@@ -1479,7 +1479,14 @@ impl<'a> Flatten<'a> {
             binding_ty: Some(ty.clone()),
             in_place: false,
         });
-        (value, Some(MirPlace::root(variable, Some(ty))))
+        // The slot now owns the temporary, which the call reads from it.
+        let place = MirPlace::root(variable, Some(ty.clone()));
+        let loaded = self.fresh_typed(receiver.location(), Some(variable), ty);
+        self.emit(MirInstr::LoadPlace {
+            dest: loaded,
+            place: place.clone(),
+        });
+        (loaded, Some(place))
     }
 
     /// Lower method call `call`'s receiver as [`Self::lower_method_receiver`]
