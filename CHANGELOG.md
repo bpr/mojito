@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `lower-arg-conventions` and `imm-arguments` store a register-passable
+  struct argument read through its fields into a local that `sroa`
+  splits, as upstream's `LowerArgConventions` stores it for `SROA` and
+  `Mem2Reg` (R1268). So `take_q(q: Q)` reading `q.a` and `q.b` reads two
+  `field.get`s of the argument's value instead of loads through its slot.
+  A memory-only struct argument stays behind its slot, as upstream's
+  `lowerPointerType` leaves it, an initializer's `out self` is never
+  stored, and a type whose copy runs a constructor is stored by a load,
+  which runs none. No program's output changes.
+
 - `mem-2-reg` reads a whole-root `ref.make` of a slot, whose register
   only `ref.read` and `ref.write` take, as the allocation's own address,
   as upstream's inlined `ref` parameter is (R1105). Each read and write

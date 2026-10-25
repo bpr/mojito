@@ -2,7 +2,10 @@
 # per field, as upstream's `SROA` splits the allocation, so `mem-2-reg`
 # promotes each field: a fieldwise-built slot, an inlined constructor's
 # `out self`, a nested struct, a slot read whole after a field write, a
-# moved slot, and an empty struct.
+# moved slot, and an empty struct. A register-passable struct argument read
+# through its fields is stored into a slot that splits too, as upstream's
+# `LowerArgConventions` stores it for `SROA` (`take_q`, read and owned); a
+# memory-only one stays behind its address, as upstream leaves it (`take`).
 
 
 @fieldwise_init
@@ -35,6 +38,17 @@ struct Empty(Copyable, Movable):
 @no_inline
 def take(p: Pt) -> Int:
     return p.x * 10 + p.y
+
+
+@no_inline
+def take_q(q: Q) -> Int:
+    return q.a * 10 + q.b
+
+
+@no_inline
+def take_owned_q(var q: Q) -> Int:
+    q.b += 1
+    return q.a * 10 + q.b
 
 
 @no_inline
@@ -85,3 +99,5 @@ def main():
     print(whole(4))
     print(moved(9))
     print(empty())
+    print(take_q(Q(4, 5)))
+    print(take_owned_q(Q(1, 2)))

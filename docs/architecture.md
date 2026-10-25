@@ -5667,7 +5667,9 @@ register-passable type by its `imm` convention, one SSA value from the
 generator on, where MIR lowering gives every parameter a slot: it is
 `lower-arg-conventions`' store restricted to `read` parameters, so each
 such parameter slot is read once at the entry, into a local `mem-2-reg`
-promotes, and every read of the argument is that one value. An owned
+promotes or `sroa` splits (a field read then upstream's
+`kgen.struct.extract` of the value), and every read of the argument is
+that one value. An owned
 argument keeps its slot, as upstream's `owned_in_mem` one stays in memory
 until `LowerArgConventions`. So `var s = x` then `s < x` compares one
 register with itself, which `canonicalize` folds.
@@ -6778,20 +6780,27 @@ among them. Last, after an `if` whose `then` arm cannot fall through, the
 condition reads `false` in the rest of its block, and `true` after one
 with no elifs whose `else` arm cannot
 (`propagateImpliedCondition`). Its `--timings` counters are
-`erased_loops`, `erased_tries`, and `implied_conditions`. `lower-arg-conventions` stores
-only an argument `mem-2-reg` promotes whole, so `sroa` splits no struct
-argument (R1268). Upstream's first
+`erased_loops`, `erased_tries`, and `implied_conditions`. Upstream's first
 optimization pipeline after elaboration runs `LowerArgConventions` and then
 `Mem2Reg` on every function: a register-passable `read` or owned argument
-is stored into a callee-side temporary, which `Mem2Reg` promotes, while a
-`mut` one is not. `lower-arg-conventions` (`analysis::LOWER_ARG_CONVENTIONS`,
-`analysis/mem2reg.rs`, R787) is that callee half: each `read` or owned
-parameter of a trivially register-passable type that `mem-2-reg` would
-promote, were it stored at the entry, gets a fresh local every mention of
-it names, stored from one `var.use` of the parameter at the entry, so the
-call ABI's slot is read once and `mem-2-reg` promotes the local; which
-parameters qualify is the region promotion's own judgement
-(`variance`), the parameter counted as stored at the entry. `mem-2-reg` then
+is stored into a callee-side temporary, which `SROA` splits and `Mem2Reg`
+promotes, while a `mut` one is not, nor a memory-only struct, which
+`lowerPointerType` leaves behind its address, nor an initializer's `out
+self`, a `byref_result` upstream makes the function's result.
+`lower-arg-conventions` (`analysis::LOWER_ARG_CONVENTIONS`,
+`analysis/mem2reg.rs`, R787, R1268) is that callee half: each `read` or
+owned parameter of a register-passable type
+(`MirDeclarations::register_passable`) that `mem-2-reg` would promote, or
+`sroa` split, were it stored at the entry, gets a fresh local every mention
+of it names, stored from one read of the parameter at the entry (a
+`var.use` copy of a type whose copy is the value itself, else a whole-root
+`place.load`, which runs no copy constructor), so the call ABI's slot is
+read once and the local is split or promoted; which parameters qualify is
+the region promotion's own judgement (`variance`) and `sroa`'s census
+(`splittable_parameters`), the parameter counted as stored at the entry.
+So a `read q: Q` of a `TrivialRegisterPassable` struct read as `q.a` and
+`q.b` becomes two `field.get`s of the argument's value, where a memory-only
+`Pt` keeps its field loads through the slot, as at the pin. `mem-2-reg` then
 promotes the instance's locals too, whose types the instance closed. It folds what only
 an instance knows: the elaborator answers a parameter read
 (`Const::Param`) with an ordinary scalar `const`, so the operators over it

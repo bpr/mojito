@@ -1,0 +1,33 @@
+  functions: [
+      fn {
+        name: memory_only_argument_kept,
+        registers: 6,
+        vars: 1,
+        var_names: [p],
+        params: 1,
+        param_types: [struct_type { name: Pt, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Pt, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 288, end: 291, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 294, end: 296, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 294, end: 296, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 288, end: 296, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 299, end: 302, origin: present($v0) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 288, end: 302, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(10) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              binary { op: mul, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              place.load { dest: %r4, place: place { root: $v0, root_type: present(struct_type { name: Pt, arguments: [] }), projections: [projection { op: field(y), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      }
+  ]

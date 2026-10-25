@@ -2,9 +2,9 @@
 //! SSA values when every user is a load, a store, or a lifetime marker, and
 //! `lower-arg-conventions`, the callee half of upstream's
 //! `LowerArgConventions`, which stores each register-passable argument into
-//! a temporary that `Mem2Reg` then promotes, and `imm-arguments`, its
-//! `read` half before elaboration, where upstream's parser already passes
-//! such an argument as one value.
+//! a temporary that `SROA` splits and `Mem2Reg` promotes, and
+//! `imm-arguments`, its `read` half before elaboration, where upstream's
+//! parser already passes such an argument as one value.
 //!
 //! A MIR variable slot is the allocation. One is promoted when its type is
 //! trivially register-passable ([`MirDeclarations::copy_is_identity`]),
@@ -45,15 +45,17 @@
 
 use super::canonicalize::definition_counts;
 use super::pre_elaboration::BodyPass;
+use super::sroa::splittable_parameters;
 use mojito_common::timing;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    Const, MirBlock, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirTerm, Reg,
-    RegionFrame, UseMode, count_register_reads, instruction_regions, instruction_regions_mut,
+    Const, MirBlock, MirCase, MirDeclarations, MirElif, MirFunction, MirInstr, MirPlace, MirTerm,
+    Reg, RegionFrame, UseMode, count_register_reads, instruction_regions, instruction_regions_mut,
     instruction_slots, loop_continues_mut, match_nexts_mut, region_exit, renumber_block_slots,
     retire_slots, try_raises_mut,
 };
+use mojito_symbol::symbol::is_initializer_symbol;
 use mojito_types::types::Ty;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
@@ -104,71 +106,80 @@ pub fn mem_2_reg(_name: &str, function: &mut MirFunction, declarations: &MirDecl
     true
 }
 
-/// Store each argument of `function` that [`mem_2_reg`] would promote into
-/// a fresh local at the entry, which every mention of the argument then
-/// names; returns whether any was.
+/// Store each argument of `function` that [`mem_2_reg`] would promote, or
+/// [`sroa`](super::sroa::sroa) split, into a fresh local at the entry.
 ///
-/// The argument is a `read` or owned parameter of a trivially
-/// register-passable type, as upstream promotes one; a `mut` or `deinit`
-/// one is never stored. Its own slot, the call ABI's, keeps the one read at
+/// Every mention of the argument then names the local; returns whether
+/// any was stored. The argument is a `read` or owned parameter of a
+/// register-passable type ([`MirDeclarations::register_passable`]), as
+/// upstream's `lowerPointerType` lowers one and leaves a memory-only
+/// struct behind its address; a `mut` or `deinit` one is never stored, nor
+/// an initializer's `out self`, which upstream's `byref_result` makes the
+/// function's result. Its own slot, the call ABI's, keeps the one read at
 /// the entry.
 pub fn lower_arg_conventions(
-    _name: &str,
+    name: &str,
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> bool {
-    store_arguments(function, declarations, |_| true)
+    store_arguments(name, function, declarations, |_| true)
 }
 
 /// Store each `read` argument of `function` that [`mem_2_reg`] would
-/// promote into a fresh local at the entry, as [`lower_arg_conventions`]
-/// stores it; returns whether any was.
+/// promote, or [`sroa`](super::sroa::sroa) split, into a fresh local at
+/// the entry, as [`lower_arg_conventions`] stores it.
 ///
-/// Upstream's parser passes a `read` argument of a register-passable type
-/// by its `imm` convention, one SSA value from the parametric generator on,
-/// so its every read is that value; a parameter slot read once at the entry
-/// is that value here. An owned argument stays in its slot, as upstream's
-/// `owned_in_mem` one stays in memory until `LowerArgConventions`.
+/// Returns whether any was stored. Upstream's parser passes a `read`
+/// argument of a register-passable type by its `imm` convention, one SSA
+/// value from the parametric generator on, so its every read is that
+/// value, and a field read a `kgen.struct.extract` of it; a parameter slot
+/// read once at the entry is that value here. An owned argument stays in
+/// its slot, as upstream's `owned_in_mem` one stays in memory until
+/// `LowerArgConventions`.
 pub fn imm_arguments(
-    _name: &str,
+    name: &str,
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> bool {
     let owned = function.owned_params.clone();
-    store_arguments(function, declarations, |param| {
+    store_arguments(name, function, declarations, |param| {
         !owned.get(param).copied().unwrap_or(true)
     })
 }
 
-/// Store each argument of `function` that `admitted` admits, of a `read`
-/// or owned convention and a trivially register-passable type, which
-/// [`mem_2_reg`] would promote, into a fresh local at the entry; returns
-/// whether any was.
+/// Store each argument of `function`, the body `name`, that `admitted`
+/// admits, of a `read` or owned convention and a register-passable type,
+/// which [`mem_2_reg`] would promote or [`splittable_parameters`] answers,
+/// into a fresh local at the entry; returns whether any was.
 fn store_arguments(
+    name: &str,
     function: &mut MirFunction,
     declarations: &MirDeclarations,
     admitted: impl Fn(usize) -> bool,
 ) -> bool {
+    let out_self = is_initializer_symbol(name);
     let eligible: BTreeSet<VarId> = (0..function.n_params)
         .filter(|&param| {
             admitted(param)
+                && (param != 0 || !out_self)
                 && !function.ref_params.get(param).copied().unwrap_or(true)
                 && !function.deinit_params.get(param).copied().unwrap_or(true)
                 && function
                     .param_types
                     .get(param)
-                    .is_some_and(|ty| declarations.copy_is_identity(ty))
+                    .is_some_and(|ty| declarations.register_passable(ty))
         })
         .filter_map(|param| VarId::try_from(param).ok())
         .collect();
     if eligible.is_empty() {
         return false;
     }
-    let stored: Vec<VarId> = variance(function, declarations, &eligible)
-        .0
-        .intersection(&eligible)
-        .copied()
-        .collect();
+    let mut stored = splittable_parameters(function, declarations, &eligible);
+    stored.extend(
+        variance(function, declarations, &eligible)
+            .0
+            .intersection(&eligible),
+    );
     if stored.is_empty() {
         return false;
     }
@@ -198,11 +209,20 @@ fn store_arguments(
         {
             function.spans.0.insert(value.0, (span, Some(param)));
         }
-        entry.push(MirInstr::UseVar {
-            dest: value,
-            var: param,
-            mode: UseMode::Copy,
-            constructor: None,
+        // The argument's value, as upstream stores the lowered one: a type
+        // whose copy runs a constructor is loaded, which runs none.
+        entry.push(if declarations.copy_is_identity(&ty) {
+            MirInstr::UseVar {
+                dest: value,
+                var: param,
+                mode: UseMode::Copy,
+                constructor: None,
+            }
+        } else {
+            MirInstr::LoadPlace {
+                dest: value,
+                place: MirPlace::root(param, Some(ty.clone())),
+            }
         });
         entry.push(MirInstr::DefVar {
             var: local,

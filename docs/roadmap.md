@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1351**.
+Next free ID: **R1352**.
 
 ## Ordered Work
 
@@ -775,22 +775,26 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1268 `lower-arg-conventions` stores only the arguments `mem-2-reg`
-  promotes whole, so `sroa` never splits a struct argument**
+- [ ] **R1351 `lower-arg-conventions` stores an owned argument of any size,
+  where upstream leaves one over `mem-to-reg-size-limit` in memory**
 
-  After elaboration, a `read` argument of a struct type is read through
-  field places on its parameter slot, where upstream's
-  `LowerArgConventions` stores every register-passable argument into a
-  stack allocation for the `'kgen.func'` pipeline's `SROA` and `Mem2Reg`.
-  - `lower_arg_conventions` stores a parameter only when `promotable_type`
-    admits it, and `sroa` splits locals only.
-  - Lever: admit a parameter `sroa` would split (expose its census from
-    `crates/mojito-analysis/src/analysis/sroa.rs`) in
-    `lower_arg_conventions`' eligible set.
-  - Probe: `def take(p: Pt) -> Int: return p.x * 10 + p.y` in
-    `assets/ok/struct_slot_fields_split.mojo` keeps two `place.load`s of
-    `p`'s fields in concrete `take` (upstream: `LowerArgConventions.cpp`,
-    then `SROA, Mem2Reg`).
+  Upstream's `lowerPointerType` (`LowerArgConventions.cpp`) lowers an
+  `owned_in_mem` argument to a register only when the target's store size
+  of its type is at most `maxInlineSize` (256 bytes); a larger one stays
+  behind its address, so `SROA` and `Mem2Reg` never see a temporary for it.
+  - `store_arguments` (`analysis/mem2reg.rs`) has no size test, so a large
+    register-passable owned argument is stored into a local, split by
+    `sroa`, and promoted.
+  - Lever: give `lower_arg_conventions` the target's store size (the
+    layout `crates/mojito-native-core` owns) and skip an owned parameter
+    over 256 bytes; `imm-arguments` keeps none, since upstream's parser
+    passes every register-passable `read` argument as `imm`.
+  - Probe: `@no_inline def f(var b: Big) -> Int: return b.n + 1`, over a
+    `TrivialRegisterPassable` `Big` of a `SIMD[DType.float64, 64]` and an
+    `Int` (520 bytes), reads `b.n` as a `field.get` of `b`'s whole value
+    in concrete `f`, where the pin keeps `b` behind its pointer argument
+    and loads the field through it.
+  - Found while landing R1268 (2026-10-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -1,0 +1,35 @@
+  functions: [
+      fn {
+        name: struct_argument_split,
+        registers: 7,
+        vars: 2,
+        var_names: [q, q],
+        params: 1,
+        param_types: [struct_type { name: Q, arguments: [] }],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Q, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Q, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: struct_type { name: Q, arguments: [] } }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 215, end: 218, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 221, end: 223, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 221, end: 223, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 215, end: 223, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 226, end: 229, origin: present($v0) }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 215, end: 229, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 215, end: 218, origin: present($v0) }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r6, var: $v0, mode: copy },
+              var.store { var: $v1, src: %r6, binding_type: present(struct_type { name: Q, arguments: [] }), in_place: false },
+              const { dest: %r1, value: int_literal(10) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              place.load { dest: %r0, place: place { root: $v1, root_type: present(struct_type { name: Q, arguments: [] }), projections: [projection { op: field(a), type: Int }], type: present(Int), through: absent } },
+              binary { op: mul, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              place.load { dest: %r4, place: place { root: $v1, root_type: present(struct_type { name: Q, arguments: [] }), projections: [projection { op: field(b), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      }
+  ]

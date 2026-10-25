@@ -3,10 +3,11 @@
 //! each field a body reads and writes through field places.
 //!
 //! A MIR variable slot is the allocation. One is split when it is a local
-//! of a declared struct type whose fields its arguments resolve, none of
-//! them a pointer or a `ref`, whatever its fields' types and whatever its
-//! drop runs,
-//! as upstream tests only that the element types resolve, and every
+//! (an argument `imm-arguments` or `lower-arg-conventions` stored into one
+//! included, [`splittable_parameters`]) of a declared struct type whose
+//! fields its arguments resolve, none of them a pointer or a `ref`,
+//! whatever its fields' types and whatever its drop runs, as upstream
+//! tests only that the element types resolve, and every
 //! mention of it is one of:
 //! - a whole store (`var.store`, or `place.store` on the whole slot), which
 //!   becomes one `field.get` of the stored value and one `var.store` per
@@ -117,6 +118,23 @@ pub fn sroa(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
     timing::count("split_slots", retired.len() as u64);
     timing::count("split_field_slots", field_slots as u64);
     true
+}
+
+/// The parameters among `params` of `function` whose slot [`sroa`] would
+/// split were it a local the entry stores whole, as
+/// `lower-arg-conventions` stores one: upstream's `SROA` splits the stack
+/// allocation `LowerArgConventions` stores a register-passable argument
+/// into, whatever reads it.
+pub fn splittable_parameters(
+    function: &MirFunction,
+    declarations: &MirDeclarations,
+    params: &BTreeSet<VarId>,
+) -> BTreeSet<VarId> {
+    let fields = judged_slots(function, declarations, |var| params.contains(&var));
+    unkept_census(function, &fields)
+        .into_keys()
+        .filter(|var| fields.contains_key(var))
+        .collect()
 }
 
 /// Upstream's `loopLimit`: the most rounds one run splits.
@@ -254,32 +272,12 @@ impl Registers {
 
 /// The slots of `function` a round splits, each with its fields, sorted.
 fn splittable_slots(function: &MirFunction, declarations: &MirDeclarations) -> Vec<Candidate> {
-    let mut judged: HashMap<&Ty, Option<Judged<'_>>> = HashMap::new();
-    let fields: HashMap<VarId, Judged<'_>> = function
-        .var_tys
-        .iter()
-        .filter(|&(&var, _)| var as usize >= function.n_params)
-        .filter_map(|(&var, ty)| {
-            let fields = judged.entry(ty).or_insert_with(|| {
-                splittable_type(ty, declarations)
-                    .map(|fields| (fields, !declarations.register_passable(ty)))
-            });
-            Some((var, fields.clone()?))
-        })
-        .collect();
-    if fields.is_empty() {
-        return Vec::new();
-    }
-    let mut census = HashMap::new();
-    take_census(&function.blocks, &fields, &mut census);
-    if fields.values().any(|(_, memory_only)| *memory_only) {
-        let mut registers = Registers::default();
-        registers.record(&function.blocks);
-        keep_address_users(&mut census, &fields, &registers);
-    }
-    let mut slots: Vec<Candidate> = census
+    let fields = judged_slots(function, declarations, |var| {
+        var as usize >= function.n_params
+    });
+    let mut slots: Vec<Candidate> = unkept_census(function, &fields)
         .into_iter()
-        .filter(|(_, entry)| entry.defined && !entry.kept)
+        .filter(|(_, entry)| entry.defined)
         .filter_map(|(var, entry)| {
             Some(Candidate {
                 var,
@@ -290,6 +288,50 @@ fn splittable_slots(function: &MirFunction, declarations: &MirDeclarations) -> V
         .collect();
     slots.sort_unstable_by_key(|candidate| candidate.var);
     slots
+}
+
+/// The slots of `function` that `admitted` admits and whose type
+/// [`splittable_type`] splits, each with its fields and whether its type
+/// is memory-only.
+fn judged_slots<'a>(
+    function: &MirFunction,
+    declarations: &'a MirDeclarations,
+    admitted: impl Fn(VarId) -> bool,
+) -> HashMap<VarId, Judged<'a>> {
+    let mut judged: HashMap<&Ty, Option<Judged<'_>>> = HashMap::new();
+    function
+        .var_tys
+        .iter()
+        .filter(|&(&var, _)| admitted(var))
+        .filter_map(|(&var, ty)| {
+            let fields = judged.entry(ty).or_insert_with(|| {
+                splittable_type(ty, declarations)
+                    .map(|fields| (fields, !declarations.register_passable(ty)))
+            });
+            Some((var, fields.clone()?))
+        })
+        .collect()
+}
+
+/// The census of each slot `fields` names that `function` mentions and no
+/// mention keeps, an address user of a memory-only one included
+/// ([`keep_address_users`]).
+fn unkept_census(
+    function: &MirFunction,
+    fields: &HashMap<VarId, Judged<'_>>,
+) -> HashMap<VarId, Census> {
+    if fields.is_empty() {
+        return HashMap::new();
+    }
+    let mut census = HashMap::new();
+    take_census(&function.blocks, fields, &mut census);
+    if fields.values().any(|(_, memory_only)| *memory_only) {
+        let mut registers = Registers::default();
+        registers.record(&function.blocks);
+        keep_address_users(&mut census, fields, &registers);
+    }
+    census.retain(|_, entry| !entry.kept);
+    census
 }
 
 /// The fields of a slot of `ty` [`sroa`] may split, at its arguments
