@@ -12,6 +12,10 @@
 //! driver applies a `fold` that returns an operand; and an instruction
 //! whose results nothing reads goes when it has no effect but reading
 //! ([`MirInstr::would_be_trivially_dead`]), repeated until nothing changes.
+//! A `call.indirect` whose callee is defined once by a function constant,
+//! or by a closure of no captures, becomes a direct `call` of that
+//! function, as KGEN's `CallParamOp` and `CallIndirectOp` canonicalizers
+//! fold a known callee.
 //! A `drop.reg` of a register whose type an instantiation made one whose
 //! destruction runs no code goes first, as upstream tracks no
 //! register-passable trivial value: a fold may then forward the register
@@ -35,7 +39,7 @@ use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirInstr, Reg, count_register_reads,
+    Const, FuncRef, MirBlock, MirDeclarations, MirFunction, MirInstr, Reg, count_register_reads,
     instruction_regions_mut, instruction_regs_mut, terminator_regs_mut,
 };
 use mojito_types::types::{Ty, TyKind};
@@ -52,7 +56,8 @@ pub const CANONICALIZE: BodyPass = BodyPass {
 ///
 /// Each instruction over constant operands becomes a `const` and each
 /// region op the `hlcf` patterns match is rewritten; identity copies are
-/// forwarded, and dead instructions are erased.
+/// forwarded, a call through a known callee becomes a direct call, and
+/// dead instructions are erased.
 /// Constants fold first, so a comparison folded to a `const bool` decides
 /// its `if` in the same run. Erasure and the patterns repeat until neither
 /// changes anything: an erased instruction can empty an arm. A removed
@@ -86,6 +91,9 @@ pub fn canonicalize(
         forwarded_copies += forwarded;
     }
     timing::count("forwarded_copies", forwarded_copies as u64);
+    let folded_callees = fold_known_callees(function, declarations);
+    timing::count("folded_callees", folded_callees as u64);
+    patterns += folded_callees;
     loop {
         let before = erased.len();
         erase_dead_until_none(function, &mut erased);
@@ -411,6 +419,111 @@ fn erase_dead(blocks: &mut [MirBlock], reads: &[u32], erased: &mut HashSet<u32>)
             !dead
         });
     }
+}
+
+/// Rewrite each `call.indirect` of `function` whose callee register is
+/// defined once by a function constant, or by a closure of no captures,
+/// into a direct `call` of that function; returns how many were rewritten.
+///
+/// This is KGEN's `CallParamOp::canonicalize`, a call of a known callee
+/// symbol, and its `CallIndirectOp::canonicalize` over a `create_closure`
+/// with nothing to prepend. A copied callee was forwarded to its constant
+/// already; one read out of a slot is not a known callee.
+fn fold_known_callees(function: &mut MirFunction, declarations: &MirDeclarations) -> usize {
+    let definitions = definition_counts(&mut function.blocks, function.n_regs);
+    let mut callees = HashMap::new();
+    visit_blocks(&mut function.blocks, &mut |block| {
+        for instruction in &block.instrs {
+            let (dest, name) = match instruction {
+                MirInstr::Const {
+                    dest,
+                    k: Const::Function(name),
+                } => (dest, name),
+                MirInstr::MakeClosure {
+                    dest,
+                    function,
+                    captures,
+                } if captures.is_empty() => (dest, function),
+                _ => continue,
+            };
+            if definitions.get(dest.0 as usize) == Some(&1) {
+                callees.insert(dest.0, name.clone());
+            }
+        }
+    });
+    if callees.is_empty() {
+        return 0;
+    }
+    let reg_types = &function.reg_types;
+    let mut folded = 0;
+    visit_blocks(&mut function.blocks, &mut |block| {
+        for instruction in &mut block.instrs {
+            if let Some(call) = direct_call(instruction, &callees, reg_types, declarations) {
+                *instruction = call;
+                folded += 1;
+            }
+        }
+    });
+    folded
+}
+
+/// The direct `call` a `call.indirect` through one of `callees` is, when
+/// it binds its operands as the indirect call did: the target declares no
+/// compile-time parameters or collectors, its signature is the callee's
+/// function type (upstream's `verifyCallOp` agreement), and any keyword
+/// names a parameter the declaration names alike.
+fn direct_call(
+    instruction: &mut MirInstr,
+    callees: &HashMap<u32, String>,
+    reg_types: &HashMap<u32, Ty>,
+    declarations: &MirDeclarations,
+) -> Option<MirInstr> {
+    let MirInstr::CallIndirect {
+        dest,
+        callee,
+        raises,
+        args,
+        kwargs,
+        arg_places,
+        kwarg_places,
+        capture_accesses,
+        param_arg_regs,
+        instantiated_args,
+        spread,
+        ..
+    } = instruction
+    else {
+        return None;
+    };
+    let name = callees.get(&callee.0)?;
+    let declaration = declarations.function(name)?;
+    let contract = reg_types.get(&callee.0)?.as_func()?;
+    let binds = declaration.param_decls.is_empty()
+        && param_arg_regs.is_empty()
+        && instantiated_args.is_empty()
+        && spread.is_none()
+        && declaration.variadic.is_none()
+        && declaration.kw_variadic.is_none()
+        && contract.params == declaration.param_types
+        && contract.conventions == declaration.param_conventions
+        && contract.ret == declaration.ret_ty
+        && contract.ref_return.is_some() == declaration.returns_reference
+        && contract.raises == declaration.raises
+        && (kwargs.is_empty() || contract.names == declaration.param_names);
+    binds.then(|| MirInstr::Call {
+        dest: *dest,
+        func: FuncRef(name.clone()),
+        raises: raises.take(),
+        args: std::mem::take(args),
+        kwargs: std::mem::take(kwargs),
+        arg_places: std::mem::take(arg_places),
+        kwarg_places: std::mem::take(kwarg_places),
+        capture_accesses: std::mem::take(capture_accesses),
+        param_arg_regs: Vec::new(),
+        receiver: None,
+        instantiated_args: Vec::new(),
+        spread: None,
+    })
 }
 
 /// Remove the instructions defining `roots`' keys from `blocks` and their

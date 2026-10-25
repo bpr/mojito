@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1344**.
+Next free ID: **R1346**.
 
 ## Ordered Work
 
@@ -279,26 +279,53 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1098 `canonicalize` keeps a `call.indirect` whose callee is a
-  function constant**
+- [ ] **R1344 `mem-2-reg` keeps the slot of a closure a call goes
+  through**
 
-  An inlined `apply[double]` body holds `const function(double)` feeding
-  a `call.indirect` (`tests/mir_passes/inline-parametric/generic_kept.mir`),
-  where upstream's canonicalizer folds the known callee into a direct call
-  (MLIR's `SimplifyIndirectCallWithKnownCallee`) and Mojito's elaborator
-  does it only per instance, after which no inliner runs.
-  - The lever: in `analysis/canonicalize.rs`, a `CallIndirect` whose
-    callee register `mir::callable_targets` resolves to a capture-free
-    function becomes a `Call` of it, dropping `callee_place`,
-    `param_decls`, `instantiated_contract`, and the abstract `resolved`.
-  - A closure or a nominal callable struct keeps the indirect call.
-  - This is what lets the third round inline `double` when it is itself
-    `nodebug`.
-  - Done when `generic_kept.mir` shows `call { func: double }`, a sibling
-    case `callable_chain.mir` with a `nodebug` `double` shows no call, and
-    a `canonicalize` pass case `indirect_known_callee.mir` pins the fold.
+  A nested `def` passed as a callable binder or bound to a local stays in
+  a slot, so a call of it that is not inlined reads `var.use` of the slot
+  and stays `call.indirect` until the elaborator resolves it per instance,
+  where upstream's `Mem2Reg` promotes the closure and its canonicalizer
+  then folds the call to the closure's function.
+  - `call.indirect`'s `callee_place` names the slot, which keeps it
+    (`mem2reg.rs`: "a call through the slot keeps it"); `canonicalize`
+    folds only a callee register that `closure.make` itself defines.
+  - Lever: decide what `callee_place` still records for a closure value
+    (loans over its captures), and promote the slot when nothing needs
+    it, so the call reads the `closure.make` register.
+  - Probe: `print(apply[inner](3))` over a capture-free nested
+    `def inner(x: Int) -> Int` and a `nodebug`
+    `def apply[f: def(Int) thin -> Int](x: Int) -> Int: return f(x)`
+    keeps a `var.store` of `closure.make "main$inner"` and a `var.use`
+    feeding a `call.indirect` in `emit-mir`'s `main`.
+  - Probe: `var g = inner` then `print(g(1))` keeps the same slot.
+  - A `nodebug` nested `def` already inlines through the slot
+    (`inline-parametric`'s `closures.called`), so this is the call's
+    shape, not inlining reach.
+  - Found while landing R1098 (2026-10-24).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1345 `canonicalize` keeps a `call.indirect` through a capturing
+  closure**
+
+  A `call.indirect` whose callee register is a `closure.make` with
+  captures stays indirect, where upstream's
+  `CallIndirectOp::canonicalize` folds a `create_closure` callee into a
+  call of its function with the captures prepended to the arguments.
+  - A direct call of a capturing nested `def` already has that shape:
+    each captured place is a leading `args` operand, with its `arg_places`
+    entry and `capture_accesses`.
+  - Lever: build those operands from the `closure.make`'s `captures` in
+    `fold_known_callees` (`analysis/canonicalize.rs`): a load of each
+    reference capture's place and its access; a copy or move capture
+    (`{var x}`, `{s^}`) needs its holding slot first.
+  - Probe: `outer` in
+    `tests/mir_passes/canonicalize/indirect_known_callee.mir` keeps its
+    `call.indirect` through `closure.make "outer$plus"`.
+  - Found while landing R1098 (2026-10-24).
+  - Depends on R1344, which makes the shape reachable from source.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1099 `inline-parametric` keeps a call whose argument has no place
   or slot form to bind**

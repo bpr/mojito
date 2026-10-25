@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `canonicalize` folds a known callee, as KGEN's `CallParamOp` and
+  `CallIndirectOp` canonicalizers do (R1098): a `call.indirect` whose
+  callee register is defined once by a function constant or a capture-free
+  `closure.make` becomes a direct `call` of that function. An inlined
+  `apply[double](3)` now calls `double` directly before elaboration, so a
+  `nodebug` `double` inlines in the third round and folds, as at the pin.
+  A call through a capturing closure stays indirect (R1345), and so does
+  one through a closure held in a slot (R1344).
 - The post-elaboration pipeline runs upstream's `AutomaticInline`
   (`automatic-inline`, R1271): callees first over the call graph's
   strongly connected components, each concrete function takes the bodies of

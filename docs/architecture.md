@@ -5795,7 +5795,19 @@ point where a slot declared in a loop is uninitialized again.
   read: a backend may alias it to the place (Pliron's
   `collect_aliased_load_regs`) only for a type whose copy is not the
   identity, while nothing writes the place before the register's last
-  reader. Then, until nothing
+  reader. Next it folds each known callee (R1098), KGEN's
+  `CallParamOp::canonicalize` and, for a closure of no captures,
+  `CallIndirectOp::canonicalize`: a `call.indirect` whose callee register
+  is defined once by `const function(f)` (an inlined callable binder's
+  read) or by a capture-free `closure.make` of `f` becomes `call f`,
+  dropping `callee_place`, the abstract `resolved`, `param_decls`, and
+  `instantiated_contract`, when `f` declares no compile-time parameters
+  or collectors and its signature is the callee's function type
+  (`tests/mir_passes/canonicalize/indirect_known_callee.mir`). So round
+  2's fold hands round 3's `inline-parametric` a direct call, and an
+  inlined `apply[double]` inlines a `nodebug` `double` too. A capturing
+  closure keeps the indirect call (R1345), and a closure read out of a
+  slot is no known callee (R1344). Then, until nothing
   changes, it erases each instruction whose results nothing reads and
   that `MirInstr::would_be_trivially_dead` declares free of effects but
   reading (MLIR's `wouldOpBeTriviallyDead`): constants, literal
@@ -5812,7 +5824,7 @@ point where a slot declared in a loop is uninitialized again.
   Erasure can empty an arm, so the `hlcf` patterns and erasure repeat until
   neither changes anything.
   Its `--timings` counters are `folded_constants`, `forwarded_copies`,
-  and `erased_instructions`.
+  `folded_callees`, and `erased_instructions`.
 - **`inline-parametric` opens the second round and runs again in the third**
   (`analysis::INLINE_PARAMETRIC`, `analysis/inline_parametric.rs`, R784),
   upstream's `InlineParametric`. It follows the callees whose declaration's

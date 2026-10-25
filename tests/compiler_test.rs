@@ -4917,3 +4917,40 @@ fn keyword_collector_construction_is_named_by_the_call() {
         );
     }
 }
+
+#[test]
+fn callable_binder_function_value_inlines_through_canonicalize() {
+    // An inlined `apply[double]` reads its binder as `double`'s function
+    // constant, which `canonicalize` folds into a direct call, as KGEN's
+    // `CallParamOp` canonicalizer does, so the next inliner round inlines a
+    // `nodebug` `double` and a plain function stays a direct call.
+    let compiled = Compiler::default()
+        .compile_source(
+            "@always_inline(\"nodebug\")\ndef apply[f: def(Int) thin -> Int](x: Int) -> Int:\n    return f(x)\n\n@always_inline(\"nodebug\")\ndef double(x: Int) -> Int:\n    return x * 2\n\n@no_inline\ndef plain(x: Int) -> Int:\n    return x + 1\n\ndef main():\n    print(apply[double](3))\n    print(apply[plain](3))\n",
+            std::path::Path::new("/tmp/mojito_callable_binder_known_callee.mojo"),
+        )
+        .expect("compile the callable binder calls");
+    let program = compiled.elaborated_mir();
+    let (_, main) = program
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main");
+    let instructions = mojito::mir::nested_instructions(&main.blocks);
+    assert!(
+        !instructions
+            .iter()
+            .any(|instruction| matches!(instruction, mojito::mir::MirInstr::CallIndirect { .. })),
+        "a call through a known callee stays indirect"
+    );
+    assert!(
+        instructions.iter().any(
+            |instruction| matches!(instruction, mojito::mir::MirInstr::Call { func, .. } if func.0 == "plain")
+        ),
+        "`apply[plain]` does not call `plain` directly"
+    );
+    assert!(
+        program.functions.iter().all(|(name, _)| name != "double"),
+        "the `nodebug` `double` is not inlined"
+    );
+}
