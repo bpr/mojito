@@ -522,7 +522,6 @@ impl<'a> Flatten<'a> {
                 dest: callee,
                 base: recv,
                 field: method.to_owned(),
-                constructors: Vec::new(),
             });
             let callee_place = recv_place.map(|mut place| {
                 place.project(Proj::Field(method.to_owned()), callable.clone());

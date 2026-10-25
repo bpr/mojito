@@ -842,6 +842,7 @@ assets/ok/sized_library_traits.mojo	main	exe-differential	sanitized
 assets/ok/slice.mojo	main	exe-differential	sanitized
 assets/ok/slice_descriptor_protocols.mojo	main	exe-differential	sanitized
 assets/ok/slice_kind_construction.mojo	main	exe-differential	sanitized
+assets/ok/slice_library_struct.mojo	main	exe-differential	sanitized
 assets/ok/slice_literal_constructor_binding.mojo	main	exe-differential	sanitized
 assets/ok/slice_none_bound.mojo	main	exe-differential	sanitized
 assets/ok/slice_string_native.mojo	main	exe-differential	sanitized

@@ -2028,9 +2028,6 @@ impl Checker {
                 "Deinitable" => self.is_deinitable(ty),
                 "Hashable" => self.is_hashable(ty),
                 "Writable" => match ty.kind() {
-                    // The compiler-provided `Slice` writes as
-                    // `Slice(start, end, step)` (upstream's `Writable`).
-                    TyKind::Struct(name, args) if args.is_empty() && name == "Slice" => true,
                     TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
                     TyKind::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
                     TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_) => false,

@@ -286,42 +286,6 @@ impl VmBackend {
         )
     }
 
-    /// Materialize one intrinsic Slice bound through the bundled
-    /// `Optional[Int]` constructor its read names in `constructors`: the
-    /// positional one-argument one when the bound is set, the nullary one
-    /// otherwise. The projection's declared result `target` names the
-    /// constructed struct.
-    pub(super) fn slice_bound_optional(
-        &mut self,
-        prog: &Prog,
-        bound: Option<i64>,
-        target: Option<&Ty>,
-        constructors: &[String],
-    ) -> Result<Value, RuntimeError> {
-        let name = prog.declared_struct(target).ok_or_else(|| {
-            RuntimeError::Unsupported(
-                "vm: Slice bound access requires its declared Optional result".to_string(),
-            )
-        })?;
-        let arguments = bound
-            .map(|value| vec![Value::Int(value)])
-            .unwrap_or_default();
-        let expected_params = arguments.len() + 1;
-        let constructor = constructors
-            .iter()
-            .find(|constructor| {
-                prog.index_of(constructor)
-                    .is_some_and(|index| prog.mir.functions[index].1.n_params == expected_params)
-            })
-            .ok_or_else(|| {
-                RuntimeError::Unsupported(format!(
-                    "vm: Slice bound access names no {}-argument `{name}` constructor",
-                    arguments.len()
-                ))
-            })?;
-        self.construct_via_init(prog, name, constructor, arguments, &[])
-    }
-
     /// Normalize an `Indexer` to the VM's signed index representation. Int-like
     /// values take the intrinsic path; user conformers execute
     /// `__mlir_index__`, which is the source-level contract even though MIR
@@ -545,63 +509,6 @@ impl VmBackend {
                         .into(),
                 )),
             },
-            "Slice" | "slice" => {
-                let optional = |value: &Value| match value {
-                    Value::Int(value) => Ok(Some(*value)),
-                    Value::IntLiteral(value) => {
-                        value.wrapping_signed(64).map(Some).ok_or_else(|| {
-                            RuntimeError::TypeError(
-                                "slice bound cannot materialize as Int".to_string(),
-                            )
-                        })
-                    }
-                    Value::None => Ok(None),
-                    // A nominal `Optional[Int]` bound: read its owned slot.
-                    Value::Struct { .. } => {
-                        let size = value_as_index(&get_field(value, "_size")?)?;
-                        if size == 0 {
-                            return Ok(None);
-                        }
-                        let Value::Pointer { allocation, offset } = get_field(value, "data")?
-                        else {
-                            return Err(RuntimeError::TypeError(
-                                "slice bound Optional storage requires Pointer".to_string(),
-                            ));
-                        };
-                        match self.heap_read(allocation, offset, 0)? {
-                            Value::Int(value) => Ok(Some(value)),
-                            other => Err(RuntimeError::TypeError(format!(
-                                "slice bound must be Int or None, got {}",
-                                crate::runtime::type_name(&other)
-                            ))),
-                        }
-                    }
-                    other => Err(RuntimeError::TypeError(format!(
-                        "slice bound must be Int or None, got {}",
-                        crate::runtime::type_name(other)
-                    ))),
-                };
-                let (start, end, step) = match (name, args.as_slice()) {
-                    ("slice", [end]) => (None, optional(end)?, None),
-                    ("slice" | "Slice", [start, end]) => (optional(start)?, optional(end)?, None),
-                    ("slice" | "Slice", [start, end, step]) => {
-                        (optional(start)?, optional(end)?, optional(step)?)
-                    }
-                    _ => {
-                        return Err(RuntimeError::ArityMismatch {
-                            name: name.to_string(),
-                            expected: if name == "Slice" { 2 } else { 1 },
-                            got: args.len(),
-                        });
-                    }
-                };
-                Ok(Value::Slice {
-                    kind: mojito_types::types::SliceKind::Slice,
-                    start,
-                    end,
-                    step,
-                })
-            }
             // Utility numeric built-ins use the shared runtime value helpers; a
             // struct operand routes through the same dunder the checker resolved.
             "abs" => {
@@ -996,20 +903,6 @@ fn scalar_repr(value: &Value) -> String {
             }
             out.push('\'');
             out
-        }
-        Value::Slice {
-            start, end, step, ..
-        } => {
-            let bound = |bound: &Option<i64>| match bound {
-                Some(value) => value.to_string(),
-                None => "None".to_string(),
-            };
-            format!(
-                "Slice(start={}, end={}, step={})",
-                bound(start),
-                bound(end),
-                bound(step)
-            )
         }
         other => other.to_string(),
     }

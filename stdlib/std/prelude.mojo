@@ -18,6 +18,7 @@ from std.builtin.enum_like import EnumLike
 from std.builtin.tuple import Tuple
 from std.builtin.variadics import ParameterList, TypeList, VariadicList
 from std.range import range
+from std.builtin.builtin_slice import Slice, slice
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration, next
 from std.builtin.reversed import reversed
 from std.memory.alloc import alloc

@@ -384,29 +384,16 @@ impl<'a> FnLowering<'a> {
         let ptr_handle: TypeHandle = PointerType::get(ctx, 0).into();
         let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
         for arg in args {
-            // A slice descriptor writes as `Slice(start, end, step)`, its
-            // text a temporary the append copies.
-            let slice = self
-                .func
-                .reg_types
-                .get(&arg.0)
-                .and_then(slice_struct_name)
-                .is_some();
-            if !slice
-                && let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
-                    .as_ref()
-                    .map(Ty::kind)
+            if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
+                .as_ref()
+                .map(Ty::kind)
                 && !mojito_symbol::symbol::is_stdlib_string_struct(name)
                 && !mojito_symbol::symbol::is_stdlib_string_span_struct(name)
             {
                 self.append_struct_via_write_to(ctx, *arg, name, descriptor, dest)?;
                 continue;
             }
-            let (chunk, chunk_len) = if slice {
-                self.slice_string(ctx, *arg, dest, false)?
-            } else {
-                self.writer_argument_text(ctx, *arg, dest)?
-            };
+            let (chunk, chunk_len) = self.writer_argument_text(ctx, *arg, dest)?;
             let data = LoadOp::new(ctx, descriptor, ptr_handle);
             self.append(ctx, data.get_operation(), Some(dest));
             let len_address = self.offset_address(ctx, descriptor, 8);
@@ -434,9 +421,6 @@ impl<'a> FnLowering<'a> {
             self.append(ctx, store.get_operation(), Some(dest));
             let store = StoreOp::new(ctx, total.get_result(ctx), len_address);
             self.append(ctx, store.get_operation(), Some(dest));
-            if slice {
-                self.emit_free(ctx, chunk);
-            }
         }
         self.erased.insert(dest.0);
         Ok(())
@@ -510,18 +494,6 @@ impl<'a> FnLowering<'a> {
         ) {
             self.write_literal_bytes(ctx, b"None", dest);
             return Ok(());
-        }
-        // A slice descriptor writes as `Slice(start, end, step)` with `None`
-        // for an absent bound (upstream's `Slice.write_to`; the contiguous and
-        // strided kinds delegate to it).
-        if self
-            .func
-            .reg_types
-            .get(&arg.0)
-            .and_then(slice_struct_name)
-            .is_some()
-        {
-            return self.print_slice_descriptor(ctx, arg, dest);
         }
         // A nominal struct displays through its `write_to` conformance over
         // the builtin-string accumulator — the VM's `format_value` dispatch.
@@ -729,50 +701,6 @@ impl<'a> FnLowering<'a> {
             len = selected_len.get_result(ctx);
         }
         (data, len)
-    }
-
-    /// `Slice(start, end, step)`: each raw bound word prints as an Int when
-    /// its presence bit is set and as `None` otherwise (selected without
-    /// branching: the Int text is formatted into the scratch buffer either
-    /// way, then the `(data, len)` pair is chosen).
-    fn print_slice_descriptor(
-        &mut self,
-        ctx: &mut Context,
-        arg: Reg,
-        dest: Reg,
-    ) -> Result<(), PlironError> {
-        let descriptor = self.reg_ptr(ctx, arg)?;
-        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let none_global = self.shared.intern_string(ctx, b"None");
-        self.write_literal_bytes(ctx, b"Slice(", dest);
-        for (index, (offset, bit)) in [(0u64, 1i64), (8, 2), (16, 4)].into_iter().enumerate() {
-            if index > 0 {
-                self.write_literal_bytes(ctx, b", ", dest);
-            }
-            let address = self.offset_address(ctx, descriptor, offset);
-            let word = LoadOp::new(ctx, address, i64_handle);
-            self.append(ctx, word.get_operation(), Some(dest));
-            let flags_address = self.offset_address(ctx, descriptor, 24);
-            let flags = LoadOp::new(ctx, flags_address, i64_handle);
-            self.append(ctx, flags.get_operation(), Some(dest));
-            let mask = self.int_constant(ctx, bit);
-            let masked = AndOp::new(ctx, flags.get_result(ctx), mask);
-            self.append(ctx, masked.get_operation(), Some(dest));
-            let zero = self.int_constant(ctx, 0);
-            let is_set = ICmpOp::new(ctx, ICmpPredicateAttr::NE, masked.get_result(ctx), zero);
-            self.append(ctx, is_set.get_operation(), Some(dest));
-            let (int_data, int_len) =
-                self.format_scalar(ctx, ScalarTy::Int, word.get_result(ctx), dest)?;
-            let none_data = self.global_address(ctx, &none_global, dest);
-            let none_len = self.uint_constant(ctx, 4);
-            let data = SelectOp::new(ctx, is_set.get_result(ctx), int_data, none_data);
-            self.append(ctx, data.get_operation(), Some(dest));
-            let len = SelectOp::new(ctx, is_set.get_result(ctx), int_len, none_len);
-            self.append(ctx, len.get_operation(), Some(dest));
-            self.write_stdout(ctx, data.get_result(ctx), len.get_result(ctx), dest);
-        }
-        self.write_literal_bytes(ctx, b")", dest);
-        Ok(())
     }
 
     /// Intern `bytes` and write them to stdout.

@@ -47,7 +47,7 @@ impl Specializer<'_> {
     /// `__getitem__`/`__setitem__` family) to its concrete instance. The
     /// receiver binds the owner's parameters and the destination's checked
     /// type anchors the result, mirroring the nullary iterator-step
-    /// inference; subscript actuals are `Int` indexes or slice descriptors
+    /// inference; subscript actuals are indexes or constructed slice values
     /// and never carry generic solutions of their own. A subscript is a
     /// call of its accessor, so it names the generator without the
     /// accessor's unused arguments, as upstream's rewritten call does, and

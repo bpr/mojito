@@ -241,14 +241,9 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "nominal `__getitem__` dispatch (value, reference, and raising-reference results) plus the `pointer` and constant-index pack-storage intrinsics; runtime pack indexes reject until the packs slice",
     ),
     (
-        "slice.get",
-        CapabilityStatus::Supported,
-        "raw bound descriptors through the nominal `__getitem__` contract; bound accesses materialize compiled `Optional`s, `indices` normalizes natively, explicit `Slice(...)`/`slice(...)` construction builds the descriptor, `Slice.__eq__`/`__ne__` compare the raw words, and printing writes `Slice(start, end, step)`",
-    ),
-    (
         "index.multi",
         CapabilityStatus::Supported,
-        "variadic `__getitem__` dispatch with index and slice-descriptor actuals, positional or keyword",
+        "variadic `__getitem__` dispatch with index actuals, a slice literal's constructed value among them, positional or keyword",
     ),
     (
         "index.multi_set",

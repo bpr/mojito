@@ -270,18 +270,6 @@ impl<'f> RegisterEnds<'f> {
                 collectors,
                 out,
             ),
-            MirInstr::Slice {
-                object,
-                object_place,
-                call: Some(call),
-                ..
-            } => self.subscript_consumed(
-                call,
-                (*object, object_place.as_deref()),
-                SubscriptArguments::default(),
-                collectors,
-                out,
-            ),
             MirInstr::MultiIndex {
                 object,
                 args,
@@ -690,11 +678,6 @@ pub fn owned_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             call: Some(call),
             ..
         }
-        | MirInstr::Slice {
-            dest,
-            call: Some(call),
-            ..
-        }
         | MirInstr::MultiIndex {
             dest,
             call: Some(call),
@@ -771,9 +754,6 @@ fn parameter_argument_regs(instruction: &MirInstr) -> impl Iterator<Item = u32> 
         MirInstr::Index {
             call: Some(call), ..
         }
-        | MirInstr::Slice {
-            call: Some(call), ..
-        }
         | MirInstr::MultiIndex {
             call: Some(call), ..
         } => &call.param_arg_regs,
@@ -810,7 +790,7 @@ impl SubscriptArguments<'_> {
     /// Push each plain index `contract` takes ownership of with no
     /// retained place: a positional one binding its slot or, from there
     /// and with `collectors`, the collector, and a keyword one the slot of
-    /// its name. A slice descriptor is built by the call.
+    /// its name.
     fn consumed(&self, contract: &ParameterContract<'_>, collectors: bool, out: &mut Vec<Reg>) {
         let placed = |places: &[Option<MirPlace>], index: usize| {
             places.get(index).is_some_and(Option::is_some)

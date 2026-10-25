@@ -204,14 +204,6 @@ impl Checker {
                 return Ok(Ty::bool());
             }
         }
-        // The compiler-provided `Slice` is Equatable (upstream
-        // `builtin_slice.mojo`); the VM compares the three bounds.
-        if matches!(op, Eq | Ne)
-            && matches!((lt.kind(), rt.kind()), (TyKind::Struct(left, left_args), TyKind::Struct(right, right_args))
-                if left == "Slice" && right == "Slice" && left_args.is_empty() && right_args.is_empty())
-        {
-            return Ok(Ty::bool());
-        }
         // Two equal opaque type parameters bounded by an arithmetic, bitwise,
         // or shift operation trait dispatch after erasure
         // (`def f[T: Addable](a: T, b: T) -> T: return a + b`). Comparison,
@@ -985,39 +977,6 @@ impl Checker {
         Ok(Ty::error())
     }
 
-    pub(super) fn infer_slice_construction(
-        &self,
-        name: &str,
-        args: &[Expr],
-    ) -> Result<Ty, TypeError> {
-        let valid_arity = match name {
-            "Slice" => matches!(args.len(), 2 | 3),
-            "slice" => matches!(args.len(), 1..=3),
-            _ => false,
-        };
-        if !valid_arity {
-            return Err(TypeError::ArityMismatch {
-                name: name.to_string(),
-                expected: if name == "Slice" { 2 } else { 1 },
-                got: args.len(),
-            });
-        }
-        for argument in args {
-            let found = self.infer(argument)?;
-            // A bound is an `Int`, `None`, or an `Optional[Int]` value (the
-            // descriptor's own field type, as upstream's `Slice.__init__`
-            // declares): the nominal slot is read at construction.
-            if found != TyKind::None && !coerces(&found, &Ty::int()) && !is_optional_int(&found) {
-                return Err(TypeError::TypeMismatch {
-                    expected: "Int or None".to_string(),
-                    found: found.to_string(),
-                    context: format!("argument to '{name}'"),
-                });
-            }
-        }
-        Ok(TyKind::Struct("Slice".to_string(), Vec::new()).into())
-    }
-
     /// Type `Pointer(to=place)` (also spelled through the deprecated
     /// `UnsafePointer` alias): an origin-bearing pointer to existing checked
     /// storage. The element type is the place's type and the origin is the
@@ -1381,13 +1340,6 @@ fn dunder_error(sig: &MethodSig) -> Option<Ty> {
 /// Whether a dunder's convention for one operand reads it.
 const fn reads(convention: Option<ArgConvention>) -> bool {
     matches!(convention, None | Some(ArgConvention::Imm))
-}
-
-/// Whether `ty` is the nominal `Optional[Int]` (module-qualified or not).
-fn is_optional_int(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::Struct(name, args)
-        if (name == "Optional" || name.ends_with("$Optional"))
-            && matches!(args.as_slice(), [mojito_types::types::TyArg::Ty(ty)] if *ty == TyKind::Int))
 }
 
 /// The subtree of the deepest common base of a union of places that share one

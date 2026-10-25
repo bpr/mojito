@@ -171,14 +171,7 @@ pub(super) fn instruction_uses(i: &MirInstr) -> Vec<(Used<'_>, Reg)> {
             }
             uses
         }
-        MirInstr::Slice {
-            dest,
-            object_place: base_place,
-            arg_places: index_place,
-            call,
-            ..
-        }
-        | MirInstr::MultiIndex {
+        MirInstr::MultiIndex {
             dest,
             object_place: base_place,
             arg_places: index_place,

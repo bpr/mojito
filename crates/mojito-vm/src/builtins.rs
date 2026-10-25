@@ -23,8 +23,6 @@ pub const BUILTIN_CALLEES: &[&str] = &[
     "String",
     "repr",
     "len",
-    "Slice",
-    "slice",
     "abs",
     "min",
     "max",
@@ -45,7 +43,7 @@ pub const BUILTIN_CALLEES: &[&str] = &[
 /// The methods of compiler-private values a method call may name without
 /// a checker-selected symbol.
 ///
-/// They are the methods of strings, packs, slices, SIMD vectors, `DType`,
+/// They are the methods of strings, packs, SIMD vectors, `DType`,
 /// pointers, and hashable scalars: the arms of
 /// `backend::vm::invoke::method_call` that run before struct dispatch,
 /// `runtime::simd_method`, and the `DType` predicates.
@@ -63,9 +61,6 @@ pub const INTRINSIC_METHODS: &[&str] = &[
     "write",
     mojito_symbol::symbol::WRITE_FORMATTED,
     "__len__",
-    "indices",
-    "__eq__",
-    "__ne__",
     "copy",
     "free",
     "unsafe_free",

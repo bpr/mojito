@@ -334,7 +334,7 @@ impl Checker {
                     0,
                     [lower.as_deref(), upper.as_deref(), step.as_deref()],
                 )?;
-                let descriptor = self.slice_literal_default_type(step.as_deref());
+                let descriptor = Self::slice_literal_default_type(step.as_deref());
                 let resolution = self.resolve_struct_setitem(
                     &object_type,
                     &[descriptor],
@@ -402,7 +402,7 @@ impl Checker {
                                 position,
                                 [lower.as_deref(), upper.as_deref(), step.as_deref()],
                             )?;
-                            argument_types.push(self.slice_literal_default_type(step.as_deref()));
+                            argument_types.push(Self::slice_literal_default_type(step.as_deref()));
                             descriptors.push(Some(literal));
                         }
                     }
@@ -551,16 +551,15 @@ impl Checker {
             .borrow()
             .get(&expression.source_span())?[2]
             .clone();
-        Some(self.slice_literal_default_type(stride.as_ref()))
+        Some(Self::slice_literal_default_type(stride.as_ref()))
     }
 
     /// How the slice literal `literal` binds a parameter of type `expected`,
     /// if it does, as upstream's `T(lower, upper, stride,
     /// __slice_literal__=None)` for a parameter of type `T`, an omitted
     /// operand passing `None`. An inferred parameter binds the literal's
-    /// default type. The compiler-provided `Slice` takes `Int` operands,
-    /// which MIR's descriptor builds it from. When `record`, each written
-    /// operand's conversion to its constructor parameter is recorded on it.
+    /// default type. When `record`, each written operand's conversion to its
+    /// constructor parameter is recorded on it.
     pub(super) fn slice_literal_binding(
         &self,
         literal: &Expr,
@@ -577,7 +576,7 @@ impl Checker {
         };
         let target = match expected.kind() {
             TyKind::Param { .. } => {
-                let default = self.slice_literal_default_type(operands[2].as_ref());
+                let default = Self::slice_literal_default_type(operands[2].as_ref());
                 if !self.value_coerces(&default, expected) {
                     return Ok(None);
                 }
@@ -585,19 +584,6 @@ impl Checker {
             }
             _ => expected.clone(),
         };
-        let TyKind::Struct(name, arguments) = target.kind() else {
-            return Ok(None);
-        };
-        if name == "Slice" && arguments.is_empty() {
-            for operand in operands.iter().flatten() {
-                if !coerces(&self.infer(operand)?, &Ty::int()) {
-                    return Ok(None);
-                }
-            }
-            return Ok(Some(
-                mojito_checked::checked::CheckedSliceLiteral::Descriptor(SliceKind::Slice),
-            ));
-        }
         self.slice_literal_construction(&target, &operands, record)
     }
 
@@ -1083,8 +1069,8 @@ impl Checker {
                     descriptors.push(Some(descriptor));
                 }
                 // A keyword slice (`s[byte=a:b]`) binds a keyword-only
-                // slice-descriptor `__getitem__` parameter through the same
-                // structural call binding as a keyword subscript.
+                // `__getitem__` parameter through the same structural call
+                // binding as a keyword subscript.
                 SubscriptArg::KeywordSlice {
                     name,
                     lower,
@@ -1996,20 +1982,6 @@ impl Checker {
             self.record_at(object.source_span()).reference_value_use =
                 Some(reference.mutability == mojito_types::origin::Mutability::Mutable);
         }
-        // The compiler-provided `Slice`'s public fields are upstream's
-        // `start`, `end`, and `step`.
-        if let TyKind::Struct(name, args) = obj_ty.kind()
-            && name == "Slice"
-            && args.is_empty()
-        {
-            if !["start", "end", "step"].contains(&field) {
-                return Err(TypeError::NoSuchField {
-                    object_type: name.clone(),
-                    field: field.to_string(),
-                });
-            }
-            return Ok(TyKind::Struct("Optional".to_string(), vec![TyArg::Ty(Ty::int())]).into());
-        }
         // `v.length` on a SIMD value (a native scalar is a width-1 vector)
         // is upstream's lane-count parameter: an `Int` constant when known,
         // the width's parameter expression in a generator.
@@ -2384,17 +2356,17 @@ impl Checker {
     /// no parameter type is in play, as upstream's `getDefaultType` picks
     /// it: `ContiguousSlice` when the stride is omitted or `None`, `Slice`
     /// otherwise.
-    fn slice_literal_default_type(&self, stride: Option<&Expr>) -> Ty {
-        let contiguous =
-            mojito_module::module::linked_item_name("std.builtin.builtin_slice", "ContiguousSlice");
-        let name = if stride.is_none_or(|stride| matches!(stride.kind, ExprKind::None))
-            && self.structs.contains_key(&contiguous)
-        {
-            contiguous
+    fn slice_literal_default_type(stride: Option<&Expr>) -> Ty {
+        let name = if stride.is_none_or(|stride| matches!(stride.kind, ExprKind::None)) {
+            "ContiguousSlice"
         } else {
-            "Slice".to_string()
+            "Slice"
         };
-        TyKind::Struct(name, Vec::new()).into()
+        TyKind::Struct(
+            mojito_module::module::linked_item_name("std.builtin.builtin_slice", name),
+            Vec::new(),
+        )
+        .into()
     }
 
     /// The call of `target`'s `__slice_literal__` constructor a slice literal
@@ -2508,14 +2480,10 @@ impl Checker {
             signature,
             self.self_instance_ty(name).as_ref(),
         );
-        Ok(Some(
-            mojito_checked::checked::CheckedSliceLiteral::Construct(
-                mojito_checked::checked::SliceLiteralConstruction {
-                    target: target.clone(),
-                    constructor,
-                    omitted,
-                },
-            ),
-        ))
+        Ok(Some(mojito_checked::checked::CheckedSliceLiteral {
+            target: target.clone(),
+            constructor,
+            omitted,
+        }))
     }
 }

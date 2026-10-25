@@ -431,7 +431,6 @@ fn collect_subscript_store(
         .iter()
         .map(|argument| match argument {
             MirSubscriptArg::Index(register) => Some(*register),
-            MirSubscriptArg::Slice { .. } => None,
         })
         .collect::<Option<Vec<_>>>()
     else {
@@ -1262,7 +1261,6 @@ impl Site {
                     // descriptor's call keeps its slots.
                     let register = |argument: &MirSubscriptArg| match argument {
                         MirSubscriptArg::Index(register) => Some(*register),
-                        MirSubscriptArg::Slice { .. } => None,
                     };
                     let receiver = function
                         .reg_types

@@ -3011,28 +3011,10 @@ impl<'a> Specializer<'a> {
                     // the bound constant carried by the receiver instance's
                     // type arguments — the VM's `get_field` value-parameter
                     // fallback over reified `value_params`.
-                    MirInstr::GetField {
-                        dest,
-                        base,
-                        field,
-                        constructors,
-                    } => {
+                    MirInstr::GetField { dest, base, field } => {
                         let Some(receiver) = function.reg_types.get(&base.0) else {
                             continue;
                         };
-                        // A slice descriptor's bound read builds its
-                        // `Optional` through that struct's constructors,
-                        // which it names.
-                        if matches!(peel_refs(receiver).kind(), TyKind::Struct(name, _)
-                            if name == "Slice")
-                            && matches!(field.as_str(), "start" | "end" | "step")
-                        {
-                            if let Some(bound) = function.reg_types.get(&dest.0).cloned() {
-                                *constructors =
-                                    self.enqueue_slice_bound_constructors(owner, &bound)?;
-                            }
-                            continue;
-                        }
                         let Some(constant) = self.value_param_constant(
                             receiver,
                             field,
@@ -3106,33 +3088,6 @@ impl<'a> Specializer<'a> {
                             base,
                             SubscriptOperands {
                                 registers: &[index],
-                                positional: 1,
-                                keywords: &[],
-                            },
-                            Some(dest),
-                            contract,
-                        )?;
-                        if let Some(dropped) = dropped {
-                            mojito_mir::mir::shed_subscript_operands(
-                                instruction,
-                                &dropped.positional,
-                                &dropped.keyword,
-                            );
-                        }
-                    }
-                    MirInstr::Slice {
-                        dest,
-                        object,
-                        call: Some(contract),
-                        ..
-                    } => {
-                        let (dest, object) = (*dest, *object);
-                        let dropped = self.rewrite_subscript_call(
-                            owner,
-                            function,
-                            object,
-                            SubscriptOperands {
-                                registers: &[],
                                 positional: 1,
                                 keywords: &[],
                             },
@@ -3274,37 +3229,6 @@ impl<'a> Specializer<'a> {
             let TyKind::Struct(name, _) = ty.kind() else {
                 continue;
             };
-            // The compiler-provided `Slice` has no source template; give it
-            // the backend's raw layout (three i64 bounds plus a presence
-            // bitmask — the VM's `Value::Slice` `Option<i64>` fields) so
-            // descriptor-typed parameters and locals lay out.
-            if name == "Slice" {
-                if !self.output_struct_positions.contains_key(name) {
-                    self.declare_output_struct(MirStructDeclaration {
-                        name: name.clone(),
-                        fields: vec![
-                            ("start".to_string(), Ty::int()),
-                            ("end".to_string(), Ty::int()),
-                            ("step".to_string(), Ty::int()),
-                            ("flags".to_string(), Ty::int()),
-                        ],
-                        mut_self_methods: HashSet::default(),
-                        fieldwise_init: false,
-                        param_decls: Vec::new(),
-                        explicit_destructors: HashMap::new(),
-                        explicit_destroy: None,
-                        conformances: Vec::new(),
-                        declared: Vec::new(),
-                        associated_types: Vec::new(),
-                        parameterized_associated_types: Vec::new(),
-                        associated_values: Vec::new(),
-                        parameterized_associated_values: Vec::new(),
-                        members: Vec::new(),
-                        witness_tables: Vec::new(),
-                    });
-                }
-                continue;
-            }
             let template_name = name.split("$mono").next().unwrap_or(name).to_string();
             let Some(template) = self.structs.get(template_name.as_str()) else {
                 continue;
@@ -3682,37 +3606,6 @@ impl<'a> Specializer<'a> {
             .map(drop)
     }
 
-    /// Enqueue the constructors a slice descriptor's bound read builds its
-    /// `Optional` result `bound` through, the VM's `slice_bound_optional`:
-    /// the nullary one and the positional one-argument one, which the read
-    /// names. Returns their instances.
-    fn enqueue_slice_bound_constructors(
-        &mut self,
-        owner: &str,
-        bound: &Ty,
-    ) -> Result<Vec<String>, MonoError> {
-        let TyKind::Struct(name, _) = bound.kind() else {
-            return Ok(Vec::new());
-        };
-        let Some(bindings) = self.struct_bindings(owner, bound)? else {
-            return Ok(Vec::new());
-        };
-        let constructors = self.enqueue_struct_overloads(
-            nominal_template(name),
-            &bindings,
-            "__init__",
-            &|candidate, declaration| {
-                declaration.param_names.len() <= 1
-                    && !candidate.contains("$kw$")
-                    && !mojito_symbol::symbol::is_none_overload(candidate)
-            },
-        )?;
-        Ok(constructors
-            .into_iter()
-            .map(|(_, instance)| instance)
-            .collect())
-    }
-
     /// Enqueue the overloads `{template_name}.{method}` of the struct
     /// instance `bindings` binds that `select` accepts, as
     /// [`Self::enqueue_struct_members`] does, and return each overload
@@ -3914,9 +3807,6 @@ fn drop_parameter_slots(instruction: &mut MirInstr) {
         MirInstr::Index {
             call: Some(call), ..
         }
-        | MirInstr::Slice {
-            call: Some(call), ..
-        }
         | MirInstr::MultiIndex {
             call: Some(call), ..
         }
@@ -4040,9 +3930,7 @@ fn collect_referenced_functions(instructions: &[MirInstr], referenced: &mut Vec<
                 referenced.extend(resolved.iter().cloned());
             }
             MirInstr::MakeClosure { function, .. } => referenced.push(function.clone()),
-            MirInstr::Index { call, .. }
-            | MirInstr::Slice { call, .. }
-            | MirInstr::MultiIndex { call, .. } => {
+            MirInstr::Index { call, .. } | MirInstr::MultiIndex { call, .. } => {
                 referenced.extend(call.iter().map(|call| call.target.clone()));
             }
             MirInstr::MultiSet { call, .. } => referenced.push(call.target.clone()),

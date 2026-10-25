@@ -1195,22 +1195,14 @@ pub struct DictLiteral {
     pub list_constructor: String,
 }
 
-/// A slice literal bound to a subscript parameter: upstream's
-/// `T(lower, upper, stride, __slice_literal__=None)`, where `T` is the
-/// parameter's type and an omitted operand is `None`.
+/// A slice literal bound to a subscript parameter of type `T`.
+///
+/// Upstream's `T(lower, upper, stride, __slice_literal__=None)`: one call of
+/// `T`'s `__slice_literal__` constructor, an omitted operand passing `None`.
+/// Each written operand carries its own conversion to its parameter,
+/// recorded on its node.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum CheckedSliceLiteral {
-    /// The compiler-provided `Slice`, built by MIR's slice descriptor from
-    /// the written `Int` bounds.
-    Descriptor(mojito_types::types::SliceKind),
-    /// One call of a library type's `__slice_literal__` constructor.
-    Construct(SliceLiteralConstruction),
-}
-
-/// See [`CheckedSliceLiteral::Construct`]. Each written operand carries its
-/// own conversion to its parameter, recorded on its node.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct SliceLiteralConstruction {
+pub struct CheckedSliceLiteral {
     /// The constructed type, the bound parameter's.
     pub target: Ty,
     /// The exact lowered `__init__` overload declaring `__slice_literal__`.

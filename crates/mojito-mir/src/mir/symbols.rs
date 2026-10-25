@@ -248,9 +248,6 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                 MirInstr::Index {
                     call: Some(call), ..
                 }
-                | MirInstr::Slice {
-                    call: Some(call), ..
-                }
                 | MirInstr::MultiIndex {
                     call: Some(call), ..
                 }
@@ -259,10 +256,6 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                     prepare: Some(target),
                     ..
                 } => replace(target),
-                MirInstr::GetField {
-                    constructors: symbols,
-                    ..
-                } => symbols.iter_mut().for_each(&mut *replace),
                 MirInstr::DropVar {
                     destructor: Some(target),
                     ..

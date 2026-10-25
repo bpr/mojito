@@ -342,7 +342,6 @@ impl Checker {
             "input" => self.infer_input(span, args),
             "len" => self.infer_len(span, args),
             "range" => self.infer_range(args),
-            "Slice" | "slice" => self.infer_slice_construction(name, args),
             "Int" => self.infer_conversion(&span, Ty::int(), args),
             "UInt" => self.infer_conversion(&span, Ty::uint(), args),
             "Float64" => self.infer_conversion(&span, Ty::float64(), args),

@@ -816,7 +816,7 @@ exports top-level `def`, `struct`, `trait`, and `comptime` declarations except
 The entry module's declarations keep their source names, except that one
 whose name a loaded module links bare (the bundled publics
 `implicit_public_identity` keeps unqualified, such as `List` or `range`),
-a compiler builtin identity (`builtin_module_exports`, such as `Slice`), or
+a compiler builtin identity (`builtin_module_exports`, such as `Hashable`), or
 a prelude name (such as `String`) takes the entry module's qualified name
 (`module::entry_item_name`, module `__main__`), as every Mojo declaration
 lives in its module's namespace: the entry's `struct List` shadows the
@@ -3708,21 +3708,16 @@ source-bound argument types/conventions/places, capture accesses,
 reference-result origin, and source-ordered compile-time value arguments plus
 their declarations. `Index` carries exactly one nominal call or a checked
 `MirIntrinsicSubscript` discriminator for Tuple/runtime-pack storage, variadic
-storage, SIMD, pointers, or the CTFE-only compile-time-list bridge. `Slice`
-similarly carries exactly one nominal call or the temporary VM String intrinsic.
-`MultiIndex` and `MultiSet` always require a nominal call contract. Checked
+storage, SIMD, pointers, or the CTFE-only compile-time-list bridge.
+`MultiIndex` and `MultiSet` always require a nominal call contract; a slice
+literal is a call of its parameter type's `__slice_literal__` constructor
+whose value they pass like any index. Checked
 assignment, including the single-index spelling
 `value[index] = replacement`, retains whether the right-hand side binds as the
 last positional argument or the keyword-only `value` after a variadic index
 pack. A mutable receiver place may be rooted in a `mut`/`ref` parameter, so the
 VM commits setter write-back through the same caller handle instead of
 flattening the access into raw backing storage.
-
-One narrow representation bridge is intentionally call-less despite its
-nominal checked result: `Slice.indices()` currently produces transient private
-`Value::Tuple` storage typed as the public result Tuple. Its subsequent indexing
-is explicitly tagged `MirIntrinsicSubscript::TupleStorage`; this exception is
-not permission to infer dispatch from an arbitrary nominal runtime value.
 
 A projection below a nominal reference-returning accessor is rooted in a hidden
 caller handle. Lowering executes the selected accessor once, materializes its
@@ -5279,8 +5274,7 @@ current Mojo:
   call, and owners dying together there drop in descending `VarId`, after
   the call's in-place result binding and its slot, if any. A
   concrete register-passable `read` or `var` parameter, a built-in operator's
-  operand, or a slice bound is loaded at call setup instead, in parameter
-  order (slice descriptors first), so an owner whose last use it is drops just
+  operand is loaded at call setup instead, in parameter order, so an owner whose last use it is drops just
   before the consumer, in that load order (`RegisterUses::loaded`). The
   owner a register or a loan carries is the part its source place reaches
   (`DropValues::access`, upstream's `getValueRefsForAccess`), a `ValueRef`
@@ -6231,8 +6225,7 @@ point where a slot declared in a loop is uninitialized again.
   level a round. A pointer field keeps the slot, as the VM reads through
   it when it is a
   slot's whole value (R1269), and so does a `ref` field, whose own slot
-  would need each place past it to go `through` it, and so does a slice descriptor, which both backends
-  build as their own value (R1158). The `--timings` counters are `split_slots`
+  would need each place past it to go `through` it. The `--timings` counters are `split_slots`
   and `split_field_slots`.
 - **`mem-2-reg` runs before each round's `canonicalize`**
   (`analysis::MEM_2_REG`, `analysis/mem2reg.rs`, R787), upstream's
@@ -7140,14 +7133,12 @@ Method calls are normal function calls with a receiver convention:
 - nominal collection mutators commit through a reference-aware receiver place,
   including pointer-backed self-hosted `List` fields
 
-Method-dispatched nominal `Index`, `Slice`, `MultiIndex`, and `MultiSet` enter
+Method-dispatched nominal `Index`, `MultiIndex`, and `MultiSet` enter
 this same selected-method dispatcher and argument binder. They never choose a dunder by
 runtime name or arity: the retained `MirSubscriptCall` supplies the lowered
 target, value-parameter arguments, typed raising contract, caller places, and
-reference-result metadata. The VM only materializes slice descriptors, invokes
-that contract, performs selected write-back, and returns or propagates its
-result. The call-less `Slice.indices()` Tuple-storage bridge described above is
-the sole nominally typed exception.
+reference-result metadata. The VM only invokes that contract, performs
+selected write-back, and returns or propagates its result.
 
 ### Moves At Runtime
 
@@ -7227,7 +7218,6 @@ runtime values:
 - CTFE-only `ComptimeList` values
 - compiler-private heterogeneous pack tuples
 - variants (checked alternative list, active tag, and payload)
-- slice descriptors (contiguous, strided, or general, with optional bounds)
 - SIMD-like lane vectors
 - errors
 - moved/tombstone markers

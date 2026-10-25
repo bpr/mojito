@@ -491,12 +491,6 @@ fn self_forwards(
                 call: Some(call),
                 ..
             }
-            | MirInstr::Slice {
-                object,
-                object_place,
-                call: Some(call),
-                ..
-            }
             | MirInstr::MultiIndex {
                 object,
                 object_place,
@@ -709,7 +703,6 @@ impl<'a> SelfCall<'a> {
         };
         let subscript = |argument: &MirSubscriptArg| match argument {
             MirSubscriptArg::Index(reg) => Some(*reg),
-            MirSubscriptArg::Slice { .. } => None,
         };
         match instruction {
             MirInstr::Call {
@@ -767,17 +760,6 @@ impl<'a> SelfCall<'a> {
                 kwargs: Vec::new(),
                 spread: false,
             }),
-            MirInstr::Slice {
-                object,
-                object_place,
-                call: Some(call),
-                ..
-            } if call.target == name => Some(Self {
-                receiver: Some((*object, object_place.as_deref())),
-                args: vec![(None, None)],
-                kwargs: Vec::new(),
-                spread: false,
-            }),
             MirInstr::MultiIndex {
                 object,
                 object_place,
@@ -819,6 +801,5 @@ impl<'a> SelfCall<'a> {
     }
 }
 
-/// One operand of a call, its register and its place; an operand no one
-/// register holds, a slice descriptor, has no register.
+/// One operand of a call, its register and its place.
 type Operand<'a> = (Option<Reg>, Option<&'a MirPlace>);

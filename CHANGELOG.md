@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Slice` and the three `slice(...)` functions are the library code
+  upstream's `builtin_slice.mojo` declares, prelude names as at the pin, so
+  a slice is an ordinary struct on every backend (R1158). A literal bound to
+  a `Slice` parameter takes `None` and `Optional[Int]` operands
+  (`c[1:3:None]`, `c[None:3]`, `c[o:]`), `Slice(None, 3)` is rejected as
+  at the pin, and `Slice(1, 3).start.value()` runs on the VM. MIR text
+  1.105 withdraws `slice.get`, the `slice_arg` subscript argument, and
+  `field.get`'s `constructors`; the package format is `mojito-package 96`.
+
 - `ContiguousSlice` and `StridedSlice` are the library structs upstream's
   `builtin_slice.mojo` declares, so they construct explicitly, a `Slice`
   converts to a `StridedSlice` implicitly, and a value of either indexes a

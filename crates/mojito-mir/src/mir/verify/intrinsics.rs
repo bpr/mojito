@@ -92,20 +92,6 @@ pub(super) fn indexed_place_element_types(base: &Ty) -> Option<Vec<Ty>> {
     }
 }
 
-pub(super) fn verify_intrinsic_slice(
-    prefix: &str,
-    intrinsic: MirIntrinsicSubscript,
-    _base: Option<&Ty>,
-    _dest: Option<&Ty>,
-    errors: &mut Vec<String>,
-) {
-    // No intrinsic slice dispatch remains (StringLiteral positional slicing
-    // was removed at the audited head); any recorded kind is a verifier error.
-    errors.push(format!(
-        "{prefix}: intrinsic {intrinsic:?} is not a slice dispatch"
-    ));
-}
-
 /// Rebuild the executable callable shape from the symbolic generic contract.
 /// The full dependent/type substitution is performed here rather than by
 /// inspecting parameter-materialization instructions; `arguments` is the

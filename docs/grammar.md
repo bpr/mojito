@@ -1059,17 +1059,15 @@ Notes:
   `StridedSlice` for an `Int` one, `Slice` for any, and a user struct
   declaring one — at one cost, so two such overloads are ambiguous, and an
   inferred parameter takes the literal's default type (`ContiguousSlice`
-  for an omitted or `None` stride, `Slice` otherwise). The two kinds are
-  import-only library structs (`from std.builtin.builtin_slice import
-  ContiguousSlice, StridedSlice`); `Slice` is a prelude name. Mixed/multiple arguments dispatch through
-  variadic `__getitem__`/`__setitem__`. Nominal List slicing receives the same
-  checked descriptor through its ordinary `__getitem__` as any other user
-  receiver; it is not a VM collection shortcut. Lists, tuples, SIMD values,
-  unsafe pointers, and supported user indexing protocols provide reads;
-  writable containers also support indexed assignment. The slice-specific MIR
-  instructions do not yet carry every ordinary method-call contract (effects,
-  conventions, captures, and reference-return origins), so full user-defined
-  slicing parity remains a pre-schema roadmap item.
+  for an omitted or `None` stride, `Slice` otherwise). All three are
+  upstream's library structs: the two kinds are import-only (`from
+  std.builtin.builtin_slice import ContiguousSlice, StridedSlice`), and
+  `Slice` is a prelude name. Mixed/multiple arguments dispatch through
+  variadic `__getitem__`/`__setitem__`. Nominal List slicing receives the
+  constructed slice value through its ordinary `__getitem__` as any other
+  user receiver; it is not a VM collection shortcut. Lists, tuples, SIMD
+  values, unsafe pointers, and supported user indexing protocols provide
+  reads; writable containers also support indexed assignment.
 - **`^` (transfer sigil)** is a postfix that marks an ownership *move* of its operand
   (`x^`, `raise e^`). MIR represents whole-value and projected-field moves;
   ownership analysis rejects use-after-move, double moves, conditional moves,

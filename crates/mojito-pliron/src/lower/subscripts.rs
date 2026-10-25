@@ -5,10 +5,10 @@ use super::*;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
-    /// One checker-selected subscript invocation (`Index`/`Slice`/
-    /// `MultiIndex`/`MultiSet` nominal dispatch): bind the receiver by its
-    /// compiled convention, match the actuals (index registers and
-    /// inline-built slice descriptors) against the callee's slots, call, and
+    /// One checker-selected subscript invocation (`Index`/`MultiIndex`/
+    /// `MultiSet` nominal dispatch): bind the receiver by its compiled
+    /// convention, match the actual index registers against the callee's
+    /// slots, call, and
     /// write a `mut self` receiver back — the VM's `method_call` over the
     /// subscript contract. `anchor` is the result register for the get forms
     /// and a scratch register for `MultiSet` (whose result is discarded).
@@ -104,7 +104,6 @@ impl FnLowering<'_> {
             (None, _) => None,
             (Some(_), [built]) => match &positional[*built] {
                 SubscriptActual::Reg(reg, _) => Some(self.reg_value(ctx, *reg, ScalarTy::Ptr)?),
-                SubscriptActual::Descriptor(_) => None,
             },
             (Some(_), _) => None,
         };
@@ -157,15 +156,6 @@ impl FnLowering<'_> {
                         self.arg_value(ctx, *reg, &expected, owned, anchor)?
                     }
                 }
-                Some(SubscriptActual::Descriptor(value)) => {
-                    if by_ref {
-                        return Err(self.unsupported_reg(
-                            format!("`mut`/`ref` slice-descriptor argument of `{resolved}`"),
-                            anchor,
-                        ));
-                    }
-                    *value
-                }
                 None => {
                     if by_ref {
                         return Err(self.unsupported_reg(
@@ -215,37 +205,23 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// One `MirSubscriptArg` as a lowered actual: an index register or an
-    /// inline-built slice descriptor.
-    pub(super) fn subscript_actual<'p>(
-        &mut self,
-        ctx: &mut Context,
-        anchor: Reg,
+    /// One `MirSubscriptArg` as a lowered actual: its index register.
+    pub(super) const fn subscript_actual<'p>(
         arg: &mojito_mir::mir::MirSubscriptArg,
         place: Option<&'p MirPlace>,
-    ) -> Result<SubscriptActual<'p>, PlironError> {
-        Ok(match arg {
+    ) -> SubscriptActual<'p> {
+        match arg {
             mojito_mir::mir::MirSubscriptArg::Index(reg) => SubscriptActual::Reg(*reg, place),
-            mojito_mir::mir::MirSubscriptArg::Slice {
-                lower, upper, step, ..
-            } => SubscriptActual::Descriptor(
-                self.build_slice_descriptor(ctx, anchor, *lower, *upper, *step)?,
-            ),
-        })
+        }
     }
 
     pub(super) fn subscript_actuals<'p>(
-        &mut self,
-        ctx: &mut Context,
-        anchor: Reg,
         args: &[mojito_mir::mir::MirSubscriptArg],
         places: &'p [Option<MirPlace>],
-    ) -> Result<Vec<SubscriptActual<'p>>, PlironError> {
+    ) -> Vec<SubscriptActual<'p>> {
         args.iter()
             .enumerate()
-            .map(|(i, arg)| {
-                self.subscript_actual(ctx, anchor, arg, places.get(i).and_then(Option::as_ref))
-            })
+            .map(|(i, arg)| Self::subscript_actual(arg, places.get(i).and_then(Option::as_ref)))
             .collect()
     }
 
@@ -374,268 +350,5 @@ impl FnLowering<'_> {
             TrapCategory::UnhandledError,
             dest,
         )
-    }
-
-    /// The slice-descriptor `indices(length)` normalization — the VM's
-    /// `normalize_slice_bounds` — as branch-free selects over the raw
-    /// descriptor, producing the three-element bounds tuple. A zero step
-    /// traps (the VM's runtime error; the negative-length check is
-    /// unreachable over container sizes and is not replicated).
-    pub(super) fn lower_slice_indices(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        recv: Reg,
-        args: &[Reg],
-    ) -> Result<(), PlironError> {
-        if args.len() != 1 {
-            return Err(self.unsupported_reg("slice `indices` call contract".into(), dest));
-        }
-        let length = self.reg_value(ctx, args[0], ScalarTy::Int)?;
-        let descriptor = self.reg_ptr(ctx, recv)?;
-        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let bound = |lowering: &mut Self, ctx: &mut Context, offset: u64, bit: i64| {
-            let address = lowering.offset_address(ctx, descriptor, offset);
-            let value = LoadOp::new(ctx, address, i64_handle);
-            lowering.append(ctx, value.get_operation(), Some(dest));
-            let flags_address = lowering.offset_address(ctx, descriptor, 24);
-            let flags = LoadOp::new(ctx, flags_address, i64_handle);
-            lowering.append(ctx, flags.get_operation(), Some(dest));
-            let mask = lowering.int_constant(ctx, bit);
-            let masked = AndOp::new(ctx, flags.get_result(ctx), mask);
-            lowering.append(ctx, masked.get_operation(), Some(dest));
-            let zero = lowering.int_constant(ctx, 0);
-            let is_set = ICmpOp::new(ctx, ICmpPredicateAttr::NE, masked.get_result(ctx), zero);
-            lowering.append(ctx, is_set.get_operation(), Some(dest));
-            (value.get_result(ctx), is_set.get_result(ctx))
-        };
-        let (raw_lower, has_lower) = bound(self, ctx, 0, 1);
-        let (raw_upper, has_upper) = bound(self, ctx, 8, 2);
-        let (raw_step, has_step) = bound(self, ctx, 16, 4);
-        let one = self.int_constant(ctx, 1);
-        let step = SelectOp::new(ctx, has_step, raw_step, one);
-        self.append(ctx, step.get_operation(), Some(dest));
-        let step = step.get_result(ctx);
-        let zero = self.int_constant(ctx, 0);
-        let step_is_zero = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, step, zero);
-        self.append(ctx, step_is_zero.get_operation(), Some(dest));
-        self.emit_trap_guard(
-            ctx,
-            step_is_zero.get_result(ctx),
-            TrapCategory::UnhandledError,
-            dest,
-        )?;
-        let step_positive = ICmpOp::new(ctx, ICmpPredicateAttr::SGT, step, zero);
-        self.append(ctx, step_positive.get_operation(), Some(dest));
-        let step_positive = step_positive.get_result(ctx);
-        let minus_one = self.int_constant(ctx, -1);
-        let len_minus_one = SubOp::new_with_overflow_flag(ctx, length, one, no_overflow_flags());
-        self.append(ctx, len_minus_one.get_operation(), Some(dest));
-        let len_minus_one = len_minus_one.get_result(ctx);
-        // Clamp an explicit bound to a valid range, wrapping a negative
-        // index once (`runtime::normalize_slice_bounds`'s `adjust`).
-        let adjust = |lowering: &mut Self, ctx: &mut Context, raw: Value| {
-            let wrapped = AddOp::new_with_overflow_flag(ctx, raw, length, no_overflow_flags());
-            lowering.append(ctx, wrapped.get_operation(), Some(dest));
-            let negative = ICmpOp::new(ctx, ICmpPredicateAttr::SLT, raw, zero);
-            lowering.append(ctx, negative.get_operation(), Some(dest));
-            let adjusted =
-                SelectOp::new(ctx, negative.get_result(ctx), wrapped.get_result(ctx), raw);
-            lowering.append(ctx, adjusted.get_operation(), Some(dest));
-            let adjusted = adjusted.get_result(ctx);
-            let clamp =
-                |lowering: &mut Self, ctx: &mut Context, value: Value, low: Value, high: Value| {
-                    let below = ICmpOp::new(ctx, ICmpPredicateAttr::SLT, value, low);
-                    lowering.append(ctx, below.get_operation(), Some(dest));
-                    let floored = SelectOp::new(ctx, below.get_result(ctx), low, value);
-                    lowering.append(ctx, floored.get_operation(), Some(dest));
-                    let above =
-                        ICmpOp::new(ctx, ICmpPredicateAttr::SGT, floored.get_result(ctx), high);
-                    lowering.append(ctx, above.get_operation(), Some(dest));
-                    let clamped =
-                        SelectOp::new(ctx, above.get_result(ctx), high, floored.get_result(ctx));
-                    lowering.append(ctx, clamped.get_operation(), Some(dest));
-                    clamped.get_result(ctx)
-                };
-            let positive = clamp(lowering, ctx, adjusted, zero, length);
-            let negative = clamp(lowering, ctx, adjusted, minus_one, len_minus_one);
-            let result = SelectOp::new(ctx, step_positive, positive, negative);
-            lowering.append(ctx, result.get_operation(), Some(dest));
-            result.get_result(ctx)
-        };
-        let adjusted_lower = adjust(self, ctx, raw_lower);
-        let adjusted_upper = adjust(self, ctx, raw_upper);
-        let default_start = SelectOp::new(ctx, step_positive, zero, len_minus_one);
-        self.append(ctx, default_start.get_operation(), Some(dest));
-        let start = SelectOp::new(
-            ctx,
-            has_lower,
-            adjusted_lower,
-            default_start.get_result(ctx),
-        );
-        self.append(ctx, start.get_operation(), Some(dest));
-        let default_stop = SelectOp::new(ctx, step_positive, length, minus_one);
-        self.append(ctx, default_stop.get_operation(), Some(dest));
-        let stop = SelectOp::new(ctx, has_upper, adjusted_upper, default_stop.get_result(ctx));
-        self.append(ctx, stop.get_operation(), Some(dest));
-        let elements = [start.get_result(ctx), stop.get_result(ctx), step];
-        let storage = self.entry_alloca(ctx, elements.len() as u64 * 8, 8);
-        for (index, value) in elements.into_iter().enumerate() {
-            let address = self.offset_address(ctx, storage, index as u64 * 8);
-            let store = StoreOp::new(ctx, value, address);
-            self.append(ctx, store.get_operation(), Some(dest));
-        }
-        self.reg_values.insert(dest.0, storage);
-        Ok(())
-    }
-
-    /// `Slice(start, end)`, `Slice(start, end, step)`, `slice(end)`,
-    /// `slice(start, end)`, `slice(start, end, step)`: a `None`-typed
-    /// argument is an absent bound, every other argument an `Int` bound.
-    pub(super) fn lower_slice_constructor(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        name: &str,
-        args: &[Reg],
-    ) -> Result<(), PlironError> {
-        let bound = |lowering: &Self, reg: Reg| {
-            (!matches!(
-                lowering.func.reg_types.get(&reg.0).map(Ty::kind),
-                Some(TyKind::None)
-            ))
-            .then_some(reg)
-        };
-        let (lower, upper, step) = match (name, args) {
-            ("slice", [end]) => (None, bound(self, *end), None),
-            (_, [start, end]) => (bound(self, *start), bound(self, *end), None),
-            (_, [start, end, step]) => (bound(self, *start), bound(self, *end), bound(self, *step)),
-            _ => {
-                return Err(self.unsupported_reg(format!("`{name}` constructor arity"), dest));
-            }
-        };
-        let storage = if [lower, upper, step].iter().flatten().any(|reg| {
-            matches!(self.func.reg_types.get(&reg.0).map(Ty::kind), Some(TyKind::Struct(name, _))
-                if name == "Optional"
-                    || name.ends_with("$Optional")
-                    || name.starts_with("Optional$mono$"))
-        }) {
-            self.build_dynamic_slice_descriptor(ctx, dest, lower, upper, step)?
-        } else {
-            self.build_slice_descriptor(ctx, dest, lower, upper, step)?
-        };
-        self.reg_values.insert(dest.0, storage);
-        Ok(())
-    }
-
-    fn build_dynamic_slice_descriptor(
-        &mut self,
-        ctx: &mut Context,
-        anchor: Reg,
-        lower: Option<Reg>,
-        upper: Option<Reg>,
-        step: Option<Reg>,
-    ) -> Result<Value, PlironError> {
-        let storage = self.entry_alloca(ctx, 32, 8);
-        let zero = self.int_constant(ctx, 0);
-        let mut flags = zero;
-        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        for (index, (bound, bit)) in [(lower, 1i64), (upper, 2), (step, 4)]
-            .into_iter()
-            .enumerate()
-        {
-            let (value, present) = match bound {
-                None => (zero, self.bool_constant(ctx, false)),
-                Some(reg)
-                    if matches!(self.func.reg_types.get(&reg.0).map(Ty::kind), Some(TyKind::Struct(name, _))
-                        if name == "Optional"
-                            || name.ends_with("$Optional")
-                            || name.starts_with("Optional$mono$")) =>
-                {
-                    let optional = self.reg_ptr(ctx, reg)?;
-                    let data = LoadOp::new(ctx, optional, ptr_ty);
-                    self.append(ctx, data.get_operation(), Some(anchor));
-                    let value = LoadOp::new(ctx, data.get_result(ctx), i64_ty);
-                    self.append(ctx, value.get_operation(), Some(anchor));
-                    let size_address = self.offset_address(ctx, optional, 8);
-                    let size = LoadOp::new(ctx, size_address, i64_ty);
-                    self.append(ctx, size.get_operation(), Some(anchor));
-                    let present =
-                        ICmpOp::new(ctx, ICmpPredicateAttr::NE, size.get_result(ctx), zero);
-                    self.append(ctx, present.get_operation(), Some(anchor));
-                    (value.get_result(ctx), present.get_result(ctx))
-                }
-                Some(reg) => (
-                    self.reg_value(ctx, reg, ScalarTy::Int)?,
-                    self.bool_constant(ctx, true),
-                ),
-            };
-            let address = self.offset_address(ctx, storage, index as u64 * 8);
-            let store = StoreOp::new(ctx, value, address);
-            self.append(ctx, store.get_operation(), Some(anchor));
-            let bit = self.int_constant(ctx, bit);
-            let masked = SelectOp::new(ctx, present, bit, zero);
-            self.append(ctx, masked.get_operation(), Some(anchor));
-            let merged = OrOp::new(ctx, flags, masked.get_result(ctx));
-            self.append(ctx, merged.get_operation(), Some(anchor));
-            flags = merged.get_result(ctx);
-        }
-        let address = self.offset_address(ctx, storage, 24);
-        let store = StoreOp::new(ctx, flags, address);
-        self.append(ctx, store.get_operation(), Some(anchor));
-        Ok(storage)
-    }
-
-    /// `Slice.__eq__`/`__ne__`: the descriptors are equal when all four raw
-    /// words match (absent bounds store 0 and are distinguished by the
-    /// presence bitmask, so word equality is exact bound equality).
-    pub(super) fn lower_slice_equality(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        recv: Reg,
-        args: &[Reg],
-        negate: bool,
-    ) -> Result<(), PlironError> {
-        if args.len() != 1 {
-            return Err(self.unsupported_reg("slice equality call contract".into(), dest));
-        }
-        let left = self.reg_ptr(ctx, recv)?;
-        let right = self.reg_ptr(ctx, args[0])?;
-        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let mut all_equal: Option<Value> = None;
-        for offset in [0u64, 8, 16, 24] {
-            let left_address = self.offset_address(ctx, left, offset);
-            let left_word = LoadOp::new(ctx, left_address, i64_handle);
-            self.append(ctx, left_word.get_operation(), Some(dest));
-            let right_address = self.offset_address(ctx, right, offset);
-            let right_word = LoadOp::new(ctx, right_address, i64_handle);
-            self.append(ctx, right_word.get_operation(), Some(dest));
-            let equal = ICmpOp::new(
-                ctx,
-                ICmpPredicateAttr::EQ,
-                left_word.get_result(ctx),
-                right_word.get_result(ctx),
-            );
-            self.append(ctx, equal.get_operation(), Some(dest));
-            all_equal = Some(match all_equal {
-                None => equal.get_result(ctx),
-                Some(previous) => {
-                    let both = AndOp::new(ctx, previous, equal.get_result(ctx));
-                    self.append(ctx, both.get_operation(), Some(dest));
-                    both.get_result(ctx)
-                }
-            });
-        }
-        let equal = all_equal.expect("four words compared");
-        if negate {
-            let truth = self.bool_constant(ctx, true);
-            let differ = XorOp::new(ctx, equal, truth);
-            self.define(ctx, dest, differ.get_operation(), differ.get_result(ctx))
-        } else {
-            self.reg_values.insert(dest.0, equal);
-            Ok(())
-        }
     }
 }

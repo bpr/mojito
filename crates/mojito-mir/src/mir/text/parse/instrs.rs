@@ -610,11 +610,6 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 base: self.req(value, fields, "base", Self::reg)?,
                 field: self.req(value, fields, "field", Self::symbol)?,
-                constructors: self
-                    .field(fields, "constructors")
-                    .ok()
-                    .map(|value| self.strings(value))
-                    .unwrap_or_default(),
             }),
             "index.get" => Some(MirInstr::Index {
                 dest: self.req(value, fields, "dest", Self::reg)?,
@@ -626,30 +621,6 @@ impl Decoder {
                 index_place: (self
                     .req(value, fields, "index_place", |d, v| Some(d.option_place(v)))?)
                 .map(Box::new),
-                call: (self.req(value, fields, "call", |d, v| {
-                    Some(d.option_value(Some(v)).and_then(|v| d.subscript_call(v)))
-                })?)
-                .map(Box::new),
-                intrinsic: self.req(value, fields, "intrinsic", |d, v| {
-                    Some(
-                        d.option_value(Some(v))
-                            .and_then(|v| d.intrinsic_subscript(v)),
-                    )
-                })?,
-            }),
-            "slice.get" => Some(MirInstr::Slice {
-                dest: self.req(value, fields, "dest", Self::reg)?,
-                object: self.req(value, fields, "object", Self::reg)?,
-                kind: self.req(value, fields, "kind", Self::slice_kind)?,
-                lower: self.req(value, fields, "lower", |d, v| Some(d.option_reg(v)))?,
-                upper: self.req(value, fields, "upper", |d, v| Some(d.option_reg(v)))?,
-                step: self.req(value, fields, "step", |d, v| Some(d.option_reg(v)))?,
-                object_place: (self.req(value, fields, "object_place", |d, v| {
-                    Some(d.option_place(v))
-                })?)
-                .map(Box::new),
-                arg_places: self
-                    .req(value, fields, "arg_places", |d, v| Some(d.places_option(v)))?,
                 call: (self.req(value, fields, "call", |d, v| {
                     Some(d.option_value(Some(v)).and_then(|v| d.subscript_call(v)))
                 })?)

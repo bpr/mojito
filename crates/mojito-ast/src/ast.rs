@@ -856,8 +856,8 @@ pub enum SubscriptArg {
         step: Option<Box<Expr>>,
     },
     /// `name=lower:upper[:step]` — a keyword slice argument (`s[byte=a:b]`),
-    /// dispatched like [`SubscriptArg::Keyword`] with a slice-descriptor
-    /// value. Read-only, like every keyword subscript.
+    /// dispatched like [`SubscriptArg::Keyword`] with the value of the slice
+    /// literal. Read-only, like every keyword subscript.
     KeywordSlice {
         name: String,
         lower: Option<Box<Expr>>,

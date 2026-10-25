@@ -260,9 +260,6 @@ pub fn instruction_named_types(instruction: &MirInstr) -> Vec<(&'static str, &Ty
         MirInstr::Index {
             call: Some(call), ..
         }
-        | MirInstr::Slice {
-            call: Some(call), ..
-        }
         | MirInstr::MultiIndex {
             call: Some(call), ..
         }

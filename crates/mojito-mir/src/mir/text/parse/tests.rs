@@ -1036,7 +1036,6 @@ fn instruction_families_reprint_byte_identically() {
             dest: Reg(19),
             base: Reg(0),
             field: "size".into(),
-            constructors: vec!["Optional.__init__".into()],
         },
         MirInstr::Index {
             dest: Reg(20),
@@ -1056,30 +1055,10 @@ fn instruction_families_reprint_byte_identically() {
             call: None,
             intrinsic: Some(MirIntrinsicSubscript::Pointer),
         },
-        MirInstr::Slice {
-            dest: Reg(22),
-            object: Reg(0),
-            kind: SliceKind::Slice,
-            lower: Some(Reg(1)),
-            upper: None,
-            step: Some(Reg(2)),
-            object_place: Some(Box::new(place(0))),
-            arg_places: vec![None, Some(place(1))],
-            call: Some(Box::new(sample_subscript_call())),
-            intrinsic: Some(MirIntrinsicSubscript::Simd),
-        },
         MirInstr::MultiIndex {
             dest: Reg(23),
             object: Reg(0),
-            args: vec![
-                MirSubscriptArg::Index(Reg(1)),
-                MirSubscriptArg::Slice {
-                    kind: SliceKind::Slice,
-                    lower: Some(Reg(2)),
-                    upper: Some(Reg(3)),
-                    step: None,
-                },
-            ],
+            args: vec![MirSubscriptArg::Index(Reg(1))],
             object_place: Some(Box::new(place(0))),
             arg_places: vec![None],
             kwargs: vec![("byte".into(), MirSubscriptArg::Index(Reg(4)))],
@@ -1498,12 +1477,12 @@ fn malformed_instruction_payloads_are_diagnosed() {
     );
     assert!(
         diagnostics(&artifact_with_instruction(
-            "index.multi { dest: %r0, object: %r0, args: [slice_arg { kind: sideways, \
+            "index.multi { dest: %r0, object: %r0, args: [slice_arg { kind: slice, \
              lower: absent, upper: absent, step: absent }], object_place: absent, \
              arg_places: [], kwargs: [], kwarg_places: [], call: absent }"
         ))
         .iter()
-        .any(|message| message.contains("unknown slice kind `sideways`"))
+        .any(|message| message.contains("expected subscript argument"))
     );
 }
 

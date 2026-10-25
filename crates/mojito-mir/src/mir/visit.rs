@@ -312,17 +312,6 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
             call.as_deref_mut()
                 .map_or(Ok(()), |call| walk_subscript_call(visitor, call))
         }
-        I::Slice {
-            object_place,
-            arg_places,
-            call,
-            ..
-        } => {
-            visit_opt_place(visitor, object_place.as_deref_mut())?;
-            visit_places(visitor, arg_places)?;
-            call.as_deref_mut()
-                .map_or(Ok(()), |call| walk_subscript_call(visitor, call))
-        }
         I::MultiIndex {
             object_place,
             arg_places,

@@ -36,14 +36,6 @@ pub enum Value {
         function: String,
         captures: Vec<ClosureCapture>,
     },
-    /// A checked slice descriptor. Unlike the old fabricated struct layout,
-    /// omitted bounds and descriptor kind are first-class runtime data.
-    Slice {
-        kind: mojito_types::types::SliceKind,
-        start: Option<i64>,
-        end: Option<i64>,
-        step: Option<i64>,
-    },
     /// A struct instance: its type name and field values (in declaration
     /// order). An instance's compile-time arguments are in its name, as the
     /// elaborator minted it. A value type — `Clone` deep-copies, giving value
@@ -181,21 +173,6 @@ impl PartialEq for Value {
             ) => aa == ba && ao == bo,
             (Self::None, Self::None) => true,
             // Closures have identity, not structural, equality.
-            // Descriptor equality compares the bounds.
-            (
-                Self::Slice {
-                    start: as_,
-                    end: ae,
-                    step: ap,
-                    ..
-                },
-                Self::Slice {
-                    start: bs,
-                    end: be,
-                    step: bp,
-                    ..
-                },
-            ) => as_ == bs && ae == be && ap == bp,
             (
                 Self::Struct {
                     name: n1,
@@ -276,22 +253,6 @@ impl fmt::Display for Value {
             Self::None => write!(f, "None"),
             Self::Function(name) => write!(f, "<function {name}>"),
             Self::Closure { function, .. } => write!(f, "<closure {function}>"),
-            // Upstream's `Slice.write_to` text.
-            Self::Slice {
-                start, end, step, ..
-            } => {
-                let bound = |bound: &Option<i64>| match bound {
-                    Some(value) => value.to_string(),
-                    None => "None".to_string(),
-                };
-                write!(
-                    f,
-                    "Slice({}, {}, {})",
-                    bound(start),
-                    bound(end),
-                    bound(step)
-                )
-            }
             Self::Struct { name, fields } => {
                 write!(f, "{name}(")?;
                 for (i, (fname, val)) in fields.iter().enumerate() {
@@ -376,7 +337,6 @@ pub fn type_name(value: &Value) -> String {
         Value::Str(_) => "String".to_string(),
         Value::None => "None".to_string(),
         Value::Function(_) | Value::Closure { .. } => "function".to_string(),
-        Value::Slice { kind, .. } => kind.type_name().to_string(),
         Value::Struct { name, .. } => name.clone(),
         Value::Simd { dtype, lanes } => {
             if lanes.width() == 1 {
@@ -475,8 +435,6 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
             }
             Ok(true)
         }
-        // `Slice.__eq__`: bound-wise (the structural `PartialEq` arm).
-        (Value::Slice { .. }, Value::Slice { .. }) => Ok(a == b),
         _ => Err(RuntimeError::TypeError(format!(
             "cannot compare {} and {}",
             type_name(a),
@@ -709,42 +667,6 @@ pub fn value_as_index(v: &Value) -> Result<i64, RuntimeError> {
             type_name(other)
         ))),
     }
-}
-
-/// Normalize a `Slice` against a concrete length, implementing the public
-/// `Slice.indices(length)` contract.
-pub fn normalize_slice_bounds(
-    len: i64,
-    lower: Option<i64>,
-    upper: Option<i64>,
-    step: Option<i64>,
-) -> Result<(i64, i64, i64), RuntimeError> {
-    if len < 0 {
-        return Err(RuntimeError::TypeError(
-            "slice length cannot be negative".to_string(),
-        ));
-    }
-    let step = step.unwrap_or(1);
-    if step == 0 {
-        return Err(RuntimeError::TypeError(
-            "slice step cannot be zero".to_string(),
-        ));
-    }
-    // Clamp an explicit bound to a valid range, wrapping a negative index once.
-    let adjust = |i: i64| -> i64 {
-        let i = if i < 0 { i + len } else { i };
-        if step > 0 {
-            i.clamp(0, len)
-        } else {
-            i.clamp(-1, len - 1)
-        }
-    };
-    let (start, stop) = if step > 0 {
-        (lower.map_or(0, adjust), upper.map_or(len, adjust))
-    } else {
-        (lower.map_or(len - 1, adjust), upper.map_or(-1, adjust))
-    };
-    Ok((start, stop, step))
 }
 
 /// Evaluate primitive/internal `x in c` / `x not in c`.

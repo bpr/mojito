@@ -153,26 +153,6 @@ impl FnLowering<'_> {
             self.borrow_or_adopt_string(ctx, arg, dest, data, len);
             return Ok(());
         }
-        // A slice descriptor converts to upstream's `Slice(start, end, step)`
-        // text, an owned buffer.
-        if self
-            .func
-            .reg_types
-            .get(&arg.0)
-            .and_then(slice_struct_name)
-            .is_some()
-        {
-            let (data, len) = self.slice_string(ctx, arg, dest, false)?;
-            self.str_runtime.insert(
-                dest.0,
-                RuntimeStr {
-                    data,
-                    len,
-                    owned: true,
-                },
-            );
-            return Ok(());
-        }
         // A nominal struct converts through its `write_to` conformance over
         // a fresh accumulator — the VM's `format_value` struct arm. The
         // accumulated buffer transfers into the resulting owned string.

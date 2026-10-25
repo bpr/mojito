@@ -77,60 +77,6 @@ pub(super) fn verify_subscript_instruction(
                 );
             }
         }
-        MirInstr::Slice {
-            dest,
-            object,
-            kind,
-            object_place,
-            arg_places,
-            call,
-            intrinsic,
-            ..
-        } => {
-            verify_subscript_receiver_place(
-                prefix,
-                cx.reg_ty(*object),
-                object_place.as_deref(),
-                errors,
-            );
-            if arg_places.len() != 1 {
-                errors.push(format!(
-                    "{prefix}: slice place metadata is not aligned with its descriptor argument"
-                ));
-            }
-            if call.is_some() == intrinsic.is_some() {
-                errors.push(format!(
-                    "{prefix}: slice operation must carry exactly one checked-call or intrinsic dispatch"
-                ));
-            }
-            if let Some(call) = call {
-                verify_subscript_call(
-                    prefix,
-                    cx.function,
-                    cx.declarations,
-                    call,
-                    SubscriptSources {
-                        receiver_ty: cx.reg_ty(*object),
-                        method: "__getitem__",
-                        receiver_place: object_place.as_deref(),
-                        positional_places: arg_places,
-                        keyword_places: &[],
-                        positional_types: &[Some(slice_descriptor_ty(*kind))],
-                        keyword_types: &[],
-                        dest: Some(*dest),
-                    },
-                    errors,
-                );
-            } else if let Some(intrinsic) = intrinsic {
-                verify_intrinsic_slice(
-                    prefix,
-                    *intrinsic,
-                    cx.reg_ty(*object),
-                    cx.reg_ty(*dest),
-                    errors,
-                );
-            }
-        }
         MirInstr::MultiIndex {
             dest,
             object,

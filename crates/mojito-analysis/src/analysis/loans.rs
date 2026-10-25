@@ -500,14 +500,7 @@ pub(super) fn loan_accesses(
                     .collect()
             }
         }
-        MirInstr::Slice {
-            dest,
-            object_place,
-            arg_places,
-            call,
-            ..
-        }
-        | MirInstr::MultiIndex {
+        MirInstr::MultiIndex {
             dest,
             object_place,
             arg_places,

@@ -111,7 +111,6 @@ accessed; the compact notation omits this analysis-only field.
 |---|---|---|
 | `field.get` | `GetField` | Read a named field from a register value |
 | `index.get` | `Index` | Execute the complete selected `__getitem__` contract, or read an intrinsic indexed element |
-| `slice.get` | `Slice` | Execute the complete selected `__getitem__` contract with a checked slice descriptor, or use the temporary VM String intrinsic |
 | `index.multi` | `MultiIndex` | Execute the complete selected `__getitem__` contract with mixed index/slice arguments |
 | `index.multi_set` | `MultiSet` | Execute the complete selected `__setitem__` contract (including one-index assignment) and write back its mutable receiver, even through a caller reference handle |
 | `place.load` | `LoadPlace` | Read a place without reevaluating it |
@@ -619,38 +618,20 @@ index argument; the already evaluated index register is reused in its
 compile-time value-parameter ABI. An ordinary value consumer reads and copies a
 returned referent, while an explicit `ref` binding retains its handle.
 
-### `slice.get` — Slice Value
-
-```text
-slice.get %dest, %object, [%lower:%upper:%step]
-```
-
-Constructs a slice descriptor and executes the selected nominal accessor, or
-slices a VM-backed String. The accessor result, not the descriptor, is stored in
-`%dest`. Each bound is either a register or `_` for an omitted, direction-aware
-default:
-
-```text
-slice.get %r4, %r0, [%r1:%r2:_]
-slice.get %r5, %r0, [_:_:%r3]
-```
+### Slice literals
 
 A source slice is a call of its bound parameter type's `__slice_literal__`
-constructor, as upstream's literal constructs its parameter's type: a library
-`ContiguousSlice`, `StridedSlice`, or user struct is an ordinary constructor
-call whose result the subscript passes like any index, and only a literal
-bound to the compiler-provided `Slice` is this instruction's `Slice`
-descriptor. User receivers receive that first-class descriptor through their
-selected `__getitem__`; this includes the bundled nominal List and does not
-bypass its ordinary method. Checker-created descriptors never carry an
-arbitrary user `@implicit` conversion for the VM to reconstruct. The VM-backed String path normalizes
-bounds directly. A zero step or invalid bound produces a runtime error.
+constructor, as upstream's literal constructs its parameter's type: the
+library `Slice`, `ContiguousSlice`, `StridedSlice`, or a user struct. The
+subscript passes the constructed value as an ordinary `index.multi`
+argument, so a selected `__getitem__` receives it like any index, and no
+instruction builds a slice value of its own.
 
 ### `index.multi` / `index.multi_set` — Mixed Subscripts
 
 ```text
-index.multi %dest, %object, [%row, stride(%lo:%hi:%step)]
-index.multi_set [$grid], [%row, stride(%lo:%hi:%step)], %value
+index.multi %dest, %object, [%row, %slice]
+index.multi_set [$grid], [%row, %slice], %value
 ```
 
 Every method-dispatched nominal variant carries the same `MirSubscriptCall` payload: exact lowered
@@ -658,22 +639,16 @@ target, executable result type, and error type; independent ABI place
 requirements and effective
 receiver/argument conventions, source-slot mapping for positional, keyword, and
 default arguments, capture accesses, reference-result origin, and source-ordered
-compile-time value arguments plus declarations. `Index.call` and `Slice.call`
-are absent only when the instruction carries an explicit
-`MirIntrinsicSubscript`: Tuple/runtime-pack storage, variadic storage, SIMD,
-pointer, or CTFE compile-time-list indexing for `Index`, and temporary VM String
-slicing for `Slice`. Verification requires exactly one call or intrinsic;
+compile-time value arguments plus declarations. `Index.call` is absent only
+when the instruction carries an explicit `MirIntrinsicSubscript`:
+Tuple/runtime-pack storage, variadic storage, SIMD, pointer, or CTFE
+compile-time-list indexing. Verification requires exactly one call or intrinsic;
 runtime values never select the family. `MultiIndex.call` and `MultiSet.call`
 are mandatory because the VM has no intrinsic multidimensional operation. The
 source evaluation order for assignment is receiver, index and slice-bound
 expressions, then right-hand side. Fixed setters receive the assignment value last,
 while variadic
 `*indices, *, value` methods receive it in the keyword-only `value` slot.
-
-`MirIntrinsicSubscript::TupleStorage` also names the narrow ABI bridge for a
-nominally typed `Slice.indices()` result that is still carried as transient
-private `Value::Tuple` storage. This exception is explicit in MIR and does not
-enable runtime family inference for arbitrary nominal values.
 
 Verification treats retained `raises` as an ordinary protected or propagating
 call site and checks exact argument-source binding, types, collectors, places,

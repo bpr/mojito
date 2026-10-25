@@ -433,9 +433,6 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         MirInstr::Index {
             call: Some(call), ..
         }
-        | MirInstr::Slice {
-            call: Some(call), ..
-        }
         | MirInstr::MultiIndex {
             call: Some(call), ..
         }

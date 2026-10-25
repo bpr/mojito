@@ -243,12 +243,7 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
                 MirInstr::MakeStruct { dest, fields } => {
                     creates.insert(dest.0, fields.clone());
                 }
-                MirInstr::GetField {
-                    dest,
-                    base,
-                    field,
-                    constructors,
-                } if constructors.is_empty() => {
+                MirInstr::GetField { dest, base, field } => {
                     extracts.insert(dest.0, (*base, field.clone()));
                 }
                 _ => {}
@@ -355,18 +350,9 @@ impl StructFolds<'_> {
     /// The operand an extract of a created struct's field reads: upstream's
     /// `StructExtractOp::fold`.
     fn extracted(&self, instruction: &MirInstr) -> Option<Reg> {
-        let MirInstr::GetField {
-            base,
-            field,
-            constructors,
-            ..
-        } = instruction
-        else {
+        let MirInstr::GetField { base, field, .. } = instruction else {
             return None;
         };
-        if !constructors.is_empty() {
-            return None;
-        }
         let position = self.position(*base, field)?;
         self.creates.get(&base.0)?.get(position).copied()
     }

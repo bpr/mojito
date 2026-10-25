@@ -273,28 +273,6 @@ impl<'a> ArgumentPassing<'a> {
                 loaded
             })
             .unwrap_or_default(),
-            MirInstr::Slice {
-                object,
-                lower,
-                upper,
-                step,
-                object_place,
-                call: Some(call),
-                ..
-            } => Callee::resolve(
-                self.declarations,
-                &call.target,
-                receiver_ty(object_place.as_deref(), *object, register_types),
-            )
-            .map(|callee| {
-                let mut loaded = Vec::new();
-                slice_bounds_loaded(*lower, *upper, *step, 0, &mut loaded);
-                if object_place.is_none() {
-                    callee_receiver_by_value(callee, *object, register_types, &mut loaded);
-                }
-                loaded
-            })
-            .unwrap_or_default(),
             MirInstr::MultiIndex {
                 object,
                 args,
@@ -309,7 +287,6 @@ impl<'a> ArgumentPassing<'a> {
             )
             .map(|callee| {
                 let mut loaded = Vec::new();
-                subscript_slices_loaded(args, &mut loaded);
                 if object_place.is_none() {
                     callee_receiver_by_value(callee, *object, register_types, &mut loaded);
                 }
@@ -334,7 +311,6 @@ impl<'a> ArgumentPassing<'a> {
             )
             .map(|callee| {
                 let mut loaded = Vec::new();
-                subscript_slices_loaded(args, &mut loaded);
                 subscript_indices_loaded(&callee.contract(), args, arg_places, &mut loaded);
                 loaded
             })
@@ -674,11 +650,6 @@ impl RegisterLoanStep {
                 base_place: Some(place),
                 ..
             }
-            | MirInstr::Slice {
-                dest,
-                object_place: Some(place),
-                ..
-            }
             | MirInstr::MultiIndex {
                 dest,
                 object_place: Some(place),
@@ -762,7 +733,6 @@ impl RegisterLoanStep {
                 | MirInstr::CallIndirect { .. }
                 | MirInstr::MethodCall { .. }
                 | MirInstr::Index { .. }
-                | MirInstr::Slice { .. }
                 | MirInstr::MultiIndex { .. }
                 | MirInstr::BinOp {
                     resolved: Some(_),
@@ -959,19 +929,6 @@ fn arguments_by_value(
     }
 }
 
-/// The slice descriptors' bounds of subscript `args`: every descriptor is
-/// built before the call loads its receiver and plain indices.
-fn subscript_slices_loaded(args: &[MirSubscriptArg], loaded: &mut Vec<(u32, usize)>) {
-    for argument in args {
-        if let MirSubscriptArg::Slice {
-            lower, upper, step, ..
-        } = argument
-        {
-            slice_bounds_loaded(*lower, *upper, *step, 0, loaded);
-        }
-    }
-}
-
 /// The plain subscript indices `contract` loads by value, each at its
 /// parameter rank after the receiver.
 fn subscript_indices_loaded(
@@ -989,23 +946,6 @@ fn subscript_indices_loaded(
             loaded.push((register.0, index + 1));
         }
     }
-}
-
-/// Push a slice's present bounds at `rank`: the slice descriptor the call
-/// receives is built from them by value before the call loads anything else.
-fn slice_bounds_loaded(
-    lower: Option<Reg>,
-    upper: Option<Reg>,
-    step: Option<Reg>,
-    rank: usize,
-    loaded: &mut Vec<(u32, usize)>,
-) {
-    loaded.extend(
-        [lower, upper, step]
-            .into_iter()
-            .flatten()
-            .map(|bound| (bound.0, rank)),
-    );
 }
 
 /// Push `receiver` at rank zero when `declaration` takes its receiver by

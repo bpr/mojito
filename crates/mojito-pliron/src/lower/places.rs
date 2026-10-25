@@ -1,5 +1,5 @@
-//! Place addressing: `place_address`, field offsets/layout, `GetField`,
-//! slice descriptors, and tuple construction.
+//! Place addressing: `place_address`, field offsets/layout, `GetField`, and
+//! tuple construction.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -391,11 +391,6 @@ impl FnLowering<'_> {
         while let TyKind::Ref(reference) = base_ty.kind() {
             base_ty = reference.referent.clone();
         }
-        // A slice-descriptor bound access materializes a fresh `Optional`
-        // through its compiled constructor — the VM's `slice_bound_optional`.
-        if slice_struct_name(&base_ty).is_some() && matches!(field, "start" | "end" | "step") {
-            return self.lower_slice_bound_field(ctx, dest, base, field);
-        }
         let (offset, field_ty) = self.field_offset(&base_ty, field, dest)?;
         let base_ptr = self.reg_ptr(ctx, base)?;
         let address = if offset == 0 {
@@ -440,105 +435,6 @@ impl FnLowering<'_> {
         self.append(ctx, call.get_operation(), Some(dest));
         self.reg_values.insert(dest.0, storage);
         Ok(())
-    }
-
-    /// One bound of the raw 32-byte slice descriptor (`{start, end, step,
-    /// flags}` i64 fields — the layout `discover_structs` synthesizes),
-    /// materialized as a real `Optional` by calling the destination type's
-    /// compiled positional constructor: 1-argument when the bound's flag bit
-    /// is set, 0-argument otherwise — the VM's `slice_bound_optional`.
-    /// One bound of the raw 32-byte slice descriptor (`{start, end, step,
-    /// flags}` i64 fields — the layout `discover_structs` synthesizes),
-    /// materialized as an `Optional` value over a frame-backed payload slot:
-    /// `{data → payload, _size ∈ {0, 1}}` — the observable state the VM's
-    /// `slice_bound_optional` constructor calls produce, with no heap
-    /// allocation to own.
-    pub(super) fn lower_slice_bound_field(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        base: Reg,
-        field: &str,
-    ) -> Result<(), PlironError> {
-        let Some(optional_ty) = self
-            .func
-            .reg_types
-            .get(&dest.0)
-            .filter(|ty| matches!(ty.kind(), TyKind::Struct(..)))
-            .cloned()
-        else {
-            return Err(self.unsupported_reg("untyped slice bound access".into(), dest));
-        };
-        let lowered = lower_ty(self.name, &optional_ty, &self.layout, self.reg_span(dest))?;
-        let LowerTy::Aggregate { layout, .. } = lowered else {
-            return Err(self.unsupported_reg("slice bound Optional layout".into(), dest));
-        };
-        let (offset, bit) = match field {
-            "start" => (0u64, 1i64),
-            "end" => (8, 2),
-            _ => (16, 4),
-        };
-        let descriptor = self.reg_ptr(ctx, base)?;
-        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let value_address = self.offset_address(ctx, descriptor, offset);
-        let value = LoadOp::new(ctx, value_address, i64_handle);
-        self.append(ctx, value.get_operation(), Some(dest));
-        let flags_address = self.offset_address(ctx, descriptor, 24);
-        let flags = LoadOp::new(ctx, flags_address, i64_handle);
-        self.append(ctx, flags.get_operation(), Some(dest));
-        let mask = self.int_constant(ctx, bit);
-        let masked = AndOp::new(ctx, flags.get_result(ctx), mask);
-        self.append(ctx, masked.get_operation(), Some(dest));
-        let zero = self.int_constant(ctx, 0);
-        let is_set = ICmpOp::new(ctx, ICmpPredicateAttr::NE, masked.get_result(ctx), zero);
-        self.append(ctx, is_set.get_operation(), Some(dest));
-        let payload = self.entry_alloca(ctx, 8, 8);
-        let store = StoreOp::new(ctx, value.get_result(ctx), payload);
-        self.append(ctx, store.get_operation(), Some(dest));
-        let temp = self.entry_alloca(ctx, layout.size, layout.align);
-        let store = StoreOp::new(ctx, payload, temp);
-        self.append(ctx, store.get_operation(), Some(dest));
-        let one = self.int_constant(ctx, 1);
-        let size = SelectOp::new(ctx, is_set.get_result(ctx), one, zero);
-        self.append(ctx, size.get_operation(), Some(dest));
-        let size_address = self.offset_address(ctx, temp, 8);
-        let store = StoreOp::new(ctx, size.get_result(ctx), size_address);
-        self.append(ctx, store.get_operation(), Some(dest));
-        self.reg_values.insert(dest.0, temp);
-        Ok(())
-    }
-
-    /// Materialize one slice descriptor in the backend's raw layout: three
-    /// i64 bounds at offsets 0/8/16 (absent bounds store 0) and the presence
-    /// bitmask at offset 24 (start=1, end=2, step=4) — `Value::Slice`'s
-    /// `Option<i64>` fields.
-    pub(super) fn build_slice_descriptor(
-        &mut self,
-        ctx: &mut Context,
-        anchor: Reg,
-        lower: Option<Reg>,
-        upper: Option<Reg>,
-        step: Option<Reg>,
-    ) -> Result<Value, PlironError> {
-        let storage = self.entry_alloca(ctx, 32, 8);
-        let mut flags = 0i64;
-        for (index, (bound, bit)) in [(lower, 1i64), (upper, 2), (step, 4)].iter().enumerate() {
-            let value = match bound {
-                Some(reg) => self.reg_value(ctx, *reg, ScalarTy::Int)?,
-                None => self.int_constant(ctx, 0),
-            };
-            let address = self.offset_address(ctx, storage, index as u64 * 8);
-            let store = StoreOp::new(ctx, value, address);
-            self.append(ctx, store.get_operation(), Some(anchor));
-            if bound.is_some() {
-                flags |= bit;
-            }
-        }
-        let flags = self.int_constant(ctx, flags);
-        let address = self.offset_address(ctx, storage, 24);
-        let store = StoreOp::new(ctx, flags, address);
-        self.append(ctx, store.get_operation(), Some(anchor));
-        Ok(storage)
     }
 
     /// `MakeTuple`: fresh storage with each element stored at its composed

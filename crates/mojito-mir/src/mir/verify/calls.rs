@@ -346,18 +346,11 @@ pub(super) fn verify_direct_call(
 pub(super) fn subscript_arg_regs(argument: &crate::mir::MirSubscriptArg, out: &mut Vec<Reg>) {
     match argument {
         crate::mir::MirSubscriptArg::Index(register) => out.push(*register),
-        crate::mir::MirSubscriptArg::Slice {
-            lower, upper, step, ..
-        } => out.extend([lower, upper, step].into_iter().flatten().copied()),
     }
 }
 
 pub(super) fn simd_element_type(dtype: &mojito_types::types::SimdDtype) -> Ty {
     mojito_types::types::simd_lane(dtype)
-}
-
-pub(super) fn slice_descriptor_ty(kind: mojito_types::types::SliceKind) -> Ty {
-    TyKind::Struct(kind.type_name().to_string(), Vec::new()).into()
 }
 
 pub(super) fn subscript_argument_ty(
@@ -368,7 +361,6 @@ pub(super) fn subscript_argument_ty(
         crate::mir::MirSubscriptArg::Index(register) => {
             function.reg_types.get(&register.0).cloned()
         }
-        crate::mir::MirSubscriptArg::Slice { kind, .. } => Some(slice_descriptor_ty(*kind)),
     }
 }
 

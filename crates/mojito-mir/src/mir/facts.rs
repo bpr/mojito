@@ -713,13 +713,6 @@ impl<'a> Node<'a> {
             .cloned()
     }
 
-    pub(super) fn is_slice_descriptor(self) -> bool {
-        matches!(
-            self.ty().as_ref().map(Ty::kind),
-            Some(TyKind::Struct(name, args)) if name == "Slice" && args.is_empty()
-        )
-    }
-
     pub(super) fn intrinsic_index_dispatch(self) -> Option<MirIntrinsicSubscript> {
         let ty = self.ty()?;
         match ty.kind() {

@@ -372,26 +372,6 @@ impl VmBackend {
             Value::Tuple(_) => Err(RuntimeError::Unsupported(format!(
                 "vm: internal tuple-pack storage has no runtime method '{method}'; public Tuple methods require nominal lowering"
             ))),
-            Value::Slice {
-                start, end, step, ..
-            } if method == "indices" && args.len() == 1 => {
-                let length = value_as_index(&args[0])?;
-                let (start, end, step) =
-                    crate::runtime::normalize_slice_bounds(length, *start, *end, *step)?;
-                Ok(Value::Tuple(vec![
-                    Value::Int(start),
-                    Value::Int(end),
-                    Value::Int(step),
-                ]))
-            }
-            Value::Slice { .. } if matches!(method, "__eq__" | "__ne__") && args.len() == 1 => {
-                let equal = crate::runtime::values_equal(&recv, &args[0])?;
-                Ok(Value::Bool(if method == "__eq__" { equal } else { !equal }))
-            }
-            Value::Slice { kind, .. } => Err(RuntimeError::Unsupported(format!(
-                "vm: {} has no method '{method}'",
-                kind.type_name()
-            ))),
             Value::Simd { dtype, lanes } => {
                 crate::runtime::simd_method(*dtype, lanes, method, &args)
             }

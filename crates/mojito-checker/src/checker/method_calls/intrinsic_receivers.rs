@@ -6,9 +6,9 @@ use mojito_types::types::TyKind;
 
 impl Checker {
     /// Type a call the receiver's type answers without a declared signature:
-    /// the compiler-known collections, `SIMD` and `DType`, slice descriptors,
-    /// the inverted `write_to`, `Hasher` bounds, string literals,
-    /// tuples, packs, pointers, and uninit storage. `None` leaves the call to
+    /// the compiler-known collections, `SIMD` and `DType`, the inverted
+    /// `write_to`, `Hasher` bounds, string literals, tuples, packs, pointers,
+    /// and uninit storage. `None` leaves the call to
     /// signature resolution.
     pub(super) fn infer_intrinsic_receiver_call(
         &self,
@@ -59,12 +59,6 @@ impl Checker {
         {
             return self.infer_simd_method(site, dtype, width).map(Some);
         }
-        if let TyKind::Struct(kind, targs) = obj_ty.kind()
-            && kind == "Slice"
-            && targs.is_empty()
-        {
-            return self.infer_slice_descriptor_method(site).map(Some);
-        }
         // Raw-seam compatibility only: with the linked stdlib present the
         // nominal prelude `Optional` owns its full method surface below.
         if matches!(obj_ty.kind(), TyKind::Struct(name, args) if name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(ty)] if *ty == TyKind::Int))
@@ -96,9 +90,7 @@ impl Checker {
                 TyKind::Struct(name, targs)
                     if !(targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
             )
-            && (matches!(obj_ty.kind(), TyKind::Struct(name, args)
-                    if name == "Slice" && args.is_empty())
-                || self.conforms_to(obj_ty, "Writable"))
+            && self.conforms_to(obj_ty, "Writable")
         {
             return self.infer_inverted_write(site).map(Some);
         }
@@ -228,82 +220,6 @@ impl Checker {
                 method: method.to_string(),
             }),
         }
-    }
-
-    /// The compiler-provided `Slice` descriptor's methods.
-    fn infer_slice_descriptor_method(&self, site: MethodCallSite<'_>) -> Result<Ty, TypeError> {
-        let MethodCallSite {
-            span,
-            object,
-            method,
-            call,
-            obj_ty,
-        } = site;
-        let MethodCallArguments {
-            param_args,
-            args,
-            kwargs,
-            ..
-        } = call;
-        reject_kwargs(kwargs)?;
-        // `Slice.__eq__`/`__ne__`.
-        if matches!(method, "__eq__" | "__ne__") {
-            let types = self.builtin_args(&format!("Slice.{method}"), 1, args)?;
-            if !matches!((types[0]).kind(), TyKind::Struct(name, args) if name == "Slice" && args.is_empty())
-            {
-                return Err(TypeError::TypeMismatch {
-                    expected: "Slice".to_string(),
-                    found: types[0].to_string(),
-                    context: format!("Slice.{method} operand"),
-                });
-            }
-            return Ok(Ty::bool());
-        }
-        if matches!(method, "write_to" | "write_repr_to")
-            && args.len() == 1
-            && param_args.is_empty()
-        {
-            let writer_ty = self.infer(&args[0])?;
-            if !self.conforms_to(&writer_ty, "Writer") {
-                return Err(TypeError::TypeMismatch {
-                    expected: "Writer".to_string(),
-                    found: writer_ty.to_string(),
-                    context: format!("argument 1 to '{method}'"),
-                });
-            }
-            self.check_place(&args[0])?;
-            self.record_at(object.source_span())
-                .borrowed_read_call_place = true;
-            self.infer_print(std::slice::from_ref(object), &[])?;
-            self.record_at(span.clone()).adjustment =
-                Some(Box::new(if method == "write_repr_to" {
-                    mojito_checked::checked::SemanticAdjustment::InvertedReprWrite {
-                        repr: self.builtin_string_result(),
-                    }
-                } else {
-                    mojito_checked::checked::SemanticAdjustment::InvertedWrite
-                }));
-            return Ok(Ty::none());
-        }
-        if method != "indices" {
-            return Err(TypeError::NoSuchMethod {
-                object_type: obj_ty.to_string(),
-                method: method.to_string(),
-            });
-        }
-        let types = self.builtin_args("Slice.indices", 1, args)?;
-        if !coerces(&types[0], &Ty::int()) {
-            return Err(TypeError::TypeMismatch {
-                expected: "Int".to_string(),
-                found: types[0].to_string(),
-                context: "Slice.indices length".to_string(),
-            });
-        }
-        Ok(mojito_types::types::tuple_type(vec![
-            Ty::int(),
-            Ty::int(),
-            Ty::int(),
-        ]))
     }
 
     /// The raw-seam `Optional[Int]`, present only without the linked stdlib.

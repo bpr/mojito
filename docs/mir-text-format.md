@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.104
+# Mojito Textual MIR Format, Version 1.105
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.104 is implemented end to end for inspection and loading: canonical
+Version 1.105 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.104
+mojito-mir 1.105
 ```
 
-The writer emits 1.104. The reader accepts 1.0 through 1.104; *Schema 1.0*
+The writer emits 1.105. The reader accepts 1.0 through 1.105; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -525,6 +525,15 @@ descriptor is always `slice`. An older artifact spelling either kind no
 longer loads. The package format moves to `mojito-package 95`, whose
 checked subscripts record each slice literal as the descriptor or the
 constructor call it binds (`CheckedSliceLiteral`).
+
+Schema 1.105 withdraws `slice.get`, the `slice_arg` subscript argument,
+and `field.get`'s `constructors` field: `Slice` is the library struct
+upstream declares, so every slice literal is a call of its parameter
+type's `__slice_literal__` constructor whose result the subscript passes
+as an `index` argument, and a read of a `Slice` bound is an ordinary
+field read. An older artifact holding any of them no longer loads. The
+package format moves to `mojito-package 96`, whose checked subscripts
+record each slice literal as the constructor call it binds.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1227,8 +1236,8 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `UninitStorage` / `UninitStorageTake` / `UninitStorageDestroy` | `uninit.make` / `uninit.take` / `uninit.destroy` — an `uninit.destroy` carries `destructor: "<symbol>"` after `element` when it names the payload's `__deinit__`, as `drop.var` does (schema 1.73) |
 | `MarkInitialized` | `ownership.mark_initialized` (schema 1.28: `{ place }`, upstream's `lit.ownership.mark_initialized`; `lower-lit` erases it, so concrete MIR holds none) |
 | `MarkDestroyed` | `ownership.mark_destroyed` (schema 1.30: `{ place }`, upstream's `lit.ownership.mark_destroyed`: the place holds no value from here and no destructor runs on it; `lower-lit` erases it, so concrete MIR holds none) |
-| `GetField` | `field.get` — a slice descriptor's bound read (`s.start`) carries `constructors: ["<symbol>", …]` after its `field` naming the `Optional` constructors it builds its result through, the nullary one and the positional one-argument one, as an upstream call names the constructor it runs (schema 1.69); the elaborator names them in concrete MIR, the writer omits the field when the read names none, and the reader takes an absent field as none |
-| `Index` / `Slice` / `MultiIndex` / `MultiSet` | `index.get` / `slice.get` / `index.multi` / `index.multi_set` |
+| `GetField` | `field.get` (schema 1.105 withdraws the `constructors` field a slice descriptor's bound read carried from schema 1.69) |
+| `Index` / `MultiIndex` / `MultiSet` | `index.get` / `index.multi` / `index.multi_set` (schema 1.105 withdraws `slice.get` and the `slice_arg` subscript argument: a slice literal's constructed value is an `index` argument) |
 | `Store` / `StoreRef` | `place.store` / `place.store_ref` |
 | `MakeStruct` | `struct.create { dest, fields: [%rA, …] }` (schema 1.87: upstream's `kgen.struct.create`, a struct value of `dest`'s register type built from one register per declared field, in declaration order, running no constructor; `sroa` emits it for a whole read of a split slot, and the verifier checks the result is a declared struct, the operand count, and, for a non-generic struct, each operand's type) |
 | `MakeTuple` | `tuple.make` — the elements of a heterogeneous collector or of a typed `Tuple[T, ...]` construction (schema 1.95: every call builds its callee's collector so, not only an inlined one) |
@@ -1252,7 +1261,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 
 `UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic
 subscripts are `tuple_storage`, `variadic_storage`, `simd`, `pointer`, and
-`comptime_list`. The one slice descriptor kind is `slice`. Result adapters currently contain only
+`comptime_list`. Result adapters currently contain only
 `copy_iterator_reference`.
 
 For `Try`, `body`, `handler`, and `orelse` contain lists of local

@@ -915,12 +915,7 @@ impl VmBackend {
                 self.drop_named(prog, payload, Some(element), destructor.as_deref())?;
                 regs[dest.0 as usize] = Value::None;
             }
-            MirInstr::GetField {
-                dest,
-                base,
-                field,
-                constructors,
-            } => {
+            MirInstr::GetField { dest, base, field } => {
                 let base = regs[base.0 as usize].clone();
                 // A ref-typed base register holds a handle; field access
                 // addresses its referent (another read twin of the ref-field
@@ -930,25 +925,7 @@ impl VmBackend {
                 } else {
                     base
                 };
-                regs[dest.0 as usize] = match &base {
-                    Value::Slice {
-                        start, end, step, ..
-                    } => {
-                        let bound = match field.as_str() {
-                            "start" => *start,
-                            "end" => *end,
-                            "step" => *step,
-                            _ => {
-                                return Err(RuntimeError::TypeError(format!(
-                                    "Slice has no field '{field}'"
-                                )));
-                            }
-                        };
-                        let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                        self.slice_bound_optional(prog, bound, target, constructors)?
-                    }
-                    _ => get_field(&base, field)?,
-                };
+                regs[dest.0 as usize] = get_field(&base, field)?;
             }
             MirInstr::Index {
                 dest,
@@ -1076,70 +1053,6 @@ impl VmBackend {
                     };
                 }
             }
-            MirInstr::Slice {
-                dest,
-                object,
-                kind,
-                lower,
-                upper,
-                step,
-                object_place,
-                arg_places,
-                call,
-                intrinsic,
-            } => {
-                let bound = |b: &Option<Reg>| -> Result<Option<i64>, RuntimeError> {
-                    match b {
-                        Some(r) => Ok(Some(value_as_index(&regs[r.0 as usize])?)),
-                        None => Ok(None),
-                    }
-                };
-                let (lo, hi, st) = (bound(lower)?, bound(upper)?, bound(step)?);
-                let receiver = regs[object.0 as usize].clone();
-                regs[dest.0 as usize] = if let Some(call) = call {
-                    let slice = Value::Slice {
-                        kind: *kind,
-                        start: lo,
-                        end: hi,
-                        step: st,
-                    };
-                    let result = self.method_call(
-                        prog,
-                        MethodInvocation {
-                            receiver,
-                            method: "__getitem__",
-                            resolved_name: Some(&call.target),
-                            result_adapter: None,
-                            arguments: vec![slice],
-                            keyword_arguments: Vec::new(),
-                            receiver_place: object_place.as_deref(),
-                            argument_places: arg_places,
-                            keyword_argument_places: &[],
-                        },
-                        CallerFrame {
-                            id: frame_id,
-                            function: caller_function,
-                            registers: regs,
-                            variables: vars,
-                        },
-                    )?;
-                    let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
-                    self.materialize_checked_result(prog, result, target)?
-                } else {
-                    match intrinsic {
-                        Some(kind) => {
-                            return Err(RuntimeError::TypeError(format!(
-                                "vm: intrinsic {kind:?} does not support slicing"
-                            )));
-                        }
-                        None => {
-                            return Err(RuntimeError::TypeError(
-                                "vm: call-less slice lacks an intrinsic dispatch kind".to_string(),
-                            ));
-                        }
-                    }
-                };
-            }
             MirInstr::MultiIndex {
                 dest,
                 object,
@@ -1150,31 +1063,10 @@ impl VmBackend {
                 kwarg_places,
                 call,
             } => {
-                let bound = |bound: &Option<Reg>| -> Result<Option<i64>, RuntimeError> {
-                    bound
-                        .map(|register| value_as_index(&regs[register.0 as usize]))
-                        .transpose()
+                let subscript_value = |argument: &MirSubscriptArg| match argument {
+                    MirSubscriptArg::Index(register) => regs[register.0 as usize].clone(),
                 };
-                let subscript_value = |argument: &MirSubscriptArg| -> Result<Value, RuntimeError> {
-                    Ok(match argument {
-                        MirSubscriptArg::Index(register) => regs[register.0 as usize].clone(),
-                        MirSubscriptArg::Slice {
-                            kind,
-                            lower,
-                            upper,
-                            step,
-                        } => Value::Slice {
-                            kind: *kind,
-                            start: bound(lower)?,
-                            end: bound(upper)?,
-                            step: bound(step)?,
-                        },
-                    })
-                };
-                let mut arguments = Vec::with_capacity(args.len());
-                for argument in args {
-                    arguments.push(subscript_value(argument)?);
-                }
+                let arguments = args.iter().map(subscript_value).collect();
                 let call = call.as_ref().ok_or_else(|| {
                     RuntimeError::TypeError(
                         "vm: nominal multi-index lacks a checked call contract".to_string(),
@@ -1182,8 +1074,8 @@ impl VmBackend {
                 })?;
                 let keyword_arguments = kwargs
                     .iter()
-                    .map(|(name, argument)| Ok((name.clone(), subscript_value(argument)?)))
-                    .collect::<Result<Vec<_>, RuntimeError>>()?;
+                    .map(|(name, argument)| (name.clone(), subscript_value(argument)))
+                    .collect();
                 let result = self.method_call(
                     prog,
                     MethodInvocation {
@@ -1217,26 +1109,10 @@ impl VmBackend {
                 value_keyword,
                 call,
             } => {
-                let bound = |bound: &Option<Reg>| -> Result<Option<i64>, RuntimeError> {
-                    bound
-                        .map(|register| value_as_index(&regs[register.0 as usize]))
-                        .transpose()
-                };
                 let mut arguments = Vec::with_capacity(args.len() + usize::from(!value_keyword));
                 for argument in args {
                     arguments.push(match argument {
                         MirSubscriptArg::Index(register) => regs[register.0 as usize].clone(),
-                        MirSubscriptArg::Slice {
-                            kind,
-                            lower,
-                            upper,
-                            step,
-                        } => Value::Slice {
-                            kind: *kind,
-                            start: bound(lower)?,
-                            end: bound(upper)?,
-                            step: bound(step)?,
-                        },
                     });
                 }
                 let keyword_arguments = if *value_keyword {

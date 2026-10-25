@@ -23,7 +23,7 @@ use mojito_types::param_expr::{
 };
 use mojito_types::types::{
     CallableDefault, ConstraintOperand, DependentType, GenericConstraint, PackPredicateRef,
-    ParamDecl, SliceKind, TrivialLifecycle, Ty, TyArg,
+    ParamDecl, TrivialLifecycle, Ty, TyArg,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 

@@ -34,7 +34,6 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::UninitStorageDestroy { dest, .. }
         | MirInstr::GetField { dest, .. }
         | MirInstr::Index { dest, .. }
-        | MirInstr::Slice { dest, .. }
         | MirInstr::MultiIndex { dest, .. }
         | MirInstr::LoadPlace { dest, .. }
         | MirInstr::MakeTuple { dest, .. }
@@ -254,32 +253,6 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             }
             if let Some(index_place) = index_place {
                 index_regs(index_place, out);
-            }
-            if let Some(call) = call {
-                out.extend(
-                    call.param_arg_regs
-                        .iter()
-                        .filter_map(|argument| argument.value),
-                );
-            }
-        }
-        MirInstr::Slice {
-            object,
-            lower,
-            upper,
-            step,
-            object_place,
-            arg_places,
-            call,
-            ..
-        } => {
-            out.push(*object);
-            out.extend([lower, upper, step].into_iter().flatten().copied());
-            if let Some(object_place) = object_place {
-                index_regs(object_place, out);
-            }
-            for argument_place in arg_places.iter().flatten() {
-                index_regs(argument_place, out);
             }
             if let Some(call) = call {
                 out.extend(

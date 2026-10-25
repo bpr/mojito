@@ -729,7 +729,7 @@ fn verifier_rejects_corrupt_subscript_argument_contracts() {
 
 #[test]
 fn verifier_rejects_missing_nominal_subscript_contracts() {
-    let source = "@fieldwise_init\nstruct Access:\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n    def __getitem__(self, columns: Slice) -> Int:\n        return self.value\n    def __getitem__(self, row: Int, column: Int) -> Int:\n        return self.value\n\ndef main():\n    var access = Access(1)\n    print(access[0])\n    print(access[:])\n    print(access[0, 0])\n";
+    let source = "struct Columns:\n    var n: Int\n    def __init__(out self, start: NoneType, end: NoneType, stride: NoneType, __slice_literal__: NoneType = None):\n        self.n = 0\n\n@fieldwise_init\nstruct Access:\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n    def __getitem__(self, columns: Columns) -> Int:\n        return self.value\n    def __getitem__(self, row: Int, column: Int) -> Int:\n        return self.value\n\ndef main():\n    var access = Access(1)\n    print(access[0])\n    print(access[:])\n    print(access[0, 0])\n";
     let mut mir = lower_source(source);
     for instruction in mir
         .functions
@@ -737,56 +737,16 @@ fn verifier_rejects_missing_nominal_subscript_contracts() {
         .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
     {
         match instruction {
-            MirInstr::Index { call, .. }
-            | MirInstr::Slice { call, .. }
-            | MirInstr::MultiIndex { call, .. } => *call = None,
+            MirInstr::Index { call, .. } | MirInstr::MultiIndex { call, .. } => *call = None,
             _ => {}
         }
     }
     expect_finding(&mir, "index operation must carry exactly one");
-    expect_finding(&mir, "slice operation must carry exactly one");
     expect_finding(&mir, "multi-index operation lacks a checked call contract");
 }
 
 #[test]
 fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
-    // Slice dispatch shapes are hand-built: source-level slicing is nominal
-    // only (the StringLiteral slice intrinsic was retired with the audited
-    // head), so a missing or spurious dispatch never comes from lowering.
-    let slice = |call, intrinsic| {
-        program(function(
-            vec![block(
-                vec![
-                    MirInstr::Const {
-                        dest: Reg(0),
-                        k: Const::Str("abc".to_string()),
-                    },
-                    MirInstr::Slice {
-                        dest: Reg(1),
-                        object: Reg(0),
-                        kind: mojito::types::SliceKind::Slice,
-                        lower: None,
-                        upper: None,
-                        step: None,
-                        object_place: None,
-                        arg_places: Vec::new(),
-                        call,
-                        intrinsic,
-                    },
-                ],
-                MirTerm::Return(Some(Reg(1))),
-            )],
-            2,
-            &[(0, Ty::string_literal()), (1, Ty::string_literal())],
-        ))
-    };
-    let missing = slice(None, None);
-    expect_finding(&missing, "slice operation must carry exactly one");
-
-    // No intrinsic slice dispatch remains: any recorded kind is a finding.
-    let spurious = slice(None, Some(MirIntrinsicSubscript::Pointer));
-    expect_finding(&spurious, "is not a slice dispatch");
-
     let mut mistyped = lower_source(
         "def main():\n    var lanes = SIMD[DType.int, 2](1, 2)\n    print(lanes[0])\n",
     );
@@ -865,7 +825,7 @@ fn verifier_rejects_cross_receiver_and_fabricated_reference_subscript_contracts(
 
 #[test]
 fn verifier_classifies_every_raising_subscript_instruction() {
-    let source = "@fieldwise_init\nstruct Access:\n    var value: Int\n    def __getitem__(self, index: Int) raises -> Int:\n        raise Error(\"index\")\n    def __getitem__(self, columns: Slice) raises -> Int:\n        raise Error(\"slice\")\n    def __getitem__(self, row: Int, column: Int) raises -> Int:\n        raise Error(\"multi\")\n    def __setitem__(mut self, row: Int, column: Int, value: Int) raises:\n        raise Error(\"set\")\n\ndef main() raises:\n    var access = Access(0)\n    print(access[0])\n    print(access[:])\n    print(access[0, 0])\n    access[0, 0] = 1\n";
+    let source = "struct Columns:\n    var n: Int\n    def __init__(out self, start: NoneType, end: NoneType, stride: NoneType, __slice_literal__: NoneType = None):\n        self.n = 0\n\n@fieldwise_init\nstruct Access:\n    var value: Int\n    def __getitem__(self, index: Int) raises -> Int:\n        raise Error(\"index\")\n    def __getitem__(self, columns: Columns) raises -> Int:\n        raise Error(\"slice\")\n    def __getitem__(self, row: Int, column: Int) raises -> Int:\n        raise Error(\"multi\")\n    def __setitem__(mut self, row: Int, column: Int, value: Int) raises:\n        raise Error(\"set\")\n\ndef main() raises:\n    var access = Access(0)\n    print(access[0])\n    print(access[:])\n    print(access[0, 0])\n    access[0, 0] = 1\n";
     let mut mir = lower_source(source);
     let (_, main) = mir
         .functions

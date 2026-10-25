@@ -413,14 +413,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
             &[],
             *dest,
         ),
-        MirInstr::Slice {
-            dest,
-            object_place,
-            arg_places,
-            call: Some(call),
-            ..
-        }
-        | MirInstr::MultiIndex {
+        MirInstr::MultiIndex {
             dest,
             object_place,
             arg_places,
@@ -491,7 +484,6 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
         | MirInstr::BinOp { .. }
         | MirInstr::GetField { .. }
         | MirInstr::Index { call: None, .. }
-        | MirInstr::Slice { call: None, .. }
         | MirInstr::MultiIndex { call: None, .. }
         | MirInstr::MakeTuple { .. }
         | MirInstr::MakeStruct { .. }

@@ -116,9 +116,7 @@ impl<'a> Flatten<'a> {
         // field is read — enabling field-sensitive partial-move checking
         // (reading `p.b` after `p.a^` stays legal). A member of a temporary
         // or an indexed base keeps the register-based `GetField`.
-        if !object.is_slice_descriptor()
-            && let Some(place) = self.pure_field_place(e)
-        {
+        if let Some(place) = self.pure_field_place(e) {
             let place_root = place.root;
             let place_ty = place.ty.clone();
             let loaded = self.fresh_typed(
@@ -193,7 +191,6 @@ impl<'a> Flatten<'a> {
                     dest: d,
                     base,
                     field: field.to_owned(),
-                    constructors: Vec::new(),
                 });
                 d
             };
@@ -363,30 +360,17 @@ impl<'a> Flatten<'a> {
         d
     }
 
-    /// The subscript argument slice literal `descriptor` of subscript `node`
-    /// passes, its written operands (lower, upper, stride) already lowered
-    /// to `operands`: the compiler-built `Slice` descriptor, or the value its
-    /// `__slice_literal__` constructor call returns, upstream's
-    /// `T(lower, upper, stride, __slice_literal__=None)` with `None` for an
-    /// omitted operand.
+    /// The subscript argument slice literal `construction` of subscript
+    /// `node` passes, its written operands (lower, upper, stride) already
+    /// lowered to `operands`: the value its `__slice_literal__` constructor
+    /// call returns, upstream's `T(lower, upper, stride,
+    /// __slice_literal__=None)` with `None` for an omitted operand.
     pub(in crate::mir) fn slice_literal_argument(
         &mut self,
         node: Node<'a>,
-        descriptor: &CheckedSliceLiteral,
+        construction: &CheckedSliceLiteral,
         operands: [Option<Reg>; 3],
     ) -> MirSubscriptArg {
-        let [lower, upper, step] = operands;
-        let construction = match descriptor {
-            CheckedSliceLiteral::Descriptor(kind) => {
-                return MirSubscriptArg::Slice {
-                    kind: *kind,
-                    lower,
-                    upper,
-                    step,
-                };
-            }
-            CheckedSliceLiteral::Construct(construction) => construction,
-        };
         let args = operands
             .into_iter()
             .zip(&construction.omitted)
@@ -419,9 +403,8 @@ impl<'a> Flatten<'a> {
         ))
     }
 
-    /// Emit the read of `object` subscripted by the one slice argument
-    /// `argument` into `dest`: a compiler-built descriptor's `slice.get`, or
-    /// a constructed slice value passed like any index.
+    /// Emit the read of `object` subscripted by the one constructed slice
+    /// value `argument` into `dest`, passed like any index.
     pub(in crate::mir) fn emit_slice_read(
         &mut self,
         dest: Reg,
@@ -430,38 +413,17 @@ impl<'a> Flatten<'a> {
         object_place: Option<MirPlace>,
         call: Option<MirSubscriptCall>,
     ) {
-        match argument {
-            MirSubscriptArg::Slice {
-                kind,
-                lower,
-                upper,
-                step,
-            } => self.emit(MirInstr::Slice {
-                dest,
-                object,
-                kind,
-                lower,
-                upper,
-                step,
-                object_place: object_place.map(Box::new),
-                arg_places: vec![None],
-                call: call.map(Box::new),
-                intrinsic: None,
-            }),
-            index @ MirSubscriptArg::Index(_) => {
-                self.record_call(dest, call.as_ref().map(|call| call.target.clone()), 0);
-                self.emit(MirInstr::MultiIndex {
-                    dest,
-                    object,
-                    args: vec![index],
-                    object_place: object_place.map(Box::new),
-                    arg_places: vec![None],
-                    kwargs: Vec::new(),
-                    kwarg_places: Vec::new(),
-                    call: call.map(Box::new),
-                });
-            }
-        }
+        self.record_call(dest, call.as_ref().map(|call| call.target.clone()), 0);
+        self.emit(MirInstr::MultiIndex {
+            dest,
+            object,
+            args: vec![argument],
+            object_place: object_place.map(Box::new),
+            arg_places: vec![None],
+            kwargs: Vec::new(),
+            kwarg_places: Vec::new(),
+            call: call.map(Box::new),
+        });
     }
 
     /// Read multi-subscript node `e`, whose arguments are `args`.
@@ -782,7 +744,7 @@ fn variant_project(node: &CheckedExpr) -> Option<(mojito_types::types::VariantIn
         })
 }
 
-/// The slice descriptors multi-subscript or slice node `node` records.
+/// The slice literals multi-subscript or slice node `node` records.
 fn slice_descriptors(node: &CheckedExpr) -> Option<&[Option<CheckedSliceLiteral>]> {
     node.adjustments
         .iter()

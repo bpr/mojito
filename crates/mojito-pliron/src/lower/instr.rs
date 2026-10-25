@@ -580,28 +580,6 @@ impl FnLowering<'_> {
                 intrinsic: Some(intrinsic),
                 ..
             } => self.lower_index_intrinsic(ctx, *dest, *base, *index, *intrinsic),
-            MirInstr::Slice {
-                dest,
-                object,
-                lower,
-                upper,
-                step,
-                object_place,
-                call: Some(call),
-                ..
-            } => {
-                let descriptor = self.build_slice_descriptor(ctx, *dest, *lower, *upper, *step)?;
-                self.lower_subscript_call(
-                    ctx,
-                    *dest,
-                    "__getitem__",
-                    call,
-                    *object,
-                    object_place.as_deref(),
-                    &[SubscriptActual::Descriptor(descriptor)],
-                    &[],
-                )
-            }
             MirInstr::MultiIndex {
                 dest,
                 object,
@@ -612,15 +590,11 @@ impl FnLowering<'_> {
                 kwarg_places,
                 call: Some(call),
             } => {
-                let positional = self.subscript_actuals(ctx, *dest, args, arg_places)?;
+                let positional = Self::subscript_actuals(args, arg_places);
                 let mut keywords = Vec::with_capacity(kwargs.len());
                 for (i, (name, arg)) in kwargs.iter().enumerate() {
-                    let actual = self.subscript_actual(
-                        ctx,
-                        *dest,
-                        arg,
-                        kwarg_places.get(i).and_then(Option::as_ref),
-                    )?;
+                    let actual =
+                        Self::subscript_actual(arg, kwarg_places.get(i).and_then(Option::as_ref));
                     keywords.push((name.as_str(), actual));
                 }
                 self.lower_subscript_call(
@@ -647,7 +621,7 @@ impl FnLowering<'_> {
                 // The discarded `__setitem__` result binds to a scratch
                 // register outside the function's register space.
                 let scratch = Reg(u32::MAX);
-                let mut positional = self.subscript_actuals(ctx, scratch, args, arg_places)?;
+                let mut positional = Self::subscript_actuals(args, arg_places);
                 let mut keywords = Vec::new();
                 if *value_keyword {
                     keywords.push((
@@ -787,9 +761,7 @@ impl FnLowering<'_> {
                     constructor.as_deref(),
                 )
             }
-            MirInstr::Index { dest, .. }
-            | MirInstr::Slice { dest, .. }
-            | MirInstr::MultiIndex { dest, .. } => {
+            MirInstr::Index { dest, .. } | MirInstr::MultiIndex { dest, .. } => {
                 Err(self.unsupported_reg(format!("instruction `{}`", instr_name(instr)), *dest))
             }
             MirInstr::MakeSimd {

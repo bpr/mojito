@@ -1503,8 +1503,8 @@ impl<'a> Flatten<'a> {
     /// owning field out before the slot dies, as it does for a named
     /// local's. A temporary held in a register is read by a `GetField`.
     /// `None`, leaving the base to the caller, when the base is not a fresh
-    /// temporary, is a reference result, a materialized borrow source, or a
-    /// slice descriptor, or when the field is a reference.
+    /// temporary, is a reference result, or a materialized borrow source, or
+    /// when the field is a reference.
     pub(super) fn load_temporary_field(
         &mut self,
         expression: Node<'a>,
@@ -1521,14 +1521,6 @@ impl<'a> Flatten<'a> {
         if matches!(field_ty.kind(), TyKind::Ref(_)) {
             return None;
         }
-        // A slice descriptor's `start`/`end`/`step` are intrinsic bounds on a
-        // `Slice` value, not struct fields: only the register-based `GetField`
-        // mints their nominal `Optional`, so a place read of one has nothing
-        // to navigate. The `Member` place branch in `lower_expr::expr` carves
-        // out the same set, and the two must agree.
-        if object.is_slice_descriptor() {
-            return None;
-        }
         let slot = match self.expr_c(object) {
             CValue::Value(base) => {
                 let loaded = self.fresh(expression.location(), None);
@@ -1536,7 +1528,6 @@ impl<'a> Flatten<'a> {
                     dest: loaded,
                     base,
                     field: field.to_owned(),
-                    constructors: Vec::new(),
                 });
                 return Some(loaded);
             }

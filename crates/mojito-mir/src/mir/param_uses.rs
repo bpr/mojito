@@ -629,12 +629,7 @@ pub fn member_receiver_ty<'f>(
         MirInstr::Index {
             base, base_place, ..
         } => (base, base_place),
-        MirInstr::Slice {
-            object,
-            object_place,
-            ..
-        }
-        | MirInstr::MultiIndex {
+        MirInstr::MultiIndex {
             object,
             object_place,
             ..
@@ -959,11 +954,6 @@ fn drop_subscript_arguments<'a>(
             call: Some(call),
             ..
         } => (*base, vec![index], &mut **call),
-        MirInstr::Slice {
-            object,
-            call: Some(call),
-            ..
-        } => (*object, Vec::new(), &mut **call),
         MirInstr::MultiIndex {
             object,
             args,
@@ -1009,9 +999,8 @@ fn drop_subscript_arguments<'a>(
 /// The index operands among a subscript's bracket arguments, mutably.
 fn index_operands(args: &mut [MirSubscriptArg]) -> Vec<&mut Reg> {
     args.iter_mut()
-        .filter_map(|argument| match argument {
-            MirSubscriptArg::Index(register) => Some(register),
-            MirSubscriptArg::Slice { .. } => None,
+        .map(|argument| match argument {
+            MirSubscriptArg::Index(register) => register,
         })
         .collect()
 }

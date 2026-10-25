@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1423**.
+Next free ID: **R1425**.
 
 ## Ordered Work
 
@@ -1299,6 +1299,25 @@ change that needs a new `MJRT_ABI_VERSION`.
     "unsupported heterogeneous runtime pack projection": a folded constant
     index into a served `def`'s pack was projected by stride.
   - Found while landing R252 (2026-10-04).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1424 Native `Writer.write` recognizes a `Named` argument by name**
+
+  The `Writer.write` lowering (`lower/methods.rs`) formats a `Named` over a
+  scalar inline by matching `$Named` in its struct name, where upstream
+  calls `Named.write_to` like any struct's.
+  - Without that arm, `text.write(Named("n", w))`
+    (`conformance/fixtures/view_temporary_write.mojo`) stops natively with
+    "unsupported display of a Pointer": no `Named.write_to` instance bound
+    to the builtin string writer reaches the native program, so
+    `append_struct_display` falls back to the reflective display of its
+    `Pointer` field.
+  - A `Named` over an aggregate, such as `Slice.write_repr_to`'s
+    `Optional[Int]` bounds, already writes through its compiled `write_to`.
+  - The lever: demand each struct argument's builtin-writer `write_to`
+    instance at a native `Writer.write`, then delete the `Named` arm.
+  - Found while landing R1158 (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9583,10 +9602,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The rule: reject a `drop.reg` whose register type
     `MirDeclarations::register_passable` answers no for.
   - The remaining placements are copies and moves into a register, each
-    with its own entry: slice descriptors (R1157, R1158), truthiness
-    copies (R1249), `List`→`Span` copies (R117), read arguments by value
-    (R677), `List.resize`'s double copy (R1353), generic reads (R1354),
-    closure values (R1334), and a pending `Error` (R1293).
+    with its own entry: truthiness copies (R1249), `List`→`Span` copies
+    (R117), read arguments by value (R677), `List.resize`'s double copy
+    (R1353), generic reads (R1354), closure values (R1334), and a pending
+    `Error` (R1293).
   - Probe: the rule must judge a conditional conformance at closed
     arguments, as upstream's `getRegisterPassability` does:
     `Bool(f.try_index(42))` (`assets/ok/list_methods_growth.mojo`) keeps
@@ -9595,7 +9614,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     answers no for any conditional row.
   - Re-run the `emit-mir` census over `assets/ok` and
     `assets/ownership_ok` before landing it.
-  - Depends on R1157, R1158, R1249, R117, R677, R1353, R1354, R1334, R1293.
+  - Depends on R1249, R117, R677, R1353, R1354, R1334, R1293.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
@@ -9607,7 +9626,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   (`std.collections.list.List`).
   - `implicit_public_identity` and `builtin_module_exports`
     (`crates/mojito-module/src/module.rs`) keep the names bare; checker
-    sites match `"List"`, `"String"`, `"Slice"`, and others directly.
+    sites match `"List"`, `"String"`, and others directly.
   - The entry's own declaration of such a name is qualified instead
     (`module::entry_item_name`, R605), so a program can shadow one, but no
     other module's declarations are.
@@ -9619,38 +9638,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R605 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1158 `Slice` is a compiler intrinsic, and MIR carries a descriptor
-  `SliceKind`**
-
-  Problem: upstream's `Slice` is a library struct, where Mojito's is a
-  checker intrinsic whose values MIR, the VM, and the Pliron lowering
-  build as a dedicated descriptor kind.
-  - Port `Slice` to `builtin_slice.mojo` beside the two kinds.
-  - Retire the descriptor `SliceKind` in MIR, the VM's descriptor value,
-    and the Pliron descriptor lowering, so a slice is an ordinary struct
-    value.
-  - `MirInstr::Slice` and `MirSubscriptArg::Slice` now carry only
-    `SliceKind::Slice`: a literal bound to a library type is already its
-    `__slice_literal__` constructor's call.
-  - Probe: a literal bound to a `Slice` parameter takes only `Int`
-    operands, which the descriptor is built from, so `c[1:3:None]`,
-    `c[None:3]`, and `c[o:]` with `o: Optional[Int]` are rejected over
-    `__getitem__(self, s: Slice)`, where the pin's
-    `Slice.__init__(Optional[Int], Optional[Int], Optional[Int],
-    __slice_literal__)` accepts them.
-  - Probe: `sroa` refuses a descriptor slot (`splittable_type`,
-    `crates/mojito-analysis/src/analysis/sroa.rs`), where upstream's `SROA`
-    splits a `Slice` like any struct; splitting one made
-    `assets/ok/template_method_tuple_element.mojo` fail on the VM with
-    "Slice bound access requires its declared Optional result".
-  - Found while landing R192 (2026-10-19).
-  - Probe: `Slice(..) == Slice(..)` under the intrinsic `==`, and a strided
-    `slice.get` result, are owned descriptor registers a `drop.reg`
-    destroys; as a library struct the operands are read temporaries in
-    slots.
-  - Depends on R1157, which ports the two kinds first.
-  - Model: Fable, Planned.
 
 - [ ] **R1422 A slice literal is not an expression node**
 
@@ -9668,8 +9655,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The lever: one `ExprKind::SliceLiteral { lower, upper, step }` operand,
     checked against its expected type as an initializer, so the subscript
     forms keep plain `Index` and keyword arguments.
+  - The side table's names (`SliceDescriptors`, `subscript_descriptor`,
+    `synthetic_slice_descriptor`) still say "descriptor", from before
+    `Slice` was a library struct; they go with it.
   - Depends on R1371, which makes every bracket an index of expressions.
   - Model: Fable, Not Planned.
+
+- [ ] **R1423 MIR wraps each subscript argument in a one-variant
+  `MirSubscriptArg`**
+
+  `MirSubscriptArg` is only `Index(Reg)` now that a slice literal is a
+  constructor call, where upstream's subscript is a call whose operands are
+  plain values.
+  - Collapse it to `Reg` in `MultiIndex`/`MultiSet` `args` and `kwargs`
+    and in the text format's `index(...)` argument (a MIR text bump), about
+    100 matches.
+  - Pliron's `SubscriptActual` has one variant too, and
+    `unused_params::Operand` keeps an `Option<Reg>` that no operand leaves
+    empty; both collapse with it.
+  - Found while landing R1158 (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R705 `Equatable` and `Comparable` are compiler-known, where
   upstream's library declares them**
@@ -11831,6 +11837,8 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: each `xs[a:b]` or `s[byte=a:b]` builds a `ContiguousSlice`,
     whose two `Optional[Int]` bounds allocate twice per subscript
     (`MOJITO_RT_DBG_POINTERS` counts them natively).
+  - Probe: a literal bound to a `Slice` parameter, and every `Slice(...)`
+    or `slice(...)`, allocates three `Optional[Int]` cells.
   - The lever: hold the payload in the bundled `Variant` storage, as
     upstream's `_type` does.
   - Depends on nothing.

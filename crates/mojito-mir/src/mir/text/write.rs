@@ -1187,25 +1187,14 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 destructor.as_deref(),
             ),
         ),
-        MirInstr::GetField {
-            dest,
-            base,
-            field,
-            constructors,
-        } => {
-            let mut fields = vec![
+        MirInstr::GetField { dest, base, field } => record(
+            tag,
+            &[
                 ("dest", reg_value(*dest)),
                 ("base", reg_value(*base)),
                 ("field", symbol(field)),
-            ];
-            if !constructors.is_empty() {
-                fields.push((
-                    "constructors",
-                    list(constructors.iter().map(|name| symbol(name))),
-                ));
-            }
-            record(tag, &fields)
-        }
+            ],
+        ),
         MirInstr::Index {
             dest,
             base,
@@ -1225,38 +1214,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
                     "index_place",
                     option(index_place.as_deref().map(place_value)),
                 ),
-                ("call", option(call.as_deref().map(subscript_call))),
-                (
-                    "intrinsic",
-                    option(intrinsic.map(|v| super::intrinsic_subscript_spelling(v).into())),
-                ),
-            ],
-        ),
-        MirInstr::Slice {
-            dest,
-            object,
-            kind,
-            lower,
-            upper,
-            step,
-            object_place,
-            arg_places,
-            call,
-            intrinsic,
-        } => record(
-            tag,
-            &[
-                ("dest", reg_value(*dest)),
-                ("object", reg_value(*object)),
-                ("kind", slice_kind(*kind).into()),
-                ("lower", option(lower.map(reg_value))),
-                ("upper", option(upper.map(reg_value))),
-                ("step", option(step.map(reg_value))),
-                (
-                    "object_place",
-                    option(object_place.as_deref().map(place_value)),
-                ),
-                ("arg_places", places_option(arg_places)),
                 ("call", option(call.as_deref().map(subscript_call))),
                 (
                     "intrinsic",
@@ -1967,20 +1924,6 @@ fn param_arg(value: &MirParamArg) -> String {
 fn subscript_arg(value: &MirSubscriptArg) -> String {
     match value {
         MirSubscriptArg::Index(v) => positional("index", &reg_value(*v)),
-        MirSubscriptArg::Slice {
-            kind,
-            lower,
-            upper,
-            step,
-        } => record(
-            "slice_arg",
-            &[
-                ("kind", slice_kind(*kind).into()),
-                ("lower", option(lower.map(reg_value))),
-                ("upper", option(upper.map(reg_value))),
-                ("step", option(step.map(reg_value))),
-            ],
-        ),
     }
 }
 
@@ -3082,11 +3025,6 @@ const fn infix(value: InfixOp) -> &'static str {
         InfixOp::NotIn => "not_in",
         InfixOp::Is => "is",
         InfixOp::IsNot => "is_not",
-    }
-}
-const fn slice_kind(value: mojito_types::types::SliceKind) -> &'static str {
-    match value {
-        mojito_types::types::SliceKind::Slice => "slice",
     }
 }
 

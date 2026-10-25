@@ -5232,10 +5232,10 @@ fn setitem_dunder_typing_and_errors() {
     );
 
     // Slice and mixed-dimensional assignment use the same checked contract.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Grid:\n    var a: Int\n    def __setitem__(mut self, row: Int, columns: Slice, value: Int):\n        self.a = value\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = 9\n",
     );
-    let e = err(
+    let e = err_std(
         "@fieldwise_init\nstruct Grid:\n    var a: Int\n    def __setitem__(mut self, row: Int, columns: Slice, value: Int):\n        self.a = value\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = \"wrong\"\n",
     );
     assert!(
@@ -5245,7 +5245,7 @@ fn setitem_dunder_typing_and_errors() {
         ),
         "got {e:?}"
     );
-    let e = err(
+    let e = err_std(
         "@fieldwise_init\nstruct Grid:\n    var a: Int\n    def __setitem__(self, row: Int, columns: Slice, value: Int):\n        pass\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = 9\n",
     );
     assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");

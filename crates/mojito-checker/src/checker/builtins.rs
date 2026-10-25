@@ -493,8 +493,8 @@ impl Checker {
     }
 
     /// Whether a value of type `ty` may be handed to `print` or a `Writer`: a
-    /// printable built-in, a built-in aggregate of printable elements, a
-    /// slice, or a struct or parameter that is `Writable`.
+    /// printable built-in, a built-in aggregate of printable elements, or a
+    /// struct or parameter that is `Writable`.
     pub(super) fn printable_argument(&self, ty: &Ty) -> bool {
         if let TyKind::Struct(name, _) = ty.kind()
             && !self.structs.contains_key(name)
@@ -505,9 +505,6 @@ impl Checker {
                 || tuple_elements(ty)
                     .is_some_and(|elements| elements.into_iter().all(is_printable)))
         {
-            return true;
-        }
-        if matches!(ty.kind(), TyKind::Struct(name, args) if name == "Slice" && args.is_empty()) {
             return true;
         }
         if matches!(ty.kind(), TyKind::Struct(..) | TyKind::Param { .. })

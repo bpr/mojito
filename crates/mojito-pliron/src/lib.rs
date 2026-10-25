@@ -1212,9 +1212,6 @@ impl<'p> CallEdges<'p, '_> {
             MirInstr::Index {
                 call: Some(call), ..
             }
-            | MirInstr::Slice {
-                call: Some(call), ..
-            }
             | MirInstr::MultiIndex {
                 call: Some(call), ..
             } => self.push_named(&call.target),

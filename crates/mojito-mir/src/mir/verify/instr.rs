@@ -91,10 +91,9 @@ pub(super) fn verify_instruction(
         MirInstr::GetIter { .. } | MirInstr::Next { .. } => {
             verify_iteration_instruction(&cx, instruction, errors);
         }
-        MirInstr::Index { .. }
-        | MirInstr::Slice { .. }
-        | MirInstr::MultiIndex { .. }
-        | MirInstr::MultiSet { .. } => verify_subscript_instruction(&cx, instruction, errors),
+        MirInstr::Index { .. } | MirInstr::MultiIndex { .. } | MirInstr::MultiSet { .. } => {
+            verify_subscript_instruction(&cx, instruction, errors);
+        }
         MirInstr::PointerStorageTake { .. }
         | MirInstr::PointerStorageDestroy { .. }
         | MirInstr::UninitStorage { .. }
@@ -121,17 +120,6 @@ pub(super) fn verify_instruction(
             );
         }
         MirInstr::MethodCall { .. } => verify_call_instruction(&cx, instruction, errors),
-        // A slice bound's read names only declared constructors.
-        MirInstr::GetField { constructors, .. } => {
-            for constructor in constructors {
-                if cx.declarations.function(constructor).is_none() {
-                    errors.push(format!(
-                        "{}: field read names the undeclared constructor `{constructor}`",
-                        cx.prefix
-                    ));
-                }
-            }
-        }
         MirInstr::DropVar { var, destructor } => verify_lifecycle_symbol(
             &cx,
             "drop",

@@ -37,19 +37,6 @@ impl FnLowering<'_> {
             if name == "Error" {
                 return self.lower_error_builtin(ctx, dest, args, kwargs);
             }
-            // Explicit `Slice(...)`/`slice(...)` descriptor construction (the
-            // VM's intrinsic constructor; literals arrive as `MakeSlice`).
-            if matches!(name, "Slice" | "slice")
-                && kwargs.is_empty()
-                && self
-                    .func
-                    .reg_types
-                    .get(&dest.0)
-                    .and_then(slice_struct_name)
-                    .is_some()
-            {
-                return self.lower_slice_constructor(ctx, dest, name, args);
-            }
             // The numeric/IO builtins the VM's `call_named` implements
             // directly. Nominal-receiver `len`/`abs`/`round` were rewritten
             // to `__len__`/`__abs__`/`__round__` method calls during

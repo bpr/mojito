@@ -66,16 +66,6 @@ impl Decoder {
         })
     }
 
-    pub(super) fn slice_kind(&mut self, value: &Value) -> Option<SliceKind> {
-        match self.atom(value)? {
-            "slice" => Some(SliceKind::Slice),
-            other => {
-                self.error(value.span, format!("unknown slice kind `{other}`"));
-                None
-            }
-        }
-    }
-
     pub(super) fn iteration_mode(&mut self, value: &Value) -> Option<IterationMode> {
         match self.atom(value)? {
             "borrowed" => Some(IterationMode::Borrowed),
@@ -294,19 +284,6 @@ impl Decoder {
         match &value.kind {
             ValueKind::Positional(tag, inner) if tag == "index" => {
                 self.reg(inner).map(MirSubscriptArg::Index)
-            }
-            ValueKind::Record(tag, fields) if tag == "slice_arg" => {
-                let kind = self.req(value, fields, "kind", Self::slice_kind)?;
-                let lower = self.req(value, fields, "lower", |d, v| Some(d.option_reg(v)))?;
-                let upper = self.req(value, fields, "upper", |d, v| Some(d.option_reg(v)))?;
-                let step = self.req(value, fields, "step", |d, v| Some(d.option_reg(v)))?;
-                self.unknown(fields, &["kind", "lower", "upper", "step"]);
-                Some(MirSubscriptArg::Slice {
-                    kind,
-                    lower,
-                    upper,
-                    step,
-                })
             }
             _ => {
                 self.error(value.span, "expected subscript argument");

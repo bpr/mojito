@@ -17,24 +17,6 @@ use crate::param_expr::{
 };
 use mojito_ast::ast::{ArgConvention, Dtype};
 
-/// The kind of a compiler-built slice descriptor.
-///
-/// `Slice` is the one descriptor type the compiler still provides; a slice
-/// literal bound to a library type calls that type's `__slice_literal__`
-/// constructor instead.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub enum SliceKind {
-    Slice,
-}
-
-impl SliceKind {
-    pub const fn type_name(self) -> &'static str {
-        match self {
-            Self::Slice => "Slice",
-        }
-    }
-}
-
 /// A loan-transfer effect inferred from a callable's body: an accepted store
 /// into an outliving destination (`self` or a parameter) whose loan roots at
 /// another parameter or `self`.

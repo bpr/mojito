@@ -270,20 +270,10 @@ pub const fn no_overflow_flags() -> IntegerOverflowFlagsAttr {
     }
 }
 
-/// One already-lowered subscript actual: an index register (with its checked
-/// place for `mut`/`ref` slots) or an inline-built slice-descriptor pointer.
+/// One already-lowered subscript actual: an index register, with its checked
+/// place for `mut`/`ref` slots.
 pub enum SubscriptActual<'a> {
     Reg(Reg, Option<&'a MirPlace>),
-    Descriptor(Value),
-}
-
-/// The compiler-provided slice-descriptor struct name behind `ty`, if any.
-pub fn slice_struct_name(ty: &Ty) -> Option<&str> {
-    match ty.kind() {
-        TyKind::Struct(name, _) if name == "Slice" => Some(name),
-        TyKind::Ref(reference) => slice_struct_name(&reference.referent),
-        _ => None,
-    }
 }
 
 pub const fn instr_name(instr: &MirInstr) -> &'static str {
@@ -316,7 +306,6 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::MethodCall { .. } => "MethodCall",
         MirInstr::GetField { .. } => "GetField",
         MirInstr::Index { .. } => "Index",
-        MirInstr::Slice { .. } => "Slice",
         MirInstr::MultiIndex { .. } => "MultiIndex",
         MirInstr::MultiSet { .. } => "MultiSet",
         MirInstr::Store { .. } => "Store",
@@ -390,13 +379,7 @@ fn borrowed_operands(
             }
             Some(_) => Vec::new(),
         },
-        MirInstr::Slice {
-            object,
-            object_place,
-            call: Some(call),
-            ..
-        }
-        | MirInstr::MultiIndex {
+        MirInstr::MultiIndex {
             object,
             object_place,
             call: Some(call),

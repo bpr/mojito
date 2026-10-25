@@ -105,24 +105,6 @@ impl FnLowering<'_> {
             self.reg_values.insert(dest.0, value);
             return Ok(());
         }
-        // Slice descriptors are checker-virtual: `indices` is the VM's
-        // intrinsic normalization and `__eq__`/`__ne__` compare the raw
-        // bounds; no other method exists on them.
-        if self
-            .func
-            .reg_types
-            .get(&recv.0)
-            .and_then(slice_struct_name)
-            .is_some()
-        {
-            if method == "indices" {
-                return self.lower_slice_indices(ctx, dest, recv, args);
-            }
-            if matches!(method, "__eq__" | "__ne__") {
-                return self.lower_slice_equality(ctx, dest, recv, args, method == "__ne__");
-            }
-            return Err(self.unsupported_reg(format!("slice descriptor method `{method}`"), dest));
-        }
         // The builtin-string writer receiver (`write_to`'s `Value::Str`
         // accumulator) appends each argument's display text in place; its
         // `write_string` appends the view's bytes the same way.
@@ -335,24 +317,6 @@ impl FnLowering<'_> {
         dest: Reg,
         arg: Reg,
     ) -> Result<(), PlironError> {
-        if self
-            .func
-            .reg_types
-            .get(&arg.0)
-            .and_then(slice_struct_name)
-            .is_some()
-        {
-            let (data, len) = self.slice_string(ctx, arg, dest, true)?;
-            self.str_runtime.insert(
-                dest.0,
-                RuntimeStr {
-                    data,
-                    len,
-                    owned: true,
-                },
-            );
-            return Ok(());
-        }
         if matches!(
             self.func.reg_types.get(&arg.0).map(Ty::kind),
             Some(TyKind::None)
@@ -648,62 +612,6 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    pub(super) fn slice_string(
-        &mut self,
-        ctx: &mut Context,
-        arg: Reg,
-        dest: Reg,
-        repr: bool,
-    ) -> Result<(Value, Value), PlironError> {
-        let output = self.entry_alloca(ctx, 16, 8);
-        self.mem_zero(ctx, output, 16);
-        let descriptor = self.reg_ptr(ctx, arg)?;
-        let i64_ty: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let flags_address = self.offset_address(ctx, descriptor, 24);
-        let flags = LoadOp::new(ctx, flags_address, i64_ty);
-        self.append(ctx, flags.get_operation(), Some(dest));
-        let labels: [&[u8]; 3] = if repr {
-            [b"Slice(start=", b", end=", b", step="]
-        } else {
-            [b"Slice(", b", ", b", "]
-        };
-        let none = self.shared.intern_string(ctx, b"None");
-        for (index, ((offset, bit), label)) in [(0u64, 1i64), (8, 2), (16, 4)]
-            .into_iter()
-            .zip(labels)
-            .enumerate()
-        {
-            let label_global = self.shared.intern_string(ctx, label);
-            let label_data = self.global_address(ctx, &label_global, dest);
-            let label_len = self.uint_constant(ctx, label.len() as u64);
-            self.append_string_pair(ctx, output, label_data, label_len, dest);
-            let address = self.offset_address(ctx, descriptor, offset);
-            let word = LoadOp::new(ctx, address, i64_ty);
-            self.append(ctx, word.get_operation(), Some(dest));
-            let mask = self.int_constant(ctx, bit);
-            let masked = AndOp::new(ctx, flags.get_result(ctx), mask);
-            self.append(ctx, masked.get_operation(), Some(dest));
-            let zero = self.int_constant(ctx, 0);
-            let present = ICmpOp::new(ctx, ICmpPredicateAttr::NE, masked.get_result(ctx), zero);
-            self.append(ctx, present.get_operation(), Some(dest));
-            let (int_data, int_len) =
-                self.format_scalar(ctx, ScalarTy::Int, word.get_result(ctx), dest)?;
-            let none_data = self.global_address(ctx, &none, dest);
-            let none_len = self.uint_constant(ctx, 4);
-            let data = SelectOp::new(ctx, present.get_result(ctx), int_data, none_data);
-            self.append(ctx, data.get_operation(), Some(dest));
-            let len = SelectOp::new(ctx, present.get_result(ctx), int_len, none_len);
-            self.append(ctx, len.get_operation(), Some(dest));
-            self.append_string_pair(ctx, output, data.get_result(ctx), len.get_result(ctx), dest);
-            let _ = index;
-        }
-        let close = self.shared.intern_string(ctx, b")");
-        let close = self.global_address(ctx, &close, dest);
-        let one = self.uint_constant(ctx, 1);
-        self.append_string_pair(ctx, output, close, one, dest);
-        Ok(self.string_parts(ctx, output, dest))
-    }
-
     /// The VM-synthesized `Writer.write` dispatch: each argument's display
     /// text feeds one `write_string` call on the aliased `mut self` receiver.
     /// The payload `String` borrows the text bytes (`cap == len`); the callee
@@ -745,26 +653,25 @@ impl FnLowering<'_> {
         let writer_address = self.place_address(ctx, &place, dest)?.0;
         for arg in args {
             let mut temporary = None;
-            let (data, len) = if self
-                .func
-                .reg_types
-                .get(&arg.0)
-                .and_then(slice_struct_name)
-                .is_some()
-            {
-                let parts = self.slice_string(ctx, *arg, dest, false)?;
-                temporary = Some(parts.0);
-                parts
-            } else if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
-                .as_ref()
-                .map(Ty::kind)
+            let (data, len) = if let Some(TyKind::Struct(name, _)) =
+                (self.func.reg_types.get(&arg.0).cloned())
+                    .as_ref()
+                    .map(Ty::kind)
                 && !mojito_symbol::symbol::is_stdlib_string_struct(name)
             {
                 if mojito_symbol::symbol::is_stdlib_string_span_struct(name) {
                     let span = self.reg_ptr(ctx, *arg)?;
                     self.string_parts(ctx, span, dest)
-                } else if name.contains("$Named$mono$") || name.ends_with("$Named") {
-                    let named_ty = self.func.reg_types[&arg.0].clone();
+                } else if (name.contains("$Named$mono$") || name.ends_with("$Named"))
+                    && let named_ty = self.func.reg_types[&arg.0].clone()
+                    && let Ok((value_offset, value_ty)) =
+                        self.field_offset(&named_ty, "_value", dest)
+                    && let TyKind::Pointer { element, .. } = value_ty.kind()
+                    && let Ok(LowerTy::Scalar(scalar)) =
+                        lower_ty(self.name, element, &self.layout, self.reg_span(dest))
+                {
+                    // A scalar value formats inline; any other value's
+                    // `Named` writes through its compiled `write_to`.
                     let base = self.reg_ptr(ctx, *arg)?;
                     let (name_offset, _) = self.field_offset(&named_ty, "_name", dest)?;
                     let name_address = self.offset_address(ctx, base, name_offset);
@@ -776,19 +683,10 @@ impl FnLowering<'_> {
                     let equals = self.global_address(ctx, &equals, dest);
                     let one = self.uint_constant(ctx, 1);
                     self.append_string_pair(ctx, descriptor, equals, one, dest);
-                    let (value_offset, value_ty) = self.field_offset(&named_ty, "_value", dest)?;
-                    let TyKind::Pointer { element, .. } = value_ty.kind() else {
-                        return Err(self.unsupported_reg("Named value pointer".into(), dest));
-                    };
                     let pointer_address = self.offset_address(ctx, base, value_offset);
                     let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
                     let pointer = LoadOp::new(ctx, pointer_address, ptr_ty);
                     self.append(ctx, pointer.get_operation(), Some(dest));
-                    let LowerTy::Scalar(scalar) =
-                        lower_ty(self.name, element, &self.layout, self.reg_span(dest))?
-                    else {
-                        return Err(self.unsupported_reg("aggregate Named value".into(), dest));
-                    };
                     let handle = scalar.handle(ctx);
                     let value = LoadOp::new(ctx, pointer.get_result(ctx), handle);
                     self.append(ctx, value.get_operation(), Some(dest));

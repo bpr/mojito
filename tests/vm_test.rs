@@ -1215,11 +1215,8 @@ fn raising_iter_normalization_propagates_to_the_enclosing_try() {
 }
 
 #[test]
-fn slice_bounds_construct_nominal_optional_values() {
-    // The prelude-visible nominal Optional serves the Slice-bound bridge
-    // directly (a local shadowing struct would now collide with the prelude
-    // binding).
-    let source = "def main():\n    var present = Slice(1, 4).start.or_else(9)\n    var absent = Slice(None, 4).start.or_else(9)\n    print(present, absent)\n";
+fn slice_bounds_are_nominal_optional_fields() {
+    let source = "def main():\n    var present = Slice(1, 4).start.or_else(9)\n    var absent = Slice(None, 4, None).start.or_else(9)\n    print(present, absent)\n";
     assert_eq!(parity(source), "1 9\n");
 }
 

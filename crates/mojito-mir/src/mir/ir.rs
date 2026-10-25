@@ -453,9 +453,7 @@ pub fn instruction_param_args_mut(instruction: &mut MirInstr) -> Vec<&mut MirPar
         MirInstr::Call { param_arg_regs, .. }
         | MirInstr::CallIndirect { param_arg_regs, .. }
         | MirInstr::MethodCall { param_arg_regs, .. } => param_arg_regs.iter_mut().collect(),
-        MirInstr::Index { call, .. }
-        | MirInstr::Slice { call, .. }
-        | MirInstr::MultiIndex { call, .. } => call
+        MirInstr::Index { call, .. } | MirInstr::MultiIndex { call, .. } => call
             .iter_mut()
             .flat_map(|call| call.param_arg_regs.iter_mut())
             .collect(),
@@ -511,9 +509,7 @@ pub fn dunder_method_call(
 /// instruction carries, if any.
 pub fn instruction_subscript_call(instruction: &MirInstr) -> Option<&MirSubscriptCall> {
     match instruction {
-        MirInstr::Index { call, .. }
-        | MirInstr::Slice { call, .. }
-        | MirInstr::MultiIndex { call, .. } => call.as_deref(),
+        MirInstr::Index { call, .. } | MirInstr::MultiIndex { call, .. } => call.as_deref(),
         MirInstr::MultiSet { call, .. } => Some(call),
         _ => None,
     }
@@ -522,9 +518,7 @@ pub fn instruction_subscript_call(instruction: &MirInstr) -> Option<&MirSubscrip
 /// [`instruction_subscript_call`], mutably.
 pub fn instruction_subscript_call_mut(instruction: &mut MirInstr) -> Option<&mut MirSubscriptCall> {
     match instruction {
-        MirInstr::Index { call, .. }
-        | MirInstr::Slice { call, .. }
-        | MirInstr::MultiIndex { call, .. } => call.as_deref_mut(),
+        MirInstr::Index { call, .. } | MirInstr::MultiIndex { call, .. } => call.as_deref_mut(),
         MirInstr::MultiSet { call, .. } => Some(call),
         _ => None,
     }
@@ -796,25 +790,6 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             out.extend([dest, base, index]);
             places_regs_mut(base_place.as_deref_mut(), &mut out);
             places_regs_mut(index_place.as_deref_mut(), &mut out);
-            if let Some(call) = call {
-                subscript_call_regs_mut(call, &mut out);
-            }
-        }
-        MirInstr::Slice {
-            dest,
-            object,
-            lower,
-            upper,
-            step,
-            object_place,
-            arg_places,
-            call,
-            ..
-        } => {
-            out.extend([dest, object]);
-            out.extend([lower, upper, step].into_iter().flatten());
-            places_regs_mut(object_place.as_deref_mut(), &mut out);
-            places_regs_mut(arg_places.iter_mut().flatten(), &mut out);
             if let Some(call) = call {
                 subscript_call_regs_mut(call, &mut out);
             }
@@ -1185,9 +1160,6 @@ fn capture_accesses(instruction: &MirInstr) -> &[MirCaptureAccess] {
         MirInstr::Index {
             call: Some(call), ..
         }
-        | MirInstr::Slice {
-            call: Some(call), ..
-        }
         | MirInstr::MultiIndex {
             call: Some(call), ..
         }
@@ -1211,9 +1183,6 @@ fn capture_accesses_mut(instruction: &mut MirInstr) -> &mut [MirCaptureAccess] {
         MirInstr::Index {
             call: Some(call), ..
         }
-        | MirInstr::Slice {
-            call: Some(call), ..
-        }
         | MirInstr::MultiIndex {
             call: Some(call), ..
         }
@@ -1226,9 +1195,6 @@ fn capture_accesses_mut(instruction: &mut MirInstr) -> &mut [MirCaptureAccess] {
 fn subscript_arg_regs_mut<'a>(arg: &'a mut MirSubscriptArg, out: &mut Vec<&'a mut Reg>) {
     match arg {
         MirSubscriptArg::Index(reg) => out.push(reg),
-        MirSubscriptArg::Slice {
-            lower, upper, step, ..
-        } => out.extend([lower, upper, step].into_iter().flatten()),
     }
 }
 
@@ -1382,12 +1348,6 @@ pub fn is_environment_slot(name: &str) -> bool {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MirSubscriptArg {
     Index(Reg),
-    Slice {
-        kind: mojito_types::types::SliceKind,
-        lower: Option<Reg>,
-        upper: Option<Reg>,
-        step: Option<Reg>,
-    },
 }
 
 /// Checked non-nominal dispatch for an index or slice instruction.
@@ -1397,9 +1357,7 @@ pub enum MirSubscriptArg {
 /// compiler/runtime storage family selected by the checked base type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MirIntrinsicSubscript {
-    /// Compiler-private heterogeneous Tuple/RuntimePack storage, including a
-    /// nominal Tuple result whose intrinsic producer uses `Value::Tuple` as its
-    /// ABI (currently `Slice.indices`).
+    /// Compiler-private heterogeneous Tuple/RuntimePack storage.
     TupleStorage,
     /// Compiler-private homogeneous `*args` storage.
     VariadicStorage,
@@ -2206,12 +2164,6 @@ pub enum MirInstr {
         dest: Reg,
         base: Reg,
         field: String,
-        /// The constructors a slice descriptor's bound read (`s.start`)
-        /// builds its `Optional` result through, the nullary one and the
-        /// positional one-argument one, which the elaborator names in
-        /// concrete MIR. Empty for any other read.
-        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_seq")]
-        constructors: Vec<String>,
     },
     /// Subscript *read* `base[index]` inside an rvalue. Nominal collection
     /// subscripts carry their complete checker-selected invocation in `call`.
@@ -2227,20 +2179,6 @@ pub enum MirInstr {
         /// reference returned into the caller's frame.
         base_place: Option<Box<MirPlace>>,
         index_place: Option<Box<MirPlace>>,
-        call: Option<Box<MirSubscriptCall>>,
-        intrinsic: Option<MirIntrinsicSubscript>,
-    },
-    /// Slice `object[lower:upper:step]` → what the selected `__getitem__`
-    /// returns. Each bound is optional (absent = a direction-aware default).
-    Slice {
-        dest: Reg,
-        object: Reg,
-        kind: mojito_types::types::SliceKind,
-        lower: Option<Reg>,
-        upper: Option<Reg>,
-        step: Option<Reg>,
-        object_place: Option<Box<MirPlace>>,
-        arg_places: Vec<Option<MirPlace>>,
         call: Option<Box<MirSubscriptCall>>,
         intrinsic: Option<MirIntrinsicSubscript>,
     },
@@ -2750,7 +2688,7 @@ impl MirInstr {
             | Self::MethodCall { raises, .. }
             | Self::UnOp { raises, .. }
             | Self::BinOp { raises, .. } => raises.as_ref(),
-            Self::Index { call, .. } | Self::Slice { call, .. } | Self::MultiIndex { call, .. } => {
+            Self::Index { call, .. } | Self::MultiIndex { call, .. } => {
                 call.as_ref().and_then(|call| call.raises.as_ref())
             }
             Self::MultiSet { call, .. } => call.raises.as_ref(),
@@ -2766,7 +2704,7 @@ impl MirInstr {
             | Self::MethodCall { raises, .. }
             | Self::UnOp { raises, .. }
             | Self::BinOp { raises, .. } => raises.as_mut(),
-            Self::Index { call, .. } | Self::Slice { call, .. } | Self::MultiIndex { call, .. } => {
+            Self::Index { call, .. } | Self::MultiIndex { call, .. } => {
                 call.as_mut().and_then(|call| call.raises.as_mut())
             }
             Self::MultiSet { call, .. } => call.raises.as_mut(),
@@ -2849,7 +2787,6 @@ impl MirInstr {
             | Self::UninitStorageTake { .. }
             | Self::UninitStorageDestroy { .. }
             | Self::Index { .. }
-            | Self::Slice { .. }
             | Self::MultiIndex { .. }
             | Self::MultiSet { .. }
             | Self::Store { .. }

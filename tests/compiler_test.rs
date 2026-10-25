@@ -4531,7 +4531,6 @@ fn dunder_unused_arguments_leave_the_instance_key() {
             matches!(
                 instruction,
                 mojito::mir::MirInstr::Index { call: Some(_), .. }
-                    | mojito::mir::MirInstr::Slice { call: Some(_), .. }
             )
         })
         .count();

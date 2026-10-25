@@ -1290,7 +1290,6 @@ impl<'a> Flatten<'a> {
                                     .unwrap_or_else(|| target.location()),
                             ),
                         ),
-                        slice @ MirSubscriptArg::Slice { .. } => slice.clone(),
                     })
                     .collect::<Vec<_>>();
                 let getter_places = source_places
@@ -1446,7 +1445,6 @@ impl<'a> Flatten<'a> {
                                 ),
                             )
                         }
-                        slice @ MirSubscriptArg::Slice { .. } => slice.clone(),
                     })
                     .collect::<Vec<_>>();
                 let setter_places = source_places
@@ -1833,10 +1831,7 @@ impl<'a> Flatten<'a> {
             }
             (CheckedOp::Member { field, .. }, Some(object)) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
-                if object.is_slice_descriptor()
-                    || e.is_dtype_constant()
-                    || e.recorded_value().is_some()
-                {
+                if e.is_dtype_constant() || e.recorded_value().is_some() {
                     return None;
                 }
                 let mut p = self.simple_place(object)?;
@@ -1880,10 +1875,7 @@ impl<'a> Flatten<'a> {
         match (e.op(), e.object()) {
             (CheckedOp::Member { field, .. }, Some(object)) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
-                if object.is_slice_descriptor()
-                    || e.is_dtype_constant()
-                    || e.recorded_value().is_some()
-                {
+                if e.is_dtype_constant() || e.recorded_value().is_some() {
                     return None;
                 }
                 let mut p = self.pure_field_place(object)?;
@@ -1922,10 +1914,7 @@ impl<'a> Flatten<'a> {
             }
             (CheckedOp::Member { field, .. }, Some(object)) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
-                if object.is_slice_descriptor()
-                    || e.is_dtype_constant()
-                    || e.recorded_value().is_some()
-                {
+                if e.is_dtype_constant() || e.recorded_value().is_some() {
                     return None;
                 }
                 if self.name_spelled(object).is_some_and(|name| name == "Self")

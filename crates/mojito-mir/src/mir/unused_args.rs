@@ -436,13 +436,6 @@ pub fn shed_subscript_operands(
             base_place: object_place,
             call,
             ..
-        }
-        | MirInstr::Slice {
-            dest,
-            object,
-            object_place,
-            call,
-            ..
         } if positional.contains(&0) => {
             let (dest, object) = (*dest, *object);
             let (call, object_place) = (call.take(), object_place.take());
@@ -911,15 +904,9 @@ fn subscript_operand_regs(
 ) -> Vec<Reg> {
     let argument = |argument: &MirSubscriptArg| match argument {
         MirSubscriptArg::Index(reg) => vec![*reg],
-        MirSubscriptArg::Slice {
-            lower, upper, step, ..
-        } => [*lower, *upper, *step].into_iter().flatten().collect(),
     };
     match instruction {
         MirInstr::Index { index, .. } if positional.contains(&0) => vec![*index],
-        MirInstr::Slice {
-            lower, upper, step, ..
-        } if positional.contains(&0) => [*lower, *upper, *step].into_iter().flatten().collect(),
         MirInstr::MultiIndex { args, kwargs, .. } => positional
             .iter()
             .filter_map(|&index| args.get(index))
@@ -950,7 +937,6 @@ fn clear_subscript_places(
     };
     match instruction {
         MirInstr::Index { index_place, .. } if positional.contains(&0) => *index_place = None,
-        MirInstr::Slice { arg_places, .. } => clear(arg_places, positional),
         MirInstr::MultiIndex {
             arg_places,
             kwarg_places,

@@ -57,7 +57,7 @@ use mojito_mir::mir::{
     UseMode, fresh_register, instruction_regions, instruction_regions_mut, instruction_slots,
     retire_slots, terminator_regs,
 };
-use mojito_types::types::{SliceKind, Ty, TyKind};
+use mojito_types::types::{Ty, TyKind};
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
@@ -337,18 +337,14 @@ fn unkept_census(
 /// The fields of a slot of `ty` [`sroa`] may split, at its arguments
 /// ([`MirDeclarations::field_types`]): any declared struct whose fields
 /// they resolve, as upstream's only test is that the element types are,
-/// whatever its fields' types and whatever its drop runs. A slice
-/// descriptor, which both backends build as their own value, is never one,
-/// nor is a struct with a pointer or `ref` field: the VM reads a place on
+/// whatever its fields' types and whatever its drop runs. A struct with a
+/// pointer or `ref` field is never one: the VM reads a place on
 /// a whole slot that holds a reference handle through the handle, and a
 /// place past a `ref` field's own slot would need that slot as its
 /// `through`, which the rewrite does not give it, so the field's own slot
 /// would not read as the field did.
 fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fields<'a>> {
-    let TyKind::Struct(name, _) = ty.kind() else {
-        return None;
-    };
-    if name == SliceKind::Slice.type_name() {
+    if !matches!(ty.kind(), TyKind::Struct(..)) {
         return None;
     }
     let fields = declarations.field_types(ty)?;
@@ -562,7 +558,6 @@ impl Splitter<'_> {
                         dest: value,
                         base: src,
                         field: field.name.clone(),
-                        constructors: Vec::new(),
                     });
                     out.push(MirInstr::DefVar {
                         var: field.slot,

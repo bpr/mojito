@@ -1076,12 +1076,6 @@ impl Checker {
         if name == "NoneType" && args.is_empty() {
             return Ok(Some((Ty::none(), Vec::new())));
         }
-        if name == "Slice" && args.is_empty() {
-            return Ok(Some((
-                TyKind::Struct("Slice".to_string(), Vec::new()).into(),
-                Vec::new(),
-            )));
-        }
         // Upstream compatibility alias: `StringSlice` resolves to the
         // canonical `StringSpan` view (never emitted; diagnostics and
         // display always spell `StringSpan`). Resolved at the same
