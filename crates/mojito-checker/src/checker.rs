@@ -2180,24 +2180,38 @@ impl Checker {
 
     /// Require `expr` to be usable as a condition (`if`/`while`/ternary/
     /// comprehension filter), recording a truthiness mark for MIR to convert
-    /// where [`Self::condition_truthiness`] asks for one.
+    /// where [`Self::condition_truthiness`] asks for one. The conversion
+    /// reads its operand as upstream's `Bool.__init__[T: Boolable](value: T)`
+    /// does: a named struct or parameter value, or an element an accessor
+    /// returns by reference, is borrowed where it lies and a temporary is
+    /// read in its call-result slot, so nothing is copied.
     fn expect_bool(&self, expr: &Expr, context: &str) -> Result<(), TypeError> {
         let ty = self.infer(expr)?;
         if self.condition_truthiness(&ty, context)? {
             self.record_at(expr.source_span()).truthiness_condition = true;
+            if !is_numeric(&ty) && !is_scalar_simd(&ty) {
+                let element = matches!(expr.kind, ExprKind::Index { .. })
+                    && self.infer_reference_value(expr).is_some();
+                if element {
+                    self.record_at(expr.source_span()).borrowed_read_call_place = true;
+                }
+                self.borrow_nominal_place_argument(expr, &ty);
+                self.borrow_parameter_place_argument(expr, &ty);
+                self.record_read_temporary_argument(expr);
+            }
         }
         Ok(())
     }
 
     /// Whether a condition of type `ty` converts through `Bool(x)`: `false`
     /// for a `Bool`, `true` for a numeric scalar (`if n:` over an `Int`, a
-    /// `Float64`, or a width-1 lane such as `if a == b` over `UInt64`s) or a
-    /// struct whose `__bool__` supplies its truth value (`if collection:`),
-    /// and an error for anything else.
+    /// `Float64`, or a width-1 lane such as `if a == b` over `UInt64`s), a
+    /// `Boolable` type parameter, or a struct whose `__bool__` supplies its
+    /// truth value (`if collection:`), and an error for anything else.
     fn condition_truthiness(&self, ty: &Ty, context: &str) -> Result<bool, TypeError> {
         if *ty == TyKind::Bool {
             Ok(false)
-        } else if is_numeric(ty) || is_scalar_simd(ty) {
+        } else if is_numeric(ty) || is_scalar_simd(ty) || param_has_bound(ty, "Boolable") {
             Ok(true)
         } else if let Some(result) = self.struct_dunder(ty, "__bool__", &[]) {
             require_dunder_ret(result?, &Ty::bool(), "__bool__")?;

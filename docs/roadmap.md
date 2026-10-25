@@ -2833,6 +2833,11 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: a `read` parameter too: `value(pick(r))` over a `Movable`
     `Res`, `pick(ref r: Res) -> ref [r] Res`, is rejected, where the pin
     borrows the referent and prints its value.
+  - Probe: a conversion's read operand too: `Bool(os[0])` and `Bool(t[0])`
+    over a `List[Optional[T]]` and a tuple, `T` only `Copyable`, are
+    rejected, while the condition `if os[0]:` runs. `expect_bool` marks
+    such an element `borrowed_read_call_place`, but
+    `borrow_nominal_place_argument` admits only a bare name.
   - The rejection is the checker's implicit-copy test on a reference
     result (`crates/mojito-checker/src/checker.rs`), which treats the
     `ref` slot as a consuming read.
@@ -2996,7 +3001,7 @@ Track: `calls`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R1404 Thirteen `calls` entries are fixed, assume per-instance
+- [ ] **R1404 Twelve `calls` entries are fixed, assume per-instance
   clones, or lack their new cores' Depends links**
 
   Some `calls` entries were fixed by later work, three assume re-checked
@@ -3010,8 +3015,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`generate_instance_clones`).
   - Assume per-instance clones that are re-checked: R112, R91, and R420.
   - Wait on landed entries: R1242 (R1241 landed with R1140 and R1237).
-  - Overtaken: R1249 by R1328, which fixed `Bool(x)` copying a bounded `x`.
-    Also R548, by R1103 and R743, though its diagnostic remains in
+  - Overtaken: R548, by R1103 and R743, though its diagnostic remains in
     `inference.rs`.
   - Add `Depends on R1364` to R667: its `is_deinitable` half is the
     three-valued conformance query.
@@ -3133,28 +3137,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `Bag(1).get()` and `b.get()` over `get(ref self)` beside
     `get(var self)`.
   - Found while landing R1290 (2026-10-23).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1249 A `Boolable` struct's condition copies the struct**
-
-  Problem: `if o:` over `var o = Optional(T(8))`, `T` printing its copies
-  and destructions, prints `copy 8` and destroys only one of the two
-  values, where the pin calls `__bool__` on `o` in place and copies
-  nothing.
-  - The checker marks a `Boolable` condition `Truthiness`, and MIR lowers
-    it as a call `Bool(value)` over the loaded value (`condition_value`,
-    `mir/call_results.rs`), which copies a non-trivial struct.
-  - Upstream converts a condition with the struct's `__bool__` over the
-    borrowed value.
-  - A concrete `struct C(Boolable)` holding a `T` copies too: both kinds
-    print one `copy` and one `del` for the two values.
-  - Every enum-case pattern over such an `Optional` copies the same way,
-    since `Optional._get_enum_discriminant` is `1 if self else 0`: `case
-    .Some(_)`, `case .Some(u)`, and `case .Some(ref u)` each print `copy`.
-  - Lifecycle fixtures over `Optional` payloads
-    (`assets/ok/match_cluster_lifecycle.mojo`) wait on this.
-  - Found while landing R1140 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9602,8 +9584,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The rule: reject a `drop.reg` whose register type
     `MirDeclarations::register_passable` answers no for.
   - The remaining placements are copies and moves into a register, each
-    with its own entry: truthiness copies (R1249), `List`→`Span` copies
-    (R117), read arguments by value (R677), `List.resize`'s double copy
+    with its own entry: `List`→`Span` copies (R117), read arguments by value (R677), `List.resize`'s double copy
     (R1353), generic reads (R1354), closure values (R1334), and a pending
     `Error` (R1293).
   - Probe: the rule must judge a conditional conformance at closed

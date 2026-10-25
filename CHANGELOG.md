@@ -646,6 +646,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A condition over a `Boolable` value (`if o:`, `while c:`, a conditional
+  expression, a comprehension filter) reads a named value, a field, or a
+  list or tuple element where it lies, as upstream's `Bool(x)` does,
+  instead of copying it, so `if o:` over an `Optional[T]` with a printing
+  `T` and every enum-case pattern over it (`case .Some(u)`, through
+  `_get_enum_discriminant`) copy nothing, as at the pin (R1249). A `T: Boolable` parameter (`if b:`) and an element of
+  a non-`ImplicitlyCopyable` type (`if os[i]:` over `List[Optional[T]]`)
+  are now accepted as conditions; both were rejected.
 - An implicit copy at its source's last use no longer runs an
   initializer the pin does not (R136): an owned parameter (`take(c)`,
   `take_kw(c=c)`, past a raising later argument too), an owned receiver

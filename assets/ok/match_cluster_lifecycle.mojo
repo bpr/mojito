@@ -2,7 +2,8 @@
 # its remaining tests before its bindings, so a `var` binding copies only
 # once its case has matched, and a failed guard destroys the copy before
 # the next member runs. A run led by a binding is not clustered, and its
-# copies follow case order too.
+# copies follow case order too. An `Optional` subject's discriminant reads
+# it in place, so its enum-case tests copy nothing.
 struct T(ImplicitlyCopyable):
     var n: Int
 
@@ -56,4 +57,20 @@ def main():
             print("b", b.n)
         case _:
             print("other")
+    print("optional cases")
+    var o = Optional(T(6))
+    match o:
+        case .Some(_) if g("some"):
+            print("some")
+        case .Some(var a):
+            print("a", a.n)
+        case .None:
+            print("none")
+    match o:
+        case .Some(ref r):
+            print("r", r.n)
+        case .None:
+            print("none")
+    if o:
+        print("truthy", o.value().n)
     print("end")

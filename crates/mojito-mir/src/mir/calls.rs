@@ -2044,7 +2044,7 @@ impl<'a> Flatten<'a> {
     /// user-observable lifecycle, and keeping `UseVar` preserves their pinned
     /// ASAP destruction, which aggregate `LoadPlace` results deliberately
     /// trade for owner retention through the call.
-    fn lower_borrowed_read_argument(&mut self, expression: Node<'a>) -> Option<Reg> {
+    pub(super) fn lower_borrowed_read_argument(&mut self, expression: Node<'a>) -> Option<Reg> {
         if let Some((object, _)) = expression.index_operands() {
             return self.lower_borrowed_element_read(expression, object);
         }

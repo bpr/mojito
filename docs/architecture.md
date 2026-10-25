@@ -5180,7 +5180,9 @@ current Mojo:
   (`read_c`, a whole `LoadPlace`), an owned one takes it (`take_c`, a
   `UseVar Forward` its call setup moves to the call), a `ref self` receiver
   binds its place, a field read projects it (`load_temporary_field`), a
-  condition reads it for `Bool(x)` (`condition_value`), and a discarded
+  condition reads it for `Bool(x)` (`condition_value`, which reads a named
+  place `Checker::expect_bool` marked `BorrowReadArgument` where it lies,
+  as an explicit `Bool(x)` argument is read), and a discarded
   statement leaves it dead at its definition (`discard_result`). The call
   is the slot's last use, so its `DropVar` follows the call, before the
   enclosing expression continues. A call operand's convention is the
