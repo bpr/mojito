@@ -2440,18 +2440,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R117 Converting a `List` to a `Span` copies its elements**
-
-  Problem: `var s: Span[Dup, origin_of(xs)] = xs` copies the list into a
-  temporary (each element's copy constructor runs) and destroys it, where
-  the pin builds the view and copies nothing.
-  - An element read through the view (`print(s[0])`, `g(s[0])`) is lent,
-    as a `List` element is.
-  - The copy is the implicit conversion's source read; not root-caused.
-  - Probe: `conformance/probes/span_conversion_copies_elements.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R118 An element of a temporary container cannot be passed to a read
   parameter**
 
@@ -2816,6 +2804,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     rejected, while the condition `if os[0]:` runs. `expect_bool` marks
     such an element `borrowed_read_call_place`, but
     `borrow_nominal_place_argument` admits only a bare name.
+  - Probe: a `mut` parameter too: `bump(ps[0])` over `List[P]`, `def
+    bump(mut p: P)`, `P` only `Copyable`, is rejected the same way, where
+    the pin writes the element in place (found landing R117, 2026-10-25).
   - The rejection is the checker's implicit-copy test on a reference
     result (`crates/mojito-checker/src/checker.rs`), which treats the
     `ref` slot as a consuming read.

@@ -400,6 +400,7 @@ assets/ok/list_strided_slice_normalizes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_subscript_field_store.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_subscript_field_store_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_subscript_field_store_shapes.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/list_to_span_conversion_borrows.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_ptr_multi_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_uninit_length.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/live_pointer_ref_argument.mojo	-	ineligible	no-scalar-entry-shape

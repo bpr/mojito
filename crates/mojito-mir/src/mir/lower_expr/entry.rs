@@ -482,11 +482,16 @@ impl<'a> Flatten<'a> {
 
     /// The source of a view-constructor conversion (`BorrowConversionSource`)
     /// with the caller place its `ref [origin]` parameter binds: a named place
-    /// as written, or the element place an accessor's reference result or an
-    /// intrinsic subscript (`parts[i]` over a collector) names, evaluated once.
+    /// as written, read where it lies as a read argument is (no copy of the
+    /// source runs), or the element place an accessor's reference result or
+    /// an intrinsic subscript (`parts[i]` over a collector) names, evaluated
+    /// once.
     fn borrowed_conversion_source(&mut self, e: Node<'a>) -> (Reg, Option<MirPlace>) {
         if let Some(place) = self.simple_place(e) {
-            return (self.expr_unconverted(e), Some(place));
+            let value = self
+                .lower_borrowed_read_argument(e)
+                .unwrap_or_else(|| self.expr_unconverted(e));
+            return (value, Some(place));
         }
         let Some(place) = self
             .materialize_reference_result_place(e)

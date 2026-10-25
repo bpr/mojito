@@ -646,6 +646,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- Converting a `List` to a `Span` (`var s: Span[T, origin_of(xs)] = xs`,
+  a list passed to a `Span` parameter, a field source) builds the view over
+  the list where it lies, as at the pin: no element's copy constructor
+  runs and no temporary list is destroyed (R117).
+
 - An element read through a view (`String(span[0])`, `span[0].copy()`,
   `rest[0].v` over `var rest = xs[1:]` or `var [*rest] = xs`) no longer
   conflicts with the view's own loan when the view is used again, and an
