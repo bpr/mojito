@@ -114,38 +114,6 @@ pub(super) fn function_closure_captures(
         .collect()
 }
 
-pub(super) fn dunder_method_call(
-    dest: Reg,
-    recv: Reg,
-    method: &str,
-    resolved: Option<String>,
-    raises: Option<mojito_mir::mir::Raises>,
-    args: Vec<Reg>,
-) -> MirInstr {
-    let arg_places = vec![None; args.len()];
-    MirInstr::MethodCall {
-        dest,
-        recv,
-        method: method.to_string(),
-        resolved,
-        raises,
-        reference_result: None,
-        result_adapter: None,
-        args,
-        kwargs: Vec::new(),
-        recv_place: None,
-        recv_writes: false,
-        receiver_convention: None,
-        arg_places,
-        kwarg_places: Vec::new(),
-        capture_accesses: Vec::new(),
-        param_arg_regs: Vec::new(),
-        param_decls: Vec::new(),
-        instantiated_args: Vec::new(),
-        spread: None,
-    }
-}
-
 /// How many leading method `param_decls` restate the owner struct's own
 /// parameters: `__init__` declarations prepend them (`src/mir.rs`), and the
 /// owner-bound instance identity already carries their solutions.

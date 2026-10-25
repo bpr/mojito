@@ -6395,7 +6395,11 @@ point where a slot declared in a loop is uninitialized again.
   struct's type reaches, as upstream's conformance witness tables do: a
   special method or a requirement of a trait the struct declares
   (`mir::MirDeclarations::reached_from_type`, `Specializer::table_key`,
-  R1006). Those stay live through the calls that name them. A VM dispatch with
+  R1006). Those stay live through the calls that name them. A VM dispatch
+  runs a selected instance of the receiver's own struct as named, one
+  spelled off its template too, since such a generator names no owner
+  instance (R1110: `a + g` runs `Grid.__radd__$REMOVED$ARG$mono`, not the
+  table's `__add__`). One with
   no selected instance of the receiver's own struct (an operator, a
   protocol method, a trait requirement, a type-reached dunder) runs the
   instance the table records under the selected method spelling, else
@@ -6485,10 +6489,11 @@ point where a slot declared in a loop is uninitialized again.
   on a struct operand is a `MethodCall` of its dunder by then, so it drops
   the operand too (R1033), and a subscript names its accessor's reduced
   generator through `rewrite_subscript_call` (`ReceiverCall::reduced`):
-  its contract loses the arguments the removed slots bound, a
-  multi-subscript sheds the operands they named, and an `index.get` or a
-  slice whose one operand goes becomes a multi-subscript with none, which
-  both backends run as the same call over the contract. `inline-parametric`
+  its contract loses the arguments the removed slots bound
+  (`mir::shed_subscript_contract`), a multi-subscript sheds the operands
+  they named, and an `index.get` or a slice whose one operand goes
+  becomes a multi-subscript with none (`mir::shed_subscript_operands`),
+  which both backends run as the same call over the contract. `inline-parametric`
   reads an inlined callee's reduced generator through
   `with_removed_argument_forwards_erased`, as `Specializer::materialize_body`
   reads an instance: the callee's own forwards to its callees' removed
@@ -6558,14 +6563,20 @@ point where a slot declared in a loop is uninitialized again.
   merges an inlined callee's snapshot into its caller's.
   A forward to a callee's removed runtime argument is no use either
   (R1013): before it records `removed_args`, the pass reads the body with
-  each direct call or resolved method call of a finished callee that
-  removed arguments passing no operand for them
-  (`mir::without_removed_argument_forwards`, binding by
+  each direct call, resolved method call, resolved operator, and
+  subscript read of a finished callee that removed arguments passing no
+  operand for them (`mir::without_removed_argument_forwards`, binding by
   `mir::removed_argument_operands`, the matcher the elaborator's
   `Specializer::drop_removed_arguments` uses) and the instructions that
-  only computed one erased: a whole-place or field load, a borrow, a copy
-  of a slot whose type has no destructor, or a move of a parameter whose
-  drop runs no code. A copy of any other value is a call of its own and
+  only computed one erased. An operator is read as the call of its dunder
+  the elaborator rewrites it to (`mir::dunder_method_call`, the receiver
+  its left operand, a reflected operator's swapped in already), and a
+  subscript as its accessor's call shed of the operands and contract
+  arguments the removed slots bound, by the helpers
+  `rewrite_subscript_call` uses (R1110); a self-recursive call through
+  either is one too (`SelfCall::of`). The erased instructions are a
+  whole-place or field load, a borrow, a copy of a slot whose type has no
+  destructor, or a move of a parameter whose drop runs no code. A copy of any other value is a call of its own and
   stays, as the pin keeps `fcopy`. A removed receiver becomes a register no
   instruction defines, of the receiver's type, so the call still reads the
   struct arguments its member kept. The pass follows every callee with an

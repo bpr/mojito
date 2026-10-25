@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1348**.
+Next free ID: **R1349**.
 
 ## Ordered Work
 
@@ -553,24 +553,30 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1031.
   - Model: Fable, Not Planned.
 
-- [ ] **R1110 An argument a body passes only to an operator's or a
-  subscript's removed argument is a use**
+- [ ] **R1348 A struct operator and a multi-subscript are not calls in
+  MIR, so `inline-parametric` keeps a `nodebug` dunder they reach**
 
-  `fwd[n](g: Grid, a: Arr[n])` returning `g + a` or `g[a]`, where the
-  dunder ignores its operand, keeps `a` and one instance per `n`, where
-  upstream's pass, which rewrote the dunder's call first, removes both.
-  - `mir::without_removed_argument_forwards` drops operands from a `call`
-    and a resolved `call.method` only (`calls_removing`,
-    `drop_removed_operands`): a `binop`/`unop` operand and a subscript
-    instruction's actual stay uses of the caller's slot, since the operator
-    is not a call until the elaborator rewrites it and the subscript's
-    operand is a field of the instruction.
-  - The view would treat an operator on a struct operand as the call of
-    its dunder and a subscript as the call of its accessor, erasing the
-    forward chain as for a call.
-  - Found while landing R1033 (2026-10-17).
+  MIR lowering emits `a + b` on a struct as a `binary` naming its dunder
+  and `g[i, j]` or `g[i:j]` as an `index.multi` or `slice` naming its
+  accessor, where upstream's parser emits the dunder's call, as Mojito's
+  `prefix_op` already does for `-x`.
+  - Each pass that reads calls has to know these instructions as calls:
+    `unused_args` and `unused_params` now do (R1110), but
+    `Inliner::inlinable` reads a `call`, a resolved `call.method`, a
+    one-operand `index.get`, and a devirtualized `call.indirect` only.
+  - Probe: `via_op(a: V, b: V)` returning `a + b`, over an
+    `@always_inline("nodebug") def __add__(self, o: V) -> Int`, keeps the
+    `binary` after pre-elaboration, while `a.plus(b)` over the same body
+    inlines.
+  - Probe: `via_sub(a: V, i: Int)` returning `a[i, 2]`, over an
+    `@always_inline("nodebug") def __getitem__(self, i: Int, j: Int)`,
+    keeps the `index.multi`.
+  - Lever: lower a struct operator to the dunder's `call.method`, as
+    `prefix_op` does, and have the inliner bind a subscript's operands
+    through its contract, as its `index.get` arm does.
+  - Found while landing R1110 (2026-10-24).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1035 A package body's cycle check misses the calls its drops
   add**
@@ -10280,22 +10286,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     target, so the VM resolves no name; failing that, an index by name.
   - Found while landing R580 (2026-10-10), which moved the elaborator's
     resolution onto by-name lookups.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R728 A struct infix operator's concrete call says it cannot
-  raise**
-
-  Problem: `native::mono` rewrites a struct `BinOp` to its dunder's
-  `MethodCall` through `dunder_method_call` (`mono/equiv.rs`) with
-  `raises: None`, even over a raising `__add__`.
-  - Mojo's `a + b` is the dunder's call, and that call carries its effect.
-  - Execution is right only because the VM propagates through Rust's `?`
-    and native lowering reads the effect from the callee's declaration.
-  - Fix: lower a struct operator to the dunder's call carrying the
-    checker's effect, by giving MIR `BinOp` a `raises` contract or by
-    making the struct operator a `MethodCall` before mono.
-  - Found while landing R720 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

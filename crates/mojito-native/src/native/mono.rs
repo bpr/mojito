@@ -7,8 +7,8 @@
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use equiv::*;
 use mojito_mir::mir::{
-    addressed_slots, callable_targets, destroyed_structs, nested_instructions, relocated_structs,
-    renumber_slots, retire_slots,
+    addressed_slots, callable_targets, destroyed_structs, dunder_method_call, nested_instructions,
+    relocated_structs, renumber_slots, retire_slots,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use promote::*;

@@ -2330,11 +2330,7 @@ impl<'a> Specializer<'a> {
                     resolved,
                     raises,
                 } = instruction
-                    && let Some(method) = op.dunder()
-                    && !matches!(
-                        op,
-                        mojito_ast::ast::InfixOp::In | mojito_ast::ast::InfixOp::NotIn
-                    )
+                    && let Some(method) = mojito_mir::mir::operator_method(*op)
                     && matches!(
                         (function.reg_types.get(&a.0).map(peel_refs)).map(Ty::kind),
                         Some(TyKind::Struct(..))
@@ -3160,14 +3156,10 @@ impl<'a> Specializer<'a> {
                         dest,
                         base,
                         index,
-                        base_place,
-                        call: call @ Some(_),
+                        call: Some(contract),
                         ..
                     } => {
                         let (dest, base, index) = (*dest, *base, *index);
-                        let Some(contract) = call.as_deref_mut() else {
-                            continue;
-                        };
                         let dropped = self.rewrite_subscript_call(
                             owner,
                             function,
@@ -3180,31 +3172,21 @@ impl<'a> Specializer<'a> {
                             Some(dest),
                             contract,
                         )?;
-                        if dropped.is_some_and(|dropped| dropped.positional.contains(&0)) {
-                            let (call, object_place) = (call.take(), base_place.take());
-                            *instruction = MirInstr::MultiIndex {
-                                dest,
-                                object: base,
-                                args: Vec::new(),
-                                object_place,
-                                arg_places: Vec::new(),
-                                kwargs: Vec::new(),
-                                kwarg_places: Vec::new(),
-                                call,
-                            };
+                        if let Some(dropped) = dropped {
+                            mojito_mir::mir::shed_subscript_operands(
+                                instruction,
+                                &dropped.positional,
+                                &dropped.keyword,
+                            );
                         }
                     }
                     MirInstr::Slice {
                         dest,
                         object,
-                        object_place,
-                        call: call @ Some(_),
+                        call: Some(contract),
                         ..
                     } => {
                         let (dest, object) = (*dest, *object);
-                        let Some(contract) = call.as_deref_mut() else {
-                            continue;
-                        };
                         let dropped = self.rewrite_subscript_call(
                             owner,
                             function,
@@ -3217,27 +3199,19 @@ impl<'a> Specializer<'a> {
                             Some(dest),
                             contract,
                         )?;
-                        if dropped.is_some_and(|dropped| dropped.positional.contains(&0)) {
-                            let (call, object_place) = (call.take(), object_place.take());
-                            *instruction = MirInstr::MultiIndex {
-                                dest,
-                                object,
-                                args: Vec::new(),
-                                object_place,
-                                arg_places: Vec::new(),
-                                kwargs: Vec::new(),
-                                kwarg_places: Vec::new(),
-                                call,
-                            };
+                        if let Some(dropped) = dropped {
+                            mojito_mir::mir::shed_subscript_operands(
+                                instruction,
+                                &dropped.positional,
+                                &dropped.keyword,
+                            );
                         }
                     }
                     MirInstr::MultiIndex {
                         dest,
                         object,
                         args,
-                        arg_places,
                         kwargs,
-                        kwarg_places,
                         call: Some(call),
                         ..
                     } => {
@@ -3257,8 +3231,11 @@ impl<'a> Specializer<'a> {
                             call,
                         )?;
                         if let Some(dropped) = dropped {
-                            drop_subscript_operands(args, arg_places, &dropped.positional);
-                            drop_subscript_operands(kwargs, kwarg_places, &dropped.keyword);
+                            mojito_mir::mir::shed_subscript_operands(
+                                instruction,
+                                &dropped.positional,
+                                &dropped.keyword,
+                            );
                         }
                     }
                     MirInstr::MultiSet {
@@ -4002,23 +3979,6 @@ fn pass_capturing_arguments(
         loads.push(MirInstr::LoadPlace { dest, place });
     }
     preludes.push((index, loads));
-}
-
-/// Remove from a multi-subscript's `operands`, and their `places`, the
-/// `dropped` indexes its accessor's removed arguments bound.
-fn drop_subscript_operands<T>(
-    operands: &mut Vec<T>,
-    places: &mut Vec<Option<MirPlace>>,
-    dropped: &BTreeSet<usize>,
-) {
-    for &index in dropped.iter().rev() {
-        if index < operands.len() {
-            operands.remove(index);
-        }
-        if index < places.len() {
-            places.remove(index);
-        }
-    }
 }
 
 /// Drops the compile-time argument slots `instruction` still carries: a

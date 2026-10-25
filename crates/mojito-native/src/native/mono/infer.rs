@@ -3,9 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::checked::CheckedCallArgumentSource;
 use mojito_hir::hir::VarId;
-use mojito_mir::mir::SlotParameter;
 use mojito_types::types::TyKind;
 
 /// The runtime operands one subscript instruction passes its accessor
@@ -208,34 +206,13 @@ impl Specializer<'_> {
                 format!("binding subscript call to `{target}` during argument removal: {e:?}"),
             )
         })?;
-        // The contract lists one argument per declared parameter past the
-        // receiver, by position; the kept ones name their operands by the
-        // indexes the instruction keeps.
-        let removed: BTreeSet<usize> = generator
-            .removed_args
-            .iter()
-            .filter_map(|&slot| match declaration.slot_parameter(slot as usize) {
-                SlotParameter::Position(position) => Some(position),
-                _ => None,
-            })
-            .collect();
-        let mut position = 0;
-        call.arguments.retain(|_| {
-            let kept = !removed.contains(&position);
-            position += 1;
-            kept
-        });
-        for argument in &mut call.arguments {
-            argument.source = match argument.source {
-                CheckedCallArgumentSource::Positional(index) => {
-                    CheckedCallArgumentSource::Positional(index - positional.range(..index).count())
-                }
-                CheckedCallArgumentSource::Keyword(index) => {
-                    CheckedCallArgumentSource::Keyword(index - keyword.range(..index).count())
-                }
-                CheckedCallArgumentSource::Default => CheckedCallArgumentSource::Default,
-            };
-        }
+        mojito_mir::mir::shed_subscript_contract(
+            call,
+            declaration,
+            &generator.removed_args,
+            &positional,
+            &keyword,
+        );
         Ok(Some(DroppedOperands {
             positional,
             keyword,

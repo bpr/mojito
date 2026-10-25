@@ -1,0 +1,188 @@
+  functions: [
+      fn {
+        name: "Grid.__add__",
+        registers: 4,
+        vars: 2,
+        var_names: [self, o],
+        params: 2,
+        param_types: [struct_type { name: Grid, arguments: [] }, struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Grid", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Grid, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Grid", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 220, end: 226, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 229, end: 230, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 229, end: 230, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 220, end: 230, origin: absent }) }],
+        removed_params: [param_id { owner: "Grid", slot: 0 }],
+        removed_args: [$v1],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(1) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Grid, arguments: [] }), projections: [projection { op: field(k), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: "Grid.__sub__",
+        registers: 3,
+        vars: 2,
+        var_names: [self, o],
+        params: 2,
+        param_types: [struct_type { name: Grid, arguments: [] }, struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Grid", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Grid, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Grid", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 308, end: 314, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 317, end: 320, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 308, end: 320, origin: absent }) }],
+        removed_params: [param_id { owner: "Grid", slot: 0 }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Grid, arguments: [] }), projections: [projection { op: field(k), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Grid", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: Int }], type: present(Int), through: absent } },
+              binary { op: sub, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: "Ring.__add__",
+        registers: 15,
+        vars: 3,
+        var_names: [self, o, "$tmp_arg_r9"],
+        params: 2,
+        param_types: [struct_type { name: Ring, arguments: [] }, struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Ring, arguments: [] } }, var_type { var: $v1, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v2, type: struct_type { name: Ring, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: IntLiteral }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r8, type: Int }, reg_type { reg: %r9, type: struct_type { name: Ring, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r10, type: struct_type { name: Ring, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r11, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r12, type: Int }, reg_type { reg: %r13, type: IntLiteral }, reg_type { reg: %r14, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 467, end: 473, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 476, end: 477, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 476, end: 477, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 467, end: 477, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 498, end: 522, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 511, end: 517, origin: present($v0) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 520, end: 521, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 520, end: 521, origin: absent }) }, reg_loc { reg: %r8, location: present(loc { file: file0, start: 511, end: 521, origin: absent }) }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 498, end: 522, origin: absent }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 498, end: 522, origin: present($v2) }) }, reg_loc { reg: %r11, location: present(loc { file: file0, start: 525, end: 526, origin: present($v1) }) }, reg_loc { reg: %r12, location: present(loc { file: file0, start: 498, end: 526, origin: absent }) }, reg_loc { reg: %r13, location: present(loc { file: file0, start: 542, end: 543, origin: absent }) }, reg_loc { reg: %r14, location: present(loc { file: file0, start: 542, end: 543, origin: absent }) }],
+        removed_params: [param_id { owner: "Ring", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "Ring.__add__", params: [param_id { owner: "Ring", slot: 0 }] }, callee_params { callee: "Ring.__init__", params: [param_id { owner: "Ring", slot: 0 }] }],
+        removed_args: [$v1],
+        callee_removed_args: [callee_args { callee: "Ring.__add__", args: [$v1] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r1, value: int_literal(0) },
+              literal.materialize { dest: %r2, value: %r1, target: Int },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Ring, arguments: [] }), projections: [projection { op: field(k), type: Int }], type: present(Int), through: absent } },
+              binary { op: gt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
+              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: param(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }) }, const { dest: %r6, value: int_literal(1) }, literal.materialize { dest: %r7, value: %r6, target: Int }, place.load { dest: %r5, place: place { root: $v0, root_type: present(struct_type { name: Ring, arguments: [] }), projections: [projection { op: field(k), type: Int }], type: present(Int), through: absent } }, binary { op: sub, dest: %r8, a: %r5, b: %r7, resolved: absent, raises: absent }, call { dest: %r9, func: "Ring.__init__", raises: absent, args: [%r8], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [param_arg { name: absent, value: present(%r4), expr: present(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }) }], receiver: absent, instantiated_args: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))], spread: absent }, var.store { var: $v2, src: %r9, binding_type: present(struct_type { name: Ring, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] }), in_place: false }, place.load { dest: %r10, place: place { root: $v2, root_type: present(struct_type { name: Ring, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: Ring, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } }, place.load { dest: %r11, place: place { root: $v1, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "Ring", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } }, binary { op: add, dest: %r12, a: %r10, b: %r11, resolved: present("Ring.__add__"), raises: absent }, drop.var { var: $v2 }], terminator: return { value: present(%r12) } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              const { dest: %r13, value: int_literal(7) },
+              literal.materialize { dest: %r14, value: %r13, target: Int }
+            ],
+            terminator: return { value: present(%r14) }
+          }
+        ]
+      },
+      fn {
+        name: "Ring.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, k],
+        params: 2,
+        param_types: [struct_type { name: Ring, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Ring, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }],
+        removed_params: [param_id { owner: "Ring", slot: 0 }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy },
+              place.store { place: place { root: $v0, root_type: present(struct_type { name: Ring, arguments: [] }), projections: [projection { op: field(k), type: Int }], type: present(Int), through: absent }, src: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: fwd_add,
+        registers: 3,
+        vars: 2,
+        var_names: [g, a],
+        params: 2,
+        param_types: [struct_type { name: Grid, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_add", slot: 0, name: n, type: meta_value(Int) }))] }, struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_add", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Grid, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_add", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v1, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_add", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Grid, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_add", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_add", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 619, end: 620, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 623, end: 624, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 619, end: 624, origin: absent }) }],
+        removed_params: [param_id { owner: "fwd_add", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "Grid.__add__", params: [param_id { owner: "Grid", slot: 0 }] }],
+        removed_args: [$v1],
+        callee_removed_args: [callee_args { callee: "Grid.__add__", args: [$v1] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Grid, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_add", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: Grid, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_add", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_add", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_add", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: present("Grid.__add__"), raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: fwd_sub,
+        registers: 3,
+        vars: 2,
+        var_names: [g, a],
+        params: 2,
+        param_types: [struct_type { name: Grid, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_sub", slot: 0, name: n, type: meta_value(Int) }))] }, struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_sub", slot: 0, name: n, type: meta_value(Int) }))] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Grid, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_sub", slot: 0, name: n, type: meta_value(Int) }))] } }, var_type { var: $v1, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_sub", slot: 0, name: n, type: meta_value(Int) }))] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Grid, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_sub", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r1, type: struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_sub", slot: 0, name: n, type: meta_value(Int) }))] } }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 700, end: 701, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 704, end: 705, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 700, end: 705, origin: absent }) }],
+        removed_params: [param_id { owner: "fwd_sub", slot: 0 }],
+        callee_removed_params: [callee_params { callee: "Grid.__sub__", params: [param_id { owner: "Grid", slot: 0 }] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Grid, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_sub", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: Grid, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_sub", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_sub", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [], type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fwd_sub", slot: 0, name: n, type: meta_value(Int) }))] }), through: absent } },
+              binary { op: sub, dest: %r2, a: %r0, b: %r1, resolved: present("Grid.__sub__"), raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      }
+  ]

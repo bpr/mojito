@@ -903,7 +903,9 @@ impl Prog {
     /// runtime type. Bounded generic calls carry an abstract checker symbol;
     /// retargeting its suffix preserves overload selection even when every
     /// overload has the same positional arity (for example `**kwargs` methods).
-    /// A selected instance of the receiver's own struct runs as named. Any
+    /// A selected instance of the receiver's own struct runs as named, one
+    /// spelled for its template too: a method generator that removed its
+    /// struct's parameters names no owner instance. Any
     /// other member the receiver's type reaches is the one its struct's
     /// member table names, as a conformance's witness table answers a
     /// requirement: under the selected method spelling, else by callable
@@ -919,8 +921,10 @@ impl Prog {
     ) -> Option<String> {
         let defined = resolved.filter(|selected| self.index_of(selected).is_some());
         if let Some(selected) = defined.filter(|selected| {
-            mojito_symbol::symbol::split_method_symbol(selected)
-                .is_some_and(|(owner, _)| owner == receiver_type)
+            mojito_symbol::symbol::split_method_symbol(selected).is_some_and(|(owner, _)| {
+                owner == receiver_type
+                    || owner == mojito_types::types::struct_template(receiver_type)
+            })
         }) {
             return Some(selected.to_string());
         }

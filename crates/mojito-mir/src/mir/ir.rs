@@ -464,6 +464,49 @@ pub fn instruction_param_args_mut(instruction: &mut MirInstr) -> Vec<&mut MirPar
     }
 }
 
+/// The method a binary operator `op` on a nominal left operand calls, its
+/// left operand the receiver; `in` and `not in`, which dispatch on the
+/// right operand, call none.
+pub fn operator_method(op: InfixOp) -> Option<&'static str> {
+    op.dunder()
+        .filter(|_| !matches!(op, InfixOp::In | InfixOp::NotIn))
+}
+
+/// The call of the operator method `method` on `recv` that a nominal
+/// operator, prefix, or builtin conversion is, passing `args` past the
+/// receiver, as upstream's parser spells `a + b` as `a.__add__(b)`.
+pub fn dunder_method_call(
+    dest: Reg,
+    recv: Reg,
+    method: &str,
+    resolved: Option<String>,
+    raises: Option<Raises>,
+    args: Vec<Reg>,
+) -> MirInstr {
+    let arg_places = vec![None; args.len()];
+    MirInstr::MethodCall {
+        dest,
+        recv,
+        method: method.to_string(),
+        resolved,
+        raises,
+        reference_result: None,
+        result_adapter: None,
+        args,
+        kwargs: Vec::new(),
+        recv_place: None,
+        recv_writes: false,
+        receiver_convention: None,
+        arg_places,
+        kwarg_places: Vec::new(),
+        capture_accesses: Vec::new(),
+        param_arg_regs: Vec::new(),
+        param_decls: Vec::new(),
+        instantiated_args: Vec::new(),
+        spread: None,
+    }
+}
+
 /// The checker-selected `__getitem__`/`__setitem__` call a subscript
 /// instruction carries, if any.
 pub fn instruction_subscript_call(instruction: &MirInstr) -> Option<&MirSubscriptCall> {

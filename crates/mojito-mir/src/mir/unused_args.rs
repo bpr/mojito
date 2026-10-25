@@ -12,11 +12,13 @@ use crate::mir::call_defaults::erase_unpassed_defaults;
 use crate::mir::param_uses::{erase_forward_chains, register_reads};
 use crate::mir::verify::instruction_result_regs;
 use crate::mir::{
-    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, Reg,
-    SlotParameter, instruction_regions, instruction_regions_mut, instruction_slots,
-    retire_parameters, table_member,
+    MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
+    MirSubscriptArg, MirSubscriptCall, Reg, SlotParameter, dunder_method_call, instruction_regions,
+    instruction_regions_mut, instruction_slots, instruction_subscript_call,
+    instruction_subscript_call_mut, operator_method, retire_parameters, table_member,
 };
 use mojito_ast::call::{ArgSlot, CallVariadics, MatchError, match_call_slots};
+use mojito_checked::checked::CheckedCallArgumentSource;
 use mojito_hir::hir::VarId;
 use mojito_types::origin::Origin;
 use mojito_types::types::{Ty, TyArg, TyKind, mentions};
@@ -374,6 +376,102 @@ impl CallOperands<'_> {
     }
 }
 
+/// Remove from a subscript's checked `call` the arguments that bound the
+/// `removed` slots of its accessor, so declared.
+///
+/// Those bound the operands at the `positional` and `keyword` indexes
+/// ([`removed_argument_operands`]). The contract lists one argument per declared parameter past the
+/// receiver, by position; the kept ones name their operands by the indexes
+/// the instruction keeps once [`shed_subscript_operands`] sheds the rest,
+/// as upstream's rewritten call of the accessor passes none for them.
+pub fn shed_subscript_contract(
+    call: &mut MirSubscriptCall,
+    declaration: &MirFunctionDeclaration,
+    removed: &[VarId],
+    positional: &BTreeSet<usize>,
+    keyword: &BTreeSet<usize>,
+) {
+    let positions: BTreeSet<usize> = removed
+        .iter()
+        .filter_map(|&slot| match declaration.slot_parameter(slot as usize) {
+            SlotParameter::Position(position) => Some(position),
+            _ => None,
+        })
+        .collect();
+    let mut position = 0;
+    call.arguments.retain(|_| {
+        let kept = !positions.contains(&position);
+        position += 1;
+        kept
+    });
+    for argument in &mut call.arguments {
+        argument.source = match argument.source {
+            CheckedCallArgumentSource::Positional(index) => {
+                CheckedCallArgumentSource::Positional(index - positional.range(..index).count())
+            }
+            CheckedCallArgumentSource::Keyword(index) => {
+                CheckedCallArgumentSource::Keyword(index - keyword.range(..index).count())
+            }
+            CheckedCallArgumentSource::Default => CheckedCallArgumentSource::Default,
+        };
+    }
+}
+
+/// Remove from a subscript `instruction` the operands at the `positional`
+/// and `keyword` indexes, with their places; gives their registers.
+///
+/// An `index.get` or a slice whose one operand goes becomes a
+/// multi-subscript with none, as upstream's rewritten call of the accessor
+/// passes none.
+pub fn shed_subscript_operands(
+    instruction: &mut MirInstr,
+    positional: &BTreeSet<usize>,
+    keyword: &BTreeSet<usize>,
+) -> Vec<Reg> {
+    let shed = subscript_operand_regs(instruction, positional, keyword);
+    match instruction {
+        MirInstr::Index {
+            dest,
+            base: object,
+            base_place: object_place,
+            call,
+            ..
+        }
+        | MirInstr::Slice {
+            dest,
+            object,
+            object_place,
+            call,
+            ..
+        } if positional.contains(&0) => {
+            let (dest, object) = (*dest, *object);
+            let (call, object_place) = (call.take(), object_place.take());
+            *instruction = MirInstr::MultiIndex {
+                dest,
+                object,
+                args: Vec::new(),
+                object_place,
+                arg_places: Vec::new(),
+                kwargs: Vec::new(),
+                kwarg_places: Vec::new(),
+                call,
+            };
+        }
+        MirInstr::MultiIndex {
+            args,
+            arg_places,
+            kwargs,
+            kwarg_places,
+            ..
+        } => {
+            shed_indexes(args, arg_places, positional);
+            shed_indexes(kwargs, kwarg_places, keyword);
+        }
+        _ => {}
+    }
+    shed
+}
+
 /// The members a backend runs from a value's type with every argument its
 /// protocol passes, beside the member table's ([`table_member`]): an
 /// iteration's `__iter__` and `__next__`, and the conversions and
@@ -575,8 +673,9 @@ fn argument_forwards_view<'a>(
     })
 }
 
-/// Whether `blocks` or their regions hold a direct call, or a resolved
-/// method call, of a callee `removed` names arguments of.
+/// Whether `blocks` or their regions hold a direct call, a resolved method
+/// call, a resolved operator, or a subscript read of a callee `removed`
+/// names arguments of.
 fn calls_removing<'a>(blocks: &[MirBlock], removed: &dyn Fn(&str) -> Option<&'a [VarId]>) -> bool {
     blocks
         .iter()
@@ -585,7 +684,11 @@ fn calls_removing<'a>(blocks: &[MirBlock], removed: &dyn Fn(&str) -> Option<&'a 
             let target = match instruction {
                 MirInstr::Call { func, .. } => Some(func.0.as_str()),
                 MirInstr::MethodCall { resolved, .. } => resolved.as_deref(),
-                _ => None,
+                MirInstr::BinOp { op, resolved, .. } if operator_method(*op).is_some() => {
+                    resolved.as_deref()
+                }
+                MirInstr::MultiSet { .. } => None,
+                _ => instruction_subscript_call(instruction).map(|call| call.target.as_str()),
             };
             target
                 .and_then(removed)
@@ -619,6 +722,14 @@ impl Receivers<'_> {
 /// of its callee's removed arguments or, by `operands`, only their places,
 /// adding each callee that lost one to `discounted` and each operand's
 /// register to `dropped`.
+///
+/// A resolved operator is the call of the dunder it names, the receiver
+/// its left operand, and a subscript read the call of its accessor: the
+/// view that drops operands holds the call the elaborator rewrites each
+/// to, the operator as the dunder's method call and the subscript shed of
+/// the operands and contract arguments the accessor's removed arguments
+/// bound, while the view that keeps them leaves each instruction for the
+/// elaborator to rewrite.
 fn drop_removed_operands<'a>(
     blocks: &mut [MirBlock],
     receivers: &mut Receivers<'_>,
@@ -644,6 +755,84 @@ fn drop_removed_operands<'a>(
                 discounted,
                 dropped,
             );
+        }
+        if let MirInstr::BinOp {
+            op,
+            dest,
+            a,
+            b,
+            resolved: Some(target),
+            raises,
+        } = instruction
+            && let Some(method) = operator_method(*op)
+            && let Some((slots, declaration)) = callee(target)
+        {
+            if operands == Operands::Drop {
+                *instruction = dunder_method_call(
+                    *dest,
+                    *a,
+                    method,
+                    Some(target.clone()),
+                    raises.take(),
+                    vec![*b],
+                );
+            } else {
+                let mut changed = removed_argument_operands(declaration, slots, 1, &[])
+                    .is_ok_and(|(positional, _)| positional.contains(&0));
+                if changed {
+                    dropped.insert(b.0);
+                }
+                if declaration.has_receiver && slots.contains(&0) {
+                    changed = true;
+                    let fresh = receivers.fresh(*a);
+                    *a = fresh;
+                    dropped.insert(fresh.0);
+                }
+                if changed {
+                    discounted.insert(target.clone());
+                }
+                continue;
+            }
+        }
+        if !matches!(instruction, MirInstr::MultiSet { .. })
+            && let Some(call) = instruction_subscript_call(instruction)
+            && !call.arguments.is_empty()
+            && let Some((slots, declaration)) = callee(&call.target)
+        {
+            let target = call.target.clone();
+            let (count, keywords): (usize, Vec<&str>) = match &*instruction {
+                MirInstr::MultiIndex { args, kwargs, .. } => (
+                    args.len(),
+                    kwargs.iter().map(|(name, _)| name.as_str()).collect(),
+                ),
+                _ => (1, Vec::new()),
+            };
+            let Ok((positional, keyword)) =
+                removed_argument_operands(declaration, slots, count, &keywords)
+            else {
+                continue;
+            };
+            if positional.is_empty() && keyword.is_empty() {
+                continue;
+            }
+            match operands {
+                Operands::Drop => {
+                    if let Some(call) = instruction_subscript_call_mut(instruction) {
+                        shed_subscript_contract(call, declaration, slots, &positional, &keyword);
+                    }
+                    let shed = shed_subscript_operands(instruction, &positional, &keyword);
+                    dropped.extend(shed.into_iter().map(|reg| reg.0));
+                }
+                // The elaborator sheds the operands and the contract's
+                // arguments as it names the accessor's generator.
+                Operands::Keep => {
+                    let kept = subscript_operand_regs(instruction, &positional, &keyword);
+                    dropped.extend(kept.into_iter().map(|reg| reg.0));
+                    clear_subscript_places(instruction, &positional, &keyword);
+                }
+            }
+            discounted.insert(target);
+            continue;
         }
         match instruction {
             MirInstr::Call {
@@ -708,6 +897,84 @@ fn drop_removed_operands<'a>(
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// The registers of a subscript `instruction`'s operands at the
+/// `positional` and `keyword` indexes: an `index.get`'s index, a slice's
+/// bounds, a multi-subscript's indexes and bounds.
+fn subscript_operand_regs(
+    instruction: &MirInstr,
+    positional: &BTreeSet<usize>,
+    keyword: &BTreeSet<usize>,
+) -> Vec<Reg> {
+    let argument = |argument: &MirSubscriptArg| match argument {
+        MirSubscriptArg::Index(reg) => vec![*reg],
+        MirSubscriptArg::Slice {
+            lower, upper, step, ..
+        } => [*lower, *upper, *step].into_iter().flatten().collect(),
+    };
+    match instruction {
+        MirInstr::Index { index, .. } if positional.contains(&0) => vec![*index],
+        MirInstr::Slice {
+            lower, upper, step, ..
+        } if positional.contains(&0) => [*lower, *upper, *step].into_iter().flatten().collect(),
+        MirInstr::MultiIndex { args, kwargs, .. } => positional
+            .iter()
+            .filter_map(|&index| args.get(index))
+            .chain(
+                keyword
+                    .iter()
+                    .filter_map(|&index| kwargs.get(index).map(|(_, argument)| argument)),
+            )
+            .flat_map(argument)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Clear the places of a subscript `instruction`'s operands at the
+/// `positional` and `keyword` indexes.
+fn clear_subscript_places(
+    instruction: &mut MirInstr,
+    positional: &BTreeSet<usize>,
+    keyword: &BTreeSet<usize>,
+) {
+    let clear = |places: &mut Vec<Option<MirPlace>>, indexes: &BTreeSet<usize>| {
+        for &index in indexes {
+            if let Some(place) = places.get_mut(index) {
+                *place = None;
+            }
+        }
+    };
+    match instruction {
+        MirInstr::Index { index_place, .. } if positional.contains(&0) => *index_place = None,
+        MirInstr::Slice { arg_places, .. } => clear(arg_places, positional),
+        MirInstr::MultiIndex {
+            arg_places,
+            kwarg_places,
+            ..
+        } => {
+            clear(arg_places, positional);
+            clear(kwarg_places, keyword);
+        }
+        _ => {}
+    }
+}
+
+/// Remove from `operands`, and their `places`, the `indexes`.
+fn shed_indexes<T>(
+    operands: &mut Vec<T>,
+    places: &mut Vec<Option<MirPlace>>,
+    indexes: &BTreeSet<usize>,
+) {
+    for &index in indexes.iter().rev() {
+        if index < operands.len() {
+            operands.remove(index);
+        }
+        if index < places.len() {
+            places.remove(index);
         }
     }
 }

@@ -254,6 +254,7 @@ assets/ok/dtype_runtime_value.mojo	main	exe-differential	sanitized
 assets/ok/dtype_struct_param.mojo	main	exe-differential	sanitized
 assets/ok/dtype_value_param.mojo	main	exe-differential	sanitized
 assets/ok/dunder_contains.mojo	main	exe-differential	sanitized
+assets/ok/dunder_forwarded_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/dunder_index.mojo	main	exe-differential	sanitized
 assets/ok/dunder_setitem.mojo	main	exe-differential	sanitized
 assets/ok/dunder_unused_argument_instances.mojo	main	exe-differential	sanitized

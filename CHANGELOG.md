@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `remove-unused-params` reads an operator on a struct as the call of its
+  dunder and a subscript as the call of its accessor, as upstream's
+  parser emits them (R1110): an argument a body passes only to such a
+  dunder's removed argument is unused in turn, so `fwd[n](g: Grid[n],
+  a: Arr[n])` returning `g + a` or `g[a]` loses `a` and `n` and has one
+  instance, as on the pin, and a dunder that passes its operand only back
+  to itself through `+` or a subscript loses it too. The VM now runs a
+  selected method instance spelled off its struct's template, so `a + g`
+  calls a reduced `__radd__` rather than the `__add__` its member table
+  records.
+
 - `canonicalize` folds a comparison of one int-like register with
   itself, as upstream's `foldSIMDCmp` folds `cmp(x, x)` (R1076): `lt`,
   `gt`, and `ne` to `False`, `le`, `ge`, and `eq` to `True`, splat across

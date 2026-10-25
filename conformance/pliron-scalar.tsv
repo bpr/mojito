@@ -254,6 +254,7 @@ assets/ok/dtype_runtime_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_struct_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_value_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_contains.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dunder_forwarded_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_index.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_setitem.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dunder_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
