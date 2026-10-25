@@ -1049,14 +1049,19 @@ Notes:
   overload; over a capitalized type name (`Origin[mut=True]`,
   `SIMD[width=4]`), named brackets remain compile-time parameter
   application. A named argument whose value is a slice (`s[byte=a:b]`,
-  `s[byte=:b]`, `s[byte=::2]`) is a **keyword slice**: the slice becomes a
-  `ContiguousSlice`/`StridedSlice` descriptor bound to a keyword-only
-  `__getitem__` parameter, read-only like every nominal keyword subscript.
-  A slice preserves omitted bounds; a step value selects `StridedSlice` and its
-  absence `ContiguousSlice`, a second colon with no step changing nothing, as
-  upstream's `__slice_literal__` rule has it, and either binds a `Slice`
-  parameter. The two kinds are import-only (`from std.builtin.builtin_slice
-  import ContiguousSlice, StridedSlice`); `Slice` is a prelude name. Mixed/multiple arguments dispatch through
+  `s[byte=:b]`, `s[byte=::2]`) is a **keyword slice**: the slice binds a
+  keyword-only `__getitem__` parameter, read-only like every nominal keyword
+  subscript. A slice literal is upstream's `T(lower, upper, stride,
+  __slice_literal__=None)` for a parameter of type `T`, an omitted operand
+  passing `None` (a second colon with no step changes nothing): it binds
+  every parameter type with a `__slice_literal__` constructor accepting its
+  operands — `ContiguousSlice` for an omitted or `None` stride,
+  `StridedSlice` for an `Int` one, `Slice` for any, and a user struct
+  declaring one — at one cost, so two such overloads are ambiguous, and an
+  inferred parameter takes the literal's default type (`ContiguousSlice`
+  for an omitted or `None` stride, `Slice` otherwise). The two kinds are
+  import-only library structs (`from std.builtin.builtin_slice import
+  ContiguousSlice, StridedSlice`); `Slice` is a prelude name. Mixed/multiple arguments dispatch through
   variadic `__getitem__`/`__setitem__`. Nominal List slicing receives the same
   checked descriptor through its ordinary `__getitem__` as any other user
   receiver; it is not a VM collection shortcut. Lists, tuples, SIMD values,
@@ -1423,9 +1428,9 @@ List is not an implicit copy.
 - **Index read**: `xs[i]` (`i` an `Int`, in `0..len`) → the element (type `T`). Negative
   indices are not supported yet; a runtime out-of-range index is an error.
 - **Slice read**: `xs[start:stop]` or `xs[start:stop:step]` preserves omitted,
-  negative, and strided bounds in a `ContiguousSlice` (no step value) or
-  `StridedSlice` (a step value) descriptor and invokes List's ordinary checked
-  `__getitem__`; the contiguous overload returns a `Span` over the list, the
+  negative, and strided bounds in the `ContiguousSlice` (no step value, or
+  `None`) or `StridedSlice` (an `Int` step) its literal constructs and invokes
+  List's ordinary checked `__getitem__`; the contiguous overload returns a `Span` over the list, the
   strided one an eager `List[T]` copy. The contiguous overload is
   strict — a negative, out-of-range, or reversed bound aborts (an uncatchable
   trap) instead of normalizing; only strided slicing keeps

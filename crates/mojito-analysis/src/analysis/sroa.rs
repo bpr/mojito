@@ -348,14 +348,7 @@ fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fie
     let TyKind::Struct(name, _) = ty.kind() else {
         return None;
     };
-    let descriptor = [
-        SliceKind::Slice,
-        SliceKind::ContiguousSlice,
-        SliceKind::StridedSlice,
-    ]
-    .into_iter()
-    .any(|kind| kind.type_name() == name);
-    if descriptor {
+    if name == SliceKind::Slice.type_name() {
         return None;
     }
     let fields = declarations.field_types(ty)?;

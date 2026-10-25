@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1421**.
+Next free ID: **R1423**.
 
 ## Ordered Work
 
@@ -3735,22 +3735,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     matching against a struct's `@staticmethod`, and `T.make()` dispatch
     over a bound binder.
   - Found while landing R914 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1159 A `None` slice bound or step is rejected**
-
-  Problem: `xs[None:3]` and `xs[1:5:None]` are rejected, where the pin
-  treats `None` as an absent bound and prints `[0, 1, 2]` and
-  `[1, 2, 3, 4]`.
-  - `xs[None:3]` is a parse error ("a slice bound must be an expression").
-  - `xs[1:5:None]` fails the check ("type mismatch for slice bound:
-    expected Int, found None", `check_slice_bounds`).
-  - Upstream's literal passes each bound to an `Optional[Int]` or
-    `NoneType` constructor parameter, so a `None` step selects
-    `ContiguousSlice`.
-  - Probe: `conformance/probes/slice_none_bound.mojo`.
-  - Found while landing R192 (2026-10-19).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8045,6 +8029,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     name as it is.
   - Library types leak the same way (`__module$list$List`, and R68's
     `__module$hasher$default_hasher`).
+  - Probe: the library `ContiguousSlice` and `StridedSlice` print as
+    `__module$std$builtin$builtin$slice$ContiguousSlice` in every
+    diagnostic (`assets/type_error/contiguous_slice_not_equatable.mojo`,
+    `conformance/fixtures/slice_kind_does_not_widen.mojo`,
+    `conformance/fixtures/strided_slice_has_no_bounds.mojo`).
   - The lever: diagnostics spell a type through `unqualified_type_name`,
     as runtime type names already do.
   - Found while landing R605 (2026-10-10).
@@ -9631,29 +9620,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1157 `ContiguousSlice` and `StridedSlice` are compiler intrinsics,
-  where upstream declares them as library structs**
-
-  Problem: `ContiguousSlice(1, 3, None)`, `StridedSlice(1, 5, 2)`, and
-  `var t: StridedSlice = Slice(1, 4)` are rejected ("Undefined variable"),
-  where the pin runs them.
-  - Upstream declares both in `builtin_slice.mojo`, each with a
-    `__slice_literal__` constructor a slice literal calls.
-  - Mojito's kinds are `TyKind::Struct` names the checker resolves from
-    their linked spellings (`SliceKind::of_source_name`), with no
-    declaration behind them.
-  - Port both as library structs in `stdlib/std/builtin/builtin_slice.mojo`,
-    and bind a literal through the parameter type's `__slice_literal__`
-    constructor in place of `slice_literal_binds`.
-  - Probe: `conformance/probes/slice_kind_construction.mojo`.
-  - Found while landing R192 (2026-10-19).
-  - Probe: a `ContiguousSlice` or `StridedSlice` parameter is copied whole
-    into a register to read `slice.start` (`String.__getitem__`'s
-    `ContiguousSlice` overloads), and a `drop.reg` destroys the copy; as
-    library structs they are read in place.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1158 `Slice` is a compiler intrinsic, and MIR carries a descriptor
   `SliceKind`**
 
@@ -9664,10 +9630,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Retire the descriptor `SliceKind` in MIR, the VM's descriptor value,
     and the Pliron descriptor lowering, so a slice is an ordinary struct
     value.
-  - Natively `String(Slice(1, 3))` writes the raw layout the elaborator
-    gives the intrinsic (`Slice(start=1, end=3, step=0, flags=3)`), where
-    the VM and the pin write `Slice(1, 3, None)`.
-  - Probe: `conformance/probes/slice_string_native.mojo`.
+  - `MirInstr::Slice` and `MirSubscriptArg::Slice` now carry only
+    `SliceKind::Slice`: a literal bound to a library type is already its
+    `__slice_literal__` constructor's call.
+  - Probe: a literal bound to a `Slice` parameter takes only `Int`
+    operands, which the descriptor is built from, so `c[1:3:None]`,
+    `c[None:3]`, and `c[o:]` with `o: Optional[Int]` are rejected over
+    `__getitem__(self, s: Slice)`, where the pin's
+    `Slice.__init__(Optional[Int], Optional[Int], Optional[Int],
+    __slice_literal__)` accepts them.
   - Probe: `sroa` refuses a descriptor slot (`splittable_type`,
     `crates/mojito-analysis/src/analysis/sroa.rs`), where upstream's `SROA`
     splits a `Slice` like any struct; splitting one made
@@ -9680,6 +9651,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     slots.
   - Depends on R1157, which ports the two kinds first.
   - Model: Fable, Planned.
+
+- [ ] **R1422 A slice literal is not an expression node**
+
+  Mojito's parser spreads a slice literal over `ExprKind::Slice`,
+  `SubscriptArg::Slice`, and `SubscriptArg::KeywordSlice`, where upstream's
+  `SliceLiteralNode` is one expression, an operand of its subscript, that
+  becomes `T(lower, upper, stride, __slice_literal__=None)` once its
+  parameter type is known (`SliceLiteralNode::emitIR`).
+  - So the checker stands a literal in with a checker-only `ExprKind::None`
+    argument keyed by a derived syntax id, and keeps its operands in a side
+    table (`Checker::slice_literals`, `synthetic_slice_descriptor`).
+  - MIR rebuilds the constructor call from the recorded
+    `CheckedSliceLiteral` (`slice_literal_argument`), where upstream's call
+    is an ordinary checked node.
+  - The lever: one `ExprKind::SliceLiteral { lower, upper, step }` operand,
+    checked against its expected type as an initializer, so the subscript
+    forms keep plain `Index` and keyword arguments.
+  - Depends on R1371, which makes every bracket an index of expressions.
+  - Model: Fable, Not Planned.
 
 - [ ] **R705 `Equatable` and `Comparable` are compiler-known, where
   upstream's library declares them**
@@ -11827,6 +11817,22 @@ residue found inside a task moves to the task that owns its fix.
     delete it.
   - Done when every entry listed here is deleted, rewritten against today's
     code, or merged.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1421 `Optional` stores its value in a heap allocation, where
+  upstream's holds it inline**
+
+  Mojito's `Optional[T]` is an `UnsafePointer[T]` to one heap slot plus a
+  size, allocated even when empty, where upstream's is a
+  `Variant[_NoneType, T]` held inline.
+  - Every `Optional` costs an allocation and a free, and a struct holding
+    one is memory-only with a destructor.
+  - Probe: each `xs[a:b]` or `s[byte=a:b]` builds a `ContiguousSlice`,
+    whose two `Optional[Int]` bounds allocate twice per subscript
+    (`MOJITO_RT_DBG_POINTERS` counts them natively).
+  - The lever: hold the payload in the bundled `Variant` storage, as
+    upstream's `_type` does.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

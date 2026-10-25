@@ -683,20 +683,6 @@ fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
         .map(|(_, names)| *names)
 }
 
-/// The import-only builtin exports of the module at `canon`, each with its
-/// qualified target ([`QUALIFIED_BUILTIN_EXPORTS`]).
-fn qualified_builtin_exports(canon: &Path) -> impl Iterator<Item = (&'static str, String)> {
-    let normalized = canon.to_string_lossy().replace('\\', "/");
-    QUALIFIED_BUILTIN_EXPORTS
-        .iter()
-        .filter(move |(suffix, _, _)| normalized.ends_with(suffix))
-        .flat_map(|(_, module, names)| {
-            names
-                .iter()
-                .map(move |name| (*name, qualified(module, name)))
-        })
-}
-
 fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
@@ -977,11 +963,6 @@ impl<'p> Linker<'p> {
                     .iter()
                     .flat_map(|(_, names)| names.iter().copied()),
             )
-            .chain(
-                QUALIFIED_BUILTIN_EXPORTS
-                    .iter()
-                    .flat_map(|(_, _, names)| names.iter().copied()),
-            )
             .chain(PRELUDE_EXPORTS.iter().copied())
             .collect();
         let own: HashMap<String, String> = body
@@ -1127,9 +1108,6 @@ impl<'p> Linker<'p> {
                     .entry((*name).to_string())
                     .or_insert_with(|| (*name).to_string());
             }
-        }
-        for (name, target) in qualified_builtin_exports(canon) {
-            exports.entry(name.to_string()).or_insert(target);
         }
         let visible_namespaces: HashMap<_, _> = namespaces
             .into_iter()
@@ -1748,17 +1726,6 @@ fn module_path_under(mut base: PathBuf, path: &[String]) -> PathBuf {
         base.with_extension("mojo")
     }
 }
-
-/// Each canonical module home's import-only builtin exports, by path
-/// suffix, with the module whose namespace qualifies them: names the
-/// prelude does not export, so only an import binds them, as upstream's
-/// prelude exports `Slice` but not the two kinds
-/// (`mojito_types::types::SliceKind::of_source_name`).
-const QUALIFIED_BUILTIN_EXPORTS: &[(&str, &str, &[&str])] = &[(
-    "std/builtin/builtin_slice.mojo",
-    "std.builtin.builtin_slice",
-    &["ContiguousSlice", "StridedSlice"],
-)];
 
 /// Each canonical module home's builtin exports, by path suffix
 /// ([`builtin_module_exports`]).

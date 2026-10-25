@@ -507,10 +507,7 @@ impl Checker {
         {
             return true;
         }
-        if matches!(ty.kind(), TyKind::Struct(name, args)
-            if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
-                && args.is_empty())
-        {
+        if matches!(ty.kind(), TyKind::Struct(name, args) if name == "Slice" && args.is_empty()) {
             return true;
         }
         if matches!(ty.kind(), TyKind::Struct(..) | TyKind::Param { .. })

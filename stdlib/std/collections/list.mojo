@@ -355,10 +355,9 @@ struct List[T: AnyType](
     # Strict contiguous slice (current Mojo bounds): negative, out-of-range,
     # or reversed bounds abort instead of normalizing, and the result is a
     # sub-view borrowing the list's owned elements, not a copy. Strided
-    # slicing (and a `Slice`-typed descriptor value, which widens to
-    # `StridedSlice` like upstream's implicit conversion) keeps `indices()`
-    # normalization and copies through the overload above; omitted bounds
-    # default to the full extent.
+    # slicing (and a `Slice` value, which converts to `StridedSlice` through
+    # its `@implicit` constructor) keeps `indices()` normalization and copies
+    # through the overload above; omitted bounds default to the full extent.
     @__unsafe_nested_origins_read_only
     @inline(.always)
     def __getitem__(

@@ -764,7 +764,7 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
                     MirInstr::Slice {
                         dest: Reg(1),
                         object: Reg(0),
-                        kind: mojito::types::SliceKind::ContiguousSlice,
+                        kind: mojito::types::SliceKind::Slice,
                         lower: None,
                         upper: None,
                         step: None,

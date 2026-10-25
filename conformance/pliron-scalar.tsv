@@ -841,6 +841,10 @@ assets/ok/sized_generic_views.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sized_library_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/slice.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/slice_descriptor_protocols.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/slice_kind_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/slice_literal_constructor_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/slice_none_bound.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/slice_string_native.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_generic_free_def_view.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_implicit_from_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/span_iteration.mojo	-	ineligible	no-scalar-entry-shape

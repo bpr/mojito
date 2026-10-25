@@ -1076,11 +1076,9 @@ impl Checker {
         if name == "NoneType" && args.is_empty() {
             return Ok(Some((Ty::none(), Vec::new())));
         }
-        if let Some(kind) = mojito_types::types::SliceKind::of_source_name(name)
-            && args.is_empty()
-        {
+        if name == "Slice" && args.is_empty() {
             return Ok(Some((
-                TyKind::Struct(kind.type_name().to_string(), Vec::new()).into(),
+                TyKind::Struct("Slice".to_string(), Vec::new()).into(),
                 Vec::new(),
             )));
         }

@@ -60,10 +60,10 @@ impl Checker {
             return self.infer_simd_method(site, dtype, width).map(Some);
         }
         if let TyKind::Struct(kind, targs) = obj_ty.kind()
-            && matches!(kind.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
+            && kind == "Slice"
             && targs.is_empty()
         {
-            return self.infer_slice_descriptor_method(site, kind).map(Some);
+            return self.infer_slice_descriptor_method(site).map(Some);
         }
         // Raw-seam compatibility only: with the linked stdlib present the
         // nominal prelude `Optional` owns its full method surface below.
@@ -97,8 +97,7 @@ impl Checker {
                     if !(targs.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name))
             )
             && (matches!(obj_ty.kind(), TyKind::Struct(name, args)
-                    if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
-                        && args.is_empty())
+                    if name == "Slice" && args.is_empty())
                 || self.conforms_to(obj_ty, "Writable"))
         {
             return self.infer_inverted_write(site).map(Some);
@@ -231,12 +230,8 @@ impl Checker {
         }
     }
 
-    /// A `Slice`/`ContiguousSlice`/`StridedSlice` descriptor's methods.
-    fn infer_slice_descriptor_method(
-        &self,
-        site: MethodCallSite<'_>,
-        kind: &str,
-    ) -> Result<Ty, TypeError> {
+    /// The compiler-provided `Slice` descriptor's methods.
+    fn infer_slice_descriptor_method(&self, site: MethodCallSite<'_>) -> Result<Ty, TypeError> {
         let MethodCallSite {
             span,
             object,
@@ -251,8 +246,8 @@ impl Checker {
             ..
         } = call;
         reject_kwargs(kwargs)?;
-        // `Slice.__eq__`/`__ne__` (only `Slice` is Equatable upstream).
-        if matches!(method, "__eq__" | "__ne__") && kind == "Slice" {
+        // `Slice.__eq__`/`__ne__`.
+        if matches!(method, "__eq__" | "__ne__") {
             let types = self.builtin_args(&format!("Slice.{method}"), 1, args)?;
             if !matches!((types[0]).kind(), TyKind::Struct(name, args) if name == "Slice" && args.is_empty())
             {
@@ -303,11 +298,6 @@ impl Checker {
                 found: types[0].to_string(),
                 context: "Slice.indices length".to_string(),
             });
-        }
-        // Upstream `ContiguousSlice.indices` yields `(start, end)`; the
-        // strided family keeps the three-element normalization.
-        if kind == "ContiguousSlice" {
-            return Ok(mojito_types::types::tuple_type(vec![Ty::int(), Ty::int()]));
         }
         Ok(mojito_types::types::tuple_type(vec![
             Ty::int(),

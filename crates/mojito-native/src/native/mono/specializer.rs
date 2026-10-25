@@ -3024,7 +3024,7 @@ impl<'a> Specializer<'a> {
                         // `Optional` through that struct's constructors,
                         // which it names.
                         if matches!(peel_refs(receiver).kind(), TyKind::Struct(name, _)
-                            if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice"))
+                            if name == "Slice")
                             && matches!(field.as_str(), "start" | "end" | "step")
                         {
                             if let Some(bound) = function.reg_types.get(&dest.0).cloned() {
@@ -3274,11 +3274,11 @@ impl<'a> Specializer<'a> {
             let TyKind::Struct(name, _) = ty.kind() else {
                 continue;
             };
-            // The checker-virtual slice descriptors have no source template;
-            // give them the backend's raw layout (three i64 bounds plus a
-            // presence bitmask — the VM's `Value::Slice` `Option<i64>` fields)
-            // so descriptor-typed parameters and locals lay out.
-            if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") {
+            // The compiler-provided `Slice` has no source template; give it
+            // the backend's raw layout (three i64 bounds plus a presence
+            // bitmask — the VM's `Value::Slice` `Option<i64>` fields) so
+            // descriptor-typed parameters and locals lay out.
+            if name == "Slice" {
                 if !self.output_struct_positions.contains_key(name) {
                     self.declare_output_struct(MirStructDeclaration {
                         name: name.clone(),

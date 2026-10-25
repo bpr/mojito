@@ -3,7 +3,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{
-    CheckedExpr, CheckedNodeId, CheckedSubscriptArg, SemanticAdjustment,
+    CheckedExpr, CheckedNodeId, CheckedSliceLiteral, CheckedSubscriptArg, SemanticAdjustment,
 };
 use mojito_types::types::TyKind;
 
@@ -349,29 +349,119 @@ impl<'a> Flatten<'a> {
         let lower = lower.map(|bound| self.expr(bound));
         let upper = upper.map(|bound| self.expr(bound));
         let step = step.map(|bound| self.expr(bound));
-        let call = self.subscript_call_contract(e, &[]);
+        let descriptor = slice_descriptors(e.checked)
+            .and_then(|descriptors| descriptors.first().cloned().flatten())
+            .expect("checked slice has a selected descriptor");
+        let argument = self.slice_literal_argument(e, &descriptor, [lower, upper, step]);
         // No intrinsic slice channel remains: StringLiteral
         // positional slicing was removed at the audited head, so
         // every checked slice routes through a nominal call.
-        let intrinsic = None;
-        let kind = slice_descriptors(e.checked)
-            .and_then(|descriptors| descriptors.first().copied().flatten())
-            .expect("checked slice has a selected descriptor");
+        let call = self.subscript_call_contract(e, std::slice::from_ref(&argument));
         let d = self.fresh(e.location(), None);
         self.emit_interior_invalidations(e, None);
-        self.emit(MirInstr::Slice {
-            dest: d,
-            object: obj,
-            kind,
-            lower,
-            upper,
-            step,
-            object_place: object_place.map(Box::new),
-            arg_places: vec![None],
-            call: call.map(Box::new),
-            intrinsic,
-        });
+        self.emit_slice_read(d, obj, argument, object_place, call);
         d
+    }
+
+    /// The subscript argument slice literal `descriptor` of subscript `node`
+    /// passes, its written operands (lower, upper, stride) already lowered
+    /// to `operands`: the compiler-built `Slice` descriptor, or the value its
+    /// `__slice_literal__` constructor call returns, upstream's
+    /// `T(lower, upper, stride, __slice_literal__=None)` with `None` for an
+    /// omitted operand.
+    pub(in crate::mir) fn slice_literal_argument(
+        &mut self,
+        node: Node<'a>,
+        descriptor: &CheckedSliceLiteral,
+        operands: [Option<Reg>; 3],
+    ) -> MirSubscriptArg {
+        let [lower, upper, step] = operands;
+        let construction = match descriptor {
+            CheckedSliceLiteral::Descriptor(kind) => {
+                return MirSubscriptArg::Slice {
+                    kind: *kind,
+                    lower,
+                    upper,
+                    step,
+                };
+            }
+            CheckedSliceLiteral::Construct(construction) => construction,
+        };
+        let args = operands
+            .into_iter()
+            .zip(&construction.omitted)
+            .map(|(written, omitted)| {
+                written.unwrap_or_else(|| {
+                    let none = self.none_register(node);
+                    match omitted
+                        .as_ref()
+                        .and_then(|omitted| omitted.conversion.as_ref())
+                    {
+                        Some((constructor, ty)) => self.constructor_call(
+                            node,
+                            constructor,
+                            ty.clone(),
+                            vec![none],
+                            Vec::new(),
+                        ),
+                        None => none,
+                    }
+                })
+            })
+            .collect();
+        let marker = self.none_register(node);
+        MirSubscriptArg::Index(self.constructor_call(
+            node,
+            &construction.constructor,
+            construction.target.clone(),
+            args,
+            vec![("__slice_literal__".to_string(), marker)],
+        ))
+    }
+
+    /// Emit the read of `object` subscripted by the one slice argument
+    /// `argument` into `dest`: a compiler-built descriptor's `slice.get`, or
+    /// a constructed slice value passed like any index.
+    pub(in crate::mir) fn emit_slice_read(
+        &mut self,
+        dest: Reg,
+        object: Reg,
+        argument: MirSubscriptArg,
+        object_place: Option<MirPlace>,
+        call: Option<MirSubscriptCall>,
+    ) {
+        match argument {
+            MirSubscriptArg::Slice {
+                kind,
+                lower,
+                upper,
+                step,
+            } => self.emit(MirInstr::Slice {
+                dest,
+                object,
+                kind,
+                lower,
+                upper,
+                step,
+                object_place: object_place.map(Box::new),
+                arg_places: vec![None],
+                call: call.map(Box::new),
+                intrinsic: None,
+            }),
+            index @ MirSubscriptArg::Index(_) => {
+                self.record_call(dest, call.as_ref().map(|call| call.target.clone()), 0);
+                self.emit(MirInstr::MultiIndex {
+                    dest,
+                    object,
+                    args: vec![index],
+                    object_place: object_place.map(Box::new),
+                    arg_places: vec![None],
+                    kwargs: Vec::new(),
+                    kwarg_places: Vec::new(),
+                    call: call.map(Box::new),
+                });
+            }
+        }
     }
 
     /// Read multi-subscript node `e`, whose arguments are `args`.
@@ -409,7 +499,7 @@ impl<'a> Flatten<'a> {
         let mut kwarg_places = Vec::new();
         let lowered_args: Vec<_> = args
             .iter()
-            .zip(descriptors.iter().copied())
+            .zip(descriptors.iter().cloned())
             .filter_map(|(argument, descriptor)| match argument {
                 CheckedSubscriptArg::Keyword { name, value } => {
                     debug_assert!(descriptor.is_none());
@@ -426,15 +516,13 @@ impl<'a> Flatten<'a> {
                     ..
                 } => {
                     kwarg_places.push(None);
-                    kwargs.push((
-                        name.clone(),
-                        MirSubscriptArg::Slice {
-                            kind: descriptor.expect("keyword slice argument has descriptor kind"),
-                            lower: bound(self, *lower),
-                            upper: bound(self, *upper),
-                            step: bound(self, *step),
-                        },
-                    ));
+                    let descriptor =
+                        descriptor.expect("keyword slice argument has a bound literal");
+                    let operands = [bound(self, *lower), bound(self, *upper), bound(self, *step)];
+                    let argument = self.outside_call_setup(|this| {
+                        this.slice_literal_argument(e, &descriptor, operands)
+                    });
+                    kwargs.push((name.clone(), argument));
                     None
                 }
                 CheckedSubscriptArg::Index(value) => {
@@ -447,12 +535,11 @@ impl<'a> Flatten<'a> {
                     lower, upper, step, ..
                 } => {
                     arg_places.push(None);
-                    Some(MirSubscriptArg::Slice {
-                        kind: descriptor.expect("slice argument has descriptor kind"),
-                        lower: bound(self, *lower),
-                        upper: bound(self, *upper),
-                        step: bound(self, *step),
-                    })
+                    let descriptor = descriptor.expect("slice argument has a bound literal");
+                    let operands = [bound(self, *lower), bound(self, *upper), bound(self, *step)];
+                    Some(self.outside_call_setup(|this| {
+                        this.slice_literal_argument(e, &descriptor, operands)
+                    }))
                 }
             })
             .collect();
@@ -647,6 +734,16 @@ impl<'a> Flatten<'a> {
         }
         dest
     }
+
+    /// A fresh register holding `None`, at `node`.
+    fn none_register(&mut self, node: Node<'a>) -> Reg {
+        let none = self.fresh_typed(node.location(), None, Ty::none());
+        self.emit(MirInstr::Const {
+            dest: none,
+            k: Const::None,
+        });
+        none
+    }
 }
 
 /// Whether `object` is a pointer, whose subscript reads its pointee.
@@ -686,7 +783,7 @@ fn variant_project(node: &CheckedExpr) -> Option<(mojito_types::types::VariantIn
 }
 
 /// The slice descriptors multi-subscript or slice node `node` records.
-fn slice_descriptors(node: &CheckedExpr) -> Option<&[Option<mojito_types::types::SliceKind>]> {
+fn slice_descriptors(node: &CheckedExpr) -> Option<&[Option<CheckedSliceLiteral>]> {
     node.adjustments
         .iter()
         .find_map(|adjustment| match adjustment {

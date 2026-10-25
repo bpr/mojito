@@ -478,18 +478,7 @@ impl FnLowering<'_> {
         self.append(ctx, default_stop.get_operation(), Some(dest));
         let stop = SelectOp::new(ctx, has_upper, adjusted_upper, default_stop.get_result(ctx));
         self.append(ctx, stop.get_operation(), Some(dest));
-        // `ContiguousSlice.indices` is upstream's two-element `(start, end)`;
-        // the strided family keeps the three-element normalization.
-        let contiguous = self
-            .func
-            .reg_types
-            .get(&recv.0)
-            .and_then(slice_struct_name)
-            .is_some_and(|name| name == "ContiguousSlice");
-        let mut elements = vec![start.get_result(ctx), stop.get_result(ctx)];
-        if !contiguous {
-            elements.push(step);
-        }
+        let elements = [start.get_result(ctx), stop.get_result(ctx), step];
         let storage = self.entry_alloca(ctx, elements.len() as u64 * 8, 8);
         for (index, value) in elements.into_iter().enumerate() {
             let address = self.offset_address(ctx, storage, index as u64 * 8);

@@ -716,9 +716,7 @@ impl<'a> Node<'a> {
     pub(super) fn is_slice_descriptor(self) -> bool {
         matches!(
             self.ty().as_ref().map(Ty::kind),
-            Some(TyKind::Struct(name, args))
-                if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice")
-                    && args.is_empty()
+            Some(TyKind::Struct(name, args)) if name == "Slice" && args.is_empty()
         )
     }
 
@@ -1249,16 +1247,13 @@ impl<'a> Flatten<'a> {
                 .operands()
                 .flat_map(|value| self.aggregate_borrows(value))
                 .collect(),
-            // A view-typed slice result (a Span sub-slice or a StringSpan
-            // keyword slice) inherits its receiver's loans.
-            CheckedOp::Slice { .. } | CheckedOp::MultiIndex { .. } => {
+            // A view-typed subscript result (a Span sub-slice or a
+            // StringSpan keyword slice) inherits its receiver's loans.
+            CheckedOp::Index { .. } | CheckedOp::Slice { .. } | CheckedOp::MultiIndex { .. }
+                if !matches!(node.op(), CheckedOp::Index { .. }) || node.borrows_view_result() =>
+            {
                 if let Some(object) = node.object()
-                    && node.adjustments().iter().any(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::BorrowViewResult { .. }
-                        )
-                    })
+                    && node.borrows_view_result()
                 {
                     let loans = self.aggregate_borrows(object);
                     if !loans.is_empty() {

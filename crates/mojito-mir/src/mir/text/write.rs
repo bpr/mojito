@@ -3087,8 +3087,6 @@ const fn infix(value: InfixOp) -> &'static str {
 const fn slice_kind(value: mojito_types::types::SliceKind) -> &'static str {
     match value {
         mojito_types::types::SliceKind::Slice => "slice",
-        mojito_types::types::SliceKind::ContiguousSlice => "contiguous_slice",
-        mojito_types::types::SliceKind::StridedSlice => "strided_slice",
     }
 }
 

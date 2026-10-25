@@ -76,6 +76,13 @@ point, as upstream's toolchain does.
   for` iterator at compile time. The prelude links them for their bodies:
   the compiler names them by module path, and no user spelling reaches
   them.
+- `std/builtin/builtin_slice.mojo` — upstream's `ContiguousSlice` and
+  `StridedSlice`, each with the `__slice_literal__` constructor a slice
+  literal calls for a parameter of its type, `write_to`/`write_repr_to`
+  delegating to `Slice`, and `indices` (two-element for `ContiguousSlice`);
+  `StridedSlice` converts implicitly from a `Slice`. Only an import binds
+  either. `Slice` and `slice(...)` are still compiler-provided prelude
+  names.
 - `std/builtin/variadics.mojo` — upstream's `_MLIR.KGENTypeType`
   (`!kgen.type`) and `_MLIR.KGENParamListType[elt_type: Self.KGENTypeType]`
   raw-list alias, `ParameterList[type: AnyType, //, values:

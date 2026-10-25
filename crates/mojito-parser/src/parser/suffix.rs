@@ -76,6 +76,18 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                                 step,
                             });
                         }
+                        // `None` parses as a type in a bracket, but as a
+                        // slice's lower bound it is the `None` value
+                        // (`xs[None:3]`).
+                        mojito_ast::ast::ParamArg::Type(Type::None) => {
+                            let lower = Expr::new(ExprKind::None, self.last_span);
+                            let (upper, step) = self.parse_slice_components()?;
+                            items.push(ParsedBracketItem::Slice {
+                                lower: Some(Box::new(lower)),
+                                upper,
+                                step,
+                            });
+                        }
                         // `s[byte=a:b]` — a keyword slice whose lower bound
                         // was parsed as the keyword argument's value.
                         mojito_ast::ast::ParamArg::Named { name, value }

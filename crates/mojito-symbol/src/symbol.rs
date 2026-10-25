@@ -31,7 +31,7 @@ use mojito_ast::ast::{
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_types::ct::{CtLane, CtValue};
-use mojito_types::types::{FuncTy, SliceKind, Ty, TyArg, canonical_simd_ty, default_literal};
+use mojito_types::types::{FuncTy, Ty, TyArg, canonical_simd_ty, default_literal};
 use sha2::{Digest, Sha256};
 
 /// The lowered symbol of `std._intrinsics._pow_int`.
@@ -618,6 +618,17 @@ pub fn is_set_literal_constructor(param_names: &[String], variadic: bool) -> boo
 /// non-variadic, with a `__dict_literal__` keyword.
 pub fn is_dict_literal_constructor(param_names: &[String], variadic: bool) -> bool {
     !variadic && param_names.iter().any(|name| name == "__dict_literal__")
+}
+
+/// Whether a constructor declaration is one a slice literal (`[a:b:c]`)
+/// may call for a parameter of its struct's type: not variadic, with a
+/// `__slice_literal__` keyword after the three operand parameters.
+pub fn is_slice_literal_constructor(param_names: &[String], variadic: bool) -> bool {
+    !variadic
+        && param_names
+            .iter()
+            .position(|name| name == "__slice_literal__")
+            .is_some_and(|marker| marker >= 3)
 }
 
 /// Whether `symbol` is a single-parameter constructor whose parameter is the
@@ -1645,14 +1656,6 @@ fn ast_raw(
         // Mirror `ty_raw`: the `NoneType` annotation resolves to `TyKind::None`,
         // which mangles as `None`.
         Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
-        // Mirror `ty_raw`: an imported slice kind's linked spelling resolves
-        // to the kind's own descriptor type.
-        Type::Named(name, args)
-            if args.is_empty()
-                && let Some(kind) = SliceKind::of_source_name(name) =>
-        {
-            kind.type_name().to_string()
-        }
         // `Scalar[DType.x]` / `SIMD[DType.x, N]` annotations mangle as their
         // canonical checked spelling (`Scalar[DType.float32]` is the width-1
         // `Float32`), matching `ty_raw`'s display of the resolved `TyKind::Simd`.
@@ -1916,12 +1919,6 @@ fn annotation_display(ty: &Type) -> String {
             "String".to_string()
         }
         Type::Named(name, args) if args.is_empty() && name == "NoneType" => "None".to_string(),
-        Type::Named(name, args)
-            if args.is_empty()
-                && let Some(kind) = SliceKind::of_source_name(name) =>
-        {
-            kind.type_name().to_string()
-        }
         Type::Named(name, args) => {
             let mut s = name.clone();
             if !args.is_empty() {

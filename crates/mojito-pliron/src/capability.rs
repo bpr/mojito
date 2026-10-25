@@ -243,7 +243,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "slice.get",
         CapabilityStatus::Supported,
-        "raw bound descriptors through the nominal `__getitem__` contract; bound accesses materialize compiled `Optional`s, `indices` normalizes natively (two-element for `ContiguousSlice`), explicit `Slice(...)`/`slice(...)` construction builds the descriptor, `Slice.__eq__`/`__ne__` compare the raw words, and printing writes `Slice(start, end, step)`",
+        "raw bound descriptors through the nominal `__getitem__` contract; bound accesses materialize compiled `Optional`s, `indices` normalizes natively, explicit `Slice(...)`/`slice(...)` construction builds the descriptor, `Slice.__eq__`/`__ne__` compare the raw words, and printing writes `Slice(start, end, step)`",
     ),
     (
         "index.multi",

@@ -903,6 +903,10 @@ pub struct Checker {
     /// borrows the referent for its `self` convention (consuming receivers
     /// are gated separately), so the result is never read out as a value.
     borrowed_reference_receivers: RefCell<FactSet<SourceSpan>>,
+    /// Each slice literal's operands (lower, upper, stride), by the
+    /// checker-only argument standing for it while its subscript's overload
+    /// is selected (`synthetic_slice_descriptor`).
+    slice_literals: RefCell<HashMap<SourceSpan, [Option<Expr>; 3]>>,
     /// Compile-time bindings read as the object of a field chain the checker
     /// compiled to a parameter expression (`q` of `q.a`): the chain is read,
     /// never the binding, which therefore materializes no temporary.
@@ -1087,6 +1091,7 @@ impl Checker {
             copyable_reference_result_reads: RefCell::new(FactSet::default()),
             discarded_reference_results: RefCell::new(FactSet::default()),
             borrowed_reference_receivers: RefCell::new(FactSet::default()),
+            slice_literals: RefCell::new(HashMap::new()),
             parameter_field_objects: RefCell::new(FactSet::default()),
             unconsumed_temporaries: RefCell::new(FactSet::default()),
             linear_temporaries: RefCell::new(FactSet::default()),
@@ -3180,9 +3185,9 @@ struct SubscriptResolution {
     return_type: Ty,
     lowered_name: Option<String>,
     value_keyword: bool,
-    /// Each index argument's slice-literal kind, as the selected parameter
-    /// binds it.
-    descriptors: Vec<Option<mojito_types::types::SliceKind>>,
+    /// Each index argument's slice literal, as the selected parameter binds
+    /// it.
+    descriptors: Vec<Option<mojito_checked::checked::CheckedSliceLiteral>>,
 }
 
 type SplitCallableSpecialization = (

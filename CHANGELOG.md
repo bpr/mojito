@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `ContiguousSlice` and `StridedSlice` are the library structs upstream's
+  `builtin_slice.mojo` declares, so they construct explicitly, a `Slice`
+  converts to a `StridedSlice` implicitly, and a value of either indexes a
+  `List` (R1157). A slice literal is now a call of its parameter type's
+  `__slice_literal__` constructor with `None` for an omitted operand: a
+  user struct declaring one binds a literal, a `None` bound or stride and an
+  `Optional[Int]` bound pass (`xs[1:5:None]`, `xs[None:3]`, `xs[o:]`,
+  R1159), an inferred parameter takes the literal's default type, and a
+  literal two overloads accept is ambiguous, as at the pin. Natively a
+  `Slice` written through `String(...)` or a library struct's `write_to`
+  prints `Slice(start, end, step)` instead of its raw layout.
+
 - `enum` declarations, the pinned Mojo's experimental `__enum` spelled as
   upstream's enum proposal spells it (a kept extension, `docs/non-goals.md`):
   `case name` and `case name(T, ...)` declarations become an ordinary struct

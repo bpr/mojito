@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.103
+# Mojito Textual MIR Format, Version 1.104
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.103 is implemented end to end for inspection and loading: canonical
+Version 1.104 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.103
+mojito-mir 1.104
 ```
 
-The writer emits 1.103. The reader accepts 1.0 through 1.103; *Schema 1.0*
+The writer emits 1.104. The reader accepts 1.0 through 1.104; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -516,6 +516,15 @@ callee returns its result through memory (`IndirectResult`,
 `ConversionIndirectResult`), upstream's `ByRefResult` convention, which
 MIR lowering reads to give such a result its call-result slot. The MIR
 text is unchanged.
+
+Schema 1.104 drops the `contiguous_slice` and `strided_slice` descriptor
+kinds: `ContiguousSlice` and `StridedSlice` are library structs, and a
+slice literal bound to one is a call of its `__slice_literal__`
+constructor whose result the subscript passes like any index, so a
+descriptor is always `slice`. An older artifact spelling either kind no
+longer loads. The package format moves to `mojito-package 95`, whose
+checked subscripts record each slice literal as the descriptor or the
+constructor call it binds (`CheckedSliceLiteral`).
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1243,8 +1252,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 
 `UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic
 subscripts are `tuple_storage`, `variadic_storage`, `simd`, `pointer`, and
-`comptime_list`. Slice descriptors are `slice`, `contiguous_slice`, and
-`strided_slice`. Result adapters currently contain only
+`comptime_list`. The one slice descriptor kind is `slice`. Result adapters currently contain only
 `copy_iterator_reference`.
 
 For `Try`, `body`, `handler`, and `orelse` contain lists of local

@@ -648,7 +648,7 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    fn slice_string(
+    pub(super) fn slice_string(
         &mut self,
         ctx: &mut Context,
         arg: Reg,

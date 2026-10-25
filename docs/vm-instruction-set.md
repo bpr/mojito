@@ -635,13 +635,15 @@ slice.get %r4, %r0, [%r1:%r2:_]
 slice.get %r5, %r0, [_:_:%r3]
 ```
 
-A source slice is represented by its checker-selected `ContiguousSlice` or
-`StridedSlice` descriptor. User receivers receive that first-class descriptor
-through their selected `__getitem__`; this includes the bundled nominal List and
-does not bypass its ordinary method. A literal bound to a `Slice` parameter is
-built as a `Slice` descriptor, as upstream's literal constructs its parameter's
-type; checker-created descriptors never carry an arbitrary user `@implicit`
-conversion for the VM to reconstruct. The VM-backed String path normalizes
+A source slice is a call of its bound parameter type's `__slice_literal__`
+constructor, as upstream's literal constructs its parameter's type: a library
+`ContiguousSlice`, `StridedSlice`, or user struct is an ordinary constructor
+call whose result the subscript passes like any index, and only a literal
+bound to the compiler-provided `Slice` is this instruction's `Slice`
+descriptor. User receivers receive that first-class descriptor through their
+selected `__getitem__`; this includes the bundled nominal List and does not
+bypass its ordinary method. Checker-created descriptors never carry an
+arbitrary user `@implicit` conversion for the VM to reconstruct. The VM-backed String path normalizes
 bounds directly. A zero step or invalid bound produces a runtime error.
 
 ### `index.multi` / `index.multi_set` — Mixed Subscripts

@@ -181,9 +181,7 @@ impl PartialEq for Value {
             ) => aa == ba && ao == bo,
             (Self::None, Self::None) => true,
             // Closures have identity, not structural, equality.
-            // Descriptor equality compares the bounds only: a `[a:b]` literal
-            // widened into a `Slice`-typed parameter keeps its runtime
-            // sub-kind, while upstream constructs a real `Slice` there.
+            // Descriptor equality compares the bounds.
             (
                 Self::Slice {
                     start: as_,
@@ -278,8 +276,7 @@ impl fmt::Display for Value {
             Self::None => write!(f, "None"),
             Self::Function(name) => write!(f, "<function {name}>"),
             Self::Closure { function, .. } => write!(f, "<closure {function}>"),
-            // Upstream's `Slice.write_to` text; the contiguous and strided
-            // descriptors delegate to it, so every kind prints as `Slice`.
+            // Upstream's `Slice.write_to` text.
             Self::Slice {
                 start, end, step, ..
             } => {

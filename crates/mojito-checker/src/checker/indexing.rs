@@ -329,13 +329,16 @@ impl Checker {
                 step,
             } => {
                 let object_type = self.check_place(object)?;
-                self.check_slice_bounds(lower.as_deref(), upper.as_deref(), step.as_deref())?;
-                let kind = slice_literal_kind(step.as_deref());
-                let descriptor = TyKind::Struct(kind.type_name().to_string(), Vec::new());
+                let literal = self.synthetic_slice_descriptor(
+                    &place.source_span(),
+                    0,
+                    [lower.as_deref(), upper.as_deref(), step.as_deref()],
+                )?;
+                let descriptor = self.slice_literal_default_type(step.as_deref());
                 let resolution = self.resolve_struct_setitem(
                     &object_type,
-                    &[descriptor.into()],
-                    &[Some(kind)],
+                    &[descriptor],
+                    &[Some(literal)],
                     None,
                 )?;
                 if let Some(target) = resolution.lowered_name {
@@ -394,16 +397,13 @@ impl Checker {
                             descriptors.push(None);
                         }
                         SubscriptArg::Slice { lower, upper, step } => {
-                            self.check_slice_bounds(
-                                lower.as_deref(),
-                                upper.as_deref(),
-                                step.as_deref(),
+                            let literal = self.synthetic_slice_descriptor(
+                                &place.source_span(),
+                                position,
+                                [lower.as_deref(), upper.as_deref(), step.as_deref()],
                             )?;
-                            let kind = slice_literal_kind(step.as_deref());
-                            argument_types.push(
-                                TyKind::Struct(kind.type_name().to_string(), Vec::new()).into(),
-                            );
-                            descriptors.push(Some(kind));
+                            argument_types.push(self.slice_literal_default_type(step.as_deref()));
+                            descriptors.push(Some(literal));
                         }
                     }
                 }
@@ -495,40 +495,26 @@ impl Checker {
         }
     }
 
-    pub(super) fn check_slice_bounds(
-        &self,
-        lower: Option<&Expr>,
-        upper: Option<&Expr>,
-        step: Option<&Expr>,
-    ) -> Result<(), TypeError> {
-        for bound in [lower, upper, step].into_iter().flatten() {
-            let found = self.infer(bound)?;
-            if !coerces(&found, &Ty::int()) {
-                return Err(TypeError::TypeMismatch {
-                    expected: "Int".to_string(),
-                    found: found.to_string(),
-                    context: "slice bound".to_string(),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// A slice descriptor is a real runtime argument to `__getitem__`/
-    /// `__setitem__`, but its source syntax is spread across optional bounds.
-    /// Give overload/origin/effect checking one typed synthetic argument while
-    /// retaining descriptor construction separately for MIR.
+    /// The checker-only argument standing for a slice literal with
+    /// `operands` (lower, upper, stride) while selecting
+    /// `__getitem__`/`__setitem__`: upstream's slice literal, an initializer
+    /// that becomes a call of its parameter type's `__slice_literal__`
+    /// constructor once overload resolution binds it
+    /// ([`Self::slice_literal_binding`]). It is typed as the literal's
+    /// default type, which an inferred parameter takes.
     ///
     /// The argument's identity is derived from the subscript's and the
-    /// descriptor's position in it, so every check of one subscript keys
-    /// the descriptor alike, and a clone's copy of it traces to the
-    /// template's.
+    /// literal's position in it, so every check of one subscript keys the
+    /// literal alike, and a clone's copy of it traces to the template's.
     pub(super) fn synthetic_slice_descriptor(
         &self,
         span: &SourceSpan,
         position: usize,
-        kind: SliceKind,
-    ) -> Expr {
+        operands: [Option<&Expr>; 3],
+    ) -> Result<Expr, TypeError> {
+        for operand in operands.into_iter().flatten() {
+            self.infer(operand)?;
+        }
         let mut expression = Expr::new(ExprKind::None, span.span);
         expression.source.clone_from(&span.source);
         if let Some(subscript) = span.syntax {
@@ -537,43 +523,82 @@ impl Checker {
                 u32::try_from(position).unwrap_or(u32::MAX),
             );
         }
-        self.record_at(expression.source_span()).ty =
-            Some(TyKind::Struct(kind.type_name().to_string(), Vec::new()).into());
-        expression
+        self.slice_literals.borrow_mut().insert(
+            expression.source_span(),
+            operands.map(Option::<&Expr>::cloned),
+        );
+        Ok(expression)
     }
 
-    /// Whether `expression` is the checker-only value standing in for source
-    /// slice syntax while selecting `__getitem__`/`__setitem__`. A slice
-    /// literal binds a `Slice` parameter or one of its own kind
-    /// (`mojito_types::types::slice_literal_binds`), as upstream's
-    /// `__slice_literal__` constructors do, but is not fed through an
-    /// arbitrary user `@implicit` constructor. Keeping that boundary here also
-    /// prevents a conversion for a nonexistent expression from being attached
-    /// to the enclosing subscript's source span.
+    /// Whether `expression` is the checker-only value standing in for a
+    /// slice literal ([`Self::synthetic_slice_descriptor`]). It binds a
+    /// parameter only through that parameter type's `__slice_literal__`
+    /// constructor, never through a user `@implicit` constructor of its
+    /// default type, and no conversion is recorded on it.
     pub(super) fn is_synthetic_slice_descriptor(&self, expression: &Expr) -> bool {
-        matches!(expression.kind, ExprKind::None)
-            && self.has_fact(&expression.source_span(), |facts| {
-                matches!(
-                    facts.ty.as_ref().map(Ty::kind),
-                    Some(TyKind::Struct(name, args))
-                        if matches!(
-                            name.as_str(),
-                            "Slice" | "ContiguousSlice" | "StridedSlice"
-                        ) && args.is_empty()
-                )
-            })
+        self.slice_literal_type(expression).is_some()
     }
 
-    /// Whether `expression` is a slice literal of type `actual` that binds a
-    /// parameter of type `expected` (`mojito_types::types::slice_literal_binds`).
-    pub(super) fn binds_slice_literal(
+    /// The type of the checker-only value standing in for a slice literal
+    /// ([`Self::synthetic_slice_descriptor`]): the literal's default type,
+    /// which an inferred parameter takes. `None` for any other expression.
+    pub(super) fn slice_literal_type(&self, expression: &Expr) -> Option<Ty> {
+        if !matches!(expression.kind, ExprKind::None) {
+            return None;
+        }
+        let stride = self
+            .slice_literals
+            .borrow()
+            .get(&expression.source_span())?[2]
+            .clone();
+        Some(self.slice_literal_default_type(stride.as_ref()))
+    }
+
+    /// How the slice literal `literal` binds a parameter of type `expected`,
+    /// if it does, as upstream's `T(lower, upper, stride,
+    /// __slice_literal__=None)` for a parameter of type `T`, an omitted
+    /// operand passing `None`. An inferred parameter binds the literal's
+    /// default type. The compiler-provided `Slice` takes `Int` operands,
+    /// which MIR's descriptor builds it from. When `record`, each written
+    /// operand's conversion to its constructor parameter is recorded on it.
+    pub(super) fn slice_literal_binding(
         &self,
-        expression: &Expr,
-        actual: &Ty,
+        literal: &Expr,
         expected: &Ty,
-    ) -> bool {
-        self.is_synthetic_slice_descriptor(expression)
-            && mojito_types::types::slice_literal_binds(actual, expected)
+        record: bool,
+    ) -> Result<Option<mojito_checked::checked::CheckedSliceLiteral>, TypeError> {
+        let Some(operands) = self
+            .slice_literals
+            .borrow()
+            .get(&literal.source_span())
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let target = match expected.kind() {
+            TyKind::Param { .. } => {
+                let default = self.slice_literal_default_type(operands[2].as_ref());
+                if !self.value_coerces(&default, expected) {
+                    return Ok(None);
+                }
+                default
+            }
+            _ => expected.clone(),
+        };
+        let TyKind::Struct(name, arguments) = target.kind() else {
+            return Ok(None);
+        };
+        if name == "Slice" && arguments.is_empty() {
+            for operand in operands.iter().flatten() {
+                if !coerces(&self.infer(operand)?, &Ty::int()) {
+                    return Ok(None);
+                }
+            }
+            return Ok(Some(
+                mojito_checked::checked::CheckedSliceLiteral::Descriptor(SliceKind::Slice),
+            ));
+        }
+        self.slice_literal_construction(&target, &operands, record)
     }
 
     /// Check one nominal `object[...] = value` as the exact selected
@@ -619,10 +644,16 @@ impl Checker {
                 {
                     return Ok(None);
                 }
-                self.check_slice_bounds(lower.as_deref(), upper.as_deref(), step.as_deref())?;
-                let kind = slice_literal_kind(step.as_deref());
-                let descriptor = self.synthetic_slice_descriptor(&target.source_span(), 0, kind);
-                (object.as_ref(), vec![descriptor], vec![Some(kind)])
+                let descriptor = self.synthetic_slice_descriptor(
+                    &target.source_span(),
+                    0,
+                    [lower.as_deref(), upper.as_deref(), step.as_deref()],
+                )?;
+                (
+                    object.as_ref(),
+                    vec![descriptor.clone()],
+                    vec![Some(descriptor)],
+                )
             }
             ExprKind::MultiIndex {
                 object,
@@ -655,18 +686,13 @@ impl Checker {
                             descriptors.push(None);
                         }
                         SubscriptArg::Slice { lower, upper, step } => {
-                            self.check_slice_bounds(
-                                lower.as_deref(),
-                                upper.as_deref(),
-                                step.as_deref(),
-                            )?;
-                            let kind = slice_literal_kind(step.as_deref());
-                            arguments.push(self.synthetic_slice_descriptor(
+                            let descriptor = self.synthetic_slice_descriptor(
                                 &target.source_span(),
                                 position,
-                                kind,
-                            ));
-                            descriptors.push(Some(kind));
+                                [lower.as_deref(), upper.as_deref(), step.as_deref()],
+                            )?;
+                            arguments.push(descriptor.clone());
+                            descriptors.push(Some(descriptor));
                         }
                     }
                 }
@@ -744,7 +770,8 @@ impl Checker {
                     "selected __setitem__ contract has no assignment-value slot".to_string(),
                 )
             })?;
-        let descriptors = bind_selected_slice_literals(&contract, &[], descriptors);
+        let descriptors =
+            self.bind_selected_slice_literals(&target.source_span(), &[], &descriptors)?;
         self.record_at(target.source_span()).subscript_descriptor =
             Some((descriptors, value_keyword));
         let target_ty = match target_ty.kind() {
@@ -944,10 +971,8 @@ impl Checker {
         upper: Option<&Expr>,
         step: Option<&Expr>,
     ) -> Result<Ty, TypeError> {
-        self.check_slice_bounds(lower, upper, step)?;
-        let kind = slice_literal_kind(step);
         let object_type = self.infer(object)?;
-        let result = match object_type.kind() {
+        let (result, literal) = match object_type.kind() {
             // Positional slicing on a StringLiteral value is gone at the
             // audited head along with nominal String positional slicing;
             // only the keyword-unit spellings remain.
@@ -971,41 +996,19 @@ impl Checker {
                 ));
             }
             TyKind::Struct(..) | TyKind::Param { .. } => {
-                let descriptor = self.synthetic_slice_descriptor(&span, 0, kind);
-                self.infer_method_call(
+                let descriptor = self.synthetic_slice_descriptor(&span, 0, [lower, upper, step])?;
+                let result = self.infer_method_call(
                     &span,
                     object,
                     "__getitem__",
                     MethodCallArguments::ordinary(std::slice::from_ref(&descriptor), &[]),
-                )?
+                )?;
+                (result, descriptor)
             }
             _ => return Err(TypeError::NotIndexable(object_type.to_string())),
         };
-        // A view-typed slice result (a Span sub-slice) stays borrowed from
-        // its receiver's sources: the result binding inherits the
-        // receiver's loans instead of owning fresh storage.
-        if self.type_carries_loans(&result) {
-            // Re-inference keeps an owner a `ref self` consumer already
-            // minted for this view temporary.
-            let mut record = self.record_at(span.clone());
-            let materialized = match record.adjustment.as_deref() {
-                Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
-                    materialized,
-                    ..
-                }) => *materialized,
-                _ => None,
-            };
-            record.adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
-                    materialized,
-                    interior: Vec::new(),
-                },
-            ));
-        }
-        let descriptors = match self.fact(&span, |facts| facts.selected_call.as_deref()) {
-            Some(contract) => bind_selected_slice_literals(&contract, &[], vec![Some(kind)]),
-            None => vec![Some(kind)],
-        };
+        self.record_borrowed_view_result(&span, &result);
+        let descriptors = self.bind_selected_slice_literals(&span, &[], &[Some(literal)])?;
         self.record_at(span).subscript_descriptor = Some((descriptors, false));
         Ok(result)
     }
@@ -1071,10 +1074,13 @@ impl Checker {
                     descriptors.push(None);
                 }
                 SubscriptArg::Slice { lower, upper, step } => {
-                    self.check_slice_bounds(lower.as_deref(), upper.as_deref(), step.as_deref())?;
-                    let kind = slice_literal_kind(step.as_deref());
-                    actual_arguments.push(self.synthetic_slice_descriptor(&span, position, kind));
-                    descriptors.push(Some(kind));
+                    let descriptor = self.synthetic_slice_descriptor(
+                        &span,
+                        position,
+                        [lower.as_deref(), upper.as_deref(), step.as_deref()],
+                    )?;
+                    actual_arguments.push(descriptor.clone());
+                    descriptors.push(Some(descriptor));
                 }
                 // A keyword slice (`s[byte=a:b]`) binds a keyword-only
                 // slice-descriptor `__getitem__` parameter through the same
@@ -1085,13 +1091,16 @@ impl Checker {
                     upper,
                     step,
                 } => {
-                    self.check_slice_bounds(lower.as_deref(), upper.as_deref(), step.as_deref())?;
-                    let kind = slice_literal_kind(step.as_deref());
+                    let descriptor = self.synthetic_slice_descriptor(
+                        &span,
+                        position,
+                        [lower.as_deref(), upper.as_deref(), step.as_deref()],
+                    )?;
                     keyword_arguments.push(mojito_ast::ast::KwArg {
                         name: name.clone(),
-                        value: self.synthetic_slice_descriptor(&span, position, kind),
+                        value: descriptor.clone(),
                     });
-                    descriptors.push(Some(kind));
+                    descriptors.push(Some(descriptor));
                 }
             }
         }
@@ -1101,26 +1110,7 @@ impl Checker {
             "__getitem__",
             MethodCallArguments::ordinary(&actual_arguments, &keyword_arguments),
         )?;
-        // A view-typed subscript result (a StringSpan keyword slice) stays
-        // borrowed from its receiver's sources.
-        if self.type_carries_loans(&result) {
-            // Re-inference keeps an owner a `ref self` consumer already
-            // minted for this view temporary.
-            let mut record = self.record_at(span.clone());
-            let materialized = match record.adjustment.as_deref() {
-                Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
-                    materialized,
-                    ..
-                }) => *materialized,
-                _ => None,
-            };
-            record.adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
-                    materialized,
-                    interior: Vec::new(),
-                },
-            ));
-        }
+        self.record_borrowed_view_result(&span, &result);
         let keyword = arguments
             .iter()
             .map(|argument| {
@@ -1130,10 +1120,7 @@ impl Checker {
                 )
             })
             .collect::<Vec<_>>();
-        let descriptors = match self.fact(&span, |facts| facts.selected_call.as_deref()) {
-            Some(contract) => bind_selected_slice_literals(&contract, &keyword, descriptors),
-            None => descriptors,
-        };
+        let descriptors = self.bind_selected_slice_literals(&span, &keyword, &descriptors)?;
         self.record_at(span).subscript_descriptor = Some((descriptors, false));
         Ok(result)
     }
@@ -1146,7 +1133,7 @@ impl Checker {
         &self,
         receiver: &Ty,
         arguments: &[Ty],
-        literals: &[Option<SliceKind>],
+        literals: &[Option<Expr>],
         value: Option<&Ty>,
     ) -> Result<SubscriptResolution, TypeError> {
         let TyKind::Struct(name, type_arguments) = receiver.kind() else {
@@ -1211,10 +1198,19 @@ impl Checker {
                 continue;
             }
 
-            let binds = |position: usize, actual: &Ty, expected: &Ty| {
-                coerces(actual, expected)
-                    || (literals.get(position).is_some_and(Option::is_some)
-                        && mojito_types::types::slice_literal_binds(actual, expected))
+            // A slice literal binds through its parameter type's
+            // `__slice_literal__` constructor, at one cost whichever type
+            // that is.
+            let binds = |position: usize, actual: &Ty, expected: &Ty| match literals
+                .get(position)
+                .and_then(Option::as_ref)
+            {
+                Some(literal) => Ok(self
+                    .slice_literal_binding(literal, expected, false)?
+                    .map(|_| 0)),
+                None => Ok::<_, TypeError>(
+                    coerces(actual, expected).then(|| conversion_count(actual, expected)),
+                ),
             };
             let mut score = 0;
             let mut compatible = true;
@@ -1224,19 +1220,19 @@ impl Checker {
                 .zip(parameters.iter().take(fixed_index_count))
                 .enumerate()
             {
-                if !binds(position, actual, expected) {
+                let Some(cost) = binds(position, actual, expected)? else {
                     compatible = false;
                     break;
-                }
-                score += conversion_count(actual, expected);
+                };
+                score += cost;
             }
             if compatible && let Some(element) = &variadic {
                 for (position, actual) in arguments.iter().enumerate().skip(fixed_index_count) {
-                    if !binds(position, actual, element) {
+                    let Some(cost) = binds(position, actual, element)? else {
                         compatible = false;
                         break;
-                    }
-                    score += conversion_count(actual, element);
+                    };
+                    score += cost;
                 }
             }
             if compatible && let Some(actual) = value {
@@ -1256,7 +1252,7 @@ impl Checker {
                 // a place costs a `var` parameter the way every other ranking
                 // site does. The signature-length slot carries the runtime
                 // parameter count here, not compile-time parameters.
-                let descriptors = literals
+                let bound = literals
                     .iter()
                     .enumerate()
                     .map(|(position, literal)| {
@@ -1265,7 +1261,7 @@ impl Checker {
                         } else {
                             variadic.as_ref()
                         };
-                        literal.map(|kind| bound_slice_literal(kind, parameter))
+                        literal.clone().zip(parameter.cloned())
                     })
                     .collect::<Vec<_>>();
                 matches.push((
@@ -1273,14 +1269,13 @@ impl Checker {
                     signature,
                     parameters[value_index].clone(),
                     value_keyword,
-                    descriptors,
+                    bound,
                 ));
             }
         }
 
         matches.sort_by_key(|(score, ..)| *score);
-        let Some((best, signature, value_type, value_keyword, descriptors)) = matches.first()
-        else {
+        let Some((best, signature, value_type, value_keyword, bound)) = matches.first() else {
             if let (Some(found), Some(expected)) = (value, value_mismatches.first()) {
                 return Err(TypeError::TypeMismatch {
                     expected: expected.to_string(),
@@ -1314,7 +1309,15 @@ impl Checker {
                 )
             }),
             value_keyword: *value_keyword,
-            descriptors: descriptors.clone(),
+            descriptors: bound
+                .iter()
+                .map(|bound| {
+                    bound
+                        .as_ref()
+                        .map(|(literal, parameter)| self.bound_slice_literal(literal, parameter))
+                        .transpose()
+                })
+                .collect::<Result<_, _>>()?,
         })
     }
 
@@ -1601,6 +1604,12 @@ impl Checker {
             "__getitem__",
             MethodCallArguments::ordinary(indices, &[]),
         )?;
+        // A view-typed result (a `Span` over a `ContiguousSlice` index)
+        // stays borrowed from its receiver's sources.
+        if !matches!(result.kind(), TyKind::Ref(_)) && self.type_carries_loans(&result) {
+            self.record_borrowed_view_result(&span, &result);
+            return Ok(result);
+        }
         if list_element(obj_ty).is_some() {
             self.record_interior_reference(span, object, "element");
         } else if dict_elements(obj_ty).is_some() {
@@ -1987,19 +1996,13 @@ impl Checker {
             self.record_at(object.source_span()).reference_value_use =
                 Some(reference.mutability == mojito_types::origin::Mutability::Mutable);
         }
-        // A descriptor's public fields are upstream's: `Slice` has `start`,
-        // `end`, and `step`, `ContiguousSlice` the two bounds, and
-        // `StridedSlice` none, its one field being the private `_inner`.
+        // The compiler-provided `Slice`'s public fields are upstream's
+        // `start`, `end`, and `step`.
         if let TyKind::Struct(name, args) = obj_ty.kind()
+            && name == "Slice"
             && args.is_empty()
-            && let Some(fields) = match name.as_str() {
-                "Slice" => Some(&["start", "end", "step"][..]),
-                "ContiguousSlice" => Some(&["start", "end"][..]),
-                "StridedSlice" => Some(&[][..]),
-                _ => None,
-            }
         {
-            if !fields.contains(&field) {
+            if !["start", "end", "step"].contains(&field) {
                 return Err(TypeError::NoSuchField {
                     object_type: name.clone(),
                     field: field.to_string(),
@@ -2288,51 +2291,231 @@ pub(super) fn simd_dtype(ty: &Ty) -> Option<Result<SimdDtype, TypeError>> {
     }
 }
 
-/// `descriptors`, a subscript's per-argument slice-literal kinds, as the
-/// selected `contract` binds them ([`bound_slice_literal`]). `keyword` marks
-/// the arguments spelled by keyword, in source order; a missing entry is
-/// positional.
-fn bind_selected_slice_literals(
-    contract: &mojito_checked::checked::CheckedCallContract,
-    keyword: &[bool],
-    mut descriptors: Vec<Option<SliceKind>>,
-) -> Vec<Option<SliceKind>> {
-    let spelled_by_keyword = |position: usize| keyword.get(position).copied().unwrap_or(false);
-    for argument in &contract.arguments {
-        let (index, by_keyword) = match argument.source {
-            mojito_checked::checked::CheckedCallArgumentSource::Positional(index) => (index, false),
-            mojito_checked::checked::CheckedCallArgumentSource::Keyword(index) => (index, true),
-            mojito_checked::checked::CheckedCallArgumentSource::Default => continue,
-        };
-        let position = (0..descriptors.len())
-            .filter(|position| spelled_by_keyword(*position) == by_keyword)
-            .nth(index);
-        if let Some(Some(kind)) = position.and_then(|position| descriptors.get_mut(position)) {
-            *kind = bound_slice_literal(*kind, Some(&argument.parameter_ty));
+impl Checker {
+    /// Record that the view-typed (`result`) subscript at `span` stays
+    /// borrowed from its receiver's sources: its binding inherits the
+    /// receiver's loans instead of owning fresh storage. Re-inference keeps
+    /// an owner a `ref self` consumer already minted for this view
+    /// temporary.
+    fn record_borrowed_view_result(&self, span: &SourceSpan, result: &Ty) {
+        if !self.type_carries_loans(result) {
+            return;
         }
+        let mut record = self.record_at(span.clone());
+        let materialized = match record.adjustment.as_deref() {
+            Some(mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                materialized,
+                ..
+            }) => *materialized,
+            _ => None,
+        };
+        record.adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::BorrowViewResult {
+                materialized,
+                interior: Vec::new(),
+            },
+        ));
     }
-    descriptors
-}
 
-/// The kind a slice literal of `kind` builds for `parameter`: upstream's
-/// literal calls the parameter type's `__slice_literal__` constructor, so a
-/// literal bound to a `Slice` parameter is a `Slice`.
-fn bound_slice_literal(kind: SliceKind, parameter: Option<&Ty>) -> SliceKind {
-    match parameter.map(Ty::kind) {
-        Some(TyKind::Struct(name, args)) if name == "Slice" && args.is_empty() => SliceKind::Slice,
-        _ => kind,
+    /// `literals`, a subscript's per-argument slice literals (`None` for an
+    /// ordinary index), as the call selected at `span` binds them, with
+    /// their operand conversions recorded. `keyword` marks the arguments
+    /// spelled by keyword, in source order; a missing entry is positional.
+    /// Without a selected call a literal builds its default type.
+    fn bind_selected_slice_literals(
+        &self,
+        span: &SourceSpan,
+        keyword: &[bool],
+        literals: &[Option<Expr>],
+    ) -> Result<Vec<Option<mojito_checked::checked::CheckedSliceLiteral>>, TypeError> {
+        let contract = self.fact(span, |facts| facts.selected_call.as_deref());
+        let spelled_by_keyword = |position: usize| keyword.get(position).copied().unwrap_or(false);
+        let parameter = |position: usize| {
+            let by_keyword = spelled_by_keyword(position);
+            let index = (0..position)
+                .filter(|earlier| spelled_by_keyword(*earlier) == by_keyword)
+                .count();
+            let source = if by_keyword {
+                mojito_checked::checked::CheckedCallArgumentSource::Keyword(index)
+            } else {
+                mojito_checked::checked::CheckedCallArgumentSource::Positional(index)
+            };
+            contract.as_ref().and_then(|contract| {
+                contract
+                    .arguments
+                    .iter()
+                    .find(|argument| argument.source == source)
+                    .map(|argument| argument.parameter_ty.clone())
+            })
+        };
+        literals
+            .iter()
+            .enumerate()
+            .map(|(position, literal)| {
+                literal
+                    .as_ref()
+                    .map(|literal| {
+                        let parameter = parameter(position).unwrap_or_else(|| {
+                            self.slice_literal_type(literal).unwrap_or_else(Ty::error)
+                        });
+                        self.bound_slice_literal(literal, &parameter)
+                    })
+                    .transpose()
+            })
+            .collect()
     }
-}
 
-/// The descriptor kind a slice literal binds, by upstream's
-/// `__slice_literal__` rule: the literal calls the parameter type's
-/// `__init__(start, end, stride, __slice_literal__=None)`, passing `None`
-/// for a missing step, which only `ContiguousSlice` takes. A step value
-/// selects `StridedSlice`, whether or not a second colon was written.
-const fn slice_literal_kind(step: Option<&Expr>) -> SliceKind {
-    if step.is_some() {
-        SliceKind::StridedSlice
-    } else {
-        SliceKind::ContiguousSlice
+    /// The slice literal `literal` as the selected parameter type
+    /// `parameter` binds it, recording its operand conversions.
+    fn bound_slice_literal(
+        &self,
+        literal: &Expr,
+        parameter: &Ty,
+    ) -> Result<mojito_checked::checked::CheckedSliceLiteral, TypeError> {
+        self.slice_literal_binding(literal, parameter, true)?
+            .ok_or_else(|| {
+                TypeError::InvariantViolation(format!(
+                    "a slice literal does not bind its selected '{parameter}' parameter"
+                ))
+            })
+    }
+
+    /// The type a slice literal whose stride operand is `stride` has where
+    /// no parameter type is in play, as upstream's `getDefaultType` picks
+    /// it: `ContiguousSlice` when the stride is omitted or `None`, `Slice`
+    /// otherwise.
+    fn slice_literal_default_type(&self, stride: Option<&Expr>) -> Ty {
+        let contiguous =
+            mojito_module::module::linked_item_name("std.builtin.builtin_slice", "ContiguousSlice");
+        let name = if stride.is_none_or(|stride| matches!(stride.kind, ExprKind::None))
+            && self.structs.contains_key(&contiguous)
+        {
+            contiguous
+        } else {
+            "Slice".to_string()
+        };
+        TyKind::Struct(name, Vec::new()).into()
+    }
+
+    /// The call of `target`'s `__slice_literal__` constructor a slice literal
+    /// with `operands` makes, if exactly one such constructor accepts them
+    /// at least cost: each written operand converts to its parameter as a
+    /// call argument does, and each omitted one passes `None`. When
+    /// `record`, the written operands' conversions are recorded on them.
+    fn slice_literal_construction(
+        &self,
+        target: &Ty,
+        operands: &[Option<Expr>; 3],
+        record: bool,
+    ) -> Result<Option<mojito_checked::checked::CheckedSliceLiteral>, TypeError> {
+        let TyKind::Struct(name, arguments) = target.kind() else {
+            return Ok(None);
+        };
+        let Some(info) = self.structs.get(name) else {
+            return Ok(None);
+        };
+        let Some(constructors) = info.methods.get("__init__") else {
+            return Ok(None);
+        };
+        let substitution = struct_subst(&info.decls, arguments);
+        let struct_arguments =
+            super::comptime_validation::positional_pack_arguments(&info.decls, arguments);
+        let mut viable = Vec::new();
+        for signature in constructors.iter().filter(|signature| {
+            signature.decls.is_empty()
+                && signature.keyword_only.is_none_or(|first| first >= 3)
+                && mojito_symbol::symbol::is_slice_literal_constructor(
+                    &signature.names,
+                    signature.variadic.is_some(),
+                )
+                && signature
+                    .required
+                    .iter()
+                    .zip(&signature.names)
+                    .skip(3)
+                    .all(|(required, name)| !required || name == "__slice_literal__")
+        }) {
+            let mut environment = ConstraintEnvironment::declared(&signature.decls, &[]);
+            environment.bind_declared(&info.decls, &struct_arguments);
+            if signature.availability.iter().any(|constraint| {
+                self.validate_constraint_in_environment(name, constraint, &environment)
+                    .is_err()
+            }) {
+                continue;
+            }
+            let parameters: Vec<Ty> = signature
+                .params
+                .iter()
+                .take(3)
+                .map(|parameter| substitute(parameter, &substitution))
+                .collect();
+            let mut cost = Some(0);
+            for (operand, parameter) in operands.iter().zip(&parameters) {
+                let found = match operand {
+                    Some(operand) => self.infer_with_expected(operand, parameter, false)?,
+                    None => Ty::none(),
+                };
+                let converts = self.value_coerces(&found, parameter)
+                    || self
+                        .implicit_conversion_target(&found, parameter)?
+                        .is_some();
+                cost = cost
+                    .filter(|_| converts)
+                    .map(|cost| cost + conversion_count(&found, parameter));
+            }
+            if let Some(cost) = cost {
+                viable.push((cost, signature, parameters));
+            }
+        }
+        let Some(best) = viable.iter().map(|(cost, ..)| *cost).min() else {
+            return Ok(None);
+        };
+        viable.retain(|(cost, ..)| *cost == best);
+        let [(_, signature, parameters)] = viable.as_slice() else {
+            return Err(TypeError::BadCall {
+                func: name.clone(),
+                reason: "ambiguous slice-literal constructor".to_string(),
+            });
+        };
+        if signature.raises {
+            return Err(TypeError::Unsupported(format!(
+                "a slice literal calling the raising '{name}' constructor is not supported"
+            )));
+        }
+        let mut omitted = [None, None, None];
+        for ((operand, parameter), omitted) in operands.iter().zip(parameters).zip(&mut omitted) {
+            match operand {
+                Some(operand) if record => {
+                    let found = self.infer_with_expected(operand, parameter, true)?;
+                    self.record_implicit_conversion(operand, &found, parameter)?;
+                }
+                Some(_) => {}
+                None => {
+                    let conversion = if self.value_coerces(&Ty::none(), parameter) {
+                        None
+                    } else {
+                        self.implicit_conversion_target(&Ty::none(), parameter)?
+                            .map(|(constructor, _)| (constructor, parameter.clone()))
+                    };
+                    *omitted = Some(mojito_checked::checked::OmittedSliceOperand { conversion });
+                }
+            }
+        }
+        let constructor = constructor_symbol(
+            name,
+            "__init__",
+            constructors.len() > 1,
+            signature,
+            self.self_instance_ty(name).as_ref(),
+        );
+        Ok(Some(
+            mojito_checked::checked::CheckedSliceLiteral::Construct(
+                mojito_checked::checked::SliceLiteralConstruction {
+                    target: target.clone(),
+                    constructor,
+                    omitted,
+                },
+            ),
+        ))
     }
 }

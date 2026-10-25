@@ -3688,6 +3688,16 @@ fn parses_slice_subscripts() {
             step: None,
         })
     );
+    // `None` is a bound like any expression, the lower one included.
+    assert_eq!(
+        parse_expr("xs[None:2:None]"),
+        Expr::from(ExprKind::Slice {
+            object: ident("xs"),
+            lower: Some(bx(ExprKind::None)),
+            upper: Some(int(2)),
+            step: Some(bx(ExprKind::None)),
+        })
+    );
 
     assert_eq!(
         parse_expr("grid[row, 1:5:2]"),

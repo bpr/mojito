@@ -378,11 +378,6 @@ impl VmBackend {
                 let length = value_as_index(&args[0])?;
                 let (start, end, step) =
                     crate::runtime::normalize_slice_bounds(length, *start, *end, *step)?;
-                // Always the three normalized bounds: the checked destination
-                // type (`materialize_checked_result`) trims the private pack to
-                // `ContiguousSlice.indices`' two-element `(start, end)`, since
-                // the runtime kind of a widened literal is not the receiver's
-                // checked descriptor type.
                 Ok(Value::Tuple(vec![
                     Value::Int(start),
                     Value::Int(end),

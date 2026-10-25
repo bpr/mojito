@@ -73,9 +73,13 @@ impl Checker {
             };
             if let Some(expected) = resolved.param_types.get(index) {
                 let actual = self.infer_with_expected(expression, expected, true)?;
-                let binds = self.has_index_normalization(expression, expected)
-                    || self.binds_slice_literal(expression, &actual, expected)
-                    || self.record_implicit_conversion(expression, &actual, expected)?;
+                let binds = if self.is_synthetic_slice_descriptor(expression) {
+                    self.slice_literal_binding(expression, expected, true)?
+                        .is_some()
+                } else {
+                    self.has_index_normalization(expression, expected)
+                        || self.record_implicit_conversion(expression, &actual, expected)?
+                };
                 if !binds {
                     return Err(TypeError::TypeMismatch {
                         expected: expected.to_string(),
@@ -391,11 +395,19 @@ impl Checker {
                 ArgSlot::Default => continue,
             };
             let actual = self.infer_with_expected(expression, &params[index], false)?;
-            let binds = self.has_index_normalization(expression, &params[index])
-                || self.value_coerces(&actual, &params[index])
-                || self.binds_slice_literal(expression, &actual, &params[index]);
+            // A slice literal binds through its parameter type's
+            // `__slice_literal__` constructor, at one cost whichever type
+            // that is.
+            let literal = self.is_synthetic_slice_descriptor(expression);
+            let binds = if literal {
+                self.slice_literal_binding(expression, &params[index], false)?
+                    .is_some()
+            } else {
+                self.has_index_normalization(expression, &params[index])
+                    || self.value_coerces(&actual, &params[index])
+            };
             if !binds
-                && (self.is_synthetic_slice_descriptor(expression)
+                && (literal
                     || self
                         .implicit_conversion_target(&actual, &params[index])?
                         .is_none())
@@ -406,7 +418,9 @@ impl Checker {
                     context: "method overload candidate".to_string(),
                 });
             }
-            score += conversion_count(&actual, &params[index]);
+            if !literal {
+                score += conversion_count(&actual, &params[index]);
+            }
             simd_erasures += usize::from(
                 matches!(
                     signature.params.get(index).map(Ty::kind),

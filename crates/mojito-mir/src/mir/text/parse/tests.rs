@@ -1059,7 +1059,7 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::Slice {
             dest: Reg(22),
             object: Reg(0),
-            kind: SliceKind::StridedSlice,
+            kind: SliceKind::Slice,
             lower: Some(Reg(1)),
             upper: None,
             step: Some(Reg(2)),
@@ -1074,7 +1074,7 @@ fn instruction_families_reprint_byte_identically() {
             args: vec![
                 MirSubscriptArg::Index(Reg(1)),
                 MirSubscriptArg::Slice {
-                    kind: SliceKind::ContiguousSlice,
+                    kind: SliceKind::Slice,
                     lower: Some(Reg(2)),
                     upper: Some(Reg(3)),
                     step: None,

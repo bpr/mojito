@@ -1161,11 +1161,11 @@ pub enum SemanticAdjustment {
         element: Ty,
         copy: bool,
     },
-    /// Descriptor types selected for a subscript's arguments. `None` denotes an
-    /// ordinary index; `Some` denotes a source slice and records whether overload
-    /// selection chose the contiguous, strided, or general Slice protocol.
+    /// How each of a subscript's arguments is built. `None` denotes an
+    /// ordinary index; `Some` denotes a slice literal and the parameter it
+    /// binds ([`CheckedSliceLiteral`]).
     SliceDescriptors {
-        descriptors: Vec<Option<mojito_types::types::SliceKind>>,
+        descriptors: Vec<Option<CheckedSliceLiteral>>,
         /// A variadic `__setitem__` receives the assignment value through its
         /// required keyword-only `value` slot. Reads and fixed-arity writes leave
         /// this false.
@@ -1193,6 +1193,39 @@ pub enum SemanticAdjustment {
 pub struct DictLiteral {
     pub constructor: String,
     pub list_constructor: String,
+}
+
+/// A slice literal bound to a subscript parameter: upstream's
+/// `T(lower, upper, stride, __slice_literal__=None)`, where `T` is the
+/// parameter's type and an omitted operand is `None`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum CheckedSliceLiteral {
+    /// The compiler-provided `Slice`, built by MIR's slice descriptor from
+    /// the written `Int` bounds.
+    Descriptor(mojito_types::types::SliceKind),
+    /// One call of a library type's `__slice_literal__` constructor.
+    Construct(SliceLiteralConstruction),
+}
+
+/// See [`CheckedSliceLiteral::Construct`]. Each written operand carries its
+/// own conversion to its parameter, recorded on its node.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SliceLiteralConstruction {
+    /// The constructed type, the bound parameter's.
+    pub target: Ty,
+    /// The exact lowered `__init__` overload declaring `__slice_literal__`.
+    pub constructor: String,
+    /// Per operand (lower, upper, stride): `None` when the operand is
+    /// written, or how the omitted operand's `None` reaches its parameter.
+    pub omitted: [Option<OmittedSliceOperand>; 3],
+}
+
+/// The `None` an omitted slice-literal operand passes: as is to a
+/// `NoneType` parameter, or through `conversion`, the `@implicit`
+/// constructor building the parameter's type (`Optional[Int]`) from it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OmittedSliceOperand {
+    pub conversion: Option<(String, Ty)>,
 }
 
 /// The construction a sugar checked as.
@@ -6638,7 +6671,7 @@ node_facts! {
         binding_ty: Ty,
         effects: EffectFacts,
         selected_call: Box<CheckedCallContract>,
-        subscript_descriptor: (Vec<Option<mojito_types::types::SliceKind>>, bool),
+        subscript_descriptor: (Vec<Option<CheckedSliceLiteral>>, bool),
         iteration_protocol: Box<IterationProtocol>,
         /// The protocol a `comptime for` steps the construction spelled
         /// for its iterable by (`seq.__iter__()`).

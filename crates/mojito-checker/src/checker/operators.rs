@@ -204,9 +204,8 @@ impl Checker {
                 return Ok(Ty::bool());
             }
         }
-        // `Slice` is Equatable (upstream `builtin_slice.mojo`); its
-        // `ContiguousSlice`/`StridedSlice` sub-kinds are not, so only exact
-        // `Slice` operands compare. The VM compares the three bounds.
+        // The compiler-provided `Slice` is Equatable (upstream
+        // `builtin_slice.mojo`); the VM compares the three bounds.
         if matches!(op, Eq | Ne)
             && matches!((lt.kind(), rt.kind()), (TyKind::Struct(left, left_args), TyKind::Struct(right, right_args))
                 if left == "Slice" && right == "Slice" && left_args.is_empty() && right_args.is_empty())

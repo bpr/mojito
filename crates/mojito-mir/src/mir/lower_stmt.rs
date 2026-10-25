@@ -1087,33 +1087,25 @@ impl<'a> Flatten<'a> {
             CheckedOp::Slice {
                 lower, upper, step, ..
             } if let Some(object) = target.object() => {
-                let kind = descriptors
-                    .first()
-                    .copied()
-                    .flatten()
-                    .expect("augmented slice has a descriptor kind");
                 let (receiver, receiver_place) = self.lower_call_receiver(object);
-                let lower_reg = lower.map(|id| self.slice_bound(target, id));
-                let upper_reg = upper.map(|id| self.slice_bound(target, id));
-                let step_reg = step.map(|id| self.slice_bound(target, id));
+                let argument = self.slice_set_argument(
+                    target,
+                    descriptors.first().cloned().flatten(),
+                    [*lower, *upper, *step],
+                );
                 let getter_call =
                     self.mir_subscript_call_contract(plan.getter.clone(), &[], target.location());
                 if plan.setter.is_none() {
                     self.emit_checked_call_boundary(&plan.getter, &target.location());
                     let handle =
                         self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-                    self.emit(MirInstr::Slice {
-                        dest: handle,
-                        object: receiver,
-                        kind,
-                        lower: lower_reg,
-                        upper: upper_reg,
-                        step: step_reg,
-                        object_place: receiver_place.map(Box::new),
-                        arg_places: vec![None],
-                        call: Some(Box::new(getter_call)),
-                        intrinsic: None,
-                    });
+                    self.emit_slice_read(
+                        handle,
+                        receiver,
+                        argument,
+                        receiver_place,
+                        Some(getter_call),
+                    );
                     let handle =
                         self.peel_reference_handle_to(handle, &plan.operand_ty, &target.location());
                     let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
@@ -1157,18 +1149,13 @@ impl<'a> Flatten<'a> {
                 self.emit_checked_call_boundary(&plan.getter, &target.location());
                 let current =
                     self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-                self.emit(MirInstr::Slice {
-                    dest: current,
-                    object: receiver,
-                    kind,
-                    lower: lower_reg,
-                    upper: upper_reg,
-                    step: step_reg,
-                    object_place: receiver_place.clone().map(Box::new),
-                    arg_places: vec![None],
-                    call: Some(Box::new(getter_call)),
-                    intrinsic: None,
-                });
+                self.emit_slice_read(
+                    current,
+                    receiver,
+                    argument.clone(),
+                    receiver_place.clone(),
+                    Some(getter_call),
+                );
                 let result = if let Some(inplace) = &plan.inplace {
                     self.emit_augmented_inplace(
                         current,
@@ -1223,12 +1210,7 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::MultiSet {
                     receiver: setter_receiver,
                     receiver_place: receiver_place.map(Box::new),
-                    args: vec![MirSubscriptArg::Slice {
-                        kind,
-                        lower: lower_reg,
-                        upper: upper_reg,
-                        step: step_reg,
-                    }],
+                    args: vec![argument],
                     arg_places: vec![None],
                     value,
                     value_place: None,
@@ -1273,12 +1255,11 @@ impl<'a> Flatten<'a> {
                         } => {
                             source_places.push(None);
                             source_spans.push(None);
-                            MirSubscriptArg::Slice {
-                                kind: descriptor.expect("slice argument has a descriptor kind"),
-                                lower: lower.map(|id| self.slice_bound(target, id)),
-                                upper: upper.map(|id| self.slice_bound(target, id)),
-                                step: step.map(|id| self.slice_bound(target, id)),
-                            }
+                            self.slice_set_argument(
+                                target,
+                                descriptor.clone(),
+                                [*lower, *upper, *step],
+                            )
                         }
                         _ => {
                             unreachable!("keyword subscript assignment is rejected at checking")
@@ -1627,29 +1608,18 @@ impl<'a> Flatten<'a> {
                         ..
                     } => {
                         arg_places.push(None);
-                        MirSubscriptArg::Slice {
-                            kind: descriptor
-                                .expect("slice assignment argument has descriptor kind"),
-                            lower: lower.map(|id| self.slice_bound(target, id)),
-                            upper: upper.map(|id| self.slice_bound(target, id)),
-                            step: step.map(|id| self.slice_bound(target, id)),
-                        }
+                        self.slice_set_argument(target, descriptor, [*lower, *upper, *step])
                     }
                     _ => unreachable!("keyword subscript assignment is rejected at checking"),
                 })
                 .collect(),
             SetArguments::Slice([lower, upper, step]) => {
                 arg_places.push(None);
-                vec![MirSubscriptArg::Slice {
-                    kind: descriptors
-                        .first()
-                        .copied()
-                        .flatten()
-                        .expect("slice assignment has descriptor kind"),
-                    lower: lower.map(|id| self.slice_bound(target, id)),
-                    upper: upper.map(|id| self.slice_bound(target, id)),
-                    step: step.map(|id| self.slice_bound(target, id)),
-                }]
+                vec![self.slice_set_argument(
+                    target,
+                    descriptors.first().cloned().flatten(),
+                    [lower, upper, step],
+                )]
             }
         };
         let (value, value_place) =
@@ -1703,6 +1673,22 @@ impl<'a> Flatten<'a> {
         subscript
             .operand_of(id)
             .expect("a subscript argument's node is its operand")
+    }
+
+    /// The subscript argument the slice literal `descriptor` of subscript
+    /// `subscript` passes, whose operand nodes are `operands`, evaluated
+    /// outside the subscript call's setup.
+    fn slice_set_argument(
+        &mut self,
+        subscript: Node<'a>,
+        descriptor: Option<mojito_checked::checked::CheckedSliceLiteral>,
+        operands: [Option<mojito_checked::checked::CheckedNodeId>; 3],
+    ) -> MirSubscriptArg {
+        let descriptor = descriptor.expect("a slice argument has a bound literal");
+        let operands = operands.map(|id| id.map(|id| self.slice_bound(subscript, id)));
+        self.outside_call_setup(|this| {
+            this.slice_literal_argument(subscript, &descriptor, operands)
+        })
     }
 
     /// The value of slice bound node `id` of subscript `subscript`.

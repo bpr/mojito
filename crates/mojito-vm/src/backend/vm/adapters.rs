@@ -106,15 +106,9 @@ impl VmBackend {
         let Some(public_elements) = mojito_types::types::tuple_elements(target) else {
             return Ok(crate::runtime::coerce_checked(value, target));
         };
-        let Value::Tuple(mut items) = value else {
+        let Value::Tuple(items) = value else {
             return Ok(crate::runtime::coerce_checked(value, target));
         };
-        // `ContiguousSlice.indices` is checked as the two-element `(start,
-        // end)` while the intrinsic computes the three normalized bounds; the
-        // checked destination selects the shape.
-        if items.len() == 3 && public_elements.len() == 2 {
-            items.truncate(2);
-        }
         let definition = prog.structs.get(name).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
                 "vm: checked public Tuple result targets missing specialization '{name}'"

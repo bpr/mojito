@@ -384,16 +384,29 @@ impl<'a> FnLowering<'a> {
         let ptr_handle: TypeHandle = PointerType::get(ctx, 0).into();
         let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
         for arg in args {
-            if let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
-                .as_ref()
-                .map(Ty::kind)
+            // A slice descriptor writes as `Slice(start, end, step)`, its
+            // text a temporary the append copies.
+            let slice = self
+                .func
+                .reg_types
+                .get(&arg.0)
+                .and_then(slice_struct_name)
+                .is_some();
+            if !slice
+                && let Some(TyKind::Struct(name, _)) = (self.func.reg_types.get(&arg.0).cloned())
+                    .as_ref()
+                    .map(Ty::kind)
                 && !mojito_symbol::symbol::is_stdlib_string_struct(name)
                 && !mojito_symbol::symbol::is_stdlib_string_span_struct(name)
             {
                 self.append_struct_via_write_to(ctx, *arg, name, descriptor, dest)?;
                 continue;
             }
-            let (chunk, chunk_len) = self.writer_argument_text(ctx, *arg, dest)?;
+            let (chunk, chunk_len) = if slice {
+                self.slice_string(ctx, *arg, dest, false)?
+            } else {
+                self.writer_argument_text(ctx, *arg, dest)?
+            };
             let data = LoadOp::new(ctx, descriptor, ptr_handle);
             self.append(ctx, data.get_operation(), Some(dest));
             let len_address = self.offset_address(ctx, descriptor, 8);
@@ -421,6 +434,9 @@ impl<'a> FnLowering<'a> {
             self.append(ctx, store.get_operation(), Some(dest));
             let store = StoreOp::new(ctx, total.get_result(ctx), len_address);
             self.append(ctx, store.get_operation(), Some(dest));
+            if slice {
+                self.emit_free(ctx, chunk);
+            }
         }
         self.erased.insert(dest.0);
         Ok(())

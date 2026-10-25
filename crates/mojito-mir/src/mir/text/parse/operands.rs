@@ -69,8 +69,6 @@ impl Decoder {
     pub(super) fn slice_kind(&mut self, value: &Value) -> Option<SliceKind> {
         match self.atom(value)? {
             "slice" => Some(SliceKind::Slice),
-            "contiguous_slice" => Some(SliceKind::ContiguousSlice),
-            "strided_slice" => Some(SliceKind::StridedSlice),
             other => {
                 self.error(value.span, format!("unknown slice kind `{other}`"));
                 None

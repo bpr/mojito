@@ -1,4 +1,4 @@
-# expect: is not defined for ContiguousSlice
+# expect: operator '==' is not defined for
 # Only `Slice` is Equatable upstream; the `ContiguousSlice`/`StridedSlice`
 # descriptor sub-kinds do not compare.
 from std.builtin.builtin_slice import ContiguousSlice

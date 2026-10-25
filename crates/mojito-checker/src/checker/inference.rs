@@ -403,6 +403,9 @@ impl Checker {
     }
 
     pub(super) fn infer(&self, expr: &Expr) -> Result<Ty, TypeError> {
+        if let Some(literal) = self.slice_literal_type(expr) {
+            return Ok(literal);
+        }
         // A leading-dot member chain is only meaningful where an expected
         // type flows; plain inference has no context to resolve it.
         if contextual_root_span(expr).is_some() {
@@ -2029,9 +2032,14 @@ impl Checker {
         expected: &Ty,
         record: bool,
     ) -> Result<Ty, TypeError> {
-        // Compiler-synthesized slice descriptors have no standalone source
-        // expression. Their exact protocol type is installed by
-        // `synthetic_slice_descriptor`; consume that checked fact directly.
+        // A slice literal's stand-in has no source expression to check: its
+        // binding is judged against each parameter type
+        // (`slice_literal_binding`).
+        if let Some(literal) = self.slice_literal_type(expression) {
+            return Ok(literal);
+        }
+        // An augmented subscript's computed value has no source expression
+        // either; consume the type installed for it directly.
         if matches!(expression.kind, ExprKind::None)
             && let Some(ty) = self.fact(&expression.source_span(), |facts| facts.ty.as_ref())
         {

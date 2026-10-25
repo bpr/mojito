@@ -277,14 +277,10 @@ pub enum SubscriptActual<'a> {
     Descriptor(Value),
 }
 
-/// The checker-virtual slice-descriptor struct name behind `ty`, if any.
+/// The compiler-provided slice-descriptor struct name behind `ty`, if any.
 pub fn slice_struct_name(ty: &Ty) -> Option<&str> {
     match ty.kind() {
-        TyKind::Struct(name, _)
-            if matches!(name.as_str(), "Slice" | "ContiguousSlice" | "StridedSlice") =>
-        {
-            Some(name)
-        }
+        TyKind::Struct(name, _) if name == "Slice" => Some(name),
         TyKind::Ref(reference) => slice_struct_name(&reference.referent),
         _ => None,
     }

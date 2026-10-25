@@ -816,8 +816,7 @@ exports top-level `def`, `struct`, `trait`, and `comptime` declarations except
 The entry module's declarations keep their source names, except that one
 whose name a loaded module links bare (the bundled publics
 `implicit_public_identity` keeps unqualified, such as `List` or `range`),
-a compiler builtin identity (`builtin_module_exports`, such as `Slice`, or
-an import-only one, `qualified_builtin_exports`, such as `ContiguousSlice`), or
+a compiler builtin identity (`builtin_module_exports`, such as `Slice`), or
 a prelude name (such as `String`) takes the entry module's qualified name
 (`module::entry_item_name`, module `__main__`), as every Mojo declaration
 lives in its module's namespace: the entry's `struct List` shadows the
