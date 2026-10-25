@@ -2054,7 +2054,9 @@ impl Checker {
     /// initializer's struct at its own parameters, else the node's own) is
     /// memory-only is returned through memory
     /// ([`mojito_checked::checked::SemanticAdjustment::IndirectResult`]);
-    /// so is an implicit conversion's when its type is.
+    /// so is an implicit conversion's when its type is. A read argument
+    /// whose type is not memory-only is passed by value
+    /// ([`mojito_checked::checked::SemanticAdjustment::RegisterPassableRead`]).
     fn record_result_conventions(&self) {
         // A compiler-known type upstream declares `TrivialRegisterPassable`
         // (a scalar, a pointer, a literal) and a function value, which
@@ -2073,11 +2075,13 @@ impl Checker {
                 .filter(|(_, rest)| rest.is_empty() || rest.starts_with('$'))
                 .and_then(|(name, _)| self.self_instance_ty(name))
         };
-        let judged: Vec<(SourceSpan, bool, bool)> = {
+        let judged: Vec<(SourceSpan, bool, bool, bool)> = {
             let records = self.node_facts.borrow();
             records
                 .iter()
                 .map(|(span, facts)| {
+                    let by_value = facts.borrowed_read_call_place
+                        && facts.ty.as_ref().is_some_and(|ty| !memory_only(ty));
                     let indirect = facts
                         .declared_result
                         .clone()
@@ -2090,16 +2094,17 @@ impl Checker {
                         .and_then(constructed)
                         .or_else(|| facts.implicit_conversion_type.clone())
                         .is_some_and(|ty| memory_only(&ty));
-                    (span.clone(), indirect, converted)
+                    (span.clone(), indirect, converted, by_value)
                 })
-                .filter(|(_, indirect, converted)| *indirect || *converted)
+                .filter(|(_, indirect, converted, by_value)| *indirect || *converted || *by_value)
                 .collect()
         };
         let mut records = self.node_facts.borrow_mut();
-        for (span, indirect, converted) in judged {
+        for (span, indirect, converted, by_value) in judged {
             if let Some(facts) = records.get_mut(&span) {
                 facts.indirect_result = indirect;
                 facts.conversion_indirect_result = converted;
+                facts.register_passable_read = by_value;
             }
         }
     }

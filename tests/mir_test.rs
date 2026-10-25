@@ -3806,6 +3806,50 @@ fn chained_reference_subscript_materializes_a_retained_handle() {
 }
 
 #[test]
+fn memory_only_read_argument_retains_its_place_and_register_passable_does_not() {
+    // Upstream passes a memory-only `read` argument by address and a
+    // register-passable one by value: only the first retains its caller
+    // place, which the VM binds as the callee's parameter.
+    let src = "@fieldwise_init\nstruct Pt(Copyable, Movable):\n    var x: Int\n\n@fieldwise_init\nstruct Q(TrivialRegisterPassable):\n    var x: Int\n\ndef pt(a: Pt, b: Pt) -> Int:\n    return a.x + b.x\n\ndef q(a: Q, b: Q) -> Int:\n    return a.x + b.x\n\ndef main():\n    var p = Pt(1)\n    var r = Q(2)\n    print(pt(p, p) + q(r, r))\n";
+    let checked = mojito::check_program(&parse(src).expect("parse")).expect("check");
+    let mir = mojito::mir::lower_checked_program(&checked);
+    let (_, main) = mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main lowered");
+    let places = |callee: &str| {
+        nested_instructions(&main.blocks)
+            .into_iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func, arg_places, ..
+                } if func.0 == callee => Some(arg_places.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("call of {callee}"))
+    };
+    let p = main
+        .var_names
+        .iter()
+        .position(|name| name == "p")
+        .expect("slot p") as u32;
+    assert!(
+        places("pt")
+            .iter()
+            .all(|place| place.as_ref().map(|place| place.root) == Some(p)),
+        "{:?}",
+        places("pt")
+    );
+    assert!(places("q").iter().all(Option::is_none), "{:?}", places("q"));
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
 fn dynamic_reference_returning_call_actual_retains_one_hidden_place() {
     let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.value)] Int:\n        return self.value\n\ndef index() -> Int:\n    return 0\n\ndef bump(mut value: Int):\n    value += 2\n\ndef main():\n    var box = Box(40)\n    bump(box[index()])\n";
     let checked = mojito::check_program(&parse(src).expect("parse")).expect("check");

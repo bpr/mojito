@@ -1038,6 +1038,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A memory-only value passed to a `read` parameter reaches the callee as
+  the caller's storage at every call, as upstream passes it by address,
+  where the VM used to bind a copy unless the call's result borrowed the
+  argument (R677). A write through an untracked `UnsafePointer` to the
+  caller's value is now seen through the parameter, as at the pin under
+  `-O0`. A register-passable argument is still passed by value: the
+  checker records it (`RegisterPassableRead`), and the package format
+  moves to `mojito-package 97`.
+
 - A result its callee returns through memory gets one hidden slot at its
   call, as upstream's call emission passes the callee's `ByRefResult`
   argument a synthesized `__call_result_tmp__`, and each consumer without

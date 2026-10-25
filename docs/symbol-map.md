@@ -1062,7 +1062,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Flatten::call_result`, which binds a result whose node answers
   `Node::indirect_result` (the checker's `IndirectResult` /
   `ConversionIndirectResult`, recorded by
-  `Checker::record_result_conventions` from `NodeFacts::declared_result`)
+  `Checker::record_result_conventions` from `NodeFacts::declared_result`,
+  which also marks a register-passable read argument
+  `RegisterPassableRead`, `Node::register_passable_read`, so
+  `lower_call_operand` retains the place of every other one)
   to its `$call_result_tmp_r` slot (`mir::CALL_RESULT_SLOT`) right after
   its producer, in place when a non-raising call made it, and the
   consumer readers `read_c`, `take_c`, `operand_c` (by the checker's

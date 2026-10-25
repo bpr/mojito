@@ -827,6 +827,11 @@ pub enum SemanticAdjustment {
     /// upstream's `mergeCValuesAcrossIfLikeOp` does. Any other result is
     /// stored into a result slot by each arm.
     RegisterPassableResult,
+    /// A [`Self::BorrowReadArgument`] whose type is proven register-passable,
+    /// which upstream passes to a `read` parameter by value. Any other read
+    /// argument is memory-only and passed by address: lowering retains its
+    /// place, so the callee binds the caller's storage.
+    RegisterPassableRead,
     /// A call, dispatched operator, by-value subscript, or display whose
     /// selected callee returns its result through memory, as upstream's
     /// signature synthesizes a `ByRefResult` argument: the callee's declared
@@ -6399,6 +6404,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.register_passable_result {
         adjustments.push(SemanticAdjustment::RegisterPassableResult);
     }
+    if facts.register_passable_read {
+        adjustments.push(SemanticAdjustment::RegisterPassableRead);
+    }
     if facts.indirect_result
         && matches!(
             expression.kind,
@@ -6713,6 +6721,8 @@ node_facts! {
         implicitly_copied_consuming_receiver,
         truthiness_condition,
         register_passable_result,
+        /// See [`SemanticAdjustment::RegisterPassableRead`].
+        register_passable_read,
         /// See [`SemanticAdjustment::IndirectResult`].
         indirect_result,
         /// See [`SemanticAdjustment::ConversionIndirectResult`].

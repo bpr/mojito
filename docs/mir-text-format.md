@@ -535,6 +535,12 @@ field read. An older artifact holding any of them no longer loads. The
 package format moves to `mojito-package 96`, whose checked subscripts
 record each slice literal as the constructor call it binds.
 
+The package format moves to `mojito-package 97` when a checked read
+argument records whether its type is proven register-passable
+(`RegisterPassableRead`), which upstream passes by value: MIR lowering
+retains the place of every other read argument, which upstream passes by
+address. The MIR text is unchanged.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

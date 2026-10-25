@@ -517,15 +517,15 @@ impl<'a> Flatten<'a> {
                     None => self.lower_borrowed_read_argument(expression),
                 }
             {
-                // A call whose result borrows its reads retains the place as
-                // a SHARED read:
-                // the ownership analysis classifies a retained place by the
-                // callee's declared convention (a non-`mut`/`ref` slot reads),
-                // and the VM binds it as a caller-place handle so the view's
-                // reference fields root in caller storage. Every other call
-                // retains no place: owner liveness through the call comes from
-                // the register's place provenance.
-                if lends_reads {
+                // A memory-only read is passed by address, as upstream
+                // passes it, so its place is retained as a SHARED read: the
+                // ownership analysis classifies a retained place by the
+                // callee's declared convention (a non-`mut`/`ref` slot
+                // reads), and the VM binds it as a caller-place handle. A
+                // register-passable read is passed by value and retains no
+                // place unless the call's result borrows it, so a view's
+                // reference fields root in caller storage.
+                if lends_reads || !expression.register_passable_read() {
                     return (register, self.simple_place(expression));
                 }
                 return (register, None);

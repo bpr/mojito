@@ -5197,6 +5197,16 @@ current Mojo:
   keeps its `$arg_loan_r` anchor, a materialized borrow source its `$mat_r`
   slot, and an origin-bearing view at an argument its register, whose
   provenance keeps the viewed storage live.
+- A named place bound to a read parameter (`BorrowReadArgument`) is read
+  where it lies, and a memory-only one is passed by address, as upstream
+  passes a memory-only `read` argument: `lower_call_operand`
+  (`mir/calls.rs`) retains its place in the call's `arg_places`, so the
+  ownership analysis classifies a shared read and the VM binds the
+  parameter to the caller's storage. The checker marks a read argument
+  whose type is proven register-passable `RegisterPassableRead`
+  (`Checker::record_result_conventions`), which is passed by value and
+  retains its place only when the call's result borrows it
+  (`Node::lends_read_arguments`).
 - A list, dict, or set display, a tuple display, and a comprehension are
   their construction's result, as upstream emits a collection literal as a
   constructor call into its destination or a temporary, so

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1425**.
+Next free ID: **R1426**.
 
 ## Ordered Work
 
@@ -2894,29 +2894,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     call-as-assignment-target path writes through it after the frame is
     gone.
   - Found while landing R679 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R677 A read argument reaches the VM callee as a frame value unless
-  the result borrows it**
-
-  Problem: upstream passes every memory-only `read` argument by address,
-  but the VM binds a read argument as the caller's storage only when the
-  call's result borrows it.
-  - A borrowing view or a reference result lends its read arguments
-    (`lends_read_arguments`); every other call copies the value into the
-    callee frame.
-  - Nothing observes the difference yet: pointer comparison on an
-    origin-bearing pointer is rejected, so `UnsafePointer(to=w)` inside the
-    callee cannot be compared with the caller's.
-  - It becomes a defect once pointer identity lands.
-  - Probe: MIR passes such an argument as a whole `place.load`, so `cse`
-    cannot merge the loads of a memory-only value its readers may consume:
-    `def twin(p: Pt) -> Bool: return same(p, p)` over
-    `@fieldwise_init struct Pt(Copyable, Movable): var x: Int; var y: Int`
-    keeps two adjacent whole `place.load`s of `p` in concrete `twin`,
-    where upstream passes `p`'s address twice and loads nothing.
-  - Found while landing R672 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9525,6 +9502,31 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     format moves.
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1425 A MIR call passes a by-address argument as a loaded value
+  beside its place, where upstream's call takes the address and loads
+  nothing**
+
+  `MirInstr::Call` takes every operand as a value register, so a memory-only
+  `read` argument or a `mut`/`ref` one is a whole load of its place, with
+  the place itself retained in `arg_places`.
+  - The VM replaces the loaded value with a handle to the place, and
+    Pliron recovers the address from the place
+    (`place_backed_arg_value`, `crates/mojito-pliron/src/lower/abi.rs`), so
+    the load reads nothing a backend uses.
+  - `cse` cannot merge two such loads, because their memory-only result
+    may own what a consuming reader takes.
+  - Probe: `def twin(p: Pt) -> Bool: return same(p, p)` over
+    `@fieldwise_init struct Pt(Copyable, Movable): var x: Int; var y: Int`
+    keeps two adjacent whole `place.load`s of `p` in concrete `twin`
+    (with `@no_inline` on both), where upstream passes `p`'s address twice.
+  - Probe: `bump(p)` over `def bump(mut a: Pt)` spells a `ref.make` and a
+    whole `ref.read` of `p` before the call.
+  - Fix: pass the address as the operand, a `ref.make` of the place, and
+    teach the inliner's parameter binding, `sroa`, and `mem-2-reg` to read
+    it as an address.
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R1420 A raising call's register-passable result stays a register,
   where upstream returns every raising callee's result through memory**

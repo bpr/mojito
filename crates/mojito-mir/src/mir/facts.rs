@@ -405,9 +405,9 @@ impl<'a> Node<'a> {
     /// Whether this call's result borrows its read-convention place
     /// arguments — a borrowing view ([`Self::borrows_view_result`]) or a
     /// reference result — so each must reach the callee as the caller's
-    /// storage, as upstream passes a memory-only `read` argument by address:
-    /// a result rooted in a callee-local copy would dangle once the frame
-    /// unwinds.
+    /// storage, a register-passable one included: a result rooted in a
+    /// callee-local copy would dangle once the frame unwinds. A memory-only
+    /// read reaches it so at every call, as upstream passes it by address.
     pub(super) fn lends_read_arguments(self) -> bool {
         self.borrows_view_result() || self.reference_result().is_some()
     }
@@ -643,6 +643,17 @@ impl<'a> Node<'a> {
             matches!(
                 adjustment,
                 mojito_checked::checked::SemanticAdjustment::RegisterPassableResult
+            )
+        })
+    }
+
+    /// Whether this read argument's type is proven register-passable, so
+    /// it is passed by value rather than by address.
+    pub(super) fn register_passable_read(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::RegisterPassableRead
             )
         })
     }
