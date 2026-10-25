@@ -2264,6 +2264,82 @@ impl Checker {
             });
     }
 
+    /// The exact lowered `__init__` a zero-argument construction of `target`
+    /// selects, as upstream's `emitConstructorCall` resolves `C()` with no
+    /// operands: among the overloads no argument binds whose `where` clause
+    /// holds under `target`'s arguments, the best ranked.
+    pub(super) fn empty_constructor(&self, target: &Ty) -> Result<String, TypeError> {
+        let TyKind::Struct(name, arguments) = target.kind() else {
+            return Err(TypeError::InvariantViolation(format!(
+                "empty construction of non-nominal '{target}'"
+            )));
+        };
+        let no_constructor = || TypeError::BadCall {
+            func: name.clone(),
+            reason: "no matching constructor for a call with no arguments".to_string(),
+        };
+        let info = self.structs.get(name).ok_or_else(no_constructor)?;
+        let sigs = info.methods.get("__init__").ok_or_else(no_constructor)?;
+        let ranked = sigs
+            .iter()
+            .filter(|sig| {
+                mojito_ast::call::match_call_slots(
+                    &sig.names,
+                    &sig.required,
+                    sig.positional_only,
+                    sig.keyword_only,
+                    0,
+                    &[],
+                    mojito_ast::call::CallVariadics {
+                        positional: sig.variadic.is_some(),
+                        keyword: sig.kw_variadic.is_some(),
+                    },
+                )
+                .is_ok()
+                    && self
+                        .method_constraint_result(sig, &[], &info.decls, arguments)
+                        .is_ok()
+            })
+            .map(|sig| {
+                let rank = overload_rank(
+                    0,
+                    sig.variadic.is_some(),
+                    0,
+                    !decls_are_concrete(&sig.decls),
+                );
+                (rank, sig)
+            })
+            .collect::<Vec<_>>();
+        let best = ranked.iter().map(|(rank, _)| *rank).min();
+        let sig = match ranked
+            .iter()
+            .filter(|(rank, _)| Some(*rank) == best)
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            [] => return Err(no_constructor()),
+            [(_, sig)] => *sig,
+            _ => {
+                return Err(TypeError::BadCall {
+                    func: name.clone(),
+                    reason: "ambiguous overloaded constructor call".to_string(),
+                });
+            }
+        };
+        if sig.raises {
+            return Err(TypeError::Unsupported(format!(
+                "a collection built by '{name}'s raising empty constructor"
+            )));
+        }
+        Ok(constructor_symbol(
+            name,
+            "__init__",
+            sigs.len() > 1,
+            sig,
+            self.self_instance_ty(name).as_ref(),
+        ))
+    }
+
     /// The call diagnostic of a constructor candidate whose availability
     /// clause fails for the constructed type, which is then no candidate.
     /// `method_arguments` bind the constructor's own parameters, which a

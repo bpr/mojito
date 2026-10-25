@@ -397,15 +397,9 @@ pub enum Callee<'a> {
 }
 
 impl<'a> Callee<'a> {
-    /// The declaration a direct call of `callee` binds: a struct name calls
-    /// its `__init__`.
+    /// The declaration a direct call of `callee` binds.
     pub fn direct(declarations: &'a MirDeclarations, callee: &str) -> Option<Self> {
-        if declarations.structure(callee).is_some() {
-            declarations.function(&format!("{callee}.__init__"))
-        } else {
-            declarations.function(callee)
-        }
-        .map(Self::Declared)
+        declarations.function(callee).map(Self::Declared)
     }
 
     /// The callee a method, operator, or subscript call of `target` binds

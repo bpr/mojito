@@ -976,18 +976,27 @@ pub enum SemanticAdjustment {
     /// method calls; it must not reconstruct a native collection from syntax.
     ConstructCollection {
         target: Ty,
+        /// A comprehension's insertion method (`append`, `add`, or
+        /// `__setitem__`), called once per element on the empty collection
+        /// `constructor` builds, as upstream's `emitComprehension` does.
         insert: Option<String>,
-        /// A tuple display's constructor: the exact lowered `__init__`
-        /// overload collecting its elements (`var *args: *Ts`), which MIR
-        /// lowers the display as one call of, as upstream's parser emits
-        /// `Tuple(…)`.
+        /// The exact lowered `__init__` overload the construction calls:
+        /// a tuple display's collector (`var *args: *Ts`), a list or set
+        /// display's literal constructor (`__list_literal__`,
+        /// `__set_literal__`), or the empty one a comprehension, or an empty
+        /// `{}` whose literal constructor is unavailable, builds from.
+        /// `None` for a dictionary display built by `literal`.
         constructor: Option<String>,
+        /// The marker keyword a literal `constructor` is called with, bound
+        /// to `None` after the display's elements (`__list_literal__`,
+        /// `__set_literal__`); `None` for any other constructor.
+        marker: Option<String>,
         /// The same display as a temporary receiver of a `ref self` method
         /// (`(1, 2)[0]`): it is also a materialized borrow source (see
         /// `MaterializeBorrowSource`), and one span carries one adjustment.
         materialized: Option<mojito_types::origin::OwnerId>,
-        /// A non-empty dictionary display's literal constructor: the display
-        /// is `Dict(keys=[k…], values=[v…], __dict_literal__=None)`, built
+        /// A dictionary display's literal constructor: the display is
+        /// `Dict(keys=[k…], values=[v…], __dict_literal__=None)`, built
         /// from the key and value lists rather than by insertion.
         literal: Option<Box<DictLiteral>>,
     },

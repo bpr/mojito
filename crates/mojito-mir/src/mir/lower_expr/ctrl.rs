@@ -7,29 +7,36 @@ use super::*;
 use mojito_checked::checked::{
     CheckedComprehensionClause, CheckedExpr, CheckedOp, DictLiteral, SemanticAdjustment,
 };
-use mojito_types::types::TyKind;
 
-/// Return the collection constructor and insertion protocol the checker
-/// selected for display or comprehension `node`. Collection syntax is
-/// deliberately absent from this decision: lowering consumes the nominal plan
-/// just like any other resolved call.
-pub(super) fn collection_plan(node: &CheckedExpr) -> Option<(Ty, Option<String>)> {
-    display_adjustments(node).find_map(|adjustment| match adjustment {
-        SemanticAdjustment::ConstructCollection { target, insert, .. } => {
-            Some((target.clone(), insert.clone()))
-        }
-        _ => None,
-    })
+/// The construction the checker selected for display or comprehension
+/// `node`. Collection syntax is deliberately absent from this decision:
+/// lowering consumes the nominal plan just like any other resolved call.
+pub(super) struct CollectionPlan<'n> {
+    pub(super) target: &'n Ty,
+    /// The exact lowered `__init__` the construction calls.
+    pub(super) constructor: Option<&'n str>,
+    /// The literal keyword `constructor` is called with, bound to `None`.
+    pub(super) marker: Option<&'n str>,
+    /// A comprehension's insertion method.
+    pub(super) insert: Option<&'n str>,
 }
 
-/// The `__init__` overload the checker selected for tuple display `node`,
-/// which collects its elements.
-pub(super) fn tuple_constructor(node: &CheckedExpr) -> Option<&str> {
+/// Return the collection construction the checker selected for display or
+/// comprehension `node`.
+pub(super) fn collection_plan(node: &CheckedExpr) -> Option<CollectionPlan<'_>> {
     display_adjustments(node).find_map(|adjustment| match adjustment {
         SemanticAdjustment::ConstructCollection {
-            constructor: Some(constructor),
+            target,
+            insert,
+            constructor,
+            marker,
             ..
-        } => Some(constructor.as_str()),
+        } => Some(CollectionPlan {
+            target,
+            constructor: constructor.as_deref(),
+            marker: marker.as_deref(),
+            insert: insert.as_deref(),
+        }),
         _ => None,
     })
 }
@@ -363,31 +370,22 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// Construct an empty nominal collection and bind it to a synthetic slot so
+    /// Construct an empty nominal collection by `constructor`, the empty
+    /// `__init__` its check selected, and bind it to a synthetic slot so
     /// each checked mutating insertion can use the ordinary method-call ABI.
     pub(in crate::mir) fn begin_nominal_collection(
         &mut self,
         expression: Node<'a>,
         target: &Ty,
+        constructor: &str,
     ) -> VarId {
-        let TyKind::Struct(name, _) = target.kind() else {
-            unreachable!("checked collection target is nominal")
-        };
-        let empty = self.fresh_typed(expression.location(), None, target.clone());
-        self.emit(MirInstr::Call {
-            dest: empty,
-            func: FuncRef::named(name),
-            raises: None,
-            args: Vec::new(),
-            kwargs: Vec::new(),
-            arg_places: Vec::new(),
-            kwarg_places: Vec::new(),
-            capture_accesses: Vec::new(),
-            param_arg_regs: Vec::new(),
-            receiver: None,
-            instantiated_args: Vec::new(),
-            spread: None,
-        });
+        let empty = self.constructor_call(
+            expression,
+            constructor,
+            target.clone(),
+            Vec::new(),
+            Vec::new(),
+        );
         let collection = self.fresh_var();
         self.var_types.insert(collection, target.clone());
         self.emit(MirInstr::DefVar {
@@ -672,14 +670,23 @@ impl<'a> Flatten<'a> {
         key: Option<Node<'a>>,
         value: Node<'a>,
     ) -> Reg {
-        let (target, insert) = collection_plan(node.checked)
-            .expect("checked collection comprehension has a nominal construction plan");
-        let insert = insert.expect("list/set/dict comprehension has an insertion method");
-        let collection = self.begin_nominal_collection(node, &target);
+        let Some(CollectionPlan {
+            target,
+            constructor: Some(constructor),
+            insert: Some(insert),
+            ..
+        }) = collection_plan(node.checked)
+        else {
+            return self.unsupported_value(
+                node.location(),
+                "a comprehension without its checked construction reached MIR",
+            );
+        };
+        let collection = self.begin_nominal_collection(node, target, constructor);
         let plan = ComprehensionPlan {
             collection,
-            target: &target,
-            insert: &insert,
+            target,
+            insert,
             key,
             value,
             clauses,
@@ -687,7 +694,7 @@ impl<'a> Flatten<'a> {
             bindings: &node.checked.comprehension_bindings,
         };
         self.comprehension_clauses(&plan, 0);
-        self.finish_nominal_collection(node, collection, &target)
+        self.finish_nominal_collection(node, collection, target)
     }
 
     /// Lower `build` as a region of its own: one block, ended by the

@@ -1932,7 +1932,9 @@ are lifetime-check inputs `lower-lit` erases, so a list the elaborator builds
 the collector that a keyword fills moves to its position, so the shared
 matcher binds the collector operand alone (`call::bind_spread`). A tuple
 display names its variadic `__init__`, which the checker records on its
-`ConstructCollection`, and a list display's literal constructor, an
+`ConstructCollection` as it records a list or set display's literal
+constructor (`List(a, b, __list_literal__=None)`, upstream's
+`InitializerUValue` lowering), and those, an
 array literal's, and a subscript (`index.multi` and `index.multi_set`,
 whose contract names the collector as one argument) build theirs the same
 way; a call through a bound whose requirement has no body builds its
@@ -2109,8 +2111,11 @@ the subscript arguments' kinds and keywords, and every adjustment from the
 node; the place builders, the subscript stores, and the projection
 predicates decide by the op too, and each operand (a slice bound, a
 subscript argument) is the handle of the id the op names. List, brace, and tuple displays and comprehensions dispatch
-the same way (`Flatten::display_family`): the constructor and insertion
-method come from the node's construction adjustment, each comprehension
+the same way (`Flatten::display_family`): the constructor, its literal marker
+keyword, and a comprehension's insertion method come from the node's
+construction adjustment (an empty `{}` whose literal constructor's `where`
+clause fails calls the empty `__init__`, upstream's initializer-list
+fallback), each comprehension
 clause's kind, binder, and iterable come from the op, and a display without
 a checked construction is an explicit `Unsupported` boundary, never a
 collection guessed from its delimiters. Operators, comparison chains,
@@ -6454,9 +6459,12 @@ point where a slot declared in a loop is uninitialized again.
   reaches, and also every call it makes itself that names a struct,
   `make[String]()`'s `T()` included, so no backend resolves an overload by
   arity for it; a fieldwise construction calls the struct's synthesized
-  `S.__init__` the same way. Only a collection display's empty value is
-  still a call naming the struct, which the elaborator's construct arm
-  resolves by arity (R1338). A constructor that removed one of its
+  `S.__init__` the same way. A list or set display calls its literal
+  constructor and a comprehension calls the empty `__init__` the check
+  selected (`Checker::empty_constructor`), as upstream's
+  `emitComprehension` does, so every construction names its `__init__`,
+  and the elaborator rejects a call naming a struct as an unresolved
+  construction. A constructor that removed one of its
   struct's parameters is owner-less like any other method, and the VM builds the call's destination
   type through it (`Prog::lifecycle_constructor`, `CallTypes::constructed`),
   so `Box[1](1)` and `Box[2](2)` share one `Box.__init__$mono`. No

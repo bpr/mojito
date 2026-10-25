@@ -2465,81 +2465,21 @@ impl<'a> Specializer<'a> {
                                     self.enqueue_repr_instance(owner, function, arg)?;
                                 }
                             }
-                            // A call naming an instance (`Box$mono$TInt`,
-                            // a type parameter's substitution) constructs
-                            // through its template's members; an instance
-                            // already minted (a body nested in an unrolled
-                            // region of a struct instance's method,
-                            // `Box$mono$V1.get$f`) is called as it is.
-                            let template = nominal_template(&func.0).to_string();
+                            // Every construction names the `__init__` its
+                            // check selected, as upstream's call names the
+                            // constructor's symbol; a call naming a struct
+                            // was never resolved.
                             if func.0 != "String"
-                                && self.structs.contains_key(template.as_str())
+                                && self.structs.contains_key(nominal_template(&func.0))
                                 && !self.instance_names.contains_key(func.0.as_str())
                             {
-                                let init_base = format!("{template}.__init__");
-                                let init = mojito_symbol::symbol::resolve_callable_symbol(
-                                    &self.functions,
-                                    &init_base,
-                                    args.len() + kwargs.len(),
-                                );
-                                let init = if self.functions.contains_key(init.as_str()) {
-                                    init
-                                } else {
-                                    self.runtime_pack_constructor(&init_base).unwrap_or(init)
-                                };
-                                if self.functions.contains_key(init.as_str()) {
-                                    let (target, bindings, arguments) = self.infer_call(
-                                        owner,
-                                        function,
-                                        &init,
-                                        Some(*dest),
-                                        *dest,
-                                        (args, *spread),
-                                        kwargs,
-                                        param_arg_regs,
-                                        instantiated_args,
-                                    )?;
-                                    if let Some((_, concrete)) = &bindings.self_instance {
-                                        function.reg_types.insert(dest.0, concrete.clone());
-                                    }
-                                    // The call names the constructor instance
-                                    // it reaches, as upstream's names the
-                                    // constructor's symbol.
-                                    let reduced = bindings.reduced;
-                                    func.0 = self.enqueue(&target, bindings, arguments)?;
-                                    if reduced {
-                                        self.drop_removed_arguments(
-                                            owner,
-                                            &target,
-                                            mojito_mir::mir::CallOperands {
-                                                args,
-                                                arg_places,
-                                                kwargs,
-                                                kwarg_places,
-                                                spread,
-                                            },
-                                        )?;
-                                    }
-                                    param_arg_regs.clear();
-                                    instantiated_args.clear();
-                                    continue;
-                                }
-                                // A generic struct's output declaration is
-                                // instance-named; respell the constructor
-                                // call so lowering's struct lookup matches.
-                                if let Some(TyKind::Struct(concrete, _)) =
-                                    function.reg_types.get(&dest.0).map(Ty::kind)
-                                    && concrete != &func.0
-                                    && nominal_template(concrete) == template
-                                {
-                                    func.0.clone_from(concrete);
-                                }
-                                // The instance identity carries every
-                                // compile-time solution, so the call keeps
-                                // no slot for one (a body that still needs
-                                // one fails its own contextual check).
-                                param_arg_regs.clear();
-                                instantiated_args.clear();
+                                return Err(self.error(
+                                    Some(owner),
+                                    format!(
+                                        "call names struct `{}`, not the `__init__` its check selected",
+                                        func.0
+                                    ),
+                                ));
                             }
                             continue;
                         }
@@ -3845,26 +3785,6 @@ impl<'a> Specializer<'a> {
             })
         };
         declares("__eq__") && !declares("__ne__")
-    }
-
-    /// The unique `__init__` overload of `init_base`'s struct whose
-    /// runtime-pack collector binds any element count (current Tuple's
-    /// `__init__(out self, var *args: *Ts)` beside its nullary constructor),
-    /// which arity-keyed selection cannot see.
-    fn runtime_pack_constructor(&self, init_base: &str) -> Option<String> {
-        let mut packs = self.functions.overloads(init_base).filter(|candidate| {
-            self.declarations
-                .get(candidate.name)
-                .is_some_and(|declaration| {
-                    declaration.variadic.as_ref().is_some_and(|element| {
-                        matches!(element.kind(), mojito_types::types::TyKind::RuntimePack(_))
-                            || mojito_types::types::pack_spread(std::slice::from_ref(element))
-                                .is_some()
-                    })
-                })
-        });
-        let first = packs.next()?.name.to_string();
-        packs.next().is_none().then_some(first)
     }
 
     /// The captured places a direct call to the lifted body `target` passes

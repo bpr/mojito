@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1414**.
+Next free ID: **R1417**.
 
 ## Ordered Work
 
@@ -811,30 +811,77 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1338 A display's empty collection is a call naming the struct,
-  whose `__init__` the elaborator resolves by arity**
+- [ ] **R1414 A display's elements are not bound as its literal
+  constructor's arguments**
 
-  MIR lowering builds a collection display's empty value as `call { func:
-  List }`, naming no constructor, where upstream's call names the
-  `__init__` overload the check selected.
-  - `Flatten::begin_nominal_collection` (`mir/lower_expr/ctrl.rs`) emits
-    it, and `tuple_literal` (`lower_expr/expr.rs`) falls back to the
-    struct name when the check recorded no constructor.
-  - The elaborator's construct arm (`native/mono/specializer.rs`) respells
-    each by `resolve_callable_symbol` over the argument count, so neither
-    backend sees one, but the by-arity lookup is a Mojito-only resolution.
-  - The check should record the empty constructor it selects for the
-    display, as `ConstructCollection` records a tuple's `constructor`, and
-    lowering should name it.
-  - Then the construct arm's struct test, and `Callee::direct`'s struct
-    mapping (`mir/register_ends.rs`), go, and so does
-    `MirStructDeclaration::fieldwise_init`, which no phase has read since
-    R1278 but the MIR text still writes.
-  - Probes: `[1, 2]`, `{1, 2}`, and `{"a": 1}` reach the arm (240, 18, and
-    2 corpus calls in R1278's tripwire).
-  - Found while landing R1278 (2026-10-24).
+  Upstream checks `[a, b]` as the call `C(a, b, __list_literal__=None)`
+  through ordinary overload resolution (`emitConstructorCall`), so each
+  element binds the collector's convention like any call argument.
+  - Mojito calls the literal constructor the check selected
+    (`record_display_construction`), but checks each element by hand as
+    consumed (`check_consuming`, "collection display element").
+  - MIR's `display_elements` (`mir/calls.rs`) lowers each element as a
+    plain value, without the facts a call argument carries
+    (`BorrowReadArgument`, `ReadTemporaryArgument`, `ForwardedArgument`).
+  - So only an owning collector (`var *values`) works. A read collector
+    (`*ts`) leaks each element temporary and copies each place element.
+  - Lever: bind the elements through the call-argument recording
+    (`record_call_places` over the literal constructor's slots and
+    conventions), and lower them through `lower_call_arguments`.
+  - Probe: give std `Set` upstream's
+    `__init__(out self, *ts: Self.T, __set_literal__: NoneType = None)`
+    and `var s: Set[Token] = {Token(5), Token(6)}` destroys `Token` twice
+    where the pin destroys it four times.
+  - Probe: with that constructor, `{x, y}` over locals of a type that is
+    not `ImplicitlyCopyable` is rejected as an implicit copy where the pin
+    borrows them.
+  - Found while landing R1338 (2026-10-25).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Fable, Planned.
+
+- [ ] **R1415 A keyword `@fieldwise_init` construction binds by the
+  struct's field list, not by its synthesized `__init__`'s parameters**
+
+  Since R1278 the construction names the synthesized `S.__init__`, whose
+  declaration carries its parameter names, where upstream binds keywords
+  against the selected `__init__`'s signature like any call's.
+  - MIR's `fieldwise_keywords_positional` (`mir/calls.rs`) reorders the
+    keywords by `OverloadLookup::fieldwise_parameters`, which reads
+    `StructDeclaration::fieldwise_init`.
+  - `declared_overloads` (`mojito-checked/src/declaration.rs`) reads it
+    too, for a package's interface validation.
+  - Lever: bind the keywords through the callee declaration, then delete
+    `fieldwise_init` from `StructDeclaration` and `MirStructDeclaration`,
+    `fieldwise_parameters`, and its `OverloadLookup`/`PackageOverloads`
+    method (a MIR text bump: `text/write.rs`, `text/parse/decls.rs`).
+  - Verify first whether the elaborator binds a direct `S.__init__`
+    call's keywords by name with no fold.
+  - Probe: `P(y=3, x=4)` over `@fieldwise_init struct P` with `x` and `y`.
+  - Found while landing R1338 (2026-10-25).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1416 Hand-written MIR still constructs by struct name, resolved
+  by arity**
+
+  A `call` naming a struct is rejected by the elaborator, but two passes
+  still resolve one "for hand-written MIR", and no verifier rule rejects
+  it.
+  - `Specializer::constructed_default_target` (`native/mono/specializer.rs`)
+    and `inline_parametric`'s `DefaultValue::of`
+    (`analysis/inline_parametric.rs`) resolve a bare struct target to
+    `"{S}.__init__"` by arity.
+  - Pass cases still spell `call { func: Pt }` and the like: `sroa/nested`,
+    `sroa/whole_read`, `sroa/parameter_binding_kept`,
+    `inline-parametric/default_constructed`, and
+    `inline-parametric/owner_origin_argument` under `tests/mir_passes/`.
+  - Lever: name the `S.__init__` declarations in those cases, delete both
+    fallbacks, and add a `mir::verify` rule (`verify/calls.rs`,
+    `verify_call_instruction`) rejecting a call that names a declared
+    struct, which replaces the elaborator's rejection.
+  - Found while landing R1338 (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1280 An iteration step through a bound keeps its abstract
   protocol after inlining**
@@ -11496,30 +11543,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R695 A list or set display is filled by `append`/`add`, not built
-  by its `__list_literal__` / `__set_literal__` constructor**
+- [ ] **R695 `Set`'s literal constructor moves its elements in, where
+  upstream's borrows them and copies each**
 
-  Problem: upstream lowers `[a, b]` in a `List` context and `{a, b}` as one
-  variadic literal-constructor call, where Mojito constructs an empty
-  collection and inserts each element; only `Array` displays get the
-  constructor call.
-  - The checker's `record_collection_construction`
-    (`crates/mojito-checker/src/checker/inference.rs`) gives every
-    non-`Array` display a `ConstructCollection` insert plan;
-    `record_array_literal_construction` gives `Array` its constructor.
-  - Lever: record the literal constructor for `List` and `Set` displays
-    too, keep the insert plan for comprehensions, and lower them as the
-    `Array` path does.
-  - Consumers to follow: `origins/actuals.rs`, `declarations.rs`,
-    `checked.rs`, and `mono/substitute.rs::list_literal_constructor`.
-  - Semantics already match since R686: the elements are read before the
-    collection is built.
-  - One difference shows: upstream's `Set.__init__(*ts: T, __set_literal__)`
-    copies each element in, so `{Token(3), Token(3)}` destroys `3` four
-    times on the pin and twice here
+  Upstream's `Set.__init__(out self, *ts: Self.T, __set_literal__:
+  NoneType = None) where Copyable and Deinitable` adds `t.copy()` per
+  element, where std's takes `var *values` and requires only `Deinitable`.
+  - A set display calls this constructor since R1338, so its shape is the
+    display's.
+  - Probe: `var s: Set[M] = {M(1), M(2)}` over a `Movable`-only `M` runs
+    here and is rejected at the pin (no viable `Set.__init__`).
+  - Probe: `{x, y}` over locals that are not `ImplicitlyCopyable` is
+    rejected here and borrowed at the pin.
+  - Probe: `{Token(3), Token(3)}` destroys `3` twice here and four times
+    on the pin
     (`tests/vm_test.rs::discarded_set_elements_and_replaced_dictionary_values_are_destroyed`).
-  - Found while landing R686 (2026-10-13).
-  - Depends on nothing.
+  - Lever: give `stdlib/std/collections/set.mojo` upstream's constructor,
+    update that test's count, and add the `Movable`-only display as a
+    `type_error` fixture.
+  - Depends on R1414 (the display must bind its elements to a read
+    collector).
   - Model: Opus, Not Planned.
 
 - [ ] **R583 The VM resolves a callee by name at run time, scanning every

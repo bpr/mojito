@@ -158,7 +158,7 @@ impl Checker {
                     self.nominal_dict(key_ty, value_ty)
                 }
             };
-            self.record_collection_construction(expression.source_span(), &result_ty);
+            self.record_comprehension_construction(expression.source_span(), &result_ty)?;
             self.record_at(expression.source_span()).ty = Some(result_ty);
             self.record_at(expression.source_span())
                 .comprehension_bindings = Some(bindings.clone());
@@ -642,7 +642,7 @@ impl Checker {
                         .map(|(value, expected)| self.infer_storage_value(value, expected))
                         .collect::<Result<Vec<_>, _>>()
                         .map(nominal_tuple_type)?;
-                    self.record_collection_construction(expr.source_span(), expected);
+                    self.record_display_construction(expr, expected, true)?;
                     self.record_at(expr.source_span()).ty = Some(expected.clone());
                     return Ok(actual);
                 }
@@ -666,7 +666,7 @@ impl Checker {
                             });
                         }
                     }
-                    self.record_collection_construction(expr.source_span(), expected);
+                    self.record_display_construction(expr, expected, true)?;
                     self.record_at(expr.source_span()).ty = Some(expected.clone());
                     return Ok(list_type(expected_element.clone()));
                 }
@@ -1051,7 +1051,7 @@ impl Checker {
                 }
                 if !dictionary {
                     let result = self.nominal_set(key_ty);
-                    self.record_collection_construction(expr.source_span(), &result);
+                    self.record_display_construction(expr, &result, true)?;
                     return Ok(result);
                 }
                 let values = entries
@@ -1067,8 +1067,8 @@ impl Checker {
                     self.check_consuming(value, &value_ty, "dictionary display value")?;
                 }
                 let result = self.nominal_dict(key_ty, value_ty);
-                self.record_collection_construction(expr.source_span(), &result);
-                self.record_dict_literal_construction(expr.source_span(), &result, true)?;
+                self.record_display_construction(expr, &result, true)?;
+                self.record_dict_literal_construction(expr.source_span(), &result, false, true)?;
                 Ok(result)
             }
             ExprKind::Comprehension { .. } => self
@@ -1370,7 +1370,7 @@ impl Checker {
                 }
                 let result = mojito_types::types::tuple_type(tys.clone());
                 self.check_tuple_literal_exclusivity(&result, elems, &tys)?;
-                self.record_collection_construction(expr.source_span(), &result);
+                self.record_display_construction(expr, &result, true)?;
                 Ok(result)
             }
             // Walrus `name := value` types as `value`; MIR marks execution as
@@ -2135,8 +2135,8 @@ impl Checker {
                     });
                 }
             }
+            self.record_display_construction(expression, expected, record)?;
             if record {
-                self.record_collection_construction(expression.source_span(), expected);
                 self.record_at(expression.source_span()).ty = Some(expected.clone());
             }
             return Ok(expected.clone());
@@ -2247,8 +2247,8 @@ impl Checker {
                 }
                 self.check_consuming(value, &actual, "Tuple display element")?;
             }
+            self.record_display_construction(expression, expected, record)?;
             if record {
-                self.record_collection_construction(expression.source_span(), expected);
                 self.record_at(expression.source_span()).ty = Some(expected.clone());
             }
             return Ok(expected.clone());
@@ -2395,15 +2395,19 @@ impl Checker {
             }
             self.check_consuming(value, &actual, context)?;
         }
+        self.record_display_construction(expression, expected, record)?;
         if record {
-            self.record_collection_construction(expression.source_span(), expected);
             self.record_at(expression.source_span()).ty = Some(expected.clone());
         }
         if let ExprKind::BraceLit(entries) = &expression.kind
-            && !entries.is_empty()
             && dict_elements(expected).is_some()
         {
-            self.record_dict_literal_construction(expression.source_span(), expected, record)?;
+            self.record_dict_literal_construction(
+                expression.source_span(),
+                expected,
+                entries.is_empty(),
+                record,
+            )?;
         }
         Ok(expected.clone())
     }
@@ -2528,36 +2532,142 @@ impl Checker {
         Ok(materialized)
     }
 
-    pub(super) fn record_collection_construction(&self, span: SourceSpan, target: &Ty) {
+    /// Record the construction display `display` of `target` lowers as, as
+    /// upstream's parser emits it: a list or set display is one call of its
+    /// literal constructor (`List(a, b, __list_literal__=None)`), whose
+    /// `where` clause must hold under `target`'s arguments, and a tuple
+    /// display is one call of its collector. An empty set display whose
+    /// literal constructor is unavailable is upstream's initializer list
+    /// `C()`. A dictionary display's constructor is recorded by
+    /// [`Self::record_dict_literal_construction`]. Only a `record` pass
+    /// attaches the construction; every pass checks it.
+    pub(super) fn record_display_construction(
+        &self,
+        display: &Expr,
+        target: &Ty,
+        record: bool,
+    ) -> Result<(), TypeError> {
         let TyKind::Struct(name, _) = target.kind() else {
-            return;
+            return Ok(());
+        };
+        let empty = match &display.kind {
+            ExprKind::ListLit(values) | ExprKind::TupleLit(values) => values.is_empty(),
+            ExprKind::BraceLit(entries) => entries.is_empty(),
+            _ => false,
+        };
+        let literal = |is_literal, marker: &str| {
+            self.literal_constructor(target, is_literal)
+                .map(|(constructor, available)| {
+                    available.map(|()| (Some(constructor), Some(marker.to_string())))
+                })
+                .transpose()
+        };
+        let (constructor, marker) = if list_element(target).is_some() {
+            literal(
+                mojito_symbol::symbol::is_list_literal_constructor,
+                "__list_literal__",
+            )?
+            .unwrap_or_default()
+        } else if set_element(target).is_some() {
+            match literal(
+                mojito_symbol::symbol::is_set_literal_constructor,
+                "__set_literal__",
+            ) {
+                Err(_) if empty => (Some(self.empty_constructor(target)?), None),
+                literal => literal?.unwrap_or_default(),
+            }
+        } else if dict_elements(target).is_some() {
+            (None, None)
+        } else {
+            let collector = self
+                .structs
+                .get(name)
+                .and_then(|info| info.methods.get("__init__"))
+                .and_then(|sigs| sigs.iter().find(|sig| sig.variadic.is_some()))
+                .map(|sig| {
+                    method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref())
+                });
+            (collector, None)
+        };
+        if record {
+            self.set_collection_construction(
+                display.source_span(),
+                target,
+                None,
+                constructor,
+                marker,
+            );
+        }
+        Ok(())
+    }
+
+    /// Record the construction comprehension `span` of `target` lowers as:
+    /// upstream's `emitComprehension` builds `var result = Collection()`
+    /// through the zero-argument constructor, then inserts each element by
+    /// `append`, `add`, or `__setitem__`.
+    pub(super) fn record_comprehension_construction(
+        &self,
+        span: SourceSpan,
+        target: &Ty,
+    ) -> Result<(), TypeError> {
+        let TyKind::Struct(name, _) = target.kind() else {
+            return Ok(());
         };
         let insert = if list_element(target).is_some() {
-            Some(format!("{name}.append"))
+            format!("{name}.append")
         } else if set_element(target).is_some() {
-            Some(format!("{name}.add"))
+            format!("{name}.add")
         } else if dict_elements(target).is_some() {
-            Some(format!("{name}.__setitem__"))
+            format!("{name}.__setitem__")
         } else {
-            None
+            return Err(TypeError::InvariantViolation(format!(
+                "comprehension builds non-collection '{target}'"
+            )));
         };
-        let constructor = insert
-            .is_none()
-            .then(|| {
-                self.structs
-                    .get(name)
-                    .and_then(|info| info.methods.get("__init__"))
-                    .and_then(|sigs| sigs.iter().find(|sig| sig.variadic.is_some()))
-                    .map(|sig| {
-                        method_lowered_name(
-                            name,
-                            "__init__",
-                            sig,
-                            self.self_instance_ty(name).as_ref(),
-                        )
-                    })
-            })
-            .flatten();
+        let constructor = self.empty_constructor(target)?;
+        self.set_collection_construction(span, target, Some(insert), Some(constructor), None);
+        Ok(())
+    }
+
+    /// The exact lowered `__init__` overload of `target`'s struct that
+    /// `is_literal` picks out by its marker keyword, with whether its `where`
+    /// clause holds under `target`'s arguments.
+    fn literal_constructor(
+        &self,
+        target: &Ty,
+        is_literal: fn(&[String], bool) -> bool,
+    ) -> Option<(String, Result<(), TypeError>)> {
+        let TyKind::Struct(name, arguments) = target.kind() else {
+            return None;
+        };
+        let info = self.structs.get(name)?;
+        let sig = info
+            .methods
+            .get("__init__")?
+            .iter()
+            .find(|sig| is_literal(&sig.names, sig.variadic.is_some()))?;
+        let struct_arguments =
+            super::comptime_validation::positional_pack_arguments(&info.decls, arguments);
+        let mut environment = ConstraintEnvironment::declared(&sig.decls, &[]);
+        environment.bind_declared(&info.decls, &struct_arguments);
+        let available = sig.availability.iter().try_for_each(|constraint| {
+            self.validate_constraint_in_environment(name, constraint, &environment)
+        });
+        let constructor =
+            method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref());
+        Some((constructor, available))
+    }
+
+    /// Set span's `ConstructCollection` to build `target` by `constructor`
+    /// (called with `marker`), then `insert` per element.
+    fn set_collection_construction(
+        &self,
+        span: SourceSpan,
+        target: &Ty,
+        insert: Option<String>,
+        constructor: Option<String>,
+        marker: Option<String>,
+    ) {
         // A re-inference of the same display keeps the owner a
         // temporary-receiver materialization already minted on it.
         let mut record = self.record_at(span);
@@ -2573,81 +2683,70 @@ impl Checker {
                 target: target.clone(),
                 insert,
                 constructor,
+                marker,
                 materialized,
                 literal: None,
             },
         ));
     }
 
-    /// Check a non-empty dictionary display as upstream's
+    /// Check a dictionary display as upstream's
     /// `Dict(keys=[k…], values=[v…], __dict_literal__=None)`: the literal
     /// constructor's `where` clause must hold under `target`'s arguments, as
-    /// at that call. When `record`, also attach the exact lowered `Dict` and
-    /// `List` literal constructor symbols to the display's
+    /// at that call. An `empty` display whose literal constructor is
+    /// unavailable is upstream's initializer list `C()` instead. When
+    /// `record`, also attach the exact lowered constructors to the display's
     /// `ConstructCollection`, which MIR lowers as those calls.
     pub(super) fn record_dict_literal_construction(
         &self,
         span: SourceSpan,
         target: &Ty,
+        empty: bool,
         record: bool,
     ) -> Result<(), TypeError> {
-        let TyKind::Struct(name, arguments) = target.kind() else {
-            return Ok(());
-        };
-        let Some((info, sig)) = self.structs.get(name).and_then(|info| {
-            info.methods
-                .get("__init__")?
-                .iter()
-                .find(|sig| {
-                    mojito_symbol::symbol::is_dict_literal_constructor(
-                        &sig.names,
-                        sig.variadic.is_some(),
-                    )
-                })
-                .map(|sig| (info, sig))
-        }) else {
-            return Ok(());
-        };
-        let struct_arguments =
-            super::comptime_validation::positional_pack_arguments(&info.decls, arguments);
-        let mut environment = ConstraintEnvironment::declared(&sig.decls, &[]);
-        environment.bind_declared(&info.decls, &struct_arguments);
-        for constraint in &sig.availability {
-            self.validate_constraint_in_environment(name, constraint, &environment)?;
-        }
-        if !record {
-            return Ok(());
-        }
-        let list = mojito_types::types::LIST_TYPE_NAME;
-        let Some(list_constructor) = self
-            .structs
-            .get(list)
-            .and_then(|info| info.methods.get("__init__"))
-            .and_then(|sigs| {
-                sigs.iter().find(|sig| {
-                    mojito_symbol::symbol::is_list_literal_constructor(
-                        &sig.names,
-                        sig.variadic.is_some(),
-                    )
-                })
-            })
-            .map(|sig| {
-                method_lowered_name(list, "__init__", sig, self.self_instance_ty(list).as_ref())
-            })
+        let Some((constructor, available)) =
+            self.literal_constructor(target, mojito_symbol::symbol::is_dict_literal_constructor)
         else {
             return Ok(());
         };
-        let constructor =
-            method_lowered_name(name, "__init__", sig, self.self_instance_ty(name).as_ref());
+        let literal = match available {
+            Err(_) if empty => None,
+            available => {
+                available?;
+                Some(constructor)
+            }
+        };
+        if !record {
+            return Ok(());
+        }
+        let Some(adjustment) = (match literal {
+            Some(constructor) => dict_elements(target)
+                .and_then(|(key, _)| {
+                    self.literal_constructor(
+                        &mojito_types::types::list_type(key.clone()),
+                        mojito_symbol::symbol::is_list_literal_constructor,
+                    )
+                })
+                .map(|(list_constructor, _)| {
+                    DisplayConstructor::Literal(mojito_checked::checked::DictLiteral {
+                        constructor,
+                        list_constructor,
+                    })
+                }),
+            None => Some(DisplayConstructor::Empty(self.empty_constructor(target)?)),
+        }) else {
+            return Ok(());
+        };
         if let Some(mojito_checked::checked::SemanticAdjustment::ConstructCollection {
             literal,
+            constructor,
             ..
         }) = self.record_at(span).adjustment.as_deref_mut()
         {
-            *literal = Some(Box::new(mojito_checked::checked::DictLiteral {
-                constructor,
-                list_constructor,
-            }));
+            match adjustment {
+                DisplayConstructor::Literal(dict) => *literal = Some(Box::new(dict)),
+                DisplayConstructor::Empty(empty) => *constructor = Some(empty),
+            }
         }
         Ok(())
     }
@@ -3229,6 +3328,13 @@ impl Checker {
         ));
         referent
     }
+}
+
+/// The constructor a dictionary display records: upstream's dict literal,
+/// or for an empty `{}` that cannot build one, its empty `__init__`.
+enum DisplayConstructor {
+    Literal(mojito_checked::checked::DictLiteral),
+    Empty(String),
 }
 
 /// The `$contextual` sentinel root's span, when `expression` is a leading-dot

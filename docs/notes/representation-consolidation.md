@@ -17,9 +17,8 @@ the entries named. A single command cannot use both.
 
 ## Recommended order
 
-1. **Finish gaps B and D** (size). Three entries remain from the first
-   pass:
-   - R1338 removes the last construction named by its struct.
+1. **Finish gap D** (size). Two entries remain from the first pass (gap
+   B closed with R1338 on 10-25):
    - R1355 gives a memory-only call result one slot, chosen at the call.
      That closes or shrinks about 13 `ownership` entries (gap D′ below).
    - R136 turns a copy at a binding's last use into a move.
@@ -27,7 +26,7 @@ the entries named. A single command cannot use both.
    R1356, the verifier rule, comes last, behind the copy entries it names.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1338 --only R1355 --only R136 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1355 --only R136 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1356 -n 0
    ```
 
@@ -162,7 +161,9 @@ entries.
   last.
 - Gap C (the call builds the library pack value) has fully landed, with
   R1304 last.
-- Gap B has R1338 left.
+- Gap B has fully landed, with R1338 last. Its residues are conformance
+  and cleanup: R1414 (a display's elements bind as call arguments), R695
+  after it, R1415 (fieldwise keywords), and R1416 (hand-written MIR).
 - Gap D has R1355 and R1356 left, and R1355 turns out to be the core of a
   larger cluster (gap D′).
 
@@ -186,7 +187,6 @@ are conformance only.
 
 | gap | upstream's shape | core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
-| B. Construction is not a call (remainder) | the call names the checked `__init__` | R1338 | — | yes |
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, R136, then R1356 | about 25 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662 (= R950), R663, R471 | R788, R378, R472, R508, R602, R1194 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1360–R1363, R705, R424, R578 → R577; R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
@@ -463,8 +463,8 @@ The second pass (10-21 to 10-24) landed:
   R890, and its last column);
 - gap C, where the call builds the library pack value (R1102, R1103, R743,
   R1070, R1073, R1304);
-- gap B except R1338 (R1049, R1050, R1052, R1029, R1097, R988, R1075,
-  R1283, R1278);
+- gap B (R1049, R1050, R1052, R1029, R1097, R988, R1075,
+  R1283, R1278, and on 10-25 R1338);
 - gap D except R1355 and R1356 (R1251, R1252, R931, R932, R1306, R832,
   R1310–R1313, R1309, R1319, R1320, R1325, R1329, R1327, R1336, R1321,
   R1330, R1326, R1337, R1328).

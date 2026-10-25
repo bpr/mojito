@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	752
+# swept-count	753
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -644,6 +644,7 @@ assets/type_error/return_origin_widening_wrapper_adapter.mojo	compile-reject	agr
 assets/type_error/scalar_range_float_needs_step.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/scalar_range_mixed_dtypes.mojo	compile-reject	agree	error: no matching function in call to 'range'
 assets/type_error/set_clear_with_bad_handler.mojo	compile-reject	agree	error: invalid call to 'clear_with': value passed to 'destroy_func' cannot be converted from 'def `lambda_0(a: Int, b: Int) thin -> None' to 'T'
+assets/type_error/set_display_requires_deinitable_element.mojo	compile-reject	agree	error: invalid call to '__init__': lacking evidence to prove correctness
 assets/type_error/set_element_ref_write.mojo	runs	subset	the pin runs it;Mojito rejects: must be mutable
 assets/type_error/set_requires_hashable_element.mojo	compile-reject	agree	error: 'Set' parameter 'T' has 'KeyElement' type, but value has type 'AnyStruct[Elem]'
 assets/type_error/setter_overload_competing_pair.mojo	compile-reject	agree	error: 'Sink' has '__setitem__' but no '__getitem__' method

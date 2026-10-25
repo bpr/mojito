@@ -344,6 +344,40 @@ impl<'a> Flatten<'a> {
         d
     }
 
+    /// One call of constructor `func` to a fresh register typed `ty`,
+    /// instantiated at `ty`'s arguments, binding `args` positionally and
+    /// then `kwargs`.
+    pub(super) fn constructor_call(
+        &mut self,
+        node: Node<'a>,
+        func: &str,
+        ty: Ty,
+        args: Vec<Reg>,
+        kwargs: Vec<(String, Reg)>,
+    ) -> Reg {
+        let TyKind::Struct(_, instantiated_args) = ty.kind() else {
+            unreachable!("a constructor builds a nominal value")
+        };
+        let instantiated_args = instantiated_args.clone();
+        let dest = self.fresh_typed(node.location(), None, ty);
+        self.record_call(dest, Some(func.to_string()), 0);
+        self.emit(MirInstr::Call {
+            dest,
+            func: FuncRef::named(func),
+            raises: None,
+            arg_places: vec![None; args.len()],
+            args,
+            kwarg_places: vec![None; kwargs.len()],
+            kwargs,
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args,
+            spread: None,
+        });
+        dest
+    }
+
     /// List display `node`, whose operands are its elements in order.
     pub(super) fn list_literal(&mut self, node: Node<'a>) -> Reg {
         let elements: Vec<Node<'a>> = node.operands().collect();
@@ -394,13 +428,15 @@ impl<'a> Flatten<'a> {
             });
             return d;
         }
-        if let Some((target, Some(insert))) = collection_plan(node.checked) {
+        if let Some(CollectionPlan {
+            target,
+            constructor: Some(constructor),
+            marker,
+            insert: None,
+        }) = collection_plan(node.checked)
+        {
             let values = self.display_elements(node, &elements);
-            let collection = self.begin_nominal_collection(node, &target);
-            for (element, value) in elements.into_iter().zip(values) {
-                self.insert_nominal_collection(element, collection, &target, &insert, vec![value]);
-            }
-            return self.finish_nominal_collection(node, collection, &target);
+            return self.display_construction(node, target.clone(), constructor, marker, values);
         }
         self.display_without_plan(node, "a list display")
     }
@@ -411,7 +447,7 @@ impl<'a> Flatten<'a> {
         node: Node<'a>,
         entries: &[(CheckedNodeId, Option<CheckedNodeId>)],
     ) -> Option<Reg> {
-        let Some((target, Some(insert))) = collection_plan(node.checked) else {
+        let Some(plan) = collection_plan(node.checked) else {
             return Some(self.display_without_plan(node, "a brace display"));
         };
         // A dictionary display evaluates every key before any value, as its
@@ -420,7 +456,7 @@ impl<'a> Flatten<'a> {
             .iter()
             .map(|(key, _)| node.operand_of(*key))
             .collect::<Option<Vec<_>>>()?;
-        if dict_elements(&target).is_some() {
+        if dict_elements(plan.target).is_some() {
             operands.extend(entries.iter().map(|(_, value)| {
                 value
                     .and_then(|value| node.operand_of(value))
@@ -430,33 +466,38 @@ impl<'a> Flatten<'a> {
         let regs = self.display_elements(node, &operands);
         let (keys, values) = regs.split_at(entries.len());
         if let Some(literal) = dict_literal_plan(node.checked) {
-            return Some(self.dict_literal(node, &target, literal, keys, values));
+            return Some(self.dict_literal(node, plan.target, literal, keys, values));
         }
-        let collection = self.begin_nominal_collection(node, &target);
-        for (index, &key) in keys.iter().enumerate() {
-            let arguments = std::iter::once(key)
-                .chain(values.get(index).copied())
-                .collect();
-            self.insert_nominal_collection(node, collection, &target, &insert, arguments);
-        }
-        Some(self.finish_nominal_collection(node, collection, &target))
+        // A set display, or an empty `{}` built by the empty constructor.
+        Some(match plan {
+            CollectionPlan {
+                target,
+                constructor: Some(constructor),
+                marker,
+                insert: None,
+            } if values.is_empty() => {
+                self.display_construction(node, target.clone(), constructor, marker, keys.to_vec())
+            }
+            _ => self.display_without_plan(node, "a brace display"),
+        })
     }
 
     /// Tuple display `node`, whose operands are its elements in order.
     pub(super) fn tuple_literal(&mut self, node: Node<'a>) -> Reg {
-        if let Some((target, None)) = collection_plan(node.checked)
-            && let TyKind::Struct(name, _) = target.kind()
+        if let Some(CollectionPlan {
+            target,
+            constructor: Some(constructor),
+            insert: None,
+            ..
+        }) = collection_plan(node.checked)
         {
             let elements: Vec<Node<'a>> = node.operands().collect();
             let regs = self.display_elements(node, &elements);
             let dest = self.fresh_typed(node.location(), None, target.clone());
-            let constructor = tuple_constructor(node.checked);
-            if let Some(constructor) = constructor {
-                self.record_call(dest, Some(constructor.to_string()), 0);
-            }
+            self.record_call(dest, Some(constructor.to_string()), 0);
             self.emit(MirInstr::Call {
                 dest,
-                func: FuncRef::named(constructor.unwrap_or(name)),
+                func: FuncRef::named(constructor),
                 raises: None,
                 args: regs.clone(),
                 kwargs: Vec::new(),
@@ -897,6 +938,30 @@ impl<'a> Flatten<'a> {
         )
     }
 
+    /// Display `node` as one call of the constructor its check selected:
+    /// its `elements` positionally, then the literal `marker` keyword
+    /// bound to `None` when it has one.
+    fn display_construction(
+        &mut self,
+        node: Node<'a>,
+        target: Ty,
+        constructor: &str,
+        marker: Option<&str>,
+        elements: Vec<Reg>,
+    ) -> Reg {
+        match marker {
+            Some(marker) => self.literal_constructor_call(
+                node,
+                constructor,
+                target,
+                elements,
+                Vec::new(),
+                marker,
+            ),
+            None => self.constructor_call(node, constructor, target, elements, Vec::new()),
+        }
+    }
+
     /// One call of a literal constructor `func` to a fresh register typed
     /// `ty`, instantiated at `ty`'s arguments: `args` positionally, then
     /// `kwargs`, then the `marker` keyword bound to `None`.
@@ -909,33 +974,13 @@ impl<'a> Flatten<'a> {
         mut kwargs: Vec<(String, Reg)>,
         marker: &str,
     ) -> Reg {
-        let TyKind::Struct(_, instantiated_args) = ty.kind() else {
-            unreachable!("a literal constructor builds a nominal collection")
-        };
-        let instantiated_args = instantiated_args.clone();
         let none = self.fresh_typed(node.location(), None, Ty::none());
         self.emit(MirInstr::Const {
             dest: none,
             k: Const::None,
         });
         kwargs.push((marker.to_string(), none));
-        let dest = self.fresh_typed(node.location(), None, ty);
-        self.record_call(dest, Some(func.to_string()), 0);
-        self.emit(MirInstr::Call {
-            dest,
-            func: FuncRef::named(func),
-            raises: None,
-            arg_places: vec![None; args.len()],
-            args,
-            kwarg_places: vec![None; kwargs.len()],
-            kwargs,
-            capture_accesses: Vec::new(),
-            param_arg_regs: Vec::new(),
-            receiver: None,
-            instantiated_args,
-            spread: None,
-        });
-        dest
+        self.constructor_call(node, func, ty, args, kwargs)
     }
 }
 

@@ -20,6 +20,15 @@ to evolve under the `0.x` compatibility rules.
   declarations are rejected with the pin's words
   (`assets/extensions/ok/enum_*.mojo`, `docs/notes/enums.md`).
 
+- A contextual list display and a set display are one call of their
+  literal constructor (`List(a, b, __list_literal__=None)`), as upstream's
+  parser emits them, instead of an empty collection filled by `append` or
+  `add`, and a comprehension calls the empty `__init__` its check selects.
+  Every construction now names its `__init__`, so the elaborator no longer
+  resolves a struct-named call by arity (R1338). A display whose element
+  type fails its literal constructor's `where` clause (a generic `Set[T]`
+  display without `T: Deinitable`) is rejected as at the pin.
+
 - A case payload matched over a generic enum-like type (`case .Some(x)` over
   `Optional[T]`, `case .success(value)` over `Result[T, E]`) keeps `T`'s
   bounds, where it used to lose them (R1236).
