@@ -3805,7 +3805,7 @@ fn chained_reference_subscript_materializes_a_retained_handle() {
         .expect("synthetic subscript reference slot") as u32;
     assert!(matches!(
         main.var_tys.get(&reference_slot).map(Ty::kind),
-        Some(mojito::TyKind::Ref(_))
+        Some(TyKind::Ref(_))
     ));
     let instructions = main
         .blocks
@@ -4219,31 +4219,47 @@ fn nested_def_statement_materializes_explicit_capture_modes_once() {
 
 #[test]
 fn sibling_capture_keeps_the_materialized_closure_slot_as_its_environment() {
-    // `helper` copies its capture, so its statement makes and stores its
-    // closure; `caller` captures that slot, and its direct call passes the
-    // slot's place, never `x`'s.
+    // `helper` copies its capture, so its statement builds its storage
+    // struct through the storage's `__init__` and keeps it in its slot;
+    // `caller` captures that slot, its direct call passes the slot's place,
+    // never `x`'s, and its call of `helper` passes the storage's field.
     let src = "def main():\n    var x = 1\n    def helper() {var x} -> Int:\n        return x\n    x = 2\n    def caller() {helper} -> Int:\n        return helper()\n    print(caller())\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
-    let main = &mir
-        .functions
-        .iter()
-        .find(|(name, _)| name == "main")
-        .expect("main lowered")
-        .1;
-    let helper_slot = main
-        .var_names
-        .iter()
-        .position(|name| name == "helper")
-        .expect("helper closure slot") as u32;
-    let x_slot = main
-        .var_names
-        .iter()
-        .position(|name| name == "x")
-        .expect("x slot") as u32;
+    let function = |name: &str| {
+        &mir.functions
+            .iter()
+            .find(|(candidate, _)| candidate == name)
+            .unwrap_or_else(|| panic!("{name} lowered"))
+            .1
+    };
+    let main = function("main");
+    let slot = |function: &MirFunction, name: &str| {
+        function
+            .var_names
+            .iter()
+            .position(|candidate| candidate == name)
+            .unwrap_or_else(|| panic!("{name} slot")) as u32
+    };
+    let helper_slot = slot(main, "helper");
+    let x_slot = slot(main, "x");
     let instructions: Vec<_> = main.blocks.iter().flat_map(|block| &block.instrs).collect();
+    assert!(
+        !instructions
+            .iter()
+            .any(|instruction| matches!(instruction, MirInstr::MakeClosure { .. }))
+    );
+    let storage = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call { dest, func, .. } if func.0 == "main$helper$__storage.__init__" => {
+                Some(*dest)
+            }
+            _ => None,
+        })
+        .expect("the declaration builds helper's storage");
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
-        MirInstr::MakeClosure { function, .. } if function == "main$helper"
+        MirInstr::DefVar { var, src, .. } if *var == helper_slot && *src == storage
     )));
     let caller_capture = instructions
         .iter()
@@ -4256,10 +4272,61 @@ fn sibling_capture_keeps_the_materialized_closure_slot_as_its_environment() {
         .expect("caller's direct call passes its captured sibling slot");
     assert_eq!(caller_capture.root, helper_slot);
     assert_ne!(caller_capture.root, x_slot);
+    let caller = function("main$caller");
+    let field = caller
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                func, arg_places, ..
+            } if func.0 == "main$helper" => arg_places.first().cloned().flatten(),
+            _ => None,
+        })
+        .expect("caller calls helper directly");
+    assert_eq!(field.root, slot(caller, "helper"));
+    assert!(matches!(field.proj.as_slice(), [Proj::Field(name)] if name == "x"));
 }
 
 #[test]
-fn forwarded_sibling_capture_parameter_keeps_its_callable_type() {
+fn sibling_capture_of_a_reference_capture_passes_its_reference_field() {
+    // `get` captures `k` by reference, so its storage's field is a `ref`
+    // to `k`, which `twice`'s direct call of `get` passes.
+    let src = "def main():\n    var k = 1\n    def get() {imm k} -> Int:\n        return k\n    def twice() {get} -> Int:\n        return get() + get()\n    k = 2\n    print(twice())\n";
+    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let storage = mir
+        .declarations
+        .structure("main$get$__storage")
+        .expect("get's storage is declared");
+    assert!(matches!(
+        storage.fields.as_slice(),
+        [(field, ty)] if field == "k" && matches!(ty.kind(), TyKind::Ref(_))
+    ));
+    let twice = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main$twice")
+        .expect("twice lifted")
+        .1;
+    let field = twice
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            MirInstr::Call {
+                func, arg_places, ..
+            } if func.0 == "main$get" => arg_places.first().cloned().flatten(),
+            _ => None,
+        })
+        .expect("twice calls get directly");
+    assert!(matches!(
+        field.ty.as_ref().map(Ty::kind),
+        Some(TyKind::Ref(_))
+    ));
+}
+
+#[test]
+fn forwarded_sibling_capture_parameter_keeps_its_storage_type() {
     let src = "def outer() -> Int:\n    var base = 40\n    def helper() {base} -> Int:\n        return base + 2\n    def middle() {helper} -> Int:\n        def inner() {helper} -> Int:\n            return helper()\n        return inner()\n    return middle()\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     let middle = &mir
@@ -4273,10 +4340,13 @@ fn forwarded_sibling_capture_parameter_keeps_its_callable_type() {
         .iter()
         .position(|name| name == "helper")
         .expect("forwarded helper slot") as u32;
-    assert!(matches!(
-        middle.var_tys.get(&helper_slot).map(Ty::kind),
-        Some(mojito::TyKind::Func(_))
-    ));
+    let storage = |ty: Option<&Ty>| {
+        matches!(
+            ty.map(Ty::kind),
+            Some(TyKind::Struct(name, _)) if name == "outer$helper$__storage"
+        )
+    };
+    assert!(storage(middle.var_tys.get(&helper_slot)));
     let capture = middle
         .blocks
         .iter()
@@ -4289,10 +4359,7 @@ fn forwarded_sibling_capture_parameter_keeps_its_callable_type() {
         })
         .expect("inner's direct call passes the forwarded helper");
     assert_eq!(capture.root, helper_slot);
-    assert!(matches!(
-        capture.root_ty.as_ref().map(Ty::kind),
-        Some(mojito::TyKind::Func(_))
-    ));
+    assert!(storage(capture.root_ty.as_ref()));
 }
 
 #[test]

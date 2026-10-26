@@ -1284,6 +1284,12 @@ pub fn nested_lifted_declaration_name(
     format!("{outer}${inner}$decl{}", declaration.0)
 }
 
+/// The storage struct of the capture-list closure lifted as `lifted`, one
+/// field per capture, as upstream's `ClosureEmitter` names `fn::__storage`.
+pub fn closure_storage_name(lifted: &str) -> String {
+    format!("{lifted}$__storage")
+}
+
 /// Whose a lifted compile-time function is, as its name says
 /// ([`lifted_owner`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

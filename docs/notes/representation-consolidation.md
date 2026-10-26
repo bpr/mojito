@@ -102,7 +102,9 @@ the entries named. A single command cannot use both.
 
 6. **Gap G: a capture-list closure is a capture list, not a struct**
    (size).
-   - R1376 builds the pin's `__storage` struct.
+   - R1376 landed: a slotted body called only by name builds the pin's
+     `__storage` struct. Lambdas and first-class uses keep their closures
+     until R1378.
    - R1377 makes the lifted body a method taking that struct.
    - R1378 types the closure as the struct, a runtime value only.
    - Legacy `@parameter` closures keep upstream's environment-pointer path,

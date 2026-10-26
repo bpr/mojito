@@ -1169,13 +1169,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Flatten::lower_nested_environment`, `mir/lower_stmt.rs`), and which are
   slotted (`NestedInfo::slotted`: a copied or moved capture with another
   use, or a sibling capturing the closure), whose statement makes and
-  stores the closure; `Flatten::lower_nested_call`
-  (`mir/lower_expr/calls.rs`) lowers a call by name to a direct `call` of
-  the lifted body passing the captured places, or the environment slots,
-  as leading arguments (`calls_nested_directly`,
-  `nested_capture_argument`), or through the closure value for a slotted
-  body with a copied or moved capture, and `load_nested_closure` makes an
-  unslotted body's closure at each first-class use. `verify/scope.rs` (`Scope::of_function`) walks that chain
+  stores the closure, or, for a slotted body with captures and only calls
+  by name anywhere (`called_by_name_everywhere`), its storage struct
+  (`NestedInfo::storage`, a `ClosureStorage` that `closure_storage` derives,
+  named by `symbol::closure_storage_name`): `lower_nested_node` pushes the
+  struct's declaration and synthesized `__init__`/`__deinit__`
+  (`lower_closure_storage`, over `mir.rs`'s `lower_fieldwise_members` and
+  `lower_synthesized_member`), and the declaration statement calls the
+  `__init__` with the captures (`Flatten::lower_closure_storage_value`).
+  `Flatten::lower_nested_call` (`mir/lower_expr/calls.rs`) lowers a call by
+  name to a direct `call` of the lifted body passing the storage's fields,
+  the captured places, or the environment slots, as leading arguments
+  (`calls_nested_directly`, `nested_capture_argument`,
+  `storage_field_place`), or through the closure value for a slotted body
+  without storage whose captures the frame does not hold, and
+  `load_nested_closure` makes an unslotted body's closure at each
+  first-class use. `verify/scope.rs` (`Scope::of_function`) walks that chain
   for the binders a body may name; `native::mono`
   (`Specializer::instantiate_nested_bodies`, `nested_bindings`,
   `binder_scope`) instantiates a nested body under its enclosing instance. A

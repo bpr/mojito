@@ -411,29 +411,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1274.
   - Model: Opus, Not Planned.
 
-- [ ] **R1104 A copy- or move-capturing nested `def` that a sibling
-  captures keeps its closure, and every call of it goes through that
-  closure**
-
-  `def inc() {var x}` captured by `def twice() {inc}` still makes its
-  closure at the declaration, and its calls by name and the sibling's
-  calls through it stay `call.indirect`, where the pin inlines them all.
-  - Upstream's closure is a `__storage` struct whose fields are the
-    captures, so a call through it binds the body's captures to those
-    fields; MIR has no place naming a closure value's environment entry,
-    so `inline-parametric` refuses a copied or moved capture it would
-    reach only through the closure.
-  - A body used only by name holds its environment in frame slots
-    (`NestedInfo::holds_environment`) and inlines; a sibling-captured one
-    could hold the same slots, with the sibling capturing them by
-    reference instead of the closure.
-  - Probe: `outer(4)` over `inc` and `twice` above, returning
-    `twice() + inc()`, prints 15 on the pin and on the VM and keeps three
-    `call.indirect` and one `closure.make` in concrete MIR.
-  - Found while landing R1080 (2026-10-17).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1342 `TypeList` pack queries over a concrete pack keep their
   inlined call**
 
@@ -519,7 +496,8 @@ which names the upstream pass each one follows. Each is measured by the
   - Lever: build those operands from the `closure.make`'s `captures` in
     `fold_known_callees` (`analysis/canonicalize.rs`): a load of each
     reference capture's place and its access; a copy or move capture
-    (`{var x}`, `{s^}`) needs its holding slot first.
+    (`{var x}`, `{s^}`), which only a lambda or a first-class use makes now
+    (R1378), needs its holding slot first.
   - Probe: `outer` in
     `tests/mir_passes/canonicalize/indirect_known_callee.mir` keeps its
     `call.indirect` through `closure.make "outer$plus"`.
@@ -7181,25 +7159,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R100 A generic nested `def` with a by-value capture does not
-  compile natively**
-
-  Problem: `def inner[k: Int]() {var x} -> Int` runs on the VM and prints
-  what the pin prints, but natively it is refused: "generic retained
-  callable `outer$inner` captures by value".
-  - Native monomorphization turns each call into a direct call to the
-    instance, passing a by-reference environment's places as the lifted
-    body's leading arguments (`capture_arguments` in
-    `native/mono/specializer.rs`).
-  - A `var` or moved capture is a snapshot held only by the closure value,
-    which the direct call no longer reads; the snapshot needs a home the
-    call can reach, such as a hidden local copied at the declaration.
-  - `conformance/probes/generic_nested_def_var_capture.mojo` pins it.
-  - Found while compiling capturing generic nested `def`s natively
-    (2026-09-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R498 A nested `def` keyed on a type pack fails MIR verification**
 
   Problem: `def inner[*Ts: Writable](*args: *Ts)` declared inside `def
@@ -9125,6 +9084,16 @@ retained on purpose and re-probed rather than fixed; they are listed in
     capture of a `String` is destroyed through the value. A
     `def(...) capturing` type says neither, so `owned_register`
     (`mir/register_ends.rs`) exempts only a thin function value.
+  - Probe: a first-class use of a sibling-captured `inc() {var x}`
+    (`apply(inc)` beside `twice() {inc}`) makes R1376's storage give way to
+    a stored `closure.make` (`called_by_name_everywhere` in
+    `mir/nested.rs`), and every lambda with a `var` or moved capture makes
+    an owned `closure.make` where it stands. Once the value is the struct,
+    the VM's `RefProjection::Capture` and owned-environment
+    `callee_place`, and Pliron's `c`/`m` capture-record slots and
+    `mjdrop_<n>` thunks (`lower/closures.rs`), lose their last producer.
+  - The storage's `ref` fields carry an untracked origin; upstream promotes
+    the captures' origins to struct parameters (`outlineAndPromoteOrigins`).
   - Closes R534 (broadened: the pin rejects every capturing capture-list
     closure there). Shrinks R176 (capture-list locals run at the pin).
   - Depends on R1377, which gives calls through the struct their method
@@ -11411,37 +11380,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1376 A capture-list nested `def` keeps its captures as a list,
-  where the pin builds a `__storage` struct whose fields are the captures**
-
-  `closure.make` holds a capture-list body's environment as a list only the
-  closure value reaches, where upstream's `ClosureEmitter::emitClosure`
-  (`lib/MojoParser/ClosureEmitter.cpp`) builds a `<fn>::__storage` struct
-  through its synthesized `__init__`, one field per capture.
-  - A reference capture is a pointer field, and a `var` or moved capture is
-    an owned field. The pin's LLVM shows `inner::__storage::__init__`
-    returning `{ i64, ptr }`.
-  - The lever: when a frame makes a capture-list closure
-    (`NestedInfo::slotted`, `mir.rs`), MIR lowering constructs that struct,
-    and a call through the value passes its fields' places as the lifted
-    body's leading arguments.
-  - This slice covers uses inside the declaring frame: calls by name, and
-    calls through a sibling that captures the closure. The checker's type is
-    unchanged until R1378.
-  - The VM's `RefProjection::Capture` and the `callee_place` an owned
-    environment needs go (`backend/vm/references.rs`), and so do Pliron's
-    capture-record slots.
-  - Legacy `@parameter` closures keep upstream's environment-pointer path
-    (R533), so R1345 then serves only them.
-  - Probe: R1104's `outer(4)` over `inc() {var x}` and `twice() {inc}`
-    prints 15 on both. Mojito keeps three `call.indirect` and one
-    `closure.make` in concrete MIR, while the pin calls `__storage::inc`
-    directly.
-  - Closes R1104 (a sibling-captured copying body is called through its
-    closure). Shrinks R100.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R1377 A capture-list closure's lifted body takes its captures as
   leading arguments, where the pin makes it a `__storage` method taking the
   struct**
@@ -11454,7 +11392,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     call, by name or through the value, passes the one struct.
   - `NestedInfo::holds_environment` and the slotted/unslotted split go. The
     declaration always builds the storage, and `sroa` and `mem-2-reg` take
-    it apart when it is register-passable.
+    it apart when it is register-passable. Today only a slotted body called
+    only by name builds it (`NestedInfo::storage`, `closure_storage` in
+    `mir/nested.rs`).
   - Probe: `outer(4)` over `def get() {imm y} -> Int` called twice. At the
     pin both calls pass one `{ ptr }` value, where Mojito passes `y`'s place
     to each.

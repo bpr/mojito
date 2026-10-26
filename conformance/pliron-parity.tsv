@@ -318,6 +318,7 @@ assets/ok/generic_field_pointer_deref_in_place.mojo	main	exe-differential	saniti
 assets/ok/generic_iterable_explicit_iter.mojo	main	exe-differential	sanitized
 assets/ok/generic_method_per_call_clones.mojo	main	exe-differential	sanitized
 assets/ok/generic_nested_def_captures.mojo	main	exe-differential	sanitized
+assets/ok/generic_nested_def_var_capture.mojo	main	exe-differential	sanitized
 assets/ok/generic_param_string_literal_materializes.mojo	main	exe-differential	sanitized
 assets/ok/generic_reads_copy_nothing.mojo	main	exe-differential	sanitized
 assets/ok/generic_struct_generic_constructor_overload.mojo	main	exe-differential	sanitized
@@ -467,6 +468,7 @@ assets/ok/native_borrowed_reads.mojo	main	exe-differential	sanitized
 assets/ok/nested.mojo	main	exe-differential	sanitized
 assets/ok/nested_comprehensions.mojo	main	exe-differential	sanitized
 assets/ok/nested_copy_lifecycle.mojo	main	exe-differential	sanitized
+assets/ok/nested_def_capture_storage.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_enclosing_binders.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_inline_shapes.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_reads_comptime_for_index.mojo	main	exe-differential	sanitized

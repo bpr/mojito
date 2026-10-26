@@ -318,6 +318,7 @@ assets/ok/generic_field_pointer_deref_in_place.mojo	-	ineligible	no-scalar-entry
 assets/ok/generic_iterable_explicit_iter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_method_per_call_clones.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_nested_def_captures.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/generic_nested_def_var_capture.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_param_string_literal_materializes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_reads_copy_nothing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/generic_struct_generic_constructor_overload.mojo	-	ineligible	no-scalar-entry-shape
@@ -467,6 +468,7 @@ assets/ok/native_borrowed_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_comprehensions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_copy_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/nested_def_capture_storage.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_def_enclosing_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_def_inline_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/nested_def_reads_comptime_for_index.mojo	-	ineligible	no-scalar-entry-shape

@@ -77,14 +77,20 @@ impl<'a> Flatten<'a> {
             place.through = Some(var);
             self.emit(MirInstr::LoadPlace { dest: d, place });
         } else if self.runtime_aliases.contains(&var) {
-            let handle = self.fresh(location.clone(), Some(var));
+            // A read borrows the referent immutably, whatever the handle
+            // the slot holds lets a write do.
+            let mut place = MirPlace::root(var, self.var_types.get(&var).cloned());
+            place.through = Some(var);
+            let handle = match mir_place_handle_ty(
+                &place,
+                Some(mojito_types::origin::Mutability::Immutable),
+            ) {
+                Some(ty) => self.fresh_typed(location.clone(), Some(var), ty),
+                None => self.fresh(location.clone(), Some(var)),
+            };
             self.emit(MirInstr::MakeRef {
                 dest: handle,
-                place: {
-                    let mut place = MirPlace::root(var, self.var_types.get(&var).cloned());
-                    place.through = Some(var);
-                    place
-                },
+                place,
             });
             self.emit(MirInstr::ReadRef {
                 dest: d,

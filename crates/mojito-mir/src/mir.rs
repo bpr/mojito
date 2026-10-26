@@ -1444,18 +1444,60 @@ fn lower_fieldwise_constructor(
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
 ) {
-    let name = &declaration.name;
-    let receiver: Ty = TyKind::Struct(name.clone(), Vec::new()).into();
-    let fields: Vec<(&str, Ty, Option<ArgConvention>)> = declaration
+    let fields: Vec<FieldwiseParameter<'_>> = declaration
         .fields
         .iter()
         .filter_map(|field| {
-            Some((
-                field.name.as_str(),
-                field.ty.clone()?,
-                field.fieldwise_convention,
-            ))
+            Some(FieldwiseParameter {
+                field: field.name.as_str(),
+                parameter: field.name.as_str(),
+                ty: field.ty.clone()?,
+                convention: field.fieldwise_convention,
+            })
         })
+        .collect();
+    let conventions: Vec<Option<ArgConvention>> =
+        fields.iter().map(|field| field.convention).collect();
+    let fieldwise_refs: Vec<Option<mojito_types::origin::RefSig>> = declaration
+        .fields
+        .iter()
+        .filter(|field| field.ty.is_some())
+        .map(|field| field.fieldwise_ref.clone())
+        .collect();
+    let param_writes =
+        mojito_checked::checked::DeclarationEffect::param_writes(&conventions, &fieldwise_refs);
+    lower_fieldwise_members(
+        (&declaration.name, parameters),
+        &fields,
+        param_writes,
+        functions,
+        declarations,
+    );
+}
+
+/// One parameter of a synthesized fieldwise `__init__`: the field it
+/// initializes, its own name, the field's type, and its convention.
+struct FieldwiseParameter<'a> {
+    field: &'a str,
+    parameter: &'a str,
+    ty: Ty,
+    convention: Option<ArgConvention>,
+}
+
+/// Lower the fieldwise `__init__` of the struct `name` over its `fields`,
+/// [`lower_fieldwise_constructor`]'s body, each parameter writing its
+/// place as `param_writes` says.
+fn lower_fieldwise_members(
+    (name, parameters): (&str, &[ParamDecl]),
+    parameter_fields: &[FieldwiseParameter<'_>],
+    param_writes: Vec<bool>,
+    functions: &mut Vec<(String, MirFunction)>,
+    declarations: &mut MirDeclarations,
+) {
+    let receiver: Ty = TyKind::Struct(name.to_string(), Vec::new()).into();
+    let fields: Vec<(&str, Ty, Option<ArgConvention>)> = parameter_fields
+        .iter()
+        .map(|field| (field.field, field.ty.clone(), field.convention))
         .collect();
     let referent = |ty: &Ty| match ty.kind() {
         TyKind::Ref(reference) => Some(reference.referent.clone()),
@@ -1518,12 +1560,6 @@ fn lower_fieldwise_constructor(
     }
     let symbol = format!("{name}.__init__");
     let conventions: Vec<Option<ArgConvention>> = fields.iter().map(|field| field.2).collect();
-    let fieldwise_refs: Vec<Option<mojito_types::origin::RefSig>> = declaration
-        .fields
-        .iter()
-        .filter(|field| field.ty.is_some())
-        .map(|field| field.fieldwise_ref.clone())
-        .collect();
     let ref_params: Vec<bool> = fields
         .iter()
         .map(|(_, ty, _)| matches!(ty.kind(), TyKind::Ref(_)))
@@ -1531,9 +1567,9 @@ fn lower_fieldwise_constructor(
     let arity = fields.len();
     declarations.functions.push(MirFunctionDeclaration {
         lowered_name: symbol.clone(),
-        param_names: fields
+        param_names: parameter_fields
             .iter()
-            .map(|(field, ..)| (*field).to_string())
+            .map(|field| field.parameter.to_string())
             .collect(),
         param_types: param_types.clone(),
         defaults: vec![None; arity],
@@ -1555,10 +1591,7 @@ fn lower_fieldwise_constructor(
         raises: false,
         error_ty: None,
         ref_params: ref_params.clone(),
-        param_writes: mojito_checked::checked::DeclarationEffect::param_writes(
-            &conventions,
-            &fieldwise_refs,
-        ),
+        param_writes,
         availability: Vec::new(),
         enclosing: None,
         region_binders: Vec::new(),
@@ -1567,7 +1600,7 @@ fn lower_fieldwise_constructor(
     });
     let n_params = 1 + arity;
     let var_names: Vec<String> = std::iter::once("self")
-        .chain(fields.iter().map(|(field, ..)| *field))
+        .chain(parameter_fields.iter().map(|field| field.parameter))
         .map(str::to_string)
         .collect();
     let var_types: Vec<Ty> = std::iter::once(receiver).chain(param_types).collect();
@@ -4512,7 +4545,8 @@ struct NestedInfo {
     /// place the sibling's call and environment name. Otherwise the
     /// statement makes no closure: a call by name is a direct call of the
     /// lifted body, and a first-class use makes the closure where it
-    /// stands, as the pin takes the function value at the use.
+    /// stands, as the pin takes the function value at the use. A slotted
+    /// body with [`Self::storage`] keeps its storage in the slot instead.
     slotted: bool,
     /// True when the body copies or moves a capture and is only called by
     /// name in its declaring body: the declaration statement copies or
@@ -4521,12 +4555,34 @@ struct NestedInfo {
     /// lifted body's leading reference argument, the shape upstream's SROA
     /// leaves of the closure's `__storage` struct.
     holds_environment: bool,
+    /// The storage struct a slotted capture-list `def` declared by a
+    /// statement builds in its slot instead of a closure, as upstream's
+    /// `ClosureEmitter::emitClosure` builds `fn::__storage`: a call of the
+    /// body by name, or through a sibling capturing it, passes the
+    /// storage's fields as the lifted body's leading reference arguments.
+    storage: Option<ClosureStorage>,
     /// Captured enclosing-local names, in a deterministic (sorted) order shared by
     /// the lifted function's parameter list and every rewritten call site.
     captures: Vec<NestedCapture>,
     /// The checker's exact callable type for the nested `def`, used to type
     /// synthetic closure-value registers. `None` only on unchecked paths.
     callable_ty: Option<Ty>,
+}
+
+/// The `__storage` struct of a capture-list closure: one field per
+/// capture, in capture order, an owned value for a `var` or moved capture
+/// and a `ref` for a reference capture, whose referent a captured
+/// sibling's storage is when it has one.
+#[derive(Clone)]
+struct ClosureStorage {
+    /// `Struct(<lifted>$__storage, binders)`.
+    ty: Ty,
+    fields: Vec<(String, Ty)>,
+    /// The enclosing binders the fields name, the struct's parameters.
+    param_decls: Vec<ParamDecl>,
+    /// Whether a call of the body may write the storage: it owns a field,
+    /// or a field is a mutable reference.
+    writes: bool,
 }
 
 /// [`lower_cfg`] with a nested-`def` registry in scope: a call of a registered

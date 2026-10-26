@@ -1965,6 +1965,75 @@ impl<'a> Flatten<'a> {
         });
     }
 
+    /// Build the storage struct `storage` of the slotted capture-list
+    /// `def` `info`, declared `name` at `at`, in the declaration's slot, as
+    /// upstream's `ClosureEmitter::emitClosure` calls the storage's
+    /// `__init__` with the captures: a `var` capture's place is read, a
+    /// moved capture's value moves in, and a reference capture's place,
+    /// a captured sibling's storage slot included, is lent.
+    fn lower_closure_storage_value(
+        &mut self,
+        info: &NestedInfo,
+        storage: &ClosureStorage,
+        name: &str,
+        at: &SourceSpan,
+    ) {
+        let mut args = Vec::new();
+        let mut arg_places = Vec::new();
+        for (capture, (_, field)) in info.captures.iter().zip(&storage.fields) {
+            let place = self.capture_place(capture);
+            let ty = match field.kind() {
+                TyKind::Ref(reference) => reference.referent.clone(),
+                _ => field.clone(),
+            };
+            let dest = self.fresh_typed(at.clone(), Some(place.root), ty);
+            if capture.kind == mojito_ast::ast::CaptureKind::Move {
+                self.emit(MirInstr::UseVar {
+                    dest,
+                    var: place.root,
+                    mode: UseMode::Move,
+                    constructor: None,
+                });
+                arg_places.push(None);
+            } else {
+                self.emit(MirInstr::LoadPlace {
+                    dest,
+                    place: place.clone(),
+                });
+                arg_places.push(Some(place));
+            }
+            args.push(dest);
+        }
+        let TyKind::Struct(structure, _) = storage.ty.kind() else {
+            unreachable!("a closure's storage is a struct")
+        };
+        let constructor = format!("{structure}.__init__");
+        let dest = self.fresh_typed(at.clone(), None, storage.ty.clone());
+        self.record_call(dest, Some(constructor.clone()), 0);
+        self.emit_call(MirInstr::Call {
+            dest,
+            func: FuncRef::named(&constructor),
+            raises: None,
+            args,
+            kwargs: Vec::new(),
+            arg_places,
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            receiver: None,
+            instantiated_args: Vec::new(),
+            spread: None,
+        });
+        let var = self.declare_binding_var(info.binding, name);
+        self.var_types.insert(var, storage.ty.clone());
+        self.emit(MirInstr::DefVar {
+            var,
+            src: dest,
+            binding_ty: Some(storage.ty.clone()),
+            in_place: false,
+        });
+    }
+
     /// Copy or move each copied or moved capture of nested `def` `info`,
     /// declared at `at`, into the frame slot that holds that entry of its
     /// environment ([`NestedInfo::holds_environment`]).
@@ -2601,11 +2670,12 @@ impl<'a> Flatten<'a> {
             ) => {}
 
             // A direct nested declaration lowers to nothing unless it needs
-            // a closure slot (`NestedInfo::slotted`) or holds its
-            // environment (`NestedInfo::holds_environment`): then it creates
-            // its closure, or its environment's entries, exactly here, so
-            // copy and move captures snapshot or transfer before any
-            // following statement can mutate or use the source binding.
+            // a slot (`NestedInfo::slotted`) or holds its environment
+            // (`NestedInfo::holds_environment`): then it builds its storage
+            // (`NestedInfo::storage`) or closure, or its environment's
+            // entries, exactly here, so copy and move captures snapshot or
+            // transfer before any following statement can mutate or use the
+            // source binding.
             (CheckedStmtOp::Def(def), _) => {
                 let info = statement_binding
                     .and_then(|binding| self.nested.get(&binding))
@@ -2616,9 +2686,15 @@ impl<'a> Flatten<'a> {
                         self.lower_nested_environment(&info, &node.location());
                     }
                     Some(info) if !info.slotted => {}
-                    Some(info) => {
-                        self.lower_slotted_nested_def(&info, &def.name, node.location());
-                    }
+                    Some(info) => match &info.storage {
+                        Some(storage) => self.lower_closure_storage_value(
+                            &info,
+                            storage,
+                            &def.name,
+                            &node.location(),
+                        ),
+                        None => self.lower_slotted_nested_def(&info, &def.name, node.location()),
+                    },
                     None => self.emit(MirInstr::Unsupported(
                         "nested def/struct/trait declaration".into(),
                     )),

@@ -290,13 +290,13 @@ impl<'a> Flatten<'a> {
         Some(d)
     }
 
-    /// Lower a call of a nested `def` by name. A body whose captures are
-    /// all reference captures this frame holds is called directly, as the
-    /// pin calls the lifted closure generator: a `call` of the lifted body
-    /// passing the captured places as its leading reference arguments. A
-    /// body with a copied or moved capture, or one whose captures this
-    /// lifted frame does not hold (a sibling it reaches only through a
-    /// captured closure value), is called through its closure value.
+    /// Lower a call of a nested `def` by name. A body whose storage this
+    /// frame holds, or whose captures are all places this frame holds, is
+    /// called directly, as the pin calls the lifted closure generator: a
+    /// `call` of the lifted body passing the storage's fields or the
+    /// captured places as its leading reference arguments. Any other body
+    /// (a sibling reached only through a captured closure value) is called
+    /// through its closure value.
     pub(in crate::mir) fn lower_nested_call(
         &mut self,
         call: Node<'a>,
@@ -386,11 +386,15 @@ impl<'a> Flatten<'a> {
     }
 
     /// Whether a call of `info` by name is a direct call of its lifted
-    /// body: the frame holds each captured place, its own local or a
-    /// forwarded environment parameter for a reference capture, and the
-    /// environment slot of a copied or moved one
-    /// ([`NestedInfo::holds_environment`]).
+    /// body: the frame holds its storage ([`NestedInfo::storage`]), its
+    /// declaration's slot or a sibling's capture of it, or each captured
+    /// place, its own local or a forwarded environment parameter for a
+    /// reference capture, and the environment slot of a copied or moved
+    /// one ([`NestedInfo::holds_environment`]).
     pub(in crate::mir) fn calls_nested_directly(&self, info: &NestedInfo) -> bool {
+        if info.storage.is_some() && self.owner_vars.contains_key(&info.binding) {
+            return true;
+        }
         info.captures.iter().all(|capture| match capture.kind {
             mojito_ast::ast::CaptureKind::Imm
             | mojito_ast::ast::CaptureKind::Mut
@@ -403,14 +407,44 @@ impl<'a> Flatten<'a> {
         })
     }
 
-    /// The place a call of `info` by name passes for `capture`: the
-    /// environment slot holding a copied or moved capture, else the
-    /// captured place.
+    /// The place a call of `info` by name passes for `capture`: the field
+    /// of the storage this frame holds that keeps it, which for a
+    /// reference capture holds the handle the call binds, the environment
+    /// slot holding a copied or moved capture, else the captured place.
     fn nested_capture_argument(&mut self, info: &NestedInfo, capture: &NestedCapture) -> MirPlace {
+        if let Some(place) = self.storage_field_place(info, capture) {
+            return place;
+        }
         match self.environment.get(&(info.binding, capture.binding)) {
             Some(var) => MirPlace::root(*var, self.var_types.get(var).cloned()),
             None => self.capture_place(capture),
         }
+    }
+
+    /// The field of the storage of `info` this frame holds that keeps
+    /// `capture`, `None` when the frame holds no storage of it.
+    fn storage_field_place(
+        &mut self,
+        info: &NestedInfo,
+        capture: &NestedCapture,
+    ) -> Option<MirPlace> {
+        let storage = info.storage.as_ref()?;
+        if !self.owner_vars.contains_key(&info.binding) {
+            return None;
+        }
+        let (field, ty) = info
+            .captures
+            .iter()
+            .zip(&storage.fields)
+            .find_map(|(candidate, field)| (candidate == capture).then_some(field))?;
+        let mut place = self.binding_place(info.binding, &info.source_name);
+        if place.root_ty.is_none() && place.through.is_none() {
+            place.root_ty = Some(storage.ty.clone());
+        }
+        place.proj.push(Proj::Field(field.clone()));
+        place.projection_tys.push(ty.clone());
+        place.ty = Some(ty.clone());
+        Some(place)
     }
 
     /// The direct call of the lifted body of `info`: its captured places,
@@ -433,12 +467,17 @@ impl<'a> Flatten<'a> {
         let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         self.close_call_setup(Some(call));
         self.allow_argument_anchors = saved_anchor_permission;
+        let through_storage = info.storage.is_some() && self.owner_vars.contains_key(&info.binding);
         let captured: Vec<(Reg, MirPlace)> = info
             .captures
             .iter()
             .map(|capture| {
                 let place = self.nested_capture_argument(info, capture);
-                let ty = place.ty.clone().unwrap_or_else(|| capture.ty.clone());
+                // A storage's reference field binds the handle it holds.
+                let ty = match place.ty.as_ref().map(Ty::kind) {
+                    Some(TyKind::Ref(reference)) if through_storage => reference.referent.clone(),
+                    _ => place.ty.clone().unwrap_or_else(|| capture.ty.clone()),
+                };
                 let dest = self.fresh_typed(call.location(), Some(place.root), ty);
                 self.emit(MirInstr::LoadPlace {
                     dest,
@@ -488,15 +527,25 @@ impl<'a> Flatten<'a> {
     }
 
     /// Keep the owners of the reference captures of `info`, and the
-    /// environment slots of its copied or moved ones, alive through a call
-    /// of it.
+    /// storage or environment slots holding its copied or moved ones, alive
+    /// through a call of it.
     fn emit_capture_keepalives(&mut self, info: &NestedInfo) {
         let mut owners = Vec::new();
         let mut seen = HashSet::new();
+        let storage = info
+            .storage
+            .as_ref()
+            .and_then(|_| self.owner_vars.get(&info.binding).copied());
+        owners.extend(storage);
         for capture in &info.captures {
+            let owned = matches!(
+                capture.kind,
+                mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move
+            );
             match self.environment.get(&(info.binding, capture.binding)) {
                 Some(var) if !owners.contains(var) => owners.push(*var),
                 Some(_) => {}
+                None if storage.is_some() && owned => {}
                 None => self.collect_capture_keepalives(capture, &mut owners, &mut seen),
             }
         }

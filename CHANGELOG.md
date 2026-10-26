@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A capture-list nested `def` a sibling captures now builds upstream's
+  `__storage` struct at its declaration, one field per capture (an owned
+  value for a `var` or moved capture, a `ref` for a reference capture),
+  through the struct's synthesized fieldwise `__init__`, where Mojito made
+  and stored a closure value (R1376). Every call of it, by name or through
+  the sibling, which captures the storage, is a direct call passing the
+  storage's fields, so the probe `outer(4)` over `inc() {var x}` and
+  `twice() {inc}` keeps no `call.indirect` or `closure.make` in concrete
+  MIR (R1104). A generic frame's storage takes the binders its fields
+  name, and a generic body reached through a sibling
+  (`scaled[k]() {var x}` with `sum() {scaled}`) now runs on both
+  backends, where elaboration failed. A body with a first-class use, and
+  every lambda, keeps its closure value. A read through a reference
+  parameter now borrows it immutably, so an `imm` capture's field binds.
+
 - A struct decides its own destructor's triviality through a declared
   `comptime __del__is_trivial: Bool` member (and copy/move through
   `__copy_ctor_is_trivial`/`__move_ctor_is_trivial`), as at the pin:

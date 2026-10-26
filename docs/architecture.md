@@ -740,11 +740,25 @@ policy or data-model responsibilities to focused children:
   (`NestedInfo::holds_environment`): the declaration copies or moves each
   such capture into a slot of its own, and a call passes that slot, the
   shape upstream's SROA leaves of the closure's `__storage` struct. A
-  closure (`closure.make`) is made at a first-class use, or at the
-  declaration when a capture is copied or moved and the body has another
-  use, or a sibling captures the closure itself (`NestedInfo::slotted`),
-  and only such a slotted body with a copied or moved capture is called
-  through its closure value.
+  body a sibling captures, or one with a copied or moved capture and
+  another use, keeps a slot of its own (`NestedInfo::slotted`). When
+  every use of a slotted body with captures, in its declaring frame or a
+  nested body, is a call by name, the slot holds the body's storage struct
+  (`NestedInfo::storage`, `<lifted>$__storage`, one field per capture in
+  capture order): an owned field for a copied or moved capture, a `ref`
+  field for a reference capture, whose referent is the captured sibling's
+  storage for a sibling with one, and the struct's parameters the
+  enclosing binders its fields name, as upstream's
+  `ClosureEmitter::emitClosure` builds it. MIR lowering synthesizes the
+  struct's declaration, its fieldwise `__init__`, which the declaration
+  calls with the captures, and a `__deinit__` when a field has a
+  destructor (`nested::lower_closure_storage`). A call of the body by
+  name, or through a sibling capturing it, passes the storage's fields as
+  the lifted body's leading reference arguments, a `ref` field the handle
+  it holds. Otherwise a closure (`closure.make`) is made at a first-class
+  use, or held in the slot, and only a slotted body without storage whose
+  captures the calling frame does not hold is called through its closure
+  value.
 - `backend/vm.rs` drives execution; `backend/vm/calls.rs` owns runtime argument
   binding and construction, while `backend/vm/places.rs` owns projected storage
   navigation and access; further `impl VmBackend` clusters live in
@@ -4084,9 +4098,9 @@ Capture discovery builds a lexical tree and lifts descendants recursively at
 arbitrary depth. Each lifted symbol encodes its complete lexical path; the
 nearest declaration wins under shadowing, and each intermediate environment
 forwards only captures permitted by its own explicit/default policy. Capturing a
-sibling captures the already materialized sibling closure slot, not a rebuilt or
-flattened copy of its transitive environment, so declaration-time snapshots and
-moved state remain stable. `KeepAlive` retains exact existing callable/reference
+sibling captures the already materialized sibling slot, its storage struct or
+closure, not a rebuilt or flattened copy of its transitive environment, so
+declaration-time snapshots and moved state remain stable. `KeepAlive` retains exact existing callable/reference
 slots and never fabricates a slot for a transitive capture; it extends a live
 range for the lifetime check and is erased by `lower-lit` after drop
 elaboration. Lifted
