@@ -15,8 +15,10 @@ from std.collections.dict import Dict
 from std.collections.optional import Optional, OptionalReg
 from std.builtin.len import Sized, SizedRaising, len
 from std.builtin.comparable import Comparable, Equatable
-from std.builtin.floatable import FloatableRaising
-from std.builtin.int import IntableRaising
+from std.builtin.bool import Boolable
+from std.builtin.floatable import Floatable, FloatableRaising
+from std.builtin.identifiable import Identifiable
+from std.builtin.int import Indexer, Intable, IntableRaising
 from std.builtin.enum_like import EnumLike
 from std.builtin.tuple import Tuple
 from std.builtin.variadics import ParameterList, TypeList, VariadicList

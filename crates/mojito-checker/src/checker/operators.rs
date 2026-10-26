@@ -47,7 +47,7 @@ impl Checker {
         // An opaque type parameter bounded by the prefix operator's trait
         // dispatches after erasure (`-x` needs `Negatable`, `not x` needs
         // `Boolable`); the concrete impl runs on the erased type.
-        if param_has_bound(&t, prefix_operation_trait(op)) {
+        if self.param_has_bound(&t, prefix_operation_trait(op)) {
             self.record_read_temporary_argument(operand);
             return Ok(match op {
                 PrefixOp::Neg | PrefixOp::Invert => t,
@@ -115,8 +115,8 @@ impl Checker {
         right: &Expr,
     ) -> Result<Ty, TypeError> {
         use InfixOp::{
-            Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Le, Lt, Mod, Mul, Ne,
-            NotIn, Or, Pow, Shl, Shr, Sub,
+            Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Is, IsNot, Le, Lt, Mod,
+            Mul, Ne, NotIn, Or, Pow, Shl, Shr, Sub,
         };
 
         // An element of an unbound pack takes its operators from its bounds.
@@ -214,7 +214,7 @@ impl Checker {
                 Add | Sub | Mul | FloorDiv | Mod | Div | Shl | Shr | BitAnd | BitOr | BitXor
             )
             && let Some(trait_name) = infix_operation_trait(op)
-            && param_has_bound(&lt, trait_name)
+            && self.param_has_bound(&lt, trait_name)
         {
             return Ok(if matches!(op, Div) { Ty::float64() } else { lt });
         }
@@ -271,7 +271,7 @@ impl Checker {
             // (`__pow__(self, Self) -> Self`); the concrete impl runs after
             // erasure. Checked before the numeric arm since a `Param` isn't
             // numeric (so `common` is None here).
-            Pow if lt == rt && param_has_bound(&lt, "Powable") => Some(lt.clone()),
+            Pow if lt == rt && self.param_has_bound(&lt, "Powable") => Some(lt.clone()),
             // Arithmetic that preserves the operand type.
             Add | Sub | Mul | FloorDiv | Mod | Pow => common,
             Shl | Shr | BitAnd | BitOr | BitXor
@@ -310,6 +310,9 @@ impl Checker {
             {
                 Some(Ty::bool())
             }
+            // Identity between equal opaque type parameters whose bound
+            // promises it (`T: Identifiable`).
+            Is | IsNot if lt == rt && self.identifiable_bound(&lt) => Some(Ty::bool()),
             _ => None,
         };
         if let Some(ty) = result {
@@ -1186,6 +1189,7 @@ impl Checker {
         let trait_name = match op {
             InfixOp::Eq | InfixOp::Ne => "Equatable",
             InfixOp::Lt | InfixOp::Gt | InfixOp::Le | InfixOp::Ge => "Comparable",
+            InfixOp::Is | InfixOp::IsNot => "Identifiable",
             _ => return None,
         };
         let dunder = op.dunder()?;

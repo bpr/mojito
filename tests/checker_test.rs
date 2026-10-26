@@ -23,13 +23,18 @@ fn err(source: &str) -> TypeError {
 /// prelude resolve), elaborate it, and run the type checker. Elaboration
 /// validates the source first, so a type error it reports is the verdict.
 fn check_with_std(source: &str) -> Result<(), TypeError> {
+    checked_with_std(source).map(|_| ())
+}
+
+/// Like [`check_with_std`], returning the checked program.
+fn checked_with_std(source: &str) -> Result<mojito::checked::CheckedProgram, TypeError> {
     let linked =
         mojito::link_source(source, std::path::Path::new("checker_test.mojo")).expect("link error");
     let program = match mojito::elaborate(linked) {
         Err(mojito::ComptimeError::Type(error)) => return Err(error),
         elaborated => elaborated.expect("elaborate"),
     };
-    check_program(&program).map(|_| ())
+    check_program(&program)
 }
 
 /// Like [`ok`], with the standard library linked.
@@ -2416,7 +2421,7 @@ fn accepts_runtime_scalar_dtype_conversions() {
 fn accepts_intable_sources_for_integer_lanes() {
     // Integer-Scalar construction accepts any Intable value: a bounded
     // parameter or a conforming struct, converted through `__int__`.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct W(Intable):\n    var n: Int\n\n    def __int__(self) -> Int:\n        return self.n\n\ndef to_byte[T: Intable](x: T) -> Byte:\n    return Byte(x)\n\ndef main():\n    var b = to_byte(W(261))\n    var c = Byte(W(300))\n",
     );
 }
@@ -3815,7 +3820,7 @@ fn applies_implicit_conversion_to_a_specialized_generic_target() {
 
 #[test]
 fn checks_each_heterogeneous_pack_element_against_its_bound() {
-    let error = err(
+    let error = err_std(
         "def count[*ArgTypes: Intable](*args: *ArgTypes) -> Int:\n    return len(args)\n\ndef main():\n    var n: Int = count(1, \"two\")\n",
     );
     assert!(matches!(error, TypeError::TraitNotSatisfied { .. }));
@@ -5390,7 +5395,7 @@ fn augmented_subscript_freezes_setter_only_index_normalization() {
     use mojito::checked::CheckedCallValueAdjustment;
 
     let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(self, index: Axis) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\ndef main():\n    var box = Box(1)\n    var axis = Axis(0)\n    box[axis] += 2\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let pair = checked
         .expressions()
         .iter()
@@ -5475,7 +5480,7 @@ fn augmented_subscript_rejects_an_immutable_reference_getter() {
 #[test]
 fn multi_indexer_normalization_uses_each_argument_position() {
     let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n    def __setitem__(mut self, row: Axis, column: Int, value: Int):\n        self.value = row.value + column + value\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Axis(2)])\n    grid[Axis(3), Axis(4)] = 5\n";
-    let checked = check_program(&parse(source).expect("parse")).expect("check");
+    let checked = checked_with_std(source).expect("check");
     let normalizations = checked
         .expressions()
         .iter()
@@ -5485,7 +5490,7 @@ fn multi_indexer_normalization_uses_each_argument_position() {
     assert_eq!(normalizations, 2);
 
     assert!(matches!(
-        err(
+        err_std(
             "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value\n\n@fieldwise_init\nstruct Plain:\n    var value: Int\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Plain(2)])\n"
         ),
         TypeError::BadCall { .. }
@@ -6114,11 +6119,11 @@ fn numeric_operation_traits_permit_their_operation() {
     ok("def absolute[T: Absable](x: T) -> T:\n    return abs(x)\n");
     ok("def rounded[T: Roundable](x: T) -> T:\n    return round(x)\n");
     ok("def powit[T: Powable](x: T, y: T) -> T:\n    return x ** y\n");
-    ok("def to_int[T: Intable](x: T) -> Int:\n    return Int(x)\n");
-    ok("def to_flt[T: Floatable](x: T) -> Float64:\n    return Float64(x)\n");
+    ok_std("def to_int[T: Intable](x: T) -> Int:\n    return Int(x)\n");
+    ok_std("def to_flt[T: Floatable](x: T) -> Float64:\n    return Float64(x)\n");
     // `Boolable` -> `Bool(x)`, and `DivModable` -> `divmod(a, b)` (prelude
     // builtins), plus the `math`-module rounding dunders on their bounds.
-    ok("def to_bool[T: Boolable](x: T) -> Bool:\n    return Bool(x)\n");
+    ok_std("def to_bool[T: Boolable](x: T) -> Bool:\n    return Bool(x)\n");
     ok("def dm[T: DivModable](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n");
     ok("def flr[T: Floorable](x: T) -> T:\n    return x.__floor__()\n");
     ok("def cl[T: Ceilable](x: T) -> T:\n    return x.__ceil__()\n");
@@ -6221,13 +6226,13 @@ fn user_struct_prefix_operators_type_check() {
 #[test]
 fn concrete_conversions_and_abs_route_through_dunders() {
     // A concrete struct with the conversion/abs dunders type-checks the builtins.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct M(Intable):\n    var n: Int\n    def __int__(self) -> Int:\n        return self.n\n    def __abs__(self) -> M:\n        return M(self.n)\n\ndef main():\n    print(Int(M(1)))\n    print(abs(M(2)).n)\n",
     );
     // `Int(x)` is upstream's `__init__[T: Intable]`: a `__int__` alone is no
     // declaration.
     assert!(matches!(
-        err(
+        err_std(
             "@fieldwise_init\nstruct M:\n    var n: Int\n    def __int__(self) -> Int:\n        return self.n\n\ndef main():\n    print(Int(M(1)))\n"
         ),
         TypeError::TraitNotSatisfied { .. }

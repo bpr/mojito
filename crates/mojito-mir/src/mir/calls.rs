@@ -482,7 +482,9 @@ impl<'a> Flatten<'a> {
         // An implicitly converted temporary (`f(String("abc"))` at a view
         // parameter) materializes inside the conversion lowering instead: the
         // slot holds the unconverted source and the callee receives the view.
-        let converted = expression.implicit_conversion().is_some();
+        // An `Indexer` normalized to `Int` likewise passes its result.
+        let converted = expression.implicit_conversion().is_some()
+            || expression.index_normalization().is_some();
         if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(adjustments)
             && !converted
         {
@@ -509,7 +511,7 @@ impl<'a> Flatten<'a> {
                     adjustment,
                     mojito_checked::checked::SemanticAdjustment::BorrowReadArgument
                 )
-            }) && expression.implicit_conversion().is_none()
+            }) && !converted
                 && let Some(register) = match setup.filter(|_| !lends_reads) {
                     Some(source) => self.defer_to_setup(expression, Some(source), true, |this| {
                         this.lower_borrowed_read_argument(expression)

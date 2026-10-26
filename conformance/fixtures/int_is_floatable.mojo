@@ -1,5 +1,6 @@
-# Mojito conforms `Int` (and an integer literal) to `Floatable`, so a
-# `Floatable`-bounded helper takes one; upstream conforms neither.
+# Neither `Int` nor an integer literal conforms to `Floatable`, as upstream's
+# `SIMD` and `IntLiteral` do not declare it, so a `Floatable`-bounded helper
+# rejects one.
 def to_flt[T: Floatable](x: T) -> Float64:
     return Float64(x)
 

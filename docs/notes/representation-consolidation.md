@@ -70,16 +70,16 @@ the entries named. A single command cannot use both.
    lever left, about 30 entries). It lands in three stages.
 
    First, the bundled library declares the compiler-known traits, so every
-   conformance has a witness table. The entries are R1360 (`Boolable`,
-   `Intable`, `Floatable`, `Indexer`, `Identifiable`), R1361 (the
+   conformance has a witness table. The entries are R1361 (the
    `std.math` traits), R1362 (`Hashable`, `Hasher`), R1363
    (`Defaultable`, `RegisterPassable`, `TrivialRegisterPassable`), and
-   R424 (`Writable`). R578 (the bundled types declare what upstream's do)
-   and R705 (`Equatable`, `Comparable`, with R706, R708, and R419) landed
-   on 2026-10-26. The rest:
+   R424 (`Writable`). R578 (the bundled types declare what upstream's do),
+   R705 (`Equatable`, `Comparable`, with R706, R708, and R419), and R1360
+   (`Boolable`, `Intable`, `Floatable`, `Indexer`, `Identifiable`, with
+   R191) landed on 2026-10-26. The rest:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1360 --only R1361 --only R1362 \
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1361 --only R1362 \
      --only R1363 --only R424 -n 0
    ```
 
@@ -199,7 +199,7 @@ are conformance only.
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1440–R1444, then R1445 | about 25 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662, R663 (landed), R1449, R1451 | R788, R378, R472, R508, R602, R1194 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1360–R1363, R424, R705 and R578 (landed); R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1361–R1363, R424, R705, R578, and R1360 (landed); R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 for the other closure forms | R1104, R100, R1230, R1333 (closed), R534, R176 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R603; R1379–R1388 | about 45 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 | about 20 (below) | slight |
@@ -270,7 +270,7 @@ missing.
 - **Closes**:
   - Dispatch: R1109, R1031, R1280.
   - Operators: R1332, R1282, R81, R697, R1238 (R708 closed).
-  - Traits: R109 (after R424), R712, R579, R191 (R707 and R706 closed).
+  - Traits: R109 (after R424), R712, R579 (R707, R706, and R191 closed).
 - **Shrinks** R987, R1291, R684, R113, R1119, R25, R817, R862, R860,
   R861, and R863.
 
@@ -375,7 +375,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | R1389–R1399 (`Int`, `UInt`, and `Float64` become width-one `SIMD`, then the library `SIMD` port, R1397), R160, R1188, R276, R1192 | R1408 (after R1392), R143, R339, R335, R331, R430, R850, R212, R1019, R423, R1352, R186, R185, R851, R187, R171, R330, R336, R857, R1189, R427, R432 |
+| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | R1389–R1399 (`Int`, `UInt`, and `Float64` become width-one `SIMD`, then the library `SIMD` port, R1397), R160, R1188, R276, R1192 | R1408 (after R1392), R143, R335, R331, R430, R850, R212, R1019, R423, R1352, R186, R185, R851, R187, R171, R330, R336, R857, R1189, R427, R432 |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R424 → R422 → R1287 (R424 is also gap F) | R1409, R433, R434, R275, R18, R159, R937 |
 | Reflection is a builtin, not `Reflected[T]` | R324 (after gap H) | R271, R497, R272, R76, R569, R270, R77, R78, R79, R75, R443, R444, R273, R900, R904 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |

@@ -80,6 +80,32 @@ impl FnLowering<'_> {
         ) {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
         }
+        // `Boolable`, `Intable`, `Floatable`, and `Indexer` on a scalar: its
+        // conversion, as the VM dispatches it.
+        if resolved.is_none()
+            && args.is_empty()
+            && kwargs.is_empty()
+            && self.func.reg_types.get(&recv.0).is_some_and(|ty| {
+                mojito_types::types::is_scalar_simd(ty)
+                    || matches!(
+                        ty.kind(),
+                        TyKind::Int
+                            | TyKind::UInt
+                            | TyKind::Float64
+                            | TyKind::Bool
+                            | TyKind::IntLiteral
+                            | TyKind::FloatLiteral
+                    )
+            })
+            && let Some(target) = match method {
+                "__bool__" => Some("Bool"),
+                "__float__" => Some("Float64"),
+                "__int__" | "__mlir_index__" => Some("Int"),
+                _ => None,
+            }
+        {
+            return self.lower_convert(ctx, dest, target, &[recv], &[]);
+        }
         if let Some((dtype, width)) = self.func.reg_types.get(&recv.0).and_then(simd_dims) {
             return self.lower_simd_method(ctx, dest, recv, dtype, width as usize, method, args);
         }

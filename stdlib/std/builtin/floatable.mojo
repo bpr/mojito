@@ -1,6 +1,10 @@
-# Upstream's `std/builtin/floatable.mojo`, without `Floatable`, which the
-# compiler still knows by name (R1360). The prelude exports
-# `FloatableRaising`, as upstream's does.
+# Upstream's `std/builtin/floatable.mojo`: the `Floatable` and
+# `FloatableRaising` traits. The prelude exports both, as upstream's does.
+
+
+trait Floatable:
+    def __float__(self) -> Float64:
+        ...
 
 
 trait FloatableRaising:

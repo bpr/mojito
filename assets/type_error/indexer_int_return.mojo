@@ -1,4 +1,4 @@
-# expect: no '__mlir_index__' candidates have type 'def(self: Offset) thin -> __mlir_type.index'
+# expect: method '__mlir_index__' does not match the signature required by trait 'Indexer'
 # Upstream's `Indexer` requires `__mlir_index__(self) -> __mlir_type.index`;
 # an `Int` return does not satisfy it.
 @fieldwise_init

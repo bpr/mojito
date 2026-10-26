@@ -118,6 +118,23 @@ impl Checker {
         {
             return Ok(Ty::int());
         }
+        // A scalar's conversion dunders are the methods upstream's `SIMD`,
+        // `Bool`, and numeric literals declare for `Boolable`, `Intable`,
+        // and `Floatable`; the backends answer them through the conversion
+        // built-in.
+        if let Some((trait_name, result)) = match method {
+            "__bool__" => Some(("Boolable", Ty::bool())),
+            "__int__" => Some(("Intable", Ty::int())),
+            "__float__" => Some(("Floatable", Ty::float64())),
+            _ => None,
+        } && args.is_empty()
+            && kwargs.is_empty()
+            && param_args.is_empty()
+            && (is_numeric_like(&obj_ty) || is_scalar_simd(&obj_ty) || obj_ty == TyKind::Bool)
+            && mojito_types::conformance::modelled_declares(&obj_ty, trait_name)
+        {
+            return Ok(result);
+        }
         // A receiver borrows a reference result for the call rather than
         // reading the referent out as an owned value; a consuming receiver
         // is gated on `ImplicitlyCopyable` below once the method resolves.

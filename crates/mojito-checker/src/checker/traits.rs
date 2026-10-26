@@ -1594,11 +1594,6 @@ impl Checker {
             // effectiveness is enforced at the transfer/consuming use sites.
             "Movable" => true,
             "Deinitable" => true,
-            "Indexer" => self.structs.get(name).is_some_and(|info| {
-                info.methods
-                    .get("__mlir_index__")
-                    .is_some_and(|methods| methods.iter().any(is_indexer_requirement))
-            }),
             "Hasher" => self.structs.get(name).is_some_and(|info| {
                 let initializes = info.methods.get("__init__").is_some_and(|methods| {
                     methods.iter().any(|method| method.params.is_empty())
@@ -2060,12 +2055,6 @@ impl Checker {
                         .any(|bound| bound == tr || self.trait_refines(bound, tr)),
                     _ => false,
                 },
-                "Indexer" => match ty.kind() {
-                    TyKind::Int | TyKind::IntLiteral => true,
-                    TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                    TyKind::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
-                    _ => false,
-                },
                 "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable"
                 | "Multipliable" | "Divisible" | "FloorDivisible" | "Modable" => {
                     is_numeric_like(ty)
@@ -2074,21 +2063,6 @@ impl Checker {
                     is_integer_like(ty)
                 }
                 "Negatable" => is_signed_numeric_like(ty),
-                // A struct declaring Intable (with its `__int__`) or
-                // Floatable (with its `__float__`) conforms like the numeric
-                // scalars — integer-Scalar construction accepts any Intable
-                // value.
-                "Intable" => {
-                    is_numeric_like(ty)
-                        || *ty == TyKind::Bool
-                        || matches!(ty.kind(), TyKind::Struct(name, args)
-                            if self.struct_conformance_applies(name, args, tr))
-                }
-                "Floatable" => {
-                    is_numeric_like(ty)
-                        || matches!(ty.kind(), TyKind::Struct(name, args)
-                            if self.struct_conformance_applies(name, args, tr))
-                }
                 "RegisterPassable" => self.register_passability(ty) == RegisterPassability::Proven,
                 // A struct answers by its declared conformances, as upstream
                 // decides any trait; a leaf's shape alone holds the rest.
@@ -2645,10 +2619,6 @@ impl Checker {
     /// intentionally evidence-oriented: marker traits name the field that
     /// prevents fieldwise synthesis, while operation traits name the operation
     /// promised by the bound.
-    #[allow(
-        clippy::format_push_string,
-        reason = "TODO: write! into the buffer instead"
-    )]
     pub(super) fn trait_failure_reason(&self, ty: &Ty, tr: &str) -> Option<String> {
         let TyKind::Struct(name, arguments) = ty.kind() else {
             return builtin_trait_operation(tr)
@@ -2733,24 +2703,6 @@ impl Checker {
                                 .to_string(),
                         )
                     })
-            }
-            "Indexer" => {
-                let mut reason = format!(
-                    "'{name}' does not implement all requirements for 'Indexer'\nnote: no \
-                     '__mlir_index__' candidates have type 'def(self: {name}) thin -> \
-                     __mlir_type.index'"
-                );
-                for method in info.methods.get("__mlir_index__").into_iter().flatten() {
-                    reason.push_str(&format!(
-                        "\nnote: candidate declared here with type 'def(self: {name}) thin -> {}'",
-                        if method.ret_mlir_index {
-                            "__mlir_type.index".to_string()
-                        } else {
-                            method.ret.to_string()
-                        }
-                    ));
-                }
-                Some(reason)
             }
             "Copyable" => field_failure(&|field_ty| self.is_copyable(field_ty)),
             "ImplicitlyCopyable" => {
@@ -3858,15 +3810,6 @@ type StructMemberTypes = (
     HashMap<String, ParameterizedMember>,
     Option<Ty>,
 );
-
-/// Whether a method satisfies upstream's `Indexer` requirement:
-/// `def __mlir_index__(self) -> __mlir_type.index`.
-pub(super) fn is_indexer_requirement(method: &MethodSig) -> bool {
-    method.has_self
-        && method.params.is_empty()
-        && method.ret == TyKind::Int
-        && method.ret_mlir_index
-}
 
 /// Whether a default is a literal, or a negated numeric one: an expression
 /// that names nothing, so a trait requirement and its witness mean the same

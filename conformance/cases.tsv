@@ -560,3 +560,4 @@ read-argument-name	mojito-only	conformance/fixtures/read_argument_name.mojo
 recursive-always-inline	mojito-only	conformance/fixtures/recursive_always_inline.mojo
 contiguous-slice-result	reject	conformance/fixtures/contiguous_slice_result.mojo
 for-destructuring-tuple-not-copied	run	assets/ok/for_destructuring_tuple_not_copied.mojo
+int-is-floatable	reject	conformance/fixtures/int_is_floatable.mojo

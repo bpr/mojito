@@ -8135,16 +8135,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R191 `Int` conforms to `Floatable`, though the pin does not**
-
-  Problem: Mojito conforms `Int` and an integer literal to `Floatable`.
-  Upstream conforms neither, so a `Floatable`-bounded helper takes only a
-  float there.
-  - A conformance leniency to withdraw.
-  - Ledger name: `int-is-floatable`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R193 Two live interior references from `ref self` accessors on one
   owner are accepted, though the pin invalidates the first**
 
@@ -8955,26 +8945,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `unused_params::Operand` keeps an `Option<Reg>` that no operand leaves
     empty; both collapse with it.
   - Found while landing R1158 (2026-10-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1360 `Boolable`, `Intable`, `Floatable`, `Indexer`, and
-  `Identifiable` are compiler-known, where upstream's library declares
-  them**
-
-  Upstream declares them in `std/builtin/bool.mojo`, `int.mojo`,
-  `floatable.mojo`, and `identifiable.mojo` (with a defaulted `__isnot__`)
-  and exports them from the prelude. Mojito knows them by name, so no
-  conformance records a witness table.
-  - Bundle the declarations and drop the names from `COMPILER_TRAITS`. Move
-    the scalar answers from `leaf_conforms` to `modelled_declares`, as
-    `Sized` is answered.
-  - Delete their arms in `builtin_trait_operation` and
-    `verify_builtin_conformance`.
-  - Probe: `def f[T: Boolable](x: T) -> Bool: return x.__bool__()` fails
-    the check ("type 'T' has no method '__bool__'"), where the pin runs it
-    for a struct declaring `Boolable`.
-  - Closes R191 (`Int` is `Floatable`). Shrinks R1281 and R1109.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10323,6 +10293,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     'Int', which has no '__len__'/'__getitem__' yet"); lift that rejection
     with the port. A sequence *pattern* over these types crashes the pin,
     so `compile_sequence_pattern`'s rejection stays.
+  - Probe: `conforms_to(SIMD[DType.int32, 4], Intable)` and
+    `conforms_to(Float64, Indexer)` are `True` at the pin, whose `SIMD`
+    declares both at every width and dtype and fails an instance at
+    `__int__`'s scalar constraint or `__mlir_index__`'s integral one.
+    `modelled_declares` (`mojito-types::conformance`) answers `Intable` for
+    a scalar and `Indexer` for an integral scalar only, since the builtin
+    conversion has no such constraint, so the bound rejects both instead.
   - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R336 (the length
     type), and R185 and R186 (so the port is upstream's bodies with no
     leniency).
@@ -10350,14 +10327,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port the overloads, including the refined `out self` they use, and
     delete the scalar arms of all three sites. R857's cast becomes their
     `pop.cast`.
-  - Probe: R339's `__int__`, and `Int(StringSpan("12"))`, which the
-    checker's rule converts through `StringSpan.__int__`.
+  - Probe: `Int(StringSpan("12"))`, which the checker's rule converts
+    through `StringSpan.__int__`.
   - Probe: a struct whose `__int__` or `__float__` raises converts through
     `Int(x)` or `Float64(x)` without declaring `IntableRaising` or
     `FloatableRaising` (bundled in `std.builtin.int` and
     `std.builtin.floatable`): the checker's conversion exempts a raising
     dunder from the declared-bound test.
-  - Closes R339 (`__int__` on a scalar).
+  - Probe: `Bool("abc")` and `"abc".__bool__()` are rejected ("expected a
+    numeric or Bool value"), where the pin prints `True`: the built-in
+    `Bool(x)` takes only a numeric or `Bool` operand, and a scalar's
+    `__bool__`, `__int__`, and `__float__` are checker rules
+    (`method_calls/mc_infer.rs`) over the numeric scalars, where upstream's
+    `Bool.__init__[T: Boolable]` calls `StringLiteral.__bool__`.
   - Depends on R1397.
   - Model: Fable, Not Planned.
 
@@ -11729,18 +11711,6 @@ residue found inside a task moves to the task that owns its fix.
   - The `simd-infix-comparison` divergence waits on it: withdrawing the
     infix spelling leaves `x.ne(y)` as the only ordered comparison on a
     scalar.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R339 A scalar has no `__int__` method**
-
-  Problem: `v.reduce_add().__int__()` on a `SIMD[DType.int32, n]` prints
-  at the pin, while Mojito reports "type 'Int32' has no method '__int__'".
-  - `Int(x)` converts the same scalar, through the conversion built-in,
-    not a method (`checker/builtins.rs`).
-  - Upstream's scalar is a width-1 `SIMD`, whose `Intable` conformance is
-    an ordinary method.
-  - Found while landing R4's struct-valued half (2026-10-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -104,24 +104,12 @@ pub(super) fn conversion_protocol(target: &Ty) -> Option<(&'static str, &'static
     }
 }
 
-/// Whether `ty` is an opaque type parameter carrying the named trait `bound`.
-/// The numeric-operation traits (roadmap milestone 7 — `Absable`/`Roundable`/`Powable`/
-/// `Intable`/`Floatable`/`Boolable`/`DivModable`) gate a corresponding built-in
-/// or operator on an opaque `T` this way: the concrete type's implementation
-/// runs after type erasure.
-pub(super) fn param_has_bound(ty: &Ty, bound: &str) -> bool {
-    matches!(ty.kind(), TyKind::Param { bounds, .. } if bounds.iter().any(|b| b == bound))
-}
-
 pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> {
     match trait_name {
         "Hashable" => Some("__hash__(self, mut hasher: Some[Hasher]) -> None"),
         "Absable" => Some("__abs__() -> Self"),
         "Roundable" => Some("__round__() -> Self"),
         "Powable" => Some("__pow__(Self) -> Self"),
-        "Intable" => Some("__int__() -> Int"),
-        "Floatable" => Some("__float__() -> Float64"),
-        "Boolable" => Some("__bool__() -> Bool"),
         "DivModable" => Some("__divmod__(Self) -> Tuple[Self, Self]"),
         // Binary-operator traits: each names the dunder its operator dispatches
         // through. `__truediv__` returns `Float64` (mojito's `/` is always
@@ -377,6 +365,16 @@ pub(super) fn common_numeric(a: &Ty, b: &Ty) -> Option<Ty> {
 /// Type inference for compiler-known builtin free functions
 /// (`print`, `len`, `range`, conversions, `divmod`, …). Moved from `checker.rs`.
 impl Checker {
+    /// Whether `ty` is an opaque type parameter conforming to the named trait
+    /// `bound`, by a bound that is or refines it, or an assumed conformance.
+    /// The numeric-operation traits (`Absable`/`Roundable`/`Powable`/
+    /// `Intable`/`Floatable`/`Boolable`/`DivModable`) gate a corresponding
+    /// built-in or operator on an opaque `T` this way: the concrete type's
+    /// implementation runs after type erasure.
+    pub(super) fn param_has_bound(&self, ty: &Ty, bound: &str) -> bool {
+        matches!(ty.kind(), TyKind::Param { .. }) && self.conforms_to(ty, bound)
+    }
+
     /// Whether the type parameter `ty` is `Equatable` by its bounds or an
     /// assumed conformance, so `==` and `!=` call its requirements.
     pub(super) fn equatable_bound(&self, ty: &Ty) -> bool {
@@ -387,6 +385,12 @@ impl Checker {
     /// assumed conformance, so the ordering operators call its requirements.
     pub(super) fn comparable_bound(&self, ty: &Ty) -> bool {
         matches!(ty.kind(), TyKind::Param { .. }) && self.conforms_to(ty, "Comparable")
+    }
+
+    /// Whether the type parameter `ty` is `Identifiable` by its bounds or an
+    /// assumed conformance, so `is` and `is not` call its requirements.
+    pub(super) fn identifiable_bound(&self, ty: &Ty) -> bool {
+        matches!(ty.kind(), TyKind::Param { .. }) && self.conforms_to(ty, "Identifiable")
     }
 
     /// Whether a tuple element of type `ty` supports `==`/`!=`: an
@@ -674,7 +678,7 @@ impl Checker {
         let tys = self.builtin_args("abs", 1, args)?;
         // A numeric value, or an opaque `T: Absable` — `abs` returns the same type
         // (`__abs__(self) -> Self`); the concrete impl runs after type erasure.
-        if is_numeric(&tys[0]) || param_has_bound(&tys[0], "Absable") {
+        if is_numeric(&tys[0]) || self.param_has_bound(&tys[0], "Absable") {
             Ok(tys[0].clone())
         } else if let Some(result) = self.struct_dunder(&tys[0], "__abs__", &[]) {
             // A concrete struct routes through `__abs__(self) -> Self`.
@@ -705,7 +709,7 @@ impl Checker {
         let tys = self.builtin_args("round", 1, args)?;
         if matches!((tys[0]).kind(), TyKind::Float64 | TyKind::FloatLiteral) {
             Ok(Ty::float64())
-        } else if param_has_bound(&tys[0], "Roundable") {
+        } else if self.param_has_bound(&tys[0], "Roundable") {
             Ok(tys[0].clone())
         } else if let Some(result) = self.struct_dunder(&tys[0], "__round__", &[]) {
             // A concrete struct routes through `__round__(self) -> Self`.
@@ -1037,7 +1041,7 @@ impl Checker {
             }
             return Ok(target);
         }
-        let bounded = conversion.is_some_and(|(_, bound)| param_has_bound(&arg_ty, bound));
+        let bounded = conversion.is_some_and(|(_, bound)| self.param_has_bound(&arg_ty, bound));
         if bounded {
             self.borrow_parameter_place_argument(&args[0], &arg_ty);
             self.record_read_temporary_argument(&args[0]);
@@ -1066,7 +1070,7 @@ impl Checker {
                 common,
             ]));
         }
-        if tys[0] == tys[1] && param_has_bound(&tys[0], "DivModable") {
+        if tys[0] == tys[1] && self.param_has_bound(&tys[0], "DivModable") {
             return Ok(mojito_types::types::tuple_type(vec![
                 tys[0].clone(),
                 tys[0].clone(),

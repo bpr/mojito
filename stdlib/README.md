@@ -79,6 +79,18 @@ point, as upstream's toolchain does.
   fields (R269), so `__eq__` stays a requirement here. The
   compiler-modelled scalars and `Bool` conform to both, and `DType` to
   `Equatable`, as the upstream structs they stand in for declare.
+- `std/builtin/bool.mojo`, `std/builtin/int.mojo`,
+  `std/builtin/floatable.mojo`, and `std/builtin/identifiable.mojo` —
+  upstream's conversion traits: `Boolable`, `Indexer`, `Intable`,
+  `IntableRaising`, `Floatable`, `FloatableRaising`, and `Identifiable`,
+  whose `__isnot__` defaults through `__is__`; the prelude exports all
+  seven. The compiler-modelled scalars conform as the upstream structs they
+  stand in for declare: `SIMD`, `Bool`, and the literals are `Boolable`;
+  `SIMD`, `Bool`, and the numeric literals `Intable`; only `Bool` and
+  `FloatLiteral` are `Floatable`; `SIMD` and `IntLiteral` are `Indexer`.
+  Only a scalar `SIMD` is `Intable`, and only an integral one `Indexer`,
+  since upstream's methods assert as much (R1397). A scalar answers a
+  requirement through its builtin conversion.
 - `std/builtin/_stubs.mojo` — upstream's `paramfor_has_next`,
   `paramfor_next_iter`, and `paramfor_next_value`, which step a `comptime
   for` iterator at compile time. The prelude links them for their bodies:

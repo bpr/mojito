@@ -687,6 +687,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Boolable`, `Intable`, `Floatable`, `Indexer`, and `Identifiable` are now
+  upstream's library traits, declared in the bundled
+  `std/builtin/bool.mojo`, `int.mojo`, `floatable.mojo`, and the new
+  `identifiable.mojo`, and exported by the prelude (R1360), where the
+  compiler knew them by name. A call through the bound reaches the
+  requirement, so `x.__bool__()` over `T: Boolable` runs where it was
+  rejected, and `a is not b` over `T: Identifiable` calls the trait's
+  defaulted `__isnot__`. The scalars conform as upstream's `SIMD`, `Bool`,
+  and literal structs declare and answer a requirement through their
+  builtin conversion, so `Int` and `Float64` are no longer `Floatable`
+  (R191) while `Bool` is, and a float literal binds a `Floatable` type
+  parameter as `FloatLiteral`, as the pin binds a literal whose
+  materialized type fails the bound. A struct with an `__mlir_index__`
+  that does not declare `Indexer` no longer indexes a collection, and a
+  `T: Indexer` index into a `List` is normalized through `__mlir_index__`,
+  where its value was passed through unconverted.
+
 - `Equatable` and `Comparable` are now upstream's library traits, declared
   in the bundled `std/builtin/comparable.mojo` and exported by the prelude
   (R705), where the compiler knew them by name. `Equatable` defaults

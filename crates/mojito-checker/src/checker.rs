@@ -2231,7 +2231,8 @@ impl Checker {
         let bounded = self.opaque_element(ty).unwrap_or_else(|| ty.clone());
         if *ty == TyKind::Bool {
             Ok(false)
-        } else if is_numeric(ty) || is_scalar_simd(ty) || param_has_bound(&bounded, "Boolable") {
+        } else if is_numeric(ty) || is_scalar_simd(ty) || self.param_has_bound(&bounded, "Boolable")
+        {
             Ok(true)
         } else if let Some(result) = self.struct_dunder(ty, "__bool__", &[]) {
             require_dunder_ret(result?, &Ty::bool(), "__bool__")?;

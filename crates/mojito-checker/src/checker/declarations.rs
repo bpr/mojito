@@ -3719,6 +3719,11 @@ impl Checker {
                 subst
                     .entry(binder.id.clone())
                     .or_insert_with(|| solved.clone());
+            } else if let TyKind::Param { binder, bounds, .. } = pat.kind()
+                && !subst.contains_key(&binder.id)
+                && self.binds_unmaterialized_literal(act, bounds)
+            {
+                subst.insert(binder.id.clone(), act.clone());
             } else {
                 unify(pat, act, &mut subst)?;
             }
@@ -3896,6 +3901,20 @@ impl Checker {
             }
         }
         Ok(explicit)
+    }
+
+    /// Whether a numeric literal argument of type `literal` binds a type
+    /// parameter bounded by `bounds` as itself: the pin materializes it
+    /// unless the type it materializes to fails a bound its own type meets
+    /// (`FloatLiteral` is `Floatable`, `Float64` is not).
+    fn binds_unmaterialized_literal(&self, literal: &Ty, bounds: &[String]) -> bool {
+        matches!(literal.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) && {
+            let materialized = default_literal(literal);
+            !bounds
+                .iter()
+                .all(|bound| self.conforms_to(&materialized, bound))
+                && bounds.iter().all(|bound| self.conforms_to(literal, bound))
+        }
     }
 
     /// Solve the type binders a value parameter's declared type names

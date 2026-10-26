@@ -1739,18 +1739,13 @@ impl Checker {
     }
 
     /// Whether a value can be normalized to the VM's index representation.
-    /// Numeric literals/Int use the identity path; an opaque `Indexer` or a
-    /// concrete conformer supplies `__mlir_index__() -> __mlir_type.index`
+    /// Numeric literals/Int use the identity path; an `Indexer` type
+    /// parameter or struct supplies `__mlir_index__() -> __mlir_type.index`
     /// (represented as `Int`).
     pub(super) fn is_index_type(&self, ty: &Ty) -> bool {
         coerces(ty, &Ty::int())
-            || matches!(ty.kind(), TyKind::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Indexer"))
-            || matches!(ty.kind(), TyKind::Struct(name, _)
-            if self.structs.get(name).is_some_and(|info| {
-                info.methods
-                    .get("__mlir_index__")
-                    .is_some_and(|methods| methods.iter().any(super::traits::is_indexer_requirement))
-            }))
+            || matches!(ty.kind(), TyKind::Param { .. } | TyKind::Struct(..))
+                && self.conforms_to(ty, "Indexer")
     }
 
     /// Resolve the exact normalization method for a non-Int `Indexer`. The
@@ -1758,7 +1753,7 @@ impl Checker {
     /// ordinary checked method dispatch once its runtime receiver is known.
     pub(super) fn index_normalization_target(&self, ty: &Ty) -> Option<String> {
         match ty.kind() {
-            TyKind::Struct(name, arguments) => {
+            TyKind::Struct(name, arguments) if self.conforms_to(ty, "Indexer") => {
                 let info = self.structs.get(name)?;
                 let substitution = struct_subst(&info.decls, arguments);
                 let methods = info.methods.get("__mlir_index__")?;

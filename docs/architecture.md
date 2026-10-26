@@ -2481,7 +2481,8 @@ resolved callee's compiled `ResultForm`.
 
 Opaque trait-bounded collection indexing uses the requirement signature for its
 index and result types, then executes through concrete dunder dispatch after
-erasure. The standard `Indexer` contract is modeled separately. When overload
+erasure. The library's `Indexer` contract is modeled separately: an index that
+is `Indexer` (a declaring struct or a bounded type parameter) normalizes. When overload
 selection needs an `Int` index and no direct subscript overload accepts the
 source index type, the checker records the exact `__mlir_index__() -> Int`
 normalization. Lowering evaluates the source expression once, emits that selected

@@ -6,7 +6,9 @@
 //! and the elaborator ask the same predicate here.
 
 use crate::types::TyKind;
-use crate::types::{Ty, default_literal, is_scalar_simd, simd_shape, trivial_predicate_name};
+use crate::types::{
+    Ty, default_literal, is_scalar_simd, scalar_simd_dtype, simd_shape, trivial_predicate_name,
+};
 
 /// Mojo's built-in traits the compiler knows by name. A program may also
 /// declare a trait of one of these names; its declaration then decides.
@@ -22,13 +24,8 @@ pub const COMPILER_TRAITS: &[&str] = &[
     "Representable",
     "Writable",
     "Writer",
-    "Boolable",
-    "Intable",
-    "Floatable",
-    "Indexer",
     "Hashable",
     "Hasher",
-    "Identifiable",
     "Iterable",
     "IterableOwned",
     "Iterator",
@@ -214,25 +211,12 @@ pub fn leaf_conforms(
             }
             _ => false,
         },
-        "Indexer" => matches!(ty.kind(), TyKind::Int | TyKind::IntLiteral),
         "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
-        | "Divisible" | "FloorDivisible" | "Modable" | "Floatable" => is_numeric_like(ty),
+        | "Divisible" | "FloorDivisible" | "Modable" => is_numeric_like(ty),
         "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {
             is_integer_like(ty)
         }
         "Negatable" => is_signed_numeric_like(ty),
-        "Intable" => is_numeric_like(ty) || *ty == TyKind::Bool,
-        // Upstream's `SIMD`, `Bool`, and literal structs declare `Boolable`;
-        // none declares `Identifiable`.
-        "Boolable" => {
-            is_numeric_like(ty)
-                || is_scalar_simd(ty)
-                || matches!(
-                    ty.kind(),
-                    TyKind::Bool | TyKind::StringLiteral | TyKind::Simd { .. }
-                )
-        }
-        "Identifiable" => false,
         // `AnyType`, and the layout and operation markers that stay shallow.
         _ => true,
     })
@@ -246,10 +230,30 @@ pub fn leaf_conforms(
 /// `Bool` list `Equatable` and `Comparable`, and `DType` lists `Equatable`;
 /// a numeric literal answers as the scalar it materializes to. Only a
 /// scalar `SIMD` conforms here, since a vector's comparison through the
-/// bound is not yet its reducing `__eq__`. A struct or a type parameter
-/// answers by its own declaration or bounds instead.
+/// bound is not yet its reducing `__eq__`.
+///
+/// `SIMD`, `Bool`, and the literal structs list `Boolable`; `SIMD`, `Bool`,
+/// and the numeric literals `Intable`; `Bool` and `FloatLiteral`
+/// `Floatable`; `SIMD` and `IntLiteral` `Indexer`; none lists
+/// `Identifiable`. Only a scalar `SIMD` is `Intable` here, and only an
+/// integral one `Indexer`, since upstream's methods assert as much where
+/// an instance calls them. A struct or a type parameter answers by its own
+/// declaration or bounds instead.
 pub fn modelled_declares(ty: &Ty, trait_name: &str) -> bool {
     match trait_name {
+        "Boolable" => {
+            is_numeric_like(ty)
+                || matches!(
+                    ty.kind(),
+                    TyKind::Bool | TyKind::StringLiteral | TyKind::Simd { .. }
+                )
+        }
+        "Intable" => is_numeric_like(ty) || is_scalar_simd(ty) || *ty == TyKind::Bool,
+        "Floatable" => matches!(ty.kind(), TyKind::Bool | TyKind::FloatLiteral),
+        "Indexer" => {
+            is_integer_like(ty)
+                || scalar_simd_dtype(ty).is_some_and(mojito_ast::ast::Dtype::is_integral)
+        }
         "Equatable" => {
             is_numeric_like(ty)
                 || is_scalar_simd(ty)

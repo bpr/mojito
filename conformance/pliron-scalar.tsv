@@ -195,6 +195,7 @@ assets/ok/constructor_read_temporary_drop_order.mojo	-	ineligible	no-scalar-entr
 assets/ok/constructor_reads_no_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/container_hashable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/contextual_member_static.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/conversion_traits_library.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/converting_default_reads_erased_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_argument_destroys_owner_first.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_construction_last_use_moves.mojo	-	ineligible	no-scalar-entry-shape
