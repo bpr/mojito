@@ -1241,18 +1241,8 @@ fn instruction_families_reprint_byte_identically() {
         MirInstr::MarkInitialized { place: place(0) },
         MirInstr::MarkDestroyed { place: place(0) },
         MirInstr::Unsupported("no lowering for frobnication".into()),
-        MirInstr::GetIter {
-            source: 0,
-            dest: 1,
-            mode: IterationMode::Borrowed,
-            prepare: Some("__iter__".into()),
-        },
-        MirInstr::GetIter {
-            source: 0,
-            dest: 2,
-            mode: IterationMode::Owned,
-            prepare: None,
-        },
+        MirInstr::GetIter { source: 0, dest: 1 },
+        MirInstr::GetIter { source: 1, dest: 1 },
         MirInstr::HasNext {
             dest: Reg(38),
             iter: 1,

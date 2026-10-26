@@ -8,7 +8,7 @@ use crate::mir::{
 use mojito_ast::ast::{ArgConvention, Dtype, InfixOp, PrefixOp};
 use mojito_checked::checked::{
     CheckedCallArgument, CheckedCallArgumentSource, CheckedConst, CheckedResultAdapter,
-    IterationMode, TransferEffect, TransferSet,
+    TransferEffect, TransferSet,
 };
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 use mojito_common::token::SourceSpan;

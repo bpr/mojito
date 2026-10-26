@@ -1233,6 +1233,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `inline-parametric` and `automatic-inline` now inline a callee holding a
+  `try`, splicing it into the caller's block as an inlined `if` is, as the
+  pin does (R1288). So an `@always_inline` function holding a `for` loop
+  over a raising iterator inlines below the size bound, and a `nodebug`
+  body iterating its parameter or collector (`total(xs)`, `total(1, 2,
+  3)`, `count[T: Iterable]` in `fc`) inlines too.
+
+- A `for` loop or comprehension now calls a nominal iterable's `__iter__`
+  as an ordinary method call and stores the iterator into its own slot,
+  as upstream's `emitForStmt` does (R1286), so the inliner splices it like
+  any call and `inline_cost` no longer prices it specially
+  (`protocol_call_cost` is gone). `iter.init` starts only compiler-private
+  storage and loses its `mode` and `prepare` (MIR text 1.109), and the
+  elaborator's iterator-slot retyping is deleted (R664). The pin still
+  keeps some loops that now inline here, `for i in range(x): break` among
+  them, because it measures a callee right after splicing its own callees,
+  before any cleanup (R1452). Output is unchanged on the VM and natively
+  across the corpus.
+
 - Copy lowering, drop elaboration, and the elaborator no longer look for a
   frame slot named after a non-callable value binder, which MIR stopped
   creating with R662 (R663): `materialized_parameter_slots`, the

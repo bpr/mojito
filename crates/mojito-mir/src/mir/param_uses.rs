@@ -1669,21 +1669,6 @@ impl<'o, 'a, 'n> Walker<'o, 'a, 'n> {
                 raises,
                 |own: &[&ParamDecl]| own.is_empty(),
             ),
-            MirInstr::GetIter {
-                source,
-                prepare,
-                mode,
-                ..
-            } => match prepare {
-                Some(callee) => self.member_call(
-                    declarations,
-                    callee,
-                    function.var_tys.get(source),
-                    mode,
-                    |own: &[&ParamDecl]| own.is_empty(),
-                ),
-                _ => false,
-            },
             _ => {
                 let Some(call) = instruction_subscript_call(instruction) else {
                     return false;

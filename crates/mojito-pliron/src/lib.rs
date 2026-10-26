@@ -1194,19 +1194,12 @@ impl<'p> CallEdges<'p, '_> {
         }
     }
 
-    /// The edges of an instruction that names its targets as symbols: an
-    /// iterator step, a subscript, a closure, a constant function, and the
+    /// The edges of an instruction that names its targets as symbols: a
+    /// subscript, a closure, a constant function, and the
     /// constructors and destructors a copy, a move, a store, or a destroy
     /// names.
     fn lifecycle_edges(&mut self, instr: &'p MirInstr) {
         match instr {
-            // Iterator instructions carry their targets as symbols rather
-            // than call edges; monomorphization has already retargeted
-            // them to concrete instances.
-            MirInstr::GetIter {
-                prepare: Some(step),
-                ..
-            } => self.push_named(step),
             // Subscript instructions carry their checker-selected (and
             // mono-retargeted) targets on the instruction.
             MirInstr::Index {

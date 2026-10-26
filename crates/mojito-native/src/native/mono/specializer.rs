@@ -1050,10 +1050,6 @@ impl<'a> Specializer<'a> {
         // Take the blocks out so call rewriting can read the function's
         // substituted register-type table without aliasing its body.
         let mut blocks = std::mem::take(&mut function.blocks);
-        // Iterator normalization first: the advance rewrites of each
-        // `HasNext`/`Next` need the iterator slot types this pass
-        // records.
-        self.rewrite_iterator_inits(&key.template, &mut function, &mut blocks)?;
         unpack_builtin_collectors(&mut blocks, &mut function.reg_types);
         let arguments = parameter_argument_regs(&mut blocks);
         self.rewrite_blocks(&key.template, &mut function, &mut blocks)?;

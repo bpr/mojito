@@ -66,17 +66,6 @@ impl Decoder {
         })
     }
 
-    pub(super) fn iteration_mode(&mut self, value: &Value) -> Option<IterationMode> {
-        match self.atom(value)? {
-            "borrowed" => Some(IterationMode::Borrowed),
-            "owned" => Some(IterationMode::Owned),
-            other => {
-                self.error(value.span, format!("unknown iteration mode `{other}`"));
-                None
-            }
-        }
-    }
-
     pub(super) fn intrinsic_subscript(&mut self, value: &Value) -> Option<MirIntrinsicSubscript> {
         match self.atom(value)? {
             "tuple_storage" => Some(MirIntrinsicSubscript::TupleStorage),

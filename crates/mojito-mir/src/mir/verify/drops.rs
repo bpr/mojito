@@ -706,9 +706,6 @@ impl<'a> Walk<'a> {
         {
             state.fill(place.root, &owned_prefix(place));
         }
-        if let Some(source) = instruction.consumed_iteration_source() {
-            state.end(source);
-        }
         let ended: Vec<&MirPlace> = match instruction {
             MirInstr::UseVar { var, mode, .. } if mode.moves() => {
                 state.end(*var);

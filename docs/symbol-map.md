@@ -926,21 +926,23 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and iterator-protocol selection respectively. `iteration.rs` accepts only a
   `StopIteration`-raising `__next__` (upstream's `__has_next__` rejection for a
   nonraising one) and records `IterationProtocol::source_retained`, which HIR
-  (`hir.rs` loop lowering) and MIR (`lower_stmt.rs` `GetIter`,
+  (`hir.rs` loop lowering) and MIR (`lower_stmt.rs` `normalize_iterator`,
   `lower_expr/ctrl.rs` comprehensions) read to decide whether a loop keeps its
   source alive and loaned, and `IterationProtocol::prepare`, the one
   `__iter__` the loop calls (an `__iter__` whose result is no iterator is
   rejected, as at the pin), and `prepare_raises`, the error type of a raising
-  one, which MIR's `Flatten::call_raising_iter` (`lower_stmt.rs`) emits as a
-  raising `MethodCall` with its error region in place of `GetIter`. Each trip's raising `__next__` is
+  one, which MIR's `Flatten::call_iter` (`lower_stmt.rs`) emits as an
+  ordinary `MethodCall`, with its error region when it raises, as upstream's
+  `emitForStmt` calls `__iter__`; `GetIter` starts only compiler-private
+  storage (a runtime pack, an owned `VariadicList`, or a CTFE list), which
+  has no `prepare`. Each trip's raising `__next__` is
   `Flatten::call_raising_next` (`lower_stmt.rs`, HIR's `HirInstr::CallNext`):
   a raising `MethodCall` on the iterator slot and its error region, inside
   the `try` whose handler leaves the loop, which HIR's `for_loop` builds and
   `lower_expr/ctrl.rs`'s `raising_next_try` builds for a comprehension. It also records `IterationProtocol::iterator_ty`,
-  the `__iter__` result those two `GetIter` sites type a split iterator slot
-  with (every iterable with an `__iter__` step splits; an owned one's
-  consumed source is `MirInstr::consumed_iteration_source`, which the move,
-  drop, and whole-drop states and both backends read): a conformer's from `struct_iteration_protocol`, a bounded
+  the `__iter__` result those two sites type a split iterator slot with
+  (every iterable with an `__iter__` step splits; an owned one's source is
+  moved into the call's owned receiver): a conformer's from `struct_iteration_protocol`, a bounded
   parameter's from its bound's own `__iter__` (`generic_iterator_ty`), with
   `origin_of(self)` resolved to the named source by
   `resolve_iterator_origin`. A homogeneous collector is the bundled

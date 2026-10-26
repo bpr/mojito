@@ -920,17 +920,6 @@ impl Decoder {
             "iter.init" => Some(MirInstr::GetIter {
                 source: self.req(value, fields, "source", Self::var)?,
                 dest: self.req(value, fields, "dest", Self::var)?,
-                mode: self.req(value, fields, "mode", Self::iteration_mode)?,
-                // The loop calls one `__iter__`: a list of at most one.
-                prepare: self.req(value, fields, "prepare", |d, v| {
-                    let mut steps = d.strings(v).into_iter();
-                    let step = steps.next();
-                    if steps.next().is_some() {
-                        d.error(v.span, "`prepare` names more than one `__iter__`");
-                        return None;
-                    }
-                    Some(step)
-                })?,
             }),
             "iter.has_next" => Some(MirInstr::HasNext {
                 dest: self.req(value, fields, "dest", Self::reg)?,

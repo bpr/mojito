@@ -1665,26 +1665,9 @@ fn instruction_value(instruction: &MirInstr) -> String {
             record(tag, &[("place", place_value(place))])
         }
         MirInstr::Unsupported(message) => record(tag, &[("message", quote(message))]),
-        MirInstr::GetIter {
-            source,
-            dest,
-            mode,
-            prepare,
-        } => record(
+        MirInstr::GetIter { source, dest } => record(
             tag,
-            &[
-                ("source", var_value(*source)),
-                ("dest", var_value(*dest)),
-                (
-                    "mode",
-                    match mode {
-                        mojito_checked::checked::IterationMode::Borrowed => "borrowed",
-                        mojito_checked::checked::IterationMode::Owned => "owned",
-                    }
-                    .into(),
-                ),
-                ("prepare", list(prepare.iter().map(|v| symbol(v)))),
-            ],
+            &[("source", var_value(*source)), ("dest", var_value(*dest))],
         ),
         MirInstr::HasNext { dest, iter } | MirInstr::Next { dest, iter } => record(
             tag,

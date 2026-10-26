@@ -2606,19 +2606,15 @@ pub enum MirInstr {
     /// lowering-time `panic!` — so a backend can report a clean error instead of
     /// crashing on an otherwise-valid program.
     Unsupported(String),
-    /// Iterator protocol: normalize `source` through its checker-selected nominal
-    /// `__iter__()` implementation, called once as upstream's `emitForStmt`
-    /// calls it, producing the iterator in `dest`; with no `prepare`, the
-    /// source is already compiler-private iterator storage. When
-    /// `source == dest` the iterable is normalized in place; when they differ,
-    /// `source` retains the live iterable in its own slot (dropped after the loop)
-    /// so a borrowing iterator does not clobber its only owner.
+    /// Iterator protocol over compiler-private iterator storage (a runtime
+    /// pack, an owned `VariadicList`, or a compile-time list): start
+    /// iterating `source` in `dest`. When `source == dest` the storage is
+    /// iterated in place; a borrowed source holds a reference, which `dest`
+    /// reads through. A nominal iterable calls its `__iter__` instead, as an
+    /// ordinary method call, as upstream's `emitForStmt` does.
     GetIter {
         source: VarId,
         dest: VarId,
-        mode: mojito_checked::checked::IterationMode,
-        #[serde(serialize_with = "mojito_types::symbol_ref::serialize_option")]
-        prepare: Option<String>,
     },
     /// Iterator protocol over compiler-private iterator storage (a runtime
     /// pack or a compile-time list): read whether the iterator variable `iter`
@@ -2643,20 +2639,6 @@ pub enum MirInstr {
 const _: () = assert!(std::mem::size_of::<MirInstr>() <= 312);
 
 impl MirInstr {
-    /// The slot an owned `GetIter` consumes into an iterator slot of its
-    /// own: `(a^).__iter__()` ends `a`, as upstream's owned argument does.
-    pub fn consumed_iteration_source(&self) -> Option<VarId> {
-        match self {
-            Self::GetIter {
-                source,
-                dest,
-                mode: mojito_checked::checked::IterationMode::Owned,
-                prepare,
-            } if source != dest && prepare.is_some() => Some(*source),
-            _ => None,
-        }
-    }
-
     /// The place a `deinit`-receiver call consumes in place, as upstream's
     /// call consumes a `DeinitMem` operand (`memConsume`).
     pub fn consumed_receiver(&self) -> Option<&MirPlace> {

@@ -266,11 +266,13 @@ folds the operators over it (R840);
      `if`/`else`s and not eight, four `while` loops and not five, fifteen
      `s += f(x)` calls and not sixteen, one `print` of an `Int` and not
      two, and no `for range` loop. Mojito's `inline_cost` prices its own
-     MIR to the same boundaries (R923, R1075).
+     MIR to the same boundaries (R923, R1075) but the `for range` loop,
+     which the pin keeps because it measures a callee right after splicing
+     its own callees, before any cleanup (R1452).
    - Nothing else inlines: a plain `def`, `@no_inline`, a trait-dispatched
      call, and a few `String`-literal shapes stay calls; a recursive
      `@always_inline` function is an error. A callee holding a `try`
-     inlines below the bound, which Mojito does not yet do (R1288).
+     inlines below the bound, as Mojito's does (R1288).
 
    Mojito inlines a callee whatever its compile-time parameters, binding
    every binder kind the call's arguments reach through one map

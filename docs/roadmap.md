@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1452**.
+Next free ID: **R1453**.
 
 ## Ordered Work
 
@@ -411,6 +411,15 @@ which names the upstream pass each one follows. Each is measured by the
     R176's leniency accepts (the pin reports "no matching function in
     initialization"). An unannotated display holds the lambda's storage
     struct, which no erasure respells (R1378).
+  - Probe: `assets/ok/function_value_array_display.mojo`,
+    `function_value_array_element_binding.mojo`, and
+    `shadowed_local_callable_call.mojo` stop at the same verifier, an erased
+    `Array[def(Int) -> Int, _REMOVED_ARG]` slot declared `Array[def(Int)
+    thin -> Int, 2]`, the `thin` marker lost as the environment is
+    (failing at 6831b3df and before R662).
+  - Probe: `assets/extensions/ok/template_served_iterable_def.mojo` stops
+    there too, a `_DictKeyIter` slot typed with `_REMOVED_ARG` arguments
+    its caller declares concretely.
   - Found while landing R1427 (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -597,72 +606,33 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1286 `inline_cost` prices a `for` loop's `__next__` as its own
-  body, where the pin counts it inlined into the loop's `try`, its
-  iterator left in memory**
+- [ ] **R1452 `inline_cost` prices a callee as `mem-2-reg` leaves it, where
+  the pin measures it right after splicing its own callees**
 
-  Three loop shapes cost 31 or fewer by `inline_cost` and keep their call
-  at the pin, which counts at least 32 operations.
-  - Probe: `for i in range(x): break` costs 31 here.
-  - Probe: `for i in Bounded(x): s += i`, over a struct iterator whose
-    `__next__` tests `self.i == self.n`, raises `StopIteration`, and
-    stores `self.i`, costs 31 here (`var it = Bounded(x)` first costs 33).
-  - Probe, once R1288 lets a callee holding a `try` inline: `var r =
-    range(x)`, then `try: s += Int(r.__next__())` costs 27 here.
-  - Since R890 the first two keep their call here too, but only because
-    each loop holds the `try` around its `__next__` call, which R1288's
-    veto refuses; once R1288 lands, the cost decides them again.
-  - The pin's count stays small for a raising inlined body that does not
-    store to `self` (11) and for one that stores without raising (5), so
-    the operations it adds are a slot its `Mem2Reg` leaves in memory.
-  - The `__next__` call is inlined into the loop's `try` before its
-    caller is measured (R890), so `inline_cost` can price the slot
-    traffic left after `mem-2-reg`, as the pin's count holds it;
-    `protocol_call_cost` now prices only the `__iter__` call.
-  - Done when the probes decide as the pin does and `protocol_call_cost`
-    is gone.
-  - Found while landing R1075 (2026-10-22).
-  - Depends on R1288.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1288 `inline-parametric` keeps the call to a callee holding a
-  `try`, which the pin inlines**
-
-  `is_closed` refuses a callee whose body holds a `try`, `nodebug` or
-  plain, where the pin inlines both below its size bound.
-  - Probe: `@always_inline def f(x: Int) -> Int` holding `var s = x`,
-    `try: s += 1`, `except: pass`, and `return s` inlines at the pin,
-    `nodebug` too.
-  - Probe: the same `try` around `s += g(x)`, over an `@always_inline` `g`
-    that raises `StopIteration` when `x == 3`, inlines at the pin, costing
-    10 there.
-  - Probe: since R890 every `for` loop over a raising iterator holds a
-    `try` around its `__next__` call, so `@always_inline def first(x:
-    Int) -> Int` holding `var s = x` and `for i in It(x): s += i; break`,
-    over an `It` whose `__next__` never raises, costs 19 here and inlines
-    at the pin, but keeps its call here
-    (`tests/mir_passes/inline-parametric/for_protocol.mir` pins it kept).
-  - Probe: R1280's `@always_inline("nodebug") def count[T: Iterable]`
-    counting `for _ in a` keeps its call in `fc` here since R890.
-  - Probe: after elaboration, `automatic-inline` keeps the same calls: a
-    plain `def` holding a `try`, or a `for` loop over a raising iterator,
-    called from `main` stays a call in concrete MIR, where upstream's
-    `AutomaticInline` inlines it below its threshold of 50 operations.
-  - The splice would place the callee's `try` in the caller's block, its
-    parts sharing the caller's registers as an inlined `if`'s do.
-  - `inline_cost` already prices a `try` as four beside its parts.
-  - It also prices a handler that its body cannot reach, which the pin
-    empties: `try: s += 1`, `except: s += 2` costs 6 there and 8 here.
-  - The comments on `is_closed` and in
-    `docs/pre-elaboration-optimization-plan.md` say the pin refuses such a
-    callee, which neither the 2026-09-21 nor the 2026-10-17 pin does.
-  - Done when the probes inline and a pass case pins one.
-  - Once this lands, a homogeneous `read` collector a `for` body iterates
-    (`total(1, 2, 3)` in `assets/ok/always_inline_nodebug_collectors.mojo`)
-    inlines as a lent slot, as the loop-free `cnt` does since R1099; a
-    `for` body's place-bound receiver composes through its `$iter` slot,
-    so `rebind_blocks`' whole-root `GetIter` rule needs no change.
-  - Found while landing R1075 (2026-10-22).
+  Upstream's `InlineParametric` measures a callee as soon as its own calls
+  are inlined, running no pipeline in between (`onComplete` is empty).
+  - So a callee its spliced bodies push past the bound in the first round
+    inlines only in the second, into a caller the pin then measures with
+    that body and the caller's iterator slot uncleaned, and the caller
+    keeps its call.
+  - Mojito prices every body as its round's `mem-2-reg` would leave it, so
+    it inlines such a caller.
+  - Probe: `@always_inline def f(x: Int) -> Int` holding `var r = R(x)` and
+    `try: s += r.nxt()`, `except: pass`, over an `@always_inline` `nxt(self)
+    raises StopIteration` that raises when `self.end == 3` and otherwise
+    returns `W[1](self.end).get()`, an inlined constructor and method,
+    keeps its call at the pin and inlines here.
+  - Marking that `nxt` `nodebug`, which inlines at any size in the first
+    round, makes `f` cost 10 at the pin, which confirms the cause.
+  - Probe, once R1397 makes `Int` arithmetic `SIMD` dunder calls: `for i in
+    range(x): break` costs 31 here and `var r = range(x)` then `try: s +=
+    Int(r.__next__())` costs 28, where the pin keeps both, since
+    `SIMD.__add__` spliced into `__next__` puts it past the bound.
+  - The lever: price the slot traffic, wrapper loop, and breaks of a body
+    spliced since the last `mem-2-reg` as the operations the pin counts,
+    calibrated against pin probes.
+  - Done when the first probe keeps its call.
+  - Found while landing R1286 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -897,14 +867,14 @@ which names the upstream pass each one follows. Each is measured by the
   protocol after inlining**
 
   When `inline-parametric` substitutes `List[Int]` for a callee's `T:
-  Iterable`, the inlined `for x in a` keeps `prepare:
-  ["__trait_dispatch.__iter__$ov$SelfRead"]` and its `call.method` naming
+  Iterable`, the inlined `for x in a` keeps its `call.method`s naming
+  `__trait_dispatch.__iter__$ov$SelfRead` and
   `__iterator_dispatch.__next__`, where upstream's substitution folds both
   witnesses.
   - The inliner's witness fold (`inline_parametric::fold_witnesses`) skips
-    `GetIter` and that call: the iterator slot is typed by an associated
+    both calls: the iterator slot is typed by an associated
     projection (`T.IteratorType[o]`) only the elaborator solves.
-  - `prepare` names the borrowed alternate
+  - The `__iter__` call names the borrowed alternate
     (`symbol::borrowed_iterator_dispatch_alternate`) of `Iterable`'s
     `__iter__$ov$SelfRef` requirement, which no witness table records.
   - Fold both at once, through `StructDeclaration::witness_tables`, once
@@ -915,9 +885,8 @@ which names the upstream pass each one follows. Each is measured by the
     `@always_inline("nodebug") def count[T: Iterable](a: T) -> Int`
     counting `for _ in a`; done when `fc`'s inlined body names
     `List.__iter__` and the iterator's `__next__`.
-  - Since R890 the loop holds a `try` around its `__next__` call, so
-    `count` keeps its call until R1288 lets a callee holding a `try`
-    inline.
+  - Since R1288 lifted the inliner's `try` veto, `count` inlines into
+    `fc`, so the probe shows the two unfolded calls.
   - Found while landing R1052 (2026-10-22).
   - Depends on R1288.
   - Model: Fable, Not Planned.
@@ -1077,7 +1046,7 @@ which names the upstream pass each one follows. Each is measured by the
   - No pass can rename references in place, as MLIR's
     `replaceAllSymbolUses` does, without re-serializing.
   - Retype `MakeClosure::function`, `Const::Function`, every `resolved`,
-    `MirSubscriptCall::target`, `GetIter::prepare`, and the checked
+    `MirSubscriptCall::target`, and the checked
     `CheckedIteratorCall::target` and `CheckedConst` targets as one
     `SymbolRef` type that serializes tagged, beside `FuncRef`.
   - Depends on nothing.
@@ -9291,23 +9260,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Done when `member_defaults` reads the call node and no MIR code calls
     `generic_instantiations()`.
   - Found while landing R619 (2026-10-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R664 Owned or empty-chain iteration normalizes its iterator into
-  the source slot**
-
-  `GetIter` with `source == dest` leaves `$iter<N>` typed by the iterable
-  (`List[Int]`) while it holds the iterator (`_ListOwnedIter`).
-  - Mono's `rewrite_get_iter` retypes the slot after the fact, from the
-    resolved chain.
-  - Upstream, `for x in l^` takes `l^.__iter__()` into its own iterator
-    value.
-  - The split path already types its slot by
-    `IterationProtocol::iterator_ty`.
-  - Done when every `GetIter` has its own `dest` slot typed by
-    `iterator_ty`, and `rewrite_get_iter` writes no slot type.
-  - Found while landing R661 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

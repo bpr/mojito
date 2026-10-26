@@ -2,14 +2,14 @@ mojito-mir 1.107
 artifact {
   features: [],
   files: [
-    file { id: file0, path: present("region_try_callee_kept.mojo"), module: absent }
+    file { id: file0, path: present("region_try_callee_inlined.mojo"), module: absent }
   ],
   traits: [],
   structs: [
   ],
   decls: [
     decl { lowered_name: guarded, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
-    decl { lowered_name: region_try_callee_kept, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+    decl { lowered_name: region_try_callee_inlined, param_names: [x], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
   ],
   functions: [
       fn {
@@ -40,7 +40,7 @@ artifact {
         ]
       },
       fn {
-        name: region_try_callee_kept,
+        name: region_try_callee_inlined,
         registers: 2,
         vars: 1,
         var_names: [x],

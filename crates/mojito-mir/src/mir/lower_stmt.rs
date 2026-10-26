@@ -448,13 +448,15 @@ impl<'a> Flatten<'a> {
         self.aggregate_loans.insert(dest, loans);
     }
 
-    /// Normalize the iterable in `source` into the iterator slot `dest`
-    /// (`GetIter`). A borrowed source is normalized into its own slot
-    /// (`source != dest`); when the iterator may refer to it, its source
-    /// loans are re-established on the long-lived iterator slot so they stay
-    /// live through the whole loop, rejecting mutation of the source during
-    /// iteration. An iterator that cannot refer to its source leaves it free
-    /// to die ASAP. Shared by `for` statements and comprehension clauses.
+    /// Normalize the iterable in `source` into the iterator slot `dest`: a
+    /// nominal iterable's `__iter__` call ([`Self::call_iter`]), whose
+    /// iterator has a slot of its own, or compiler-private storage's
+    /// `GetIter`. When the iterator may refer to a borrowed source, its
+    /// source loans are re-established on the long-lived iterator slot so
+    /// they stay live through the whole loop, rejecting mutation of the
+    /// source during iteration. An iterator that cannot refer to its source
+    /// leaves it free to die ASAP. Shared by `for` statements and
+    /// comprehension clauses.
     pub(super) fn normalize_iterator(
         &mut self,
         source: VarId,
@@ -462,16 +464,12 @@ impl<'a> Flatten<'a> {
         protocol: &mojito_checked::checked::IterationProtocol,
     ) {
         let borrowed_place = self.iteration_sources.remove(&source);
-        match (&protocol.prepare_raises, &protocol.prepare) {
-            (Some(error), Some(selected)) if source != dest => {
-                self.call_raising_iter(source, dest, borrowed_place, protocol, selected, error);
+        match &protocol.prepare {
+            Some(selected) => {
+                let error = protocol.prepare_raises.as_ref();
+                self.call_iter(source, dest, borrowed_place, protocol, selected, error);
             }
-            _ => self.emit(MirInstr::GetIter {
-                source,
-                dest,
-                mode: protocol.mode,
-                prepare: protocol.prepare.clone(),
-            }),
+            None => self.emit(MirInstr::GetIter { source, dest }),
         }
         if protocol.borrowed_origin.is_some() && protocol.source_retained && source != dest {
             self.reestablish_source_loans(source, dest);
@@ -3707,19 +3705,19 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// `dest = source.__iter__()` through a raising `__iter__`, `selected`:
-    /// an ordinary raising method call followed by its error region, as
-    /// upstream's `emitForStmt` calls `__iter__`, so the raise leaves through
+    /// `dest = source.__iter__()` through `selected`: an ordinary method
+    /// call, followed by its error region when `__iter__` raises `error`, as
+    /// upstream's `emitForStmt` calls `__iter__`, so a raise leaves through
     /// the call's raise edge. A borrowed source is called on the place its
     /// handle borrows; an owned one is moved into the consuming receiver.
-    fn call_raising_iter(
+    fn call_iter(
         &mut self,
         source: VarId,
         dest: VarId,
         borrowed_place: Option<MirPlace>,
         protocol: &mojito_checked::checked::IterationProtocol,
         selected: &str,
-        error: &Ty,
+        error: Option<&Ty>,
     ) {
         let span = SourceSpan::new(None, DUMMY_SPAN);
         let owned = protocol.mode == mojito_checked::checked::IterationMode::Owned;
@@ -3748,7 +3746,7 @@ impl<'a> Flatten<'a> {
         }
         let iterator = self.fresh_typed(span.clone(), Some(dest), protocol.iterator_ty.clone());
         self.record_call(iterator, Some(selected.to_string()), 0);
-        let raises = self.raises(Some(error.clone()), span);
+        let raises = self.raises(error.cloned(), span);
         self.emit_call(MirInstr::MethodCall {
             dest: iterator,
             recv,

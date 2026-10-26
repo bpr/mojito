@@ -79,6 +79,31 @@ fn function<'a>(program: &'a SpecializedProgram, name: &str) -> &'a MirFunction 
         .1
 }
 
+/// The slot a `for` loop keeps its iterator in, apart from its iterable.
+fn iterator_slot(function: &MirFunction) -> u32 {
+    function
+        .var_names
+        .iter()
+        .position(|slot| slot.starts_with("$iterobj"))
+        .expect("the loop keeps its iterator in a slot of its own") as u32
+}
+
+/// The target of each `__iter__` method call `blocks` and their regions
+/// hold.
+fn iter_targets(blocks: &[MirBlock]) -> Vec<&String> {
+    nested_instructions(blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method,
+                resolved: Some(target),
+                ..
+            } if method == "__iter__" => Some(target),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
 fn raising_user_iterator_types_the_split_slot_and_retargets_its_operations() {
     let source = "@fieldwise_init\n\
@@ -107,28 +132,24 @@ fn raising_user_iterator_types_the_split_slot_and_retargets_its_operations() {
                   \x20   print(total)\n";
     let specialized = specialized_main(source);
     let main = function(&specialized, "main");
-    let instrs = instructions(&main.blocks);
-    let (dest, prepare) = instrs
-        .iter()
-        .find_map(|instruction| match instruction {
-            MirInstr::GetIter { dest, prepare, .. } => Some((*dest, prepare)),
-            _ => None,
-        })
-        .expect("main normalizes its iterable");
+    let dest = iterator_slot(main);
     assert!(
         matches!(main.var_tys.get(&dest).map(Ty::kind), Some(TyKind::Struct(name, _)) if name == "RangeIter"),
         "the split iterator slot must be typed by its `__iter__`: {:?}",
         main.var_tys.get(&dest)
     );
-    let step = prepare.as_ref().expect("the loop names its `__iter__`");
-    assert!(
-        specialized
-            .program
-            .functions
-            .iter()
-            .any(|(name, _)| name == step),
-        "`__iter__` `{step}` must name a specialized function"
-    );
+    let steps = iter_targets(&main.blocks);
+    assert!(!steps.is_empty(), "the loop calls its `__iter__`");
+    for step in steps {
+        assert!(
+            specialized
+                .program
+                .functions
+                .iter()
+                .any(|(name, _)| name == step),
+            "`__iter__` `{step}` must name a specialized function"
+        );
+    }
     let target = nested_instructions(&main.blocks)
         .into_iter()
         .find_map(|instruction| match instruction {
@@ -154,14 +175,7 @@ fn raising_user_iterator_types_the_split_slot_and_retargets_its_operations() {
 fn raising_range_iteration_types_the_slot_and_reaches_its_operations() {
     let specialized = specialized_main("def main():\n    for x in range(3):\n        print(x)\n");
     let main = function(&specialized, "main");
-    let instrs = instructions(&main.blocks);
-    let dest = instrs
-        .iter()
-        .find_map(|instruction| match instruction {
-            MirInstr::GetIter { dest, .. } => Some(*dest),
-            _ => None,
-        })
-        .expect("range iteration normalizes its iterable");
+    let dest = iterator_slot(main);
     assert!(
         matches!(
             main.var_tys.get(&dest).map(Ty::kind),
@@ -211,19 +225,13 @@ fn generic_dispatch_iteration_resolves_a_typed_concrete_iter() {
         .iter()
         .find(|(name, _)| name.starts_with("first_count"))
         .expect("the generic loop body was specialized");
-    let instrs = instructions(&first_count.1.blocks);
-    let (dest, prepare) = instrs
-        .iter()
-        .find_map(|instruction| match instruction {
-            MirInstr::GetIter { dest, prepare, .. } => Some((*dest, prepare)),
-            _ => None,
-        })
-        .expect("the generic loop normalizes its iterable");
+    let dest = iterator_slot(&first_count.1);
+    let steps = iter_targets(&first_count.1.blocks);
     assert!(
-        !prepare
-            .as_deref()
-            .is_some_and(|step| step.starts_with("__trait_dispatch.")),
-        "a dispatch `__iter__` must resolve statically post-mono: {prepare:?}"
+        !steps
+            .iter()
+            .any(|step| step.starts_with("__trait_dispatch.")),
+        "a dispatch `__iter__` must resolve statically post-mono: {steps:?}"
     );
     assert!(
         matches!(

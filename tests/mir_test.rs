@@ -572,10 +572,23 @@ fn owned_iteration_iterator_has_a_slot_of_its_own() {
         ),
         "{main:#?}"
     );
-    let consumed = nested_instructions(&main.blocks)
-        .into_iter()
-        .find_map(MirInstr::consumed_iteration_source);
-    assert_eq!(consumed, Some(source_slot), "{main:#?}");
+    // `(l^).__iter__()` moves the source into its owned receiver.
+    let instructions = nested_instructions(&main.blocks);
+    let receiver = instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall { recv, method, .. } if method == "__iter__" => Some(*recv),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("an `__iter__` call: {main:#?}"));
+    assert!(
+        instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::UseVar { dest, var, mode: UseMode::Move, .. }
+                if *dest == receiver && *var == source_slot
+        )),
+        "{main:#?}"
+    );
 }
 
 #[test]

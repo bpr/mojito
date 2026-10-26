@@ -536,11 +536,6 @@ pub(super) fn apply_effects(state: &mut [Node], i: &MirInstr, context: &MoveCont
                 state[place.root as usize].do_move(&place_path(place));
             }
         }
-        MirInstr::GetIter { .. } => {
-            if let Some(source) = i.consumed_iteration_source() {
-                state[source as usize].do_move(&[]);
-            }
-        }
         MirInstr::DropPlace { place, .. } | MirInstr::MarkDestroyed { place } => {
             state[place.root as usize].do_move(&place_path(place));
         }

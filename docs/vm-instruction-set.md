@@ -137,7 +137,7 @@ accessed; the compact notation omits this analysis-only field.
 
 | Mnemonic | MIR operation | Purpose |
 |---|---|---|
-| `iter.init` | `GetIter` | Call a value's `__iter__` once, into an iterator |
+| `iter.init` | `GetIter` | Start iterating compiler-private iterator storage |
 | `iter.has_next` | `HasNext` | Test compiler-private iterator storage for another element |
 | `iter.next` | `Next` | Advance compiler-private iterator storage |
 
@@ -751,21 +751,22 @@ and loan instructions to retain the live source's `element` interior generation.
 That is a checked concrete bridge, not a VM inference of the current generic
 `IteratorType[origin]` contract.
 
-### `iter.init` — Normalize Iterator
+### `iter.init` — Start Compiler-Private Iteration
 
 ```text
-iter.init $iterator
+iter.init { source: $source, dest: $iterator }
 ```
 
-Normalizes `$iterator` for a value or owned `for` loop by following the
-checker-selected `__iter__()` chain until it yields a nominal struct with
-`__next__`, with a defensive iteration-depth limit. The iterator lands in a
-slot of its own; an owned chain (`__iter__(var self)`) moves the source out
-of its slot, leaving it moved. Bundled ranges and
-collections take this same path as concrete user structs. A raising
-`__iter__` is no `iter.init`: MIR calls it as a raising `call.method` with its
-error region, as upstream's `emitForStmt` does, and stores the iterator into
-the slot.
+Starts iterating compiler-private storage, which iterates itself: a runtime
+pack, an owned `VariadicList`, or a CTFE compile-time list. When `$source`
+and `$iterator` are one slot the storage is iterated in place; a borrowed
+source holds a reference, which the iterator slot reads through. A nominal
+iterable is no `iter.init`: MIR calls its checker-selected `__iter__` as an
+ordinary `call.method`, with its error region when it raises, as upstream's
+`emitForStmt` does, and stores the iterator into a slot of its own; an
+owned `__iter__(var self)` takes the source moved into its receiver.
+Bundled ranges and collections take this same path as concrete user
+structs.
 
 A typed-raising iterator has no `iter.*` advance either: a `for` loop calls
 its `__next__(mut self)` as a raising `call.method` on the iterator slot,

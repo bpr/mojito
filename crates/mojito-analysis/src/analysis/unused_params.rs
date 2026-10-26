@@ -382,9 +382,6 @@ fn call_targets<'a>(blocks: &'a [MirBlock], targets: &mut BTreeSet<&'a str>) {
             } => {
                 targets.insert(target);
             }
-            MirInstr::GetIter { prepare, .. } => {
-                targets.extend(prepare.as_deref());
-            }
             _ => {
                 if let Some(call) = instruction_subscript_call(instruction) {
                     targets.insert(&call.target);

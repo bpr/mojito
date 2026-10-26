@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.107
+mojito-mir 1.109
 ```
 
-The writer emits 1.107. The reader accepts 1.0 through 1.107; *Schema 1.0*
+The writer emits 1.109. The reader accepts 1.0 through 1.109; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -586,6 +586,14 @@ through memory (`CheckedSliceLiteral::indirect_result`), as a call's
 `IndirectResult` does: MIR lowering binds such a literal to a
 call-result slot its subscript reads in place, keyword or positional.
 The MIR text is unchanged.
+
+Schema 1.109 withdraws `iter.init`'s `mode` and `prepare`: a `for` loop
+or comprehension over a nominal iterable calls its `__iter__` as an
+ordinary `call.method`, with its error region when it raises, and stores
+the iterator into a slot of its own, as upstream's `emitForStmt` does, so
+`iter.init { source, dest }` starts only compiler-private storage, which
+names no `__iter__` (R1286). An older artifact spelling either field no
+longer loads. The package format is unchanged.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1316,7 +1324,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `ComptimeIf` | `comptime.if { results: [reg...], conditions: [<constraint>...], arms: [[block...]...], else: [block...] }` — `hlcf.comptime.if`, one arm per condition (schema 1.54) |
 | `ComptimeFor` | `comptime.for { results: [reg...], binder: <binder>, initial: <param_expr>, has_next: <param_expr>, next_iter: <param_expr>, next_value: <param_expr>, operands: [reg...], arguments: [reg...], body: [block...], else: [block...] }` — `hlcf.comptime.for`; the four sequence fields are the `ComptimeFor` terminator's; `else` is one block ending in `unreachable {}`; `body` is one block ending in `unreachable {}` that holds a `comptime.if` on `eq { left: operand_expr(<has_next>), right: operand_value(ct_bool(true)) }`, whose arm is the suite and whose else arm is the stop arm, ending in `comptime.for.break`, as `LowerSemanticCF` leaves upstream's body (schema 1.54; the `slot` field and the `elements` source withdrawn, schema 1.57; the body's `has_next` test, schema 1.58); the `operands` define the body's `arguments` on entry and each `comptime.for.continue` for the next iteration, each `comptime.for.break` defines the `results`, and operands and results agree in number and type, as `ComptimeForOp::verify` requires (schema 1.85) |
 | `ComptimeAssert` | `comptime.assert { condition: <constraint> }` — upstream's `kgen.param.assert`, a `comptime assert` over the function's binders, its message (if any) a `with_message` around the condition; the elaborator judges it per reached instance, failing the instance `constraint failed: MESSAGE`, and concrete MIR carries none (schema 1.81) |
-| `GetIter` / `HasNext` / `Next` | `iter.init` / `iter.has_next` / `iter.next` (schema 1.94 withdraws `iter.try_next`; see *Compatibility*; `iter.init`'s `prepare` lists at most one symbol, the `__iter__` the loop calls once, and the reader rejects a longer list) |
+| `GetIter` / `HasNext` / `Next` | `iter.init { source: $vN, dest: $vN }` / `iter.has_next` / `iter.next` over compiler-private iterator storage (schema 1.94 withdraws `iter.try_next`, and schema 1.109 `iter.init`'s `mode` and `prepare`; see *Compatibility*) |
 
 `UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic
 subscripts are `tuple_storage`, `variadic_storage`, `simd`, `pointer`, and

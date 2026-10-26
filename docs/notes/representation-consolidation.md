@@ -59,15 +59,12 @@ the entries named. A single command cannot use both.
    `kgen.param.constant`. A callable binder's read is still a slot
    (R1449, behind gap G's R533).
 
-4. **The inliner's `try` veto** (size, one entry). Since R890, every `for`
-   loop over a raising iterator holds a `try`, and `is_closed` refuses any
-   callee holding one. So no loop-bearing `@always_inline` body inlines.
-   R1288 lifts the veto. R1286 then shrinks to a deletion, and R1280 (gap
-   F) becomes reachable.
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1288 --only R1286 -n 0
-   ```
+4. **The inliner's `try` veto** (size). R1288 and R1286 landed
+   (2026-10-26): a callee holding a `try` inlines, and a loop's `__iter__`
+   is an ordinary call the inliner splices, so loop-bearing
+   `@always_inline` bodies inline below the bound and R1280 (gap F) is
+   reachable. The pin keeps some that inline here, because it measures a
+   callee before cleaning what it spliced in (R1452).
 
 5. **Gap F: members reached by name, not called** (size, the largest
    lever left, about 30 entries). It lands in three stages.
@@ -271,7 +268,7 @@ missing.
     reached through trait-bound calls.
   - R1348's operators and R1280's iteration step cannot inline.
 - **Closes**:
-  - Dispatch: R1109, R1031, R1280 (after R1288).
+  - Dispatch: R1109, R1031, R1280.
   - Operators: R708, R1332, R1282, R81, R697, R1238.
   - Traits: R707, R706 (after R705), R109 (after R424), R712, R579, R191.
 - **Shrinks** R987, R1291, R684, R113, R1119, R25, R817, R862, R860,

@@ -1687,80 +1687,16 @@ impl VmBackend {
                 }
                 regs[dest.0 as usize] = value;
             }
-            // Iterator protocol (`for`): call the nominal `__iter__` the
-            // checker chose. Only VM-CTFE's explicit ComptimeList and
-            // the compiler-private heterogeneous runtime-pack carrier have a
-            // method-free fallback in HasNext/Next below; public Tuple values
-            // are nominal structs and must use their checked methods.
-            MirInstr::GetIter {
-                source,
-                dest,
-                mode: _,
-                prepare,
-            } => {
-                // Call the checker-selected `__iter__` once on the source,
-                // producing the iterator in `dest`. When `dest != source` the
-                // source stays live in its own slot (a borrowing iterator must
-                // not clobber its only owner); when they are the same slot this
-                // normalizes in place, unchanged.
-                // An owned `__iter__` consumes a source in a slot of its own,
-                // leaving the slot moved.
-                let mut current = if i.consumed_iteration_source().is_some() {
-                    std::mem::replace(&mut vars[*source as usize], Value::Moved)
-                } else {
-                    vars[*source as usize].clone()
-                };
-                // A borrowed named source binds the source slot to a reference;
-                // follow it to the underlying source struct for method resolution.
-                // A borrowed `__iter__(ref self)` re-roots at the source below via
-                // `reference_to_place_parts`, so this deref is only for the name.
+            // Iterator protocol over compiler-private storage: only VM-CTFE's
+            // explicit ComptimeList, an owned `VariadicList`, and the
+            // heterogeneous runtime-pack carrier iterate without a nominal
+            // `__iter__`, through HasNext/Next below. In place when
+            // `dest == source`; a borrowed source binds its slot to a
+            // reference, which `dest` reads through.
+            MirInstr::GetIter { source, dest } => {
+                let mut current = vars[*source as usize].clone();
                 if matches!(current, Value::Ref { .. }) {
                     current = self.read_reference(&current, frame_id, vars)?;
-                }
-                if let Some(selected) = prepare {
-                    let Value::Struct { name, .. } = &current else {
-                        return Err(RuntimeError::TypeError(format!(
-                            "vm: checked iterator preparation applied to {}",
-                            crate::runtime::type_name(&current)
-                        )));
-                    };
-                    let sname = name.clone();
-                    let fidx = prog
-                        .runtime_method_name(&sname, "__iter__", Some(selected.as_str()), 0)
-                        .and_then(|target| prog.index_of(&target))
-                        .ok_or_else(|| {
-                            RuntimeError::Unsupported(format!(
-                                "vm: checked iterator method '{selected}' of '{sname}' is missing from MIR"
-                            ))
-                        })?;
-                    // SPIKE seam A: a borrowed `__iter__(ref self)` receives a handle
-                    // to the source slot so the iterator's borrow roots at the loop
-                    // frame; caller-reachable so that root resolves inside `__iter__`.
-                    let borrowed = prog.mir.functions[fidx]
-                        .1
-                        .ref_params
-                        .first()
-                        .copied()
-                        .unwrap_or(false);
-                    let arg = if borrowed {
-                        Self::reference_to_place_parts(
-                            frame_id,
-                            regs,
-                            vars,
-                            &MirPlace::root(*source, None),
-                        )?
-                    } else {
-                        current
-                    };
-                    let (value, _, _) = self.call_frame_caller_reachable(
-                        prog,
-                        fidx,
-                        vec![arg],
-                        frame_id,
-                        function,
-                        vars,
-                    )?;
-                    current = value;
                 }
                 vars[*dest as usize] = current;
             }

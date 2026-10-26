@@ -3653,17 +3653,18 @@ types.
 
 A loop or comprehension whose iterable has an `__iter__` step, borrowed or
 owned, splits its source from its iterator, as upstream's iterator is a
-value of its own type: it declares the iterator slot (`$iterobj<N>`,
-`$compiterobj<N>`) at the `GetIter` that declares it, and an owned
-`__iter__(var self)` consumes the source slot
-(`MirInstr::consumed_iteration_source`), which no drop names again. The
-slot is typed with `IterationProtocol::iterator_ty`: the checked
+value of its own type: it calls `__iter__` as an ordinary method call,
+as upstream's `emitForStmt` does, and stores its result into the iterator
+slot (`$iterobj<N>`, `$compiterobj<N>`), and an owned `__iter__(var self)`
+takes the source slot moved into its receiver, which no drop names again.
+The slot is typed with `IterationProtocol::iterator_ty`: the checked
 `__iter__` result, its `origin_of(self)` resolved to the named source
 (`Checker::resolve_iterator_origin`), symbolic in a generic body
-(`C.IteratorType[origin_of(xs)]`, read off the bound's own `__iter__`).
-`mir::verify` rejects a `UseVar` or `DropVar` slot with no type, and
-`rewrite_get_iter` keeps a split slot's declared type, typing only a source
-normalized in place (R664).
+(`C.IteratorType[origin_of(xs)]`, read off the bound's own `__iter__`),
+which the elaborator substitutes like any slot type. `mir::verify` rejects
+a `UseVar` or `DropVar` slot with no type. Only compiler-private storage,
+which iterates itself, starts with `GetIter`, its slot typed as the
+storage.
 
 A struct's compile-time value members ride beside them:
 `MirStructDeclaration.associated_values` holds each member's value as a
@@ -6058,11 +6059,13 @@ point where a slot declared in a loop is uninitialized again.
   private `structured_back_edges` counts them), a place's field projection
   one `struct.gep` (a read-modify-write's store reusing its read's), a
   raising body two, a `try` four beside its parts (a `for` loop's `try`
-  around its `__next__` call among them), `iter.init` the body of each
-  `__iter__` it calls, as upstream's `emitForStmt` calls and then inlines
-  it (bodies `Callees::body` answers, one per call that stays), and `print`
-  the 30 its call site costs there (R1287); each other instruction costs
-  one. The bound is upstream's `getInlineThreshold` of 35 at `-O3`, which
+  around its `__next__` call among them), an `iter.init`, which starts
+  compiler-private storage, nothing, and `print` the 30 its call site
+  costs there (R1287); each other instruction costs one. A loop's
+  `__iter__` and `__next__` are ordinary calls, priced as the bodies this
+  pass splices for them before it measures the caller. Every body is
+  priced as its round's `mem-2-reg` would leave it, where upstream
+  measures a callee right after splicing its own callees (R1452). The bound is upstream's `getInlineThreshold` of 35 at `-O3`, which
   `shouldInline` compares with `getNumOperations`, less three operations
   every body holds there. Every body is placed as upstream's `inlineGeneratorCall`
   places it (the private `splice_region`): in a `loop` labelled
@@ -6124,8 +6127,8 @@ point where a slot declared in a loop is uninitialized again.
   `value.copy` of the loaded register (the private
   `copy_bound_parameters`, taking a fresh callee register), which
   `name_constructors` then names the instantiated type's `__copyinit__`
-  as it names any copy; an `iter.init` over one iterates the caller's
-  slot, and a loan's interior of one is an interior of that slot; a
+  as it names any copy; an `iter.init` over one, compiler-private
+  storage, iterates the caller's slot, and a loan's interior of one is an interior of that slot; a
   parameter bound so that the callee names it otherwise as a slot keeps
   the call, a shape lowering never emits, since a `for` iterates a slot of
   its own. In a wrapped body every return, at any depth, is a
@@ -6941,7 +6944,7 @@ inlined anything or not, as upstream's `completeFunctionProcessing` does:
   never a `@no_inline` one.
 - **The splice.** It is `inline-parametric`'s (`inline_calls`), over a
   callee whose binders the elaborator closed, so a shape it keeps a call
-  for (a callee holding a `try`, R1288) stays a call here too. Unlike
+  for stays a call here too. Unlike
   `inline-parametric`, it does not rescan a spliced body: upstream inlines
   only the caller's own call sites, and a recursive callee's call inside
   its own body would inline without end. Inlined code takes the call's

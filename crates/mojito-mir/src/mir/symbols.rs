@@ -253,10 +253,6 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                     call: Some(call), ..
                 }
                 | MirInstr::MultiSet { call, .. } => replace(&mut call.target),
-                MirInstr::GetIter {
-                    prepare: Some(target),
-                    ..
-                } => replace(target),
                 MirInstr::DropVar {
                     destructor: Some(target),
                     ..
