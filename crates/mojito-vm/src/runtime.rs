@@ -623,20 +623,6 @@ pub fn apply_infix(op: InfixOp, l: Value, r: Value) -> Result<Value, RuntimeErro
     if let (InfixOp::Add, Value::Str(a), Value::Str(b)) = (op, &l, &r) {
         return Ok(Value::Str(format!("{a}{b}")));
     }
-    if let (Value::Tuple(left), Value::Tuple(right)) = (&l, &r) {
-        let result = match op {
-            InfixOp::Eq => Some(values_equal(&l, &r)?),
-            InfixOp::Ne => Some(!values_equal(&l, &r)?),
-            InfixOp::Lt => Some(compare_tuples(left, right)? == Ordering::Less),
-            InfixOp::Le => Some(compare_tuples(left, right)? != Ordering::Greater),
-            InfixOp::Gt => Some(compare_tuples(left, right)? == Ordering::Greater),
-            InfixOp::Ge => Some(compare_tuples(left, right)? != Ordering::Less),
-            _ => None,
-        };
-        if let Some(result) = result {
-            return Ok(Value::Bool(result));
-        }
-    }
     // Numeric operators (arithmetic, ordering, and numeric equality), with
     // promotion of mixed numeric kinds.
     if let (Some(a), Some(b)) = (as_num(&l), as_num(&r)) {
@@ -1442,16 +1428,6 @@ fn as_exact_num(value: &Value) -> Option<ExactNum> {
     }
 }
 
-fn compare_tuples(left: &[Value], right: &[Value]) -> Result<Ordering, RuntimeError> {
-    for (left, right) in left.iter().zip(right) {
-        let ordering = compare_tuple_values(left, right)?;
-        if ordering != Ordering::Equal {
-            return Ok(ordering);
-        }
-    }
-    Ok(left.len().cmp(&right.len()))
-}
-
 fn materialize_like_numeric(literal: Value, concrete: &Value) -> Result<Value, RuntimeError> {
     match (literal, concrete) {
         (Value::IntLiteral(value), Value::Int(_)) => value
@@ -1967,54 +1943,6 @@ fn to_bool_lanes(v: &Value, width: usize) -> Result<Vec<bool>, RuntimeError> {
             ..
         } if l.len() == width => Ok(l.clone()),
         scalar => Ok(vec![value_to_bool_lane(scalar)?; width]),
-    }
-}
-
-/// Compare two tuple elements for lexicographic tuple ordering. Numeric values
-/// use the same promotion ranks as arithmetic; strings and nested tuples compare
-/// structurally.
-fn compare_tuple_values(left: &Value, right: &Value) -> Result<Ordering, RuntimeError> {
-    if (as_exact_num(left).is_some() || as_exact_num(right).is_some())
-        && (as_exact_num(left).is_some() || as_num(left).is_some())
-        && (as_exact_num(right).is_some() || as_num(right).is_some())
-    {
-        let compare = |op| match apply_infix(op, left.clone(), right.clone())? {
-            Value::Bool(value) => Ok(value),
-            _ => Err(RuntimeError::TypeError(
-                "numeric tuple comparison did not produce Bool".into(),
-            )),
-        };
-        if compare(InfixOp::Eq)? {
-            return Ok(Ordering::Equal);
-        }
-        if compare(InfixOp::Lt)? {
-            return Ok(Ordering::Less);
-        }
-        if compare(InfixOp::Gt)? {
-            return Ok(Ordering::Greater);
-        }
-        return Err(RuntimeError::TypeError(
-            "cannot order NaN tuple elements".into(),
-        ));
-    }
-    if let (Some(left), Some(right)) = (as_num(left), as_num(right)) {
-        return match left.rank().max(right.rank()) {
-            2 => left
-                .as_f64()
-                .partial_cmp(&right.as_f64())
-                .ok_or_else(|| RuntimeError::TypeError("cannot order NaN tuple elements".into())),
-            1 => Ok(left.as_u64().cmp(&right.as_u64())),
-            _ => Ok(left.as_i64().cmp(&right.as_i64())),
-        };
-    }
-    match (left, right) {
-        (Value::Str(left), Value::Str(right)) => Ok(left.cmp(right)),
-        (Value::Tuple(left), Value::Tuple(right)) => compare_tuples(left, right),
-        _ => Err(RuntimeError::TypeError(format!(
-            "cannot order {} and {} tuple elements",
-            type_name(left),
-            type_name(right)
-        ))),
     }
 }
 

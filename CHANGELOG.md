@@ -1355,6 +1355,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A tuple comparison is now the call of the bundled `Tuple`'s dunder under
+  its `where conforms_to` clause, as at the pin (R1359), where the checker
+  decided it structurally by element type and the VM ordered tuples
+  itself. A compile-time comparison of tuple displays (`comptime c = (1,
+  2) < (1, 3)`) is now lifted as that call and runs, where it was
+  rejected (`assets/ok/tuple_comparison_dunder_call.mojo`). Over a name
+  bound to a tuple display it is still folded and rejected (R1464).
+
 - An operator over a type parameter or an associated projection is now the
   call of the requirement its bounds declare, as any method call through a
   bound is (R1358): `a + b` over `T: Addy`, a user trait declaring

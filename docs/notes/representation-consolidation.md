@@ -83,13 +83,8 @@ the entries named. A single command cannot use both.
 
    Second, operators become calls of the requirement. R1357 (landed) has
    the checker check `a op b` as `a.__op__(b)`. R1358 (landed) does the
-   same for an operator over a bound, and R1359 does it for tuple
-   comparison. R1348
-   (landed) made a struct operator a call in MIR:
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1359 -n 0
-   ```
+   same for an operator over a bound, and R1359 (landed) for tuple
+   comparison. R1348 (landed) made a struct operator a call in MIR.
 
    Third, R1281 reads the witness table instead of composing a name. R1109
    and R1031 then become deletions:
@@ -256,8 +251,7 @@ missing.
     rest of `mojito_types::conformance::COMPILER_TRAITS` records no
     witness table.
   - The checker types operators apart from method calls (`infer_infix`,
-    `infer_prefix` over the compiler-known operation traits, the
-    structural `tuple_order_compatible`).
+    `infer_prefix` over the compiler-known operation traits).
 - **Upstream**: the traits are library declarations with default bodies.
   `a op b` is checked as `a.__op__(b)` and emitted as a `kgen.call` of
   the requirement, which substitution folds to the member.

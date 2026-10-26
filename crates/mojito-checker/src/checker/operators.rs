@@ -102,17 +102,6 @@ impl Checker {
         })
     }
 
-    /// Whether every element of a public Tuple supports `==`/`!=`: scalars
-    /// and bounded parameters as before, nested tuples recursively, and user
-    /// structs with `__eq__` (the specialization's `__eq__`/`__ne__` run at
-    /// the operator).
-    pub(in crate::checker) fn tuple_elements_equatable_nominal(&self, elements: &[Ty]) -> bool {
-        elements.iter().all(|element| match element.kind() {
-            TyKind::Tuple(nested) => self.tuple_elements_equatable_nominal(nested),
-            _ => self.equatable_element(element),
-        })
-    }
-
     #[allow(
         clippy::cognitive_complexity,
         clippy::too_many_lines,
@@ -186,48 +175,6 @@ impl Checker {
             }
         }
 
-        // Tuple comparisons are structural. Equality accepts independently
-        // equatable element packs (different element types simply compare
-        // unequal); ordering requires a lexicographically compatible prefix.
-        if let (TyKind::Tuple(left), TyKind::Tuple(right)) = (lt.kind(), rt.kind()) {
-            // Current Tuple comparison methods take `other: Self`: different
-            // arities or element packs are not comparable merely because the VM
-            // could walk both vectors. Literal element coercion may still make
-            // the two tuple types the same contextual `Self`.
-            let same_self = coerces(&lt, &rt) || coerces(&rt, &lt);
-            let supported = match op {
-                Eq | Ne => {
-                    same_self
-                        && self.tuple_elements_equatable_nominal(left)
-                        && self.tuple_elements_equatable_nominal(right)
-                }
-                Lt | Gt | Le | Ge => same_self && self.tuple_order_compatible(left, right),
-                _ => false,
-            };
-            if supported {
-                return Ok(Ty::bool());
-            }
-        }
-        if matches!((lt.kind(), rt.kind()), (TyKind::Struct(left, _), TyKind::Struct(right, _))
-            if !self.structs.contains_key(left) && !self.structs.contains_key(right))
-            && let (Some(left), Some(right)) = (tuple_elements(&lt), tuple_elements(&rt))
-        {
-            let left = left.into_iter().cloned().collect::<Vec<_>>();
-            let right = right.into_iter().cloned().collect::<Vec<_>>();
-            let same_self = coerces(&lt, &rt) || coerces(&rt, &lt);
-            let supported = match op {
-                Eq | Ne => {
-                    same_self
-                        && self.tuple_elements_equatable_nominal(&left)
-                        && self.tuple_elements_equatable_nominal(&right)
-                }
-                Lt | Gt | Le | Ge => same_self && self.tuple_order_compatible(&left, &right),
-                _ => false,
-            };
-            if supported {
-                return Ok(Ty::bool());
-            }
-        }
         // An operator over a type parameter or a projection is the call of
         // the requirement its bounds (or an assumed conformance) declare,
         // `a.__add__(b)`, else the right operand's reflected `b.__radd__(a)`,

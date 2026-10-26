@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1464**.
+Next free ID: **R1466**.
 
 ## Ordered Work
 
@@ -3295,27 +3295,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1359 Tuple comparison is decided structurally, not by `Tuple`'s
-  dunders**
-
-  The checker accepts `p < q` and `p == q` over tuples by
-  `tuple_order_compatible` and `tuple_elements_equatable_nominal`
-  (`checker/builtins.rs`, `operators.rs`), where upstream calls the bundled
-  `Tuple.__lt__` and `__eq__` under their `where conforms_to` clauses.
-  - Delete both structural arms. A tuple operand then dispatches as R1357's
-    struct operator does.
-  - Probe: `(Tag(2), 1) < (Tag(2), 3)` over a user `Comparable` `Tag` prints
-    `True` at the pin and in Mojito, which decides it through
-    `tuple_order_compatible` rather than `Tuple.__lt__`.
-  - Mixed built-in elements, such as `(1, String("b")) < ...` and
-    `(2.0, String("x")) < ...`, already run.
-  - Probe: `conforms_to(Tuple[Int, Int], Comparable)` is `True` at the pin,
-    whose `Tuple` conforms where its elements do, and `False` in Mojito,
-    whose `modelled_declares` (`mojito-types::conformance`) answers no
-    tuple for `Equatable` or `Comparable`, so a tuple fails either bound.
-  - Depends on R1357 and R707.
-  - Model: Opus, Not Planned.
-
 - [ ] **R726 A constructor with its own origin parameter matches no
   overload over a struct argument**
 
@@ -4938,6 +4917,41 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a local alias, `comptime F = Ts[0]` then `materialize[F ==
     Int]()` in `def f[*Ts: Movable]()`.
   - Found while landing R1168 (2026-10-20).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1464 A compile-time operator over a name bound to a tuple display
+  is folded above the check, not called**
+
+  Problem: `comptime P = (4, 5)`, `comptime Q = (4, 6)`, then `comptime F
+  = P != Q` stops with "not a compile-time value: numeric comparison
+  expects numeric operands", where the pin runs `Tuple.__ne__` and prints
+  `True`.
+  - A tuple display is a closed value, so the pre-check evaluator folds
+    `P` and `Q` to tuples and hands the operator to
+    `param_expr::fold::fold_infix`, which has no tuple arm
+    (`comptime/eval.rs:eval_infix`).
+  - The request predicate `applies_callable`
+    (`checker/comptime_requests.rs`) decides by syntax. It lifts an
+    operator over a tuple display as `Tuple`'s dunder call, but cannot
+    see that a name binds one.
+  - Upstream evaluates every compile-time operator as the operand type's
+    dunder call.
+  - `comptime D = P < (4, 6)` already runs, since the display lifts it,
+    and so does the run-time `print(P < Q)`.
+  - Found while landing R1359 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1465 `conforms_to` is not a run-time `Bool` expression**
+
+  Problem: `print(conforms_to(Tuple[Int, Int], Comparable))` stops with
+  "Undefined variable 'conforms_to'", where the pin prints `True`.
+  - Only compile-time positions fold it: a `comptime` binding, a `where`
+    clause, and a `comptime if` (`comptime/eval.rs`,
+    `checker/constraints.rs`). Call inference has no callee for it.
+  - The workaround binds it first: `comptime c = conforms_to(...)`.
+  - Found while landing R1359 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

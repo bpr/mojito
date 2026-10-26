@@ -38,7 +38,9 @@ pub trait CalleeOracle {
 /// worklist. The constructions the elaborator folds as literals (`SIMD`,
 /// `Dict`, and `Set` applications) are not applications here, but a method
 /// of a literal is (`"abc".byte_length()`, `{"a": 1}.get("a")`), and so is
-/// a subscript of a dictionary or set display, whose `__getitem__` raises.
+/// a subscript of a dictionary or set display, whose `__getitem__` raises,
+/// and an operator over a tuple display (`(1, 2) < (1, 3)`), which calls
+/// `Tuple`'s dunder.
 pub fn applies_callable(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
     struct Finder<'o, O> {
         oracle: &'o O,
@@ -64,6 +66,15 @@ pub fn applies_callable(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
                         || is_literal(object, self.oracle)
                 }
                 ExprKind::Index { object, .. } => is_keyed_display(object, self.oracle),
+                ExprKind::Infix(op, left, right) if op.dunder().is_some() => {
+                    is_tuple_display(left) || is_tuple_display(right)
+                }
+                ExprKind::Compare { first, rest } => std::iter::once(&**first)
+                    .chain(rest.iter().map(|(_, operand)| operand))
+                    .zip(rest)
+                    .any(|(left, (op, right))| {
+                        op.dunder().is_some() && (is_tuple_display(left) || is_tuple_display(right))
+                    }),
                 _ => false,
             };
         }
@@ -135,6 +146,11 @@ fn is_keyed_display(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
         }
         _ => false,
     }
+}
+
+/// Whether `expression` is a tuple display, `(1, 2)`.
+const fn is_tuple_display(expression: &Expr) -> bool {
+    matches!(expression.kind, ExprKind::TupleLit(_))
 }
 
 /// Whether `expression` is a literal value: a scalar, a string, a display,

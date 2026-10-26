@@ -319,26 +319,6 @@ impl Checker {
         matches!(ty.kind(), TyKind::Param { .. }) && self.conforms_to(ty, "Equatable")
     }
 
-    /// Whether the type parameter `ty` is `Comparable` by its bounds or an
-    /// assumed conformance, so the ordering operators call its requirements.
-    pub(super) fn comparable_bound(&self, ty: &Ty) -> bool {
-        matches!(ty.kind(), TyKind::Param { .. }) && self.conforms_to(ty, "Comparable")
-    }
-
-    /// Whether a tuple element of type `ty` supports `==`/`!=`: an
-    /// `Equatable` struct or type parameter, or a scalar.
-    pub(super) fn equatable_element(&self, ty: &Ty) -> bool {
-        match ty.kind() {
-            TyKind::Struct(..) => self.conforms_to(ty, "Equatable"),
-            _ => {
-                self.equatable_bound(ty)
-                    || is_scalar(ty)
-                    || is_numeric_like(ty)
-                    || is_scalar_simd(ty)
-            }
-        }
-    }
-
     /// Whether list elements of type `ty` can be compared for equality
     /// (needed by `List.remove`/`count`/`index`) — the same scalar set
     /// `==`/`!=` accept.
@@ -359,18 +339,6 @@ impl Checker {
             TyKind::Tuple(nested) => self.tuple_elements_equatable(nested),
             _ => self.is_list_equatable(ty),
         })
-    }
-
-    /// Tuple ordering is lexicographic. Every element must be comparable, and
-    /// each pair in the common prefix must have a compatible comparison
-    /// operation.
-    pub(super) fn tuple_order_compatible(&self, left: &[Ty], right: &[Ty]) -> bool {
-        self.tuple_elements_comparable(left)
-            && self.tuple_elements_comparable(right)
-            && left
-                .iter()
-                .zip(right)
-                .all(|(left, right)| self.tuple_order_pair_compatible(left, right))
     }
 
     /// Type `print(...)`. Intrinsic scalars have builtin writing; nominal values,
@@ -1049,30 +1017,5 @@ impl Checker {
             }));
         }
         self.struct_dunder(ty, method, args)
-    }
-
-    fn tuple_elements_comparable(&self, elements: &[Ty]) -> bool {
-        elements
-            .iter()
-            .all(|element| self.tuple_element_comparable(element))
-    }
-
-    fn tuple_element_comparable(&self, ty: &Ty) -> bool {
-        match ty.kind() {
-            TyKind::Tuple(nested) => self.tuple_elements_comparable(nested),
-            TyKind::StringLiteral => true,
-            _ => is_numeric(ty) || self.comparable_bound(ty) || is_scalar_simd(ty),
-        }
-    }
-
-    fn tuple_order_pair_compatible(&self, left: &Ty, right: &Ty) -> bool {
-        if common_numeric(left, right).is_some() {
-            return true;
-        }
-        match (left.kind(), right.kind()) {
-            (TyKind::StringLiteral, TyKind::StringLiteral) => true,
-            (TyKind::Tuple(left), TyKind::Tuple(right)) => self.tuple_order_compatible(left, right),
-            _ => left == right && (self.comparable_bound(left) || is_scalar_simd(left)),
-        }
     }
 }

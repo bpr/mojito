@@ -19,8 +19,9 @@ body, plain or generic — is a request: one predicate draws that line for
 the elaborator and the checker alike
 (`mojito_checker::checker::applies_callable`, over each phase's
 `CalleeOracle`): a call of a module `def`, generic over a type or not, a
-struct construction, a static method, or a method or subscript of a
-dictionary or set display, anywhere under a value root. The check binds
+struct construction, a static method, a method or subscript of a
+dictionary or set display, or an operator over a tuple display (`Tuple`'s
+dunder call), anywhere under a value root. The check binds
 the request as a parameter expression (`ParamKind::Apply`, or the
 application of a thunk MIR lifts for an expression that is not a bare
 call), and `native::mono` evaluates it on first demand

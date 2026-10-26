@@ -2516,7 +2516,10 @@ through the spelled call's own lowering (`ordinary_method_call`; a reflected
 one through `reflected_operator_call`, which lowers the left operand, its
 argument, before its receiver, in source order), so every pass that reads
 calls reads it as one, a `var`/`deinit self` dunder included, and its
-operands' owners die at the call. A comparison over a type parameter bounded by
+operands' owners die at the call. A tuple is the bundled `Tuple` struct, so
+its comparison is the call of `Tuple`'s dunder under the dunder's `where
+conforms_to` clause; neither the checker nor the VM orders tuples
+structurally. A comparison over a type parameter bounded by
 `Equatable` or `Comparable` names the bound's requirement
 (`__trait_dispatch.__lt__$ov$Self`), so it too is a call; the elaborator
 retargets it at a struct instance and clears it at a builtin one. Any other
