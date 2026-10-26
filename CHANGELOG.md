@@ -687,6 +687,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Hashable` and `Hasher` are now upstream's library traits, declared in
+  the bundled `std/hash/hash.mojo` and `hasher.mojo` (R1362), where the
+  compiler knew them by name and checked a conformer's shape. Each
+  conformance now records the witness table a call through the bound
+  reads. The prelude exports `Hashable` but not `Hasher`, so a program
+  naming `Hasher` needs `from std.hash import Hasher`, as at the pin. A
+  `[H: Hasher]` witness satisfies a `Some[Hasher]` requirement, and a
+  malformed `Hasher` conformer reports the member that does not witness
+  its requirement. `Hasher` keeps Mojito's requirement set (R25, R1125),
+  and the reflective `__hash__` default is still synthesized (R269). A
+  `var self` method called through a type parameter's bound no longer
+  needs the bound to prove `Movable`, as at the pin.
+
 - The nine `std.math` operation traits (`Absable`, `Powable`, `Roundable`,
   `DivModable`, `Ceilable`, `Floorable`, `Truncable`, `CeilDivable`,
   `CeilDivableRaising`) are now upstream's library traits, declared in the

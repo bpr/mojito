@@ -363,7 +363,7 @@ impl Checker {
         // an otherwise unbounded `T` (upstream's container bodies).
         if method == "__hash__"
             && args.len() == 1
-            && self.is_hashable(obj_ty)
+            && self.conforms_to(obj_ty, "Hashable")
             && !effective_bounds.iter().any(|bound| bound == "Hashable")
         {
             effective_bounds.push("Hashable".to_string());
@@ -593,12 +593,13 @@ impl Checker {
             && builtin_hashable_ty(obj_ty)
         {
             let hasher = self.infer(&args[0])?;
-            if !self.conforms_to(&hasher, "Hasher") {
+            let hasher_trait = super::super::hasher_trait();
+            if !self.conforms_to(&hasher, &hasher_trait) {
                 return Err(TypeError::TraitNotSatisfied {
                     param: "hasher".to_string(),
                     ty: hasher.to_string(),
-                    trait_name: "Hasher".to_string(),
-                    reason: self.trait_failure_reason(&hasher, "Hasher"),
+                    reason: self.trait_failure_reason(&hasher, &hasher_trait),
+                    trait_name: hasher_trait,
                 });
             }
             self.check_place(&args[0])?;

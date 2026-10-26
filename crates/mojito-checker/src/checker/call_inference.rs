@@ -783,7 +783,7 @@ impl Checker {
                     || !kwargs.is_empty()
                     || bounds
                         .iter()
-                        .any(|bound| matches!(bound.as_str(), "Hasher" | "Defaultable")))
+                        .any(|bound| self.bound_default_constructs(bound)))
             {
                 if !(args.is_empty() && kwargs.is_empty()) {
                     return self.infer_type_param_copy_construction(

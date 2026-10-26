@@ -1,9 +1,9 @@
 # Pin gap probe (Mojo 1.2.0.dev2026092105): a `mut self` method as the
 # witness of `Hashable`'s read-`self` `__hash__` requirement. The pin accepts
-# the conformance and prints True; Mojito rejects it ("type 'Odd' for
-# parameter 'Self' does not conform to trait 'Hashable': missing required
-# operation"), because a witness must repeat the requirement's receiver
-# convention exactly. Roadmap section 3 carries the entry.
+# the conformance and prints True; Mojito rejects it ("struct 'Odd' method
+# '__hash__' does not match the signature required by trait 'Hashable'"),
+# because a witness must repeat the requirement's receiver convention
+# exactly. docs/roadmap.md R67.
 from std.hash import Hasher
 
 

@@ -48,7 +48,10 @@ impl Checker {
                     )
                     .map(Some);
             }
-            if !self.conforms_to(&ty, "Defaultable") && !self.conforms_to(&ty, "Hasher") {
+            if !self.conforms_to(&ty, "Defaultable")
+                && !matches!(ty.kind(), TyKind::Param { bounds, .. }
+                    if bounds.iter().any(|bound| self.bound_default_constructs(bound)))
+            {
                 return Err(TypeError::TraitNotSatisfied {
                     param: method.to_string(),
                     ty: ty.to_string(),

@@ -165,7 +165,10 @@ point, as upstream's toolchain does.
   `_fnv1a.mojo` port the two algorithms in upstream's `_update_with_simd(mut
   self, value: SIMD[_, _])` spelling over `to_bits`/`.length` (a 32-bit-limb
   folded multiply stands in for the 128-bit product; the rotation is spelled
-  inline). `Hashable` and `Hasher` are compiler-known traits; the compiler
+  inline). `hash.mojo` declares upstream's `Hashable` (the prelude exports
+  it) and `hasher.mojo` the `Hasher` trait with Mojito's requirement set
+  (R25); the reflective `__hash__` default is still synthesized by the
+  compiler (R269). The compiler
   instantiates the `_update_with_simd` template per hashed vector type and
   feeds every leaf as itself (`-0.0` folded), a string's bytes as a `Span[Byte, _]`
   (`_update_with_bytes`). The containers (`List`, `Array`, `Set`, `Dict`,

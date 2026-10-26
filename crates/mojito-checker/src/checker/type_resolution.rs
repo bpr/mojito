@@ -1059,7 +1059,8 @@ impl Checker {
             && args.len() == 1
             && let Some(trait_name) = existential_trait
             && (COMPILER_TRAITS.contains(&trait_name.as_str())
-                || self.traits.contains_key(trait_name))
+                || self.traits.contains_key(trait_name)
+                || self.predeclared_traits.contains(trait_name))
         {
             return Ok(Some((
                 TyKind::Param {
@@ -2901,7 +2902,9 @@ impl Checker {
                 bounds,
                 default: Some(default),
                 ..
-            } if bounds.iter().any(|bound| bound == "Hasher") => Some((*default).clone()),
+            } if bounds.iter().any(|bound| *bound == super::hasher_trait()) => {
+                Some((*default).clone())
+            }
             _ => None,
         }
     }
@@ -2914,12 +2917,13 @@ impl Checker {
         argument: &mojito_ast::ast::ParamArg,
     ) -> Result<Ty, TypeError> {
         let hasher = self.collection_type_argument(collection, argument)?;
-        if !self.conforms_to(&hasher, "Hasher") {
+        let hasher_trait = super::hasher_trait();
+        if !self.conforms_to(&hasher, &hasher_trait) {
             return Err(TypeError::TraitNotSatisfied {
                 param: "H".to_string(),
                 ty: hasher.to_string(),
-                trait_name: "Hasher".to_string(),
-                reason: self.trait_failure_reason(&hasher, "Hasher"),
+                reason: self.trait_failure_reason(&hasher, &hasher_trait),
+                trait_name: hasher_trait,
             });
         }
         Ok(hasher)

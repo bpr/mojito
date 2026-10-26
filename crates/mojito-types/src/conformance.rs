@@ -24,8 +24,6 @@ pub const COMPILER_TRAITS: &[&str] = &[
     "Representable",
     "Writable",
     "Writer",
-    "Hashable",
-    "Hasher",
     "Iterable",
     "IterableOwned",
     "Iterator",
@@ -181,12 +179,11 @@ pub fn leaf_conforms(
                 _ => true,
             }
         }
-        "Hashable" => builtin_hashable_ty(ty),
         "Writable" => !matches!(
             ty.kind(),
             TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
         ),
-        "Writer" | "Hasher" => false,
+        "Writer" => false,
         "Defaultable" => match ty.kind() {
             TyKind::Int
             | TyKind::IntLiteral
@@ -234,8 +231,11 @@ pub fn leaf_conforms(
 /// a numeric literal answers as the scalar it materializes to. Only `Int`,
 /// `UInt`, and `Float64` conform here, and a float scalar `SIMD` to
 /// `Ceilable`, `Floorable`, and `Truncable`, since the backends compute
-/// the operations over no other `SIMD` (R1457). A struct or a type
-/// parameter answers by its own declaration or bounds instead.
+/// the operations over no other `SIMD` (R1457).
+///
+/// `SIMD`, `Bool`, `StringLiteral`, and `DType` list `Hashable`; none lists
+/// `Hasher`. A struct or a type parameter answers by its own declaration or
+/// bounds instead.
 pub fn modelled_declares(ty: &Ty, trait_name: &str) -> bool {
     // The `std.math` traits outside the prelude answer by their linked name.
     match trait_name
@@ -266,6 +266,7 @@ pub fn modelled_declares(ty: &Ty, trait_name: &str) -> bool {
                 || scalar_simd_dtype(ty).is_some_and(mojito_ast::ast::Dtype::is_float)
         }
         "Absable" | "Powable" | "Roundable" | "DivModable" | "CeilDivable" => is_numeric_like(ty),
+        "Hashable" => builtin_hashable_ty(ty),
         "Sized" => matches!(
             ty.kind(),
             TyKind::Int

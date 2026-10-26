@@ -1,5 +1,5 @@
 //! Trait and struct declaration checking, trait conformance (nominal and
-//! built-in), type-capability queries (Copyable/Movable/Hashable/…), and
+//! built-in), type-capability queries (Copyable/Movable/…), and
 //! trait-method/associated-member lookup. Extracted from `checker.rs`;
 //! see `docs/symbol-map.md`.
 
@@ -1594,64 +1594,6 @@ impl Checker {
             // effectiveness is enforced at the transfer/consuming use sites.
             "Movable" => true,
             "Deinitable" => true,
-            "Hasher" => self.structs.get(name).is_some_and(|info| {
-                let initializes = info.methods.get("__init__").is_some_and(|methods| {
-                    methods.iter().any(|method| method.params.is_empty())
-                });
-                let updates = info.methods.get("update").is_some_and(|methods| {
-                    methods.iter().any(|method| {
-                        method.self_convention == Some(ArgConvention::Mut)
-                            && method.params.len() == 1
-                            && method.ret == TyKind::None
-                    })
-                });
-                let finishes = info.methods.get("finish").is_some_and(|methods| {
-                    methods.iter().any(|method| {
-                        method.params.is_empty()
-                            && method.self_convention == Some(ArgConvention::Var)
-                            && method.ret == canonical_simd_ty(mojito_ast::ast::Dtype::UInt64, 1)
-                    })
-                });
-                // `_update_with_simd(mut self, value: SIMD[_, _])`: the vector
-                // parameter is open in both slots, over the inferred binders
-                // the elaborator desugars the wildcard spelling to.
-                let simd_updates = info.methods.get("_update_with_simd").is_some_and(|methods| {
-                    methods.iter().any(|method| {
-                        method.self_convention == Some(ArgConvention::Mut)
-                            && matches!(
-                                method.params.as_slice(),
-                                [param] if matches!(
-                                    param.kind(),
-                                    TyKind::Simd {
-                                        dtype: SimdDtype::Expr(_),
-                                        width: SimdWidth::Expr(_),
-                                    }
-                                )
-                            )
-                            && method.ret == TyKind::None
-                    })
-                });
-                let byte_updates = info.methods.get("_update_with_bytes").is_some_and(|methods| {
-                    methods.iter().any(|method| {
-                        method.self_convention == Some(ArgConvention::Mut)
-                            && method.params.len() == 1
-                            && method.ret == TyKind::None
-                    })
-                });
-                initializes && updates && simd_updates && byte_updates && finishes
-            }),
-            "Hashable" => self.structs.get(name).is_some_and(|info| {
-                info.methods.get("__hash__").is_some_and(|methods| {
-                    methods.iter().any(|method| {
-                        method.has_self
-                            && method.self_convention.is_none()
-                            && method.params.len() == 1
-                            && method.conventions == [Some(ArgConvention::Mut)]
-                            && matches!((method.params[0]).kind(), TyKind::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
-                            && method.ret == TyKind::None
-                    })
-                })
-            }),
             // A struct without a `Writer`-fed `write_to` writes through the
             // reflective `Name(field=...)` default; any other `write_to` is an
             // ordinary overload beside it, as in current Mojo.
@@ -2004,13 +1946,10 @@ impl Checker {
             }
         }
         if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
-            // A hashed leaf is recorded as it is proved, so `is_hashable`
-            // answers for its own.
-            if tr != "Hashable"
-                && let Some(conforms) =
-                    mojito_types::conformance::leaf_conforms(ty, tr, &mut |element, tr| {
-                        self.conforms_to(element, tr)
-                    })
+            if let Some(conforms) =
+                mojito_types::conformance::leaf_conforms(ty, tr, &mut |element, tr| {
+                    self.conforms_to(element, tr)
+                })
             {
                 return conforms;
             }
@@ -2020,17 +1959,11 @@ impl Checker {
                 "ImplicitlyCopyable" => self.is_implicitly_copyable(ty),
                 "Movable" => self.is_movable(ty),
                 "Deinitable" => self.is_deinitable(ty),
-                "Hashable" => self.is_hashable(ty),
                 "Writable" => match ty.kind() {
                     TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
                     TyKind::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
                     TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_) => false,
                     _ => true,
-                },
-                "Hasher" => match ty.kind() {
-                    TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                    TyKind::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
-                    _ => false,
                 },
                 // Default construction is a declared conformance on structs
                 // (current `Tuple`/`Array` default-construct their elements
@@ -2586,6 +2519,19 @@ impl Checker {
         refines_trait(&self.traits, candidate, required)
     }
 
+    /// Whether a type parameter bounded by `bound` constructs with no
+    /// arguments (`HasherType()`): the bound is or refines `Defaultable`, or
+    /// requires a nullary `__init__` of its own.
+    pub(super) fn bound_default_constructs(&self, bound: &str) -> bool {
+        bound == "Defaultable"
+            || self.trait_refines(bound, "Defaultable")
+            || self.traits.get(bound).is_some_and(|info| {
+                info.methods
+                    .get("__init__")
+                    .is_some_and(|inits| inits.iter().any(|init| init.params.is_empty()))
+            })
+    }
+
     /// Whether `premise` proves `consequence`, as
     /// [`generic_constraint_implies`] decides it, with every trait proving
     /// the traits it refines ([`Self::trait_implies`]).
@@ -2663,44 +2609,13 @@ impl Checker {
                 {
                     Some(format!("'{name}' does not declare Hashable conformance"))
                 } else if hashes.is_none() {
-                    field_failure(&|field_ty| self.is_hashable(field_ty))
+                    field_failure(&|field_ty| self.conforms_to(field_ty, "Hashable"))
                 } else {
                     Some(
                         "missing required operation '__hash__(self, mut hasher: Some[Hasher]) -> None'"
                             .to_string(),
                     )
                 }
-            }
-            "Hasher" => {
-                let has = |method: &str| info.methods.contains_key(method);
-                let retired_leaf = info
-                    .methods
-                    .get("_update_with_simd")
-                    .is_some_and(|methods| {
-                        methods.iter().any(|method| {
-                            method.params == [canonical_simd_ty(mojito_ast::ast::Dtype::UInt64, 1)]
-                        })
-                    });
-                ["__init__", "_update_with_bytes", "_update_with_simd", "update", "finish"]
-                    .into_iter()
-                    .find(|method| !has(method))
-                    .map(|method| format!("missing required Hasher member '{method}'"))
-                    .or_else(|| {
-                        retired_leaf.then(|| {
-                            "'_update_with_simd(mut self, value: UInt64)' is the retired Mojito \
-                             spelling; spell 'def _update_with_simd(mut self, value: SIMD[_, _])' \
-                             and read the lanes with 'value.to_bits[DType.uint64]()'"
-                                .to_string()
-                        })
-                    })
-                    .or_else(|| {
-                        Some(
-                            "a Hasher member has the wrong shape (expected '_update_with_simd(mut self, SIMD[_, _])', \
-                             '_update_with_bytes(mut self, Span[Byte, _])', 'update(mut self, Some[Hashable])', \
-                             and 'finish(var self) -> UInt64')"
-                                .to_string(),
-                        )
-                    })
             }
             "Copyable" => field_failure(&|field_ty| self.is_copyable(field_ty)),
             "ImplicitlyCopyable" => {
@@ -3189,20 +3104,6 @@ impl Checker {
         })
     }
 
-    pub(super) fn is_hashable(&self, ty: &Ty) -> bool {
-        if let Some(element) = self.opaque_element(ty) {
-            return self.is_hashable(&element);
-        }
-        if self.has_assumed_conformance(ty, "Hashable") {
-            return true;
-        }
-        match ty.kind() {
-            TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, "Hashable"),
-            TyKind::Param { bounds, .. } => bounds.iter().any(|b| b == "Hashable"),
-            _ => builtin_hashable_ty(ty),
-        }
-    }
-
     /// `assumption` is a conditional conformance's premise: a field of a
     /// parameter type the premise makes copyable counts as copyable.
     pub(super) fn struct_copyable_conformance_ok(
@@ -3402,51 +3303,6 @@ impl Checker {
         argc: usize,
     ) -> Vec<MethodSig> {
         let mut methods = Vec::new();
-        if method == "__hash__" && argc == 1 && bounds.iter().any(|b| b == "Hashable") {
-            let mut signature = MethodSig::intrinsic(
-                vec![
-                    TyKind::Param {
-                        binder: synthetic_binder("Some[Hasher]"),
-                        bounds: vec!["Hasher".to_string()],
-                        callable_bound: None,
-                    }
-                    .into(),
-                ],
-                Ty::none(),
-            );
-            signature.conventions[0] = Some(ArgConvention::Mut);
-            methods.push(signature);
-        }
-        if bounds.iter().any(|bound| bound == "Hasher") {
-            let signature = match (method, argc) {
-                ("update", 1) => Some((
-                    TyKind::Param {
-                        binder: synthetic_binder("Some[Hashable]"),
-                        bounds: vec!["Hashable".to_string()],
-                        callable_bound: None,
-                    },
-                    TyKind::None,
-                    Some(ArgConvention::Mut),
-                )),
-                _ => None,
-            };
-            if let Some((param, ret, convention)) = signature {
-                let mut signature = MethodSig::intrinsic(vec![param.into()], ret.into());
-                signature.self_convention = convention;
-                methods.push(signature);
-            }
-            if method == "_update_with_simd" && argc == 1 {
-                methods.push(hasher_simd_update_requirement());
-            }
-            if method == "finish" && argc == 0 {
-                let mut signature = MethodSig::intrinsic(
-                    vec![],
-                    canonical_simd_ty(mojito_ast::ast::Dtype::UInt64, 1),
-                );
-                signature.self_convention = Some(ArgConvention::Var);
-                methods.push(signature);
-            }
-        }
         // Current Mojo's `Copyable` trait carries a non-overridable default
         // `copy(self) -> Self`; elaboration synthesizes the concrete method on
         // every conforming struct, and a Copyable-bounded parameter resolves

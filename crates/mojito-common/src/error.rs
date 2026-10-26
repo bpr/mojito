@@ -929,11 +929,7 @@ impl fmt::Display for TypeError {
                 trait_name,
                 reason,
             } => {
-                // A bundled trait's linked name spells as its declaration.
-                let trait_name = trait_name
-                    .strip_prefix("__module$")
-                    .and_then(|rest| rest.rsplit('$').next())
-                    .unwrap_or(trait_name);
+                let trait_name = declared_trait_spelling(trait_name);
                 write!(
                     f,
                     "type '{ty}' for parameter '{param}' does not conform to trait '{trait_name}'"
@@ -949,7 +945,8 @@ impl fmt::Display for TypeError {
                 method,
             } => write!(
                 f,
-                "struct '{struct_name}' declares conformance to trait '{trait_name}' but is missing method '{method}'"
+                "struct '{struct_name}' declares conformance to trait '{}' but is missing method '{method}'",
+                declared_trait_spelling(trait_name)
             ),
             Self::TraitMethodMismatch {
                 struct_name,
@@ -957,7 +954,8 @@ impl fmt::Display for TypeError {
                 method,
             } => write!(
                 f,
-                "struct '{struct_name}' method '{method}' does not match the signature required by trait '{trait_name}'"
+                "struct '{struct_name}' method '{method}' does not match the signature required by trait '{}'",
+                declared_trait_spelling(trait_name)
             ),
             Self::MissingTraitComptimeMember {
                 struct_name,
@@ -1246,3 +1244,12 @@ impl std::error::Error for LexError {}
 impl std::error::Error for ParseError {}
 impl std::error::Error for TypeError {}
 impl std::error::Error for OwnershipError {}
+
+/// A trait as its declaration spells it: a bundled trait's linked name
+/// (`__module$std$hash$hasher$Hasher`) loses its module path.
+fn declared_trait_spelling(trait_name: &str) -> &str {
+    trait_name
+        .strip_prefix("__module$")
+        .and_then(|rest| rest.rsplit('$').next())
+        .unwrap_or(trait_name)
+}

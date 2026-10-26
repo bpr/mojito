@@ -133,7 +133,7 @@ impl Checker {
             let result_ty = match kind {
                 mojito_ast::ast::CollectionKind::List => list_type(value_ty),
                 mojito_ast::ast::CollectionKind::Set => {
-                    if !self.is_hashable(&value_ty) {
+                    if !self.conforms_to(&value_ty, "Hashable") {
                         return Err(TypeError::TraitNotSatisfied {
                             param: "T".to_string(),
                             ty: value_ty.to_string(),
@@ -147,7 +147,7 @@ impl Checker {
                     let key = key.as_ref().expect("dictionary comprehension has a key");
                     let key_ty = self.materialized_element_ty(key)?;
                     self.check_consuming(key, &key_ty, "dictionary comprehension key")?;
-                    if !self.is_hashable(&key_ty) {
+                    if !self.conforms_to(&key_ty, "Hashable") {
                         return Err(TypeError::TraitNotSatisfied {
                             param: "K".to_string(),
                             ty: key_ty.to_string(),
@@ -1057,7 +1057,7 @@ impl Checker {
                 for key in &keys {
                     self.check_consuming(key, &key_ty, "collection display element")?;
                 }
-                if !self.is_hashable(&key_ty) {
+                if !self.conforms_to(&key_ty, "Hashable") {
                     return Err(TypeError::TraitNotSatisfied {
                         param: "K".to_string(),
                         ty: key_ty.to_string(),
@@ -2381,7 +2381,7 @@ impl Checker {
             return self.infer(expression);
         };
         if let Some(element) = set_element(expected)
-            && !self.is_hashable(element)
+            && !self.conforms_to(element, "Hashable")
         {
             return Err(TypeError::TraitNotSatisfied {
                 param: "T".to_string(),
@@ -2391,7 +2391,7 @@ impl Checker {
             });
         }
         if let Some((key, _)) = dict_elements(expected)
-            && !self.is_hashable(key)
+            && !self.conforms_to(key, "Hashable")
         {
             return Err(TypeError::TraitNotSatisfied {
                 param: "K".to_string(),

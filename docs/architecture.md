@@ -889,7 +889,7 @@ exports top-level `def`, `struct`, `trait`, and `comptime` declarations except
 The entry module's declarations keep their source names, except that one
 whose name a loaded module links bare (the bundled publics
 `implicit_public_identity` keeps unqualified, such as `List` or `range`),
-a compiler builtin identity (`builtin_module_exports`, such as `Hashable`), or
+a compiler builtin identity (`builtin_module_exports`, such as `Movable`), or
 a prelude name (such as `String`) takes the entry module's qualified name
 (`module::entry_item_name`, module `__main__`), as every Mojo declaration
 lives in its module's namespace: the entry's `struct List` shadows the
@@ -2554,7 +2554,9 @@ and accepts format-spec syntax; the scalar width/alignment mini-language remains
 representation-level work rather than a return to deprecated `__str__` hooks.
 
 Hashable values contribute to a caller-provided hasher through
-`__hash__(self, mut hasher: Some[Hasher])`; a conformer that omits it receives
+`__hash__(self, mut hasher: Some[Hasher])`, the requirement of the bundled
+`Hashable` trait (`std/hash/hash.mojo`; `Hasher` is declared beside it in
+`hasher.mojo`); a conformer that omits it receives
 a synthesized field-by-field default at elaboration (next to the `copy`
 synthesis). `hash`, `Dict`'s bucketing, and the bundled `AHasher`/`Fnv1a` are
 ordinary stdlib code in `std.hash`. The compiler contributes only the leaf:
@@ -2566,7 +2568,8 @@ generator over the leaf's dtype and width that `native::mono` instantiates
 per leaf type and both backends select by the lane shape of its value
 parameter (an erased run calls the template with the binders read off the
 value) — and a constructible type parameter (`H()`
-under a `Hasher`/`Defaultable` bound) is a `MirInstr::ConstructTypeParam`
+under a bound that is `Defaultable` or requires a nullary `__init__`, as
+`Hasher` does) is a `MirInstr::ConstructTypeParam`
 naming its binder, which `native::mono` writes as the bound type's default
 construction. A type bracket argument has no run-time form: as Mojo's call
 carries a type parameter as an attribute, it rides the call's instantiated

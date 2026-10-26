@@ -1,14 +1,17 @@
-# `Hashable` is a compiler-known trait whose single requirement is
+# Upstream's `std/hash/hash.mojo`: the `Hashable` trait and `hash()`. The
+# prelude exports `Hashable`, as upstream's does.
 #
-#   def __hash__(self, mut hasher: Some[Hasher])
-#
-# (also accepted as `def __hash__[H: Hasher](self, mut hasher: H)`). A
-# conformer that omits it receives the reflective default: every field is
-# fed to `hasher.update` in declaration order, and every field must be
-# Hashable. This docstring-only home lets `from std.hash.hash import
-# Hashable` resolve.
+# A conformer that omits `__hash__` receives the reflective default: every
+# field is fed to `hasher.update` in declaration order, and every field must
+# be Hashable. The compiler synthesizes that body until the trait's own can
+# read `reflect[Self]` (R269).
 
 from .hasher import Hasher, default_hasher
+
+
+trait Hashable:
+    def __hash__(self, mut hasher: Some[Hasher]):
+        ...
 
 
 def hash[T: Hashable, //, HasherType: Hasher = default_hasher](

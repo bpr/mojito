@@ -7,8 +7,8 @@ use mojito_types::types::TyKind;
 impl Checker {
     /// Type a call the receiver's type answers without a declared signature:
     /// the compiler-known collections, `SIMD` and `DType`, the inverted
-    /// `write_to`, `Hasher` bounds, string literals, tuples, packs, pointers,
-    /// and uninit storage. `None` leaves the call to
+    /// `write_to`, string literals, tuples, packs, pointers, and uninit
+    /// storage. `None` leaves the call to
     /// signature resolution.
     pub(super) fn infer_intrinsic_receiver_call(
         &self,
@@ -93,11 +93,6 @@ impl Checker {
             && self.conforms_to(obj_ty, "Writable")
         {
             return self.infer_inverted_write(site).map(Some);
-        }
-        if matches!(obj_ty.kind(), TyKind::Param { bounds, .. } if bounds.iter().any(|bound| bound == "Hasher"))
-            && let Some(ty) = self.infer_hasher_bound_method(site)?
-        {
-            return Ok(Some(ty));
         }
         if method == STRING_FORMAT
             && *obj_ty == TyKind::StringLiteral
@@ -311,60 +306,6 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::LiteralFormat,
         ));
         Ok(ty)
-    }
-
-    /// The `Hasher` requirements a `Hasher`-bounded parameter answers
-    /// directly; any other method resolves through the bound.
-    fn infer_hasher_bound_method(&self, site: MethodCallSite<'_>) -> Result<Option<Ty>, TypeError> {
-        let MethodCallSite {
-            object,
-            method,
-            call,
-            ..
-        } = site;
-        let MethodCallArguments { args, kwargs, .. } = call;
-        reject_kwargs(kwargs)?;
-        match method {
-            "update" => {
-                self.check_place(object)?;
-                let tys = self.builtin_args("Hasher.update", 1, args)?;
-                if !self.conforms_to(&tys[0], "Hashable") {
-                    return Err(TypeError::TraitNotSatisfied {
-                        param: "T".to_string(),
-                        ty: tys[0].to_string(),
-                        trait_name: "Hashable".to_string(),
-                        reason: self.trait_failure_reason(&tys[0], "Hashable"),
-                    });
-                }
-                // `update(mut self, value: Some[Hashable])` reads its
-                // value: a named one is lent where it lies, not copied.
-                if matches!(args[0].kind, ExprKind::Identifier(_)) {
-                    self.record_at(args[0].source_span())
-                        .borrowed_read_call_place = true;
-                }
-                return Ok(Some(Ty::none()));
-            }
-            "_update_with_bytes" => {
-                self.check_place(object)?;
-                let tys = self.builtin_args("Hasher._update_with_bytes", 1, args)?;
-                if !matches!((tys[0]).kind(), TyKind::Struct(name, _) if name.ends_with("Span")) {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "Span[Byte, _]".to_string(),
-                        found: tys[0].to_string(),
-                        context: "Hasher._update_with_bytes".to_string(),
-                    });
-                }
-                return Ok(Some(Ty::none()));
-            }
-            // `finish(var self)` takes the receiver, as an ordinary call's
-            // owned receiver does.
-            "finish" if args.is_empty() => {
-                self.record_forwarded_operand(object);
-                return Ok(Some(canonical_simd_ty(Dtype::UInt64, 1)));
-            }
-            _ => {}
-        }
-        Ok(None)
     }
 }
 

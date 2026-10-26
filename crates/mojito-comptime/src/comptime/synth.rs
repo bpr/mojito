@@ -219,7 +219,7 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
                 ty: Type::Named(
                     "Some".to_string(),
                     vec![ParamArg::Type(Type::Named(
-                        "Hasher".to_string(),
+                        mojito_checker::checker::hasher_trait(),
                         Vec::new(),
                     ))],
                 ),

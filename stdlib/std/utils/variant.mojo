@@ -11,6 +11,7 @@
 # for each public operation.
 from std.reflection.type_info import _unqualified_type_name
 from std.range import range
+from std.hash.hasher import Hasher
 
 comptime _InvalidTypeIndex: Int = -1
 

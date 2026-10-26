@@ -14,6 +14,7 @@ from std.iter import Iterable, IterableOwned, Iterator, StopIteration
 from std.memory.alloc import unsafe_alloc
 from std.builtin.enum_like import EnumLike
 from std.builtin.variadics import ParameterList, TypeList, _MLIR
+from std.hash.hasher import Hasher
 
 @fieldwise_init
 struct EmptyOptionalError[T: AnyType](ImplicitlyCopyable, Movable, Writable):

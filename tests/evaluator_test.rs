@@ -411,7 +411,7 @@ fn keyword_only_mut_parameter_after_a_pack_collector_writes_back() {
 #[test]
 fn hashable_contributes_to_a_caller_provided_hasher() {
     let actual = output(
-        "@fieldwise_init\nstruct Pair(Hashable):\n    var left: Int\n    var right: Int\n    def __hash__(self, mut hasher: Some[Hasher]):\n        hasher.update(self.left)\n        hasher.update(self.right)\n\ndef main():\n    print(hash(Pair(1, 2)) == hash(Pair(1, 2)))\n    print(hash(Pair(1, 2)) == hash(Pair(2, 1)))\n",
+        "from std.hash import Hasher\n\n@fieldwise_init\nstruct Pair(Hashable):\n    var left: Int\n    var right: Int\n    def __hash__(self, mut hasher: Some[Hasher]):\n        hasher.update(self.left)\n        hasher.update(self.right)\n\ndef main():\n    print(hash(Pair(1, 2)) == hash(Pair(1, 2)))\n    print(hash(Pair(1, 2)) == hash(Pair(2, 1)))\n",
     );
     assert_eq!(actual, "True\nFalse\n");
 }

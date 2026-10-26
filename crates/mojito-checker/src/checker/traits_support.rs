@@ -255,6 +255,7 @@ pub(super) fn method_callable_ty(method: &MethodSig) -> Ty {
 /// satisfies a requirement spelled `def push[H: Hasher]`, since a binder's
 /// identity is its declaration's and its spelling is not part of the shape.
 fn canonical_method_shape(method: &MethodSig) -> MethodSig {
+    let method = &with_existential_binders(method);
     if method.decls.is_empty() {
         return method.clone();
     }
@@ -282,4 +283,47 @@ fn canonical_method_shape(method: &MethodSig) -> MethodSig {
     shape.ret = types.pop().expect("return type");
     shape.params = types;
     shape
+}
+
+/// `method` with each existential parameter (`hasher: Some[Hasher]`) bound
+/// by the anonymous type binder upstream desugars it to, after the declared
+/// ones, so `[H: Hasher](hasher: H)` is the same contract.
+fn with_existential_binders(method: &MethodSig) -> MethodSig {
+    let mut lifted = method.clone();
+    for (slot, param) in lifted.params.iter_mut().enumerate() {
+        let TyKind::Param {
+            binder,
+            bounds,
+            callable_bound: None,
+        } = param.kind()
+        else {
+            continue;
+        };
+        if !is_existential_binder(binder) {
+            continue;
+        }
+        let id = ParamId::new(&binder.id.owner, slot + 1);
+        let bounds = bounds.clone();
+        *param = TyKind::Param {
+            binder: ParamRef {
+                id: id.clone(),
+                name: binder.name.clone(),
+            },
+            bounds: bounds.clone(),
+            callable_bound: None,
+        }
+        .into();
+        lifted.decls.push(ParamDecl::Type {
+            id,
+            name: String::new(),
+            bounds,
+            trait_param: None,
+            callable_bound: None,
+            default: None,
+            infer_only: false,
+            variadic: false,
+            constraints: Vec::new(),
+        });
+    }
+    lifted
 }

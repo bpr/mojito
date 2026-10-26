@@ -1,3 +1,5 @@
+from .hasher import Hasher
+
 struct Fnv1a(Defaultable, Hasher):
     var _value: UInt64
 

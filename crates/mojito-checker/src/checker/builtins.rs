@@ -16,47 +16,6 @@ pub(super) use mojito_types::conformance::{
 };
 pub(super) use mojito_types::types::default_literal;
 
-/// The `Hasher` requirement `_update_with_simd(mut self, value: SIMD[_, _])`
-/// as a call through an `H: Hasher` bound sees it: generic over the
-/// desugared spelling's infer-only dtype and width binders, which the
-/// argument's vector type solves (see [`hasher_simd_update_binders`]).
-pub(super) fn hasher_simd_update_requirement() -> MethodSig {
-    let (dtype, width) = hasher_simd_update_binders();
-    let context = ParamContext::detached();
-    let value = TyKind::Simd {
-        dtype: SimdDtype::Expr(context.decl_ref(
-            dtype.id.clone(),
-            &dtype.name,
-            MetaTy::value(Ty::dtype()),
-        )),
-        width: SimdWidth::Expr(context.decl_ref(width.id.clone(), &width.name, MetaTy::int())),
-    };
-    let binder = |binder: ParamRef, ty: Ty| ParamDecl::Value {
-        id: binder.id,
-        name: binder.name.to_string(),
-        ty,
-        default: None,
-        callable_default: None,
-        infer_only: true,
-        variadic: false,
-        constraints: Vec::new(),
-    };
-    let mut signature = MethodSig::intrinsic(vec![value.into()], Ty::none());
-    signature.decls = vec![binder(dtype, Ty::dtype()), binder(width, Ty::int())];
-    signature.self_convention = Some(ArgConvention::Mut);
-    signature
-}
-
-/// The dtype and `SIMDLength` width binders of
-/// [`hasher_simd_update_requirement`].
-pub(super) fn hasher_simd_update_binders() -> (ParamRef, ParamRef) {
-    let binder = |slot: usize, name: &str| ParamRef {
-        id: ParamId::new("$Hasher._update_with_simd", slot),
-        name: name.into(),
-    };
-    (binder(0, "$dtype_value"), binder(1, "$length_value"))
-}
-
 /// Upstream's `print` rejection: its variadic `*values` pack element does not
 /// conform to `Writable`.
 pub(super) fn not_writable(ty: &Ty) -> TypeError {
@@ -106,7 +65,6 @@ pub(super) fn conversion_protocol(target: &Ty) -> Option<(&'static str, &'static
 
 pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> {
     match trait_name {
-        "Hashable" => Some("__hash__(self, mut hasher: Some[Hasher]) -> None"),
         // Binary-operator traits: each names the dunder its operator dispatches
         // through. `__truediv__` returns `Float64` (mojito's `/` is always
         // floating); the rest return `Self`.

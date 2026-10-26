@@ -437,6 +437,12 @@ pub(crate) fn math_trait(name: &str) -> String {
     mojito_module::module::linked_item_name("std.math", name)
 }
 
+/// The linked name of the bundled `Hasher` trait, which the prelude does
+/// not export: the compiler names it by module path, never by its spelling.
+pub fn hasher_trait() -> String {
+    mojito_module::module::linked_item_name("std.hash.hasher", "Hasher")
+}
+
 /// A static type checker over the parsed AST.
 ///
 /// Top-level struct and trait declarations register order-independently
@@ -1085,7 +1091,7 @@ impl Checker {
             enum_declaration: false,
             node_facts: RefCell::new(FactMap::default()),
             nested_origins_read_only_functions: declaration_table::DeclarationSet::default(),
-            simd_length_binders: HashSet::from([builtins::hasher_simd_update_binders().1.id]),
+            simd_length_binders: HashSet::new(),
             trait_bounded_binders: HashMap::new(),
             call_bindings: RefCell::new(FactMap::default()),
             struct_instantiations: RefCell::new(FactVec::default()),

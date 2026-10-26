@@ -22,6 +22,7 @@ from std.builtin.floatable import FloatableRaising
 from std.builtin.int import IntableRaising
 from std.iter import Iterator, StopIteration
 from std.range import range
+from std.hash.hasher import Hasher
 from std._string_tables import _lower_table, _pow5_table, _upper_table, _upper2_table, _upper3_table
 
 # Shared strict contiguous-slice bounds checking with the audited head's

@@ -902,10 +902,9 @@ which names the upstream pass each one follows. Each is measured by the
     `Instances::dispatched_overload_target`.
   - Read `StructDeclaration::witness` (the template's table) instead, and
     delete `dispatched_overload_target`; never compose the name (R1027).
-  - Compiler-known traits other than `Equatable`/`Comparable` (`Hashable`,
-    `Writable`, `Copyable.copy`) have no declaration, so their conformances
-    record no table; their dispatches keep the composed name until the
-    bundled library declares them.
+  - Compiler-known traits (`Writable`, `Copyable.copy`) have no
+    declaration, so their conformances record no table; their dispatches
+    keep the composed name until the bundled library declares them.
   - No abstract dispatch survives into concrete MIR, so the VM keeps no
     retargeting of its own; this site is the last one.
   - Probe: `assets/ok/trait_bound_comparison_drop_order.mojo` and
@@ -3630,15 +3629,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     respelled that way at the re-pin.
   - A sized scalar or vector now answers `v.__hash__(hasher)` through the
     checker's builtin hashable-leaf arm (`method_calls/resolution.rs`), so the call
-    side the rename needs exists; `Hasher.update` itself is still the
-    checker's intrinsic, not a real `SIMD.__hash__` body.
+    side the rename needs exists; that leaf is still the checker's
+    intrinsic, not a real `SIMD.__hash__` body.
   - Upstream also replaced the pointer-and-length `hash()` overload with
     `hash_bytes(ImmSpan[Byte])`, which lands in the same pass.
-  - The levers are `checker/traits.rs` (the `Hasher` requirement set and its
-    shape message), `checker/method_calls/intrinsic_receivers.rs` (the intrinsic arms),
-    and `stdlib/std/hash/` (`hasher.mojo`, `_ahash.mojo`, `_fnv1a.mojo`
-    plus every `hasher.update(...)` call site).
-  - It changes a compiler-known trait's contract.
+  - The levers are `stdlib/std/hash/` (the bundled `Hasher` declaration in
+    `hasher.mojo`, `_ahash.mojo`, `_fnv1a.mojo`, plus every
+    `hasher.update(...)` call site).
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -4015,8 +4012,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   requirement**
 
   Problem: a struct declaring `def __hash__(mut self, mut hasher:
-  Some[Hasher])` is rejected as not conforming to `Hashable` ("missing
-  required operation"), while the pin accepts the conformance and runs it.
+  Some[Hasher])` is rejected as not conforming to `Hashable` ("does not
+  match the signature required by trait"), while the pin accepts the
+  conformance and runs it.
   - Trait conformance compares the witness's receiver convention with the
     requirement's exactly.
   - A bound dispatch's derivation relies on that equality today: it admits
@@ -6515,8 +6513,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Both the bound form and `comptime n = reflect[Self].field_count()` fail.
   - Once it runs, upstream's reflective `Equatable.__eq__` default moves
     into the bundled `std/builtin/comparable.mojo`, and the comptime
-    stand-in `synthesize_equatable_eq` (`comptime/synth.rs`) goes, as
-    Hashable's `synthesize_hashable_hash` does with R1362.
+    stand-in `synthesize_equatable_eq` (`comptime/synth.rs`) goes. So do
+    upstream's `Hashable.__hash__` default in the bundled
+    `std/hash/hash.mojo` and its stand-in `synthesize_hashable_hash`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -9029,25 +9028,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1362 `Hashable` and `Hasher` are compiler-known, where upstream's
-  `std/hash` declares them**
-
-  Upstream declares `Hashable` in `std/hash/hash.mojo` (prelude-exported,
-  with a reflective default `__hash__`) and `Hasher` in `hasher.mojo` (not
-  in the prelude). Mojito checks both by shape in
-  `verify_builtin_conformance`, and their conformances record no witness, so
-  a call through the bound keeps R1281's composed name.
-  - Declare both with today's requirement sets. R25 then changes the bundled
-    `Hasher` declaration, not checker code.
-  - The checker-synthesized reflective default stays until R269 lets
-    the body read `reflect[Self]`, as R705 stages `__eq__`.
-  - Every fixture spelling `Hasher` bare needs the pin's import.
-  - Done when both leave `COMPILER_TRAITS` and `T: Hashable` at a struct
-    resolves through its witness table.
-  - Shrinks R25, R1281, R1109, and R987.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1363 `Defaultable`, `RegisterPassable`, and
   `TrivialRegisterPassable` are compiler-known, where upstream's
   `std/builtin/value.mojo` declares them**
@@ -11178,8 +11158,8 @@ residue found inside a task moves to the task that owns its fix.
     spell `finish(var self)`.
   - Probe: `hasher_user_conformer.mojo` with `Defaultable` dropped from
     `SumHasher(Defaultable, Hasher)` passes the check, which lets `Hasher`
-    stand for `Defaultable` (`checker/call_inference.rs`,
-    `method_calls/type_receivers.rs`) under the bundled
+    stand for `Defaultable` (`Checker::bound_default_constructs`, through
+    its `__init__` requirement) under the bundled
     `hash[HasherType: Hasher]`, where the pin rejects it. Since R1283
     names the `Defaultable` witness at `HasherType()`, it fails at
     elaboration ("constructs the type `SumHasher` … after

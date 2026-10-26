@@ -293,6 +293,11 @@ pub(super) fn synthetic_binder(name: &str) -> ParamRef {
     }
 }
 
+/// Whether `binder` is an existential `Some[Trait]`'s [`synthetic_binder`].
+pub(super) fn is_existential_binder(binder: &ParamRef) -> bool {
+    binder.id.owner.starts_with(SYNTHETIC_BINDER_PREFIX) && binder.name.starts_with("Some[")
+}
+
 /// The reference to the value binder `id` spelled `name`, typed `ty`.
 pub(super) fn value_binder_expr(id: ParamId, name: &str, ty: &Ty) -> ParamExpr {
     ParamContext::detached().decl_ref(

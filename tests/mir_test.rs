@@ -2505,7 +2505,7 @@ fn bounded_trait_calls_carry_the_requirement_error_contract_into_mir() {
 fn checked_declaration_types_are_keyed_by_source_site_not_type_syntax() {
     let program = parse(
         "def keep_any[T: AnyType](x: T):\n    pass\n\
-         def keep_hashable[T: Hashable](x: T):\n    pass\n",
+         def keep_copyable[T: Copyable](x: T):\n    pass\n",
     )
     .expect("parse");
     let checked = mojito::check_program(&program).expect("check");
@@ -2521,7 +2521,7 @@ fn checked_declaration_types_are_keyed_by_source_site_not_type_syntax() {
             .clone()
     };
     assert_type_parameter(&param_type("keep_any"), "T", &["AnyType"]);
-    assert_type_parameter(&param_type("keep_hashable"), "T", &["Hashable"]);
+    assert_type_parameter(&param_type("keep_copyable"), "T", &["Copyable"]);
 }
 
 #[test]

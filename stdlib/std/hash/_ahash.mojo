@@ -1,3 +1,5 @@
+from .hasher import Hasher
+
 comptime U256 = SIMD[DType.uint64, 4]
 comptime U128 = SIMD[DType.uint64, 2]
 comptime MULTIPLE = 6364136223846793005

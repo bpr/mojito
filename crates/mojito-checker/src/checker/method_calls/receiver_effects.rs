@@ -285,8 +285,11 @@ impl Checker {
         // A `var self` receiver takes ownership by move, so a declared
         // `Movable where False` opt-out rejects it; `deinit self` is
         // consumption-for-destruction and stays legal for non-Movable values.
+        // A type parameter's value is handed over where it lies, so its
+        // bounds need not prove `Movable`, as at the pin.
         if resolved.consumes_receiver
             && resolved.self_convention == Some(mojito_ast::ast::ArgConvention::Var)
+            && !matches!(obj_ty.kind(), TyKind::Param { .. })
             && !self.is_movable(obj_ty)
         {
             return Err(TypeError::TraitNotSatisfied {

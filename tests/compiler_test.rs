@@ -3241,8 +3241,7 @@ fn template_method_requirement_witness_beside_reference_rival_runs() {
 
 #[test]
 fn template_method_builtin_requirement_witness_beside_generic_rival_runs() {
-    // A built-in trait registers no declaration, yet `Hashable`'s
-    // requirement still names its witness: the `[H: Hasher]` member, never
+    // `Hashable`'s requirement names its witness: the `[H: Hasher]` member, never
     // the rival whose own binder sits inside `List[U]`, which the recorded
     // types cannot rank.
     assert_entry_output(

@@ -5026,7 +5026,7 @@ fn trait_bound_diagnostics_name_the_blocking_field_or_operation() {
         "got {marker}"
     );
 
-    let hashable = err(
+    let hashable = err_std(
         "@fieldwise_init\nstruct Item:\n    var value: Int\n\ndef use[K: Hashable](key: K):\n    pass\n\ndef main():\n    var item: Item = Item(1)\n    use(item)\n",
     );
     assert!(
@@ -6015,34 +6015,51 @@ fn hashable_bound_permits_hasher_contribution() {
     // `x.__hash__(hasher)` type-checks on an opaque `K: Hashable` and on
     // concrete hashable built-ins: the value contributes to a caller-owned
     // `Hasher` (current Mojo's protocol), so a key struct can feed its fields.
-    ok("def h[K: Hashable](k: K, mut hasher: Some[Hasher]):\n    k.__hash__(hasher)\n");
-    ok("def hi(n: Int, mut hasher: Some[Hasher]):\n    n.__hash__(hasher)\n");
-    ok("def hs(s: StringLiteral, mut hasher: Some[Hasher]):\n    s.__hash__(hasher)\n");
-    ok("def hf(x: Float64, mut hasher: Some[Hasher]):\n    x.__hash__(hasher)\n");
+    ok_std(
+        "from std.hash import Hasher\n\ndef h[K: Hashable](k: K, mut hasher: Some[Hasher]):\n    k.__hash__(hasher)\n",
+    );
+    ok_std(
+        "from std.hash import Hasher\n\ndef hi(n: Int, mut hasher: Some[Hasher]):\n    n.__hash__(hasher)\n",
+    );
+    ok_std(
+        "from std.hash import Hasher\n\ndef hs(s: StringLiteral, mut hasher: Some[Hasher]):\n    s.__hash__(hasher)\n",
+    );
+    ok_std(
+        "from std.hash import Hasher\n\ndef hf(x: Float64, mut hasher: Some[Hasher]):\n    x.__hash__(hasher)\n",
+    );
     // The retired value-returning shape is no longer part of the protocol.
     assert!(matches!(
-        err("def h[K: Hashable](k: K) -> UInt:\n    return k.__hash__()\n"),
-        TypeError::NoSuchMethod { .. } | TypeError::ArityMismatch { .. }
+        err_std("def h[K: Hashable](k: K) -> UInt:\n    return k.__hash__()\n"),
+        TypeError::BadCall { .. }
     ));
 }
 
 #[test]
 fn hashable_conformance_requires_the_hasher_protocol() {
-    // A conformer spelling the retired `__hash__(self) -> UInt` is rejected
-    // with a diagnostic naming the hasher-based requirement.
-    let error = err(
-        "struct Old(Hashable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __hash__(self) -> UInt:\n        return UInt(self.id)\n",
+    // A conformer whose `__hash__` takes something other than a hasher does
+    // not witness the bundled trait's requirement.
+    let error = err_std(
+        "struct Old(Hashable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __hash__(self, mut hasher: Int):\n        pass\n",
     );
     assert!(
-        error.to_string().contains("mut hasher: Some[Hasher]"),
+        matches!(&error, TypeError::TraitMethodMismatch { method, .. } if method == "__hash__"),
         "got {error}"
     );
     // Both accepted spellings conform.
-    ok(
-        "struct Sugar(Hashable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __hash__(self, mut hasher: Some[Hasher]):\n        hasher.update(self.id)\n",
+    ok_std(
+        "from std.hash import Hasher\n\nstruct Sugar(Hashable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __hash__(self, mut hasher: Some[Hasher]):\n        hasher.update(self.id)\n",
     );
-    ok(
-        "struct Generic(Hashable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __hash__[H: Hasher](self, mut hasher: H):\n        hasher.update(self.id)\n",
+    ok_std(
+        "from std.hash import Hasher\n\nstruct Generic(Hashable):\n    var id: Int\n    def __init__(out self, id: Int):\n        self.id = id\n    def __hash__[H: Hasher](self, mut hasher: H):\n        hasher.update(self.id)\n",
+    );
+}
+
+#[test]
+fn consuming_receiver_of_a_type_parameter_needs_no_movable_bound() {
+    // A `var self` requirement called through a bound takes the value where
+    // it lies, so the bound need not prove `Movable`, as at the pin.
+    ok_std(
+        "trait Fin:\n    def finish(var self) -> Int:\n        ...\n\ndef f[T: Fin](var t: T) -> Int:\n    return t^.finish()\n",
     );
 }
 
@@ -6095,7 +6112,7 @@ fn hashable_bound_does_not_permit_equality() {
     // Design decision: `Hashable` does *not* imply `Equatable` — `==` on a
     // `K: Hashable` (without an `Equatable` bound) is a `BadOperator` (Phase 6).
     assert!(matches!(
-        err("def eq[K: Hashable](a: K, b: K) -> Bool:\n    return a == b\n"),
+        err_std("def eq[K: Hashable](a: K, b: K) -> Bool:\n    return a == b\n"),
         TypeError::BadOperator { .. }
     ));
     // Naming both bounds restores equality (a hash-backed key's typical bound).
@@ -6107,7 +6124,9 @@ fn any_type_bound_does_not_permit_hash() {
     // A plain `T: AnyType` promises no hash — `x.__hash__(hasher)` on it is
     // rejected.
     assert!(matches!(
-        err("def h[T: AnyType](x: T, mut hasher: Some[Hasher]):\n    x.__hash__(hasher)\n"),
+        err_std(
+            "from std.hash import Hasher\n\ndef h[T: AnyType](x: T, mut hasher: Some[Hasher]):\n    x.__hash__(hasher)\n"
+        ),
         TypeError::NoSuchMethod { .. }
     ));
 }

@@ -1,6 +1,6 @@
-# expect: retired Mojito spelling
-# `Hasher._update_with_simd` takes upstream's `SIMD[_, _]` vector; the
-# `UInt64` leaf Mojito once accepted is a conformance error with a hint.
+# expect: method '_update_with_simd' does not match the signature required by trait 'Hasher'
+# `Hasher._update_with_simd` takes upstream's `SIMD[_, _]` vector; a
+# `UInt64` leaf does not witness the requirement.
 from std.hash import Hasher
 
 struct SumHasher(Defaultable, Hasher):

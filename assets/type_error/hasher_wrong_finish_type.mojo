@@ -1,4 +1,4 @@
-# expect: does not conform to trait 'Hasher'
+# expect: method 'finish' does not match the signature required by trait 'Hasher'
 # `Hasher.finish` consumes the hasher and returns `UInt64`; a word-sized
 # `UInt` result does not satisfy the protocol.
 from std.hash import Hasher
@@ -12,8 +12,8 @@ struct NarrowHasher(Hasher):
     def _update_with_bytes(mut self, data: Span[Byte, _]):
         pass
 
-    def _update_with_simd(mut self, value: UInt64):
-        self.state += value
+    def _update_with_simd(mut self, value: SIMD[_, _]):
+        pass
 
     def update(mut self, value: Some[Hashable]):
         value.__hash__(self)
