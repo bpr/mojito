@@ -81,10 +81,10 @@ the entries named. A single command cannot use both.
    other `SIMD` values) and R1458 (`abs`, `round`, `divmod`, `pow` as
    library functions).
 
-   Second, operators become calls of the requirement. R1357 has the checker
-   check `a op b` as `a.__op__(b)`. R1358 does the same for an operator over
-   a bound, and R1359 does it for tuple comparison. R1348 (landed) made a
-   struct operator a call in MIR:
+   Second, operators become calls of the requirement. R1357 (landed) has
+   the checker check `a op b` as `a.__op__(b)`. R1358 does the same for an
+   operator over a bound, and R1359 does it for tuple comparison. R1348
+   (landed) made a struct operator a call in MIR:
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1358 --task R1359 -n 0
@@ -197,7 +197,7 @@ are conformance only.
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1440–R1444, then R1445 | about 25 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662, R663 (landed), R1449, R1451 | R788, R378, R472, R508, R602, R1194 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1363, R424, R705, R578, R1360, R1361, and R1362 (landed); R1461; R1357 → R1358, R1359; R1348 (landed); R1281 | about 30 (below) | yes, the largest |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1363, R424, R705, R578, R1360, R1361, and R1362 (landed); R1461; R1357 (landed); R1358, R1359; R1348 (landed); R1281 | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 for the other closure forms | R1104, R100, R1230, R1333 (closed), R534, R176 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R603; R1379–R1388 | about 45 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 | about 20 (below) | slight |
@@ -264,8 +264,7 @@ missing.
   - R1109 is "one instance per `n`" for every table member.
   - R987 counts 868 `List.__len__` and 523 `Span.__len__` instances
     reached through trait-bound calls.
-  - R1280's iteration step cannot inline, nor an operator whose dunder
-    owns its receiver (R1357).
+  - R1280's iteration step cannot inline.
 - **Closes**:
   - Dispatch: R1109, R1031, R1280.
   - Operators: R1332, R1282, R81, R697, R1238 (R708 closed).

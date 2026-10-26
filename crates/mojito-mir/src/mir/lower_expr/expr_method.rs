@@ -768,7 +768,7 @@ impl<'a> Flatten<'a> {
 
     /// The ordinary method call on a value receiver, including an explicit
     /// destructor call and an implicitly copied consuming receiver.
-    fn ordinary_method_call(
+    pub(super) fn ordinary_method_call(
         &mut self,
         call: Node<'a>,
         object: Node<'a>,
@@ -776,29 +776,110 @@ impl<'a> Flatten<'a> {
         args: &[Node<'a>],
         kwargs: &[(&'a str, Node<'a>)],
     ) -> Reg {
-        let node = call.checked;
-        let implicitly_copied_receiver = call.implicitly_copies_consuming_receiver();
         // If the receiver is a place, load it through that place (indices
         // evaluated once) and keep the place for write-back; otherwise it is
         // a temporary evaluated for its value only.
-        let receiver_expr = call.destroyed_receiver(object);
-        let (recv, recv_place) =
-            self.lower_setup_receiver(call, receiver_expr, implicitly_copied_receiver);
-        // Retain checker-selected `mut`/`ref` ordinary-argument places,
-        // mirroring a free-function `Call` — and the shared-read places
-        // a borrowing-view or reference result lends to. Loan-carrying temporary
-        // arguments anchor exactly as in a free call unless the
-        // callee's `ref`-argument borrows or transfer effects already
-        // carry their loans (see `call_anchors_arguments`).
+        let (recv, recv_place) = self.lower_setup_receiver(
+            call,
+            call.destroyed_receiver(object),
+            call.implicitly_copies_consuming_receiver(),
+        );
+        let (positional, keywords) = self.lower_method_arguments(call, args, kwargs);
+        self.close_call_setup(Some(call));
+        self.emit_method_call(
+            call,
+            object,
+            method,
+            MethodCallOperands {
+                recv,
+                recv_place,
+                positional,
+                keywords,
+            },
+            (args, kwargs),
+        )
+    }
+
+    /// Reflected operator `call`, `left op right` answered by the right
+    /// operand's `right.__rop__(left)`: its argument, the left operand, is
+    /// lowered before its receiver, as upstream evaluates both operands
+    /// before it resolves the call.
+    pub(super) fn reflected_operator_call(
+        &mut self,
+        call: Node<'a>,
+        method: &str,
+        left: Node<'a>,
+        right: Node<'a>,
+    ) -> Reg {
+        self.open_call_setup();
+        let (positional, keywords) = self.lower_method_arguments(call, &[left], &[]);
+        let (recv, recv_place) = self.lower_open_setup_receiver(
+            call,
+            right,
+            call.implicitly_copies_consuming_receiver(),
+        );
+        self.close_call_setup(Some(call));
+        self.emit_method_call(
+            call,
+            right,
+            method,
+            MethodCallOperands {
+                recv,
+                recv_place,
+                positional,
+                keywords,
+            },
+            (&[left], &[]),
+        )
+    }
+
+    /// Lower method call `call`'s arguments into its open setup frame.
+    /// Retain checker-selected `mut`/`ref` ordinary-argument places,
+    /// mirroring a free-function `Call` — and the shared-read places a
+    /// borrowing-view or reference result lends to. Loan-carrying temporary
+    /// arguments anchor exactly as in a free call unless the callee's
+    /// `ref`-argument borrows or transfer effects already carry their loans
+    /// (see `call_anchors_arguments`).
+    fn lower_method_arguments(
+        &mut self,
+        call: Node<'a>,
+        args: &[Node<'a>],
+        kwargs: &[(&'a str, Node<'a>)],
+    ) -> (
+        (Vec<Reg>, Vec<Option<MirPlace>>),
+        crate::mir::calls::LoweredKeywords,
+    ) {
         let lends_reads = call.lends_read_arguments();
         let saved_anchor_permission = self.allow_argument_anchors;
         self.allow_argument_anchors = call.call_anchors_arguments();
-        let (regs, arg_places) = self.lower_call_arguments(args, lends_reads);
+        let positional = self.lower_call_arguments(args, lends_reads);
         self.allow_argument_anchors = saved_anchor_permission;
-        let (kw, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
-        self.close_call_setup(Some(call));
+        let keywords = self.lower_call_keywords(kwargs, lends_reads);
+        (positional, keywords)
+    }
+
+    /// Emit method call `call` of `method` on receiver `object` over its
+    /// lowered `operands`, `sources` being the argument expressions they
+    /// were lowered from, with its transfers and error region.
+    fn emit_method_call(
+        &mut self,
+        call: Node<'a>,
+        object: Node<'a>,
+        method: &str,
+        operands: MethodCallOperands,
+        sources: (&[Node<'a>], &[(&'a str, Node<'a>)]),
+    ) -> Reg {
+        let node = call.checked;
+        let MethodCallOperands {
+            recv,
+            recv_place,
+            positional: (regs, arg_places),
+            keywords: (kw, kwarg_places),
+        } = operands;
+        let (args, kwargs) = sources;
+        let implicitly_copied_receiver = call.implicitly_copies_consuming_receiver();
         let d = self.fresh(call.location(), None);
-        self.emit_interior_invalidations(receiver_expr, None);
+        self.emit_interior_invalidations(call.destroyed_receiver(object), None);
         self.emit_call_invalidations(call, args, kwargs);
         let capture_accesses = self.call_capture_accesses(call);
         // An ordinary method call can still select a generic method and
@@ -860,4 +941,13 @@ impl<'a> Flatten<'a> {
         self.error_region(raises);
         d
     }
+}
+
+/// One method call's lowered receiver, positional arguments, and keyword
+/// arguments, each with the caller place it retains.
+struct MethodCallOperands {
+    recv: Reg,
+    recv_place: Option<MirPlace>,
+    positional: (Vec<Reg>, Vec<Option<MirPlace>>),
+    keywords: crate::mir::calls::LoweredKeywords,
 }

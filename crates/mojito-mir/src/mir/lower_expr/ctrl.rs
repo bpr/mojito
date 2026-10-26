@@ -935,7 +935,15 @@ impl<'a> Flatten<'a> {
         let dispatch = OperatorDispatch {
             raises: resolved.as_ref().and_then(|_| chain.raises()),
             resolved,
-            method: super::expr::struct_operator_method(op, receiver, false),
+            method: super::expr::struct_operator_method(op, receiver),
+            contract: link.and_then(|link| {
+                let call = link.call.as_ref()?;
+                Some(super::expr::OperatorContract {
+                    receiver_convention: call.receiver_convention,
+                    param_decls: call.param_decls.clone(),
+                    instantiated_args: link.instantiated_args.clone(),
+                })
+            }),
         };
         let cmp = self.emit_comparison(sp.clone(), op, left, cur, dispatch);
         if index + 1 == rest.len() {

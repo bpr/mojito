@@ -2501,24 +2501,32 @@ struct declaring an operation trait must define its dunder. Conversions
 paths opaque parameters already used. Builtin scalars keep primitive execution
 (`apply_infix`/`apply_prefix`) behind the protocol; a struct operand dispatches
 through its dunder (`apply_binop`/`apply_prefix`, and the `abs`/`round`/`Int`
-builtins). The checker records every struct operator's selected dunder as the
-operator's `BinOp.resolved` — a lone one as `{struct}.{dunder}`, an overloaded
-one by its overload key — and MIR lowers an operator whose receiver (the left
-operand, or a reflected operator's right) is a struct to that dunder's
-`MethodCall` (`struct_operator_method`), as upstream's parser spells `a + b` as
-`a.__add__(b)`, so every pass that reads calls reads it as one; its operands'
-owners die at the call. A dunder owning its receiver (`var`/`deinit self`)
-keeps a resolved `BinOp`, which ownership treats as the same call, because
-the check records no receiver convention for it (R1357). A comparison over a type parameter bounded by
+builtins). The checker checks a struct operator as its dunder's method call,
+as upstream's `emitBinOpCall` and `UnaryOpNode::emitArith` resolve it: `a op
+b` is `a.__op__(b)`, else, when the right operand is a typed struct and the
+operator has a reflected form, `b.__rop__(a)` (comparisons have none), and
+`-x`/`~x` is `x.__neg__()`/`x.__invert__()`. Selection is the method call's
+(`infer_operator_method_call`, which answers `None` without recording
+anything when no candidate takes the operands, as upstream's speculative
+`lookupAndResolve` does), so the operator records the whole `SelectedCall`
+contract: its receiver convention, its raise effect, and its right operand
+typed and converted by the selected parameter, so a display or a
+leading-dot operand there is built as that parameter's type. MIR lowers it
+through the spelled call's own lowering (`ordinary_method_call`; a reflected
+one through `reflected_operator_call`, which lowers the left operand, its
+argument, before its receiver, in source order), so every pass that reads
+calls reads it as one, a `var`/`deinit self` dunder included, and its
+operands' owners die at the call. A comparison over a type parameter bounded by
 `Equatable` or `Comparable` names the bound's requirement
 (`__trait_dispatch.__lt__$ov$Self`), so it too is a call; the elaborator
 retargets it at a struct instance and clears it at a builtin one. Any other
 operator over a type parameter names no dunder; the elaborator retargets it at
 each instance. A chained comparison has no occurrence per link, so its own
-record holds one `CheckedCompareLink` per link (the selected dunder and
-whether it is Equatable's default `!=`), and MIR emits each link as that
-dunder's call through the same emitter as a lone operator
-(`Flatten::emit_comparison`). Right after the first link, the first middle
+record holds one `CheckedCompareLink` per link (the selected dunder and,
+for a struct's, that method call's contract, which the check moves off the
+chain's occurrence after each link), and MIR emits each link as that
+dunder's call, with the contract's receiver convention
+(`Flatten::emit_comparison`, `struct_operator_method`). Right after the first link, the first middle
 operand becomes an owned temporary in a hidden `$chain_middle` slot (a
 place copied, a temporary or `^` moved), which drop elaboration destroys
 after the second link or on the first link's false edge; a later middle
@@ -5372,19 +5380,18 @@ current Mojo:
   `P(s, s)` over `mut a: S, b: S` is rejected, and an argument a `*args`
   collector gathers (`Tuple(Span(xs), Span(xs))`) is judged by its own type
   (`signature_collected_arguments`).
-- A struct operator is its dunder's call, so its operands bind the same way
-  (`operand_c`): the checker marks each non-place operand the
-  selected dunder reads, the receiver and the argument, a prefix operator's
-  operand, a reflected dunder's pair, and a comparison through a bound's
-  pair, with `ReadTemporaryArgument`, and `lower_operator_operand` and
-  `prefix_op` read a marked one in its call-result slot, so it dies when
-  the dunder returns, the argument before the receiver. A chained comparison's
-  middles carry no marker: the chain owns them (`chain_middle`). A place
-  operand the dunder reads — a named struct, or an element an accessor
-  returns by reference (`xs[0]`, `t[0]`) — is marked `BorrowReadArgument`
-  instead (`borrow_operator_operand`), and `lower_operator_operand`, which
-  `prefix_op` shares, reads it where it lies, as a read call argument is
-  read: no copy, so nothing to destroy. An
+- A struct operator is its dunder's method call, so its operands bind as a
+  receiver and an argument do. A comparison through a bound marks each
+  non-place operand its requirement reads `ReadTemporaryArgument`, and
+  `lower_operator_operand` reads a marked one in its call-result slot, so it
+  dies when the requirement returns. A chained comparison's middles carry no
+  marker: the chain owns them (`chain_middle`). A place operand a chain
+  link's dunder or a bound's requirement reads — a named struct, or an
+  element an accessor returns by reference (`xs[0]`, `t[0]`) — is marked
+  `BorrowReadArgument` (`borrow_operator_operand`, which a link applies to
+  its receiver, the method call having marked its argument), and
+  `lower_operator_operand` reads it where it lies, as a read call argument
+  is read: no copy, so nothing to destroy. An
   operator's result is a fresh temporary as a call's is
   (`Node::is_fresh_temporary`), for this binding and for a field read off it.
 - A subscript is its getter's call, so its value category comes from the

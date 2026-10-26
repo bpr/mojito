@@ -603,6 +603,12 @@ operator record no `NegatedEquality` adjustment, since an `Equatable`
 struct's `!=` calls the `__ne__` the bundled trait defaults (R705). The MIR
 text is unchanged.
 
+The package format moves to `mojito-package 103` when a chained
+comparison's link records its dunder's method-call contract and the
+compile-time arguments a generic dunder's call solved
+(`CheckedCompareLink::{call, instantiated_args}`), since a struct operator
+is checked as that method call (R1357). The MIR text is unchanged.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

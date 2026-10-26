@@ -135,14 +135,7 @@ impl Checker {
         {
             return Ok(result);
         }
-        // A receiver borrows a reference result for the call rather than
-        // reading the referent out as an owned value; a consuming receiver
-        // is gated on `ImplicitlyCopyable` below once the method resolves.
-        if self.infer_reference_value(object).is_some() {
-            self.borrowed_reference_receivers
-                .borrow_mut()
-                .insert(object.source_span());
-        }
+        self.borrow_reference_receiver(object);
         let site = MethodCallSite {
             span,
             object,
@@ -159,6 +152,39 @@ impl Checker {
             Some(resolved) => self.infer_selected_method_call(site, resolved),
             None => self.infer_unresolved_method(site),
         }
+    }
+
+    /// Type operator dunder `method` on `object` as its method call
+    /// `object.method(args)`, resolved the way upstream's `emitBinOpCall`
+    /// and `UnaryOpNode::emitArith` resolve it, through the speculative
+    /// `OverloadSet::lookupAndResolve`: `None`, recording nothing, when the
+    /// receiver declares no such method or no candidate takes the operands,
+    /// so the caller tries the reflected dunder or reports the operator.
+    pub(in crate::checker) fn infer_operator_method_call(
+        &self,
+        span: &SourceSpan,
+        object: &Expr,
+        obj_ty: &Ty,
+        method: &str,
+        args: &[Expr],
+    ) -> Result<Option<Ty>, TypeError> {
+        let site = MethodCallSite {
+            span,
+            object,
+            method,
+            call: MethodCallArguments::ordinary(args, &[]),
+            obj_ty,
+        };
+        let resolved = match self.resolve_receiver_method(site, &mut None)? {
+            Ok(Some(resolved)) => resolved,
+            Ok(None) | Err(OverloadSelect::NoMatch) => return Ok(None),
+            ambiguous @ Err(OverloadSelect::Ambiguous) => {
+                return selected_method(method, ambiguous, None).map(|_| None);
+            }
+        };
+        self.borrow_reference_receiver(object);
+        self.infer_selected_method_call(site, resolved)
+            .map(|result| Some(self.restore_pack_elements(result)))
     }
 
     /// Type a call of the method `resolved` selected for the receiver at
@@ -262,5 +288,18 @@ pub(super) fn selected_method(
             func: method.to_string(),
             reason: "ambiguous overloaded method call".to_string(),
         }),
+    }
+}
+
+impl Checker {
+    /// A receiver borrows a reference result for the call rather than
+    /// reading the referent out as an owned value; a consuming receiver is
+    /// gated on `ImplicitlyCopyable` once the method resolves.
+    fn borrow_reference_receiver(&self, object: &Expr) {
+        if self.infer_reference_value(object).is_some() {
+            self.borrowed_reference_receivers
+                .borrow_mut()
+                .insert(object.source_span());
+        }
     }
 }

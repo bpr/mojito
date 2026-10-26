@@ -1581,7 +1581,7 @@ impl Checker {
         };
         Ok((
             result,
-            overload_rank(score, variadic.is_some() || has_kw_collector, 0, false)
+            concrete_overload_rank(score, variadic.is_some() || has_kw_collector, &declared)
                 + self
                     .argument_binding(
                         variadic.as_ref().map(|_| overflow.len()),

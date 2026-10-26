@@ -5610,10 +5610,52 @@ fn lone_struct_dunder_operator_names_its_method() {
         .iter()
         .filter_map(|instruction| match instruction {
             MirInstr::BinOp { resolved, .. } => Some(resolved.as_deref()),
+            MirInstr::MethodCall {
+                method, resolved, ..
+            } if method == "__add__" => Some(resolved.as_deref()),
             _ => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(resolved, [Some("S.__add__"), None], "{instructions:#?}");
+}
+
+#[test]
+fn owned_receiver_struct_operators_are_method_calls() {
+    // `N(3) - 1` over `__sub__(deinit self, ...)` and `-(n^)` over
+    // `__neg__(deinit self)` are their dunders' method calls, as the spelled
+    // calls are, carrying the receiver convention the check selected.
+    let instructions = instrs(
+        "struct N(Movable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __sub__(deinit self, o: Int) -> Int:\n        return self.v - o\n    def __neg__(deinit self) -> Int:\n        return -self.v\n\ndef main():\n    print(N(3) - 1)\n    var n = N(3)\n    print(-(n^))\n",
+    );
+    let calls = instructions
+        .iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method,
+                receiver_convention,
+                ..
+            } if method == "__sub__" || method == "__neg__" => {
+                Some((method.as_str(), *receiver_convention))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let deinit = Some(mojito::ast::ArgConvention::Deinit);
+    assert_eq!(
+        calls,
+        [("__sub__", deinit), ("__neg__", deinit)],
+        "{instructions:#?}"
+    );
+    assert!(
+        !instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::BinOp {
+                resolved: Some(_),
+                ..
+            }
+        )),
+        "{instructions:#?}"
+    );
 }
 
 #[test]
@@ -5628,6 +5670,9 @@ fn chained_comparison_links_name_their_dunders() {
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::BinOp { resolved, .. } => Some(resolved.as_deref()),
+            MirInstr::MethodCall {
+                method, resolved, ..
+            } if method == "__lt__" => Some(resolved.as_deref()),
             _ => None,
         })
         .collect::<Vec<_>>();

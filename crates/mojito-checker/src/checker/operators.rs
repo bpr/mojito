@@ -54,20 +54,24 @@ impl Checker {
                 PrefixOp::Not => Ty::bool(),
             });
         }
-        // A user struct routes through the operator's dunder (`-x` →
-        // `x.__neg__() -> Self`, `not x` → `not x.__bool__() -> Bool`),
-        // raising what it raises.
-        if let Some(result) = self.struct_dunder(&t, op.dunder(), &[]) {
+        // A user struct's `-x` and `~x` are its dunder calls `x.__neg__()`
+        // and `x.__invert__()`, as upstream's `UnaryOpNode::emitArith` emits
+        // them.
+        if op != PrefixOp::Not
+            && self.is_checked_struct(&t)
+            && let Some(ty) =
+                self.infer_operator_method_call(&span, operand, &t, op.dunder(), &[])?
+        {
+            return Ok(ty);
+        }
+        // `not x` is `not x.__bool__()`, raising what `__bool__` raises.
+        if op == PrefixOp::Not
+            && let Some(result) = self.struct_dunder(&t, op.dunder(), &[])
+        {
             let ret = result?;
-            let selected = self.struct_dunder_signature_for(&t, op.dunder(), &[]);
-            if op != PrefixOp::Not
-                && let Some((info, sig, _)) = selected
-                && let TyKind::Struct(sname, _) = t.kind()
-            {
-                self.record_at(span.clone()).overload_target =
-                    Some(self.dunder_symbol(sname, op.dunder(), sig, info));
-            }
-            let signature = selected.map(|(_, sig, _)| sig);
+            let signature = self
+                .struct_dunder_signature_for(&t, op.dunder(), &[])
+                .map(|(_, sig, _)| sig);
             if let Some(error) = signature.and_then(dunder_error) {
                 self.record_call_effect(span, error.clone());
                 self.require_error(format!("raising operator '{}'", prefix_symbol(op)), error)?;
@@ -80,10 +84,7 @@ impl Checker {
             if convention.is_some_and(owns_argument) {
                 self.record_forwarded_operand(operand);
             }
-            return match op {
-                PrefixOp::Neg | PrefixOp::Invert => Ok(ret),
-                PrefixOp::Not => require_dunder_ret(ret, &Ty::bool(), "__bool__"),
-            };
+            return require_dunder_ret(ret, &Ty::bool(), "__bool__");
         }
         Err(TypeError::BadOperator {
             op: prefix_symbol(op).to_string(),
@@ -122,6 +123,20 @@ impl Checker {
         // An element of an unbound pack takes its operators from its bounds.
         let lt = self.infer(left)?;
         let lt = self.opaque_element(&lt).unwrap_or(lt);
+        // A leading-dot right operand has no type of its own, so only the
+        // left operand's dunder can take it, its parameter typing it, as
+        // upstream tries no reflected dunder for an untyped operand.
+        if let Some(span) = &span
+            && super::inference::contextual_root_span(right).is_some()
+            && self.is_checked_struct(&lt)
+        {
+            return self
+                .infer_struct_operator(span, op, left, right, &lt, None)?
+                .ok_or_else(|| TypeError::BadOperator {
+                    op: infix_symbol(op).to_string(),
+                    operands: format!("{lt} and a leading-dot operand"),
+                });
+        }
         let rt = self.infer(right)?;
         let rt = self.opaque_element(&rt).unwrap_or(rt);
 
@@ -335,121 +350,24 @@ impl Checker {
             }
             return Ok(ty);
         }
-        // Mixed literal/nominal String operands normalize onto the nominal
-        // struct: the literal side converts through the `@implicit` literal
-        // constructor and the operator dispatches the struct's dunder, so
-        // `s + "x"`, `"x" + s`, and mixed comparisons all run library code.
-        let nominal_string = |ty: &Ty| {
-            matches!(ty.kind(), TyKind::Struct(name, args)
-                if args.is_empty()
-                    && mojito_symbol::symbol::is_stdlib_string_struct(name)
-                    && self.structs.contains_key(name))
+        let Some(span) = span else {
+            return Err(bad_infix_operator(op, &lt, &rt));
         };
-        let mixed_string = if nominal_string(&lt) && rt == TyKind::StringLiteral {
-            Some((right, lt.clone()))
-        } else if nominal_string(&rt) && lt == TyKind::StringLiteral {
-            Some((left, rt.clone()))
-        } else {
-            None
-        };
-        if let Some((literal_operand, nominal_ty)) = mixed_string
-            && let Some(dunder) = op.dunder()
-            && self.record_implicit_conversion(
-                literal_operand,
-                &Ty::string_literal(),
-                &nominal_ty,
-            )?
-            && let Some(r) = self.struct_dunder(&nominal_ty, dunder, &[&nominal_ty])
+        // A string literal before a nominal `String` converts to `String`
+        // through the `@implicit` literal constructor, whose dunder the
+        // operator then calls.
+        if lt == TyKind::StringLiteral
+            && self.is_nominal_string(&rt)
+            && op.dunder().is_some()
+            && self.record_implicit_conversion(left, &lt, &rt)?
+            && let Some(ty) = self.infer_struct_operator(&span, op, left, right, &rt, None)?
         {
-            if let Some(span) = span
-                && let Some(dispatch) = self.struct_infix_dispatch(op, &nominal_ty, &nominal_ty)?
-            {
-                // The literal side is a converted temporary; only the
-                // nominal side is a place the read dunder borrows.
-                if dispatch.borrows.0 {
-                    self.borrow_operator_operand(left, &lt);
-                }
-                if dispatch.borrows.1 {
-                    self.borrow_operator_operand(right, &rt);
-                }
-                self.record_operator_temporaries(left, right, dispatch.reads, dispatch.owns);
-                self.record_at(span).overload_target = Some(dispatch.target);
-            }
-            return r;
+            return Ok(ty);
         }
-        // Operator overloading: `a OP b` on a user struct dispatches to the left
-        // operand's dunder method (`a.__add__(b)`, `a.__eq__(b)`, …); see
-        // `struct_infix_dispatch` for the selection.
-        if let Some(dispatch) = self.struct_infix_dispatch(op, &lt, &rt)? {
-            if dispatch.converted {
-                self.record_implicit_conversion(right, &rt, &dispatch.operand_ty)?;
-            }
-            if dispatch.consumes {
-                self.check_consuming_as(
-                    right,
-                    &rt,
-                    &format!("operand of '{}'", infix_symbol(op)),
-                    super::traits::ConsumeKind::Move,
-                )?;
-            }
-            if let Some(span) = span {
-                // A read dunder borrows a place operand where it lies, as a
-                // read parameter of an ordinary method call would.
-                if dispatch.borrows.0 {
-                    self.borrow_operator_operand(left, &lt);
-                }
-                if dispatch.borrows.1 {
-                    self.borrow_operator_operand(right, &rt);
-                }
-                self.record_operator_temporaries(left, right, dispatch.reads, dispatch.owns);
-                self.record_struct_instantiation(
-                    &dispatch.struct_name,
-                    &dispatch.struct_args,
-                    span.source.as_deref(),
-                );
-                if let Some(error) = dispatch.error {
-                    self.record_call_effect(span.clone(), error.clone());
-                    self.require_error(format!("raising operator '{}'", infix_symbol(op)), error)?;
-                }
-                self.record_at(span).overload_target = Some(dispatch.target);
-            }
-            let dunder = op.dunder().expect("a dispatched operator has a dunder");
-            return self
-                .struct_dunder(&lt, dunder, &[&dispatch.operand_ty])
-                .expect("dunder signature was resolved");
+        if let Some(ty) = self.infer_struct_operator(&span, op, left, right, &lt, Some(&rt))? {
+            return Ok(ty);
         }
-        // The right operand's reflected dunder (`1 + m` → `m.__radd__(1)`)
-        // answers when the left operand has no operator method for the
-        // pair: MIR swaps the operands and calls the recorded symbol.
-        if let Some(span) = span
-            && let Some(dispatch) = self.struct_reflected_dispatch(op, &lt, &rt)
-        {
-            if dispatch.reads.0 {
-                self.borrow_operator_operand(left, &lt);
-            }
-            if dispatch.reads.1 {
-                self.borrow_operator_operand(right, &rt);
-            }
-            self.record_operator_temporaries(left, right, dispatch.reads, dispatch.owns);
-            if let Some(error) = dispatch.error {
-                self.record_call_effect(span.clone(), error.clone());
-                self.require_error(format!("raising operator '{}'", infix_symbol(op)), error)?;
-            }
-            self.record_at(span.clone()).overload_target = Some(dispatch.target);
-            self.record_at(span).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::ReflectedOperator,
-            ));
-            let reflected = op
-                .reflected_dunder()
-                .expect("a reflected dispatch has a dunder");
-            return self
-                .struct_dunder(&rt, reflected, &[&lt])
-                .expect("reflected dunder signature was resolved");
-        }
-        Err(TypeError::BadOperator {
-            op: infix_symbol(op).to_string(),
-            operands: format!("{lt} and {rt}"),
-        })
+        Err(bad_infix_operator(op, &lt, &rt))
     }
 
     /// Type a chained comparison `a < b < c`: each adjacent pair must
@@ -483,7 +401,26 @@ impl Checker {
                 });
             }
             let target = self.clear_fact(&span, |facts| facts.overload_target.take());
-            links.push(CheckedCompareLink { target });
+            let call = self.clear_fact(&span, |facts| facts.selected_call.take());
+            self.clear_fact(&span, |facts| facts.declared_result.take());
+            let instantiated_args = self
+                .clear_fact(&span, |facts| facts.method_instantiation.take())
+                .map(|instantiation| instantiation.arguments)
+                .unwrap_or_default();
+            self.call_parameters.borrow_mut().remove(&span);
+            // The method call reads its receiver where it lies through its
+            // retained place; a link reads it as an operator operand.
+            if call
+                .as_ref()
+                .is_some_and(|call| reads(call.receiver_convention))
+            {
+                self.borrow_operator_operand(left, &self.chain_operand_ty(left)?);
+            }
+            links.push(CheckedCompareLink {
+                target,
+                call,
+                instantiated_args,
+            });
             left = right;
         }
         for (_, middle) in rest.split_last().map_or(&[][..], |(_, middles)| middles) {
@@ -503,129 +440,50 @@ impl Checker {
         Ok(Ty::bool())
     }
 
-    /// The dunder `lt OP rt` dispatches on a struct left operand, decided
-    /// from the operand types alone: what `infer_infix` then records at the
-    /// operator, and what an instance of a checked template realizes at its
-    /// own types.
-    ///
-    /// Among same-arity overloads the operand type selects, first by value
-    /// coercion, then through an `@implicit` conversion of the right operand,
-    /// as a call argument would convert; `BinOp.resolved` names the selected
-    /// dunder's lowered symbol, so the operator is that method's call.
-    /// An `Equatable` struct declaring `__eq__` without `__ne__` inherits
-    /// the trait's default `__ne__` as a member, so `a != b` calls it. The
-    /// dunder's availability clause (`__eq__ ... where conforms_to(Self.T,
-    /// Equatable)`) is judged against the receiver's arguments, as a method
-    /// call judges it; a failing clause leaves the operator undefined for
-    /// these operands.
-    ///
-    /// `None` when the left operand has no dunder for the pair.
-    pub(super) fn struct_infix_dispatch(
+    /// Type `left op right` over a struct as upstream's `emitBinOpCall`
+    /// does: the receiver `lt`'s dunder call `left.__op__(right)`, else,
+    /// when the right operand has a type `rt`, its reflected dunder call
+    /// `right.__rop__(left)`, marked reflected so MIR still evaluates the
+    /// operands in source order. `None` when neither selects a candidate.
+    fn infer_struct_operator(
         &self,
+        span: &SourceSpan,
         op: InfixOp,
+        left: &Expr,
+        right: &Expr,
         lt: &Ty,
-        rt: &Ty,
-    ) -> Result<Option<StructInfixDispatch>, TypeError> {
-        let Some(dunder) = op.dunder() else {
-            return Ok(None);
-        };
-        let Some((info, sig, targs)) = self.struct_dunder_signature_for(lt, dunder, &[rt]) else {
-            return Ok(None);
-        };
-        let TyKind::Struct(sname, _) = lt.kind() else {
-            unreachable!("dunder signatures resolve on struct receivers")
-        };
-        let mut operand_ty = rt.clone();
-        let mut selected = sig;
-        let mut converted = false;
-        let param = substitute_at(&sig.params[0], info, targs);
-        if !self.value_coerces(rt, &param) {
-            let same_arity = info
-                .methods
-                .get(dunder)
-                .into_iter()
-                .flatten()
-                .filter(|sig| sig.params.len() == 1);
-            for candidate in same_arity {
-                let param = substitute_at(&candidate.params[0], info, targs);
-                if self.implicit_conversion_target(rt, &param)?.is_some() {
-                    operand_ty = param;
-                    selected = candidate;
-                    converted = true;
-                    break;
-                }
-            }
-        }
-        if self
-            .method_constraint_result(selected, &[], &info.decls, targs)
-            .is_err()
+        rt: Option<&Ty>,
+    ) -> Result<Option<Ty>, TypeError> {
+        if let Some(dunder) = op.dunder()
+            && self.is_checked_struct(lt)
+            && let Some(ty) = self.infer_operator_method_call(
+                span,
+                left,
+                lt,
+                dunder,
+                std::slice::from_ref(right),
+            )?
         {
-            return Err(TypeError::BadOperator {
-                op: infix_symbol(op).to_string(),
-                operands: format!("{lt} and {rt}"),
-            });
+            return Ok(Some(ty));
         }
-        let consumes = matches!(
-            selected.conventions.first().copied().flatten(),
-            Some(ArgConvention::Var | ArgConvention::Deinit)
-        );
-        let operand_reads = (
-            reads(selected.self_convention),
-            reads(selected.conventions.first().copied().flatten()),
-        );
-        let target = self.dunder_symbol(sname, dunder, selected, info);
-        Ok(Some(StructInfixDispatch {
-            target,
-            error: dunder_error(selected),
-            operand_ty,
-            converted,
-            consumes,
-            borrows: (operand_reads.0, !converted && operand_reads.1),
-            reads: operand_reads,
-            owns: (
-                owns_argument(selected.self_convention),
-                !converted && consumes,
-            ),
-            struct_name: sname.clone(),
-            struct_args: targs.to_vec(),
-        }))
-    }
-
-    /// The dunder `lt OP rt` dispatches through the right operand's
-    /// reflected dunder (`rt.__radd__(lt)`), decided from the operand types
-    /// alone: what `infer_infix` records at the operator when the left
-    /// operand has no dunder for the pair.
-    ///
-    /// `None` when the right operand is not a struct whose reflected dunder
-    /// takes the left operand under its availability clause.
-    pub(super) fn struct_reflected_dispatch(
-        &self,
-        op: InfixOp,
-        lt: &Ty,
-        rt: &Ty,
-    ) -> Option<StructReflectedDispatch> {
-        let reflected = op.reflected_dunder()?;
-        let (info, sig, targs) = self.struct_dunder_signature_for(rt, reflected, &[lt])?;
-        let TyKind::Struct(rname, _) = rt.kind() else {
-            return None;
+        let (Some(reflected), Some(rt)) = (op.reflected_dunder(), rt) else {
+            return Ok(None);
         };
-        if !self.value_coerces(lt, &substitute_at(&sig.params[0], info, targs)) {
-            return None;
+        if !self.is_checked_struct(rt) {
+            return Ok(None);
         }
-        self.method_constraint_result(sig, &[], &info.decls, targs)
-            .ok()?;
-        Some(StructReflectedDispatch {
-            target: self.dunder_symbol(rname, reflected, sig, info),
-            error: dunder_error(sig),
-            reads: (
-                reads(sig.conventions.first().copied().flatten()),
-                reads(sig.self_convention),
-            ),
-            owns: (
-                owns_argument(sig.conventions.first().copied().flatten()),
-                owns_argument(sig.self_convention),
-            ),
-        })
+        let ty = self.infer_operator_method_call(
+            span,
+            right,
+            rt,
+            reflected,
+            std::slice::from_ref(left),
+        )?;
+        if ty.is_some() {
+            self.record_at(span.clone()).adjustment =
+                Some(Box::new(SemanticAdjustment::ReflectedOperator));
+        }
+        Ok(ty)
     }
 
     /// Type a membership test `x in c` / `x not in c` → `Bool`. The container is
@@ -1119,6 +977,20 @@ impl Checker {
         }
     }
 
+    /// Whether `ty` is a struct the program declares, whose operators are
+    /// its dunders' method calls.
+    fn is_checked_struct(&self, ty: &Ty) -> bool {
+        matches!(ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+    }
+
+    /// Whether `ty` is the declared nominal `String`.
+    fn is_nominal_string(&self, ty: &Ty) -> bool {
+        matches!(ty.kind(), TyKind::Struct(name, args)
+            if args.is_empty()
+                && mojito_symbol::symbol::is_stdlib_string_struct(name)
+                && self.structs.contains_key(name))
+    }
+
     /// The type an inferred chain operand takes at its link, as
     /// [`Self::infer_infix`] sees it.
     fn chain_operand_ty(&self, operand: &Expr) -> Result<Ty, TypeError> {
@@ -1163,23 +1035,6 @@ impl Checker {
             copyable: self.is_copyable(&ty),
             ty: ty.to_string(),
         })
-    }
-
-    /// The lowered symbol of the dunder an operator selected on struct
-    /// `sname`: its overload key when the dunder is overloaded, else
-    /// `{struct}.{dunder}`.
-    fn dunder_symbol(
-        &self,
-        sname: &str,
-        dunder: &str,
-        sig: &MethodSig,
-        info: &StructInfo,
-    ) -> String {
-        if info.methods.get(dunder).is_some_and(|sigs| sigs.len() > 1) {
-            method_lowered_name(sname, dunder, sig, self.self_instance_ty(sname).as_ref())
-        } else {
-            format!("{sname}.{dunder}")
-        }
     }
 
     /// The requirement a comparison over a bound type parameter selects
@@ -1243,45 +1098,12 @@ pub(super) const fn prefix_symbol(op: PrefixOp) -> &'static str {
     }
 }
 
-/// What [`Checker::struct_infix_dispatch`] decided for one operator.
-pub(super) struct StructInfixDispatch {
-    /// The selected dunder's lowered symbol, which `BinOp.resolved` names.
-    pub(super) target: String,
-    /// The error the selected dunder raises, if it raises.
-    pub(super) error: Option<Ty>,
-    /// The right operand's type as the selected dunder takes it.
-    pub(super) operand_ty: Ty,
-    /// Whether the right operand converts to `operand_ty` through an
-    /// `@implicit` constructor.
-    pub(super) converted: bool,
-    /// Whether the dunder consumes its operand.
-    pub(super) consumes: bool,
-    /// Whether the dunder reads its receiver (`self`) and its operand in
-    /// place: a read convention, and an operand taken without conversion.
-    pub(super) borrows: (bool, bool),
-    /// Whether the dunder reads its receiver and its operand, so a
-    /// temporary on either side is the caller's to destroy once it returns.
-    pub(super) reads: (bool, bool),
-    /// Whether the dunder owns its receiver and its operand (a `var` or
-    /// `deinit` convention, the operand taken without conversion), so a
-    /// `^` on either side forwards its storage.
-    pub(super) owns: (bool, bool),
-    pub(super) struct_name: String,
-    pub(super) struct_args: Vec<TyArg>,
-}
-
-/// What [`Checker::struct_reflected_dispatch`] decided for one operator.
-pub(super) struct StructReflectedDispatch {
-    /// The reflected dunder's lowered symbol, which `BinOp.resolved` names.
-    pub(super) target: String,
-    /// The error the reflected dunder raises, if it raises.
-    pub(super) error: Option<Ty>,
-    /// Whether the reflected dunder reads the left operand (its parameter)
-    /// and the right operand (its receiver).
-    pub(super) reads: (bool, bool),
-    /// Whether the reflected dunder owns the left operand and the right
-    /// operand.
-    pub(super) owns: (bool, bool),
+/// The error an infix operator its operands do not define reports.
+fn bad_infix_operator(op: InfixOp, lt: &Ty, rt: &Ty) -> TypeError {
+    TypeError::BadOperator {
+        op: infix_symbol(op).to_string(),
+        operands: format!("{lt} and {rt}"),
+    }
 }
 
 /// The error a selected dunder raises, if it raises.

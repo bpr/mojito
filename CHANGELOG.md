@@ -1355,6 +1355,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct operator is now checked as its dunder's method call, as
+  upstream's `emitBinOpCall` resolves it (R1357): `a op b` selects
+  `a.__op__(b)` as the spelled call would, else the reflected
+  `b.__rop__(a)`, and `-x`/`~x` select `x.__neg__()`/`x.__invert__()`,
+  recording the whole call contract, and MIR lowers it through the spelled
+  call's lowering. So a `var self` or `deinit self` dunder runs as a call
+  and a `nodebug` one inlines (`N(3) - 1`, and `-(n^)`, which failed to
+  verify: R1332), a display right operand is built as the parameter's type
+  (`l == [1]` and `l + [2]` over `List[Int]`, which were rejected: R697), a
+  leading-dot right operand resolves against it (`c == .mk()`), and a
+  generic dunder solves its parameters (`h < 2` over `__lt__[T:
+  Intable]`), also as a chained comparison's link. Method and function
+  overload selection now ranks a parameter that leaves an origin to
+  inference (`suffix: StringSpan`) as generic, as upstream's
+  auto-parameterization does, so `p.__truediv__("sub")` over `Path` selects
+  `__truediv__(self, suffix: Self)` where it was ambiguous. The package
+  format is now `mojito-package 103`.
+
 - A struct operator is now its dunder's method call in MIR, as upstream's
   parser spells `a + b` as `a.__add__(b)` (R1348), and an operator through
   a bound becomes its member's call once `inline-parametric` substitutes a

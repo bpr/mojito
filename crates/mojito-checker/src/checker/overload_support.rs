@@ -719,6 +719,38 @@ pub(super) fn overload_rank(
         + usize::from(generic)
 }
 
+/// [`overload_rank`] of a candidate declaring no compile-time parameters,
+/// whose parameter types `params` may still leave origins to inference
+/// ([`inferred_origin_count`]).
+pub(super) fn concrete_overload_rank(conversions: usize, variadic: bool, params: &[Ty]) -> usize {
+    let inferred = inferred_origin_count(params);
+    overload_rank(conversions, variadic, inferred, inferred > 0)
+}
+
+/// How many origins `params` leave to inference without the signature
+/// declaring them (`suffix: StringSpan`): upstream's auto-parameterization
+/// makes each the callee's own inferred parameter, so a candidate taking one
+/// ranks as generic beside a concrete candidate taking the same argument
+/// through as many conversions, as `Path / "sub"` selects
+/// `__truediv__(self, suffix: Self)` over `__truediv__(self, suffix:
+/// StringSlice)`.
+pub(super) fn inferred_origin_count(params: &[Ty]) -> usize {
+    fn count(ty: &Ty) -> usize {
+        match ty.kind() {
+            TyKind::Struct(_, arguments) => arguments
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => count(ty),
+                    TyArg::Origin(mojito_types::origin::Origin::Unbound) => 1,
+                    _ => 0,
+                })
+                .sum(),
+            _ => 0,
+        }
+    }
+    params.iter().map(count).sum()
+}
+
 /// How one candidate binds a call's arguments. A place handed to a `var`
 /// parameter must be copied, and current Mojo charges that copy on every
 /// candidate: `h(s)` selects `h[T: Writable](a: T)` over `h(var a: String)`,

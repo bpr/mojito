@@ -523,7 +523,7 @@ impl Checker {
         // the method's own bracket list only — a struct's parameters live in
         // `StructInfo::decls` — and a parameter no per-call clone bakes does
         // not make the candidate generic.
-        let baked = baked_decl_count(&signature.decls);
+        let baked = baked_decl_count(&signature.decls) + inferred_origin_count(&signature.params);
         Ok(MethodCallScore {
             rank: overload_rank(
                 score,

@@ -10,6 +10,24 @@ use super::*;
 use mojito_types::types::FuncTy;
 use mojito_types::types::TyKind;
 
+/// The `$contextual` sentinel root's span, when `expression` is a leading-dot
+/// member chain (`.red`, `.make(1).brighten()`, `.a.b[i]`).
+pub(super) fn contextual_root_span(expression: &Expr) -> Option<mojito_common::token::SourceSpan> {
+    let mut current = expression;
+    loop {
+        match &current.kind {
+            ExprKind::Identifier(name) if name == mojito_ast::ast::CONTEXTUAL_SENTINEL => {
+                return Some(current.source_span());
+            }
+            ExprKind::Member { object, .. }
+            | ExprKind::MethodCall { object, .. }
+            | ExprKind::Index { object, .. } => current = object,
+            ExprKind::Invoke { callee, .. } => current = callee,
+            _ => return None,
+        }
+    }
+}
+
 impl Checker {
     /// Check a comprehension in its own lexical scope and cache its result type
     /// for ordinary read-only expression inference. Clauses are visited in
@@ -3365,24 +3383,6 @@ impl Checker {
 enum DisplayConstructor {
     Literal(mojito_checked::checked::DictLiteral),
     Empty(String),
-}
-
-/// The `$contextual` sentinel root's span, when `expression` is a leading-dot
-/// member chain (`.red`, `.make(1).brighten()`, `.a.b[i]`).
-fn contextual_root_span(expression: &Expr) -> Option<mojito_common::token::SourceSpan> {
-    let mut current = expression;
-    loop {
-        match &current.kind {
-            ExprKind::Identifier(name) if name == mojito_ast::ast::CONTEXTUAL_SENTINEL => {
-                return Some(current.source_span());
-            }
-            ExprKind::Member { object, .. }
-            | ExprKind::MethodCall { object, .. }
-            | ExprKind::Index { object, .. } => current = object,
-            ExprKind::Invoke { callee, .. } => current = callee,
-            _ => return None,
-        }
-    }
 }
 
 /// The first member name after the leading dot, for diagnostics.

@@ -2965,17 +2965,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1238 A leading-dot operand of `==` has no contextual type**
+- [ ] **R1238 A leading-dot operand of `==` beside a `DType` has no
+  contextual type**
 
   Problem: `d == .int64` over a `DType`, and `case .int64:` over one, fail
   with "no contextual type is available here", where the pin prints
   `True` and runs the case.
-  - Upstream types the operand from the selected `__eq__`'s parameter; a
-    leading-dot case head over a subject that is not `EnumLike` is the
+  - A struct operator types a leading-dot right operand by the selected
+    dunder's parameter (`c == .mk()` runs), but `DType` is a compiler type
+    here (`TyKind::Dtype`) that declares no `__eq__`: `d.__eq__(.int64)`
+    reports "type 'DType' has no method '__eq__'".
+  - A leading-dot case head over a subject that is not `EnumLike` is the
     same `==` test.
-  - Mojito resolves a leading dot only against an annotation or an
-    expected parameter type (`with_contextual_root`), never an operator's
-    other operand.
+  - `k == .X` and `case .X:` over a struct's `comptime X = K(1)` also need
+    R489 ("not an associated comptime expression"), as `take(.X)` does.
   - Probe: `conformance/probes/leading_dot_equality_operand.mojo`.
   - Found while landing R1133 (2026-10-20).
   - Depends on nothing.
@@ -3122,52 +3125,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     default attributes, which the check records on the variable's type and
     the fill reads instead of tracing the register.
   - Found while landing R1077 (2026-10-16).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1357 A struct operator is checked apart from a method call**
-
-  The checker types `a op b` and `-x` over a struct through its own
-  selection (`struct_infix_dispatch`, `struct_reflected_dispatch`,
-  `struct_dunder_signature_for` in `checker/operators.rs`), where upstream's
-  `emitBinOpCall` and `UnaryOpNode::emitArith` (`MojoParser/ExprNodes.cpp`)
-  resolve `a.__op__(b)`, then `b.__rop__(a)`, through
-  `OverloadSet::lookupAndResolve` as an ordinary method call.
-  - The lever: check a struct operator as `infer_method_call` over the
-    dunder, so it records the whole `SelectedCall` contract, its raise
-    effect, and the right operand typed by the selected parameter, as an
-    argument is.
-  - MIR lowers a struct operator to its dunder's `call.method`
-    (`struct_operator_method`), but the `overload_target` fact names no
-    receiver convention, so a dunder owning its receiver (`var self`,
-    `deinit self`) still lowers to a `binary`: the contract's
-    `receiver_convention` lets that one be a call too, and a
-    `nodebug` one inline.
-  - Probe: `N(3) - 1` over `@always_inline("nodebug") def __sub__(deinit
-    self, o: Int) -> Int` keeps its `binary` after pre-elaboration.
-  - Probe: `l == [1]` over `l: List[Int]` (R697) and `print(-(n^))` over
-    `__neg__(deinit self)` (R1332) run at the pin and fail in Mojito.
-  - Closes R1332 (a prefix dunder records no call contract) and R697 (a
-    display right operand is not typed by the dunder). Shrinks R1238.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R1332 A struct prefix operator records no call contract, so a
-  `deinit self` dunder is rejected**
-
-  Problem: `print(-(n^))` over `def __neg__(deinit self) -> Int` stops
-  with "invalid checked program: … method-call receiver convention does not
-  match 'N.__neg__'", where the pin prints `-3`.
-  - `infer_prefix` (`checker/operators.rs`) records only the selected
-    dunder (`ResolveCallable`), where an ordinary method call records its
-    whole contract (`SelectedCall`) and upstream checks `-x` as
-    `x.__neg__()`.
-  - MIR's `prefix_op` (`mir/lower_expr/expr.rs`) therefore reads the
-    receiver convention off the operand's `ForwardedArgument` mark, which
-    says only that the receiver is owned, so it records `var`.
-  - Lever: record the selected call's contract for a struct prefix
-    operator, and lower its `call.method` from it.
-  - Found while landing R1325 (2026-10-24).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3350,24 +3307,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `def Int(x: Float64) -> Float64: return x + 1` and
     `print(Int(Float64(2.0)))`, which prints `3.0` at the pin.
   - Found while landing R856 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R697 A display as a struct operator's right operand is not typed
-  by the dunder's parameter**
-
-  Problem: `l + [2]` and `l == [1]` over a `List[Int]` `l` are rejected
-  ("expected List[Int], found Array[Int, 1]"), where the pin runs them.
-  - The checker types the right operand's display by its natural `Array`
-    instead of by the selected dunder's parameter, as a call argument's
-    display is.
-  - The pin builds that display at the operator's setup: `g(a) + [a.t]`,
-    where `g` adds 100 to `a.t`, reads `a.t` after `g` runs.
-  - Once typed, `lower_operator_operand`
-    (`crates/mojito-mir/src/mir/calls.rs`) must pass `bound = true` for the
-    right operand; the left operand is a receiver and keeps its natural
-    type (`[a.t] == g(a)` is rejected at the pin too).
-  - Found while landing R693 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10036,6 +9975,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     access".
   - Converting a KGEN string to a runtime string (`StaticString(names[i])`)
     then follows with R432.
+  - Probe: `"x" + s` and `"ab" == s` over a `String` `s` convert the
+    literal to `String` and call `String`'s dunder (`infer_infix`'s
+    literal-left arm, `checker/operators.rs`), where upstream calls
+    `StringLiteral.__eq__(self, rhs: StringSlice)`, and for `+` the
+    reflected `String.__radd__(self, other: StringSlice)`, which the
+    bundled `stdlib/std/string.mojo` lacks. The port deletes that arm.
   - The planning session splits it into chained one-session entries if
     one session cannot land it.
   - Found while landing R1183 (2026-10-20).

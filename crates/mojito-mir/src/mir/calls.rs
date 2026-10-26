@@ -1471,27 +1471,7 @@ impl<'a> Flatten<'a> {
         copied: bool,
     ) -> (Reg, Option<MirPlace>) {
         self.lower_setup_receiver_with(call, receiver, |this| {
-            if copied
-                && matches!(receiver.checked.op, CheckedOp::Identifier(_))
-                && !receiver.is_fresh_temporary()
-            {
-                let value = this.expr(receiver);
-                let read_copied = matches!(
-                    this.f.blocks[this.cur].instrs.last(),
-                    Some(MirInstr::UseVar { dest, mode: UseMode::Copy, .. }) if *dest == value
-                );
-                if read_copied {
-                    return (value, None);
-                }
-                return (this.copy_consuming_receiver(receiver, value, None), None);
-            }
-            let (value, place) = this.lower_method_receiver(call, receiver);
-            let value = if copied {
-                this.copy_consuming_receiver(receiver, value, place.as_ref())
-            } else {
-                value
-            };
-            (value, place)
+            this.lower_receiver_value(call, receiver, copied)
         })
     }
 
@@ -1503,21 +1483,31 @@ impl<'a> Flatten<'a> {
         receiver: Node<'a>,
         lower: impl FnOnce(&mut Self) -> (Reg, Option<MirPlace>),
     ) -> (Reg, Option<MirPlace>) {
-        let by_value = call.call_contract().is_none_or(|contract| {
-            matches!(
-                contract.receiver_convention,
-                None | Some(
-                    mojito_ast::ast::ArgConvention::Imm | mojito_ast::ast::ArgConvention::Var
-                )
-            )
-        });
-        if by_value {
+        if reads_receiver_by_value(call) {
             self.open_call_setup();
             return self.lower_setup_operand(receiver, None, false, lower);
         }
         let lowered = lower(self);
         self.open_call_setup();
         lowered
+    }
+
+    /// [`Self::lower_setup_receiver`] for a call whose setup frame its
+    /// arguments already opened: a reflected operator's receiver, the right
+    /// operand, follows its argument, the left one, in source order. A
+    /// receiver read by value is read at that setup; any other stays where
+    /// written.
+    pub(super) fn lower_open_setup_receiver(
+        &mut self,
+        call: Node<'a>,
+        receiver: Node<'a>,
+        copied: bool,
+    ) -> (Reg, Option<MirPlace>) {
+        let lower = |this: &mut Self| this.lower_receiver_value(call, receiver, copied);
+        if reads_receiver_by_value(call) {
+            return self.lower_setup_operand(receiver, None, false, lower);
+        }
+        self.outside_call_setup(lower)
     }
 
     /// Read a field (`B(1).x`) off a temporary returned through memory by
@@ -2228,4 +2218,51 @@ impl<'a> Flatten<'a> {
         });
         (loaded, Some(place))
     }
+}
+
+impl<'a> Flatten<'a> {
+    /// Method call `call`'s receiver value and retained place, copying a
+    /// consuming receiver when `copied`: a copied named receiver is read
+    /// as an owned argument is, by its slot's copying use, as upstream
+    /// copies argument 0 from the name's memory.
+    fn lower_receiver_value(
+        &mut self,
+        call: Node<'a>,
+        receiver: Node<'a>,
+        copied: bool,
+    ) -> (Reg, Option<MirPlace>) {
+        if copied
+            && matches!(receiver.checked.op, CheckedOp::Identifier(_))
+            && !receiver.is_fresh_temporary()
+        {
+            let value = self.expr(receiver);
+            let read_copied = matches!(
+                self.f.blocks[self.cur].instrs.last(),
+                Some(MirInstr::UseVar { dest, mode: UseMode::Copy, .. }) if *dest == value
+            );
+            if read_copied {
+                return (value, None);
+            }
+            return (self.copy_consuming_receiver(receiver, value, None), None);
+        }
+        let (value, place) = self.lower_method_receiver(call, receiver);
+        let value = if copied {
+            self.copy_consuming_receiver(receiver, value, place.as_ref())
+        } else {
+            value
+        };
+        (value, place)
+    }
+}
+
+/// Whether method call `call` reads or owns its receiver by value, so the
+/// receiver is read at the call's setup; a `mut`/`ref`/`deinit` receiver
+/// binds its place where written.
+fn reads_receiver_by_value(call: Node<'_>) -> bool {
+    call.call_contract().is_none_or(|contract| {
+        matches!(
+            contract.receiver_convention,
+            None | Some(mojito_ast::ast::ArgConvention::Imm | mojito_ast::ast::ArgConvention::Var)
+        )
+    })
 }

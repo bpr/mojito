@@ -530,10 +530,14 @@ impl std::fmt::Display for ComptimeSequence {
 /// What one link of a chained comparison dispatched.
 ///
 /// It is what a lone operator records: the selected dunder's lowered symbol
-/// (`None` for a built-in comparison).
+/// (`None` for a built-in comparison), and, for a struct's dunder, that
+/// method call's contract (`None` for a bound's requirement) and the
+/// compile-time arguments a generic dunder's call solved.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCompareLink {
     pub target: Option<String>,
+    pub call: Option<Box<CheckedCallContract>>,
+    pub instantiated_args: Vec<mojito_types::types::TyArg>,
 }
 
 /// Checker decisions which lowering must apply explicitly.

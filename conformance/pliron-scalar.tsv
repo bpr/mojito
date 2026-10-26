@@ -931,6 +931,7 @@ assets/ok/struct_member_reads_type_pack.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_member_unread_struct_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_method_comptime_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_method_instance_clone_unreached.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_operator_method_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_operator_operand_owner_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_operator_subscript_operand_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_operator_temporary_operand_drop.mojo	-	ineligible	no-scalar-entry-shape

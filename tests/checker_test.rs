@@ -7488,14 +7488,14 @@ fn element_call_shapes_that_stay_rejected() {
 
 #[test]
 fn binary_operator_var_operand_requires_explicit_transfer() {
-    // A dunder's `var` operand binds like any owned argument: a place of a
-    // Copyable-only type must be transferred (or explicitly copied).
+    // A dunder's `var` operand is its method call's owned argument: a place
+    // of a Copyable-only type must be transferred (or explicitly copied).
     let declarations = "@fieldwise_init\nstruct Bag(Copyable, Movable):\n    var items: List[Int]\n\n    def __add__(self, var other: Self) -> Self:\n        return other^\n\n";
     let rejected = err(&format!(
         "{declarations}def main():\n    var p = Bag(List[Int]())\n    var q = Bag(List[Int]())\n    var r = p + q\n"
     ));
     assert!(
-        matches!(&rejected, TypeError::ImplicitCopy { context, transferable: true, .. } if context == "operand of '+'"),
+        matches!(&rejected, TypeError::ImplicitCopy { context, transferable: true, .. } if context == "argument 1 to method '__add__'"),
         "got {rejected:?}"
     );
     ok(&format!(

@@ -17,29 +17,31 @@ pub(in crate::mir) struct OperatorDispatch {
     /// The method a struct receiver answers the operator with, when the
     /// operator is that method's call ([`struct_operator_method`]).
     pub(in crate::mir) method: Option<&'static str>,
+    /// The selected dunder's method-call contract, when the check recorded
+    /// one: its receiver convention, its compile-time parameter
+    /// declarations, and the arguments the call solved for them.
+    pub(in crate::mir) contract: Option<OperatorContract>,
 }
 
-/// The method struct value `receiver` answers operator `op` with, as
-/// upstream's parser spells the operator: `a + b` is `a.__add__(b)` and a
-/// reflected `1 + m` is `m.__radd__(1)`. `None` for any other receiver,
-/// whose operator stays a `binary`, for `in`, which calls the right
-/// operand's `__contains__`, and for a dunder owning its receiver, whose
-/// `var` or `deinit` convention the check does not record.
+/// What a chained comparison's link records of its dunder's method call.
+pub(in crate::mir) struct OperatorContract {
+    pub(in crate::mir) receiver_convention: Option<mojito_ast::ast::ArgConvention>,
+    pub(in crate::mir) param_decls: Vec<ParamDecl>,
+    pub(in crate::mir) instantiated_args: Vec<TyArg>,
+}
+
+/// The method struct value `receiver` answers a chained comparison's link
+/// `op` with, as upstream's parser spells the link: `a < b` is
+/// `a.__lt__(b)`. `None` for any other receiver, whose link stays a
+/// `binary`.
 pub(in crate::mir) fn struct_operator_method(
     op: InfixOp,
     receiver: Node<'_>,
-    reflected: bool,
 ) -> Option<&'static str> {
-    let method = crate::mir::operator_method(op)?;
-    (receiver
-        .ty()
-        .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
-        && !receiver.forwarded())
-    .then(|| {
-        reflected
-            .then(|| op.reflected_dunder())
-            .flatten()
-            .unwrap_or(method)
+    crate::mir::operator_method(op).filter(|_| {
+        receiver
+            .ty()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
     })
 }
 
@@ -304,13 +306,6 @@ impl<'a> Flatten<'a> {
         a: Node<'a>,
         b: Node<'a>,
     ) -> Reg {
-        // Operands left-to-right (evaluation order is explicit), each place
-        // operand read at the operator call's setup.
-        self.open_call_setup();
-        let ra = self.lower_operator_operand(node, a);
-        let rb = self.lower_operator_operand(node, b);
-        self.close_call_setup(None);
-        let resolved = node.resolved_callable();
         // A reflected operator (checker-marked) runs on the RIGHT
         // operand: `1 + m` calls `m.__radd__(1)`.
         let reflected = node.adjustments().iter().any(|adjustment| {
@@ -319,12 +314,27 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::SemanticAdjustment::ReflectedOperator
             )
         });
-        let (ra, rb) = if reflected { (rb, ra) } else { (ra, rb) };
-        let receiver = if reflected { b } else { a };
+        // A struct operator is its dunder's method call, as upstream's
+        // `emitBinOpCall` makes `a + b` the call `a.__add__(b)`.
+        if node.call_contract().is_some()
+            && let Some(method) = crate::mir::operator_method(op)
+        {
+            return match op.reflected_dunder().filter(|_| reflected) {
+                Some(method) => self.reflected_operator_call(node, method, a, b),
+                None => self.ordinary_method_call(node, a, method, &[b], &[]),
+            };
+        }
+        // Operands left-to-right (evaluation order is explicit), each place
+        // operand read at the operator call's setup.
+        self.open_call_setup();
+        let ra = self.lower_operator_operand(node, a);
+        let rb = self.lower_operator_operand(node, b);
+        self.close_call_setup(None);
         let dispatch = OperatorDispatch {
-            resolved,
+            resolved: node.resolved_callable(),
             raises: node.raises(),
-            method: struct_operator_method(op, receiver, reflected),
+            method: None,
+            contract: None,
         };
         self.emit_comparison(node.location(), op, ra, rb, dispatch)
     }
@@ -346,12 +356,27 @@ impl<'a> Flatten<'a> {
             resolved,
             raises,
             method,
+            contract,
         } = dispatch;
         let raises = self.raises(raises, location.clone());
         let d = self.fresh(location, None);
         self.emit(match (resolved, method) {
             (Some(resolved), Some(method)) => {
-                crate::mir::dunder_method_call(d, a, method, Some(resolved), raises, vec![b])
+                let mut call =
+                    crate::mir::dunder_method_call(d, a, method, Some(resolved), raises, vec![b]);
+                if let Some(contract) = contract
+                    && let MirInstr::MethodCall {
+                        receiver_convention,
+                        param_decls,
+                        instantiated_args,
+                        ..
+                    } = &mut call
+                {
+                    *receiver_convention = contract.receiver_convention;
+                    *param_decls = contract.param_decls;
+                    *instantiated_args = contract.instantiated_args;
+                }
+                call
             }
             (resolved, _) => MirInstr::BinOp {
                 op,
@@ -777,6 +802,11 @@ impl<'a> Flatten<'a> {
 
     /// Prefix operator `op` applied to `value`, the operand of node `node`.
     fn prefix_op(&mut self, node: Node<'a>, op: PrefixOp, value: Node<'a>) -> Reg {
+        // `-x` and `~x` on a struct are its dunder's method call, as
+        // upstream's `x.__neg__()` is.
+        if op != PrefixOp::Not && node.call_contract().is_some() {
+            return self.ordinary_method_call(node, value, op.dunder(), &[], &[]);
+        }
         let ra = self.lower_operator_operand(node, value);
         // `not x` on a struct or a numeric scalar is
         // `not x.__bool__()`: convert through the explicit `Bool(x)`
@@ -793,38 +823,12 @@ impl<'a> Flatten<'a> {
         };
         let d = self.fresh(node.location(), None);
         let raises = self.raises(node.raises(), node.location());
-        // `-x` and `~x` on a struct call the dunder the check selected, as
-        // upstream's `x.__neg__()` does.
-        let instruction = match node.resolved_callable() {
-            Some(resolved) if op != PrefixOp::Not => MirInstr::MethodCall {
-                dest: d,
-                recv: ra,
-                method: op.dunder().to_string(),
-                resolved: Some(resolved),
-                raises,
-                reference_result: None,
-                result_adapter: None,
-                args: Vec::new(),
-                kwargs: Vec::new(),
-                recv_place: None,
-                recv_writes: false,
-                receiver_convention: node.receiver_convention(value),
-                arg_places: Vec::new(),
-                kwarg_places: Vec::new(),
-                capture_accesses: Vec::new(),
-                param_arg_regs: Vec::new(),
-                param_decls: Vec::new(),
-                instantiated_args: Vec::new(),
-                spread: None,
-            },
-            _ => MirInstr::UnOp {
-                op,
-                dest: d,
-                a: ra,
-                raises,
-            },
-        };
-        self.emit(instruction);
+        self.emit(MirInstr::UnOp {
+            op,
+            dest: d,
+            a: ra,
+            raises,
+        });
         d
     }
 
