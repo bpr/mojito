@@ -1160,32 +1160,6 @@ impl<'p> CallEdges<'p, '_> {
                     }
                 }
             }
-            // Variant equality dispatches each nominal alternative's
-            // `__eq__` under a tag switch: those instances are edges.
-            MirInstr::BinOp {
-                op: mojito_ast::ast::InfixOp::Eq | mojito_ast::ast::InfixOp::Ne,
-                a,
-                ..
-            } => {
-                let operand = self.function.reg_types.get(&a.0).map(|ty| match ty.kind() {
-                    TyKind::Ref(reference) => &reference.referent,
-                    _ => ty,
-                });
-                if let Some(TyKind::Variant(alternatives)) = operand.map(Ty::kind) {
-                    for alternative in alternatives {
-                        let TyKind::Struct(name, _) = alternative.kind() else {
-                            continue;
-                        };
-                        if mojito_symbol::symbol::is_stdlib_string_struct(name) {
-                            for string in string_structs(self.structs) {
-                                self.push_members(string, "__eq__");
-                            }
-                        } else {
-                            self.push_members(name, "__eq__");
-                        }
-                    }
-                }
-            }
             _ => {}
         }
     }

@@ -683,33 +683,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1109 A member a backend reaches from a value's type keeps its
-  unused arguments**
-
-  `E[n].__eq__(self, other: Self)` returning `True`, `W[n].write_to` that
-  ignores its `self`, or `Arr[n].__getitem__(self, i: Int)` returning `i`
-  keeps one instance per `n`, where upstream's pass clones the generator
-  without the argument.
-  - The backends run a table member (`mir::DISPATCHED_MEMBERS`: `__eq__`,
-    `__hash__`, `write_to`, `__int__`, `__call__`, `__setitem__`, …), an
-    iteration's `__iter__` and `__next__`, and the dunders the builtins
-    dispatch (`__len__`, `__abs__`, `__bool__`, `__round__`, `math`'s) from
-    the value's type with every argument, and every subscript passes its
-    accessor's receiver, so `mir::unused_arguments` gives them no candidate
-    (`PROTOCOL_MEMBERS`, `SUBSCRIPT_ACCESSORS` in `mir/unused_args.rs`).
-  - Upstream has no such dispatch: each is a call in generic library code
-    that `RemoveUnusedParams` rewrites. The fix either makes each reach a
-    call the elaborator rewrites, or has the backends' table dispatch drop
-    the operands the entry's instance removed, with the member table
-    recording the reduced instance.
-  - Probes: `__call__(self, x: Int)` ignoring `x` through a callable value
-    (the devirtualized `call.indirect` already drops, R1031 holds the rest);
-    `__setitem__(self, i: Int, v: Int)` ignoring `v`; `__iter__(self)`
-    returning an iterator built from nothing of `self`.
-  - Found while landing R1033 (2026-10-17).
-  - Depends on R1031.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1035 A package body's cycle check misses the calls its drops
   add**
 
@@ -2773,6 +2746,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `__setitem__(mut self, a: Int, value: Float64)`, prints `4` in Mojito.
     The pin says "value passed to 'value' cannot be converted from 'Int' to
     'Float64'".
+  - Probe (from R1109): `s[0].x = 5` over a value `__getitem__` and
+    `__setitem__` prints `5` at the pin through get-modify-set; Mojito
+    fails with "dynamic element projection requires checked indexed
+    storage, got S".
   - Closes R35 (a store with a setter but no getter is accepted) and R690
     (the getter's arity is not checked on a store).
   - Depends on nothing.
@@ -3673,6 +3650,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     operator, as its `__call__` method call, and lower it as a
     `call.method`; the specializer's `CallIndirect`-over-struct
     devirtualization (`native/mono/specializer.rs`) then goes.
+  - The devirtualization names a reduced `__call__` without dropping its
+    operands ("'Add$mono$V1.__call__$REMOVED$ARG' expects 0 argument(s),
+    got 1" once `__call__` leaves `mir::TYPE_REACHED_MEMBERS`); a
+    `call.method` reduces through `Specializer::reduce_method_call`.
   - Found while landing R1031 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8720,6 +8701,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     it, and passes the handler by reference.
   - Probe: `assets/ok/variant_init_with_constructor.mojo` and
     `variant_deinit_with_linear_payload.mojo`.
+  - Probe (from R1109): the handler operand runs a struct handler's
+    `__call__` from its type (`mir::TYPE_REACHED_MEMBERS`), so a
+    `__call__` ignoring an argument keeps it; upstream's is a call
+    `RemoveUnusedParams` rewrites.
   - Found while landing R1356 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10142,6 +10127,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `modelled_declares` (`mojito-types::conformance`) answers `Intable` for
     a scalar and `Indexer` for an integral scalar only, since the builtin
     conversion has no such constraint, so the bound rejects both instead.
+  - Probe (from R1109): the hash leaf reaches `__hash__` and a hasher's
+    `_update_with_simd` from the value's type
+    (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores;
+    upstream's `SIMD.__hash__` calls `_update_with_simd` in library code.
   - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R336 (the length
     type), and R185 and R186 (so the port is upstream's bodies with no
     leniency).
@@ -10182,6 +10171,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `__bool__`, `__int__`, and `__float__` are checker rules
     (`method_calls/mc_infer.rs`) over the numeric scalars, where upstream's
     `Bool.__init__[T: Boolable]` calls `StringLiteral.__bool__`.
+  - Probe (from R1109): `Int64(C[4](1))` runs `C.__int__` from its type
+    through `simd.make` (`mir::TYPE_REACHED_MEMBERS`), so an `__int__`
+    ignoring `self` keeps one instance per `n`, where `Int(C[n](1))`
+    already calls it.
   - Depends on R1397.
   - Model: Fable, Not Planned.
 
@@ -10486,6 +10479,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     the caller's pack itself.
   - Done when `print` is the library function, the caller's MIR holds its
     pack and defaults, and `PRINT_COST` is gone.
+  - Probe (from R1109): `W[n].write_to(self, mut writer: Some[Writer])`
+    ignoring `self`, over a field reading `n`, keeps one instance per `n`
+    where the pin keeps one: display reaches `write_to`, `write_repr_to`,
+    and a writer's `write_string` from the value's type
+    (`mir::TYPE_REACHED_MEMBERS`), so they keep every argument until
+    `print` calls them.
   - Found while landing R1075 (2026-10-22).
   - Depends on R424 and R422.
   - Model: Fable, Not Planned.

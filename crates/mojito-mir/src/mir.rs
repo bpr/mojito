@@ -94,7 +94,7 @@ pub use register_ends::{
 };
 mod struct_reads;
 pub use struct_reads::{
-    DISPATCHED_MEMBERS, LIFECYCLE_MEMBERS, LayoutReads, StructReads, struct_layout_reads,
+    LIFECYCLE_MEMBERS, LayoutReads, StructReads, TYPE_REACHED_MEMBERS, struct_layout_reads,
     table_member,
 };
 mod symbols;

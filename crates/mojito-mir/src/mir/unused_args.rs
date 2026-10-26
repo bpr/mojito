@@ -15,7 +15,8 @@ use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace,
     MirSubscriptArg, MirSubscriptCall, Reg, SlotParameter, dunder_method_call, instruction_regions,
     instruction_regions_mut, instruction_slots, instruction_subscript_call,
-    instruction_subscript_call_mut, operator_method, retire_parameters, table_member,
+    instruction_subscript_call_mut, operator_method, retire_parameters, subscript_store_call,
+    table_member,
 };
 use mojito_ast::call::{ArgSlot, CallVariadics, MatchError, match_call_slots};
 use mojito_checked::checked::CheckedCallArgumentSource;
@@ -28,20 +29,19 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 /// uses ([`used_slots`]), ascending: the arguments upstream's
 /// `RemoveUnusedParams` removes from the generator a direct call names.
 ///
-/// Only a free function, a nested one, a method a resolved method call,
-/// an operator, or a subscript names, and a static method a call through
-/// its struct or an instance names, the callees whose every demand the
-/// elaborator reduces, have candidates: neither a constructor nor a table
-/// member ([`crate::mir::table_member`]) or protocol member
-/// ([`PROTOCOL_MEMBERS`]), which a backend reaches from a value's type
-/// with every argument, nor one whose signature ties an origin or a
-/// returned reference to a parameter. A nested body's calls by name are
+/// Every function but a constructor, a lifecycle member, and a member a
+/// backend reaches from a value's type ([`crate::mir::table_member`],
+/// [`crate::mir::TYPE_REACHED_MEMBERS`]), which keep every argument, and
+/// one whose signature ties an origin or a returned reference to a
+/// parameter, has candidates: a free function, a nested one, and a method
+/// a method call, an operator, a protocol's call (`len`, `in`, `for`,
+/// `==`), a subscript read, or a subscript store names, the callees whose
+/// every demand the elaborator reduces. A nested body's calls by name are
 /// direct calls, one declared in a `comptime for` too, which each unrolled
 /// copy makes, and its captures are leading arguments like any other. A
 /// `deinit` parameter and a callable one are never candidates; a method's
-/// receiver is one like any other argument, and the call of a generator
-/// without it passes none, but a subscript accessor's
-/// ([`SUBSCRIPT_ACCESSORS`]), which every subscript passes. A collector is
+/// receiver is one like any other argument, an accessor's and a setter's
+/// too, and the call of a generator without it passes none. A collector is
 /// one too, whose elements the rewritten call passes none of, but an owned
 /// collector's drop runs code, so it is a use.
 pub fn unused_arguments(
@@ -56,11 +56,7 @@ pub fn unused_arguments(
         return Vec::new();
     }
     let used = used_slots(function, declarations);
-    let keeps_receiver = declaration.has_receiver
-        && mojito_symbol::symbol::split_method_symbol(name)
-            .is_some_and(|(_, method)| SUBSCRIPT_ACCESSORS.contains(&member_base(method)));
     (0..function.n_params)
-        .filter(|&slot| !(keeps_receiver && slot == 0))
         .filter(|&slot| {
             !function.deinit_params.get(slot).copied().unwrap_or(true)
                 && !mentions(&function.param_types[slot], &|ty| {
@@ -380,10 +376,11 @@ impl CallOperands<'_> {
 /// `removed` slots of its accessor, so declared.
 ///
 /// Those bound the operands at the `positional` and `keyword` indexes
-/// ([`removed_argument_operands`]). The contract lists one argument per declared parameter past the
-/// receiver, by position; the kept ones name their operands by the indexes
-/// the instruction keeps once [`shed_subscript_operands`] sheds the rest,
-/// as upstream's rewritten call of the accessor passes none for them.
+/// ([`removed_argument_operands`]). The contract lists one argument per
+/// declared parameter past the receiver, by position, then one per
+/// operand a collector takes; the kept ones name their operands by the
+/// indexes the instruction keeps once [`shed_subscript_operands`] sheds the
+/// rest, as upstream's rewritten call of the accessor passes none for them.
 pub fn shed_subscript_contract(
     call: &mut MirSubscriptCall,
     declaration: &MirFunctionDeclaration,
@@ -398,9 +395,18 @@ pub fn shed_subscript_contract(
             _ => None,
         })
         .collect();
+    let declared = declaration.param_names.len();
     let mut position = 0;
-    call.arguments.retain(|_| {
-        let kept = !positions.contains(&position);
+    call.arguments.retain(|argument| {
+        let kept = if position < declared {
+            !positions.contains(&position)
+        } else {
+            match argument.source {
+                CheckedCallArgumentSource::Positional(index) => !positional.contains(&index),
+                CheckedCallArgumentSource::Keyword(index) => !keyword.contains(&index),
+                CheckedCallArgumentSource::Default => true,
+            }
+        };
         position += 1;
         kept
     });
@@ -465,34 +471,6 @@ pub fn shed_subscript_operands(
     shed
 }
 
-/// The members a backend runs from a value's type with every argument its
-/// protocol passes, beside the member table's ([`table_member`]): an
-/// iteration's `__iter__` and `__next__`, and the conversions and
-/// arithmetic the builtins `len`, `abs`, `round`, `divmod`, `Bool`,
-/// `Float64`, and `math` dispatch. No call the elaborator rewrites names
-/// one, so none loses an argument.
-const PROTOCOL_MEMBERS: [&str; 15] = [
-    "__iter__",
-    "__next__",
-    "__len__",
-    "__abs__",
-    "__round__",
-    "__divmod__",
-    "__bool__",
-    "__float__",
-    "__trunc__",
-    "__floor__",
-    "__ceil__",
-    "__fma__",
-    "__ceildiv__",
-    "__contains__",
-    "__mlir_index__",
-];
-
-/// The accessors a subscript reaches, whose receiver every subscript
-/// instruction passes, so it is never removed.
-const SUBSCRIPT_ACCESSORS: [&str; 2] = ["__getitem__", "__getitem_param__"];
-
 /// Whether `name`, so declared, is a function whose arguments the pass may
 /// remove ([`unused_arguments`]).
 fn reducible(name: &str, function: &MirFunction, declaration: &MirFunctionDeclaration) -> bool {
@@ -501,7 +479,6 @@ fn reducible(name: &str, function: &MirFunction, declaration: &MirFunctionDeclar
             || mojito_symbol::symbol::split_method_symbol(name).is_none_or(|(_, method)| {
                 !mojito_symbol::symbol::is_initializer_member(member_base(method))
                     && table_member(method).is_none()
-                    && !PROTOCOL_MEMBERS.contains(&member_base(method))
             }))
         && !declaration.returns_reference
         && usize::from(declaration.has_receiver)
@@ -664,8 +641,8 @@ fn argument_forwards_view<'a>(
 }
 
 /// Whether `blocks` or their regions hold a direct call, a resolved method
-/// call, a resolved operator, or a subscript read of a callee `removed`
-/// names arguments of.
+/// call, a resolved operator, or a subscript read or store of a callee
+/// `removed` names arguments of.
 fn calls_removing<'a>(blocks: &[MirBlock], removed: &dyn Fn(&str) -> Option<&'a [VarId]>) -> bool {
     blocks
         .iter()
@@ -677,7 +654,6 @@ fn calls_removing<'a>(blocks: &[MirBlock], removed: &dyn Fn(&str) -> Option<&'a 
                 MirInstr::BinOp { op, resolved, .. } if operator_method(*op).is_some() => {
                     resolved.as_deref()
                 }
-                MirInstr::MultiSet { .. } => None,
                 _ => instruction_subscript_call(instruction).map(|call| call.target.as_str()),
             };
             target
@@ -706,6 +682,14 @@ impl Receivers<'_> {
         }
         fresh
     }
+
+    /// A fresh `None` register: the result of the call a subscript store is.
+    fn unit(&mut self) -> Reg {
+        let fresh = Reg(*self.n_regs);
+        *self.n_regs += 1;
+        self.reg_types.insert(fresh.0, Ty::none());
+        fresh
+    }
 }
 
 /// Drop from each direct call in `blocks` and their regions the operands
@@ -714,12 +698,16 @@ impl Receivers<'_> {
 /// register to `dropped`.
 ///
 /// A resolved operator is the call of the dunder it names, the receiver
-/// its left operand, and a subscript read the call of its accessor: the
-/// view that drops operands holds the call the elaborator rewrites each
-/// to, the operator as the dunder's method call and the subscript shed of
-/// the operands and contract arguments the accessor's removed arguments
-/// bound, while the view that keeps them leaves each instruction for the
-/// elaborator to rewrite.
+/// its left operand, a subscript read the call of its accessor, and a
+/// subscript store the call of its setter, the value its last argument:
+/// the view that drops operands holds the call the elaborator rewrites
+/// each to, the operator as the dunder's method call, the read shed of the
+/// operands and contract arguments the accessor's removed arguments bound,
+/// and the store as the setter's method call
+/// ([`crate::mir::subscript_store_call`]), while the view that keeps them
+/// leaves each instruction for the elaborator to rewrite. A read or store
+/// whose callee removed its receiver takes a register no instruction
+/// defines in its stead, as a method call does.
 fn drop_removed_operands<'a>(
     blocks: &mut [MirBlock],
     receivers: &mut Receivers<'_>,
@@ -784,9 +772,21 @@ fn drop_removed_operands<'a>(
                 continue;
             }
         }
-        if !matches!(instruction, MirInstr::MultiSet { .. })
-            && let Some(call) = instruction_subscript_call(instruction)
-            && !call.arguments.is_empty()
+        if let MirInstr::MultiSet { call, .. } = instruction
+            && let Some((slots, declaration)) = callee(&call.target)
+        {
+            if operands == Operands::Drop {
+                let dest = receivers.unit();
+                subscript_store_call(instruction, dest, declaration);
+            } else {
+                let target = call.target.clone();
+                if keep_store_operands(instruction, receivers, declaration, slots, dropped) {
+                    discounted.insert(target);
+                }
+                continue;
+            }
+        }
+        if let Some(call) = instruction_subscript_call(instruction)
             && let Some((slots, declaration)) = callee(&call.target)
         {
             let target = call.target.clone();
@@ -797,13 +797,36 @@ fn drop_removed_operands<'a>(
                 ),
                 _ => (1, Vec::new()),
             };
-            let Ok((positional, keyword)) =
+            let Ok((positional, keyword)) = (if call.arguments.is_empty() {
+                Ok(Default::default())
+            } else {
                 removed_argument_operands(declaration, slots, count, &keywords)
-            else {
+            }) else {
                 continue;
             };
-            if positional.is_empty() && keyword.is_empty() {
+            let receiver = declaration.has_receiver && slots.contains(&0);
+            if positional.is_empty() && keyword.is_empty() && !receiver {
                 continue;
+            }
+            // The rewritten call passes no receiver, but still names its
+            // struct's parameters, which its type spells, as a method
+            // call's does.
+            if receiver
+                && let MirInstr::Index {
+                    base: object,
+                    base_place: object_place,
+                    ..
+                }
+                | MirInstr::MultiIndex {
+                    object,
+                    object_place,
+                    ..
+                } = instruction
+            {
+                let fresh = receivers.fresh(*object);
+                *object = fresh;
+                *object_place = None;
+                dropped.insert(fresh.0);
             }
             match operands {
                 Operands::Drop => {
@@ -889,6 +912,72 @@ fn drop_removed_operands<'a>(
             _ => {}
         }
     }
+}
+
+/// Clear the places of the operands a subscript store `instruction` passes
+/// for the removed `slots` of its setter, so declared, adding their
+/// registers to `dropped`, and give it a receiver no instruction defines
+/// where the setter removed its own; returns whether it lost an operand.
+///
+/// The value is the setter's last positional argument, or its `value`
+/// keyword one, as the call the store is passes it
+/// ([`crate::mir::subscript_store_call`]).
+fn keep_store_operands(
+    instruction: &mut MirInstr,
+    receivers: &mut Receivers<'_>,
+    declaration: &MirFunctionDeclaration,
+    slots: &[VarId],
+    dropped: &mut BTreeSet<u32>,
+) -> bool {
+    let MirInstr::MultiSet {
+        receiver,
+        receiver_place,
+        args,
+        arg_places,
+        value,
+        value_place,
+        value_keyword,
+        ..
+    } = instruction
+    else {
+        return false;
+    };
+    let keywords: &[&str] = if *value_keyword { &["value"] } else { &[] };
+    let Ok((positional, keyword)) = removed_argument_operands(
+        declaration,
+        slots,
+        args.len() + usize::from(!*value_keyword),
+        keywords,
+    ) else {
+        return false;
+    };
+    let mut changed = !positional.is_empty() || !keyword.is_empty();
+    for &index in &positional {
+        match args.get(index) {
+            Some(MirSubscriptArg::Index(reg)) => {
+                dropped.insert(reg.0);
+                if let Some(place) = arg_places.get_mut(index) {
+                    *place = None;
+                }
+            }
+            None => {
+                dropped.insert(value.0);
+                *value_place = None;
+            }
+        }
+    }
+    if !keyword.is_empty() {
+        dropped.insert(value.0);
+        *value_place = None;
+    }
+    if declaration.has_receiver && slots.contains(&0) {
+        changed = true;
+        let fresh = receivers.fresh(*receiver);
+        *receiver = fresh;
+        *receiver_place = None;
+        dropped.insert(fresh.0);
+    }
+    changed
 }
 
 /// The registers of a subscript `instruction`'s operands at the

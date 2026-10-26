@@ -1355,6 +1355,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A protocol member and a subscript accessor or setter that never use an
+  argument now lose it, as upstream's `RemoveUnusedParams` rewrites each
+  call in library code (R1109): `E[n].__eq__` returning `True`,
+  `L[n].__len__`, `C[n].__iter__`, and `C[n].__contains__` each have one
+  instance for every `n`, a subscript whose accessor never reads `self`
+  is the call of its generator without it, and a store whose setter
+  ignores the value is the `__setitem__` call passing none. Only display,
+  the hash leaf, a scalar construction's `__int__`, and a `Variant`
+  handler's `__call__`, which a backend still reaches from a value's
+  type, keep every argument (`mir::TYPE_REACHED_MEMBERS`). A subscript
+  whose accessor never uses its index collector (`__getitem__(self, *idx:
+  Int)` returning a field) now runs, where its contract kept the
+  collector's argument and failed to verify, and a store on a setter
+  whose `value` follows its index collector no longer misbinds its
+  checked parameters when the setter drops one.
+
 - The VM no longer dispatches a `call.indirect` over a struct value to its
   `__call__` by name (R1031): the elaborator devirtualizes every call on a
   callable struct into the `__call__` instance's method call, so a struct

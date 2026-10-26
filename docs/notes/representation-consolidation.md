@@ -86,12 +86,17 @@ the entries named. A single command cannot use both.
    same for an operator over a bound, and R1359 (landed) for tuple
    comparison. R1348 (landed) made a struct operator a call in MIR.
 
-   Third, R1281 reads the witness table instead of composing a name. R1109
-   then becomes a deletion (R1031, the VM's by-name `__call__` dispatch,
-   landed; R1466 makes a struct-value call `__call__`'s method call):
+   Third, R1281 reads the witness table instead of composing a name.
+   R1109 landed without it: every protocol member a call reaches (`len`,
+   `in`, `for`, `==`, a subscript read or store) now names its member's
+   generator without the unused arguments. Only the members a backend
+   still reaches from a value's type (`mir::TYPE_REACHED_MEMBERS`) keep
+   theirs, each until its entry makes the reach a library call: display
+   (R1287, R422), the hash leaf (R1397), a scalar construction's
+   `__int__` (R1399), and a `Variant` handler's `__call__` (R1444, R1466):
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1281 --task R1109 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1281 -n 0
    ```
 
    The lifecycle traits (`Copyable`, `Movable`, `Deinitable`, …) are not
@@ -245,9 +250,9 @@ missing.
     names.
   - The elaborator composes `{struct}.{method}` (`resolve_method_symbol`,
     `Instances::dispatched_overload_target`).
-  - The backends dispatch from the value's type through
-    `mir::DISPATCHED_MEMBERS`, `PROTOCOL_MEMBERS`, and
-    `SUBSCRIPT_ACCESSORS`.
+  - The backends dispatch display, the hash leaf, a scalar
+    construction's `__int__`, and a `Variant` handler's `__call__` from
+    the value's type, through `mir::TYPE_REACHED_MEMBERS`.
   - R1052 folded the witness only for traits that have a declaration. The
     rest of `mojito_types::conformance::COMPILER_TRAITS` records no
     witness table.
@@ -257,12 +262,14 @@ missing.
   `a op b` is checked as `a.__op__(b)` and emitted as a `kgen.call` of
   the requirement, which substitution folds to the member.
 - **Size**:
-  - R1109 is "one instance per `n`" for every table member.
+  - Each `mir::TYPE_REACHED_MEMBERS` member that ignores an argument
+    keeps one instance per `n` (R1109 closed it for every call-reached
+    member).
   - R987 counts 868 `List.__len__` and 523 `Span.__len__` instances
     reached through trait-bound calls.
   - R1280's iteration step cannot inline.
 - **Closes**:
-  - Dispatch: R1109, R1280, R1466 (R1031 closed).
+  - Dispatch: R1280, R1466 (R1031 and R1109 closed).
   - Operators: R81, R1238 (R708, R1332, R697, and R1282 closed).
   - Traits: R712, R579 (R707, R706, R191, and R109 closed).
 - **Shrinks** R987, R1291, R684, R113, R1119, R25, R817, R862, and R860

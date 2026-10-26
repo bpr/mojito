@@ -2772,6 +2772,196 @@ fn a_method_call_names_the_generator_without_its_unused_receiver() {
     assert_eq!(calls, [0, 0], "each call passes no receiver");
 }
 
+/// The names of `program`'s functions that contain `part`, sorted.
+fn functions_naming(program: &SpecializedProgram, part: &str) -> Vec<String> {
+    let mut names: Vec<String> = program
+        .program
+        .functions
+        .iter()
+        .map(|(name, _)| name.clone())
+        .filter(|name| name.contains(part))
+        .collect();
+    names.sort();
+    names
+}
+
+/// A call names the generator without its callee's unused arguments, a
+/// clone no backend reaches from the type, so no struct's member table
+/// records it: `g + 1` names `G.__add__`'s reduced instance alone.
+#[test]
+fn a_reduced_instance_is_no_member_table_entry() {
+    let source = "struct G[n: Int](Copyable, Movable):\n\
+     \x20   var v: SIMD[DType.int64, Self.n]\n\
+     \x20   def __init__(out self, x: Int):\n\
+     \x20       self.v = SIMD[DType.int64, Self.n](x)\n\
+     \x20   @no_inline\n\
+     \x20   def __add__(self, o: Int) -> Int:\n\
+     \x20       return 1\n\
+     def main() raises:\n\
+     \x20   print(G[1](1) + 1, G[2](2) + 1)\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        functions_naming(&specialized, "__add__"),
+        ["G.__add__$REMOVED$ARG$mono"]
+    );
+    let entries: Vec<&str> = specialized
+        .program
+        .declarations
+        .structs
+        .iter()
+        .flat_map(|declaration| &declaration.members)
+        .map(|entry| entry.symbol.as_str())
+        .filter(|symbol| symbol.contains("$REMOVED$ARG"))
+        .collect();
+    assert_eq!(entries, Vec::<&str>::new());
+}
+
+/// `len` and `==` are calls of `__len__` and `__eq__`, as upstream's
+/// library code calls them, so each names its member's generator without
+/// the receiver it never reads: one instance for every `n`.
+#[test]
+fn a_protocol_member_call_names_its_reduced_generator() {
+    let source = "struct L[n: Int](Sized, Equatable, Copyable, Movable):\n\
+     \x20   var v: SIMD[DType.int64, Self.n]\n\
+     \x20   def __init__(out self, x: Int):\n\
+     \x20       self.v = SIMD[DType.int64, Self.n](x)\n\
+     \x20   @no_inline\n\
+     \x20   def __len__(self) -> Int:\n\
+     \x20       return 4\n\
+     \x20   @no_inline\n\
+     \x20   def __eq__(self, other: Self) -> Bool:\n\
+     \x20       return True\n\
+     def main() raises:\n\
+     \x20   print(len(L[1](1)), len(L[2](2)))\n\
+     \x20   print(L[1](1) == L[1](2), L[2](1) != L[2](2))\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        functions_naming(&specialized, "__len__"),
+        ["L.__len__$REMOVED$ARG$mono"]
+    );
+    assert_eq!(
+        functions_naming(&specialized, "__eq__"),
+        ["L.__eq__$REMOVED$ARG$mono"]
+    );
+}
+
+/// A subscript store is the call of its setter, so one whose setter never
+/// reads the value passes none: each store becomes the `__setitem__` call
+/// of the generator without it, passing the index alone.
+#[test]
+fn a_subscript_store_sheds_the_setters_unused_value() {
+    let source = "struct S[n: Int](Copyable, Movable):\n\
+     \x20   var v: SIMD[DType.int64, Self.n]\n\
+     \x20   var last: Int\n\
+     \x20   def __init__(out self, x: Int):\n\
+     \x20       self.v = SIMD[DType.int64, Self.n](x)\n\
+     \x20       self.last = 0\n\
+     \x20   def __getitem__(self, i: Int) -> Int:\n\
+     \x20       return self.last\n\
+     \x20   @no_inline\n\
+     \x20   def __setitem__(mut self, i: Int, v: Int):\n\
+     \x20       self.last = i\n\
+     def main() raises:\n\
+     \x20   var s = S[1](1)\n\
+     \x20   var r = S[2](2)\n\
+     \x20   s[3] = 7\n\
+     \x20   r[4] = 8\n\
+     \x20   print(s.last, r.last)\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let stores = instructions(&function(&specialized, "main").blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method,
+                resolved: Some(resolved),
+                args,
+                kwargs,
+                ..
+            } if method == "__setitem__" => Some((resolved.clone(), args.len() + kwargs.len())),
+            MirInstr::MultiSet { .. } => Some((String::new(), usize::MAX)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        stores,
+        [
+            ("S$mono$V1.__setitem__$REMOVED$ARG".to_string(), 1),
+            ("S$mono$V2.__setitem__$REMOVED$ARG".to_string(), 1),
+        ]
+    );
+}
+
+/// A subscript is the call of its accessor, so one whose accessor never
+/// reads `self` names the generator without it, one for every `n`, as the
+/// `call` of it passing the index alone.
+#[test]
+fn a_subscript_names_the_accessor_without_its_unused_receiver() {
+    let source = "struct Arr[n: Int](Copyable, Movable):\n\
+     \x20   var v: SIMD[DType.int64, Self.n]\n\
+     \x20   def __init__(out self, x: Int):\n\
+     \x20       self.v = SIMD[DType.int64, Self.n](x)\n\
+     \x20   @no_inline\n\
+     \x20   def __getitem__(self, i: Int) -> Int:\n\
+     \x20       return i\n\
+     def main() raises:\n\
+     \x20   var a = Arr[1](1)\n\
+     \x20   var b = Arr[2](2)\n\
+     \x20   print(a[3], b[4])\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let name = "Arr.__getitem__$REMOVED$ARG$mono";
+    assert_eq!(functions_naming(&specialized, "__getitem__"), [name]);
+    let reads = instructions(&function(&specialized, "main").blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Call { func, args, .. } if func.0 == name => Some(args.len()),
+            MirInstr::Index { call: Some(_), .. } | MirInstr::MultiIndex { call: Some(_), .. } => {
+                Some(usize::MAX)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(reads, [1, 1], "each read calls the accessor with its index");
+}
+
+/// Display reaches `write_to` from the value's type, not through a call
+/// the elaborator rewrites, so it keeps the full generator: one instance
+/// over a layout that reads no `n`, never one per `n`, which a full demand
+/// of a generator that removed an argument would make.
+#[test]
+fn a_type_reached_member_keeps_its_full_generator() {
+    let source = "@fieldwise_init\n\
+     struct W[n: Int](Writable, Copyable, Movable):\n\
+     \x20   var x: Int\n\
+     \x20   def write_to(self, mut writer: Some[Writer]):\n\
+     \x20       writer.write(\"w\")\n\
+     def main() raises:\n\
+     \x20   print(W[1](1), W[2](2))\n";
+    let specialized = specialized_with_removed(source, &[]).expect("specialize");
+    assert_eq!(
+        mojito_mir::mir::verify::verify_concrete(&specialized.program),
+        Vec::<String>::new()
+    );
+    let instances = functions_naming(&specialized, "W.write_to");
+    assert_eq!(instances.len(), 1, "{instances:?}");
+    assert!(!instances[0].contains("$REMOVED$ARG"), "{instances:?}");
+}
+
 /// An argument a body only forwards to a callee's removed argument is
 /// unused too, as upstream rewrote the call first: `fwd` has one reduced
 /// instance for every `n`, and its call of `fa`'s passes no argument.

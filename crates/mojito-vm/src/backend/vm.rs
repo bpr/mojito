@@ -870,7 +870,7 @@ impl Prog {
         self.index_of(candidates.resolve(method, argc)?)
     }
 
-    /// The function index of the dispatched member `method` a value of the
+    /// The function index of the type-reached member `method` a value of the
     /// struct `name` runs for a call whose checker selection is `resolved`:
     /// the instance it names, else the table instance under the method
     /// spelling it selects (a `__trait_dispatch` contract's), else

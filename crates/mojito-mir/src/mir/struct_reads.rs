@@ -64,28 +64,26 @@ pub const LIFECYCLE_MEMBERS: [&str; 3] = ["__deinit__", "__copyinit__", "__movei
 /// naming them.
 ///
 /// A concrete struct declaration's member table records them beside its
-/// lifecycle members: display (`write_to`, `write_repr_to`, a
-/// writer's `write_string`), hashing (`__hash__`, a hasher's
-/// `_update_with_simd`), equality (`__eq__`, and `__ne__` through it), the
-/// `__int__` a scalar construction converts through, the `__setitem__` the
-/// VM's store through an indexed place dispatches, and the `__call__` a
-/// callable value dispatches.
-pub const DISPATCHED_MEMBERS: [&str; 10] = [
+/// lifecycle members: display (`write_to`, `write_repr_to`, a writer's
+/// `write_string`), the hash leaf (`__hash__`, a hasher's
+/// `_update_with_simd`), the `__int__` a scalar construction converts
+/// through, and the `__call__` a `Variant` handler dispatches. Upstream
+/// reaches none of them so: each is a call in its library code, which
+/// `RemoveUnusedParams` rewrites, so each keeps its unused arguments until
+/// its reach becomes such a call.
+pub const TYPE_REACHED_MEMBERS: [&str; 7] = [
     "write_to",
     "write_repr_to",
     "write_string",
     "__hash__",
     "_update_with_simd",
-    "__eq__",
-    "__ne__",
     "__int__",
-    "__setitem__",
     "__call__",
 ];
 
 /// The member a struct's member table records the method `method` under
 /// (its spelling before any `$` qualifier), when it is a lifecycle or
-/// dispatched member.
+/// type-reached member.
 ///
 /// A constructor, which a call or a slice bound's read reaches, is the
 /// instance it names, never a table entry.
@@ -93,7 +91,7 @@ pub fn table_member(method: &str) -> Option<&'static str> {
     let base = method.split('$').next().unwrap_or(method);
     LIFECYCLE_MEMBERS
         .into_iter()
-        .chain(DISPATCHED_MEMBERS)
+        .chain(TYPE_REACHED_MEMBERS)
         .find(|member| *member == base)
 }
 

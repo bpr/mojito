@@ -26,7 +26,7 @@ use unify::*;
 
 use availability::Availability;
 use catalog::{Catalog, StructCatalog};
-use infer::{ReceiverCall, SubscriptOperands};
+use infer::{DroppedOperands, ReceiverCall, SubscriptOperands};
 use mojito_ast::call::{ArgSlot, CallVariadics, match_call_slots};
 use mojito_checked::checked::CheckedConst;
 use mojito_mir::mir::text::package::PackageBodies;

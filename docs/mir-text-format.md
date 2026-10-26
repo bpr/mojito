@@ -761,10 +761,11 @@ A struct that owns a lifecycle member carries `members: [member { name:
 symbol, symbol: symbol }, ...]` after `associated_values` (schema 1.65):
 its member table, sorted by name, then symbol, naming the function that
 is its `__deinit__`, `__copyinit__`, or `__moveinit__`. A concrete struct's
-table also names each instance of a member a backend reaches from a
-value's type (`mir::DISPATCHED_MEMBERS`: `write_to`, `write_repr_to`,
-`write_string`, `__hash__`, `_update_with_simd`, `__eq__`, `__ne__`,
-`__int__`, `__setitem__`, `__call__`) and of every other special method
+table also names each full instance of a member a backend reaches from a
+value's type (`mir::TYPE_REACHED_MEMBERS`: `write_to`, `write_repr_to`,
+`write_string`, `__hash__`, `_update_with_simd`, `__int__`, `__call__`),
+never the generator a call names without its unused arguments, and of
+every other special method
 or trait requirement its type reaches
 (`mir::MirDeclarations::reached_from_type`), keyed by the template's method
 spelling with any overload qualifier (`__eq__$ov$Self`), so a generic or
@@ -776,7 +777,7 @@ concrete struct's instances, so an owner-less member shared by every
 instance of its struct (`DBox.__deinit__$mono`, `WBox.write_to$mono`)
 appears in each instance's table. The concrete verifier reports a table
 naming a function the program does not define, a key that is no
-lifecycle or dispatched member, or a second entry for a lifecycle member.
+lifecycle or type-reached member, or a second entry for a lifecycle member.
 The writer omits the field when it is empty, the reader takes an absent
 field as empty.
 

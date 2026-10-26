@@ -1309,7 +1309,7 @@ impl VmBackend {
                     index: *index,
                     value: Box::new(payload),
                 };
-                self.store_at_call_place(prog, frame_id, place, replacement, regs, vars)?;
+                self.store_at_call_place(frame_id, place, replacement, regs, vars)?;
                 self.drop_variant_payload(prog, old, destructors)?;
                 regs[dest.0 as usize] = Value::None;
             }
@@ -1375,7 +1375,7 @@ impl VmBackend {
                     index: *index,
                     value: Box::new(payload),
                 };
-                self.store_at_call_place(prog, frame_id, place, replacement, regs, vars)?;
+                self.store_at_call_place(frame_id, place, replacement, regs, vars)?;
                 self.drop_variant_payload(prog, old, destructors)?;
                 regs[dest.0 as usize] = Value::None;
             }
@@ -1427,7 +1427,7 @@ impl VmBackend {
                     index: *input_index,
                     value: Box::new(payload),
                 };
-                self.store_at_call_place(prog, frame_id, place, replacement, regs, vars)?;
+                self.store_at_call_place(frame_id, place, replacement, regs, vars)?;
                 regs[dest.0 as usize] = *old_payload;
             }
             MirInstr::MakeSimd {
@@ -1528,7 +1528,7 @@ impl VmBackend {
                     self.canonicalize_value_references(frame_id, vars, &mut v);
                     self.write_reference(&reference, frame_id, vars, v)?;
                 } else {
-                    self.store_at_place(prog, frame_id, place, v, regs, vars)?;
+                    self.store_at_place(frame_id, place, v, regs, vars)?;
                 }
             }
             MirInstr::StoreRef { place, reference } => {
@@ -1538,7 +1538,7 @@ impl VmBackend {
                         "vm: reference storage requires a reference handle".to_string(),
                     ));
                 }
-                self.store_at_place(prog, frame_id, place, handle, regs, vars)?;
+                self.store_at_place(frame_id, place, handle, regs, vars)?;
             }
             MirInstr::LoadPlace { dest, place } => {
                 // The read half of `c[i] += e` on a user struct goes through

@@ -325,7 +325,7 @@ impl VmBackend {
                     let arguments = vec![hasher, crate::runtime::hash_leaf_value(recv.clone())];
                     let (_, variables) = self.call_frame(prog, fidx, arguments)?;
                     let updated = variables.into_iter().next().unwrap_or(Value::None);
-                    self.store_at_call_place(prog, frame_id, place, updated, regs, vars)?;
+                    self.store_at_call_place(frame_id, place, updated, regs, vars)?;
                     return Ok(Value::None);
                 }
                 // `Floorable`/`Ceilable`/`Truncable` — `x.__floor__()` etc.
@@ -391,7 +391,7 @@ impl VmBackend {
                     )
                 })?;
                 let text = format!("{current}{}", self.string_span_text(&args[0])?);
-                self.store_at_call_place(prog, frame_id, place, Value::Str(text), regs, vars)?;
+                self.store_at_call_place(frame_id, place, Value::Str(text), regs, vars)?;
                 Ok(Value::None)
             }
             Value::Str(text) if method == "byte_length" && args.is_empty() => {
@@ -424,7 +424,7 @@ impl VmBackend {
                 })();
                 self.restore_caller_mirror(stack_base, vars)?;
                 formatted?;
-                self.store_at_call_place(prog, frame_id, place, Value::Str(text), regs, vars)?;
+                self.store_at_call_place(frame_id, place, Value::Str(text), regs, vars)?;
                 Ok(Value::None)
             }
             // A specialized pack's storage answers `Sized` where it stands:
@@ -483,7 +483,7 @@ impl VmBackend {
                 })();
                 self.restore_caller_mirror(stack_base, vars)?;
                 written?;
-                self.store_at_call_place(prog, frame_id, place, writer, regs, vars)?;
+                self.store_at_call_place(frame_id, place, writer, regs, vars)?;
                 Ok(Value::None)
             }
             Value::Struct { name, .. } => {
@@ -531,7 +531,7 @@ impl VmBackend {
                     && !receiver_as_reference
                     && let Some(place) = recv_place
                 {
-                    self.store_at_call_place(prog, frame_id, place, Value::Moved, regs, vars)?;
+                    self.store_at_call_place(frame_id, place, Value::Moved, regs, vars)?;
                 }
                 let mut reference_inputs = Vec::new();
                 if receiver_as_reference {
@@ -618,14 +618,7 @@ impl VmBackend {
                     && !receiver_as_reference
                     && let Some(place) = recv_place
                 {
-                    self.store_at_call_place(
-                        prog,
-                        frame_id,
-                        place,
-                        frame_vars[0].clone(),
-                        regs,
-                        vars,
-                    )?;
+                    self.store_at_call_place(frame_id, place, frame_vars[0].clone(), regs, vars)?;
                 }
                 Ok(ret)
             }

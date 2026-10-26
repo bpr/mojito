@@ -1,0 +1,59 @@
+  functions: [
+      fn {
+        name: "Arr.__getitem__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, i],
+        params: 2,
+        param_types: [struct_type { name: Arr, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 158, end: 159, origin: present($v1) }) }],
+        removed_args: [$v0],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v1, mode: copy }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      },
+      fn {
+        name: get,
+        registers: 3,
+        vars: 2,
+        var_names: [a, i],
+        params: 2,
+        param_types: [struct_type { name: Arr, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: Arr, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: Arr, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 204, end: 205, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 206, end: 207, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 204, end: 208, origin: absent }) }],
+        removed_args: [$v0],
+        callee_removed_args: [callee_args { callee: "Arr.__getitem__", args: [$v0] }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [] }), projections: [], type: present(struct_type { name: Arr, arguments: [] }), through: absent } },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              index.get { dest: %r2, base: %r0, index: %r1, base_place: present(place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [] }), projections: [], type: present(struct_type { name: Arr, arguments: [] }), through: absent }), index_place: absent, call: present(subscript_call { target: "Arr.__getitem__", raises: absent, result_type: Int, receiver_requires_place: false, receiver_convention: absent, arguments: [call_argument { source: positional(0), parameter_type: Int, requires_place: false, convention: absent }], capture_accesses: [], reference_result: absent, param_arg_regs: [], param_decls: [] }), intrinsic: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      }
+  ]

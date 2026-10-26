@@ -22,6 +22,8 @@ pub(super) struct SubscriptOperands<'a> {
 /// The operand indexes a subscript instruction sheds for its accessor's
 /// removed arguments, as upstream's rewritten call passes none for them.
 pub(super) struct DroppedOperands {
+    /// The accessor's template, whose reduced generator the call names.
+    pub(super) target: String,
     pub(super) positional: BTreeSet<usize>,
     pub(super) keyword: BTreeSet<usize>,
 }
@@ -214,6 +216,7 @@ impl Specializer<'_> {
             &keyword,
         );
         Ok(Some(DroppedOperands {
+            target,
             positional,
             keyword,
         }))
@@ -659,6 +662,22 @@ impl Specializer<'_> {
             _ => &[],
         };
         let kept = |slot: usize| !removed.contains(&(slot as VarId));
+        let slots = self
+            .functions
+            .get(target)
+            .map_or(0, |function| function.param_types.len());
+        // The checked parameters list the declared ones by position, then
+        // the collector's: each binds the slot its parameter has.
+        let parameter_slot = |position: usize| {
+            let parameter = if position < declaration.param_names.len() {
+                mojito_mir::mir::SlotParameter::Position(position)
+            } else if declaration.variadic.is_some() {
+                mojito_mir::mir::SlotParameter::Variadic
+            } else {
+                mojito_mir::mir::SlotParameter::KwVariadic
+            };
+            (0..slots).find(|&slot| declaration.slot_parameter(slot) == parameter)
+        };
         let patterns: Vec<&Ty> = self
             .functions
             .get(target)
@@ -677,7 +696,7 @@ impl Specializer<'_> {
             .parameters
             .iter()
             .enumerate()
-            .filter(|(position, _)| kept(position + 1))
+            .filter(|(position, _)| parameter_slot(*position).is_none_or(kept))
             .map(|(_, ty)| *ty)
             .collect();
         for (pattern, parameter) in parameter_patterns(&patterns, &parameters) {

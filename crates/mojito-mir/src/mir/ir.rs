@@ -502,6 +502,155 @@ pub fn dunder_method_call(
     }
 }
 
+/// Rewrite a subscript store `instruction` into the call it is; returns
+/// whether it was one.
+///
+/// The call is `object.__setitem__(indexes..., value)`, its `None` result
+/// `dest`, as upstream's `a[i] = v` is that call. The value is the last
+/// positional argument, or the `value` keyword one where the setter, so
+/// `declared`, collects its indexes, each with its place; the collector
+/// the store builds is the operand the call spreads, as a call building
+/// one passes it. The call takes the contract's target, error edge,
+/// receiver convention, and capture accesses.
+pub fn subscript_store_call(
+    instruction: &mut MirInstr,
+    dest: Reg,
+    declared: &MirFunctionDeclaration,
+) -> bool {
+    if !matches!(instruction, MirInstr::MultiSet { .. }) {
+        return false;
+    }
+    let MirInstr::MultiSet {
+        receiver,
+        receiver_place,
+        args,
+        mut arg_places,
+        value,
+        value_place,
+        value_keyword,
+        call,
+    } = std::mem::replace(instruction, MirInstr::Unsupported(String::new()))
+    else {
+        return false;
+    };
+    let mut positional: Vec<Reg> = args
+        .iter()
+        .map(|argument| match argument {
+            MirSubscriptArg::Index(reg) => *reg,
+        })
+        .collect();
+    arg_places.resize(positional.len(), None);
+    let value_place = value_place.map(|place| *place);
+    let (kwargs, kwarg_places) = if value_keyword {
+        (vec![("value".to_string(), value)], vec![value_place])
+    } else {
+        positional.push(value);
+        arg_places.push(value_place);
+        (Vec::new(), Vec::new())
+    };
+    let call = *call;
+    let spread = collector_operand(declared, positional.len(), &kwargs);
+    *instruction = MirInstr::MethodCall {
+        dest,
+        recv: receiver,
+        method: "__setitem__".to_string(),
+        resolved: Some(call.target),
+        raises: call.raises,
+        reference_result: None,
+        result_adapter: None,
+        args: positional,
+        kwargs,
+        recv_place: receiver_place,
+        recv_writes: !matches!(
+            call.receiver_convention,
+            Some(mojito_ast::ast::ArgConvention::Imm)
+        ),
+        receiver_convention: call.receiver_convention,
+        arg_places,
+        kwarg_places,
+        capture_accesses: call.capture_accesses,
+        param_arg_regs: Vec::new(),
+        param_decls: Vec::new(),
+        instantiated_args: Vec::new(),
+        spread,
+    };
+    true
+}
+
+/// Rewrite a subscript read `instruction` into the receiverless call of its
+/// accessor's generator; returns whether it was one.
+///
+/// The call names the instance the contract names, as upstream's rewritten
+/// call of an accessor that never reads `self` passes none. It passes the
+/// indexes the read passes, each with its place, the collector the read
+/// builds the operand it spreads, as the accessor, so `declared`, binds
+/// them, and takes the contract's error edge and capture accesses.
+pub fn receiverless_subscript_call(
+    instruction: &mut MirInstr,
+    declared: &MirFunctionDeclaration,
+) -> bool {
+    let index_operand = |argument: MirSubscriptArg| match argument {
+        MirSubscriptArg::Index(reg) => reg,
+    };
+    let (dest, args, mut arg_places, kwargs, kwarg_places, call) =
+        match std::mem::replace(instruction, MirInstr::Unsupported(String::new())) {
+            MirInstr::Index {
+                dest,
+                index,
+                index_place,
+                call: Some(call),
+                ..
+            } => (
+                dest,
+                vec![index],
+                vec![index_place.map(|place| *place)],
+                Vec::new(),
+                Vec::new(),
+                call,
+            ),
+            MirInstr::MultiIndex {
+                dest,
+                args,
+                arg_places,
+                kwargs,
+                kwarg_places,
+                call: Some(call),
+                ..
+            } => (
+                dest,
+                args.into_iter().map(index_operand).collect(),
+                arg_places,
+                kwargs
+                    .into_iter()
+                    .map(|(name, argument)| (name, index_operand(argument)))
+                    .collect(),
+                kwarg_places,
+                call,
+            ),
+            other => {
+                *instruction = other;
+                return false;
+            }
+        };
+    arg_places.resize(args.len(), None);
+    let spread = collector_operand(declared, args.len(), &kwargs);
+    *instruction = MirInstr::Call {
+        dest,
+        func: FuncRef::named(&call.target),
+        raises: call.raises,
+        args,
+        kwargs,
+        arg_places,
+        kwarg_places,
+        capture_accesses: call.capture_accesses,
+        param_arg_regs: Vec::new(),
+        receiver: None,
+        instantiated_args: Vec::new(),
+        spread,
+    };
+    true
+}
+
 /// The checker-selected `__getitem__`/`__setitem__` call a subscript
 /// instruction carries, if any.
 pub fn instruction_subscript_call(instruction: &MirInstr) -> Option<&MirSubscriptCall> {
@@ -1103,6 +1252,34 @@ pub fn addressed_slots<'a>(blocks: impl IntoIterator<Item = &'a MirBlock>) -> BT
         collect_block_slots(block, &mut addressed);
     }
     addressed
+}
+
+/// The position of the operand a call passing `positional` operands and
+/// `kwargs` to a function so `declared` spreads into its positional
+/// collector: the collector a subscript builds, its one overflow operand.
+fn collector_operand(
+    declared: &MirFunctionDeclaration,
+    positional: usize,
+    kwargs: &[(String, Reg)],
+) -> Option<usize> {
+    declared.variadic.as_ref()?;
+    let keywords: Vec<&str> = kwargs.iter().map(|(name, _)| name.as_str()).collect();
+    mojito_ast::call::match_call_slots(
+        &declared.param_names,
+        &declared.required,
+        declared.positional_only,
+        declared.keyword_only,
+        positional,
+        &keywords,
+        mojito_ast::call::CallVariadics {
+            positional: true,
+            keyword: declared.kw_variadic.is_some(),
+        },
+    )
+    .ok()?
+    .positional_overflow
+    .first()
+    .copied()
 }
 
 /// The renumbering [`retire_slots`] and [`retire_parameters`] share.

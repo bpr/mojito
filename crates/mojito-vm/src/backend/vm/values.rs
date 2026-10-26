@@ -148,43 +148,13 @@ impl VmBackend {
         apply_prefix(op, value)
     }
 
-    /// `c[i] = value` where the container `c` (at `parent`) is a user struct →
-    /// `c.__setitem__(i, value)`, writing the mutated `self` back to `c`'s place.
-    /// The MIR has already evaluated the receiver root, index, and RHS exactly once;
-    /// this clones the receiver, runs the `mut self` method, and stores its resulting
-    /// `self` (frame slot 0) back — the same write-back a normal `mut self` call uses.
-    pub(super) fn store_index_dunder(
-        &mut self,
-        prog: &Prog,
-        parent: &MirPlace,
-        idx: Value,
-        value: Value,
-        regs: &[Value],
-        vars: &mut [Value],
-    ) -> Result<(), RuntimeError> {
-        let recv = nav_mut(vars, regs, parent)?.clone();
-        let Value::Struct { name, .. } = &recv else {
-            return Err(RuntimeError::TypeError(
-                "__setitem__ dispatch requires a struct container".to_string(),
-            ));
-        };
-        let fidx = prog.struct_member(name, "__setitem__", 2).ok_or_else(|| {
-            RuntimeError::Unsupported(format!("vm: struct '{name}' has no method '__setitem__'"))
-        })?;
-        let (_, frame_vars) = self.call_frame(prog, fidx, vec![recv, idx, value])?;
-        *nav_mut(vars, regs, parent)? = frame_vars.into_iter().next().unwrap_or(Value::None);
-        Ok(())
-    }
-
     /// Store a value through any currently supported place shape. A final index
-    /// into an arena pointer writes the heap; a final index into a user struct
-    /// dispatches `__setitem__`; ordinary slots, fields, private pack storage,
-    /// and SIMD lanes use `store_place`. Shared by MIR stores and mut-self
+    /// into an arena pointer writes the heap; ordinary slots, fields, private
+    /// pack storage, and SIMD lanes use `store_place`. Shared by MIR stores and mut-self
     /// write-back so `self.buckets[i].append(v)` follows the same path as
     /// `self.buckets[i] = row`.
     pub(super) fn store_at_place(
         &mut self,
-        prog: &Prog,
         frame_id: FrameId,
         place: &MirPlace,
         value: Value,
@@ -193,7 +163,6 @@ impl VmBackend {
     ) -> Result<(), RuntimeError> {
         enum Target {
             Pointer(u64, i64, Reg),
-            StructIndex(Box<MirPlace>, Reg),
             Ordinary,
         }
         let place = &*place.storage();
@@ -226,7 +195,6 @@ impl VmBackend {
                 Value::Pointer { allocation, offset } => {
                     Target::Pointer(*allocation, *offset, *index)
                 }
-                Value::Struct { .. } => Target::StructIndex(Box::new(parent), *index),
                 _ => Target::Ordinary,
             }
         } else {
@@ -238,10 +206,6 @@ impl VmBackend {
                 let (region, slot) = self.heap_index(allocation, base, offset)?;
                 self.heap_store(region, slot, value);
                 Ok(())
-            }
-            Target::StructIndex(parent, index) => {
-                let index = regs[index.0 as usize].clone();
-                self.store_index_dunder(prog, &parent, index, value, regs, vars)
             }
             Target::Ordinary => store_place(vars, regs, place, value),
         }
@@ -282,7 +246,6 @@ impl VmBackend {
     /// re-root the write at the storage the handle designates.
     pub(super) fn store_at_call_place(
         &mut self,
-        prog: &Prog,
         frame_id: FrameId,
         place: &MirPlace,
         value: Value,
@@ -309,7 +272,7 @@ impl VmBackend {
             found
         };
         if !crosses_reference {
-            return self.store_at_place(prog, frame_id, place, value, regs, vars);
+            return self.store_at_place(frame_id, place, value, regs, vars);
         }
         self.write_reference(&handle, frame_id, vars, value)
     }

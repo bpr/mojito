@@ -1174,6 +1174,7 @@ assets/ok/tuple_template_served.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_call.mojo	main	exe-differential	sanitized
 assets/ok/tuple_unpack_place_copies.mojo	main	exe-differential	sanitized
+assets/ok/type_member_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/type_names_applied_elements.mojo	main	exe-differential	sanitized
 assets/ok/type_pack_reads_through_typelist.mojo	main	exe-differential	sanitized
 assets/ok/type_param_copy_construction.mojo	main	exe-differential	sanitized

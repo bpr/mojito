@@ -6615,9 +6615,11 @@ point where a slot declared in a loop is uninitialized again.
   one `DBox.__deinit__$mono`, as upstream's struct nests its member
   generators. The table names each member a backend reaches from a
   value's type rather than from the instance a call names, too
-  (`mir::DISPATCHED_MEMBERS`: display, a writer's `write_string`, hashing,
-  equality, `__int__`, the `__setitem__` the VM's store through an
-  indexed place dispatches, `__call__`),
+  (`mir::TYPE_REACHED_MEMBERS`: display, a writer's `write_string`, the
+  hash leaf, the `__int__` a scalar construction converts through, a
+  `Variant` handler's `__call__`), each a full instance: the generator a
+  call names without its unused arguments is no entry
+  (`Specializer::enqueue`),
   keyed by the template's method spelling, overload qualifier included,
   and the backends select among a member's entries with
   `symbol::MemberCandidates`, the overload rules of
@@ -6708,14 +6710,15 @@ point where a slot declared in a loop is uninitialized again.
   `mir::retire_parameters`, `mir::unread_parameters_of`), so a parameter
   only an unused argument's type named is unread too: `fa[n](a: Arr[n])`
   and `fav[n](var a: Arr[n])` remove `a` and then `n`. Only a free
-  function, a nested one, and a method (R1011, R1032) that is neither a
-  `mir::table_member` nor a protocol member a backend runs from a value's
-  type with every argument (`__iter__`, `__next__`, and the `__len__`,
-  `__abs__`, `__bool__`, and other dunders the builtins dispatch), none
-  declared in a compile-time region nor tying an origin or a returned
-  reference to a parameter, has candidates (`mir::unused_arguments`), and
-  never a `deinit` or a callable parameter, nor a subscript accessor's
-  receiver, which every subscript passes (R1109). A slot maps to its
+  function, a nested one, and a method (R1011, R1032) that is no
+  `mir::table_member` (a lifecycle member, or one of
+  `mir::TYPE_REACHED_MEMBERS`, which a backend reaches from a value's type
+  with every argument), none declared in a compile-time region nor tying
+  an origin or a returned reference to a parameter, has candidates
+  (`mir::unused_arguments`), and never a `deinit` or a callable
+  parameter. A protocol's member is a call like any other (R1109): `len`,
+  `in`, `for`, `==`, and the builtins the elaborator rewrites into dunder
+  calls name its reduced generator. A slot maps to its
   parameter by the body-slot layout
   (`FunctionDeclaration::slot_parameter`): a removed method slot past the
   receiver is the declaration's position one lower, and the resolved
@@ -6727,7 +6730,14 @@ point where a slot declared in a loop is uninitialized again.
   (`mir::shed_subscript_contract`), a multi-subscript sheds the operands
   they named, and an `index.get` or a slice whose one operand goes
   becomes a multi-subscript with none (`mir::shed_subscript_operands`),
-  which both backends run as the same call over the contract. `inline-parametric`
+  which both backends run as the same call over the contract. A read of an
+  accessor's generator without its receiver becomes the `Call` of it
+  (`mir::receiverless_subscript_call`), and a store naming a setter's
+  reduced generator becomes the `__setitem__` call it is
+  (`mir::subscript_store_call`, the value its last or `value` keyword
+  argument, a built collector its spread operand), which then drops its
+  operands and receiver as any method call does
+  (`Specializer::reduce_method_call`, R1109). `inline-parametric`
   reads an inlined callee's reduced generator through
   `with_removed_argument_forwards_erased`, as `Specializer::materialize_body`
   reads an instance: the callee's own forwards to its callees' removed

@@ -268,6 +268,102 @@ impl<'a> Specializer<'a> {
         Ok(operands.remove(&positional, &keyword))
     }
 
+    /// Rewrite the method call `instruction` of `target`'s reduced
+    /// generator, the instance its `resolved` names, as upstream rewrites
+    /// each call of a generator it removed an argument from: it passes no
+    /// operand for a removed argument ([`Self::drop_removed_arguments`])
+    /// and, where the generator removed its receiver, no receiver either,
+    /// as upstream's rewritten call names `k3(q::Holder)_REMOVED_ARG()`.
+    pub(super) fn reduce_method_call(
+        &self,
+        owner: &str,
+        target: &str,
+        instruction: &mut MirInstr,
+    ) -> Result<(), MonoError> {
+        let MirInstr::MethodCall {
+            dest,
+            resolved: Some(concrete),
+            raises,
+            args,
+            kwargs,
+            arg_places,
+            kwarg_places,
+            capture_accesses,
+            spread,
+            ..
+        } = instruction
+        else {
+            return Ok(());
+        };
+        self.drop_removed_arguments(
+            owner,
+            target,
+            mojito_mir::mir::CallOperands {
+                args,
+                arg_places,
+                kwargs,
+                kwarg_places,
+                spread,
+            },
+        )?;
+        if self.removes_receiver(target) {
+            let call = MirInstr::Call {
+                dest: *dest,
+                func: mojito_mir::mir::FuncRef::named(concrete),
+                raises: raises.take(),
+                args: std::mem::take(args),
+                kwargs: std::mem::take(kwargs),
+                arg_places: std::mem::take(arg_places),
+                kwarg_places: std::mem::take(kwarg_places),
+                capture_accesses: std::mem::take(capture_accesses),
+                param_arg_regs: Vec::new(),
+                receiver: None,
+                instantiated_args: Vec::new(),
+                spread: spread.take(),
+            };
+            *instruction = call;
+        }
+        Ok(())
+    }
+
+    /// Shed from the subscript read `instruction` of an accessor's reduced
+    /// generator the operands `dropped` names, as upstream's rewritten call
+    /// passes none for the accessor's removed arguments: an `index.get`
+    /// whose one operand goes becomes a multi-subscript with none, and a
+    /// read of a generator without its receiver the `call` of it.
+    fn shed_subscript_read(&self, instruction: &mut MirInstr, dropped: &DroppedOperands) {
+        let declared = self
+            .declarations
+            .get(dropped.target.as_str())
+            .filter(|_| self.removes_receiver(&dropped.target));
+        if let Some(declared) = declared
+            && mojito_mir::mir::receiverless_subscript_call(instruction, declared)
+            && let MirInstr::Call {
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+                spread,
+                ..
+            } = instruction
+        {
+            mojito_mir::mir::CallOperands {
+                args,
+                arg_places,
+                kwargs,
+                kwarg_places,
+                spread,
+            }
+            .remove(&dropped.positional, &dropped.keyword);
+            return;
+        }
+        mojito_mir::mir::shed_subscript_operands(
+            instruction,
+            &dropped.positional,
+            &dropped.keyword,
+        );
+    }
+
     /// [`Self::removed_params`] of `template` as binders, each with the
     /// spelling its declaration gives it: its own, an enclosing body's, or
     /// its struct's.
@@ -361,7 +457,13 @@ impl<'a> Specializer<'a> {
     ) -> Result<String, MonoError> {
         bindings.erase_origins();
         bindings.reduced = self.reduces(template, &bindings);
-        let member = self.table_owner(template, &bindings);
+        // A call names the generator without its unused arguments, a clone
+        // no backend reaches from the type: only a full demand is an entry.
+        let member = if bindings.reduced {
+            None
+        } else {
+            self.table_owner(template, &bindings)
+        };
         if let Some(declaration) = self.declarations.get(template)
             && let Availability::Disproven(message) = self.availability(declaration, &bindings)
         {
@@ -383,7 +485,7 @@ impl<'a> Specializer<'a> {
             // generator over the ones it kept, as upstream's method
             // generator lists them before its own: it names no owner
             // instance, and its kept owner arguments lead its own: a
-            // lifecycle or dispatched member too, which each struct
+            // lifecycle or type-reached member too, which each struct
             // instance's member table names, and a constructor, which each
             // construction names.
             Some((owner_template, _))
@@ -550,7 +652,7 @@ impl<'a> Specializer<'a> {
 
     /// The key a struct's member table records an instance of the method
     /// `template` under, when a backend reaches it from the struct's type:
-    /// a lifecycle member under its bare name (`__deinit__`); a dispatched
+    /// a lifecycle member under its bare name (`__deinit__`); a type-reached
     /// member (`mir::table_member`), another special method, or a
     /// requirement of a trait the struct declares
     /// (`MirDeclarations::reached_from_type`) under the template's method
@@ -581,7 +683,9 @@ impl<'a> Specializer<'a> {
 
     /// Record `instance` under the key `member` names in its struct's
     /// output declaration's member table, or in the one it gets when
-    /// declared, as upstream's struct nests the member instances it owns.
+    /// declared, as upstream's struct nests the member instances it owns:
+    /// a full instance, never the generator a call names without its
+    /// unused arguments.
     fn record_struct_member(&mut self, member: Option<&(String, String)>, instance: &str) {
         let Some((name, key)) = member else {
             return;
@@ -2631,14 +2735,10 @@ impl<'a> Specializer<'a> {
                         recv,
                         method,
                         resolved,
-                        raises,
                         result_adapter,
                         receiver_convention,
                         args,
                         kwargs,
-                        arg_places,
-                        kwarg_places,
-                        capture_accesses,
                         param_arg_regs,
                         param_decls,
                         instantiated_args,
@@ -2770,39 +2870,6 @@ impl<'a> Specializer<'a> {
                         )?;
                         let reduced = bindings.reduced;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
-                        if reduced {
-                            self.drop_removed_arguments(
-                                owner,
-                                &target,
-                                mojito_mir::mir::CallOperands {
-                                    args,
-                                    arg_places,
-                                    kwargs,
-                                    kwarg_places,
-                                    spread,
-                                },
-                            )?;
-                        }
-                        // A generator without its receiver takes none: the
-                        // call names it as upstream's rewritten call names
-                        // `k3(q::Holder)_REMOVED_ARG()`, with no receiver.
-                        if reduced && self.removes_receiver(&target) {
-                            *instruction = MirInstr::Call {
-                                dest: *dest,
-                                func: mojito_mir::mir::FuncRef::named(&concrete),
-                                raises: raises.take(),
-                                args: std::mem::take(args),
-                                kwargs: std::mem::take(kwargs),
-                                arg_places: std::mem::take(arg_places),
-                                kwarg_places: std::mem::take(kwarg_places),
-                                capture_accesses: std::mem::take(capture_accesses),
-                                param_arg_regs: Vec::new(),
-                                receiver: None,
-                                instantiated_args: Vec::new(),
-                                spread: spread.take(),
-                            };
-                            continue;
-                        }
                         // A call through a bound records no receiver
                         // convention; the call to the instance takes its
                         // declaration's.
@@ -2818,6 +2885,9 @@ impl<'a> Specializer<'a> {
                         // The instance's declaration keeps no compile-time
                         // parameters, so the call to it keeps none either.
                         param_decls.clear();
+                        if reduced {
+                            self.reduce_method_call(owner, &target, instruction)?;
+                        }
                     }
                     // An indirect call whose callee is a nominal callable
                     // struct devirtualizes into a direct `__call__` method
@@ -3149,10 +3219,6 @@ impl<'a> Specializer<'a> {
                     // their concrete instances exactly like method calls;
                     // intrinsic storage subscripts carry no nominal call and
                     // pass through.
-                    // An accessor's removed argument leaves the subscript
-                    // as upstream's rewritten call passes none for it: an
-                    // `index.get` or slice whose one operand goes becomes a
-                    // multi-subscript with none.
                     MirInstr::Index {
                         dest,
                         base,
@@ -3174,11 +3240,7 @@ impl<'a> Specializer<'a> {
                             contract,
                         )?;
                         if let Some(dropped) = dropped {
-                            mojito_mir::mir::shed_subscript_operands(
-                                instruction,
-                                &dropped.positional,
-                                &dropped.keyword,
-                            );
+                            self.shed_subscript_read(instruction, &dropped);
                         }
                     }
                     MirInstr::MultiIndex {
@@ -3205,54 +3267,41 @@ impl<'a> Specializer<'a> {
                             call,
                         )?;
                         if let Some(dropped) = dropped {
-                            mojito_mir::mir::shed_subscript_operands(
-                                instruction,
-                                &dropped.positional,
-                                &dropped.keyword,
-                            );
+                            self.shed_subscript_read(instruction, &dropped);
                         }
                     }
+                    // A store is the call of its setter: one naming the
+                    // generator without the setter's unused arguments
+                    // becomes that call, which passes none for them.
                     MirInstr::MultiSet {
                         receiver,
                         args,
+                        value_keyword,
                         call,
                         ..
                     } => {
                         let receiver = *receiver;
-                        self.rewrite_subscript_call(
+                        let keywords: &[&str] = if *value_keyword { &["value"] } else { &[] };
+                        let dropped = self.rewrite_subscript_call(
                             owner,
                             function,
                             receiver,
                             SubscriptOperands {
                                 registers: &[],
-                                positional: args.len(),
-                                keywords: &[],
+                                positional: args.len() + usize::from(!*value_keyword),
+                                keywords,
                             },
                             None,
                             call,
                         )?;
-                    }
-                    // Variant equality lowers to a tag switch that calls each
-                    // nominal alternative's `__eq__`; enqueue those instances.
-                    MirInstr::BinOp {
-                        op: mojito_ast::ast::InfixOp::Eq | mojito_ast::ast::InfixOp::Ne,
-                        a,
-                        ..
-                    } => {
-                        if let Some(TyKind::Variant(alternatives)) =
-                            function.reg_types.get(&a.0).map(peel_refs).map(Ty::kind)
+                        if let Some(dropped) = dropped
+                            && let Some(declared) = self.declarations.get(dropped.target.as_str())
                         {
-                            for alternative in alternatives {
-                                if matches!(alternative.kind(), TyKind::Struct(..)) {
-                                    self.enqueue_nominal_method_instance(
-                                        owner,
-                                        alternative,
-                                        "__eq__",
-                                        1,
-                                        &[],
-                                    )?;
-                                }
-                            }
+                            let dest = Reg(function.n_regs);
+                            function.n_regs += 1;
+                            function.reg_types.insert(dest.0, Ty::none());
+                            mojito_mir::mir::subscript_store_call(instruction, dest, declared);
+                            self.reduce_method_call(owner, &dropped.target, instruction)?;
                         }
                     }
                     _ => {}
