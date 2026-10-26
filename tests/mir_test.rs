@@ -770,6 +770,24 @@ fn mir_function<'a>(mir: &'a mojito::mir::MirProgram, name: &str) -> &'a MirFunc
         .1
 }
 
+/// The operator dunder calls in `function` of `mir`, in program order,
+/// each with its resolved target.
+fn bound_operator_calls<'m>(
+    mir: &'m mojito::mir::MirProgram,
+    function: &str,
+) -> Vec<(&'m str, Option<&'m str>)> {
+    nested_instructions(&mir_function(mir, function).blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method, resolved, ..
+            } if method.starts_with("__") => Some((method.as_str(), resolved.as_deref())),
+            MirInstr::BinOp { .. } => Some(("binary", None)),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Whether the call `operands` picks out, by returning its operands, takes
 /// one as a load of a call-result slot that a `DropVar` destroys after the
 /// call.
@@ -5681,6 +5699,22 @@ fn chained_comparison_links_name_their_dunders() {
 }
 
 #[test]
+fn bound_arithmetic_operator_calls_a_user_trait_requirement() {
+    // `a + b` over a user trait declaring `__add__` is the requirement's
+    // call, as `a.__add__(b)` is; `-a` is `a.__neg__()`.
+    let mir = checked_program_mir(
+        "trait Addy:\n    def __add__(self, other: Self) -> Self:\n        ...\n    def __neg__(self) -> Self:\n        ...\n\ndef add2[T: Addy & Deinitable](a: T, b: T) -> T:\n    return -(a + b)\n\ndef main():\n    pass\n",
+    );
+    assert_eq!(
+        bound_operator_calls(&mir, "add2"),
+        [
+            ("__add__", Some("__trait_dispatch.__add__$ov$Self")),
+            ("__neg__", Some("__trait_dispatch.__neg__$ov$"))
+        ]
+    );
+}
+
+#[test]
 fn bound_comparison_names_its_requirement() {
     // A comparison through a `Comparable` bound is its requirement's call,
     // and the bound finds `__eq__` on the `Equatable` it refines, both
@@ -5688,18 +5722,11 @@ fn bound_comparison_names_its_requirement() {
     // imports.
     let source = "def f[T: Comparable](a: T, b: T) -> Bool:\n    return a < b and a == b\n\ndef main():\n    print(f(1, 2))\n";
     let mir = checked_program_mir(source);
-    let resolved = nested_instructions(&mir_function(&mir, "f").blocks)
-        .into_iter()
-        .filter_map(|instruction| match instruction {
-            MirInstr::BinOp { resolved, .. } => Some(resolved.as_deref()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
     assert_eq!(
-        resolved,
+        bound_operator_calls(&mir, "f"),
         [
-            Some("__trait_dispatch.__lt__$ov$Self"),
-            Some("__trait_dispatch.__eq__$ov$Self")
+            ("__lt__", Some("__trait_dispatch.__lt__$ov$Self")),
+            ("__eq__", Some("__trait_dispatch.__eq__$ov$Self"))
         ]
     );
     let bounds = ["Comparable".to_string()];

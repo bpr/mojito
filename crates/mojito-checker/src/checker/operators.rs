@@ -4,7 +4,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{CheckedCompareLink, SemanticAdjustment};
-use mojito_symbol::symbol::TRAIT_DISPATCH;
 use mojito_types::types::TyKind;
 
 impl Checker {
@@ -44,9 +43,20 @@ impl Checker {
             }
             _ => {}
         }
-        // An opaque type parameter bounded by the prefix operator's trait
-        // dispatches after erasure (`-x` needs `Negatable`, `not x` needs
-        // `Boolable`); the concrete impl runs on the erased type.
+        // `-x` and `~x` over a type parameter or a projection are the calls
+        // `x.__neg__()` and `x.__invert__()` of the requirement its bounds
+        // declare, as any method call through a bound is.
+        if op != PrefixOp::Not
+            && is_bound_archetype(&t)
+            && let Some(ty) =
+                self.infer_operator_method_call(&span, operand, &t, op.dunder(), &[])?
+        {
+            return Ok(ty);
+        }
+        // A type parameter bounded by a compiler-known operation trait that
+        // declares no requirement (`Negatable`, `Invertable`) or by
+        // `Boolable` for `not x` dispatches after erasure; the concrete
+        // impl runs on the erased type.
         if self.param_has_bound(&t, prefix_operation_trait(op)) {
             self.record_read_temporary_argument(operand);
             return Ok(match op {
@@ -116,8 +126,8 @@ impl Checker {
         right: &Expr,
     ) -> Result<Ty, TypeError> {
         use InfixOp::{
-            Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Is, IsNot, Le, Lt, Mod,
-            Mul, Ne, NotIn, Or, Pow, Shl, Shr, Sub,
+            Add, And, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, In, Le, Lt, Mod, Mul, Ne,
+            NotIn, Or, Pow, Shl, Shr, Sub,
         };
 
         // An element of an unbound pack takes its operators from its bounds.
@@ -131,7 +141,7 @@ impl Checker {
             && self.is_checked_struct(&lt)
         {
             return self
-                .infer_struct_operator(span, op, left, right, &lt, None)?
+                .infer_operator_call(span, op, left, right, &lt, None)?
                 .ok_or_else(|| TypeError::BadOperator {
                     op: infix_symbol(op).to_string(),
                     operands: format!("{lt} and a leading-dot operand"),
@@ -218,11 +228,21 @@ impl Checker {
                 return Ok(Ty::bool());
             }
         }
-        // Two equal opaque type parameters bounded by an arithmetic, bitwise,
-        // or shift operation trait dispatch after erasure
-        // (`def f[T: Addable](a: T, b: T) -> T: return a + b`). Comparison,
-        // equality, and `**` params are handled in the result match below via
-        // their (refinement-aware) bound helpers.
+        // An operator over a type parameter or a projection is the call of
+        // the requirement its bounds (or an assumed conformance) declare,
+        // `a.__add__(b)`, else the right operand's reflected `b.__radd__(a)`,
+        // as upstream's `emitBinOpCall` resolves it through any method
+        // call's lookup.
+        if let Some(span) = &span
+            && (is_bound_archetype(&lt) || is_bound_archetype(&rt))
+            && let Some(ty) = self.infer_operator_call(span, op, left, right, &lt, Some(&rt))?
+        {
+            return Ok(ty);
+        }
+        // Two equal type parameters bounded by a compiler-known arithmetic,
+        // bitwise, or shift operation trait, which declares no requirement
+        // (`def f[T: Addable](a: T, b: T) -> T: return a + b`), dispatch
+        // after erasure.
         if lt == rt
             && matches!(
                 op,
@@ -282,11 +302,6 @@ impl Checker {
             Add if lt == TyKind::StringLiteral && rt == TyKind::StringLiteral => {
                 Some(Ty::string_literal())
             }
-            // `**` between equal opaque type parameters bounded by `Powable`
-            // (`__pow__(self, Self) -> Self`); the concrete impl runs after
-            // erasure. Checked before the numeric arm since a `Param` isn't
-            // numeric (so `common` is None here).
-            Pow if lt == rt && self.param_has_bound(&lt, "Powable") => Some(lt.clone()),
             // Arithmetic that preserves the operand type.
             Add | Sub | Mul | FloorDiv | Mod | Pow => common,
             Shl | Shr | BitAnd | BitOr | BitXor
@@ -308,46 +323,17 @@ impl Checker {
                     Ty::float64()
                 },
             ),
-            // Ordering between numbers, between `Bool`s (upstream's `Bool` is
-            // `Comparable`), or between equal opaque type parameters whose
-            // bound promises an ordering (`T: Comparable`).
-            Lt | Gt | Le | Ge
-                if common.is_some()
-                    || (lt == rt && (lt == TyKind::Bool || self.comparable_bound(&lt))) =>
-            {
+            // Ordering between numbers, or between `Bool`s (upstream's `Bool`
+            // is `Comparable`).
+            Lt | Gt | Le | Ge if common.is_some() || (lt == rt && lt == TyKind::Bool) => {
                 Some(Ty::bool())
             }
             // Equality: between numbers (any common type), or equal non-numeric
             // scalars (Bool/String/None).
-            Eq | Ne
-                if common.is_some()
-                    || (lt == rt && (is_scalar(&lt) || self.equatable_bound(&lt))) =>
-            {
-                Some(Ty::bool())
-            }
-            // Identity between equal opaque type parameters whose bound
-            // promises it (`T: Identifiable`).
-            Is | IsNot if lt == rt && self.identifiable_bound(&lt) => Some(Ty::bool()),
+            Eq | Ne if common.is_some() || (lt == rt && is_scalar(&lt)) => Some(Ty::bool()),
             _ => None,
         };
         if let Some(ty) = result {
-            // A comparison through a bound dispatches the requirement's read
-            // dunder (`__eq__(self, other: Self)`), which reads a named
-            // operand where it lies, as a struct's own dunder does.
-            // It is that requirement's call, so the operator names it as
-            // its target, as a struct operator names its dunder. An assumed
-            // conformance names it too, though no bound declares it.
-            if let Some(span) = span
-                && matches!(lt.kind(), TyKind::Param { .. })
-                && lt == rt
-            {
-                self.borrow_parameter_place_argument(left, &lt);
-                self.borrow_parameter_place_argument(right, &rt);
-                self.record_operator_temporaries(left, right, (true, true), (false, false));
-                if let Some(target) = self.bound_comparison_target(op) {
-                    self.record_at(span).overload_target = Some(target);
-                }
-            }
             return Ok(ty);
         }
         let Some(span) = span else {
@@ -360,11 +346,11 @@ impl Checker {
             && self.is_nominal_string(&rt)
             && op.dunder().is_some()
             && self.record_implicit_conversion(left, &lt, &rt)?
-            && let Some(ty) = self.infer_struct_operator(&span, op, left, right, &rt, None)?
+            && let Some(ty) = self.infer_operator_call(&span, op, left, right, &rt, None)?
         {
             return Ok(ty);
         }
-        if let Some(ty) = self.infer_struct_operator(&span, op, left, right, &lt, Some(&rt))? {
+        if let Some(ty) = self.infer_operator_call(&span, op, left, right, &lt, Some(&rt))? {
             return Ok(ty);
         }
         Err(bad_infix_operator(op, &lt, &rt))
@@ -440,12 +426,13 @@ impl Checker {
         Ok(Ty::bool())
     }
 
-    /// Type `left op right` over a struct as upstream's `emitBinOpCall`
-    /// does: the receiver `lt`'s dunder call `left.__op__(right)`, else,
-    /// when the right operand has a type `rt`, its reflected dunder call
-    /// `right.__rop__(left)`, marked reflected so MIR still evaluates the
-    /// operands in source order. `None` when neither selects a candidate.
-    fn infer_struct_operator(
+    /// Type `left op right` over a struct or a type parameter as upstream's
+    /// `emitBinOpCall` does: the receiver `lt`'s dunder call
+    /// `left.__op__(right)`, else, when the right operand has a type `rt`,
+    /// its reflected dunder call `right.__rop__(left)`, marked reflected so
+    /// MIR still evaluates the operands in source order. `None` when
+    /// neither selects a candidate.
+    fn infer_operator_call(
         &self,
         span: &SourceSpan,
         op: InfixOp,
@@ -455,7 +442,7 @@ impl Checker {
         rt: Option<&Ty>,
     ) -> Result<Option<Ty>, TypeError> {
         if let Some(dunder) = op.dunder()
-            && self.is_checked_struct(lt)
+            && self.has_operator_methods(lt)
             && let Some(ty) = self.infer_operator_method_call(
                 span,
                 left,
@@ -469,7 +456,7 @@ impl Checker {
         let (Some(reflected), Some(rt)) = (op.reflected_dunder(), rt) else {
             return Ok(None);
         };
-        if !self.is_checked_struct(rt) {
+        if !self.has_operator_methods(rt) {
             return Ok(None);
         }
         let ty = self.infer_operator_method_call(
@@ -937,37 +924,13 @@ impl Checker {
         .into())
     }
 
-    /// Record each operand an operator's dunder reads (`reads` = receiver,
-    /// operand) as a read temporary argument: a temporary there is the
-    /// caller's, destroyed once the dunder returns, as a method call's is.
-    /// Each operand it owns (`owns`) is a forwarded argument.
-    fn record_operator_temporaries(
-        &self,
-        left: &Expr,
-        right: &Expr,
-        reads: (bool, bool),
-        owns: (bool, bool),
-    ) {
-        if reads.0 {
-            self.record_read_temporary_argument(left);
-        }
-        if reads.1 {
-            self.record_read_temporary_argument(right);
-        }
-        if owns.0 {
-            self.record_forwarded_operand(left);
-        }
-        if owns.1 {
-            self.record_forwarded_operand(right);
-        }
-    }
-
     /// A read dunder binds its operand as a method call binds a read
     /// argument: a named struct place, or a struct element an accessor
     /// returns by reference (`xs[0]` through `List.__getitem__`), is read
     /// where it lies rather than copied out.
     fn borrow_operator_operand(&self, operand: &Expr, ty: &Ty) {
         self.borrow_nominal_place_argument(operand, ty);
+        self.borrow_parameter_place_argument(operand, ty);
         if matches!(operand.kind, ExprKind::Index { .. })
             && matches!(ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
             && self.infer_reference_value(operand).is_some()
@@ -981,6 +944,13 @@ impl Checker {
     /// its dunders' method calls.
     fn is_checked_struct(&self, ty: &Ty) -> bool {
         matches!(ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+    }
+
+    /// Whether `ty`'s operators are method calls: a struct the program
+    /// declares, or a type parameter or projection whose bounds declare
+    /// requirements.
+    fn has_operator_methods(&self, ty: &Ty) -> bool {
+        self.is_checked_struct(ty) || is_bound_archetype(ty)
     }
 
     /// Whether `ty` is the declared nominal `String`.
@@ -1036,26 +1006,6 @@ impl Checker {
             ty: ty.to_string(),
         })
     }
-
-    /// The requirement a comparison over a bound type parameter selects
-    /// (`__trait_dispatch.__lt__$ov$Self`), as the bundled `Equatable` or
-    /// `Comparable` declares it.
-    fn bound_comparison_target(&self, op: InfixOp) -> Option<String> {
-        let trait_name = match op {
-            InfixOp::Eq | InfixOp::Ne => "Equatable",
-            InfixOp::Lt | InfixOp::Gt | InfixOp::Le | InfixOp::Ge => "Comparable",
-            InfixOp::Is | InfixOp::IsNot => "Identifiable",
-            _ => return None,
-        };
-        let dunder = op.dunder()?;
-        self.traits
-            .get(trait_name)?
-            .methods
-            .get(dunder)?
-            .iter()
-            .find(|sig| matches!(sig.params.as_slice(), [param] if *param == TyKind::SelfType))
-            .map(|sig| method_lowered_name(TRAIT_DISPATCH, dunder, sig, None))
-    }
 }
 
 /// A readable symbol for an infix operator, for error messages.
@@ -1096,6 +1046,12 @@ pub(super) const fn prefix_symbol(op: PrefixOp) -> &'static str {
         PrefixOp::Not => "not",
         PrefixOp::Invert => "~",
     }
+}
+
+/// Whether `ty` is an archetype whose methods its bounds' requirements
+/// declare: a type parameter or an associated projection of one.
+fn is_bound_archetype(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Param { .. } | TyKind::Assoc { .. })
 }
 
 /// The error an infix operator its operands do not define reports.

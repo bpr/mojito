@@ -347,6 +347,13 @@ impl Checker {
             ..
         } = call;
         let mut effective_bounds = self.projection_bounds(obj_ty).unwrap_or_default();
+        // A `where conforms_to(T, Trait)` clause the body is checked under
+        // declares `Trait`'s requirements on `T` as a bound does.
+        for assumed in self.assumed_bounds(obj_ty) {
+            if !effective_bounds.contains(&assumed) {
+                effective_bounds.push(assumed);
+            }
+        }
         // `Copyable.copy` is proven by any route that proves
         // copyability (a refining bound, a member bound, or a
         // `conforms_to(T, Copyable)` availability assumption), not

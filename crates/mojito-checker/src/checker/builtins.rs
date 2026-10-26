@@ -325,12 +325,6 @@ impl Checker {
         matches!(ty.kind(), TyKind::Param { .. }) && self.conforms_to(ty, "Comparable")
     }
 
-    /// Whether the type parameter `ty` is `Identifiable` by its bounds or an
-    /// assumed conformance, so `is` and `is not` call its requirements.
-    pub(super) fn identifiable_bound(&self, ty: &Ty) -> bool {
-        matches!(ty.kind(), TyKind::Param { .. }) && self.conforms_to(ty, "Identifiable")
-    }
-
     /// Whether a tuple element of type `ty` supports `==`/`!=`: an
     /// `Equatable` struct or type parameter, or a scalar.
     pub(super) fn equatable_element(&self, ty: &Ty) -> bool {

@@ -337,13 +337,15 @@ impl VmBackend {
             through: place.through,
         };
         // A parent reached through a `ref`-typed field (`self.src.data[i]`
-        // with `src: ref[origin] Optional[T]`) is not raw storage: read it
-        // through the reference walk, which chases stored handles
-        // mid-projection, exactly like a plain `LoadPlace` does.
+        // with `src: ref[origin] Optional[T]`) or a pointer element
+        // (`self.data[i].storage[1]`) is not raw storage: read it through
+        // the reference walk, which chases stored handles mid-projection,
+        // exactly like a plain `LoadPlace` does.
         let recv = if parent
             .projection_tys
             .iter()
             .any(|ty| matches!(ty.kind(), mojito_types::types::TyKind::Ref(_)))
+            || super::references::place_crosses_reference(&parent)
         {
             let composed = Value::Ref {
                 frame: frame_id.0,

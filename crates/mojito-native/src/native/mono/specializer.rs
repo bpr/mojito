@@ -2400,6 +2400,39 @@ impl<'a> Specializer<'a> {
                     *instruction =
                         dunder_method_call(*dest, *a, method, resolved, raises, vec![*b]);
                 }
+                // A comparison requirement called on a builtin instance
+                // (`a.__lt__(b)`, or `a < b` through a bound) is the
+                // builtin's own comparison.
+                if let MirInstr::MethodCall {
+                    dest,
+                    recv,
+                    method,
+                    resolved,
+                    args,
+                    kwargs,
+                    raises,
+                    ..
+                } = instruction
+                    && resolved
+                        .as_deref()
+                        .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
+                    && kwargs.is_empty()
+                    && let [other] = args.as_slice()
+                    && let Some(op) = comparison_of_dunder(method)
+                    && !matches!(
+                        (function.reg_types.get(&recv.0).map(peel_refs)).map(Ty::kind),
+                        Some(TyKind::Struct(..)) | None
+                    )
+                {
+                    *instruction = MirInstr::BinOp {
+                        op,
+                        dest: *dest,
+                        a: *recv,
+                        b: *other,
+                        resolved: None,
+                        raises: raises.take(),
+                    };
+                }
                 // A comparison a template typed `Bool` through its bound
                 // yields a mask over sized scalars: convert it, as the
                 // checker does where the operands are spelled.
@@ -4193,4 +4226,12 @@ fn for_each_lifecycle_site_mut(
         }
     }
     Ok(())
+}
+
+/// The comparison operator whose dunder `method` is.
+fn comparison_of_dunder(method: &str) -> Option<mojito_ast::ast::InfixOp> {
+    use mojito_ast::ast::InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
+    [Eq, Ne, Lt, Le, Gt, Ge]
+        .into_iter()
+        .find(|op| op.dunder() == Some(method))
 }

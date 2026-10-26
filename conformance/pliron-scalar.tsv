@@ -48,6 +48,7 @@ assets/ok/boolable_and_divmod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_generic_write_to.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_member_list_generic_conformer.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bound_operator_requirement_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_value_member_in_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/builtins_numeric.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bundled_def_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape

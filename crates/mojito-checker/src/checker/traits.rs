@@ -1976,6 +1976,29 @@ impl Checker {
             })
     }
 
+    /// The traits the active methods' availability clauses assume the type
+    /// parameter `ty` conforms to, innermost clause first.
+    pub(super) fn assumed_bounds(&self, ty: &Ty) -> Vec<String> {
+        let TyKind::Param { binder, .. } = ty.kind() else {
+            return Vec::new();
+        };
+        let subject = AssumedSubject::Binder(binder.id.clone());
+        let mut assumed: Vec<String> = Vec::new();
+        for (_, available) in self
+            .assumed_conformances
+            .borrow()
+            .iter()
+            .rev()
+            .flatten()
+            .filter(|(parameter, _)| *parameter == subject)
+        {
+            if !assumed.contains(available) {
+                assumed.push(available.clone());
+            }
+        }
+        assumed
+    }
+
     /// The conformance facts the elaborator decides a `where` clause or a
     /// `comptime if` from, as upstream decides a conformance when a clause
     /// asks it: the program's own traits with their parents, and each own

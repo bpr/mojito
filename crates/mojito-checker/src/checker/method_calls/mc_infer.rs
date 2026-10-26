@@ -175,7 +175,12 @@ impl Checker {
             call: MethodCallArguments::ordinary(args, &[]),
             obj_ty,
         };
-        let resolved = match self.resolve_receiver_method(site, &mut None)? {
+        let selection = match self.resolve_receiver_method(site, &mut None) {
+            // A type parameter whose bounds declare no such requirement.
+            Err(TypeError::NoSuchMethod { .. }) => return Ok(None),
+            selection => selection?,
+        };
+        let resolved = match selection {
             Ok(Some(resolved)) => resolved,
             Ok(None) | Err(OverloadSelect::NoMatch) => return Ok(None),
             ambiguous @ Err(OverloadSelect::Ambiguous) => {

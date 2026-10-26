@@ -1355,6 +1355,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An operator over a type parameter or an associated projection is now the
+  call of the requirement its bounds declare, as any method call through a
+  bound is (R1358): `a + b` over `T: Addy`, a user trait declaring
+  `__add__`, runs as `a.__add__(b)` where it was rejected (R1282), as do a
+  reflected `2 + a` through `__radd__`, a raising requirement, `-a` and
+  `~a`, and `x.first() > y.first()` over a `Comparable` projection. The
+  comparison, identity, and `Powable` arms that typed such an operator by
+  its trait's name are gone, so a comparison or `**` through a bound is
+  that requirement's call too, also as a chained comparison's link. A
+  `where conforms_to(T, Trait)` clause now declares `Trait`'s requirements
+  on `T` for every method call in its body, not only `copy` and
+  `__hash__`. A comparison requirement called on a `SIMD` scalar instance
+  is the scalar's own comparison, so `not a.__eq__(b)` over `UInt8` runs
+  where the VM rejected the lane mask, and the VM reads a subscript whose
+  base lies in a pointer's element (`self.data[i].storage[1]`) through
+  the pointer.
+
 - A struct operator is now checked as its dunder's method call, as
   upstream's `emitBinOpCall` resolves it (R1357): `a op b` selects
   `a.__op__(b)` as the spelled call would, else the reflected

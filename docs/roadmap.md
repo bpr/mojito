@@ -3159,61 +3159,42 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 - [ ] **R1365 A type parameter's bound is not refined by its scope's `where`
   facts**
 
-  Method lookup over a binder widens its bounds by an assumed conformance
-  only for `copy` and `__hash__` (`resolve_bound_method`,
-  `method_calls/resolution.rs`), where upstream's `maybeRefineParamType`
+  Method lookup over a binder widens its bounds by the scope's assumed
+  `conforms_to` atoms alone (`resolve_bound_method` with
+  `Checker::assumed_bounds`, `method_calls/resolution.rs`), and nothing
+  else sees the widening, where upstream's `maybeRefineParamType`
   (`ExprNodes.cpp`) merges the declared bound with
   `getTraitBoundFromAssumptions` into one refined type every consumer sees.
   - The lever: one effective bound per binder or projection, made of the
     declared bounds plus every trait R1364's evidence set proves.
-  - Method lookup asks for that bound, and the `copy` and `__hash__` cases
-    go.
+  - Method lookup asks for that bound, and its `copy` and `__hash__` cases
+    (a refining or member bound proving the trait) go.
   - Record the refined bound on the selected call's requirement, so
     `MirDeclarations::bound_requirement` finds it.
   - `CheckLifetimes` refines the same way
     (`refineWithContextualWhereClauses`), which R1368 reuses.
   - Probe: R704's `def run[T: Copyable](s: T) where conforms_to(T, Sh)`
-    calling `s.sh(31)`. The pin runs it, Mojito says "type 'T' has no method
-    'sh'".
-  - Closes R704 (a requirement under a `where conforms_to` clause is
-    rejected). Shrinks R30.
+    calling `s.sh(b.t)`. The pin prints `del 31`, `sh`, Mojito `sh`,
+    `del 31`.
+  - Closes R704 (a requirement under a `where conforms_to` clause keeps
+    its argument's owner alive). Shrinks R30.
   - Depends on R1364, which supplies the evidence set.
   - Model: Fable, Planned.
 
 - [ ] **R704 A requirement called under a `where conforms_to(T, Trait)`
-  clause is rejected**
+  clause keeps its argument's owner alive through the call**
 
   Problem: `def run[T: Copyable](s: T) where conforms_to(T, Sh)` calling
-  `s.sh(b.t)` prints `del 31`, `sh` at the pin, but Mojito rejects it:
-  "type 'T' has no method 'sh'".
-  - The method lookup over a binder (`method_calls/resolution.rs`) widens
-    the receiver's bounds by an assumed conformance only for `copy` and
-    `__hash__`; it should take every trait the clause assumes.
-  - The call's receiver type then still names only `Copyable`, so
-    `ArgumentPassing` (`register_loans.rs`) finds no requirement through
+  `s.sh(b.t)` prints `del 31`, `sh` at the pin, but `sh`, `del 31` in
+  Mojito.
+  - The checker resolves the call through the clause's assumed trait
+    (`Checker::assumed_bounds`, since R1358), but the call's receiver type
+    still names only `Copyable`.
+  - So `ArgumentPassing` (`register_loans.rs`) finds no requirement through
     `MirDeclarations::bound_requirement` and keeps `b` through the call.
-    The fix must give the drop analysis the assumed trait too.
+    The fix gives the drop analysis the assumed trait too.
   - Found while landing R682 (2026-10-13).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1358 An operator over a bound type parameter is not a call of the
-  bound's requirement**
-
-  `a + b` or `a < b` over `T: Trait` is typed by the operator's trait name
-  (`param_has_bound` with `infix_operation_trait` and
-  `prefix_operation_trait`, `has_order_bound`, `bound_comparison_target`),
-  where upstream resolves `a.__add__(b)` against the requirements the
-  bound's traits declare, as any method call through a bound.
-  - The lever: route the bound case through R1357's method-call path. A user
-    trait declaring `__add__` then works, and the comparison and `Powable`
-    special arms go.
-  - Probe: `add2[T: Addy](a, b)` returning `a + b` prints `7` at the pin,
-    where Mojito says "operator '+' is not defined for T and T".
-  - Closes R1282 (an arithmetic operator through a user trait bound is
-    rejected).
-  - Depends on R1357 (the operator is a method call) and R705 (comparisons
-    find declared requirements).
   - Model: Opus, Not Planned.
 
 - [ ] **R1456 A `SIMD` vector is neither `Equatable` nor `Comparable`**
@@ -3269,6 +3250,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The same discard of `it.__next__()` over `T: Iterator` is rejected
     first by R1152: `__next__` raises `StopIteration` into a plain
     `raises` context.
+  - Probe: `x.first() > y.first()` in `def bigger[C: Holder](x: C, y: C)`,
+    for `comptime Elem: Comparable & ImplicitlyCopyable` in `trait Holder`,
+    runs in Mojito, where the pin rejects both operand temporaries as
+    abandoned.
   - Expect fallout in generic bundled-std bodies that drop a projected
     value.
   - `moving_an_iterable_while_its_generic_iterator_lives_rejects`
@@ -4035,25 +4020,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     collected before any declaration (`applicable_functions`,
     `checker/comptime_validation.rs`).
   - Found while landing a function applied in a signature (2026-10-06).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1282 An arithmetic operator through a user trait bound is
-  rejected**
-
-  Problem: `def add2[T: Addy](a: T, b: T) -> T: return a + b`, for `trait
-  Addy` declaring `def __add__(self, other: Self) -> Self`, fails with
-  "operator '+' is not defined for T and T", where the pin prints `7` for
-  `add2(Box[1](3), Box[1](4)).x`.
-  - The checker dispatches an operator through a bound only for a
-    comparison (`operators.rs::bound_comparison_target`, `Equatable` and
-    `Comparable`); any other dunder a bound's trait declares is not looked
-    up.
-  - Select the requirement the bound's trait declares for the operator's
-    dunder, as a method call through a bound does, and record its
-    dispatch symbol as the `binary`'s `resolved`; the inliner's witness
-    fold then folds it as it folds a comparison.
-  - Found while planning R1052 (2026-10-22).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -7302,6 +7268,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     whether or not upstream's library has them.
   - Each Mojito-only name should leave the compiler-known list, keeping
     only the traits the pin's stdlib declares.
+  - Since R1358 an operator through a bound is its requirement's call, so
+    the erased arithmetic arm of `infer_infix` and the `param_has_bound`
+    arm of `infer_prefix` (`checker/operators.rs`) serve only these traits
+    (and `not x` through `Boolable`); they go with them.
   - `docs/features.md`'s scalar-operation-traits row names them as
     supported bounds.
   - Found while landing R709 (2026-10-13).
