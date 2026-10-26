@@ -8576,42 +8576,6 @@ new bridge (2026-09-07 direction). The ports are independent of each other, and
 an entry that waits on another names it. Four runtime services are
 deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **R1402 Seventeen `mojo-shape` entries wait on landed work, are done
-  by their own test, or lack the Depends links their new cores need**
-
-  Several entries cite code that is gone or wait on entries that have
-  landed, two meet their own done condition, and the cores filed 10-25
-  (R1357–R1399) were filed without editing their members' Depends bullets.
-  - Cite gone code: R752 (`build_seeded_checked_region`, `RegionSeed`) and
-    R346 (`infer_tuple_method`).
-  - Wait on landed entries: R306 and R903 (R74), R800 (R801), R1169 (R1168),
-    R445 (R10), R912 (R907), R1072 (R743, and the bundled `VariadicList`
-    already declares `write_to` and `write_repr_to`), and R1287 (R1102).
-  - R1335 asks for a census rerun after R1326, which has landed.
-  - Done by their own test: R638 and R639. `rg 'ExprKind::TypeApply'
-    crates/mojito-mir/src` and `rg 'ExprKind::Call|EvaluatedRange'
-    crates/mojito-mir/src` find nothing.
-  - Duplicate: R950 restates R662 (a value binder read through a slot). Fold
-    R950's `mem-2-reg` `variance` bullet into R662.
-  - Add `Depends on R1392 and R1395` to R336: upstream's `SIMDLength` is a
-    struct over `index` ops whose arithmetic must fold in a parameter
-    expression.
-  - In R276, replace `R160` with `R1397`: `SIMD`'s text moves into Mojo with
-    the library `SIMD`, which takes a `DType` parameter without R160.
-  - For each entry, run its probe (or the program its first sentence names)
-    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
-    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
-  - Delete an entry whose probe now matches the pin, and record it in
-    `CHANGELOG.md`.
-  - Rewrite an entry that still fails so its cause names today's code, and
-    keep its ID.
-  - Merge a duplicate into the entry it restates, carrying its probes, and
-    delete it.
-  - Done when every entry listed here is deleted, rewritten against today's
-    code, or merged.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R867 A conditional's literal arm reaches its carrier
   unmaterialized**
 
@@ -8678,22 +8642,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `verify/drops.rs` rejects an owned register ended twice, but not one
   that reaches an exit unended, where upstream's `DestructorInserter`
   leaves no owned SSA value undestroyed.
-  - A census of `emit-mir` over `assets/ok` and `assets/ownership_ok`
-    (2026-10-24) finds one shape left: an owned `Error` read in a `try`
-    handler no raise reaches, which the forward walk never enters, so
-    drop elaboration records no facts there and places no `drop.reg`.
-  - Probe: `assets/ok/pliron_reference_write_back.mojo`'s handler
-    (`print(e)` over a body with no raising call), and
+  - The 2026-10-24 census found one shape: an owned `Error` read in a
+    `try` handler no raise reaches. Since R1326 that read is a
+    `place.load` of the handler's error slot, which `drop.var` ends, so
+    the handlers of `pliron_reference_write_back`,
     `copyable_iterator_reference_aggregate`,
     `read_temporary_conditional_argument_drop`,
     `try_finally_raise_skips_own_handler`, and
-    `try_region_shadowed_binding`.
-  - Since R1326 (2026-10-24), `print(e)` reads `e` in place, so these
-    probes' handlers hold no owned register; re-run the census before
-    deciding whether the erasure below is still needed.
-  - Fix: erase a handler no raise reaches before drop elaboration, as
-    upstream's canonicalization of a `try` without one does, then report
-    an owned register live at an exit.
+    `try_region_shadowed_binding` hold no owned register (2026-10-26), and
+    no handler erasure is needed.
+  - The rule: report an owned register live at a function or region exit.
+  - Before landing it, re-run the census: the rule on, `run` over
+    `assets/ok` and `assets/ownership_ok`, with `MOJITO_PRE_ELABORATION=0`
+    too, since the rule runs after every pass in a debug build. File any
+    new shape's cause.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9274,37 +9236,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R638 MIR lowers a `Variant` projection type application from
-  syntax**
-
-  `v[T]` as a `Variant` projection is a place, and MIR still finds it by
-  matching `ExprKind::TypeApply` where it should match `CheckedOp::TypeApply`.
-  - Sites: `expr_unconverted`'s `variant_project_type_apply` arm,
-    `place_unrebound`, `simple_place_unrebound`, `try_place_unrebound`
-    (`lower_stmt.rs`), `reference_handle` (`mir.rs`), and the
-    `Member | Index | TypeApply` place predicate in `facts.rs`.
-  - `call_family` already takes the callable `TypeApply` and returns `None`
-    for a projection, so the projection arm is reached only from syntax.
-  - Done when `rg 'ExprKind::TypeApply' crates/mojito-mir/src` finds only
-    `expression_children` and the node-less boundary arm.
-  - Found while landing R619 (2026-10-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R639 A `comptime for` range's unfolded bounds are read from the
-  range call's syntax**
-
-  `lower_term`'s `ComptimeSource::EvaluatedRange` arm matches the header's
-  rebuilt `ExprKind::Call` to reach each bound it asks a thunk for, where
-  the bound should come from the range call node's `args`.
-  - The thunk request (`ComptimeThunks::request_value`) takes syntax, so
-    the bound's node id must reach it, or the request rebuild the syntax
-    itself.
-  - Done when `lower_stmt.rs` names no `ExprKind::Call`.
-  - Found while landing R619 (2026-10-12).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R640 A trait default wrapper's forwarding call is found by its
   syntax and its instantiation by span**
 
@@ -9353,18 +9284,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while planning R743 (2026-10-23).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1072 Writing a homogeneous collector is rejected**
-
-  Problem: `print(xs)` over `*xs: Int` reports that the collector does not
-  conform to trait 'Writable', where the pin prints `(1, 2, 3)`.
-  - Upstream's `VariadicList` is `Writable` when its element is, through
-    its `write_to` and `write_repr_to`.
-  - The bundled `VariadicList` (`stdlib/std/builtin/variadics.mojo`)
-    declares neither yet, nor its `Writable where ...` conformance.
-  - Found while planning R1040 (2026-10-16).
-  - Depends on R743.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1315 A `!pop.array` size cannot be a parameter, so
   `_MLIR.POPArrayType` cannot be declared**
@@ -9441,15 +9360,22 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 - [ ] **R662 A value binder read is a frame slot, not a parameter
   reference**
 
-  `identifier_read` lowers a read of a scalar value binder (`n` in
-  `def plain[n: Int]`) to a slot `Flatten::var` interns, which holds
-  nothing until mono rewrites each read.
-  - Upstream reads a parameter as an attribute (a decl-ref), with no
-    storage.
+  `identifier_read` (`lower_expr/expr.rs`) lowers a read of a scalar value
+  binder (`n` in `def plain[n: Int]`) to a slot `Flatten::var` interns,
+  which holds nothing until mono rewrites each read.
+  - Upstream reads a parameter as `kgen.param.constant` of the binder's
+    declaration reference (an attribute), with no storage.
   - The lever: lower the read as `param_value_register` lowers a recorded
     parameter value (`Const::Param`, answered by mono), from the checked
     binding the read names, as a lifted thunk's `parameter_reads` already
     does.
+  - Both name-keyed rewrites then go: the elaborator's
+    `substitute_value_parameter_reads` (`mono/substitute.rs`) and
+    `inline-parametric`'s `read_binder`.
+  - `mem-2-reg` refuses a slot nothing stores or declares for this reason
+    (`variance`): its reads are binder reads, and that rule goes with the
+    slot. Probe: `n` in `$comptime$unrolled$0` of a `comptime for k in
+    range(n)` body.
   - Done when a value binder's read takes no slot in MIR, and VM and
     `--backend pliron` output is unchanged.
   - Found while landing R660 (2026-10-13).
@@ -9467,21 +9393,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Done when they serve only what still takes a slot, or are deleted.
   - Found while landing R660 (2026-10-13).
   - Depends on R662.
-  - Model: Opus, Not Planned.
-
-- [ ] **R752 MIR re-enters HIR to build each `try` region's CFG**
-
-  `Flatten::lower_region` calls `Cfg::build_seeded_checked_region` with
-  MIR's own slot interner and binding map, where upstream lowers a `try`'s
-  regions inside the one function walk.
-  - The lever: HIR builds each sub-region's CFG while it walks the
-    function, and `HirInstr::Try` carries them, so `RegionSeed` goes away.
-  - MIR temporaries stop interleaving with region slots, so `VarId`
-    numbering moves: review the MIR text of the `try`/`with` fixtures.
-  - Done when MIR builds no HIR CFG and VM and `--backend pliron` output
-    is unchanged.
-  - Found while landing R636 (2026-10-13).
-  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1292 A MIR `try` may lack its `except` or `else` region, where
@@ -9980,34 +9891,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 - [ ] **R306 A scalar `range(...)` is typed by a checker rule where the
   pin declares infer-only overloads**
 
-  Problem: `range(Int32(4))` is typed by `Checker::infer_scalar_range`
-  once overload selection fails, which spells the call as the range
-  struct's construction, where the pin's `std.builtin.range`
-  declares `def range[dtype: DType, //](end: Scalar[dtype]) ->
-  _ZeroStartingRange[dtype]` and its two- and three-argument siblings.
-  - Mojito's float range is a separate `_FloatStridedRange`; the pin's
-    `_StridedRange[dtype, forward]` takes the float path under `comptime if
-    Self.dtype.is_floating_point()`.
-  - The overloads reject a float or `Bool` lane with `comptime assert`.
-  - With the overloads in source, `infer_scalar_range`'s spelled
-    construction and the checker's range shortcuts (`scalar_range_parts`
-    in `iteration.rs`, `indexing.rs`, and `builtins.rs`) go.
-  - Depends on R74.
+  `range(Int32(4))` is typed by `Checker::infer_scalar_range`
+  (`checker/builtins.rs`) once overload selection fails, which spells the
+  call as the range struct's construction, where the pin's
+  `std.builtin.range` declares `def range[dtype: DType, //](end:
+  Scalar[dtype]) -> _ZeroStartingRange[dtype]` and its two- and
+  three-argument siblings.
+  - Nothing blocks the source overloads now: `def range[dtype: DType,
+    //](end: Scalar[dtype])` added to `stdlib/std/range.mojo` beside the
+    `Int` one is selected for `range(Int32(3))`, `range(3)` keeps the
+    `Int` overload, and its `comptime assert` fails a float lane at
+    elaboration (2026-10-26).
+  - The pin's float range is `_StridedRange[dtype, forward]` under
+    `comptime if Self.dtype.is_floating_point()`; Mojito's is the separate
+    `_FloatStridedRange`. Fold it into `_StridedRange`, and assert the
+    pin's "a floating-point range requires an explicit step" text in the
+    one- and two-argument overloads.
+  - Then `infer_scalar_range`, its call in `Checker::infer_call`
+    (`call_inference.rs`), and the `scalar_range_parts` shortcuts in
+    `iteration.rs`, `indexing.rs`, and `builtins.rs` go.
+  - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R903 A `comptime for` over a display of non-`Copyable` elements is
-  rejected with Mojito's wording, not the pin's**
-
-  The bundled `Array.__iter__(ref self)` states its requirement as `where
-  conforms_to(Self.T, Copyable)`, where upstream uses a `comptime assert`.
-  - A non-`Copyable` element therefore selects `__iter__(var self)`, and the
-    `paramfor_*` bound rejects `_ArrayOwnedIter[P]` as not `Copyable`.
-  - The pin reports "Array iteration requires the element to be
-    `Copyable`" from `array.mojo:1153`.
-  - Fixture: `assets/type_error/comptime_for_display_not_copyable.mojo`.
-  - Found while landing R794 (2026-10-14).
-  - Depends on R74.
-  - Model: Opus, Not Planned.
 
 - [ ] **R904 A `comptime for` over a type pack or a reflected field-type
   list fails with Mojito's own wording**
@@ -10088,45 +9992,54 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 - [ ] **R800 A compile-time subscript of a value pack is a checker rule, not
   `ParameterList.__getitem_param__`**
 
-  Problem: `comptime e = vs[1]`, `Box[vs[0]]`, and `materialize[vs[i]]()`
-  are compiled by the checker straight to a `ListGet` over the pack, where
+  `comptime e = vs[1]`, `Box[vs[0]]`, and `materialize[vs[i]]()` are
+  compiled by the checker straight to a `ListGet` over the pack, where
   upstream reads them through `ParameterList.__getitem_param__`.
   - The checker site is the `Index` arm of `compile_dependent_ct_expr`
     (`checker/constraints.rs`), which also serves display lists and module
     display constants and must keep doing so.
-  - Add `comptime __getitem_param__[idx: Int]: Self.type = Self.values[idx]`
-    to `stdlib/std/builtin/variadics.mojo`, read under the raw-list gate
-    (`Checker::bundled_raw_list_operand`), as `size` already is.
-  - Upstream's index parameter is `idx: SIMDLength`, which Mojito lacks, so
-    the port spells it `Int` and records that in the module header.
-  - A runtime subscript already calls `__getitem__`, and the length is
-    already `size`.
+  - Add `comptime __getitem_param__[idx: Int]: Self.type =
+    Self.values[idx]` to `ParameterList` in
+    `stdlib/std/builtin/variadics.mojo`, as `TypeList` already declares
+    its own, read under the raw-list gate
+    (`Checker::bundled_raw_list_operand`).
+  - Upstream's index parameter is `idx: SIMDLength` (R336), so the port
+    spells it `Int`, as `TypeList`'s does, and says so in the module
+    header.
+  - Probe: `comptime e = vs.__getitem_param__[1]` in `def go[*vs: Int]()`
+    reports "type 'ParameterList[Int, vs]' has no field
+    '__getitem_param__'", where the pin prints `5`.
   - Probe: over `struct R[t: AnyType, //, values:
-    _MLIR.KGENParamListType[t]]`, `comptime first: Int = Self.values[0]`
+    _MLIR.KGENParamListType[t]]` (`_MLIR` imported from
+    `std.builtin.variadics`), `comptime first: Int = Self.values[0]`
     prints `4` for `R[vs.values]` with `vs = 4, 5`, where the pin rejects
     it with "'KGENParamList[t]' is not subscriptable". The same arm must
     take a raw list only under the bundled gate (found while landing
     R1168, 2026-10-20).
   - Found while landing R494 (2026-10-13).
-  - Depends on R801, which gives a `comptime` value member parameters.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R1169 A type pack is not a `TypeList` value**
 
-  Problem: `var x = Ts` and `comptime tl: TypeList[Trait=Movable,
-  Ts.values] = Ts` stop with "Undefined variable 'Ts'", where the pin runs
-  them, and `len(Ts)` is a checker rule rather
-  than `TypeList.__len__`.
+  `var x = Ts` and `comptime tl: TypeList[Trait=Movable, Ts.values] = Ts`
+  stop with "Undefined variable 'Ts'", where the pin runs them, and
+  `len(Ts)` is a checker rule rather than `TypeList.__len__`.
   - Read the pack in a runtime position as `TypeList[Ts.values]()`, as
-    `infer_value_pack_read` reads a value pack as
-    `ParameterList[vs.values]()`.
+    `Checker::infer_value_pack_read` (`comptime_validation.rs`) reads a
+    value pack as `ParameterList[vs.values]()`. The bundled `TypeList`
+    already declares `__init__` and `__len__`.
   - `len(Ts)` then dispatches to `__len__` like any `Sized`; delete
-    `infer_len`'s pack arm and `pack_length_binder`'s `len` arm.
-  - `comptime y: Int = Ts` should then report the pin's "cannot implicitly
-    convert 'TypeList[Ts.values]' value to 'Int'", not "Undefined variable
-    'y'".
+    `Checker::infer_len`'s pack arm (`builtins.rs`) and
+    `pack_length_binder`'s `len` arm (`constraints.rs`).
+  - Probe: `def go[*Ts: Movable]()` with `var x = Ts`, `print(len(x))`,
+    and `print(tl.length)` prints `3` three times for `go[Int, Bool,
+    String]()` at the pin.
+  - Probe: `comptime y: Int = Ts` should report the pin's "cannot
+    implicitly convert 'TypeList[Ts.values]' value to 'Int'", not
+    "Undefined variable 'y'".
   - Found while planning R805 (2026-10-19).
-  - Depends on R1168.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R1182 `TypeList`'s list vocabulary is answered by spelling, not by
@@ -10549,8 +10462,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   stdlib struct whose `write_to` and `write_repr_to` are Mojo, choosing the
   scalar alias through `_scalar_repr_alias`.
   - The texts match the pin; the shape does not.
-  - A bundled `struct SIMD` needs everything R160 needs for `DType`, plus
-    `Ty::Simd`'s slots served by a nominal struct.
+  - The text moves into Mojo with the library `SIMD` (R1397), which takes
+    a `DType` parameter without R160's `DType` struct.
   - Probe: `x.write_repr_to(w)` on an `Int`, `UInt`, or `Float64`
     (`SemanticAdjustment::InvertedReprWrite`, `mir/lower_expr/expr_method.rs`)
     builds `repr(x)` into an owned `String` and writes that, where
@@ -10559,7 +10472,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Int8(4).write_to(t)` stop with "type 'Int8' has no method
     'write_repr_to'" (or `'write_to'`), where the pin writes `Int8(4)` and
     `Float32(1.5)`: a sized scalar's host method table has neither.
-  - Depends on R160.
+  - Depends on R1397.
   - Model: Fable, Not Planned.
 
 - [ ] **R359 `Tuple`'s private storage destroys its elements, where
@@ -10686,23 +10599,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`assets/type_error/simd_int_width_binder_not_inferred.mojo`).
   - Upstream's shape is a distinct `SIMDLength` type with an implicit
     conversion from `Int`, so the declaration, not a side table, carries it.
+  - Upstream's `SIMDLength` is a struct over `index` ops whose arithmetic
+    must fold in a parameter expression, so the `index` ops (R1392) and
+    the builtin fold (R1395) land first.
   - Found while landing R259 (2026-10-05).
-  - Depends on nothing.
+  - Depends on R1392 and R1395.
   - Model: Fable, Not Planned.
-
-- [ ] **R346 The discovery check types `Tuple`'s dunders and teardowns in
-  Rust though `tuple.mojo` declares them**
-
-  Problem: `infer_tuple_method`
-  (`checker/method_calls/builtin_types.rs`) still types `__len__`,
-  `__contains__`, the six comparisons, `consume_elements`, and `deinit_with`
-  from the element list for a `Tuple` no specialization serves yet.
-  - `reverse` and `concat` are typed against the declaration's shell
-    (`infer_tuple_member`), and the same path can answer the rest.
-  - The Rust arms answer first, so removing one moves its member to the
-    declaration.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string
   accumulator where upstream writes through a `Writer` struct**
@@ -10747,25 +10649,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 - [ ] **R1287 `print` is a compiler builtin where upstream's is an
   `@inline(.never)` library function**
 
-  `print` is checked, run, and lowered as a builtin call (`infer_print`,
-  the VM's `dispatch.rs`, Pliron's `lower/calls.rs`), where upstream's
-  `std/io/io.mojo` declares `def print[*Ts: Writable](*values: *Ts, sep:
-  StringSlice = " ", end: StringSlice = "\n", flush: Bool = False, var
-  file: RawFileDescriptor = stdout)`.
+  `print` is checked, run, and lowered as a builtin call
+  (`Checker::infer_print`, the VM's `dispatch.rs`, Pliron's
+  `lower/calls.rs`), where upstream's `std/io/io.mojo` declares `def
+  print[*Ts: Writable](*values: *Ts, sep: StringSlice = " ", end:
+  StringSlice = "\n", flush: Bool = False, var file: RawFileDescriptor =
+  stdout)`.
   - `inline_cost` prices the builtin call at the figure the pin's
-    `print(s)` call site costs (`PRINT_COST`, 30), since the call holds
-    none of the pack and defaults the pin's call site builds.
+    `print(s)` call site costs (`PRINT_COST`, 30, in
+    `inline_parametric.rs`), since the call holds none of the pack and
+    defaults the pin's call site builds.
   - Probe: `@always_inline def show(x: Int): print("show", x)` inlines
     here and keeps its call at the pin, where a `StringLiteral` value
     takes `print("a")` past the bound.
   - The pin prices `print()` at 24 and `print(s, x)` at 31.
-  - Done when `print` is the library function, the caller's MIR holds its
-    pack and defaults, and `PRINT_COST` is gone.
   - Probe: a spread into the builtin `print` (`print(*args)`) is passed as
     its elements (`expand_pack_spreads`), where every other call passes
     the caller's pack itself.
+  - Done when `print` is the library function, the caller's MIR holds its
+    pack and defaults, and `PRINT_COST` is gone.
   - Found while landing R1075 (2026-10-22).
-  - Depends on R424, R422, R1102.
+  - Depends on R424 and R422.
   - Model: Fable, Not Planned.
 
 - [ ] **R426 The bundled `_FormatUtils` respells constructs upstream writes
@@ -10804,25 +10708,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
 - [ ] **R445 `ConstructTypeParam` is a special case of `ConstructType`**
 
-  Problem: `T()` and `Ts[i]()` are carried by `MirInstr::ConstructTypeParam`
-  (a binder, plus a pack index), while `types[i]()` is carried by
-  `MirInstr::ConstructType` over the type expression, where the pin has one
-  operation: the `Defaultable` initializer of a type-valued parameter
+  `T()` and `Ts[i]()` are carried by `MirInstr::ConstructTypeParam` (a
+  binder, plus a pack index), while `types[i]()` is carried by
+  `MirInstr::ConstructType` over the type expression, where the pin has
+  one operation: the `Defaultable` initializer of a type-valued parameter
   expression.
   - Folding the nullary forms gives `T()` the operand `Ty::Param` and
     `Ts[i]()` the dependent selection, closed by the elaborator's one
     `ConstructType` arm (`mono::substitute::default_construct_parameters`).
-  - The erased VM constructs those two forms from type reification by slot
-    name, so the fold waits for the erased oracle's removal.
+  - Nothing waits on the VM: it runs concrete MIR only, and rejects both
+    instructions as parametric (`backend/vm/exec.rs`).
+  - Lowering sites: `expr_call.rs`, `expr_method.rs`, and
+    `type_construction.rs` in `mojito-mir`; `inline_parametric`'s
+    `constructs_binder` veto goes with the form.
   - `T(copy=x)` keeps its own form, or becomes a selected `Copyable`
     initializer call.
-  - Probe: `inline-parametric` keeps an `each[Int, Bool]()` call over
-    `comptime for i in range(len(Ts)): print(Ts[i]())`: the inlined
-    `Ts[i]()` would name the callee's pack binder, which the caller does
-    not declare, though substitution already closes its result type to
-    the bound list's element at `i`, which a `ConstructType` would carry.
+  - Probe: `inline-parametric` keeps the `each[Int, Bool]()` call over
+    `comptime for i in range(len(Ts)): print(Ts[i]())`, and `one[String]()`
+    over `print(T())` (bounds `Defaultable & Writable & Deinitable`), since
+    the inlined construction would name the callee's binder, which the
+    caller does not declare, though substitution already closes its type.
   - Found while landing R364 (2026-10-07).
-  - Depends on R10, which deletes the erased oracle's reification.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R533 A non-generic capturing closure bound to a callable parameter
@@ -11080,11 +10987,20 @@ follow-ups the landed producer stages filed come last.
   `MirFunction::removed_params` and the elaborator keys instances without
   it.
   - Every caller still binds the argument, and the instance binds a value
-    its body never reads.
-  - Moving to upstream's shape rewrites the declaration's `param_decls`
-    and every `param_arg` and `instantiated_args` naming the function,
-    which needs the whole program at once, as R907 does.
-  - Depends on R907.
+    its body never reads: `remove-unused-params` over `def f[n: Int](x:
+    Int)` called as `f[3](1)` and `f[4](1)` records `removed_params: [f
+    slot 0]` and keeps both callers' `instantiated_args`.
+  - The pass (`analysis/unused_params.rs`) already walks the call graph
+    callees first; it rewrites one function at a time, so the rewrite of
+    the declaration's `param_decls` and of every `param_arg` and
+    `instantiated_args` naming it needs a whole-program step after the walk.
+  - The elaborator binds a removed parameter of a compile-time application
+    only when its argument resolves (`demand_application`), since a caller
+    may have removed the one it would forward: a `comptime if` thunk in a
+    struct method called from a sibling that reads no struct parameter
+    (`assets/ok/comptime_if_method_struct_parameter_unread.mojo`). That
+    tolerance goes once the generator drops the parameter.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1263 A call keeps the operand of an argument its callee removed,
@@ -11123,24 +11039,6 @@ follow-ups the landed producer stages filed come last.
     `implicit_callees`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R950 A compile-time value parameter is read through a slot named
-  by its spelling**
-
-  A generic body reads a value binder `k` as a `var.use` of a slot named
-  `k`, where upstream reads `kgen.param.constant` of the binder's
-  declaration reference.
-  - The elaborator folds the reads by spelling
-    (`substitute_value_parameter_reads`), and `inline-parametric` does the
-    same for an inlined callee (`read_binder`).
-  - Lowering should emit `Const::Param` of the binder's declaration
-    reference, and both name-keyed rewrites then go away.
-  - `mem-2-reg` refuses a slot nothing stores or declares for this reason
-    (`variance`): its reads are binder reads, and that rule goes with the
-    slot. Probe: `n` in `$comptime$unrolled$0` of a `comptime for k in
-    range(n)` body.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1151 A variadic value parameter is typed by its element, not by
   upstream's raw list**
@@ -11779,6 +11677,17 @@ residue found inside a task moves to the task that owns its fix.
     Copyable)`, where the pin's asserts the bound with `comptime assert`
     and `downcast`, so `List.__hash__` cannot use the pin's `for element
     in self` body and indexes through `unsafe_get` instead.
+  - Probe: a `comptime for` over a display of non-`Copyable` elements
+    (`assets/type_error/comptime_for_display_not_copyable.mojo`, merged
+    from R903) is rejected as "'_ArrayOwnedIter[P]' ... does not conform to
+    trait 'Copyable'", where the pin reports "Array iteration requires the
+    element to be `Copyable`".
+  - Its cause: `Array.__iter__(ref self)` is gated `where
+    conforms_to(Self.T, Copyable)`, so the display selects `__iter__(var
+    self)`. The pin's asserts the bound with `comptime assert`, and its
+    `IteratorType` is `_ArrayIter[downcast[Self.T, Copyable], ...]`;
+    without the downcast, the `comptime for` bound rejects `_ArrayIter[P,
+    2]` as not an `Iterator`.
   - Depends on nothing.
   - Model: Opus, Planned.
 

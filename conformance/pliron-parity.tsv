@@ -148,6 +148,7 @@ assets/ok/comptime_if_generic_struct_method_call.mojo	main	exe-differential	sani
 assets/ok/comptime_if_inferred_def.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_inferred_static_method.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_layout_query.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_method_struct_parameter_unread.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_nested_def_call.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_nested_keyed_def.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_overload_beside_pack.mojo	main	exe-differential	sanitized
@@ -1209,6 +1210,7 @@ assets/ok/variadic_collector_len.mojo	main	exe-differential	sanitized
 assets/ok/variadic_element_value_read.mojo	main	exe-differential	sanitized
 assets/ok/variadic_list_element_pointers.mojo	main	exe-differential	sanitized
 assets/ok/variadic_list_members.mojo	main	exe-differential	sanitized
+assets/ok/variadic_list_writable.mojo	main	exe-differential	sanitized
 assets/ok/variadic_method_type_params.mojo	main	exe-differential	sanitized
 assets/ok/variadic_overload_collector_position.mojo	main	exe-differential	sanitized
 assets/ok/variadic_pack_forwarding_generic_def.mojo	main	exe-differential	sanitized

@@ -1395,8 +1395,10 @@ impl<'a> Specializer<'a> {
     /// arguments past the function's compile-time parameters are the values
     /// of its runtime ones (`h(n)`, a `def` the check applied by name), which
     /// the call passes and the cache keys beside the name. A binder the
-    /// function removed is bound but not keyed, as a call's is. A demand on an
-    /// instance being materialized is a cycle in the parameter domain.
+    /// function removed is not keyed, as a call's is, and is bound only when
+    /// its argument resolves: the caller may have removed the parameter it
+    /// would forward. A demand on an instance being materialized is a cycle
+    /// in the parameter domain.
     fn demand_application(
         &mut self,
         template: &str,
@@ -1492,8 +1494,13 @@ impl<'a> Specializer<'a> {
                             .collect::<Option<Vec<_>>>()
                             .map(|elements| TyKind::RuntimePack(elements).into()),
                         _ => None,
-                    }
-                    .ok_or_else(|| unresolved("an unresolved type"))?;
+                    };
+                    let Some(ty) = ty else {
+                        if keyed {
+                            return Err(unresolved("an unresolved type"));
+                        }
+                        continue;
+                    };
                     if keyed {
                         arguments.push(InstanceArg::Ty(ty.clone()));
                     }
@@ -1512,8 +1519,13 @@ impl<'a> Specializer<'a> {
                     let value = match arg.kind() {
                         ParamKind::DeclRef(reference) => bindings.values.get(reference).cloned(),
                         _ => eval_ct(arg, bindings).ok(),
-                    }
-                    .ok_or_else(|| unresolved("an unresolved value"))?;
+                    };
+                    let Some(value) = value else {
+                        if keyed {
+                            return Err(unresolved("an unresolved value"));
+                        }
+                        continue;
+                    };
                     if keyed {
                         arguments.push(InstanceArg::Value(value.clone()));
                     }

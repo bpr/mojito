@@ -6407,7 +6407,7 @@ point where a slot declared in a loop is uninitialized again.
   of a value stored outside it is promoted (the elaborator renumbers only
   the registers each clone of a body defines). A slot nothing stores or
   declares is a compile-time parameter's binding the elaborator
-  substitutes by name (R950), and keeps its slot. The other mentions go and the slot leaves
+  substitutes by name (R662), and keeps its slot. The other mentions go and the slot leaves
   the function (`mir::retire_slots`).
   Its `--timings` counters are `promoted_slots` and
   `erased_slot_instructions`.

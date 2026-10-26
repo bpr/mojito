@@ -507,7 +507,9 @@ fn defined_registers(blocks: &[MirBlock], defined: &mut HashSet<u32>) {
 /// or consumption of a type whose drop runs no code ([`slot_marker`]), as
 /// upstream erases an allocation that is only stored to. The stored
 /// registers become unread, and [`retire_unnamed_storage`] retires the
-/// slot. Returns whether any slot had a mention.
+/// slot. The function's error slot is read by its `error_return` exits,
+/// which hand the stored error to the caller. Returns whether any slot had
+/// a mention.
 fn erase_store_only_slots(function: &mut MirFunction, declarations: &MirDeclarations) -> bool {
     fn census(blocks: &[MirBlock], read: &mut HashSet<VarId>) {
         for instruction in blocks.iter().flat_map(|block| &block.instrs) {
@@ -536,7 +538,7 @@ fn erase_store_only_slots(function: &mut MirFunction, declarations: &MirDeclarat
             }
         }
     }
-    let mut read = HashSet::new();
+    let mut read: HashSet<VarId> = function.error_slot.into_iter().collect();
     census(&function.blocks, &mut read);
     let dead: HashSet<VarId> = (function.n_params..function.var_names.len())
         .filter_map(|slot| VarId::try_from(slot).ok())

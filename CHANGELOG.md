@@ -687,6 +687,29 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A homogeneous collector over a `Writable` element is now `Writable`, as
+  at the pin (R1072): the bundled `VariadicList` declares upstream's
+  `write_to` and `write_repr_to`, so `print(xs)` over `*xs: Int` writes
+  `(1, 2, 3)` and `repr(xs)` the pin's `VariadicList[...]` text on both
+  backends. A method's `comptime if` over its own parameter, called from a
+  sibling method that reads none of its struct's parameters, now runs where
+  elaboration stopped on an unresolved struct parameter: a compile-time
+  application binds a parameter it removed only when its argument
+  resolves. A raising generic function whose body inlines a call that
+  drops an operand, such as a value pack's `values[i]`, no longer loses
+  the store of its raised error, which natively handed the caller an
+  uninitialized error and trapped as a double free; `value_pack_runtime_read`
+  and three `parameter_list_*` fixtures run natively again.
+
+- A triage of seventeen `mojo-shape` entries (R1402) re-ran each probe
+  against the pin. R752 (closed by R874's `try` regions), R346 (`Tuple`'s
+  members come only from `tuple.mojo`), and R638 and R639 (MIR matches no
+  `ExprKind::TypeApply` or `ExprKind::Call`) are closed, and R1072 is
+  fixed. R950 merged into R662, and R903 into R223, whose missing
+  `downcast` is its cause. R306, R800, R1169, R445, R912, R1287, and R1335
+  are rewritten against today's code, none waiting on a landed entry; R336
+  now waits on R1392 and R1395, and R276 on R1397 instead of R160.
+
 - A triage of eighteen `divergences`, `pmir`, `native`, `code-org`, and
   `tooling` entries (R1403) re-ran each probe against the pin. Eight
   already match it and are closed: R245 (a compile-time `break` or

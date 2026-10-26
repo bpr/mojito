@@ -40,12 +40,12 @@
 #   keyword argument for an infer-only parameter does not resolve yet), and
 #   `__iter__` takes `ref self` and names the iterator's origin arguments,
 #   which a positional origin argument before a value one cannot be yet;
-# - `consume_elements`, `_annihilate`, `write_to`, and `write_repr_to` are
-#   not declared yet.
+# - `consume_elements` and `_annihilate` are not declared yet.
 # `get_span` addresses the elements through the compiler-private
 # `__param_list_address[values]()`, which stands for upstream's
-# `global_constant` over `#pop.variadic_to_array`. `write_repr_to` writes
-# the text upstream's `FormatStruct` builder writes, directly.
+# `global_constant` over `#pop.variadic_to_array`. `ParameterList`'s and
+# `VariadicList`'s `write_repr_to` write the text upstream's `FormatStruct`
+# builder writes, directly.
 from std.builtin.reversed import reversed
 from std.collections.optional import Optional
 from std.iter import Iterable, Iterator, StopIteration
@@ -358,7 +358,11 @@ struct VariadicList[
     //,
     element_type: AnyType,
     is_owned: Bool,
-](RegisterPassable, Sized):
+](
+    RegisterPassable,
+    Sized,
+    Writable where conforms_to(element_type, Writable),
+):
     """A utility class to access variadic function arguments of memory-only
     types that may have ownership. It exposes references to the elements in a
     way that can be enumerated.  Each element may be accessed with `elt[]`.
@@ -429,6 +433,57 @@ struct VariadicList[
         """
         var elements = self._value.unsafe_ptr()
         return elements[unsafe_offset=idx][]
+
+    def _write_elements[
+        is_repr: Bool = False
+    ](self, mut writer: Some[Writer]) where conforms_to(
+        Self.element_type, Writable
+    ):
+        writer.write_string("(")
+        for i in range(len(self)):
+            if i > 0:
+                writer.write_string(", ")
+
+            comptime if is_repr:
+                self[i].write_repr_to(writer)
+            else:
+                self[i].write_to(writer)
+        writer.write_string(")")
+
+    @inline(.never)
+    def write_to(
+        self, mut writer: Some[Writer]
+    ) where conforms_to(Self.element_type, Writable):
+        """Writes the elements of this variadic list to a writer.
+
+        Constraints:
+            `element_type` must conform to `Writable`.
+
+        Args:
+            writer: The object to write to.
+        """
+        self._write_elements(writer)
+
+    @inline(.never)
+    def write_repr_to(
+        self, mut writer: Some[Writer]
+    ) where conforms_to(Self.element_type, Writable):
+        """Writes the repr of this variadic list to a writer.
+
+        Constraints:
+            `element_type` must conform to `Writable`.
+
+        Args:
+            writer: The object to write to.
+        """
+        # Upstream's text: `FormatStruct(writer, "VariadicList").params(
+        # TypeNames[Self.element_type]()).fields(write_fields)`.
+        writer.write(
+            "VariadicList[", _unqualified_type_name[Self.element_type](), "]"
+        )
+        writer.write_string("(")
+        self._write_elements[is_repr=True](writer)
+        writer.write_string(")")
 
     def __iter__(
         ref self,
