@@ -6,12 +6,6 @@
 //! legality rule) reads these tables rather than keeping its own copy; the
 //! tests below pin each name to the dispatch source that implements it.
 
-/// The prefix of the symbols the VM dispatches dynamically on a trait bound.
-///
-/// A call target under it (`__trait_dispatch.copy$ov$`) resolves at run
-/// time by the receiver's kind, never to one declaration.
-pub const TRAIT_DISPATCH_PREFIX: &str = "__trait_dispatch.";
-
 /// The direct callees `backend::vm::dispatch` handles without a program
 /// function, in the order of its arms.
 pub const BUILTIN_CALLEES: &[&str] = &[

@@ -7,11 +7,21 @@
 # The template serves every instance. Each storage operation selects the
 # alternative `_get_type_index[T, *Self.Ts]()` names, which the elaborator
 # closes per instance; a `T` the pack lacks fails the instantiation with
-# upstream's "Type does not exist in Variant.". The
-# `comptime if Self.Ts.contains[T](): pass` lines stand where upstream calls
-# `Self._check[T]()` (R411).
+# upstream's "Type does not exist in Variant.", as `Self._check[T]()` does
+# for each public operation.
 from std.reflection.type_info import _unqualified_type_name
 from std.range import range
+
+comptime _InvalidTypeIndex: Int = -1
+
+
+@inline(.always)
+def _get_type_index[T: AnyType, *Ts: AnyType]() -> Int:
+    comptime for i in range(Ts.length):
+        comptime if Ts[i] == T:
+            return i
+    return _InvalidTypeIndex
+
 
 struct Variant[*Ts: AnyType](
     Copyable where Ts.all_conforms_to[Copyable](),
@@ -24,15 +34,20 @@ struct Variant[*Ts: AnyType](
 ):
     var _storage: __VariantStorage[*Self.Ts]
 
+    @staticmethod
+    def _check[T: AnyType]():
+        comptime idx = _get_type_index[T, *Self.Ts]()
+        comptime assert (
+            idx != _InvalidTypeIndex
+        ), "Type does not exist in Variant."
+
     @implicit
     def __init__[T: Movable](out self, var value: T):
-        comptime if Self.Ts.contains[T]():
-            pass
+        Self._check[T]()
         self._storage = __VariantStorage[*Self.Ts](value^)
 
     def __init__[T: AnyType, //, F: def() -> T](out self, *, init_with: F):
-        comptime if Self.Ts.contains[T]():
-            pass
+        Self._check[T]()
         self._storage = __VariantStorage[*Self.Ts](init_with=init_with)
 
     @__unsafe_nested_origins_read_only
@@ -40,8 +55,7 @@ struct Variant[*Ts: AnyType](
     def __getitem_param__[
         T: AnyType
     ](ref self) -> ref[origin_of(self)._get_owned_interior["value"]] T:
-        comptime if Self.Ts.contains[T]():
-            pass
+        Self._check[T]()
         return self._storage[T]
 
     @inline(.always)
@@ -91,48 +105,40 @@ struct Variant[*Ts: AnyType](
 
     @inline(.always)
     def unwrap[T: Movable](deinit self) -> T:
-        comptime if Self.Ts.contains[T]():
-            pass
+        Self._check[T]()
         return self._storage.unwrap[T]()
 
     @inline(.always)
     def unsafe_unwrap[T: Movable](deinit self) -> T:
-        comptime if Self.Ts.contains[T]():
-            pass
+        Self._check[T]()
         return self._storage.unsafe_unwrap[T]()
 
     @inline(.always)
     def replace[Tin: Movable & Deinitable, Tout: Movable](mut self, var value: Tin) -> Tout:
-        comptime if Self.Ts.contains[Tin]():
-            pass
+        Self._check[Tin]()
         return self._storage.replace[Tin, Tout](value^)
 
     @inline(.always)
     def unsafe_replace[Tin: Movable, Tout: Movable](mut self, var value: Tin) -> Tout:
-        comptime if Self.Ts.contains[Tin]():
-            pass
+        Self._check[Tin]()
         return self._storage.unsafe_replace[Tin, Tout](value^)
 
     def set[T: Movable](mut self, var value: T) where Self.Ts.all_conforms_to[Deinitable]():
-        comptime if Self.Ts.contains[T]():
-            pass
+        Self._check[T]()
         self._storage.set[T](value^)
 
     def set[T: AnyType, //, F: def() -> T](
         mut self, *, init_with: F
     ) where Self.Ts.all_conforms_to[Deinitable]():
-        comptime if Self.Ts.contains[T]():
-            pass
+        Self._check[T]()
         self._storage.set(init_with=init_with)
 
     def isa[T: AnyType](self) -> Bool:
-        comptime if Self.Ts.contains[T]():
-            pass
+        Self._check[T]()
         return self._storage.isa[T]()
 
     def unsafe_get[T: AnyType](ref self) -> ref[origin_of(self)] T:
-        comptime if Self.Ts.contains[T]():
-            pass
+        Self._check[T]()
         return self._storage[T]
 
     @staticmethod
@@ -140,6 +146,5 @@ struct Variant[*Ts: AnyType](
         return Self.Ts.contains[T]()
 
     def deinit_with[T: AnyType, F: def(var T)](deinit self, deinit_func: F, /):
-        comptime if Self.Ts.contains[T]():
-            pass
+        Self._check[T]()
         self._storage.deinit_with(deinit_func)

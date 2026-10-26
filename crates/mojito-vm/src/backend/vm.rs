@@ -981,12 +981,8 @@ impl Prog {
         }) {
             return Some(selected.to_string());
         }
-        let alternate =
-            resolved.and_then(mojito_symbol::symbol::borrowed_iterator_dispatch_alternate);
         resolved
-            .into_iter()
-            .chain(alternate.as_deref())
-            .find_map(|selected| self.keyed_struct_member(receiver_type, selected))
+            .and_then(|selected| self.keyed_struct_member(receiver_type, selected))
             .or_else(|| self.struct_member(receiver_type, method, argc))
             .map(|index| self.mir.functions[index].0.clone())
             .or_else(|| defined.map(str::to_string))

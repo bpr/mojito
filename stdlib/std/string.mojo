@@ -674,13 +674,14 @@ struct String(
 
     # Copies the literal's static bytes into an owned buffer. `@implicit` lets
     # a literal convert wherever the nominal String is expected.
+    @inline(.nodebug)
     @implicit
-    def __init__(out self, literal: StringLiteral):
-        self.size = literal.byte_length()
+    def __init__(out self, data: StringLiteral, /):
+        self.size = data.byte_length()
         self.cap = self.size if self.size > 0 else 1
         self.data = unsafe_alloc[Byte](self.cap)
         var copied = external_call["memcpy", Pointer[UInt8, MutUntrackedOrigin]](
-            self.data, literal.ptr(), UInt(self.size)
+            self.data, data.ptr(), UInt(self.size)
         )
 
     @inline(.nodebug)

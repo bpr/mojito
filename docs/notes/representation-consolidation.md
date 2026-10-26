@@ -269,7 +269,7 @@ missing.
     reached through trait-bound calls.
   - R1348's operators and R1280's iteration step cannot inline.
 - **Closes**:
-  - Dispatch: R1109, R1031, R204, R1280 (after R1288).
+  - Dispatch: R1109, R1031, R1280 (after R1288).
   - Operators: R708, R1332, R1282, R81, R697, R1238.
   - Traits: R707, R706 (after R705), R109 (after R424), R712, R579, R191.
 - **Shrinks** R987, R1291, R684, R113, R1119, R25, R817, R862, R860,
@@ -376,7 +376,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 
 | block | core | members |
 |---|---|---|
-| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | R1389–R1399 (`Int`, `UInt`, and `Float64` become width-one `SIMD`, then the library `SIMD` port, R1397), R160, R1188, R276, R1192 | R1408 (after R1392), R143, R339, R335, R1223, R331, R430, R850, R212, R1019, R423, R1352, R186, R185, R851, R187, R171, R330, R336, R857, R1189, R427, R432, R199 |
+| Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | R1389–R1399 (`Int`, `UInt`, and `Float64` become width-one `SIMD`, then the library `SIMD` port, R1397), R160, R1188, R276, R1192 | R1408 (after R1392), R143, R339, R335, R331, R430, R850, R212, R1019, R423, R1352, R186, R185, R851, R187, R171, R330, R336, R857, R1189, R427, R432 |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R424 → R422 → R1287 (R424 is also gap F) | R1409, R433, R434, R275, R18, R159, R937 |
 | Reflection is a builtin, not `Reflected[T]` | R324 (after gap H) | R271, R497, R272, R76, R569, R270, R77, R78, R79, R75, R443, R444, R273, R900, R904 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R419, R1165, R67, R571, R284, R550, R570 |

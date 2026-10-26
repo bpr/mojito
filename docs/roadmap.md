@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1448**.
+Next free ID: **R1449**.
 
 ## Ordered Work
 
@@ -937,7 +937,8 @@ which names the upstream pass each one follows. Each is measured by the
     `Writable`, `Copyable.copy`) have no declaration, so their conformances
     record no table; their dispatches keep the composed name until the
     bundled library declares them.
-  - The VM's retargeting of a surviving dispatch is R204's.
+  - No abstract dispatch survives into concrete MIR, so the VM keeps no
+    retargeting of its own; this site is the last one.
   - Probe: `assets/ok/trait_bound_comparison_drop_order.mojo` and
     `comparable_ordered_algorithms.mojo` print the same on both backends
     with `retarget_method_symbol` gone from `native::mono`.
@@ -3332,6 +3333,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `p.__lt__(q)` over `p = (Tag(2), 1)`, where `Tag` declares
     `Comparable`, is rejected because `Tuple.__lt__`'s `where` clause
     `conforms_to(Ts.values, Equatable)` folds False. The pin prints `True`.
+  - Probe: `Dict[P, Int]()`, where `P` declares `(Comparable, Copyable,
+    Hashable, Writable)`, is rejected with "type 'P' for parameter 'K' does
+    not conform to trait 'Equatable'"; the pin runs it.
   - Found while landing R702 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3783,6 +3787,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Once any parameter is spelled, the checker solves none of the rest from
     the arguments.
   - Found while landing R477 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1448 An implicit conversion never selects a constructor with
+  parameters of its own**
+
+  Problem: an `@implicit` constructor that declares its own parameters,
+  such as `Variant`'s `__init__[T: Movable](out self, var value: T)`, is
+  never chosen for an implicit conversion, so `v = String("hi")` over a
+  `Variant[Int, String]` is rejected with "type mismatch for assignment to
+  'v'", where the pin converts and prints `hi`.
+  - Cause: `implicit_conversion_constructor` (`mojito-checker/checker.rs`)
+    keeps a constructor only when the source `coerces` to its parameter
+    type, after substituting the struct's binders alone. A parameter typed
+    by the constructor's own binder (`T`) never matches, so the
+    constructor's binders are never inferred from the source.
+  - The selected conversion records the struct's binders
+    (`conversion_instantiation`) and nothing for the constructor's own, so
+    lowering needs those too.
+  - Probe: `var v: Variant[Int, String] = String("hi")` and `v =
+    String("hi")` print `hi` at the pin.
+  - Probe: a struct `W` with `@implicit def __init__[T: Writable](out self,
+    s: T)` beside `def __init__(out self, x: Int)`: `w = String("hey")`
+    runs the generic constructor at the pin and is rejected here.
+  - Found while landing R1405 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7938,6 +7967,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Upstream, even a real `Iterable` bound abandons its `AnyType` iterator
     temporary.
   - Ledger name: `iterable-element-identity`.
+  - Probe: the bundled `Iterable` (`stdlib/std/iter.mojo`) declares
+    `comptime Element`, which the pin's does not, so `def first[C:
+    Iterable](items: C, default: C.Element) -> C.Element` is accepted
+    where the pin reports "'Iterable' value has no attribute 'Element'".
+    Snippets in `tests/vm_test.rs` and `tests/mir_test.rs` use that
+    signature.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -10344,8 +10379,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - This is the one step that cannot be split. The entries before and after
     it take everything that can be.
   - Closes R330 (lane gathers become library methods), R331 (shuffle's `2 *
-    length` bound), R1223 (`__len__` and `__getitem__`), R187 (upstream's
-    reduction tree), and R850 (float `//` and `%`). Shrinks R212 and R171.
+    length` bound), R187 (upstream's reduction tree), and R850 (float `//`
+    and `%`). Shrinks R212 and R171.
+  - Probe (merged from R1223): `n.__getitem__(0)` over `n = 5` is rejected
+    with "type 'Int' has no method '__getitem__'", where the pin prints `5`.
+    `len(5)` already prints 1, through the checker's `modelled_declares`
+    rule in `len_result_for_type` (`checker/builtins.rs`).
+  - Probe: in a raising `main`, `var [a] = 5` and `var [a, b] =
+    SIMD[DType.int32, 2](1, 2)` print `5` and `1 2` at the pin, and `var
+    [a, b] = 5` raises "list pattern does not match value length".
+    `checker/destructure.rs` rejects all three ("sequence destructuring of
+    'Int', which has no '__len__'/'__getitem__' yet"); lift that rejection
+    with the port. A sequence *pattern* over these types crashes the pin,
+    so `compile_sequence_pattern`'s rejection stays.
   - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R336 (the length
     type), and R185 and R186 (so the port is upstream's bodies with no
     leniency).
@@ -11072,34 +11118,6 @@ recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
 
-- [ ] **R1405 Nine `stdlib` entries are fixed or wait on landed work**
-
-  Three `stdlib` entries already run as at the pin, and the rest predate the
-  work they wait on.
-  - Fixed, by probes run 10-25: R213 (`"abc".byte_length()` prints 3), R216
-    (`isdir("/tmp")` runs), and R220 (`Array[Int8, 4]()` runs).
-  - Partly fixed: R1223. `len(5)` prints 1. `n.__getitem__(0)` and `SIMD`
-    destructuring still fail, and R1397 closes them.
-  - Cite gone code: R206 (`NestedMono`, `def_specialization_requests`,
-    `replace_templates`).
-  - Wait on landed entries: R199 (R40) and R411 (R74).
-  - Overtaken: R204 by R1052, which folds a witness at substitution, though
-    `TRAIT_DISPATCH_PREFIX` remains. R1101's `Writer.write` probe can run
-    now that R1079 has landed.
-  - For each entry, run its probe (or the program its first sentence names)
-    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
-    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
-  - Delete an entry whose probe now matches the pin, and record it in
-    `CHANGELOG.md`.
-  - Rewrite an entry that still fails so its cause names today's code, and
-    keep its ID.
-  - Merge a duplicate into the entry it restates, carrying its probes, and
-    delete it.
-  - Done when every entry listed here is deleted, rewritten against today's
-    code, or merged.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1421 `Optional` stores its value in a heap allocation, where
   upstream's holds it inline**
 
@@ -11197,26 +11215,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1223 `Int`, `UInt`, `Float64`, and `SIMD` have no `__len__` or
-  `__getitem__`**
-
-  Problem: `len(n)`, `n.__getitem__(0)`, and `var [a] = n` reject for an
-  `Int` (`type 'Int' has no method '__len__'`), where the pin's scalars
-  have both, returning 1 and the value, and `SIMD` returns its width and
-  a lane: `var [a, b] = SIMD[DType.int32, 2](1, 2)` prints `1 2`.
-  - `modelled_declares` already calls these types `Sized`, so without the
-    methods R1136's sequence destructuring rejects them explicitly
-    ("sequence destructuring of 'Int', which has no
-    '__len__'/'__getitem__' yet" in `checker/destructure.rs`); lift that
-    rejection when the methods land.
-  - A sequence *pattern* over these types crashes the pin, so
-    `compile_sequence_pattern`'s rejection stays.
-  - Stop: `len(5)`, `var [a] = 5`, the `SIMD` destructuring above, and
-    `var [a, b] = 5` raising the length error all match the pin.
-  - Found while planning R1136 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1126 `Array` slices into a `Span`**
 
   Problem: `arr[1:3]` on an `Array[Int, 4]` is rejected, where the pin
@@ -11284,27 +11282,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1101 `String.__init__(literal)` carries no inline marking in the
-  bundled library**
-
-  The pin marks `String.__init__(out self, data: StringLiteral, /)`
-  `@always_inline("nodebug")`, and the bundled `stdlib/std/string.mojo`
-  leaves its twin unmarked where its neighbours carry `@inline(.nodebug)`,
-  so `String("hi")` keeps its call where every other `nodebug` constructor
-  inlines.
-  - R786 imported the pin's markings in the pin's spelling; this one was
-    missed, and any other `@always_inline("nodebug")` spelling the import
-    skipped should be checked the same way.
-  - Probe: `Writer.write[*Ts]` (`std/format/__init__.mojo`) and
-    `String.write[*Ts]` (`std/string.mojo`) carry no marking; if the pin
-    marks them, `print`'s variadic wrappers inline now that collectors do
-    (R1079).
-  - Done when the marking is on, `assets/ok/always_inline_nodebug_calls.mojo`
-    prints as before, and `String("hi")` in `main` holds no `__init__`
-    call.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R197 Compile-time Dict/Set key identity ignores a user struct's
   non-fieldwise `__eq__`**
 
@@ -11323,24 +11300,6 @@ residue found inside a task moves to the task that owns its fix.
   - No lever is named.
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R199 A string element of a compile-time tuple indexed under
-  `comptime for` breaks inside a list display**
-
-  Problem: with `comptime t = (1, "s")` and `comptime for i in range(2)`,
-  `first([t[i], t[i]], t[i])` fails MIR verification with `register r19 has
-  no checked type`.
-  - `var v = t[i]` followed by `first([v, v], v)` fails with `binding of
-    StringLiteral to a slot of type String`.
-  - The `Int`/`Bool` twin runs.
-  - Cause: the materialized element keeps its literal type where the
-    display's element type has already materialized `String`.
-  - Two `var` declarations across unrolled iterations also collide (`'v' is
-    already declared in this scope`) unless each body opens a block. That
-    collision is R40's to fix.
-  - Depends on R40, whose `comptime for` scoping fix lets the `var v` repro
-    run without a block per body.
-  - Model: Opus, Not Planned.
 
 - [ ] **R669 The bundled `Iterator` trait is not upstream's**
 
@@ -11448,44 +11407,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R204 An abstract dispatch target that survives elaboration aborts at
-  run time**
-
-  Problem: a call the checker emits as an abstract `__trait_dispatch.*` or
-  `__iterator_dispatch.*` target that `native::mono` leaves unresolved
-  reaches the VM, whose by-name retargeting then aborts, where the
-  elaborator should reject the program.
-  - The VM keeps the retargeting (`TRAIT_DISPATCH_PREFIX`,
-    `symbol::borrowed_iterator_dispatch_alternate`; `backend/vm/exec.rs`,
-    `invoke.rs`) only for such a survivor; a target the elaborator resolves
-    (`mono/infer.rs`) never reaches it.
-  - Sites: an operator or protocol dunder reached from a value whose static
-    type is a bare `Ty::Param` the instance did not close; an instance
-    reached only from bundled code.
-  - Each survivor should be a `MonoError` at the call that reaches it, as the
-    pin rejects an unsatisfied requirement; the retargeting goes with the
-    last one.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R206 Type-pack calls inside a nested `def` and whole-pack-forwarded
-  calls keep the syntactic element-typing path**
-
-  Problem: `take(b, 1)` over a local `b` rejects with `a heterogeneous pack
-  specialization needs an expression whose type is statically evident before
-  checking`.
-  - Top-level calls consult the checker's instantiation.
-  - Three of the four pieces exist for ordinary nested generics: an
-    unresolved template survives `replace_templates` for the discovery
-    check.
-  - `def_specialization_requests` harvests a nested callee.
-  - `NestedMono::scan_expression` consults that request.
-  - Remaining: the checker accepting a nested variadic shell abstractly.
-  - Remaining: softening the pack diagnostics. Only an arity failure defers
-    today, and a pack failure is `PackBound` or `NotComptime`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R207 A user variadic struct application as a pack element keeps the
   fixed-arity diagnostic**
 
@@ -11571,13 +11492,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R213 String literals have no methods**
-
-  Problem: `"abc".byte_length()` rejects.
-  - Workaround: convert a literal-typed value through `String(...)` first.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R214 An annotated `Optional[T]` local initialized from a bare
   struct construction fails MIR verification**
 
@@ -11587,15 +11501,6 @@ residue found inside a task moves to the task that owns its fix.
   - A literal payload (`var n: Optional[Int] = 6`) converts.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R216 A string literal does not bind a trait-bounded type parameter
-  that `String` satisfies**
-
-  Problem: `isdir("/tmp")` reports `'StringLiteral' ... does not conform to
-  trait 'PathLike'`.
-  - Workaround: spell `String("/tmp")`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R217 Struct-level `comptime NAME = Self(n)` constants do not
   fold**
@@ -11631,15 +11536,6 @@ residue found inside a task moves to the task that owns its fix.
   Problem: `makedirs(head, exist_ok=...)` inside `makedirs[PathLike]` mints
   its own specialization while checking and reports it undefined.
   - Workaround: recurse through a non-generic helper.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R220 Nullary construction of a sized-scalar array is reported
-  unsupported**
-
-  Problem: `Array[Int8, 1024]()` reports the scalar's `Defaultable`
-  construction unsupported.
-  - Workaround: spell `Array[Int8, 1024](fill=0)`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11935,21 +11831,6 @@ residue found inside a task moves to the task that owns its fix.
   - `tests/checker_test.rs`'s `rejects_bad_simd_shuffle_masks` pins the
     current rejection.
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R411 `Variant` stands a `comptime if` line where upstream calls
-  `Self._check[T]()`**
-
-  Problem: upstream's `Variant` methods open with `Self._check[T]()`, whose
-  `comptime assert` rejects a `T` that is no alternative; Mojito's
-  `stdlib/std/utils/variant.mojo` has a no-op
-  `comptime if Self.Ts.contains[T](): pass` there instead.
-  - The check itself holds: a storage operation's
-    `_get_type_index[T, *Ts]()` fails the instantiation at such a `T` with
-    upstream's message (`close_variant_index`, `native::mono`).
-  - Port `_InvalidTypeIndex`, `_get_type_index`, and `_check` verbatim,
-    now that `comptime assert` runs.
-  - Depends on R74.
   - Model: Opus, Not Planned.
 
 - [ ] **R427 `ord` is undefined**

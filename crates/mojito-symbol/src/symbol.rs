@@ -718,9 +718,9 @@ pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
 /// symbol.
 ///
 /// A borrowed conformer may declare `self` (Read) or `ref self` (Ref), while
-/// the checker pins one spelling in the iteration protocol; runtime
-/// retargeting probes the sibling before giving up. Owned (`var self`)
-/// dispatch has no sibling.
+/// the checker pins one spelling in the iteration protocol; the
+/// elaborator's resolution probes the sibling before giving up. Owned
+/// (`var self`) dispatch has no sibling.
 pub fn borrowed_iterator_dispatch_alternate(symbol: &str) -> Option<String> {
     let read = iterator_dispatch_symbol(ArgConvention::Imm);
     let reference = iterator_dispatch_symbol(ArgConvention::Ref);

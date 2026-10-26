@@ -687,6 +687,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A triage of nine `stdlib` entries (R1405) re-ran each probe against the
+  pin. R213 (`"abc".byte_length()` prints 3), R216 (`isdir("/tmp")`), and
+  R220 (`Array[Int8, 4]()`) already matched it and are closed, as are R206
+  (a type-pack call inside a nested `def`, and a whole-pack forward
+  `take(*args)`, now `assets/ok/pack_call_nested_def_and_forward.mojo`)
+  and R199, whose compile-time tuple program the pin rejects with Mojito's
+  message while its pack twin, a `var` per unrolled iteration filling a
+  list display, runs as at the pin
+  (`assets/ok/pack_element_list_display.mojo`). `Variant` now opens each
+  public operation with upstream's `Self._check[T]()` over the ported
+  `_get_type_index` and `_InvalidTypeIndex`, where a no-op `comptime if`
+  stood (R411). `String`'s literal constructor is upstream's `@inline(.nodebug)
+  __init__(out self, data: StringLiteral, /)`, so `String("hi")` inlines
+  (R1101). R204 is closed: no abstract `__trait_dispatch` or
+  `__iterator_dispatch` target survives into concrete MIR across the
+  corpus, so the VM's unreached sibling-iterator retargeting and the unused
+  `TRAIT_DISPATCH_PREFIX` are gone. R1223 merged into R1397, the library
+  `SIMD` port that adds `__getitem__`.
+
 - A homogeneous collector over a `Writable` element is now `Writable`, as
   at the pin (R1072): the bundled `VariadicList` declares upstream's
   `write_to` and `write_repr_to`, so `print(xs)` over `*xs: Int` writes

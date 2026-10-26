@@ -1372,8 +1372,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `sep`/`end`/`flush`/`file` keywords through `descriptor_value` and
   `libc.rs`'s `host_write_bytes`), drops, slice bounds, and value formatting.
 - `builtins.rs` (`mojito_vm::builtins`) names what that dispatch answers
-  without a program function: `BUILTIN_CALLEES`, `INTRINSIC_METHODS`, and
-  `TRAIT_DISPATCH_PREFIX`; its tests pin each name to the dispatch source. A
+  without a program function: `BUILTIN_CALLEES` and `INTRINSIC_METHODS`;
+  its tests pin each name to the dispatch source. A
   consumer deciding whether a call target resolves (the A1 legality rule)
   reads these tables.
 - `backend/vm/libc.rs` owns the `external_call` libc table: `HostState`

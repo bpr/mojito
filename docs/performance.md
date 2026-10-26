@@ -1738,7 +1738,8 @@ No `generator_instances` count moves. The shared corpus total of
 `benchmarks/instantiation.tsv` is regenerated with this change. The
 bundled library's own `write` wrappers are variadic forwards, which the
 inliner can bind since collectors inline (R1079), though neither
-`Writer.write` nor `String.write` carries an inline marking (R1101).
+`Writer.write` nor `String.write` carries an inline marking, as at the
+pin.
 
 ## Mem2Reg promotes trivially register-passable slots (2026-10-14, R787)
 

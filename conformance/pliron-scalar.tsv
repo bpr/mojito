@@ -574,6 +574,7 @@ assets/ok/ownership_marker_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_argument_destroyed_after_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_bare_in_struct_header.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_beside_value_binder.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_call_nested_def_and_forward.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_constructor_spread_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_def_scalar_value_binders_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_def_unkept_loop_template_served.mojo	-	ineligible	no-scalar-entry-shape
@@ -583,6 +584,7 @@ assets/ok/pack_element_alias_string_literal.mojo	-	ineligible	no-scalar-entry-sh
 assets/ok/pack_element_binding_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_copy_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_default_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/pack_element_list_display.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_read_borrowed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_rebind.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/pack_element_temporaries.mojo	-	ineligible	no-scalar-entry-shape
