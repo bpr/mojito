@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1446**.
+Next free ID: **R1447**.
 
 ## Ordered Work
 
@@ -1445,57 +1445,45 @@ Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R1406 Eight `ownership` entries name gone code or predate R1328 and
-  R1329**
+- [ ] **R473 A discard `_ = e` binds its value into a slot, so a place is
+  copied or moved into it**
 
-  These entries cite removed machinery or were filed before the temporary
-  and register-drop work changed the code they describe.
-  - Cite gone code: R302 (`ERASED_VM_RESIDUE`; its residual-field claim
-    falls under R1368), R88 (`MOJITO_VERIFY_TEMPLATE_FACTS`), and R115
-    (`record_replacing_interior_reference`).
-  - Overtaken: R111 by defaults filled at call binding (R1077, R1060). Also
-    R473 and R688 by R1329's register drops and copy elision, and R716 by
-    R1328 and R1336.
-  - Add `Depends on R1364` to R129: the pin rejects it when checking the
-    conformance ("lacking evidence"), so it follows the three-valued query.
-  - For each entry, run its probe (or the program its first sentence names)
-    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
-    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
-  - Delete an entry whose probe now matches the pin, and record it in
-    `CHANGELOG.md`.
-  - Rewrite an entry that still fails so its cause names today's code, and
-    keep its ID.
-  - Merge a duplicate into the entry it restates, carrying its probes, and
-    delete it.
-  - Done when every entry listed here is deleted, rewritten against today's
-    code, or merged.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R473 A discard `_ = x` copies its source instead of taking it**
-
-  Problem: `var x = Q(1, "y")` then `_ = x` as `x`'s last use prints
-  `del 1` twice in Mojito, where the pin destroys one `Q`.
-  - The same holds for `var r = q; _ = r` over a value parameter `q`.
-  - Mojito copies `x` into the discard and destroys both, where the pin
-    moves the last use.
-  - Probe: a discard of a reference result copies its referent too.
-    Over `xs: List[D]` (`D` only `Copyable`, printing in `__del__`),
-    `_ = xs.__getitem__(0)` copies the element and destroys the copy at
-    once, and `_ = xs[0]` is rejected ("cannot be implicitly copied …
-    (discard assignment)"); the pin neither copies nor destroys in either
-    form. Found while planning R1137.
-  - Today (2026-10-25) a `Copyable`-only `Q` is rejected ("cannot be
-    implicitly copied … (discard assignment)"), where the pin runs it and
-    prints `del 1`: the pin's discard demands no copy.
+  Problem: over a `Copyable`-only `Q` printing in its destructor, `var x =
+  Q(1, "y")` then `_ = x` is rejected ("cannot be implicitly copied …
+  (discard assignment)"), where the pin runs it and prints `del 1`.
+  - The checker's discard arm (`StmtKind::Assign` with `_` in
+    `checker/statements.rs`) calls `check_consuming`, so the value must be
+    copyable or transferred.
+  - HIR lowers the discard as a `Bind` into a fresh `$discard_s` slot
+    (`mojito-hir/src/hir.rs`), so a place's value is copied, or moved at its
+    last use, into storage that dies at once.
+  - The pin's discard takes nothing from a place, which dies at its last
+    use as usual.
+  - Probe: over `xs: List[D]` (`D` only `Copyable`, printing its copy and
+    destructor), `_ = xs.__getitem__(0)` prints `copy 1`, `del 1`, where the
+    pin prints nothing, and `_ = xs[0]` is rejected as above.
   - Probe: over an `ImplicitlyCopyable` `C` printing its move initializer
     and destructor, `_ = w` at `w`'s last use prints `move 3`, `del 3`,
     where the pin prints `del 3` alone.
-  - Probe: `var u2 = t2` with `u2` never read and `t2` dying there prints
-    `move 2`, `del 2`, where the pin destroys `t2` alone (`del 2`). Copy
-    elision makes the copy `t2`'s move, but no rule deletes a move into
-    storage that dies unread, the slot form of `delete_dead_copies`.
-  - Found while landing R467 (2026-10-07).
+  - An `ImplicitlyCopyable` `_ = x` at `x`'s last use prints one `del`, as
+    at the pin.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1446 A move into a variable that dies unread still runs the move
+  initializer**
+
+  Problem: `var u2 = t2`, with `u2` never read and `t2` dying there, prints
+  `move 2`, `del 2` over an `ImplicitlyCopyable` `C` printing its move
+  initializer and destructor. The pin warns that `u2` is never used and
+  prints `del 2` alone.
+  - Copy elision already turns the copy into `t2`'s move.
+  - No rule deletes a move into a slot that is destroyed before any read.
+    `delete_dead_copies` (`analysis/copy_elision.rs`) deletes only a copy
+    whose one use is the `drop.reg` right after it.
+  - The fix is that rule's slot form: a `var.store` of a moved value whose
+    slot's next use is its drop becomes the source's own drop.
+  - Found while triaging R473 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1672,31 +1660,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Related: R123 (the same anchor at an owned parameter has two owners)
     and R691 (its loan conflicts until the statement's end).
   - Found while planning R1325 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R716 A call temporary read inside a t-string dies before the
-  print**
-
-  Problem: `print(t"{S(3).v}")` prints `del 3` before `3`, where the pin
-  prints `3` and then `del 3`.
-  - The temporary should live until the enclosing `print` returns.
-  - Found while landing R713 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R688 An owner whose last use is a `var` aggregate argument's copy
-  lives through the call**
-
-  Problem: `obj.own2(y=h1.c, x=h2.c)` over `def own2(self, var x: C,
-  var y: C)`, with a printing copy initializer and destructor, prints
-  `copy 3, del 3, copy 2, del 2, own2 3 2` at the pin.
-  - Mojito copies in the same order but destroys both owners after the
-    call: `copy 3, copy 2, own2 3 2, …, del 3, del 2`.
-  - The copied register keeps its owner's provenance, so drop elaboration
-    retains the owner through the call. The fix is the `CopyValue` result
-    provenance in `crates/mojito-analysis/src/analysis/register_loans.rs`.
-  - Found while landing R681 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2196,6 +2159,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - The same happens when such elements are moved between two lists whose
     element origin is a union (`origin_of(xs, ys)`), and when a
     `Dict[Int, Span[…]]` is read through `items()`.
+  - Probe: `var l2 = l.copy()` over `l: List[Span[D, origin_of(xs)]]`,
+    with `D` printing in its destructor, then `l2[0][0].a`, stops the VM
+    with "use after Pointer deallocation". The pin and `--backend pliron`
+    print the element.
   - A later direct use of `xs` hides it, which is how
     `assets/ok/bundled_instance_loan_carrying_argument.mojo` stays clear of it.
   - An untracked pointer's element type carries it the same way: a user
@@ -2212,26 +2179,23 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   receiver**
 
   Problem: a method returning a struct that carries a loan through a type or
-  origin argument (`List[T].copy()` at `T = Span[Int, origin_of(xs)]`,
-  `Span.copy()`) records a view-result borrow of its receiver, so the copy
-  looks like it aliases what it was copied from.
-  - `l.extend(l.copy())` over `List[Span[Int, origin_of(xs)]]` is rejected
-    as aliasing `self` and `other`, and `v[0].copy()` with `v = Span(l)`
-    conflicts with the live `v`.
-  - A concrete clone check at such an argument rejects `List.__imul__`'s
-    `self.extend(orig.copy())` the same way. The clone derives in a normal
-    compilation, but `MOJITO_VERIFY_TEMPLATE_FACTS=1` checks it again and
-    fails there.
-  - The same borrow is why verification disagrees with the derived bodies
-    of `Bag.get` in `assets/ok/loan_carrying_instance_clone.mojo` and of
-    `List._get_copy`: the template records no borrow.
-  - The rule is the `BorrowViewResult` condition in `method_calls/call_contract.rs`: any
-    loan-carrying struct result of a non-consuming method.
+  origin argument (`Span.copy()` at `Span[Int, origin_of(xs)]`) records a
+  view-result borrow of its receiver, so the copy looks like it aliases what
+  it was copied from.
+  - In `def g(xs: List[Int])`, `var v = Span(l)` over `l:
+    List[Span[Int, origin_of(xs)]]`, then `var w = v[0].copy()`,
+    `l.append(Span(xs))`, and a read of `w` is rejected ("access to 'l'
+    conflicts with live reference 'w'"). The pin prints `2 3`.
+  - `w = l[0].copy()` and `l.extend(l.copy())` are accepted, as at the pin.
+  - At a mutable origin (`var xs` in `main`), the pin rejects
+    `l.extend(l.copy())` itself ("aliasing values passed mutably"), and so
+    does Mojito.
+  - The rule is `record_view_result` in `method_calls/call_contract.rs`. It
+    lends the receiver for any loan-carrying struct result of a
+    non-consuming method.
   - Dropping the borrow when the declared return names only the struct's own
     origin binders was tried. It lost the only link from `c.get()`'s result
     to the loans `c` carries, which R87 has to supply first.
-  - Not yet checked against the pin, which is expected to accept both
-    spellings.
   - Depends on R87.
   - Model: Fable, Planned.
 
@@ -2344,23 +2308,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R111 An evaluated default handed to a borrowing parameter is
-  never destroyed**
-
-  Problem: `use()`, beside `def use(r: R = R(String("dflt")))` over a
-  struct with a `__deinit__`, never runs that destructor on the VM or
-  natively, where the pin prints `drop dflt` when the call returns.
-  - An explicitly passed temporary (`use(R(String("x")))`) is destroyed
-    on both sides, and so is the default of a `var` parameter, which the
-    callee owns.
-  - The VM's `bind_for_call` runs the default function into a register
-    no drop elaboration sees. Native lowering matches it, and frees the
-    value's buffers without running the destructor.
-  - Probe: `conformance/probes/borrowed_default_argument_destructor.mojo`.
-  - Found while evaluated defaults were lowered natively (2026-09-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R114 An implicit conversion through a consuming constructor copies a
   parameter-typed place**
 
@@ -2375,22 +2322,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: `conformance/probes/consuming_conversion_copies_parameter.mojo`.
   - Found while the template's MIR replaced per-instance method clones
     (2026-10-01).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R115 A second `Dict` lookup stales a view of an earlier value**
-
-  Problem: `var v = d["a"].rstrip()` then `var u = d["b"].rstrip()` then a read
-  of `v` is rejected with "use of invalidated interior reference 'v' to
-  'd["value"]["bytes"]'", where the pin prints both.
-  - A `Dict` lookup defines a fresh `value` generation, which replaces the
-    earlier one (`record_replacing_interior_reference`).
-  - The view lends `d["value"]["bytes"]` below the earlier generation, so the
-    second lookup stales it.
-  - The pin names the same interior, and a lookup does not replace it there.
-  - A single view of a `Dict` value runs
-    (`assets/ok/list_element_view_method_result.mojo`).
-  - Probe: `conformance/probes/dict_value_view_second_lookup.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2570,12 +2501,17 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   all requirements for 'Deinitable' ... lacking evidence to prove
   correctness".
   - The elaborator leaves the `__deinit__` out of `Holder[String]`, whose
-    clause fails, so that instance is destroyed without it.
-  - The checker should demand that a struct's `Deinitable` conformance be at
-    least as conditional as its `__deinit__`, as the pin does.
+    clause fails, so that instance is destroyed without it. Natively its
+    `String` leaks.
+  - `verify_builtin_conformance` (`checker/traits.rs`) answers `Deinitable`
+    with `true`. It never compares the `__deinit__`'s `where` clause with
+    the conformance's condition, as `method_satisfies_requirement_under`
+    does for a declared requirement's availability.
+  - The pin reports the unproven clause as "lacking evidence", which needs
+    R1364's three-valued query.
   - Probe:
     `conformance/probes/conditional_deinit_without_conditional_conformance.mojo`.
-  - Depends on nothing.
+  - Depends on R1364.
   - Model: Opus, Not Planned.
 
 - [ ] **R133 A `Pointer[T, o]` parameter cannot infer both its element type
@@ -2613,23 +2549,30 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R302 A linear `Dict.deinit_with` leaves its emptied entries list to
-  an implicit destruction its element type does not allow**
+- [ ] **R302 A linear `Dict.deinit_with` leaks its emptied entries list,
+  and the closure that would free it cannot enter the stdlib package**
 
   Problem: `Dict[Int, Conn].deinit_with` over a linear `Conn` pops every
   entry and leaves `entries`, an empty `List[DictEntry[Int, Conn]]`, to the
-  `deinit self` residual teardown.
+  `deinit self` residual teardown, so `--backend pliron` leaks its buffer.
   - That list's `__deinit__` is conditional on a `Deinitable` element, so the
-    elaborator rightly mints none, and concrete MIR never frees the buffer.
-  - The erased run calls the template's destructor and logs a `drop List`
-    the concrete run lacks.
-  - The checker accepts the implicit residual destruction of a field whose
-    conditional `Deinitable` conformance the instance disproves.
-  - Consuming `entries` through `List.deinit_with` is the stdlib lever, but
-    the nested handler must forward the captured `elt_handler` and move both
-    fields out of a `var` entry, which Mojito does not accept yet.
-  - `assets/ok/dict_insert_linear_capable.mojo` is the
-    `ERASED_VM_RESIDUE` row (`tests/corpus_test.rs`).
+    elaborator rightly mints none and concrete MIR never frees the buffer.
+  - The checker's acceptance of that residual destruction is R1368's.
+  - `StringDict.deinit_with` (`stdlib/std/collections/string_dict.mojo`)
+    has the same shape.
+  - The lever: `def forward(var entry: DictEntry[...]) {elt_handler}:
+    entry^.reap_with(elt_handler)`, then `self.entries^.deinit_with(forward)`.
+    It runs on the VM and natively and frees the buffer.
+  - The stdlib package refuses it. `declared_overloads`
+    (`mojito-checked/src/declaration.rs`) counts the closure storage's
+    synthesized fieldwise constructor, which the check's
+    `OverloadSets::scan` never sees, and a declaration record holds only its
+    own struct (`LoweredDeclaration::refuse_unjoinable`, `join`).
+  - The fix: leave closure storage out of `declared_overloads`, and let a
+    record carry the storage structs nested in its declarations, each named
+    by its own directory row.
+  - Probe: `assets/ok/dict_insert_linear_capable.mojo`, counted with
+    `MOJITO_RT_DBG_POINTERS=1` (14 allocations, 13 frees).
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -7860,6 +7803,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `assets/ok/tstring_lazy.mojo` is the ledger row (`one-off`), and
     `conformance/parity.tsv` `types.string-literal-families` records the
     representation difference.
+  - Probe: `print(t"{S(3).v}")` over an `S` printing in its destructor
+    prints `del 3` before `3`. The pin's `TString` borrows the call
+    temporary, so it lives until the `print` returns (`3`, then `del 3`).
   - Lever: an origin-parameterized reference pack on the bundled `TString`
     (`TString[origins, //, *Ts]`), which the capability ledger has long
     named as the missing shape.

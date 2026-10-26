@@ -186,6 +186,7 @@ assets/ok/constructor_reads_no_struct_parameter.mojo	main	exe-differential	sanit
 assets/ok/container_hashable.mojo	main	exe-differential	sanitized
 assets/ok/contextual_member_static.mojo	main	exe-differential	sanitized
 assets/ok/converting_default_reads_erased_struct_parameter.mojo	main	exe-differential	sanitized
+assets/ok/copy_argument_destroys_owner_first.mojo	main	exe-differential	sanitized
 assets/ok/copy_construction_last_use_moves.mojo	main	exe-differential	sanitized
 assets/ok/copy_construction_owned_receiver_forwards.mojo	main	exe-differential	sanitized
 assets/ok/copy_construction_read_argument_lends.mojo	main	exe-differential	sanitized
@@ -236,6 +237,7 @@ assets/ok/dict_methods_growth.mojo	main	exe-differential	sanitized
 assets/ok/dict_movable_only_elements.mojo	main	exe-differential	sanitized
 assets/ok/dict_take_items.mojo	main	exe-differential	sanitized
 assets/ok/dict_upstream_key_value_iteration.mojo	main	exe-differential	sanitized
+assets/ok/dict_value_view_second_lookup.mojo	main	exe-differential	sanitized
 assets/ok/dict_views_iteration.mojo	main	exe-differential	sanitized
 assets/ok/discard_slots_typed_per_statement.mojo	main	exe-differential	sanitized
 assets/ok/discarded_call_result_drop_order.mojo	main	exe-differential	sanitized

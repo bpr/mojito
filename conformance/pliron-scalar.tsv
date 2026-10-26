@@ -186,6 +186,7 @@ assets/ok/constructor_reads_no_struct_parameter.mojo	-	ineligible	no-scalar-entr
 assets/ok/container_hashable.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/contextual_member_static.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/converting_default_reads_erased_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/copy_argument_destroys_owner_first.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_construction_last_use_moves.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_construction_owned_receiver_forwards.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/copy_construction_read_argument_lends.mojo	-	ineligible	no-scalar-entry-shape
@@ -236,6 +237,7 @@ assets/ok/dict_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_movable_only_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_take_items.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_upstream_key_value_iteration.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dict_value_view_second_lookup.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_views_iteration.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/discard_slots_typed_per_statement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/discarded_call_result_drop_order.mojo	-	ineligible	no-scalar-entry-shape

@@ -687,6 +687,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An owner whose last use is the copy of its field into an argument is now
+  destroyed once the copy is made, before the call, as at the pin:
+  `obj.own2(y=h1.c, x=h2.c)` prints `copy 5, del 5, copy 4, del 4` before
+  `own2` (R688). A copy initializer's result no longer inherits the alias
+  its source's shallow place read holds, while it keeps the loans its
+  value carries. A triage of eight `ownership` entries (R1406) also found
+  R111 (a borrowed evaluated default is destroyed) and R115 (a second
+  `Dict` lookup no longer stales a view of the first value) already
+  matching the pin on both backends, and folded R716 into R1130.
+
 - An augmented element store (`l[0] += x`) through a mutable-reference
   getter calls the element's in-place dunder where the element lies and
   reads `x` by the dunder's convention, as at the pin, instead of copying

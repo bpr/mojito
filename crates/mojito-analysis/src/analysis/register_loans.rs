@@ -16,6 +16,11 @@ pub(super) struct RegisterLoanState {
     /// never inherited by that instruction's own results (`t.n + 1` borrows
     /// `t` for `__add__` alone; the sum owns its bits).
     single_hop: BTreeMap<u32, BTreeSet<ValueRef>>,
+    /// Parts an aggregate `LoadPlace` result aliases: its shallow read shares
+    /// their storage, so they live through every consumer and pass to each
+    /// derived register until a copy initializer gives the copy its own
+    /// storage. The loans the value carries stay in `owners`.
+    aliased: BTreeMap<u32, BTreeSet<ValueRef>>,
 }
 
 pub(super) fn join_register_loan_states(
@@ -27,6 +32,9 @@ pub(super) fn join_register_loan_states(
     }
     for (register, owners) in &right.single_hop {
         left.single_hop.entry(*register).or_default().extend(owners);
+    }
+    for (register, owners) in &right.aliased {
+        left.aliased.entry(*register).or_default().extend(owners);
     }
     left
 }
@@ -555,13 +563,18 @@ struct RegisterLoanStep {
     operands: Vec<Reg>,
     results: Vec<Reg>,
     /// The parts the instruction uses whatever its operands carry: the
-    /// active loan roots of the variables it reads, and the parts its place
-    /// reads retain or its callee-produced handle seeds.
+    /// active loan roots of the variables it reads, and the parts its
+    /// `MakeRef` retains or its callee-produced handle seeds.
     owners: BTreeSet<ValueRef>,
     /// The parts a callee-produced handle result carries.
     seeded: BTreeSet<ValueRef>,
     /// Whether the results are fresh values that inherit only `seeded`.
     call_result: bool,
+    /// The parts an aggregate place read's result aliases.
+    aliased: BTreeSet<ValueRef>,
+    /// Whether the instruction is a `value.copy` running a copy initializer,
+    /// whose result inherits its operand's loans but none of its aliases.
+    copies: bool,
     /// A scalar read's result register and the parts it borrows for one hop.
     single_hop: Option<(u32, BTreeSet<ValueRef>)>,
     /// The slots the instruction ends by moving them, and the roots of the
@@ -612,13 +625,15 @@ impl RegisterLoanStep {
         // the root's storage until a `CopyValue` runs the copy lifecycle or a
         // consuming call finishes. Dropping the root between the load and that
         // consumer would free storage the pending register still references, so
-        // an aggregate (or unknown-typed) result retains through every consumer.
+        // an aggregate (or unknown-typed) result retains through every consumer
+        // (`aliased`), as Mojo destroys `h` once `h.c`'s copy is made.
         // A scalar read owns its bits, but the read is still a borrow of its
         // owner that lasts through the instruction consuming the register (Mojo
         // passes `t.n` to `print` as a reference to `t`, which therefore outlives
         // the call): the root is retained for that single hop only.
-        let retained_place = match instruction {
-            MirInstr::MakeRef { place, .. } => Some(place),
+        let mut aliased = BTreeSet::new();
+        match instruction {
+            MirInstr::MakeRef { place, .. } => owners.extend(reached(place)),
             MirInstr::LoadPlace { dest, place } => {
                 if place
                     .ty
@@ -626,16 +641,12 @@ impl RegisterLoanStep {
                     .or_else(|| register_types.get(&dest.0))
                     .is_none_or(may_alias_owned_storage)
                 {
-                    Some(place)
+                    aliased.extend(reached(place));
                 } else {
                     single_hop = Some((dest.0, reached(place).collect()));
-                    None
                 }
             }
-            _ => None,
-        };
-        if let Some(place) = retained_place {
-            owners.extend(reached(place));
+            _ => {}
         }
 
         // A nominal subscript returning `ref T` establishes a transient handle to
@@ -765,6 +776,14 @@ impl RegisterLoanStep {
             seeded,
             call_result,
             single_hop,
+            aliased,
+            copies: matches!(
+                instruction,
+                MirInstr::CopyValue {
+                    constructor: Some(_),
+                    ..
+                }
+            ),
             owned,
             first_register: values.first_register(),
         }
@@ -800,9 +819,10 @@ impl RegisterLoanStep {
         single_hop: &mut Vec<(u32, BTreeSet<ValueRef>)>,
     ) -> BTreeSet<ValueRef> {
         let mut owners = self.owners.clone();
+        owners.extend(&self.aliased);
         for operand in &self.operands {
-            if let Some(provenance) = registers.owners.get(&operand.0) {
-                owners.extend(provenance);
+            for map in [&registers.owners, &registers.aliased] {
+                owners.extend(map.get(&operand.0).into_iter().flatten());
             }
             if let Some(provenance) = registers.single_hop.get(&operand.0) {
                 single_hop.push((operand.0, provenance.clone()));
@@ -813,16 +833,23 @@ impl RegisterLoanStep {
 
     /// Advance `registers` past the instruction.
     fn transfer(&self, registers: &mut RegisterLoanState) {
-        let inherited = if self.call_result || self.results.is_empty() {
-            BTreeSet::new()
-        } else {
-            let mut owners = self.owners.clone();
+        let inherit = |own: &BTreeSet<ValueRef>, map: &BTreeMap<u32, BTreeSet<ValueRef>>| {
+            let mut owners = own.clone();
             for operand in &self.operands {
-                if let Some(provenance) = registers.owners.get(&operand.0) {
-                    owners.extend(provenance);
-                }
+                owners.extend(map.get(&operand.0).into_iter().flatten());
             }
             owners
+        };
+        let fresh = self.call_result || self.results.is_empty();
+        let inherited = if fresh {
+            BTreeSet::new()
+        } else {
+            inherit(&self.owners, &registers.owners)
+        };
+        let aliased = if fresh || self.copies {
+            BTreeSet::new()
+        } else {
+            inherit(&self.aliased, &registers.aliased)
         };
         if let Some((dest, roots)) = &self.single_hop {
             registers.single_hop.insert(*dest, roots.clone());
@@ -833,6 +860,17 @@ impl RegisterLoanStep {
             &inherited
         };
         for result in &self.results {
+            let owned = self.owned.iter().any(|(reg, _)| reg == result);
+            let aliased: BTreeSet<ValueRef> = aliased
+                .iter()
+                .filter(|part| !owned || part.root < self.first_register)
+                .copied()
+                .collect();
+            if aliased.is_empty() {
+                registers.aliased.remove(&result.0);
+            } else {
+                registers.aliased.insert(result.0, aliased);
+            }
             let owners = match self.owned.iter().find(|(reg, _)| reg == result) {
                 Some((_, root)) => {
                     let mut owners: BTreeSet<ValueRef> = result_owners
@@ -852,7 +890,11 @@ impl RegisterLoanStep {
             }
         }
         if !self.ended.is_empty() {
-            for map in [&mut registers.owners, &mut registers.single_hop] {
+            for map in [
+                &mut registers.owners,
+                &mut registers.single_hop,
+                &mut registers.aliased,
+            ] {
                 for parts in map.values_mut() {
                     parts.retain(|part| !self.ended.contains(&part.root));
                 }
@@ -1117,7 +1159,11 @@ impl ForwardObserver<DropFactsState> for DropFactsObserver<'_> {
         let end = end.map(|state| {
             let mut owners = BTreeSet::new();
             for value in handed_values(&block.term) {
-                let provenance = [&state.registers.owners, &state.registers.single_hop];
+                let provenance = [
+                    &state.registers.owners,
+                    &state.registers.single_hop,
+                    &state.registers.aliased,
+                ];
                 for map in provenance {
                     owners.extend(map.get(&value.0).into_iter().flatten());
                 }
