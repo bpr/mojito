@@ -71,6 +71,7 @@ assets/ok/capturing_lambda_storage.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison_link_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison_operand_copy.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/closure_storage_method_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/closures.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/collection_display_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/collection_truthiness.mojo	-	ineligible	no-scalar-entry-shape

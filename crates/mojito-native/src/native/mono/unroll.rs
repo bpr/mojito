@@ -150,20 +150,24 @@ impl Specializer<'_> {
                 "comptime for body is not one block".to_string(),
             )
         })?;
+        let over_binder: BTreeSet<VarId> = tables
+            .var_tys
+            .iter()
+            .filter(|(_, ty)| mojito_types::types::names_binder(ty, &op.binder))
+            .map(|(slot, _)| *slot)
+            .collect();
         let mut indexed: BTreeSet<VarId> = addressed_slots(std::slice::from_ref(&body))
-            .into_iter()
-            .filter(|slot| {
-                tables
-                    .var_tys
-                    .get(slot)
-                    .is_some_and(|ty| mojito_types::types::names_binder(ty, &op.binder))
-            })
+            .intersection(&over_binder)
+            .copied()
             .collect();
         indexed.extend(self.region_generator_slots(
             frame.template,
             std::iter::once(&body),
             &op.binder,
         ));
+        // A slot typed over the index the body never names, one an inlined
+        // call left unread, is no slot of any copy either.
+        tables.retired.extend(over_binder);
         tables.retired.extend(indexed.iter().copied());
         let stop = op.source.stop_test();
         let mut operands = op.operands;

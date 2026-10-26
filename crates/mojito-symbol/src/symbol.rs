@@ -1290,6 +1290,20 @@ pub fn closure_storage_name(lifted: &str) -> String {
     format!("{lifted}$__storage")
 }
 
+/// The method of its storage struct a closure's body is.
+///
+/// The closure is lifted as `lifted` and declared `source`; its storage is
+/// [`closure_storage_name`], as upstream's `liftClosureIntoMethod` nests the
+/// body in `fn::__storage`.
+pub fn closure_method_name(lifted: &str, source: &str) -> String {
+    format!("{}.{source}", closure_storage_name(lifted))
+}
+
+/// Whether struct `name` is a closure's storage ([`closure_storage_name`]).
+pub fn is_closure_storage_name(name: &str) -> bool {
+    name.ends_with("$__storage")
+}
+
 /// Whose a lifted compile-time function is, as its name says
 /// ([`lifted_owner`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

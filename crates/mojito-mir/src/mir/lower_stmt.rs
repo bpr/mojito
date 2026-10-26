@@ -2046,7 +2046,7 @@ impl<'a> Flatten<'a> {
             }
             args.push(dest);
         }
-        let TyKind::Struct(structure, _) = storage.ty.kind() else {
+        let TyKind::Struct(structure, parameters) = storage.ty.kind() else {
             unreachable!("a closure's storage is a struct")
         };
         let constructor = format!("{structure}.__init__");
@@ -2063,7 +2063,9 @@ impl<'a> Flatten<'a> {
             capture_accesses: Vec::new(),
             param_arg_regs: Vec::new(),
             receiver: None,
-            instantiated_args: Vec::new(),
+            // The storage's parameters are the enclosing binders, which no
+            // capture need spell.
+            instantiated_args: parameters.clone(),
             spread: None,
         });
         dest

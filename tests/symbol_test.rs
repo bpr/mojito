@@ -266,7 +266,7 @@ fn nested_defs_lift_to_dollar_joined_names() {
          \x20       return y + x\n\
          \x20   return inner(1)\n",
     );
-    assert!(names.contains("outer$inner"), "{names:?}");
+    assert!(names.contains("outer$inner$__storage.inner"), "{names:?}");
 }
 
 #[test]
@@ -279,8 +279,11 @@ fn deeply_nested_defs_use_the_full_lexical_symbol_path() {
          \x20       return inner()\n\
          \x20   return middle()\n",
     );
-    assert!(names.contains("outer$middle"), "{names:?}");
-    assert!(names.contains("outer$middle$inner"), "{names:?}");
+    assert!(names.contains("outer$middle$__storage.middle"), "{names:?}");
+    assert!(
+        names.contains("outer$middle$__storage.middle$inner$__storage.inner"),
+        "{names:?}"
+    );
 }
 
 #[test]

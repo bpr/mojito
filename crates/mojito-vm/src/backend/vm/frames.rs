@@ -307,7 +307,7 @@ impl VmBackend {
                         &caller.variables,
                         callee_place.as_deref(),
                         captures,
-                        prog.param_writes(function),
+                        &prog.capture_writes(function),
                     )?,
                 ),
                 Value::Struct { name, .. } => {
@@ -338,9 +338,14 @@ impl VmBackend {
                 .collect();
             let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
             let (mut bound, slots) = match prog.sigs.get(&function_name) {
-                Some(signature) => {
-                    self.bind_for_call(prog, &function_name, signature, &positional, &keywords)?
-                }
+                Some(signature) => self.bind_for_closure_call(
+                    prog,
+                    &function_name,
+                    signature,
+                    &positional,
+                    &keywords,
+                    capture_count,
+                )?,
                 None => (
                     positional,
                     (0..capture_count + args.len())
@@ -415,9 +420,13 @@ impl VmBackend {
                     }
                     let place = bound_argument_place(
                         slots.get(parameter),
-                        prog.sigs
-                            .get(&function_name)
-                            .and_then(|signature| signature.frame_param_name(parameter)),
+                        prog.sigs.get(&function_name).and_then(|signature| {
+                            // A closure's storage is a method's receiver,
+                            // which its signature does not list.
+                            signature.frame_param_name(parameter.checked_sub(usize::from(
+                                signature.has_receiver && capture_count > 0,
+                            ))?)
+                        }),
                         capture_count,
                         arg_places,
                         &keyword_names,

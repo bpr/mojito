@@ -23,8 +23,9 @@
 //! which the elaborator expands into the pack's element places.
 
 use super::{
-    FuncRef, MirBlock, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, Reg, UseMode,
-    VarId, binder_scope, fresh_register, instruction_regions_mut, materialized_parameter_slots,
+    FuncRef, MirBlock, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, Reg,
+    StructDeclarations, UseMode, VarId, binder_scope, fresh_register, instruction_regions_mut,
+    materialized_parameter_slots,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
@@ -39,13 +40,16 @@ pub type FunctionDeclarations<'d> = dyn Fn(&str) -> Option<&'d MirFunctionDeclar
 /// Regions are lowered too. The constructor's declaration, which
 /// `declarations` answers, decides how the call passes the value: a read
 /// of the source and the call, or the call alone for a register copy.
-pub fn lower_copies_and_moves(
+/// `structs` answers the struct a closure's body is a method of, whose
+/// parameters are in its scope.
+pub fn lower_copies_and_moves<'d>(
     name: &str,
     function: &mut MirFunction,
-    declarations: &FunctionDeclarations<'_>,
+    declarations: &FunctionDeclarations<'d>,
+    structs: &StructDeclarations<'d>,
 ) {
     let parameters =
-        materialized_parameter_slots(function, &binder_scope(name, |name| declarations(name)));
+        materialized_parameter_slots(function, &binder_scope(name, declarations, structs));
     let mut blocks = std::mem::take(&mut function.blocks);
     lower_blocks(&mut blocks, function, declarations, &parameters);
     function.blocks = blocks;

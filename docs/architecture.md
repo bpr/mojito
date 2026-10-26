@@ -724,8 +724,9 @@ policy or data-model responsibilities to focused children:
   the per-file responsibility map.
 - `mir/mod.rs` lowers ordinary code; `mir/ir.rs` defines the MIR data model and
   `mir/nested.rs` owns capture analysis and nested-function lifting. A
-  lifted function is a generator over its enclosing declarations' binders:
-  its declaration names the declaration it is nested in
+  lifted function without storage (a capture-free `def`, or a
+  `@parameter` closure) is a generator over its enclosing declarations'
+  binders: its declaration names the declaration it is nested in
   (`MirFunctionDeclaration::enclosing`), whose binders the verifier's scope
   admits in its body, and `native::mono` instantiates it under each instance
   of that declaration (`Specializer::instantiate_nested_bodies`). One
@@ -740,33 +741,53 @@ policy or data-model responsibilities to focused children:
   capture, the referent's copy for a reference binding, and a `ref` field
   for a reference capture, whose referent is the captured sibling's
   storage for a sibling capture. The struct's parameters are the
-  enclosing binders its fields name, and it is register-passable (and
+  enclosing binders the closure names, in its fields, its signature, or
+  its body, nested declarations included (`nested::closure_binder_uses`),
+  as upstream's `emitClosureInstance` collects them; the declaration
+  passes them to the `__init__` as its compile-time arguments. The struct
+  is register-passable (and
   trivially so) by the meet over its captures, a reference capture
   contributing its referent's, as upstream's `ClosureEmitter::emitClosure`
   decides. MIR lowering synthesizes the struct's declaration, its
   fieldwise `__init__`, which the declaration calls with the captures, and
   a `__deinit__` when a field has a destructor
-  (`nested::lower_closure_storage`). The lifted body takes the storage as
-  its one leading `read` parameter, `self`, as upstream's lifted method
-  does, and binds each capture to a frame local holding a reference to
-  the field keeping it, made at the head of the body (`CaptureStorage`,
+  (`nested::lower_closure_storage`). The lifted body is the storage's
+  method `<lifted>$__storage.<name>` (`symbol::closure_method_name`), as
+  upstream's `liftClosureIntoMethod` nests it in `fn::__storage`: its
+  declaration has a `read` receiver, only its own parameters, and no
+  `enclosing` or region binders, and the declarations nested in it are
+  named under it, as an ordinary method's are. It binds each capture to a
+  frame local holding a reference to the field keeping it, made at the
+  head of the body (`CaptureStorage`,
   `Flatten::capture_storage_prologue`), as `liftClosureIntoMethod`
-  rewires a capture's uses to a field reference of `self`. A call by name,
-  or through a sibling capturing it, is a direct `call` passing the
-  storage (`Flatten::lower_direct_nested_call`): by value when it is
+  rewires a capture's uses to a field reference of `self`, and it reads
+  the enclosing binders, now its struct's parameters, as frame locals
+  bound from the receiver's instance: `mir::binder_scope` puts a closure
+  method's struct parameters ahead of its scope. A call by name, or
+  through a sibling capturing it, is a `method_call` on the storage
+  (`Flatten::lower_direct_nested_call`): by value when it is
   register-passable, so a moved capture the body writes is written in
-  that call's copy, and by address otherwise. A first-class use makes a
-  closure capturing the storage by reference, kept live to the end of
-  its statement (`Flatten::load_nested_closure`). Every capturing lambda,
+  that call's copy, and through the storage's place otherwise, which a
+  body owning a moved capture writes back (the struct lists the method in
+  `mut_self_methods`). A first-class use makes a closure over the method
+  capturing the storage by reference, kept live to the end of its
+  statement (`Flatten::load_nested_closure`); the verifier binds the
+  first capture to the method's receiver, and `native::mono`
+  instantiates the method at the storage instance it captures
+  (`Specializer::instantiate_nested_bodies`). A body naming an enclosing
+  callable binder, which no struct instance carries as a parameter yet,
+  stays a generator nested in its enclosing declaration, taking the
+  storage as its leading `read` parameter (`ClosureStorage::method`).
+  Every capturing lambda,
   with a capture list or without one (its free names then captured
   `imm`), builds its storage the same way where it stands, once per
   evaluation, as upstream's `resolveAnonymousClosure` sends every
   non-thin lambda through `emitClosureInstance`
   (`Flatten::build_closure_storage`, into a hidden slot,
-  `Flatten::lambda_storage_slot`): an immediately invoked lambda is a
-  direct `call` of its lifted body passing the storage
-  (`lower_direct_nested_call`), and a lambda used as a value moves the
-  storage into a one-capture `closure.make` (`Flatten::lambda_closure`),
+  `Flatten::lambda_storage_slot`): an immediately invoked lambda calls
+  its method on the storage (`lower_direct_nested_call`), and a lambda
+  used as a value moves the storage into a one-capture `closure.make`
+  (`Flatten::lambda_closure`),
   which relocates it, running no `__moveinit__`, since upstream's value
   is the storage itself. The storage's `__init__` takes a moved capture
   by forwarding its storage to the `var` parameter, as an owned argument

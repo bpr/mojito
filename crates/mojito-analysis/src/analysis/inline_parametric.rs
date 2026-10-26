@@ -349,7 +349,12 @@ pub fn inline_calls(
     if changed {
         name_constructors(function, declarations);
         super::name_destructors(function, declarations);
-        lower_copies_and_moves(name, function, &|name| declarations.function(name));
+        lower_copies_and_moves(
+            name,
+            function,
+            &|name| declarations.function(name),
+            &|name| declarations.structure(name),
+        );
         record_lowered_callees(function, callees);
     }
     changed
@@ -895,6 +900,13 @@ impl<'c> Inliner<'_, 'c> {
         changed
     }
 
+    /// Whether `target` is a closure's body, its storage's method.
+    fn closure_method(&self, target: &str) -> bool {
+        self.declarations
+            .function(target)
+            .is_some_and(MirFunctionDeclaration::is_closure_method)
+    }
+
     /// The declaration of `name`, when every binder of the regions it, and
     /// each declaration it is nested in, is declared in is in scope
     /// everywhere in the call being inlined: a binder of the caller's own
@@ -1054,7 +1066,7 @@ impl<'c> Inliner<'_, 'c> {
                 instantiated_args,
                 spread,
                 ..
-            } if capture_accesses.is_empty() => (
+            } if capture_accesses.is_empty() || self.closure_method(target) => (
                 *dest,
                 Cow::Borrowed(target.as_str()),
                 CallArguments {
@@ -1069,7 +1081,7 @@ impl<'c> Inliner<'_, 'c> {
                 recv_place.as_deref(),
                 &[][..],
                 *spread,
-                &[][..],
+                capture_accesses.as_slice(),
             ),
             // A checker-selected subscript calls its accessor on the
             // base, passing the index as the accessor's one runtime
@@ -1338,10 +1350,12 @@ impl<'c> Inliner<'_, 'c> {
             }
             None => instantiated(full, declaration, owner, &arguments, self.declarations)?,
         };
-        // A nested body's direct call carries the body's own accesses to
-        // the captured places, which the inlined body performs itself.
+        // A nested body's direct call, or a call of a closure's method on
+        // its storage, carries the body's own accesses to the captured
+        // places, which the inlined body performs itself.
         (capture_accesses.is_empty()
             || declaration.enclosing.is_some()
+            || declaration.is_closure_method()
             || accessed_through(capture_accesses, &instantiated.closures, &self.closures))
         .then_some(instantiated)
     }

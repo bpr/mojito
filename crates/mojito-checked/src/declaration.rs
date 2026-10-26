@@ -452,6 +452,14 @@ impl FunctionDeclaration {
         self.provenance == FunctionProvenance::Synthesized
     }
 
+    /// Whether the function is a closure's body, the method of its
+    /// storage struct ([`mojito_symbol::symbol::closure_method_name`]).
+    pub fn is_closure_method(&self) -> bool {
+        self.has_receiver
+            && mojito_symbol::symbol::split_method_symbol(&self.lowered_name)
+                .is_some_and(|(owner, _)| mojito_symbol::symbol::is_closure_storage_name(owner))
+    }
+
     /// How many parameters the function's source spells, its receiver
     /// aside: the runtime ones and each variadic collector.
     pub fn source_arity(&self) -> usize {

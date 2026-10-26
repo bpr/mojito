@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1430**.
+Next free ID: **R1432**.
 
 ## Ordered Work
 
@@ -4152,17 +4152,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R92 A struct's callable-value parameter is undefined inside its
-  methods**
+- [ ] **R92 A struct's callable-value parameter neither elaborates nor
+  reads inside its methods**
 
-  Problem: a method of `struct Apply[callback: def(Int) thin -> Int]` that
-  calls `callback(self.seed)` checks, then stops at run time with "Undefined
-  variable 'callback'".
-  - The same parameter on a module `def` runs: the call frame reifies it as a
-    hidden local.
-  - A struct's deferred slot is never reified into its methods' frames.
-  - Whether the pin accepts the program has not been probed. If it rejects
-    it, the fix is a checker error.
+  Problem: a struct instance whose parameter is a callable
+  (`struct S[f: def() thin -> Int]`) fails at the elaborator, and a method
+  reading the parameter fails too, where the pin runs both.
+  - `var s = S[seven](1)` stops with "unsupported monomorphizing receiver
+    for `S.__init__`: solution for `f` is not constant"; the pin prints
+    `s.x`.
+  - A method returning `self.x + Self.f()` stops with "Undefined variable
+    'Self'"; the pin prints `8`. Bare `f()` is rejected at the pin
+    ("unqualified access to struct parameter 'f'; use 'Self.f' instead"),
+    and Mojito accepts it, then stops with "Undefined variable 'f'".
+  - The same parameter on a module `def` runs: the call frame reifies it as
+    a hidden local. A struct's deferred slot is never reified into its
+    methods' frames.
+  - Probe: a capturing closure naming an enclosing callable binder
+    (`callable_frame` in `assets/ok/closure_storage_method_binders.mojo`,
+    whose `body() {var x}` calls the frame's `f`) stays a generator nested
+    in its enclosing declaration, taking its storage as a leading argument
+    (`ClosureStorage::method`, `mir/nested.rs`), because its storage would
+    carry `f`, where upstream's `liftClosureIntoMethod` makes every
+    closure body its storage's method. Once a struct carries a callable
+    parameter, drop that exception.
   - Found while probing deferred slots (2026-09-26).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -11389,28 +11402,47 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1428 A capture-list closure's lifted body is a nested generator
-  taking its storage first, where the pin nests it in the `__storage`
-  struct as a method**
+- [ ] **R1430 A closure storage's parameters are its enclosing
+  declarations' binders, where upstream declares them as the storage
+  struct's own**
 
-  The lifted body `outer$inner` takes its closure's storage as its one
-  leading `read` parameter, `self`, but it stays a nested generator of its
-  enclosing declaration (`Specializer::instantiate_nested_bodies`), where
-  upstream's `liftClosureIntoMethod` makes it the storage's method
-  `outer::inner::__storage::inner`.
-  - Lever: name it `<storage>.<source name>`, set `has_receiver: true`,
-    and call it as a `MethodCall` with its resolved symbol.
-  - The storage's parameters become every binder the closure names: its
-    signature's, its body's, and its fields', as upstream's
-    `createSelfContainedSignature` and body parameter captures promote
-    them. Today they are only the binders its fields name
-    (`closure_storage`, `mir/nested.rs`).
-  - The elaborator then instantiates the body as a member of the storage
-    instance.
-  - Probe: `generic_body` in `assets/ok/nested_def_capture_storage.mojo`,
-    whose `scaled[k]() {var x}` storage would carry `k`.
-  - Depends on R1427.
-  - Model: Opus, Planned.
+  The `__storage` struct's `param_decls` are the enclosing binders'
+  own `ParamDecl`s, owned by the enclosing function (or by `S` for a
+  closure in a method of `S`), where upstream's `liftClosure` declares the
+  struct's own parameters, reusing their names.
+  - Not observable: the elaborator binds them by identity from the
+    receiver's type, and `binder_scope` puts them ahead of the method's
+    scope (`mir.rs`).
+  - Re-owning them to the storage means rewriting the method body's and
+    the fields' binder references to the struct's ids at lowering
+    (`closure_storage`, `lower_nested_node`, `mir/nested.rs`).
+  - Probe: `generic_frame` in
+    `assets/ok/closure_storage_method_binders.mojo`, whose
+    `generic_frame$body$__storage` carries `n` owned by `generic_frame`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1431 A nested `def` without a capture list stays a generator
+  nested in its enclosing declaration, where the pin promotes it to a
+  module-scope function**
+
+  A capture-free nested `def` (and a thin lambda) lowers to `outer$inner`,
+  a generator whose declaration names `outer` (`enclosing`) and which the
+  elaborator instantiates under each instance of `outer`
+  (`Specializer::instantiate_nested_bodies`), where upstream's
+  `constructClosure` calls `promoteClosure(decl, paramCaptures)`: a
+  module-scope function whose parameters are the enclosing binders it
+  names, then its own.
+  - The binder collection is `closure_binder_uses` (`mir/nested.rs`), which
+    a capturing closure's storage already uses.
+  - A `@parameter` closure, upstream's legacy capturing closure, is not
+    this entry's.
+  - Probe: `def outer[n: Int]() -> Int:` declaring `def helper() -> Int:
+    return n * 2` lowers `outer$helper` with `enclosing: outer`; the pin's
+    `helper` is a top-level function parameterized on `n`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R538 Storage paths for reference-valued elements outlive the last spelling of one**
 
   Problem: the checker, MIR, VM, and native backend keep paths for an element whose type is itself `ref[o] T`, though `List[ref[o] T]` and `Tuple[ref[o] T]` are now rejected at parse, as at the pin.

@@ -1159,14 +1159,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   included, reads through its runtime handle. Its loans
   (`aggregate_loans`) are its origin and only keep owners alive.
 - `mir/nested.rs` owns capture analysis and nested-function lifting; each
-  lifted declaration names the declaration it is nested in
+  lifted declaration without storage names the declaration it is nested in
   (`MirFunctionDeclaration::enclosing`, set by `lower_nested_node`), and the
   nested frame declares its enclosing callable and type binders' locals
   (`Enclosing`). `scope_registry` gives every direct declaration with a
   non-empty capture list (`CheckedDef::capture_list`, `NestedNode::capture_list`),
   and every capturing lambda (`NestedNode::lambda`), its storage struct (`NestedInfo::storage`, a `ClosureStorage` that
   `closure_storage` derives, with its register passability and triviality
-  as the meet over the captures, named by `symbol::closure_storage_name`),
+  as the meet over the captures, named by `symbol::closure_storage_name`,
+  its parameters the enclosing binders the closure's fields, signature,
+  and body name, `closure_binder_uses`, over `EnclosingBinders`, whose
+  `callables` list the callable binders), names its body the storage's
+  method (`NestedInfo::mangled`, `symbol::closure_method_name`) unless it
+  names a callable binder (`ClosureStorage::method`), and renames the
+  declarations nested in a method under it (`rename_nested`),
   and slots one without storage a sibling captures (`NestedInfo::slotted`,
   `Flatten::lower_slotted_nested_def`). `lower_nested_node` pushes the
   struct's declaration, with its `RegisterPassable`/`TrivialRegisterPassable`
@@ -1179,25 +1185,40 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   which an immediately invoked lambda passes to a direct call
   (`lower_direct_nested_call`, from `mir/lower_expr/expr_call.rs`) and a
   lambda used as a value moves into its closure
-  (`Flatten::lambda_closure`, `mir/lower_expr/calls.rs`). The lifted body takes the
-  storage as its one leading `read` parameter (`storage_parameter`), and its
+  (`Flatten::lambda_closure`, `mir/lower_expr/calls.rs`). The lifted body is
+  the storage's method, its declaration's receiver the storage
+  (`has_receiver`, `FunctionDeclaration::is_closure_method`), its body's
+  slot 0 the storage (`storage_parameter`), and the storage lists it in
+  `mut_self_methods` when it owns a moved capture; a body that is no method
+  takes the storage as its one leading `read` parameter. Its
   captures are frame locals (`capture_slots`, `mir.rs`'s `CaptureSlots` and
   `CaptureStorage`) that `lower_cfg_nested` binds to references to their
   fields at the head of the body (`Flatten::capture_storage_prologue`); a
   `@parameter` closure's are leading reference parameters, whose closure
   `Flatten::emit_nested_closure` makes of reference captures.
   `Flatten::lower_nested_call` (`mir/lower_expr/calls.rs`) lowers a call by
-  name to a direct `call` of the lifted body passing the storage
-  (`storage_place`, by address when it is memory-only) or the captured
+  name to a `method_call` of the storage's method on the storage
+  (`storage_place`, by address when it is memory-only), a direct `call` of
+  a lifted body that is no method passing the storage, or the captured
   places as leading arguments (`calls_nested_directly`,
   `lower_direct_nested_call`), or through the closure value otherwise, and
   `load_nested_closure` makes a closure capturing the storage by reference
   at a first-class use, anchoring the storage to the statement's end, or a
   storage-less body's closure at each
-  first-class use. `verify/scope.rs` (`Scope::of_function`) walks that chain
-  for the binders a body may name; `native::mono`
+  first-class use; the declaration statement passes the storage's
+  parameters as its `__init__`'s compile-time arguments. `verify/instr.rs`
+  (`capture_binds`) binds a closure's first capture to a method's
+  receiver, and the VM's `bind_for_closure_call` passes it in frame slot
+  zero (`Prog::capture_writes`). `verify/scope.rs` (`Scope::of_function`)
+  walks that chain for the binders a body may name; `mir::binder_scope`
+  puts a closure method's struct parameters ahead of its chain, from the
+  struct declarations it is given; `native::mono`
   (`Specializer::instantiate_nested_bodies`, `nested_bindings`,
-  `binder_scope`) instantiates a nested body under its enclosing instance. A
+  `binder_scope`) instantiates a nested body under its enclosing instance,
+  and a closure over a storage's method at the storage instance it
+  captures (`is_storage_bound_closure_method`, over
+  `infer_receiver_call`); a call of the method binds its struct's
+  parameters from the receiver as any method call does. A
   declaration inside a kept `comptime for` also declares the loop indices
   (`MirFunctionDeclaration::region_binders`, from `find_nested_defs`'s stack
   of loop statement ids and `nested.rs::loop_index`, which reads the

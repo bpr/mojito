@@ -585,7 +585,7 @@ impl VmBackend {
             Value::Closure {
                 function, captures, ..
             } => {
-                let writes = prog.param_writes(function);
+                let writes = prog.capture_writes(function);
                 let mut materialized = Vec::with_capacity(captures.len());
                 for (index, capture) in captures.iter().enumerate() {
                     if capture.owned && writes.get(index).copied().unwrap_or(true) {

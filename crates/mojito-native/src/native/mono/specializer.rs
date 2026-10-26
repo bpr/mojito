@@ -1104,9 +1104,12 @@ impl<'a> Specializer<'a> {
         self.name_lifecycle_calls(&key.template, &mut function)?;
         // An instance's destructor names only a member available in it.
         mojito_mir::mir::lower_drops(&mut function, &|_| true);
-        mojito_mir::mir::lower_copies_and_moves(&key.template, &mut function, &|instance| {
-            self.template_declaration(instance)
-        });
+        mojito_mir::mir::lower_copies_and_moves(
+            &key.template,
+            &mut function,
+            &|instance| self.template_declaration(instance),
+            &|name| self.structs.get(name),
+        );
         self.answer_layout_queries(&key.template, &mut function)?;
         ensure_concrete_function(&key.template, &name, &function)?;
         self.output_positions
@@ -2093,10 +2096,14 @@ impl<'a> Specializer<'a> {
     /// The binders a body of `template` may name: those of each declaration
     /// it is nested in, outermost first, then its own.
     pub(super) fn binder_scope(&self, template: &str) -> Vec<ParamDecl> {
-        mojito_mir::mir::binder_scope(template, |name| self.declarations.get(name))
-            .into_iter()
-            .cloned()
-            .collect()
+        mojito_mir::mir::binder_scope(
+            template,
+            |name| self.declarations.get(name),
+            |name| self.structs.get(name),
+        )
+        .into_iter()
+        .cloned()
+        .collect()
     }
 
     /// Point each closure and function value naming a body nested in
@@ -2104,7 +2111,9 @@ impl<'a> Specializer<'a> {
     /// being specialized: the nested body is a generator over `owner`'s
     /// binders, not a function of its own. A call of it by name is a
     /// direct call, which names its reduced generator as any direct call
-    /// does.
+    /// does. A closure over its storage's method names the method's
+    /// instance at the storage instance it captures, as a call on that
+    /// storage would.
     fn instantiate_nested_bodies(
         &mut self,
         owner: &str,
@@ -2112,6 +2121,21 @@ impl<'a> Specializer<'a> {
     ) -> Result<(), MonoError> {
         for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
             match instruction {
+                MirInstr::MakeClosure {
+                    function: target,
+                    captures,
+                    ..
+                } if self.is_storage_bound_closure_method(target) => {
+                    let Some(storage) = captures
+                        .first()
+                        .and_then(|capture| capture.place.ty.clone())
+                    else {
+                        continue;
+                    };
+                    let (bindings, arguments, _) =
+                        self.infer_receiver_call(owner, target, &storage, ReceiverCall::default())?;
+                    *target = self.enqueue(target, bindings, arguments)?;
+                }
                 MirInstr::MakeClosure {
                     function: target, ..
                 }
@@ -2138,6 +2162,14 @@ impl<'a> Specializer<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Whether `target` is a closure's body as its storage's method
+    /// without parameters of its own.
+    fn is_storage_bound_closure_method(&self, target: &str) -> bool {
+        self.declarations.get(target).is_some_and(|declaration| {
+            declaration.is_closure_method() && declaration.param_decls.is_empty()
+        })
     }
 
     /// The bindings and instance arguments of the nested body `target` under

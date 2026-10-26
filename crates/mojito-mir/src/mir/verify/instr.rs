@@ -745,12 +745,14 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                     "{prefix}: closure refers to undeclared lifted function '{target}'"
                 )),
                 Some(declaration) => {
-                    if captures.len() > declaration.param_types.len() {
+                    let parameters =
+                        declaration.param_types.len() + usize::from(declaration.has_receiver);
+                    if captures.len() > parameters {
                         errors.push(format!(
                             "{prefix}: closure has {} captures for '{}' with only {} parameters",
                             captures.len(),
                             target,
-                            declaration.param_types.len()
+                            parameters
                         ));
                     }
                     if !captures
@@ -1013,9 +1015,34 @@ fn verify_struct_creation(cx: &InstrCx<'_>, dest: Reg, fields: &[Reg], errors: &
 /// Whether the closure capture `capture` binds the leading parameter
 /// `index` of its lifted body `declaration`: a reference parameter by
 /// reference (a `@parameter` closure's), or a `read` one, a closure's
-/// storage, its lifted method's `self`, by reference (a `def` used as a
-/// value) or moved in (a lambda's) as a value of its type.
+/// storage, by reference (a `def` used as a value) or moved in (a
+/// lambda's) as a value of its type. A method's receiver leads its
+/// parameters: a closure's storage is the `read` `self` of the method its
+/// body is.
 fn capture_binds(
+    declaration: &MirFunctionDeclaration,
+    index: usize,
+    capture: &MirClosureCapture,
+) -> bool {
+    match index.checked_sub(usize::from(declaration.has_receiver)) {
+        Some(index) => parameter_binds(declaration, index, capture),
+        None => {
+            declaration.receiver_convention.is_none()
+                && match capture.mode {
+                    MirCaptureMode::Reference => true,
+                    MirCaptureMode::Move => capture.place.ty.as_ref().is_none_or(|ty| {
+                        matches!(ty.kind(), TyKind::Struct(name, _)
+                            if mojito_symbol::symbol::split_method_symbol(&declaration.lowered_name)
+                                .is_some_and(|(owner, _)| owner == name))
+                    }),
+                }
+        }
+    }
+}
+
+/// [`capture_binds`] for the parameter `index`, its receiver apart, of
+/// `declaration`.
+fn parameter_binds(
     declaration: &MirFunctionDeclaration,
     index: usize,
     capture: &MirClosureCapture,

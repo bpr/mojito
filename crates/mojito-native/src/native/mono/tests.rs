@@ -2866,11 +2866,12 @@ fn a_nested_body_ignoring_its_argument_is_called_as_its_reduced_generator() {
         .collect::<Vec<_>>();
     nested.sort_unstable();
     // `ign` escapes into `apply`, so its full instance stays beside the
-    // reduced one its call through `f` names; `cap` is only called.
+    // reduced one its call through `f` names; `cap`, its storage's
+    // method, is only called, on that storage.
     assert_eq!(
         nested,
         [
-            "outer$cap$REMOVED$ARG",
+            "outer$cap$__storage.cap$REMOVED$ARG",
             "outer$ign",
             "outer$ign$REMOVED$ARG"
         ]
@@ -2879,14 +2880,19 @@ fn a_nested_body_ignoring_its_argument_is_called_as_its_reduced_generator() {
         .into_iter()
         .filter_map(|instruction| match instruction {
             MirInstr::Call { func, args, .. } => Some((func.0.clone(), args.len())),
+            MirInstr::MethodCall {
+                resolved: Some(resolved),
+                args,
+                ..
+            } => Some((resolved.clone(), args.len())),
             _ => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(
         calls,
         [
-            ("outer$cap$REMOVED$ARG".to_string(), 1),
-            ("outer$cap$REMOVED$ARG".to_string(), 1),
+            ("outer$cap$__storage.cap$REMOVED$ARG".to_string(), 0),
+            ("outer$cap$__storage.cap$REMOVED$ARG".to_string(), 0),
             ("outer$ign$REMOVED$ARG".to_string(), 0),
             ("apply".to_string(), 1),
         ]

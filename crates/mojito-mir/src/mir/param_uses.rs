@@ -663,7 +663,9 @@ fn candidate_parameters<'d>(
         return declaration.param_decls.iter().collect();
     }
     let mut candidates: Vec<&ParamDecl> = Vec::new();
-    if declaration.enclosing.is_some() {
+    // A nested body's own parameters, and a closure method's, keep the
+    // owner their source declaration gave them.
+    if declaration.enclosing.is_some() || declaration.is_closure_method() {
         candidates.extend(&declaration.param_decls);
         candidates.extend(&declaration.region_binders);
     } else {

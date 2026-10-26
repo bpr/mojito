@@ -724,13 +724,27 @@ impl Prog {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
 
-    /// Per parameter of the function `name`, whether its body may write
-    /// it: a lifted body's storage `self` when it owns a moved capture.
-    fn param_writes(&self, name: &str) -> &[bool] {
-        self.mir
-            .declarations
-            .function(name)
-            .map_or(&[], |declaration| &declaration.param_writes)
+    /// Per argument a closure's captures fill in a call of its body
+    /// `name`, whether the body may write it: a lifted body's storage
+    /// when it owns a moved capture. A method's receiver, a closure's
+    /// storage, leads, written when its struct lists the method among
+    /// those writing `self`.
+    fn capture_writes(&self, name: &str) -> Vec<bool> {
+        let Some(declaration) = self.mir.declarations.function(name) else {
+            return Vec::new();
+        };
+        let receiver = declaration.has_receiver.then(|| {
+            mojito_symbol::symbol::split_method_symbol(name).is_some_and(|(owner, method)| {
+                self.mir
+                    .declarations
+                    .structure(owner)
+                    .is_some_and(|owner| owner.mut_self_methods.contains(method))
+            })
+        });
+        receiver
+            .into_iter()
+            .chain(declaration.param_writes.iter().copied())
+            .collect()
     }
 
     /// Whether the function `name` is one the compiler synthesized, whose

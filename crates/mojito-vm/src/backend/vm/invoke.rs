@@ -193,6 +193,37 @@ impl VmBackend {
         bind_args(name, sig, argv, kwargs, make_default)
     }
 
+    /// [`Self::bind_for_call`] of a call of a closure over `name`, whose
+    /// first `captures` arguments its captures fill. A closure over a
+    /// method passes its first capture, the closure's storage, as the
+    /// receiver its signature does not list, in frame slot zero.
+    pub(super) fn bind_for_closure_call(
+        &mut self,
+        prog: &Prog,
+        name: &str,
+        sig: &FnSig,
+        argv: &[Value],
+        kwargs: &[(String, Value)],
+        captures: usize,
+    ) -> Result<(Vec<Value>, Vec<ArgSlot>), RuntimeError> {
+        let Some((receiver, arguments)) = argv
+            .split_first()
+            .filter(|_| sig.has_receiver && captures > 0)
+        else {
+            return self.bind_for_call(prog, name, sig, argv, kwargs);
+        };
+        let (bound, slots) = self.bind_for_call(prog, name, sig, arguments, kwargs)?;
+        Ok((
+            std::iter::once(receiver.clone()).chain(bound).collect(),
+            std::iter::once(ArgSlot::Positional(0))
+                .chain(slots.into_iter().map(|slot| match slot {
+                    ArgSlot::Positional(argument) => ArgSlot::Positional(argument + 1),
+                    slot => slot,
+                }))
+                .collect(),
+        ))
+    }
+
     /// Dispatch a method call. Nominal values resolve to their mangled
     /// `Type.method` function, with a `mut self` receiver written back; only
     /// primitive and compiler-private storage kinds retain intrinsic branches.

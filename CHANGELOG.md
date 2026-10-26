@@ -1087,6 +1087,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A capturing closure's lifted body is now its storage struct's method,
+  `<lifted>$__storage.<name>`, as upstream's `liftClosureIntoMethod` nests
+  it, where it was a generator nested in its enclosing declaration taking
+  the storage as a leading argument (R1428). The storage's parameters are
+  the enclosing binders the closure names in its body and signature as in
+  its fields (a frame's `n` read by `body() {var x}`, a type binder, a
+  `comptime for` index), its own stay the method's, and a call by name, an
+  immediately invoked lambda, and a closure value all call the method on
+  the storage. A body naming an enclosing callable binder stays a nested
+  generator until a struct's callable parameter elaborates (R92). No
+  program's output changes; the inliner now also inlines a storage
+  method's call that carries capture accesses, and a slot typed over a
+  `comptime for` index that an inlined call leaves unread is retired with
+  the loop.
+
 - Every capturing lambda, with a capture list or without one, now builds
   upstream's `__storage` struct where it stands, as upstream's
   `resolveAnonymousClosure` does, and its lifted body takes the struct as

@@ -477,6 +477,52 @@ impl<'a> Flatten<'a> {
         let instantiated_args = call
             .instantiated_callable_contract()
             .map_or_else(|| call.instantiated_args(), |(_, arguments)| arguments);
+        let raises = self.raises(call.raises(), call.location());
+        // A body that is its storage's method is called on the storage,
+        // as upstream calls `fn::__storage::fn`, binding its own
+        // parameters from the call's solved arguments.
+        if info
+            .storage
+            .as_ref()
+            .is_some_and(|storage| storage.method.is_some())
+            && let [(recv, recv_place)] = captured.as_slice()
+        {
+            self.record_call(d, Some(info.mangled.clone()), 0);
+            self.emit_call(MirInstr::MethodCall {
+                dest: d,
+                recv: *recv,
+                method: info.source_name.clone(),
+                resolved: Some(info.mangled.clone()),
+                raises: raises.clone(),
+                reference_result: call.reference_result().map(Box::new),
+                result_adapter: None,
+                args: arg_regs,
+                kwargs: kw_regs,
+                recv_place: recv_place.clone().map(Box::new),
+                // Only a body owning a moved capture writes its storage.
+                recv_writes: info
+                    .captures
+                    .iter()
+                    .any(|capture| capture.kind == mojito_ast::ast::CaptureKind::Move),
+                receiver_convention: None,
+                arg_places,
+                kwarg_places,
+                capture_accesses,
+                param_arg_regs,
+                param_decls: info
+                    .callable_ty
+                    .as_ref()
+                    .map(generic_callable_param_decls)
+                    .unwrap_or_default(),
+                instantiated_args,
+                spread: Self::spread_position(args),
+            });
+            self.emit_nested_closure_argument_keepalives(args, kwargs);
+            self.install_call_transfers(call, None, &transfer_arg_places);
+            self.emit_capture_keepalives(info);
+            self.error_region(raises);
+            return d;
+        }
         let spread = Self::spread_position(args).map(|position| position + captured.len());
         // The captured places fill the lifted body's leading parameters,
         // which its declaration lists.
@@ -486,7 +532,6 @@ impl<'a> Flatten<'a> {
         let mut all_places: Vec<Option<MirPlace>> =
             captured.into_iter().map(|(_, place)| place).collect();
         all_places.extend(arg_places);
-        let raises = self.raises(call.raises(), call.location());
         self.emit_call(MirInstr::Call {
             dest: d,
             func: FuncRef::named(&info.mangled),

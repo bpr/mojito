@@ -751,10 +751,16 @@ pub fn owned_pack_slot(declaration: &MirFunctionDeclaration) -> Option<VarId> {
 ///
 /// A nested body is a generator over its enclosing declarations' binders
 /// and over the binders of the regions it is declared in, which come
-/// between them and its own.
+/// between them and its own. A closure's body is a method of its storage
+/// struct, which `structs` declares, whose parameters are the enclosing
+/// binders the closure names: they lead the scope of the method and of
+/// the bodies nested in it, which read them by name as a nested body
+/// reads its enclosing declarations' (an ordinary method reads its
+/// struct's through its receiver alone).
 pub fn binder_scope<'a>(
     name: &str,
     lookup: impl Fn(&str) -> Option<&'a MirFunctionDeclaration>,
+    structs: impl Fn(&str) -> Option<&'a MirStructDeclaration>,
 ) -> Vec<&'a ParamDecl> {
     let mut chain = Vec::new();
     let mut link = lookup(name);
@@ -762,6 +768,14 @@ pub fn binder_scope<'a>(
         chain.push(&declaration.param_decls);
         chain.push(&declaration.region_binders);
         link = declaration.enclosing.as_deref().and_then(&lookup);
+        if link.is_none()
+            && declaration.is_closure_method()
+            && let Some((owner, _)) =
+                mojito_symbol::symbol::split_method_symbol(&declaration.lowered_name)
+            && let Some(storage) = structs(owner)
+        {
+            chain.push(&storage.param_decls);
+        }
     }
     chain.into_iter().rev().flatten().collect()
 }
@@ -4588,6 +4602,9 @@ impl<'a> Flatten<'a> {
 struct NestedInfo {
     binding: mojito_types::origin::OwnerId,
     source_name: String,
+    /// The lifted body every call and closure names: its storage's method
+    /// when it is one ([`ClosureStorage::method`]), else the generator
+    /// nested in its enclosing declaration.
     mangled: String,
     /// True when this declaration belongs to the function currently being
     /// lowered, so its statement builds the storage or slot later uses
@@ -4600,12 +4617,12 @@ struct NestedInfo {
     slotted: bool,
     /// The storage struct a capture-list `def` declared by a statement
     /// builds in its slot, as upstream's `ClosureEmitter::emitClosure`
-    /// builds `fn::__storage`: the lifted body takes it as its one leading
-    /// `read` parameter, as upstream's lifted method takes `self`, and
-    /// reads each capture through a reference to the field keeping it. A
-    /// call by name, or through a sibling capturing it, passes the
-    /// storage, and a first-class use makes a closure capturing it by
-    /// reference.
+    /// builds `fn::__storage`: the lifted body is its method, taking it as
+    /// its `read` `self`, as upstream's `liftClosureIntoMethod` makes it,
+    /// and reads each capture through a reference to the field keeping
+    /// it. A call by name, or through a sibling capturing it, calls the
+    /// method on the storage, and a first-class use makes a closure
+    /// capturing it by reference.
     storage: Option<ClosureStorage>,
     /// Captured enclosing-local names, in a deterministic (sorted) order shared by
     /// the lifted function's parameter list and every rewritten call site.
@@ -4624,8 +4641,17 @@ struct ClosureStorage {
     /// `Struct(<lifted>$__storage, binders)`.
     ty: Ty,
     fields: Vec<(String, Ty)>,
-    /// The enclosing binders the fields name, the struct's parameters.
+    /// The enclosing binders the closure names, in its fields, its
+    /// signature, or its body, the struct's parameters, as upstream's
+    /// `emitClosureInstance` collects them.
     param_decls: Vec<ParamDecl>,
+    /// The body as the struct's `read`-self method
+    /// ([`mojito_symbol::symbol::closure_method_name`]), as upstream's
+    /// `liftClosureIntoMethod` makes it. `None` for a body naming an
+    /// enclosing callable binder, which no struct instance carries as a
+    /// parameter: it stays a generator nested in its enclosing
+    /// declaration, taking the storage as its leading parameter.
+    method: Option<String>,
     /// Whether a call of the body may write the storage: it owns a field,
     /// or a field is a mutable reference.
     writes: bool,
@@ -5496,6 +5522,9 @@ struct EnclosingBinders {
     values: Vec<(mojito_types::param_expr::ParamRef, Ty)>,
     /// The declarations of `types` and `values`, in scope order.
     declarations: Vec<ParamDecl>,
+    /// The declarations of the callable value binders, which a body reads
+    /// as frame locals of their own.
+    callables: Vec<ParamDecl>,
     /// The enclosing `comptime for` loops' variables, each checked binding
     /// with the index binder it denotes.
     loop_bindings: Vec<(
@@ -5538,7 +5567,10 @@ impl EnclosingBinders {
                     callable_default: None,
                     ..
                 } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {}
-                ParamDecl::Value { .. } => continue,
+                ParamDecl::Value { .. } => {
+                    binders.callables.push(declaration.clone());
+                    continue;
+                }
             }
             binders.declarations.push(declaration.clone());
         }
