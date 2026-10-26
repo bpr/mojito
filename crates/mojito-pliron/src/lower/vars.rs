@@ -79,6 +79,9 @@ impl FnLowering<'_> {
         if self.error_slots.contains(&var) {
             return self.stage_error(ctx, var, src);
         }
+        if self.func.error_slot == Some(var) {
+            return self.stage_function_error(ctx, src);
+        }
         if matches!(
             self.func.var_tys.get(&var).map(Ty::kind),
             Some(TyKind::Ref(_))

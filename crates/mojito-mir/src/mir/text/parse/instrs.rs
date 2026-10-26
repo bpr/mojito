@@ -33,6 +33,10 @@ impl Decoder {
         let ret_ty = self.option_ty(self.field(fields, "return_type").ok());
         let raises = self.boolean(self.field(fields, "raises").ok()?)?;
         let error_ty = self.option_ty(self.field(fields, "error_type").ok());
+        let error_slot = self
+            .field(fields, "error_slot")
+            .ok()
+            .and_then(|slot| self.var(slot));
         let reg_types_raw = self.type_map(
             self.field(fields, "register_types").ok()?,
             "reg_type",
@@ -116,6 +120,7 @@ impl Decoder {
                 "return_type",
                 "raises",
                 "error_type",
+                "error_slot",
                 "register_types",
                 "locations",
                 "blocks",
@@ -143,6 +148,7 @@ impl Decoder {
             ret_ty,
             raises,
             error_ty,
+            error_slot,
             spans,
             reg_types,
             removed_params,
@@ -153,6 +159,9 @@ impl Decoder {
         };
         if legacy_raises {
             upgrade_error_slots(&mut function);
+        }
+        if function.error_slot.is_none() {
+            upgrade_function_error_slot(&mut function);
         }
         Some((name, function))
     }
@@ -990,11 +999,19 @@ impl Decoder {
                 label: self.req(value, fields, "label", Self::try_label)?,
                 values: self.added_regs(fields, "values"),
             }),
-            "error_return" => Some(MirTerm::ErrorReturn {
-                src: self.req(value, fields, "src", Self::reg)?,
-            }),
+            // MIR older than 1.108 raises its operand out of the function,
+            // through the function's error slot.
+            "error_return" => {
+                if let Ok(src) = self.field(fields, "src") {
+                    let src = self.reg(src)?;
+                    self.legacy_raise = Some((LEGACY_FUNCTION_ERROR_SLOT, src));
+                    self.legacy_raises = true;
+                }
+                Some(MirTerm::ErrorReturn)
+            }
             // MIR older than 1.107 raises its operand: to the `try` it
-            // names, through that `try`'s slot, or out of the function.
+            // names, through that `try`'s slot, or out of the function,
+            // through the function's.
             "raise" => {
                 let src = self.req(value, fields, "src", Self::reg)?;
                 let label = if let Ok(label) = self.field(fields, "label") {
@@ -1005,17 +1022,16 @@ impl Decoder {
                     self.unlabelled_tries = true;
                     None
                 };
-                match label {
-                    Some(label) => {
-                        self.legacy_raise = Some(src);
-                        self.legacy_raises = true;
-                        Some(MirTerm::TryRaise {
-                            label,
-                            values: self.added_regs(fields, "values"),
-                        })
-                    }
-                    None => Some(MirTerm::ErrorReturn { src }),
-                }
+                let (slot, term) = label.map_or(
+                    (LEGACY_FUNCTION_ERROR_SLOT, MirTerm::ErrorReturn),
+                    |label| {
+                        let values = self.added_regs(fields, "values");
+                        (LEGACY_ERROR_SLOT, MirTerm::TryRaise { label, values })
+                    },
+                );
+                self.legacy_raise = Some((slot, src));
+                self.legacy_raises = true;
+                Some(term)
             }
             "unreachable" => Some(MirTerm::Unreachable),
             other => {
@@ -1116,12 +1132,12 @@ impl Decoder {
         })
     }
 
-    /// The block `instrs` ended by `term`, a `try.raise` read from a
-    /// `raise` older than MIR 1.107 first storing its error into the slot
+    /// The block `instrs` ended by `term`, a raise read from text older
+    /// than MIR 1.108 first storing its error into the slot
     /// [`upgrade_error_slots`] names.
     fn block_of(&mut self, mut instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
-        if let Some(src) = self.legacy_raise.take() {
-            instrs.push(legacy_error_store(src));
+        if let Some((slot, src)) = self.legacy_raise.take() {
+            instrs.push(legacy_error_store(slot, src));
         }
         MirBlock { instrs, term }
     }
@@ -1231,8 +1247,11 @@ fn infer_try_labels(blocks: &mut [MirBlock], next: &mut u32, target: Option<TryL
                 infer_try_labels(region, next, target);
             }
         }
-        if let (MirTerm::ErrorReturn { src }, Some(label)) = (&block.term, target) {
-            block.instrs.push(legacy_error_store(*src));
+        if let (MirTerm::ErrorReturn, Some(label)) = (&block.term, target)
+            && let Some(MirInstr::DefVar { var, .. }) = block.instrs.last_mut()
+            && *var == LEGACY_FUNCTION_ERROR_SLOT
+        {
+            *var = LEGACY_ERROR_SLOT;
             block.term = MirTerm::TryRaise {
                 label,
                 values: Vec::new(),
@@ -1241,15 +1260,21 @@ fn infer_try_labels(blocks: &mut [MirBlock], next: &mut u32, target: Option<TryL
     }
 }
 
-/// The slot a store [`legacy_error_store`] makes names until
-/// [`upgrade_error_slots`] names the `try`'s.
+/// The slot a store [`legacy_error_store`] makes before a raise naming a
+/// `try` names until [`upgrade_error_slots`] names the `try`'s.
 const LEGACY_ERROR_SLOT: VarId = VarId::MAX;
 
-/// The store of a `raise` older than MIR 1.107's error `src` into the slot
-/// of the `try` it names, which [`upgrade_error_slots`] fills in.
-const fn legacy_error_store(src: crate::mir::Reg) -> MirInstr {
+/// The slot a store [`legacy_error_store`] makes before a raise out of the
+/// function names until [`upgrade_function_error_slot`] names the
+/// function's.
+const LEGACY_FUNCTION_ERROR_SLOT: VarId = VarId::MAX - 1;
+
+/// The store of the error `src` of a raise older than MIR 1.108 into the
+/// placeholder `slot`, which [`upgrade_error_slots`] and
+/// [`upgrade_function_error_slot`] fill in.
+const fn legacy_error_store(slot: VarId, src: crate::mir::Reg) -> MirInstr {
     MirInstr::DefVar {
-        var: LEGACY_ERROR_SLOT,
+        var: slot,
         src,
         binding_ty: None,
         in_place: false,
@@ -1266,6 +1291,45 @@ pub(super) fn upgrade_error_slots(function: &mut MirFunction) {
     let mut blocks = std::mem::take(&mut function.blocks);
     upgrade_blocks(&mut blocks, function);
     function.blocks = blocks;
+}
+
+/// Give `function`, read from text older than MIR 1.108, the error slot it
+/// raises out through when it raises or holds a raise out of it, a fresh
+/// `$error` typed as its error: the stores [`legacy_error_store`] made
+/// before each raise out of it store into the slot.
+pub(super) fn upgrade_function_error_slot(function: &mut MirFunction) {
+    let slot = VarId::try_from(function.n_vars).unwrap_or(VarId::MAX);
+    let ty = function.error_ty.clone().unwrap_or_else(Ty::error);
+    if !name_function_error_slot(&mut function.blocks, slot, &ty) && !function.raises {
+        return;
+    }
+    function.n_vars += 1;
+    function.var_names.push("$error".to_string());
+    function.var_tys.insert(slot, ty);
+    function.error_slot = Some(slot);
+}
+
+/// Name `slot` in each store [`legacy_error_store`] made before a raise
+/// out of the function in `blocks`, typing it `ty`; whether there was one.
+fn name_function_error_slot(blocks: &mut [MirBlock], slot: VarId, ty: &Ty) -> bool {
+    let mut named = false;
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            if let MirInstr::DefVar {
+                var, binding_ty, ..
+            } = instruction
+                && *var == LEGACY_FUNCTION_ERROR_SLOT
+            {
+                *var = slot;
+                *binding_ty = Some(ty.clone());
+                named = true;
+            }
+            for region in crate::mir::instruction_regions_mut(instruction) {
+                named |= name_function_error_slot(region, slot, ty);
+            }
+        }
+    }
+    named
 }
 
 fn upgrade_blocks(blocks: &mut [MirBlock], function: &mut MirFunction) {

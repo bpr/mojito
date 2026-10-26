@@ -617,6 +617,10 @@ fn write_function(
         option(function.error_ty.as_ref().map(ty_value))
     )
     .unwrap();
+    // A raising function's error slot; a nonraising one has none.
+    if let Some(slot) = function.error_slot {
+        writeln!(output, "{pad}    error_slot: {},", var_value(slot)).unwrap();
+    }
     let reg_types = function
         .reg_types
         .iter()
@@ -1693,12 +1697,11 @@ fn term_value(term: &MirTerm) -> String {
     let tag = terminator_mnemonic(term);
     match term {
         MirTerm::Return(value) => record(tag, &[("value", option(value.map(reg_value)))]),
-        MirTerm::Unreachable => record(tag, &[]),
+        MirTerm::Unreachable | MirTerm::ErrorReturn => record(tag, &[]),
         MirTerm::TryRaise { label, values } => record(
             tag,
             &[("label", try_label(*label)), ("values", regs(values))],
         ),
-        MirTerm::ErrorReturn { src } => record(tag, &[("src", reg_value(*src))]),
         MirTerm::Yield(values)
         | MirTerm::TryYield(values)
         | MirTerm::ComptimeYield(values)

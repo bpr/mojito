@@ -190,7 +190,7 @@ stored handle and operating on its referent.
 | `return` | `Return` | Return from a function or structured region |
 | `try.yield` | `TryYield` | Complete a try sub-region normally |
 | `try.raise` | `TryRaise` | Enter the handler of the `try` its label names, the error already in that `try`'s slot |
-| `error_return` | `ErrorReturn` | Raise an error value out of the function |
+| `error_return` | `ErrorReturn` | Raise the error in the function's error slot out of the function |
 
 The structured region terminators — `yield`, `if.elifcond.yield`, `break`,
 `continue`, `match.next`, `match.complete`, `comptime.yield`,
@@ -930,13 +930,18 @@ reads the error.
 ### `error_return` — Raise Out of the Function
 
 ```text
-error_return %source
+var.store { var: $error, src: %source }
+error_return {}
 ```
 
-Raises the value in `%source` out of the current function
-(`lit.error_return`). An `Error` or `String` supplies its message; another
-value reports its runtime type. It ends any region, as upstream's `raise`
-ends its block.
+Raises the error the function's error slot (`error_slot`) holds out of
+the current function (`lit.error_return`), moving it out of the slot. The
+raise stored it there first, as upstream's raise outside every `try`
+stores into the raising function's error argument: a store into the
+function's error slot stages the raise, as a store into a `try`'s slot
+does, an `Error` or `String` supplying the message, a raise edge's error
+passing whole, and another value its runtime type, but logs no catch. It
+ends any region, as upstream's `raise` ends its block.
 
 ## Call ABI and Function Metadata
 
@@ -949,6 +954,7 @@ Each function records:
 - register count
 - variable-slot count and diagnostic names
 - number and types of leading parameter slots
+- a raising function's error slot, which its raises out of it store into
 - which parameters are owned
 - which parameters are owned or reference-bearing and how arguments are passed
 - source spans associated with generated registers

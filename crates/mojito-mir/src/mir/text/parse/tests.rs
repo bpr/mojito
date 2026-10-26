@@ -56,6 +56,7 @@ fn function_with(reg_types: Vec<Ty>, instrs: Vec<MirInstr>) -> MirFunction {
         ret_ty: Some(Ty::none()),
         raises: false,
         error_ty: None,
+        error_slot: None,
         spans: SpanTable(HashMap::new()),
         reg_types: reg_types
             .into_iter()
@@ -1269,11 +1270,55 @@ fn instruction_families_reprint_byte_identically() {
 
 #[test]
 fn error_return_terminator_reprints() {
-    let mut function = function_with(vec![Ty::int()], Vec::new());
-    function.blocks[0].term = MirTerm::ErrorReturn { src: Reg(0) };
+    let mut function = function_with(
+        vec![Ty::error()],
+        vec![MirInstr::DefVar {
+            var: 0,
+            src: Reg(0),
+            binding_ty: Some(Ty::error()),
+            in_place: false,
+        }],
+    );
+    function.n_vars = 1;
+    function.var_names = vec!["$error".to_string()];
+    function.var_tys.insert(0, Ty::error());
+    function.raises = true;
+    function.error_slot = Some(0);
+    function.blocks[0].term = MirTerm::ErrorReturn;
     let program = program_with(vec![("raising".into(), function)]);
     assert_reprints(&program);
-    assert!(write::program(&program).contains("terminator: error_return { src: %r0 }"));
+    let text = write::program(&program);
+    assert!(text.contains("error_slot: $v0,"));
+    assert!(text.contains("terminator: error_return {}"));
+}
+
+#[test]
+fn an_error_return_older_than_1_108_stores_into_the_function_error_slot() {
+    let text = artifact_with_instruction("const { dest: %r0, value: string(\"boom\") }")
+        .replace(
+            "raises: false,\n      error_type: absent",
+            "raises: true,\n      error_type: absent",
+        )
+        .replace(
+            "terminator: try.yield {} }]\n",
+            "terminator: error_return { src: %r0 } }]\n",
+        );
+    let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("older text reads");
+    let function = &parsed.program.functions[0].1;
+    assert_eq!(function.error_slot, Some(0));
+    assert_eq!(function.var_names, ["$error"]);
+    assert!(matches!(
+        function.blocks[0].instrs[..],
+        [
+            _,
+            MirInstr::DefVar {
+                var: 0,
+                src: Reg(0),
+                ..
+            }
+        ]
+    ));
+    assert!(matches!(function.blocks[0].term, MirTerm::ErrorReturn));
 }
 
 #[test]
@@ -1421,9 +1466,14 @@ fn tries_older_than_1_92_take_the_labels_their_raises_meant() {
         inner_body[0].instrs[..],
         [MirInstr::DefVar { var, src: Reg(0), .. }] if var == *slot
     ));
+    // The raise in the outer handler stores into the function's error
+    // slot, which the upgrade adds past the `try`'s.
+    let error_slot = parsed.program.functions[0].1.error_slot;
+    assert!(error_slot.is_some_and(|error| error != *slot));
+    assert!(matches!(handler[0].term, MirTerm::ErrorReturn));
     assert!(matches!(
-        handler[0].term,
-        MirTerm::ErrorReturn { src: Reg(0) }
+        handler[0].instrs[..],
+        [MirInstr::DefVar { var, src: Reg(0), .. }] if Some(var) == error_slot
     ));
 }
 

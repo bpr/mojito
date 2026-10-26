@@ -178,8 +178,19 @@ impl VmBackend {
                     self.frames.push(frame);
                     continue;
                 }
-                Transfer::ErrorReturn(src) => {
-                    let raised = self.raise_register(prog, frame.function, &frame.registers, src);
+                Transfer::ErrorReturn => {
+                    let raised = prog.mir.functions[frame.function]
+                        .1
+                        .error_slot
+                        .and_then(|slot| frame.variables.get_mut(slot as usize))
+                        .map_or_else(
+                            || {
+                                RuntimeError::Unsupported(
+                                    "vm: a raise out of a function with no error slot".to_string(),
+                                )
+                            },
+                            |slot| RuntimeError::Raised(std::mem::replace(slot, Value::Moved)),
+                        );
                     match raised {
                         RuntimeError::Raised(error)
                             if frame.id != target

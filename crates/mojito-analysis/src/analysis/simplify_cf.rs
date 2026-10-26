@@ -91,7 +91,7 @@ const fn exits_early(term: &MirTerm) -> bool {
         term,
         MirTerm::Return(_)
             | MirTerm::TryRaise { .. }
-            | MirTerm::ErrorReturn { .. }
+            | MirTerm::ErrorReturn
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::Unreachable

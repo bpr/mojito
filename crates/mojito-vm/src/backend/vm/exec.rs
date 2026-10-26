@@ -397,6 +397,14 @@ impl VmBackend {
             MirInstr::DefVar { var, src, .. } if prog.error_slots[function].contains(var) => {
                 vars[*var as usize] = self.stage_error(prog, function, regs, *src)?;
             }
+            MirInstr::DefVar { var, src, .. }
+                if prog.mir.functions[function].1.error_slot == Some(*var) =>
+            {
+                vars[*var as usize] = match self.raise_register(prog, function, regs, *src) {
+                    RuntimeError::Raised(error) => error,
+                    raised => return Err(raised),
+                };
+            }
             MirInstr::DefVar {
                 var,
                 src,

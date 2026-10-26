@@ -273,7 +273,7 @@ where
         | MirTerm::ComptimeYield(_)
         | MirTerm::ElifCond { .. } => add_state(scan, &mut flow.normal, Some(&state)),
         MirTerm::Return(_) => add_state(scan, &mut flow.exits, Some(&state)),
-        MirTerm::ErrorReturn { .. } => {
+        MirTerm::ErrorReturn => {
             let seed = scan.raise_seed(&state);
             add_state(scan, &mut flow.raises, Some(&seed));
         }
@@ -718,9 +718,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             | MirTerm::Yield(_)
             | MirTerm::ComptimeYield(_)
             | MirTerm::ElifCond { .. } => exit.clone(),
-            MirTerm::Return(_) | MirTerm::ErrorReturn { .. } | MirTerm::Unreachable => {
-                S::State::default()
-            }
+            MirTerm::Return(_) | MirTerm::ErrorReturn | MirTerm::Unreachable => S::State::default(),
             MirTerm::TryRaise { .. }
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }

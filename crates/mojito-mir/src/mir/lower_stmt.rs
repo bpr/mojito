@@ -3687,28 +3687,15 @@ impl<'a> Flatten<'a> {
                     if self.f.reg_types.get(&src.0).map(Ty::kind) == Some(&TyKind::StringLiteral) {
                         let error =
                             self.fresh_typed(self.hir_node(value).location(), None, Ty::error());
-                        self.emit(MirInstr::Call {
-                            dest: error,
-                            func: FuncRef::named("Error"),
-                            raises: None,
-                            args: vec![src],
-                            kwargs: Vec::new(),
-                            arg_places: vec![None],
-                            kwarg_places: Vec::new(),
-                            capture_accesses: Vec::new(),
-                            param_arg_regs: Vec::new(),
-                            receiver: None,
-                            instantiated_args: Vec::new(),
-                            spread: None,
-                        });
+                        self.emit(error_conversion(error, src));
                         error
                     } else {
                         src
                     };
                 self.flush_argument_anchors();
-                let (store, term) = self.raise_exit(src);
-                if let Some(store) = store {
-                    self.emit(store);
+                let (instrs, term) = self.raise_exit(src);
+                for instruction in instrs {
+                    self.emit(instruction);
                 }
                 term
             }

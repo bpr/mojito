@@ -159,7 +159,6 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
     match term {
         MirTerm::ElifCond { cond, values } => std::iter::once(cond).chain(values).collect(),
         MirTerm::Return(Some(reg)) => vec![reg],
-        MirTerm::ErrorReturn { src } => vec![src],
         MirTerm::Yield(values)
         | MirTerm::TryRaise { values, .. }
         | MirTerm::TryYield(values)
@@ -170,7 +169,7 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
         | MirTerm::ComptimeContinue(values)
         | MirTerm::Break { values, .. }
         | MirTerm::Continue { values, .. } => values.iter_mut().collect(),
-        MirTerm::Return(None) | MirTerm::Unreachable => Vec::new(),
+        MirTerm::Return(None) | MirTerm::ErrorReturn | MirTerm::Unreachable => Vec::new(),
     }
 }
 
@@ -181,7 +180,6 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
             .chain(values.iter().copied())
             .collect(),
         MirTerm::Return(Some(reg)) => vec![*reg],
-        MirTerm::ErrorReturn { src } => vec![*src],
         MirTerm::Yield(values)
         | MirTerm::TryRaise { values, .. }
         | MirTerm::TryYield(values)
@@ -192,7 +190,7 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
         | MirTerm::ComptimeContinue(values)
         | MirTerm::Break { values, .. }
         | MirTerm::Continue { values, .. } => values.clone(),
-        MirTerm::Return(None) | MirTerm::Unreachable => Vec::new(),
+        MirTerm::Return(None) | MirTerm::ErrorReturn | MirTerm::Unreachable => Vec::new(),
     }
 }
 
@@ -1027,10 +1025,13 @@ pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) ->
     }
 }
 
-/// Renumber every slot `function` names ([`renumber_block_slots`]) and each
-/// span origin.
+/// Renumber every slot `function` names ([`renumber_block_slots`]), its
+/// error slot, and each span origin.
 pub fn renumber_slots(function: &mut MirFunction, renumber: &dyn Fn(VarId) -> VarId) {
     renumber_block_slots(&mut function.blocks, renumber);
+    if let Some(slot) = &mut function.error_slot {
+        *slot = renumber(*slot);
+    }
     for (_, origin) in function.spans.0.values_mut() {
         if let Some(var) = origin {
             *var = renumber(*var);
@@ -1690,6 +1691,37 @@ pub struct Raises {
     pub flag: Reg,
     /// The raised error, of type `ty`.
     pub error: Reg,
+}
+
+/// Whether a raised value of type `ty` is a string a raise converts to the
+/// error type `error`, `Error`, as it converts its value to the type of
+/// the error slot it stores into.
+pub fn converts_to_error(ty: &Ty, error: &Ty) -> bool {
+    matches!(error.kind(), TyKind::Error)
+        && match ty.kind() {
+            TyKind::StringLiteral => true,
+            TyKind::Struct(name, _) => mojito_symbol::symbol::is_stdlib_string_struct(name),
+            _ => false,
+        }
+}
+
+/// The conversion of the string in `message` to the `Error` in `dest`, as a
+/// raise converts it.
+pub fn error_conversion(dest: Reg, message: Reg) -> MirInstr {
+    MirInstr::Call {
+        dest,
+        func: FuncRef::named("Error"),
+        raises: None,
+        args: vec![message],
+        kwargs: Vec::new(),
+        arg_places: vec![None],
+        kwarg_places: Vec::new(),
+        capture_accesses: Vec::new(),
+        param_arg_regs: Vec::new(),
+        receiver: None,
+        instantiated_args: Vec::new(),
+        spread: None,
+    }
 }
 
 /// A single three-address instruction. Each value-producing instruction writes a
@@ -3148,11 +3180,12 @@ pub enum MirTerm {
         label: TryLabel,
         values: Vec<Reg>,
     },
-    /// `lit.error_return`: raise the error value `src` out of the
-    /// function, as `emitRaise` lowers a raise outside every `try` body.
-    ErrorReturn {
-        src: Reg,
-    },
+    /// `lit.error_return`, as `emitRaise` lowers a raise outside every
+    /// `try` body: leave the function raising the error its error slot
+    /// ([`MirFunction::error_slot`]) holds, which the raise initialized
+    /// first. A `raise` statement and a raising instruction's error region
+    /// both end in one outside every `try` body.
+    ErrorReturn,
     /// `hlcf.unreachable`: control never reaches here.
     Unreachable,
 }
@@ -3260,6 +3293,12 @@ pub struct MirFunction {
     pub raises: bool,
     /// Declared error type when `raises` is true and the contract is typed.
     pub error_ty: Option<Ty>,
+    /// The slot a raise out of the function stores its error into before
+    /// its [`MirTerm::ErrorReturn`], upstream's error argument, which
+    /// `findNearestErrorSlot` returns outside every `try`: uninitialized on
+    /// entry, it holds the error at each `lit.error_return` and nothing at
+    /// a `return`. Present exactly when the function raises.
+    pub error_slot: Option<VarId>,
     /// Not encoded: a package writes its bodies' locations against its own
     /// file table.
     #[serde(skip)]

@@ -278,7 +278,7 @@ impl<'a> Walk<'a> {
                 normal,
             ) => meet(&mut flow.normal, normal),
             (MirTerm::Return(_), exits) => meet(&mut flow.exits, exits),
-            (MirTerm::ErrorReturn { .. }, raises) => meet(&mut flow.raises, raises),
+            (MirTerm::ErrorReturn, raises) => meet(&mut flow.raises, raises),
             (MirTerm::TryRaise { label, .. }, Some(state)) => {
                 if let Some(depth) = self
                     .frames

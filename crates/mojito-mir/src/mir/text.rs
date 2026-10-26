@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 107;
+pub const VERSION_MINOR: u16 = 108;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -419,7 +419,7 @@ pub const fn terminator_mnemonic(terminator: &MirTerm) -> &'static str {
         MirTerm::MatchNext(_) => "match.next",
         MirTerm::MatchComplete(_) => "match.complete",
         MirTerm::TryRaise { .. } => "try.raise",
-        MirTerm::ErrorReturn { .. } => "error_return",
+        MirTerm::ErrorReturn => "error_return",
         MirTerm::Unreachable => "unreachable",
     }
 }

@@ -628,6 +628,7 @@ mod tests {
                     ret_ty: None,
                     raises: false,
                     error_ty: None,
+                    error_slot: None,
                     spans: crate::mir::SpanTable::default(),
                     reg_types: std::collections::HashMap::new(),
                     removed_params: Vec::new(),

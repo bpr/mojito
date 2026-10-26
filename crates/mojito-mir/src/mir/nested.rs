@@ -130,6 +130,7 @@ pub(super) fn lower_fn_nested(
         static_receiver.as_ref(),
         &enclosing_binders,
         &mut thunks,
+        raises.then(|| error_ty.clone().unwrap_or_else(Ty::error)),
     );
     if !enclosing_binders.lifted {
         thunks.request_applications(checked, &cfg.body);
@@ -1262,11 +1263,14 @@ fn lower_storage_call_witness(
         args.push(dest);
     }
     let dest = register(&method.ret_ty);
+    let error_ty = method.error_ty.clone().unwrap_or_else(Ty::error);
     let raises = method.raises.then(|| Raises {
-        ty: method.error_ty.clone().unwrap_or_else(Ty::error),
+        ty: error_ty.clone(),
         flag: register(&Ty::bool()),
-        error: register(&method.error_ty.clone().unwrap_or_else(Ty::error)),
+        error: register(&error_ty),
     });
+    // The witness's error slot follows `self` and the method's parameters.
+    let error_slot = (method.param_types.len() + 1) as VarId;
     let writes_self = declarations
         .structure(name)
         .is_some_and(|declaration| declaration.mut_self_methods.contains(&method_name(method)));
@@ -1296,7 +1300,15 @@ fn lower_storage_call_witness(
         instrs.push(MirInstr::If {
             results: Vec::new(),
             cond: raises.flag,
-            then: region(Vec::new(), MirTerm::ErrorReturn { src: raises.error }),
+            then: region(
+                vec![MirInstr::DefVar {
+                    var: error_slot,
+                    src: raises.error,
+                    binding_ty: Some(error_ty.clone()),
+                    in_place: false,
+                }],
+                MirTerm::ErrorReturn,
+            ),
             elifs: Vec::new(),
             else_args: Vec::new(),
             orelse: region(Vec::new(), MirTerm::Yield(Vec::new())),
@@ -1325,6 +1337,13 @@ fn lower_storage_call_witness(
         .chain(method.param_types.iter().cloned())
         .collect();
     let n_params = param_types.len();
+    let error_slot = method.raises.then_some(error_slot);
+    let mut var_tys: HashMap<VarId, Ty> = param_types
+        .iter()
+        .enumerate()
+        .map(|(var, ty)| (var as VarId, ty.clone()))
+        .collect();
+    var_tys.extend(error_slot.map(|slot| (slot, error_ty)));
     functions.push((
         symbol,
         MirFunction {
@@ -1333,9 +1352,10 @@ fn lower_storage_call_witness(
                 term: MirTerm::Return(returned),
             }],
             n_regs: reg_types.len() as u32,
-            n_vars: n_params,
+            n_vars: n_params + usize::from(error_slot.is_some()),
             var_names: std::iter::once("self".to_string())
                 .chain(method.param_names.iter().cloned())
+                .chain(error_slot.map(|_| "$error".to_string()))
                 .collect(),
             n_params,
             owned_params: std::iter::once(false)
@@ -1345,16 +1365,13 @@ fn lower_storage_call_witness(
             ref_params: std::iter::once(false)
                 .chain(method.ref_params.iter().copied())
                 .collect(),
-            var_tys: param_types
-                .iter()
-                .enumerate()
-                .map(|(var, ty)| (var as VarId, ty.clone()))
-                .collect(),
+            var_tys,
             param_types,
             reg_types,
             ret_ty: Some(method.ret_ty.clone()),
             raises: method.raises,
             error_ty: method.error_ty.clone(),
+            error_slot,
             ..MirFunction::default()
         },
     ));
@@ -1670,6 +1687,11 @@ fn lower_nested_node(
         None,
         enclosing_binders,
         &mut thunks,
+        signature
+            .effect
+            .as_ref()
+            .filter(|effect| effect.raises)
+            .map(|effect| effect.error.clone().unwrap_or_else(Ty::error)),
     );
     thunks.request_applications(checked, &ncfg.body);
     thunks.lower(checked, overloads, out, declarations, invariant_errors);

@@ -1531,6 +1531,7 @@ mod tests {
                 ret_ty: Some(Ty::none()),
                 raises: false,
                 error_ty: None,
+                error_slot: None,
                 spans: mojito_mir::mir::SpanTable::default(),
                 reg_types: HashMap::new(),
                 removed_params: Vec::new(),

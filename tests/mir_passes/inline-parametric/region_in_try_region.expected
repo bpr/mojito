@@ -2,18 +2,19 @@
       fn {
         name: may_raise,
         registers: 7,
-        vars: 1,
-        var_names: [x],
+        vars: 2,
+        var_names: [x, "$error"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Error }],
         return_type: present(Int),
         raises: true,
         error_type: present(Error),
+        error_slot: $v1,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Bool }, reg_type { reg: %r4, type: StringLiteral }, reg_type { reg: %r5, type: Error }, reg_type { reg: %r6, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 70, end: 71, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 74, end: 75, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 74, end: 75, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 70, end: 75, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 97, end: 107, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 91, end: 108, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 120, end: 121, origin: present($v0) }) }],
         blocks: [
@@ -23,7 +24,7 @@
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v0, mode: copy },
               binary { op: lt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
-              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: string("negative") }, call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: error_return { src: %r5 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: string("negative") }, call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v1, src: %r5, binding_type: present(Error), in_place: false }], terminator: error_return {} }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               var.use { dest: %r6, var: $v0, mode: copy }
             ],
             terminator: return { value: present(%r6) }
@@ -67,15 +68,15 @@
       fn {
         name: region_in_try_region,
         registers: 28,
-        vars: 4,
-        var_names: [x, "$try_error0", "x$inline2", "x$inline3"],
+        vars: 5,
+        var_names: [x, "$try_error0", "x$inline2", "$error$inline2", "x$inline4"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Error }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Error }, var_type { var: $v2, type: Int }, var_type { var: $v3, type: Error }, var_type { var: $v4, type: Int }],
         return_type: present(None),
         raises: false,
         error_type: absent,
@@ -85,7 +86,7 @@
           bb0 {
             instructions: [
               var.declare { var: $v1 },
-              try { label: try0, error: present($v1), results: [], body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, var.store { var: $v2, src: %r0, binding_type: present(Int), in_place: false }, loop { results: [%r1, %r6, %r7], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r9, value: int_literal(0) }, literal.materialize { dest: %r10, value: %r9, target: Int }, var.use { dest: %r8, var: $v2, mode: copy }, binary { op: lt, dest: %r11, a: %r8, b: %r10, resolved: absent, raises: absent }, if { results: [], condition: %r11, then: [bb0 { instructions: [const { dest: %r12, value: string("negative") }, call { dest: %r13, func: Error, raises: absent, args: [%r12], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, const { dest: %r15, value: uninitmem }, const { dest: %r16, value: bool(true) }], terminator: break { label: present(loop4294967295), values: [%r15, %r16, %r13] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, var.use { dest: %r14, var: $v2, mode: copy }, const { dest: %r17, value: bool(false) }, const { dest: %r18, value: uninitmem }], terminator: break { label: present(loop4294967295), values: [%r14, %r17, %r18] } }] }, if { results: [], condition: %r6, then: [bb0 { instructions: [var.store { var: $v1, src: %r7, binding_type: present(Error), in_place: false }], terminator: try.raise { label: try0, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, var.store { var: $v3, src: %r1, binding_type: present(Int), in_place: false }, loop { results: [%r2], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r20, value: int_literal(100) }, literal.materialize { dest: %r21, value: %r20, target: Int }, var.use { dest: %r19, var: $v3, mode: copy }, binary { op: gt, dest: %r22, a: %r19, b: %r21, resolved: absent, raises: absent }, if { results: [], condition: %r22, then: [bb0 { instructions: [var.use { dest: %r23, var: $v3, mode: copy }], terminator: break { label: present(loop4294967295), values: [%r23] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, const { dest: %r25, value: int_literal(1) }, literal.materialize { dest: %r26, value: %r25, target: Int }, var.use { dest: %r24, var: $v3, mode: copy }, binary { op: add, dest: %r27, a: %r24, b: %r26, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r27] } }] }, call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [const { dest: %r4, value: string("caught") }, call { dest: %r5, func: print, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield { values: [] } }]), else_arguments: [], orelse: absent }
+              try { label: try0, error: present($v1), results: [], body: [bb0 { instructions: [var.use { dest: %r0, var: $v0, mode: copy }, var.store { var: $v2, src: %r0, binding_type: present(Int), in_place: false }, loop { results: [%r1, %r6, %r7], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r9, value: int_literal(0) }, literal.materialize { dest: %r10, value: %r9, target: Int }, var.use { dest: %r8, var: $v2, mode: copy }, binary { op: lt, dest: %r11, a: %r8, b: %r10, resolved: absent, raises: absent }, if { results: [], condition: %r11, then: [bb0 { instructions: [const { dest: %r12, value: string("negative") }, call { dest: %r13, func: Error, raises: absent, args: [%r12], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, const { dest: %r15, value: uninitmem }, const { dest: %r16, value: bool(true) }], terminator: break { label: present(loop4294967295), values: [%r15, %r16, %r13] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, var.use { dest: %r14, var: $v2, mode: copy }, const { dest: %r17, value: bool(false) }, const { dest: %r18, value: uninitmem }], terminator: break { label: present(loop4294967295), values: [%r14, %r17, %r18] } }] }, if { results: [], condition: %r6, then: [bb0 { instructions: [var.store { var: $v1, src: %r7, binding_type: present(Error), in_place: false }], terminator: try.raise { label: try0, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, var.store { var: $v4, src: %r1, binding_type: present(Int), in_place: false }, loop { results: [%r2], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [const { dest: %r20, value: int_literal(100) }, literal.materialize { dest: %r21, value: %r20, target: Int }, var.use { dest: %r19, var: $v4, mode: copy }, binary { op: gt, dest: %r22, a: %r19, b: %r21, resolved: absent, raises: absent }, if { results: [], condition: %r22, then: [bb0 { instructions: [var.use { dest: %r23, var: $v4, mode: copy }], terminator: break { label: present(loop4294967295), values: [%r23] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, const { dest: %r25, value: int_literal(1) }, literal.materialize { dest: %r26, value: %r25, target: Int }, var.use { dest: %r24, var: $v4, mode: copy }, binary { op: add, dest: %r27, a: %r24, b: %r26, resolved: absent, raises: absent }], terminator: break { label: present(loop4294967295), values: [%r27] } }] }, call { dest: %r3, func: print, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [const { dest: %r4, value: string("caught") }, call { dest: %r5, func: print, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: try.yield { values: [] } }]), else_arguments: [], orelse: absent }
             ],
             terminator: return { value: absent }
           }

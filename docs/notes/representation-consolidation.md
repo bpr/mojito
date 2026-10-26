@@ -226,10 +226,12 @@ are conformance only.
   forwards or moves, and R827 closed with it. R473 stays open: its
   discard still copies, and a move into storage that dies unread runs.
 - **R1293** landed 10-25: a `try`'s raises store their error into its
-  error slot, which dies as a variable. The function-level raise still
-  carries its error as a register (R1437).
+  error slot, which dies as a variable.
+- **R1437** landed 10-26: a raise out of a function stores its error into
+  the function's error slot, which dies as a variable too. A raising call
+  still hands its callee's error back in a register (R1438).
 - **R1356 then rejects the class.** It waits on R1157, R1158, R1249, R117,
-  R677, R1353, R1334, and R1437.
+  R677, R1353, and R1334.
 
 ### F. Members reached by name, not called as the requirement
 

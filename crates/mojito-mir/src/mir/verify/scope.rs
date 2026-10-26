@@ -947,6 +947,7 @@ mod tests {
             ret_ty: Some(Ty::none()),
             raises: false,
             error_ty: None,
+            error_slot: None,
             spans: crate::mir::SpanTable(HashMap::new()),
             reg_types: reg_types
                 .into_iter()

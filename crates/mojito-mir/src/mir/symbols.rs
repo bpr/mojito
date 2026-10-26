@@ -87,6 +87,7 @@ impl<'t> SymbolTable<'t> {
             ref_params: _,
             returns_reference: _,
             raises: _,
+            error_slot: _,
             spans: _,
             // The function's own binders name no symbol.
             removed_params: _,

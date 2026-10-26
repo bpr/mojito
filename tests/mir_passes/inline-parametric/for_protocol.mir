@@ -1,4 +1,4 @@
-mojito-mir 1.107
+mojito-mir 1.108
 artifact {
   features: [],
   files: [
@@ -85,18 +85,19 @@ artifact {
       fn {
         name: "It.__next__",
         registers: 7,
-        vars: 1,
-        var_names: [self],
+        vars: 2,
+        var_names: [self, "$error"],
         params: 1,
         param_types: [struct_type { name: It, arguments: [] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [true],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: It, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: It, arguments: [] } }, var_type { var: $v1, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
         return_type: present(Int),
         raises: true,
         error_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }),
+        error_slot: $v1,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 497, end: 503, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 507, end: 508, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 507, end: 508, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 497, end: 503, origin: absent }) }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 524, end: 530, origin: present($v0) }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 524, end: 530, origin: present($v0) }) }],
         blocks: [
@@ -201,18 +202,19 @@ artifact {
       fn {
         name: "Bounded.__next__",
         registers: 11,
-        vars: 1,
-        var_names: [self],
+        vars: 2,
+        var_names: [self, "$error"],
         params: 1,
         param_types: [struct_type { name: Bounded, arguments: [] }],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [true],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: struct_type { name: Bounded, arguments: [] } }],
+        var_types: [var_type { var: $v0, type: struct_type { name: Bounded, arguments: [] } }, var_type { var: $v1, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }],
         return_type: present(Int),
         raises: true,
         error_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }),
+        error_slot: $v1,
         register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Bool }, reg_type { reg: %r3, type: struct_type { name: "__module$std$iter$StopIteration", arguments: [] } }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: IntLiteral }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r7, type: Int }, reg_type { reg: %r9, type: Int }, reg_type { reg: %r10, type: Int }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 1038, end: 1044, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 1048, end: 1054, origin: present($v0) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 1038, end: 1054, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 1074, end: 1089, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 1098, end: 1104, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 1108, end: 1109, origin: absent }) }, reg_loc { reg: %r6, location: present(loc { file: file0, start: 1108, end: 1109, origin: absent }) }, reg_loc { reg: %r7, location: present(loc { file: file0, start: 1098, end: 1104, origin: absent }) }, reg_loc { reg: %r8, location: absent }, reg_loc { reg: %r9, location: present(loc { file: file0, start: 1125, end: 1131, origin: present($v0) }) }, reg_loc { reg: %r10, location: present(loc { file: file0, start: 1125, end: 1131, origin: present($v0) }) }],
         blocks: [
@@ -221,7 +223,7 @@ artifact {
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Bounded, arguments: [] }), projections: [projection { op: field(i), type: Int }], type: present(Int), through: absent } },
               place.load { dest: %r1, place: place { root: $v0, root_type: present(struct_type { name: Bounded, arguments: [] }), projections: [projection { op: field(n), type: Int }], type: present(Int), through: absent } },
               binary { op: eq, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent },
-              if { results: [], condition: %r2, then: [bb0 { instructions: [call { dest: %r3, func: "__module$std$iter$StopIteration.__init__", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: error_return { src: %r3 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r2, then: [bb0 { instructions: [call { dest: %r3, func: "__module$std$iter$StopIteration.__init__", raises: absent, args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v1, src: %r3, binding_type: present(struct_type { name: "__module$std$iter$StopIteration", arguments: [] }), in_place: false }], terminator: error_return {} }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               place.load { dest: %r4, place: place { root: $v0, root_type: present(struct_type { name: Bounded, arguments: [] }), projections: [projection { op: field(i), type: Int }], type: present(Int), through: absent } },
               const { dest: %r5, value: int_literal(1) },
               literal.materialize { dest: %r6, value: %r5, target: Int },

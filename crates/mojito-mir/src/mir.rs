@@ -135,6 +135,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         None,
         &EnclosingBinders::default(),
         &mut ComptimeThunks::default(),
+        None,
     )
 }
 
@@ -1161,6 +1162,7 @@ fn lower_program(
             None,
             &EnclosingBinders::default(),
             &mut thunks,
+            None,
         );
         thunks.request_applications(checked, &cfg.body);
         thunks.lower(
@@ -3195,8 +3197,6 @@ struct Flatten<'a> {
     /// `lit.try.raise` to it and `findNearestErrorSlot` finds its `$err`;
     /// `None` outside every `try` body, where a raise leaves the function.
     raise_target: Option<(TryLabel, VarId)>,
-    /// The error slots of this function's `try`s.
-    error_slots: HashSet<VarId>,
 }
 
 /// A `comptime for` index in scope: the binder the checker recorded on the
@@ -3861,10 +3861,7 @@ impl<'a> Flatten<'a> {
         self.emit(MirInstr::If {
             results: Vec::new(),
             cond: raises.flag,
-            then: vec![MirBlock {
-                instrs: instrs.into_iter().collect(),
-                term,
-            }],
+            then: vec![MirBlock { instrs, term }],
             elifs: Vec::new(),
             else_args: Vec::new(),
             orelse: vec![MirBlock {
@@ -3876,34 +3873,57 @@ impl<'a> Flatten<'a> {
 
     /// The exit raising the error `src` from where lowering stands, as
     /// `emitRaise` lowers a raise after the error is in the nearest error
-    /// slot: inside a `try` body, the store of `src` into that `try`'s
-    /// slot, then `lit.try.raise` to its handler; outside every body,
-    /// `lit.error_return` of `src`. The first raise naming a `try` types
-    /// its slot, as upstream's first raise resolves `__try_error__`'s type.
-    fn raise_exit(&mut self, src: Reg) -> (Option<MirInstr>, MirTerm) {
-        let Some((label, slot)) = self.raise_target else {
-            return (None, MirTerm::ErrorReturn { src });
+    /// slot `findNearestErrorSlot` finds: the store of `src` into that
+    /// slot, then, inside a `try` body, `lit.try.raise` to its handler,
+    /// and outside every body, `lit.error_return` through the function's
+    /// error slot. The first raise naming a `try` types its slot, as
+    /// upstream's first raise resolves `__try_error__`'s type; a string
+    /// raised into an `Error` slot converts to `Error` first, as the raise
+    /// converts its value to the slot's type. A raise out of a nonraising
+    /// function, which has no slot, stores nothing, and `verify` reports
+    /// it.
+    fn raise_exit(&mut self, src: Reg) -> (Vec<MirInstr>, MirTerm) {
+        let (slot, term) = match self.raise_target {
+            Some((label, slot)) => (
+                Some(slot),
+                MirTerm::TryRaise {
+                    label,
+                    values: Vec::new(),
+                },
+            ),
+            None => (self.f.error_slot, MirTerm::ErrorReturn),
+        };
+        let Some(slot) = slot else {
+            return (Vec::new(), term);
         };
         let raised = self.f.reg_types.get(&src.0).cloned();
         let ty = match self.var_types.get(&slot) {
             Some(ty) => Some(ty.clone()),
-            None => raised.inspect(|ty| {
+            None => raised.clone().inspect(|ty| {
                 self.var_types.insert(slot, ty.clone());
             }),
         };
-        let store = MirInstr::DefVar {
+        let mut instrs = Vec::new();
+        let src = match (&ty, &raised) {
+            (Some(slot_ty), Some(raised)) if converts_to_error(raised, slot_ty) => {
+                let error = Reg(self.next_reg);
+                self.next_reg += 1;
+                self.f.reg_types.insert(error.0, Ty::error());
+                if let Some((span, _)) = self.f.spans.0.get(&src.0).cloned() {
+                    self.f.spans.0.insert(error.0, (span, None));
+                }
+                instrs.push(error_conversion(error, src));
+                error
+            }
+            _ => src,
+        };
+        instrs.push(MirInstr::DefVar {
             var: slot,
             src,
             binding_ty: ty,
             in_place: false,
-        };
-        (
-            Some(store),
-            MirTerm::TryRaise {
-                label,
-                values: Vec::new(),
-            },
-        )
+        });
+        (instrs, term)
     }
 
     /// The callee for a free call the checker recorded no exact target for: the
@@ -4727,7 +4747,9 @@ struct CaptureStorage {
 /// or captures prepended), and a first-class use of it makes its closure.
 /// `declared` types the slots the frame's declaration binds before its body
 /// runs (parameters, value parameters, a named result); every other slot is
-/// typed by the op that declares it as the body lowers. The body stays
+/// typed by the op that declares it as the body lowers. `error` is a
+/// raising function's error type, which types the error slot
+/// ([`MirFunction::error_slot`]) its raises leave through. The body stays
 /// structured, as upstream's generators hold it in `hlcf`: each region, the
 /// body included, is one block, which `verify` requires.
 #[allow(clippy::too_many_arguments)]
@@ -4743,6 +4765,7 @@ fn lower_cfg_nested(
     static_receiver: Option<&Ty>,
     enclosing_binders: &EnclosingBinders,
     comptime_thunks: &mut ComptimeThunks,
+    error: Option<Ty>,
 ) -> MirFunction {
     let mut mir = MirFunction {
         blocks: Vec::new(),
@@ -4765,6 +4788,7 @@ fn lower_cfg_nested(
         ret_ty: None,
         raises: false,
         error_ty: None,
+        error_slot: None,
         spans: SpanTable::default(),
         reg_types: HashMap::new(),
         removed_params: Vec::new(),
@@ -4821,9 +4845,13 @@ fn lower_cfg_nested(
             returns_reference,
             next_try: 0,
             raise_target: None,
-            error_slots: HashSet::new(),
         };
         fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
+        if let Some(ty) = error {
+            let slot = fl.var("$error");
+            fl.var_types.insert(slot, ty);
+            fl.f.error_slot = Some(slot);
+        }
         let prologue = captures
             .storage
             .as_ref()

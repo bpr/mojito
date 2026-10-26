@@ -285,12 +285,10 @@ pub(super) const fn raises_to_handler(instr: &MirInstr) -> bool {
     matches!(instr, MirInstr::Try { .. })
 }
 
-/// The values a block's terminator hands on: those an arm yields, and the
-/// error a `lit.error_return` raises out of the function.
+/// The values a block's terminator hands on: those an arm yields.
 pub(super) fn handed_values(term: &MirTerm) -> &[Reg] {
     match term {
         MirTerm::Yield(values) | MirTerm::ComptimeYield(values) => values,
-        MirTerm::ErrorReturn { src } => std::slice::from_ref(src),
         _ => &[],
     }
 }

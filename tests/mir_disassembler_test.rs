@@ -34,6 +34,7 @@ fn identity_program() -> MirProgram {
         ret_ty: Some(Ty::int()),
         raises: false,
         error_ty: None,
+        error_slot: None,
         spans: SpanTable(HashMap::from([(
             0,
             (
@@ -115,6 +116,7 @@ fn control_flow_program() -> MirProgram {
         ret_ty: Some(Ty::int()),
         raises: false,
         error_ty: None,
+        error_slot: None,
         spans: SpanTable::default(),
         reg_types: HashMap::from([
             (0, Ty::bool()),

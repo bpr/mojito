@@ -567,6 +567,19 @@ handler's old `error_var`, or a fresh `$try_error<N>` declared before the
 `try`) followed by its `try.raise`, and one naming none an
 `error_return`. The package format moves to `mojito-package 99`.
 
+Schema 1.108 passes a raise out of the function through the function's
+error slot, as upstream's raise outside every `try` stores into the
+raising function's error argument, the slot `findNearestErrorSlot`
+returns there, before its `lit.error_return` (R1437): a raising function
+carries `error_slot: $vN`, a local slot typed as its error, and
+`error_return {}` carries no error, because the raise stored it into the
+slot first. A nonraising function carries no `error_slot` field. The
+reader still accepts an older `error_return { src: %rN }`, or a `raise`
+naming no `try`: it becomes a store of its error into the function's
+error slot, a fresh `$error` the reader adds to a raising function or to
+one holding such a raise, followed by its `error_return`. The package
+format moves to `mojito-package 100`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -853,6 +866,13 @@ fn {
 Counts are explicit and checked against referenced identities. Parameter masks
 align with `param_types`. Production artifacts require a present return type.
 Register types are explicit and are not re-inferred from mnemonics.
+
+A raising function carries `error_slot: $vN` after `error_type` (schema
+1.108): the local slot its raises out of the function store their error
+into before `error_return`, upstream's error argument. It holds nothing
+on entry, the error at each `error_return`, and nothing at a `return`, so
+drop elaboration destroys an error a `finally`'s `return` overrides. The
+verifier requires the field exactly when `raises` is true.
 
 A generic body may carry `removed_params: [param_id { owner: "f", slot: 0 },
 ...]` between `locations` and `blocks` (schema 1.60): the function's own
@@ -1321,7 +1341,7 @@ as explicit options/lists. Backends must not reconstruct omitted selections.
 | `ComptimeBreak` / `ComptimeContinue` | `comptime.for.break { values: [reg...] }` / `comptime.for.continue { values: [reg...] }` — the nearest enclosing `comptime.for` (schema 1.54); a break's `values` define its results and a continue's its body's arguments for the next iteration, one per register (schema 1.85) |
 | `MatchNext` / `MatchComplete` | `match.next { values: [reg...] }` / `match.complete { values: [reg...] }` — `hlcf.match.next`/`hlcf.match.complete`: leave the nearest enclosing `match` case for the next case or for the op's end (schema 1.74); a `match.next`'s `values` (schema 1.84) define the next region's arguments, one per argument, and a `match.complete`'s (schema 1.85) the op's results, one per result |
 | `TryRaise` | `try.raise { label: tryN, values: [%rN...] }` — `lit.try.raise`: leave every enclosing region for the handler of the nearest `try` carrying `label` whose body holds it, its values defining that handler's arguments; the error is already in that `try`'s `error` slot (schema 1.107; before, `raise { src, label: present(tryN), values }`, schema 1.90 to 1.106, see *Compatibility*) |
-| `ErrorReturn` | `error_return { src: %rN }` — `lit.error_return`: raise the error in `src` out of the function (schema 1.107; before, `raise { src, label: absent }`) |
+| `ErrorReturn` | `error_return {}` — `lit.error_return`: raise the error the function's `error_slot` holds out of the function; the raise stored it there first (schema 1.108; schema 1.107 spelled `error_return { src: %rN }`, and before, `raise { src, label: absent }`, see *Compatibility*) |
 | `Unreachable` | `unreachable {}` — `hlcf.unreachable` (schema 1.54) |
 
 The structured terminators end only the region of their op; the verifier

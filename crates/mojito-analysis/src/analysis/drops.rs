@@ -58,6 +58,7 @@ pub(super) fn elaborate_drops(
     // destroyed there.
     let demands = ExitDemands {
         receiver,
+        error: function.error_slot,
         parameters: split_parameters(&function.ref_params),
         deinit: split_parameters(&function.deinit_params),
     };
@@ -325,14 +326,17 @@ impl BackwardScan for DropLiveness<'_> {
 }
 
 /// The values a function's exits read: an initializer's receiver, which a
-/// `return` returns, the split `mut` and `ref` parameters, which every
-/// `return` and every raise out of the function hands back whole, and the
-/// whole-object bit of each split `deinit` parameter, which every such exit
-/// marks destroyed, as upstream's `mark_destroyed` of a `DeinitMem`
-/// argument before each `return` and raise does: what a field holds then
-/// died at the field's own last use.
+/// `return` returns, the error slot, which a raise out of the function
+/// hands out (upstream's error argument, initialized on error alone), the
+/// split `mut` and `ref` parameters, which every `return` and every raise
+/// out of the function hands back whole, and the whole-object bit of each
+/// split `deinit` parameter, which every such exit marks destroyed, as
+/// upstream's `mark_destroyed` of a `DeinitMem` argument before each
+/// `return` and raise does: what a field holds then died at the field's
+/// own last use.
 struct ExitDemands {
     receiver: Option<VarId>,
+    error: Option<VarId>,
     parameters: Vec<VarId>,
     deinit: Vec<VarId>,
 }
@@ -343,6 +347,9 @@ impl ExitDemands {
         let returns = matches!(term, MirTerm::Return(_));
         if let (Some(receiver), true) = (self.receiver, returns) {
             values.mark_all(live, receiver);
+        }
+        if let (Some(error), MirTerm::ErrorReturn) = (self.error, term) {
+            values.mark_all(live, error);
         }
         if leaves(term) {
             values.mark_reached(live);
@@ -371,7 +378,7 @@ impl ExitDemands {
 
 /// Whether `term` leaves the function: a `return`, or a raise out of it.
 const fn leaves(term: &MirTerm) -> bool {
-    matches!(term, MirTerm::Return(_) | MirTerm::ErrorReturn { .. })
+    matches!(term, MirTerm::Return(_) | MirTerm::ErrorReturn)
 }
 
 /// What one instruction does to the live bits, walked backward.

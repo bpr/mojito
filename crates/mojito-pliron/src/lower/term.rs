@@ -23,7 +23,7 @@ impl FnLowering<'_> {
             | MirTerm::MatchNext(values)
             | MirTerm::MatchComplete(values) => self.lower_region_exit(ctx, term, values),
             MirTerm::TryRaise { label, values } => self.lower_try_raise(ctx, *label, values),
-            MirTerm::ErrorReturn { src } => self.lower_error_return(ctx, *src),
+            MirTerm::ErrorReturn => self.lower_error_return(ctx),
             // `hlcf.unreachable`.
             MirTerm::Unreachable => {
                 let unreachable = UnreachableOp::new(ctx);

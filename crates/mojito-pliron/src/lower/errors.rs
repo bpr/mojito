@@ -39,7 +39,9 @@ impl FnLowering<'_> {
         self.emit_trace(ctx, kind, data, size);
     }
 
-    /// The entry-block `MjError` staging slot for in-flight errors.
+    /// The entry-block `MjError` staging slot of the error a raise out of
+    /// the function hands out: the storage of its error slot
+    /// ([`mojito_mir::mir::MirFunction::error_slot`]).
     pub(super) fn ensure_err_slot(&mut self, ctx: &mut Context) -> Value {
         if let Some(slot) = self.err_slot {
             return slot;
@@ -218,20 +220,36 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// A `lit.error_return`: materialize the raised value as an owned
-    /// error in the staging slot and jump to the raising function's
-    /// propagate block.
-    pub(super) fn lower_error_return(
+    /// A `lit.error_return`: jump to the raising function's propagate
+    /// block, the raise having stored its error into the function's error
+    /// slot first ([`Self::stage_function_error`]).
+    pub(super) fn lower_error_return(&mut self, ctx: &mut Context) -> Result<(), PlironError> {
+        let target = self.ensure_propagate_block(ctx)?;
+        let jump = BrOp::new(ctx, target, Vec::new());
+        self.append(ctx, jump.get_operation(), None);
+        Ok(())
+    }
+
+    /// The store of the raised register `src` into the function's error
+    /// slot, which a raise out of the function makes before its
+    /// `lit.error_return`: the error, materialized as an owned `MjError`
+    /// in the staging slot the propagate block hands out, logging the
+    /// raise.
+    pub(super) fn stage_function_error(
         &mut self,
         ctx: &mut Context,
         src: Reg,
     ) -> Result<(), PlironError> {
         let err_slot = self.ensure_err_slot(ctx);
-        self.store_raised(ctx, err_slot, src)?;
-        let target = self.ensure_propagate_block(ctx)?;
-        let jump = BrOp::new(ctx, target, Vec::new());
-        self.append(ctx, jump.get_operation(), Some(src));
-        Ok(())
+        self.store_raised(ctx, err_slot, src)
+    }
+
+    /// The death of the function's error slot, holding an error a `return`
+    /// a `finally` copied over the raise replaced: the staged `MjError` is
+    /// released.
+    pub(super) fn drop_function_error(&mut self, ctx: &mut Context) -> Result<(), PlironError> {
+        let err_slot = self.ensure_err_slot(ctx);
+        self.emit_release_storage(ctx, err_slot, &Ty::error())
     }
 
     /// A `try.raise`: jump to the landing block of the `try` labelled

@@ -183,10 +183,10 @@ use mojito_mir::mir::{
     Const, ConstructionTypes, FuncRef, LoopLabel, MirBlock, MirCaptureAccess, MirCaptureMode,
     MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
     MirPlace, MirSubscriptCall, MirTerm, Proj, Raises, Reg, RegionFrame, RegisterEnds,
-    TypeConstructionError, UseMode, callable_targets, construct_type_parameters,
-    count_register_reads, erase_removed_operands, fresh_register, has_no_destructor,
-    instruction_regions, instruction_regions_mut, instruction_regs_mut, instruction_slots,
-    instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
+    TypeConstructionError, UseMode, callable_targets, construct_type_parameters, converts_to_error,
+    count_register_reads, erase_removed_operands, error_conversion, fresh_register,
+    has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
+    instruction_slots, instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
     loop_continues_mut, lower_copies_and_moves, member_receiver_ty, name_constructors, region_exit,
     removed_argument_operands, renumber_block_slots, terminator_regs_mut,
     with_removed_argument_forwards_erased, without_removed_arguments,
@@ -867,7 +867,14 @@ impl<'c> Inliner<'_, 'c> {
                         })
                     && let raises = caller.instrs[index].raise_edge().cloned()
                     && raises.as_ref().is_none_or(|raises| {
-                        routes_raises(&blocks, raises, &callee.reg_types, self.function.n_regs)
+                        routes_raises(
+                            &blocks,
+                            raises,
+                            callee
+                                .error_slot
+                                .map(|slot| slot + self.function.n_vars as VarId),
+                            (&callee.reg_types, self.function.n_regs),
+                        )
                     })
                 {
                     self.dropped_operands |=
@@ -1679,6 +1686,7 @@ impl<'c> Inliner<'_, 'c> {
             result,
             dest,
             raises: raises.clone(),
+            error_slot: callee.error_slot.map(|slot| slot + var_base),
         };
 
         // A reference the body's breaks carry is the call's, of the
@@ -1972,6 +1980,9 @@ struct ReturnExit {
     /// flag false, a `raise` with it true and its error, and the call's
     /// error region after the loop destroys what the caller holds.
     raises: Option<Raises>,
+    /// The callee's error slot, numbered past the caller's, which each
+    /// raise out of the body stores its error into first.
+    error_slot: Option<VarId>,
 }
 
 impl ReturnExit {
@@ -1997,8 +2008,10 @@ impl ReturnExit {
     /// of the callee (`lit.error_return`) breaks the loop too when the call
     /// has a raise edge, carrying its error, a string converted to `Error`
     /// as the raise converts it, and leaves the body as it left the callee
-    /// when it has none; a raise naming a `try` of the callee stays. A value the
-    /// path does not define is upstream's `#interp.uninitmem`.
+    /// when it has none, its store into the callee's error slot storing
+    /// into the caller's instead; a raise naming a `try` of the callee
+    /// stays. A value the path does not define is upstream's
+    /// `#interp.uninitmem`.
     fn rewrite(&self, function: &mut MirFunction, block: &mut MirBlock) {
         let span = function
             .spans
@@ -2010,7 +2023,16 @@ impl ReturnExit {
             block.instrs.push(MirInstr::Const { dest, k });
             dest
         };
-        let raised = matches!(block.term, MirTerm::ErrorReturn { .. });
+        let raised = matches!(block.term, MirTerm::ErrorReturn);
+        let stored = raised
+            .then(|| raised_store(block, self.error_slot))
+            .flatten();
+        if let (Some(store), None) = (stored, &self.raises)
+            && let MirInstr::DefVar { var, .. } = &mut block.instrs[store]
+            && let Some(slot) = function.error_slot
+        {
+            *var = slot;
+        }
         let mut values = match &block.term {
             MirTerm::Return(Some(value)) if self.result == Returned::Value => vec![*value],
             MirTerm::Return(_) if matches!(self.result, Returned::None | Returned::Out) => {
@@ -2020,7 +2042,7 @@ impl ReturnExit {
                 block.term = MirTerm::Unreachable;
                 return;
             }
-            MirTerm::ErrorReturn { .. } if self.raises.is_some() => {
+            MirTerm::ErrorReturn if self.raises.is_some() => {
                 if self.result == Returned::Value {
                     let ty = function
                         .reg_types
@@ -2036,8 +2058,8 @@ impl ReturnExit {
         };
         if let Some(raises) = &self.raises {
             values.push(constant(function, block, Ty::bool(), Const::Bool(raised)));
-            let error = match block.term {
-                MirTerm::ErrorReturn { src: error }
+            let error = match stored.map(|store| block.instrs.remove(store)) {
+                Some(MirInstr::DefVar { src: error, .. })
                     if function
                         .reg_types
                         .get(&error.0)
@@ -2047,7 +2069,7 @@ impl ReturnExit {
                     block.instrs.push(error_conversion(converted, error));
                     converted
                 }
-                MirTerm::ErrorReturn { src: error } => error,
+                Some(MirInstr::DefVar { src: error, .. }) => error,
                 _ => constant(function, block, raises.ty.clone(), Const::UninitMem),
             };
             values.push(error);
@@ -2071,62 +2093,42 @@ impl ReturnExit {
     }
 }
 
+/// The index in `block`, which raises out of the callee, of the store of
+/// its error into the callee's error slot `slot`.
+fn raised_store(block: &MirBlock, slot: Option<VarId>) -> Option<usize> {
+    let slot = slot?;
+    block.instrs.iter().rposition(
+        |instruction| matches!(instruction, MirInstr::DefVar { var, .. } if *var == slot),
+    )
+}
+
 /// Whether a body inlined at a call whose raise edge is `raises` can route
-/// each raise out of the callee in `blocks` into it: one raising a value of the edge's
-/// error type, or a string the raise converts to `Error`. `reg_types` are
-/// the callee's, whose registers the body numbers from `base`.
+/// each raise out of the callee in `blocks` into it: one storing into the
+/// callee's error slot `slot` a value of the edge's error type, or a
+/// string the raise converts to `Error`. `reg_types` are the callee's,
+/// whose registers the body numbers from `base`.
 fn routes_raises(
     blocks: &[MirBlock],
     raises: &Raises,
-    reg_types: &HashMap<u32, Ty>,
-    base: u32,
+    slot: Option<VarId>,
+    (reg_types, base): (&HashMap<u32, Ty>, u32),
 ) -> bool {
     blocks.iter().all(|block| {
-        let routed = match block.term {
-            MirTerm::ErrorReturn { src: error } => error
-                .0
-                .checked_sub(base)
-                .and_then(|callee| reg_types.get(&callee))
-                .is_some_and(|ty| *ty == raises.ty || converts_to_error(ty, &raises.ty)),
-            _ => true,
-        };
+        let routed = !matches!(block.term, MirTerm::ErrorReturn)
+            || raised_store(block, slot).is_some_and(|store| {
+                matches!(&block.instrs[store], MirInstr::DefVar { src, .. } if src
+                    .0
+                    .checked_sub(base)
+                    .and_then(|callee| reg_types.get(&callee))
+                    .is_some_and(|ty| *ty == raises.ty || converts_to_error(ty, &raises.ty)))
+            });
         routed
             && block
                 .instrs
                 .iter()
                 .flat_map(instruction_regions)
-                .all(|region| routes_raises(region, raises, reg_types, base))
+                .all(|region| routes_raises(region, raises, slot, (reg_types, base)))
     })
-}
-
-/// Whether a raised value of type `ty` is a string a raise converts to the
-/// error type `error`, `Error`.
-fn converts_to_error(ty: &Ty, error: &Ty) -> bool {
-    matches!(error.kind(), TyKind::Error)
-        && match ty.kind() {
-            TyKind::StringLiteral => true,
-            TyKind::Struct(name, _) => mojito_symbol::symbol::is_stdlib_string_struct(name),
-            _ => false,
-        }
-}
-
-/// The conversion of the string in `message` to the `Error` in `dest`, as a
-/// raise converts it.
-fn error_conversion(dest: Reg, message: Reg) -> MirInstr {
-    MirInstr::Call {
-        dest,
-        func: FuncRef::named("Error"),
-        raises: None,
-        args: vec![message],
-        kwargs: Vec::new(),
-        arg_places: vec![None],
-        kwarg_places: Vec::new(),
-        capture_accesses: Vec::new(),
-        param_arg_regs: Vec::new(),
-        receiver: None,
-        instantiated_args: Vec::new(),
-        spread: None,
-    }
 }
 
 /// Retype each read of `var`, a callable slot bound to a caller's closure,
@@ -4418,7 +4420,7 @@ mod tests {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(Vec::new(), MirTerm::ErrorReturn { src: Reg(0) }),
+                body: one(Vec::new(), MirTerm::ErrorReturn),
             }],
             MirTerm::Unreachable,
         );

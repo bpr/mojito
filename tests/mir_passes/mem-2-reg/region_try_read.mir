@@ -1,4 +1,4 @@
-mojito-mir 1.107
+mojito-mir 1.108
 artifact {
   features: [],
   files: [
@@ -42,18 +42,19 @@ artifact {
       fn {
         name: fail,
         registers: 0,
-        vars: 1,
-        var_names: [x],
+        vars: 2,
+        var_names: [x, "$error"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Error }],
         return_type: absent,
         raises: true,
         error_type: present(Error),
+        error_slot: $v1,
         register_types: [],
         locations: [],
         blocks: [

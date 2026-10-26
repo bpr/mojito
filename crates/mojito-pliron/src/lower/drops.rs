@@ -93,6 +93,9 @@ impl<'a> FnLowering<'a> {
         var: u32,
         destructor: Option<&str>,
     ) -> Result<(), PlironError> {
+        if self.func.error_slot == Some(var) {
+            return self.drop_function_error(ctx);
+        }
         match self.var_lower_ty(var)? {
             LowerTy::Scalar(_) | LowerTy::ZeroSized => Ok(()),
             LowerTy::Aggregate { ty, .. } => {

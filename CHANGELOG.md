@@ -1103,6 +1103,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A raise out of a function now stores its error into the function's
+  error slot and leaves through an `error_return` carrying no error, as
+  upstream's raise outside every `try` writes the raising function's
+  error argument, the slot `findNearestErrorSlot` returns there (R1437).
+  Each raising function names the slot (`$error`), which holds nothing on
+  entry and is demanded at each `error_return` alone, so an error a
+  `finally`'s `return` overrides dies as a variable: a raising function's
+  `try: raise Error("first")`, `except: raise Error("second")`, `finally:
+  return 7` now runs natively (`pliron_finally_overrides`'s `k`), where
+  `--backend pliron` failed on the handler's `drop.reg` ("read of
+  undefined register"). A raise converts a
+  `String` it stores into an `Error`-typed slot to `Error`, as it converts
+  a literal; the re-raising handler a `try`/`finally` without `except`
+  gets moves the caught error into the enclosing slot. MIR text 1.108
+  adds a raising function's `error_slot` and drops `error_return`'s
+  operand; the reader upgrades older artifacts, and the package format
+  moves to `mojito-package 100`.
+
 - A raise into a `try` now stores its error into the `try`'s error slot
   and enters the handler with no error operand, as upstream's
   `lit.try.raise` does after the raise writes `__try_error__`, the slot

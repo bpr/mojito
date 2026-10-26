@@ -2885,9 +2885,10 @@ pub enum Terminator {
 ```
 
 A `raise` statement seals its block with `Terminator::Raise`, as upstream's
-`raise` ends its block; MIR lowers it to `MirTerm::TryRaise` inside a
-`try` body, after storing the error into the `try`'s error slot, and to
-`MirTerm::ErrorReturn` outside every body.
+`raise` ends its block; MIR lowers it to a store of the error into the
+nearest error slot followed by `MirTerm::TryRaise` inside a `try` body,
+the `try`'s slot, and by `MirTerm::ErrorReturn` outside every body, the
+function's.
 
 Iterator-driven loops use `ReturnWithCleanup` when a source `return` bypasses
 their common exit. The return expression is materialized first, then MIR keeps
@@ -3369,7 +3370,7 @@ pub enum MirTerm {
     Return(Option<Reg>),
     TryYield,
     TryRaise { label: TryLabel },
-    ErrorReturn { src: Reg },
+    ErrorReturn,
     // Yield, ElifCond, Break, Continue, ComptimeYield, ComptimeBreak,
     // ComptimeContinue, MatchNext, MatchComplete, Unreachable
 }
@@ -3379,9 +3380,20 @@ pub enum MirTerm {
 body; its values (MIR text 1.93) define the `else`'s arguments or the
 `try`'s results. `TryRaise` (`lit.try.raise`, MIR text 1.107) leaves every
 enclosing region for the handler of the nearest `try` carrying its label
-whose body holds it, and `ErrorReturn` (`lit.error_return`) raises its
-register out of the function, as upstream's `LowerSemanticCF` lowers a
-`raise`; both may end any region. A `TryRaise` carries no error: as
+whose body holds it, and `ErrorReturn` (`lit.error_return`, MIR text
+1.108) raises the error its function's error slot holds out of the
+function, as upstream's `LowerSemanticCF` lowers a `raise`; both may end
+any region. Neither carries an error. A raising function names its error
+slot (`MirFunction::error_slot`, a `$error` local `lower_cfg_nested`
+declares typed as its error), upstream's error argument, the slot
+`findNearestErrorSlot` returns outside every `try`, and a raise out of it
+first stores its error there (`Flatten::raise_exit`); the slot holds
+nothing on entry, so drop elaboration demands it at each `error_return`
+alone (`ExitDemands::error`), as upstream's error argument is initialized
+on error, and destroys at its death an error a `finally`'s `return`
+replaced. A raise converts a string it stores into an `Error`-typed slot
+to `Error` first (`mir::error_conversion`). `sroa` and `mem-2-reg` keep
+the slot whole, and `renumber_slots` renumbers it. Likewise
 upstream's `parseTryStmt` declares `__try_error__` before each `lit.try`,
 which takes it as its `$err` operand, each `MirInstr::Try` names its error
 slot (`error`; the `except` binding's own slot when the clause binds one,
@@ -3395,7 +3407,12 @@ handler never reads it. Both backends stage a store into an error slot as
 the raise's: the VM converts a string to an `Error` and logs the raise and
 its catch there (`VmBackend::stage_error`), and Pliron stores an owned
 `MjError` into an `Error`-typed slot (`FnLowering::stage_error`), a typed
-error being the value itself. MIR lowering labels each `try` with the
+error being the value itself. A store into the function's error slot
+stages its raise the same way, logging no catch: the VM keeps the error
+in the slot until `error_return` moves it out into the caller's raise
+edge, and Pliron stores it into the function's `MjError` staging slot
+(`FnLowering::stage_function_error`), which the propagate block hands
+out and a `drop.var` of the slot releases. MIR lowering labels each `try` with the
 function's next `try` number (`Flatten::next_try`, upstream's
 `tryCounter`) and lowers a raise in its body naming it and its slot
 (`Flatten::raise_target`), and one in its handler, `else`, or `finally`
@@ -3423,8 +3440,11 @@ the error on. The VM sets the flag and error when the instruction raises,
 a child frame's `raise` popping into its caller's call; Pliron joins the
 callee's outcome branch after the instruction and branches on the flag;
 `inline-parametric` routes an inlined body's raises out of the callee into
-the call's flag and error through the wrapper loop's results, a raise
-naming a `try` of the callee staying.
+the call's flag and error through the wrapper loop's results, taking each
+raise's error back out of its store into the callee's error slot, a raise
+naming a `try` of the callee staying. A raising call still hands its
+error back in a register, where upstream passes its nearest error slot as
+the callee's error argument (R1438).
 
 A `try` holds no `finally`: at the end of `Flatten::emit_try`, MIR lowering
 copies the lowered `finally` before every terminator of the body, handler,
@@ -3446,9 +3466,10 @@ ending in its own exit replaces the exit it is copied before, the replaced
 `CheckLifetimes` destroys it. A raising body without an `except` gets the
 handler upstream's parser synthesizes in a raising context
 (`Flatten::reraising_handler`): it moves the error out of the `try`'s
-slot and raises it on to the enclosing `try`, the `finally` copied before
-that raise, and a `finally` ending in its own exit leaves the error in the
-slot, where it dies as a variable; an absent `else` becomes one holding only `try.yield`, as the
+slot into the nearest error slot outside it, the enclosing `try`'s or the
+function's, and raises it there, the `finally` copied before that raise,
+and a `finally` ending in its own exit leaves the error in that slot,
+where it dies as a variable; an absent `else` becomes one holding only `try.yield`, as the
 parser stubs it. So every exit is an ordinary terminator preceded by real
 instructions, and drop elaboration needs no side channel: each death has
 an instruction to follow or a region entry to lead. HIR keeps the
@@ -6244,8 +6265,9 @@ point where a slot declared in a loop is uninitialized again.
   callee's `raise`s break the wrapper loop as its returns do, as
   upstream's inlined `lit.error_return` does: the loop's results after the
   call's value are the call's error flag and error, a `raise` breaking
-  with the flag true and its error (a string converted to `Error`, as the
-  raise converts it), a return with it false and `uninitmem`, so the
+  with the flag true and the error it stored into the callee's error slot
+  (a string converted to `Error`, as the raise converts it), a return with
+  it false and `uninitmem`, so the
   call's error region after the loop destroys what the caller holds and
   raises on, while the body's own error regions have destroyed the
   callee's locals, as its frame does at the pin. A body raising another

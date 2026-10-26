@@ -274,7 +274,7 @@ pub(super) fn verify_region_terminator(
             let target = YieldTarget::Results;
             yielded_values(prefix, function, mnemonic, values, results, target, errors);
         }
-        (MirTerm::ErrorReturn { .. }, _) => {}
+        (MirTerm::ErrorReturn, _) => {}
         (MirTerm::TryRaise { label, values }, _) => match context.raise_target(*label) {
             None => errors.push(format!(
                 "{prefix}: `{mnemonic}` names try{}, which no enclosing try body carries",
@@ -1408,7 +1408,8 @@ mod tests {
     }
 
     /// A raising `+` of the two `Int` registers into `%r1`, its flag `%r3`
-    /// and error `%r4`, then `after`, in a raising body.
+    /// and error `%r4`, then `after`, in a raising body whose error slot
+    /// is `$v1`.
     fn raising_with(after: Vec<MirInstr>) -> MirFunction {
         let raises = crate::mir::Raises {
             ty: Ty::error(),
@@ -1431,15 +1432,28 @@ mod tests {
             .extend([(3, Ty::bool()), (4, Ty::error())]);
         function.raises = true;
         function.error_ty = Some(Ty::error());
+        function.n_vars = 2;
+        function.var_names.push("$error".into());
+        function.var_tys.insert(1, Ty::error());
+        function.error_slot = Some(1);
         function
     }
 
-    /// The error region on `%r3`, its `then` region raising `error`.
+    /// The error region on `%r3`, its `then` region raising `error` out of
+    /// the function through its error slot.
     fn error_region(error: Reg) -> MirInstr {
         MirInstr::If {
             results: Vec::new(),
             cond: Reg(3),
-            then: one(Vec::new(), MirTerm::ErrorReturn { src: error }),
+            then: one(
+                vec![MirInstr::DefVar {
+                    var: 1,
+                    src: error,
+                    binding_ty: None,
+                    in_place: false,
+                }],
+                MirTerm::ErrorReturn,
+            ),
             elifs: Vec::new(),
             else_args: Vec::new(),
             orelse: one(Vec::new(), MirTerm::Yield(Vec::new())),

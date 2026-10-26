@@ -394,6 +394,8 @@ fn variance(
     for (list, region) in regions.iter().enumerate() {
         take_census(list, region.blocks, &facts.addresses, &mut census);
     }
+    // A raise out of the function hands its error slot out whole.
+    keep(&mut census, function.error_slot);
     let mut candidates: Vec<(VarId, &Census)> = census
         .iter()
         .filter(|&(&var, entry)| facts.candidate(function, declarations, entry_stored, var, entry))

@@ -118,7 +118,7 @@ impl RegionCursor {
                     values: read(regs, values),
                 });
             }
-            MirTerm::ErrorReturn { src } => return Ok(Transfer::ErrorReturn(*src)),
+            MirTerm::ErrorReturn => return Ok(Transfer::ErrorReturn),
             MirTerm::Unreachable => {
                 return Err(RuntimeError::Unsupported(
                     "vm: control reached `hlcf.unreachable`".to_string(),
@@ -337,8 +337,9 @@ pub(super) enum Transfer {
     /// A `try.raise` to the `try` labelled `label`, with the values it
     /// carries into that `try`'s handler: the driver's to run.
     TryRaise { label: TryLabel, values: Vec<Value> },
-    /// A `lit.error_return` of the register it names: the driver's to run.
-    ErrorReturn(Reg),
+    /// A `lit.error_return` of the error the function's error slot holds:
+    /// the driver's to run.
+    ErrorReturn,
 }
 
 /// One list's position: a block and an instruction in it, and which region

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1438**.
+Next free ID: **R1440**.
 
 ## Ordered Work
 
@@ -7806,6 +7806,31 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1439 A `try` whose first raise is a `String` catches an
+  `Error`**
+
+  `try: raise s` for a `String` `s`, then `except e: var t: String = e`, is
+  rejected ("expected String, found Error"), where the pin prints `dyn`:
+  upstream types a `try`'s error as its first raise's type, as
+  `parseRaiseStmt` resolves `__try_error__`, but Mojito's checker types
+  the `except` binding as `Error`.
+  - MIR lowering already types the slot from the first raise
+    (`Flatten::raise_exit`), so the checker and the slot disagree.
+  - Both backends stage a store into a `try`'s slot by converting a string
+    to an `Error` whatever the slot's type (`VmBackend::stage_error`,
+    Pliron's `FnLowering::stage_error`), where `raise_exit` converts only
+    into an `Error`-typed slot.
+  - Probe: in a raising function, `try: raise s`, `except e: print(e);
+    raise e` stops at elaboration ("unsupported monomorphizing
+    `String.__moveinit__`: expected `String`, found `Error`"), where the
+    pin prints `dyn` twice.
+  - Probe: the same with a bare `except: print("caught"); raise
+    Error("again")` fails in the VM ("field access on non-struct Error"),
+    where the pin prints `caught` and `again`.
+  - Found while landing R1437 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1128 `main()` may raise only `Error`**
 
   Problem: `def main() raises StopIteration:` is accepted and traps at run
@@ -9489,8 +9514,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `MirDeclarations::register_passable` answers no for.
   - The remaining placements are copies and moves into a register, each
     with its own entry: `List`→`Span` copies (R117), read arguments by value (R677), `List.resize`'s double copy
-    (R1353),
-    and a pending `Error` a raise out of the function holds (R1437).
+    (R1353).
   - `owns_droppable_storage` (`mir/calls.rs`) omits `TyKind::Dependent`.
     Widening it double-frees in `assets/ok/container_hashable.mojo`,
     `variant_hash_dict_key.mojo`, and `variant_generic_def_operations.mojo`
@@ -10061,35 +10085,32 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1437 A raise out of a function carries its error as an
-  operand, where `lit.error_return` leaves it in the function's error
+- [ ] **R1438 A raising call hands its callee's error back in a register,
+  where upstream passes its nearest error slot as the callee's error
   argument**
 
-  `MirTerm::ErrorReturn { src }` hands the error out as a register, where
-  upstream stores it into the raising function's error argument, the slot
-  `findNearestErrorSlot` returns outside every `try` (the function's
-  second-to-last argument), and `lit.error_return` carries only a flag.
-  - A `try`'s raises already store into its error slot (R1293); the
-    function-level raise is the one left.
-  - The VM passes the error through `Transfer::ErrorReturn` and
-    `raise_into_caller`; Pliron stages it through `err_slot` into the
-    outcome's error area; `inline-parametric` routes it out of an inlined
-    body as a break value.
-  - Fix: a raising function declares its error argument as a slot, each
-    `lit.error_return` stores into it first, and a raising call writes its
-    callee's error into its nearest error slot, so `Raises::error` stops
-    being a register.
-  - Probe: in a raising function, `try: raise Error("first")`, `except:
-    raise Error("second")`, `finally: return 7`: the handler's `Error`
-    dies by a `drop.reg` once the `finally`'s return replaces the raise,
-    and `--backend pliron` fails on that `drop.reg` ("read of undefined
-    register"), where upstream's error lives in the function's error
-    argument and dies as a variable.
-  - Probe: the re-raising handler a `try`/`finally` without `except` gets
-    moves the caught error out of the `try`'s slot into a register
-    (`Flatten::reraising_handler`), where upstream moves it into the
-    function's error argument.
-  - Found while landing R1293 (2026-10-25).
+  `Raises { ty, flag, error }` makes the error a result of the raising
+  instruction, and its error region stores that register into the nearest
+  error slot (`Flatten::error_region`), where upstream's call passes the
+  slot `findNearestErrorSlot` returns as its `ByRefError` argument and the
+  callee's raise writes it there.
+  - Every raise already stores into its nearest slot, a `try`'s (R1293) or
+    the function's (R1437); the call is the one left.
+  - The call then initializes the slot on its raise path alone, which
+    upstream's `addErrorRegions` exists to show `CheckLifetimes`: the
+    ownership walks (`region_walk.rs`, `drops.rs`, `verify/drops.rs`) must
+    see the slot initialized at the error region's entry.
+  - The VM's `raise_into_caller` writes the edge's error register; it
+    would write the caller's slot. Pliron copies the outcome's error area
+    into the edge's storage (`close_edge`); it would copy it into the slot,
+    with no ABI change.
+  - `inline-parametric` then binds the callee's error slot to the call's,
+    instead of taking each raise's error back out of its store
+    (`raised_store`) and leaving the inlined `$error$inline<N>` slot dead.
+  - Probe: `emit-mir` of `def h(x: Int) raises -> Int: return g(x)` for a
+    raising `g` shows `call g` defining `raises { flag: %rA, error: %rB }`
+    and its error region storing `%rB` into `$error`.
+  - Found while landing R1437 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

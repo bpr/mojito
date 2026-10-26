@@ -1,4 +1,4 @@
-mojito-mir 1.107
+mojito-mir 1.108
 artifact {
   features: [],
   files: [
@@ -13,18 +13,19 @@ artifact {
       fn {
         name: raise_in_nested_handler_keeps_outer,
         registers: 5,
-        vars: 2,
-        var_names: [c, "$try_error0"],
+        vars: 3,
+        var_names: [c, "$try_error0", "$error"],
         params: 1,
         param_types: [Bool],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Bool }, var_type { var: $v1, type: Int }],
+        var_types: [var_type { var: $v0, type: Bool }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
         return_type: present(Int),
         raises: true,
         error_type: present(Int),
+        error_slot: $v2,
         register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
         locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }],
         blocks: [

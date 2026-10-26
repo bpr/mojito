@@ -88,25 +88,26 @@
       fn {
         name: may_raise,
         registers: 3,
-        vars: 1,
-        var_names: [c],
+        vars: 2,
+        var_names: [c, "$error"],
         params: 1,
         param_types: [Bool],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Bool }],
+        var_types: [var_type { var: $v0, type: Bool }, var_type { var: $v1, type: Error }],
         return_type: present(None),
         raises: true,
         error_type: present(Error),
+        error_slot: $v1,
         register_types: [reg_type { reg: %r0, type: Bool }, reg_type { reg: %r1, type: StringLiteral }, reg_type { reg: %r2, type: Error }],
         locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 581, end: 582, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 604, end: 610, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 598, end: 611, origin: absent }) }],
         blocks: [
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              if { results: [], condition: %r0, then: [bb0 { instructions: [const { dest: %r1, value: string("boom") }, call { dest: %r2, func: Error, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: error_return { src: %r2 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }
+              if { results: [], condition: %r0, then: [bb0 { instructions: [const { dest: %r1, value: string("boom") }, call { dest: %r2, func: Error, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, var.store { var: $v1, src: %r2, binding_type: present(Error), in_place: false }], terminator: error_return {} }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }
             ],
             terminator: return { value: absent }
           }

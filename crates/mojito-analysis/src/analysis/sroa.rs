@@ -270,10 +270,11 @@ impl Registers {
     }
 }
 
-/// The slots of `function` a round splits, each with its fields, sorted.
+/// The slots of `function` a round splits, each with its fields, sorted:
+/// never its error slot, which a raise out of it hands out whole.
 fn splittable_slots(function: &MirFunction, declarations: &MirDeclarations) -> Vec<Candidate> {
     let fields = judged_slots(function, declarations, |var| {
-        var as usize >= function.n_params
+        var as usize >= function.n_params && function.error_slot != Some(var)
     });
     let mut slots: Vec<Candidate> = unkept_census(function, &fields)
         .into_iter()

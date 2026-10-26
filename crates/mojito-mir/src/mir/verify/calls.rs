@@ -664,6 +664,24 @@ pub(super) fn verify_function(
             function.n_vars
         ));
     }
+    match function.error_slot {
+        None if function.raises => {
+            errors.push(format!(
+                "MIR function '{name}' raises but has no error slot"
+            ));
+        }
+        Some(_) if !function.raises => {
+            errors.push(format!(
+                "MIR function '{name}' has an error slot but does not raise"
+            ));
+        }
+        Some(slot) if slot as usize >= function.n_vars || (slot as usize) < function.n_params => {
+            errors.push(format!(
+                "MIR function '{name}' error slot $v{slot} is no local slot"
+            ));
+        }
+        _ => {}
+    }
     for (index, ty) in function.param_types.iter().enumerate() {
         if contains_runtime_pack(ty) {
             errors.push(format!(
@@ -1071,9 +1089,10 @@ fn verify_error_region(
         ));
         return;
     };
-    // The `then` region hands the error on, by its `lit.error_return`, by
-    // storing it into the slot of the `try` its `try.raise` names, or,
-    // once inlining and its folds have run, by the values its terminator
+    // The `then` region hands the error on, by storing it into the error
+    // slot its raise leaves through, the slot of the `try` its `try.raise`
+    // names or the function's for its `lit.error_return`, or, once
+    // inlining and its folds have run, by the values its terminator
     // carries; a `finally` copied before the raise that ends in an exit of
     // its own replaces the raise, as `lowerTryFinally` erases the
     // terminator it pastes over.
@@ -1086,7 +1105,7 @@ fn verify_error_region(
                     | MirTerm::Continue { .. }
                     | MirTerm::Unreachable
             )
-            || matches!(block.term, MirTerm::TryRaise { .. })
+            || matches!(block.term, MirTerm::TryRaise { .. } | MirTerm::ErrorReturn)
                 && block.instrs.iter().any(|instruction| {
                     matches!(instruction, MirInstr::DefVar { src, .. } if *src == raises.error)
                 })
