@@ -740,6 +740,9 @@ impl<'a> Flatten<'a> {
             // expression's evaluation point, once per evaluation, and moves
             // it into the closure.
             CheckedOp::Lambda { .. } => match self.nested_info(node) {
+                Some(info) if info.storage.is_some() && !node.closure_callable() => {
+                    self.lambda_storage_value(&info, node.location())
+                }
                 Some(info) => self.lambda_closure(&info, node.location()),
                 None => self.unsupported_value(
                     node.location(),
@@ -872,6 +875,9 @@ impl<'a> Flatten<'a> {
             .and_then(|binding| self.nested.get(&binding))
             .cloned()
         {
+            if info.storage.is_some() && !node.closure_callable() {
+                return self.closure_storage_read(node, &name, &info);
+            }
             return self.load_nested_closure(&name, &info, checked.location());
         }
         let local = checked

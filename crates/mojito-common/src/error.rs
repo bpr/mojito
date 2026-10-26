@@ -187,6 +187,11 @@ pub enum TypeError {
     /// A `^` transfer out of a compile-time binding (a value parameter, a
     /// `comptime for` variable): a parameter is a value, not storage.
     ParameterTransfer,
+    /// A run-time value, such as a capture-list closure's storage, bound to
+    /// a compile-time parameter.
+    DynamicParameterValue,
+    /// A capturing lambda bound to a compile-time parameter.
+    CapturingLambdaParameter,
     /// A call assigned back over its destination borrows an owned interior
     /// of that destination through one of its direct arguments.
     AliasingResultArgument {
@@ -690,6 +695,12 @@ impl fmt::Display for TypeError {
             }
             Self::ImmutableTransfer(name) => {
                 write!(f, "cannot transfer out of immutable reference ('{name}')")
+            }
+            Self::DynamicParameterValue => {
+                write!(f, "cannot use a dynamic value in a parameter list")
+            }
+            Self::CapturingLambdaParameter => {
+                write!(f, "cannot use a capturing lambda in type parameter")
             }
             Self::ParameterTransfer => write!(
                 f,

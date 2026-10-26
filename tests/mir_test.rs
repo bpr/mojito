@@ -4679,6 +4679,47 @@ fn copied_capture_lives_in_the_storage_slot() {
 }
 
 #[test]
+fn closure_value_is_its_storage_struct() {
+    // A capture-list closure's value is its storage: a binding of it is a
+    // slot of the storage struct, which the check named by the closure's
+    // site, and the storage declares the `__call__` witness a call through
+    // the value devirtualizes to.
+    let src = "def outer(k: Int) -> Int:\n    var m = k\n    def vc(x: Int) {var m} -> Int:\n        return m + x\n    var g = vc\n    return g(2)\n";
+    let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
+    let outer = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "outer")
+        .expect("outer lowered")
+        .1;
+    let slot = outer
+        .var_names
+        .iter()
+        .position(|name| name == "g")
+        .expect("the binding's slot") as u32;
+    assert!(matches!(
+        outer.var_tys.get(&slot).map(Ty::kind),
+        Some(TyKind::Struct(name, _)) if name == "outer$vc$__storage"
+    ));
+    assert!(
+        outer
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .any(|instruction| matches!(
+                instruction,
+                MirInstr::CallIndirect { resolved: Some(resolved), .. }
+                    if resolved == "outer$vc$__storage.__call__"
+            ))
+    );
+    assert!(
+        mir.functions
+            .iter()
+            .any(|(name, _)| name == "outer$vc$__storage.__call__")
+    );
+}
+
+#[test]
 fn origin_specialized_function_values_use_indirect_call_mir() {
     let src = "def borrow[origin: Origin[mut=True]](ref[origin] value: Int) -> ref[origin] Int:\n    return value\n\ndef main():\n    var value = 40\n    var function = borrow[origin_of(value)]\n    ref result = function(value)\n    result += 2\n";
     let program = parse(src).expect("parse");

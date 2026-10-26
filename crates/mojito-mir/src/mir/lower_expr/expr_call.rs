@@ -63,9 +63,25 @@ impl<'a> Flatten<'a> {
         {
             return self.lower_nested_call(call, name, &info, args, kwargs);
         }
-        // The callee is the slot of the local the call's binding names.
+        // The callee is the slot of the local the call's binding names,
+        // read in place: a call borrows its callee, as upstream passes a
+        // closure's storage to its `__call__` by address, rather than
+        // calling a copy of it.
         if let Some(variable) = self.local_callee(call, name) {
-            let callee = self.read_slot(variable, call.location(), None);
+            let callee = if self.runtime_aliases.contains(&variable)
+                || self.aliases.contains_key(&variable)
+            {
+                self.read_slot(variable, call.location(), None)
+            } else {
+                let dest = self.fresh(call.location(), Some(variable));
+                self.emit(MirInstr::UseVar {
+                    dest,
+                    var: variable,
+                    mode: UseMode::BorrowShared,
+                    constructor: None,
+                });
+                dest
+            };
             let callable_ty = self
                 .var_types
                 .get(&variable)

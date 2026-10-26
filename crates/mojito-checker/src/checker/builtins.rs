@@ -336,6 +336,19 @@ pub(super) fn is_printable(ty: &Ty) -> bool {
     }
 }
 
+/// Whether a value of `from`, a closure's storage, binds `to` as the
+/// closure of its body: `to` is a callable value of another environment
+/// (a run-time `def(...) capturing[...]` contract).
+pub(super) fn closure_converts_to_callable(from: &Ty, to: &Ty) -> bool {
+    let storage = |ty: &Ty| {
+        matches!(
+            ty.as_func().map(|func| &func.environment),
+            Some(mojito_types::origin::CallableEnvironment::Storage(_))
+        )
+    };
+    storage(from) && to.as_func().is_some() && !storage(to)
+}
+
 /// True when `from` fails to bind to `to` solely because a capturing
 /// environment meets an unqualified `def(...)` value contract — the shape that
 /// deserves the "spell `capturing[...]`" migration hint.

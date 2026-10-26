@@ -2014,7 +2014,7 @@ impl<'a> Flatten<'a> {
     /// moved capture's storage is handed to its `var` parameter, as an
     /// owned argument's is, and a reference capture's place, a captured
     /// sibling's storage slot included, is lent.
-    fn build_closure_storage(
+    pub(in crate::mir) fn build_closure_storage(
         &mut self,
         info: &NestedInfo,
         storage: &ClosureStorage,

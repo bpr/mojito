@@ -330,13 +330,57 @@ impl CaptureOriginSet {
 /// implicit wildcard coercion: later bound solving may explicitly accept a
 /// concrete environment for such a constraint, but ordinary value coercion
 /// compares this fact exactly. `Thin` is an explicitly non-capturing function;
-/// `Capturing` retains its `OriginSet` contract.
+/// `Capturing` retains its `OriginSet` contract. `Storage` is a capture-list
+/// closure's or capturing lambda's own value: its closure's storage struct,
+/// conforming to the closure trait the function type spells, as upstream's
+/// `ClosureEmitter::emitClosure` returns the storage.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
 pub enum CallableEnvironment {
     #[default]
     Default,
     Thin,
     Capturing(CaptureOriginSet),
+    Storage(Box<ClosureStorageEnvironment>),
+}
+
+impl CallableEnvironment {
+    /// The capture set the environment retains when invoked: a capturing
+    /// contract's, or the captures of a closure's storage.
+    pub const fn captures(&self) -> Option<&CaptureOriginSet> {
+        match self {
+            Self::Capturing(captures) => Some(captures),
+            Self::Storage(storage) => Some(&storage.captures),
+            Self::Default | Self::Thin => None,
+        }
+    }
+}
+
+/// The storage struct of one closure, as its value's type names it: the
+/// closure's declaration site is its nominal identity, MIR's lowering
+/// names and builds the struct there.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct ClosureStorageEnvironment {
+    pub site: ClosureSite,
+    /// The captured origins, which upstream promotes to the storage's
+    /// origin parameters (`outlineAndPromoteOrigins`).
+    pub captures: CaptureOriginSet,
+    /// Whether every capture is copyable, which makes the storage
+    /// `Copyable` and `ImplicitlyCopyable` (upstream's `allCopyable`).
+    pub copyable: bool,
+    /// Whether every capture's type is register-passable, a reference
+    /// capture's referent's, which makes the storage register-passable
+    /// (upstream's meet over the captures in `emitClosure`).
+    pub register_passable: bool,
+}
+
+/// The declaration site of a closure: a nested `def`'s statement, or a
+/// lambda's hidden one.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct ClosureSite {
+    #[serde(with = "mojito_ast::ast::statement_module")]
+    pub module: Option<String>,
+    pub declaration: mojito_common::token::Span,
+    pub syntax: mojito_common::token::SyntaxId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]

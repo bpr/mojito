@@ -325,7 +325,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   receiver arms (a type-name receiver is never inferred as a value); the
   public API is
   `stdlib/std/utils/variant.mojo`, whose type-keyed methods `native::mono`
-  instantiates at each call's type argument, and `type_keyed_projection`
+  instantiates at each call's type argument (a struct handler of
+  `init_with=` or `deinit_with`, a closure's storage, is called through its
+  `__call__`: `Specializer::enqueue_struct_call` reaches it, the VM's
+  `invoke_callable_value` and Pliron's `lower_call_indirect` call it, and
+  Pliron's reachability walk follows it), and `type_keyed_projection`
   routes a `v[T]` subscript to the struct's type-keyed
   `__getitem_param__[T]` accessor in value and place positions (the
   `type_keyed_accessor_call` lowering in MIR, which reads the subscript's
@@ -1176,16 +1180,35 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and slots one without storage a sibling captures (`NestedInfo::slotted`,
   `Flatten::lower_slotted_nested_def`). `lower_nested_node` pushes the
   struct's declaration, with its `RegisterPassable`/`TrivialRegisterPassable`
-  rows, and synthesized `__init__`/`__deinit__` (`lower_closure_storage`,
-  over `mir.rs`'s `lower_fieldwise_members` and `lower_synthesized_member`),
+  rows, its `Copyable`/`ImplicitlyCopyable`/`IsTrivially*` conformances,
+  and synthesized `__init__`, `__deinit__`, `__moveinit__`, and
+  `__copyinit__` (`lower_closure_storage`, over `mir.rs`'s
+  `lower_fieldwise_members` and `lower_synthesized_member`), and the
+  storage's always-inline `__call__` witness forwarding to the method
+  (`lower_storage_call_witness`, recorded in the struct's member table),
   and the declaration statement calls the `__init__` with the captures
   (`Flatten::lower_closure_storage_value` over
   `Flatten::build_closure_storage`, `mir/lower_stmt.rs`); a lambda builds
   it where it stands into a hidden slot (`Flatten::lambda_storage_slot`),
   which an immediately invoked lambda passes to a direct call
-  (`lower_direct_nested_call`, from `mir/lower_expr/expr_call.rs`) and a
-  lambda used as a value moves into its closure
-  (`Flatten::lambda_closure`, `mir/lower_expr/calls.rs`). The lifted body is
+  (`lower_direct_nested_call`, from `mir/lower_expr/expr_call.rs`); a
+  lambda used as a value is the storage it builds
+  (`Flatten::lambda_storage_value`, `mir/lower_expr/calls.rs`), and one the
+  check converts to a run-time callable
+  (`SemanticAdjustment::ClosureCallable`, `Node::closure_callable`) moves
+  it into its closure (`Flatten::lambda_closure`). A capture-list `def`'s
+  name read as a value is its declaration's slot
+  (`Flatten::closure_storage_read`). The check types such a value as a
+  `def(...)` whose environment is
+  `mojito_types::origin::CallableEnvironment::Storage`
+  (`ClosureStorageEnvironment`: the `ClosureSite`, captures, copyability,
+  passability; finalized in `checker/statements.rs`), and
+  `resolve_closure_types` (over `ClosureStorageTypes`, a `TyRewrite` and
+  `MutTypeVisitor`) replaces it in every function and declaration one
+  `lower_fn_nested` lowers by the storage its site maps to (the
+  `ClosureTypes` map `scope_registry` fills), retargeting each indirect
+  call through a storage to its witness (`retarget_storage_calls`); the
+  verifier reports any left (`verify/calls.rs`, `verify_function`). The lifted body is
   the storage's method, its declaration's receiver the storage
   (`has_receiver`, `FunctionDeclaration::is_closure_method`), its body's
   slot 0 the storage (`storage_parameter`), and the storage lists it in
@@ -1203,7 +1226,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   places as leading arguments (`calls_nested_directly`,
   `lower_direct_nested_call`), or through the closure value otherwise, and
   `load_nested_closure` makes a closure capturing the storage by reference
-  at a first-class use, anchoring the storage to the statement's end, or a
+  at a converted first-class use, anchoring the storage to the
+  statement's end, or a
   storage-less body's closure at each
   first-class use; the declaration statement passes the storage's
   parameters as its `__init__`'s compile-time arguments. `verify/instr.rs`

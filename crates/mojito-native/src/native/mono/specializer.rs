@@ -3032,6 +3032,17 @@ impl<'a> Specializer<'a> {
                         }
                         *target = self.enqueue(target, self.base_bindings(), Vec::new())?;
                     }
+                    // A struct handler of a `Variant` owning operation (a
+                    // closure's storage) is called through its `__call__`,
+                    // which the instance reaches here.
+                    MirInstr::VariantSetInitWith { factory, .. } => {
+                        let factory = *factory;
+                        self.enqueue_struct_call(owner, function.reg_types.get(&factory.0), 0)?;
+                    }
+                    MirInstr::VariantDeinitWith { handler, .. } => {
+                        let handler = *handler;
+                        self.enqueue_struct_call(owner, function.reg_types.get(&handler.0), 1)?;
+                    }
                     // A value-parameter read (`Self.length`) resolves to
                     // the bound constant carried by the receiver instance's
                     // type arguments — the VM's `get_field` value-parameter
@@ -3580,6 +3591,24 @@ impl<'a> Specializer<'a> {
                     let removed = self.removed_params(candidate, false);
                     erased.iter().any(|id| !removed.contains(id))
                 })
+    }
+
+    /// Enqueue the `__call__` a callable of type `callable` (a closure's
+    /// storage, a struct conforming to a closure trait) runs when called
+    /// with `argc` arguments; nothing for any other type.
+    fn enqueue_struct_call(
+        &mut self,
+        owner: &str,
+        callable: Option<&Ty>,
+        argc: usize,
+    ) -> Result<(), MonoError> {
+        match callable.filter(|ty| matches!(ty.kind(), TyKind::Struct(..))) {
+            Some(receiver) => {
+                let receiver = receiver.clone();
+                self.enqueue_nominal_method_instance(owner, &receiver, "__call__", argc, &[])
+            }
+            None => Ok(()),
+        }
     }
 
     /// The bindings of the struct instance `ty`, `None` when it names no

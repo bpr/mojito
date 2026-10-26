@@ -298,7 +298,8 @@ impl Checker {
     /// default kind (`default_literal`); a value that cannot live in a named
     /// binding is rejected: a closure (`ClosureEscape`, matching `return`/reassign)
     /// or another value outside the source language's first-class surface. A
-    /// `def(...) thin` value captures nothing, so it binds like any other value.
+    /// `def(...) thin` value captures nothing, so it binds like any other
+    /// value, and a closure's storage is a value of its own struct.
     #[allow(
         clippy::unused_self,
         reason = "TODO: make an associated function or use the receiver"
@@ -307,7 +308,9 @@ impl Checker {
         match value_ty.kind() {
             TyKind::Func(func)
                 if let FuncTy {
-                    environment: mojito_types::origin::CallableEnvironment::Thin,
+                    environment:
+                        mojito_types::origin::CallableEnvironment::Thin
+                        | mojito_types::origin::CallableEnvironment::Storage(_),
                     ..
                 } = &**func =>
             {

@@ -2904,7 +2904,7 @@ pub fn callable_environment_value_coerces(
     if matches!(
         (from, to),
         (
-            CallableEnvironment::Capturing(_),
+            CallableEnvironment::Capturing(_) | CallableEnvironment::Storage(_),
             CallableEnvironment::Default
         )
     ) {
@@ -2920,6 +2920,15 @@ pub fn callable_environment_coerces(
     use crate::origin::{CallableEnvironment, CaptureOriginSet};
     if from == to {
         return true;
+    }
+    // A closure's storage converts to the closure of its body, whose
+    // environment is the storage's captures.
+    if let CallableEnvironment::Storage(storage) = from {
+        return !matches!(to, CallableEnvironment::Storage(_))
+            && callable_environment_coerces(
+                &CallableEnvironment::Capturing(storage.captures.clone()),
+                to,
+            );
     }
     match (from, to) {
         // An unqualified callable contract does not constrain the environment
@@ -5081,15 +5090,22 @@ fn write_callable(
     } else {
         write!(f, "def(")?;
     }
+    // A closure's own value displays as its closure trait, which names
+    // its parameters.
+    let named = matches!(environment, crate::origin::CallableEnvironment::Storage(_));
     for (i, p) in params.iter().enumerate() {
         if i > 0 {
             write!(f, ", ")?;
         }
-        write!(f, "{p}")?;
+        match func.names.get(i) {
+            Some(name) if named => write!(f, "{name}: {p}")?,
+            _ => write!(f, "{p}")?,
+        }
     }
     write!(f, ")")?;
     match environment {
-        crate::origin::CallableEnvironment::Default => {}
+        crate::origin::CallableEnvironment::Default
+        | crate::origin::CallableEnvironment::Storage(_) => {}
         crate::origin::CallableEnvironment::Thin => write!(f, " thin")?,
         crate::origin::CallableEnvironment::Capturing(origins) => {
             write!(f, " capturing[")?;

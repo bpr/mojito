@@ -292,7 +292,19 @@ impl Checker {
                 self.register_named_bindings(left)?;
                 self.register_named_bindings(right)?;
             }
-            ExprKind::Call { args, kwargs, .. } => {
+            ExprKind::Call {
+                param_args,
+                args,
+                kwargs,
+                ..
+            } => {
+                // A lambda bound to a compile-time parameter is checked
+                // where it stands, so its parameter binding can judge it.
+                for argument in param_args {
+                    if let Some(lambda) = parameter_lambda(argument) {
+                        self.register_named_bindings(lambda)?;
+                    }
+                }
                 for argument in args {
                     self.register_named_bindings(argument)?;
                 }
@@ -766,6 +778,7 @@ impl Checker {
                 if matches!(
                     from.environment,
                     mojito_types::origin::CallableEnvironment::Capturing(_)
+                        | mojito_types::origin::CallableEnvironment::Storage(_)
                 ) && to.environment == mojito_types::origin::CallableEnvironment::Default =>
             {
                 false
@@ -3233,12 +3246,14 @@ impl Checker {
 
     /// Whether an uncontextualized display may store its callable element
     /// type. Thin function values store as a fixed-size array of that thin
-    /// type, as current Mojo does. A capturing closure stores only as the
-    /// display's single lambda expression: every lambda has its own type
-    /// upstream, so no two capturing elements unify, and a named closure
-    /// (a nested def, an annotated local) is not a storable value there. The
-    /// display copies its element, so a transferred capture must itself be
-    /// `ImplicitlyCopyable`.
+    /// type, as current Mojo does, and a closure's storage stores as any
+    /// struct value does: each closure is its own type, so two closures'
+    /// elements never unify. A capturing closure value of another
+    /// environment stores only as the display's single lambda expression,
+    /// and a named closure of one (an annotated local) is not a storable
+    /// value there. The display copies a lambda element, as upstream's
+    /// lambda is its storage's lvalue, so a transferred capture must itself
+    /// be `ImplicitlyCopyable`.
     fn check_callable_display_element(
         &self,
         elems: &[Expr],
@@ -3250,54 +3265,59 @@ impl Checker {
                 "a collection display element",
             );
         };
-        if !matches!(
-            environment,
-            mojito_types::origin::CallableEnvironment::Capturing(_)
-        ) {
-            return Ok(());
-        }
-        match elems {
-            [single] => {
-                let ExprKind::Lambda { def } = &single.kind else {
-                    return super::type_resolution::reject_stored_callable_type(
-                        element,
-                        "a collection display element",
-                    );
-                };
-                let captures = self
-                    .fact(&def.source_span(), |facts| facts.captures.as_ref())
-                    .unwrap_or_default();
-                let uncopyable = captures.iter().find(|capture| {
-                    capture.kind == mojito_ast::ast::CaptureKind::Move
-                        && !self.is_implicitly_copyable(&capture.ty)
-                });
-                uncopyable.map_or(Ok(()), |capture| {
-                    Err(TypeError::TraitNotSatisfied {
-                        param: "T".to_string(),
-                        ty: element.to_string(),
-                        trait_name: "ImplicitlyCopyable".to_string(),
-                        reason: Some(format!(
-                            "the closure owns '{}' by transfer, and '{}' cannot be implicitly copied",
-                            capture.name, capture.ty
-                        )),
+        let copied_lambda = |value: &Expr| {
+            let ExprKind::Lambda { def } = &value.kind else {
+                return Ok(());
+            };
+            let captures = self
+                .fact(&def.source_span(), |facts| facts.captures.as_ref())
+                .unwrap_or_default();
+            let uncopyable = captures.iter().find(|capture| {
+                capture.kind == mojito_ast::ast::CaptureKind::Move
+                    && !self.is_implicitly_copyable(&capture.ty)
+            });
+            uncopyable.map_or(Ok(()), |capture| {
+                Err(TypeError::TraitNotSatisfied {
+                    param: "T".to_string(),
+                    ty: element.to_string(),
+                    trait_name: "ImplicitlyCopyable".to_string(),
+                    reason: Some(format!(
+                        "the closure owns '{}' by transfer, and '{}' cannot be implicitly copied",
+                        capture.name, capture.ty
+                    )),
+                })
+            })
+        };
+        match environment {
+            mojito_types::origin::CallableEnvironment::Storage(_) => {
+                elems.iter().try_for_each(copied_lambda)
+            }
+            mojito_types::origin::CallableEnvironment::Capturing(_) => match elems {
+                [
+                    single @ Expr {
+                        kind: ExprKind::Lambda { .. },
+                        ..
+                    },
+                ] => copied_lambda(single),
+                [_, _, ..]
+                    if elems
+                        .iter()
+                        .all(|value| matches!(value.kind, ExprKind::Lambda { .. })) =>
+                {
+                    Err(TypeError::TypeMismatch {
+                        expected: "the first element's lambda type".to_string(),
+                        found: "another capturing lambda".to_string(),
+                        context: "list element (each capturing lambda has its own type)"
+                            .to_string(),
                     })
-                })
-            }
-            [_, _, ..]
-                if elems
-                    .iter()
-                    .all(|value| matches!(value.kind, ExprKind::Lambda { .. })) =>
-            {
-                Err(TypeError::TypeMismatch {
-                    expected: "the first element's lambda type".to_string(),
-                    found: "another capturing lambda".to_string(),
-                    context: "list element (each capturing lambda has its own type)".to_string(),
-                })
-            }
-            _ => super::type_resolution::reject_stored_callable_type(
-                element,
-                "a collection display element",
-            ),
+                }
+                _ => super::type_resolution::reject_stored_callable_type(
+                    element,
+                    "a collection display element",
+                ),
+            },
+            mojito_types::origin::CallableEnvironment::Default
+            | mojito_types::origin::CallableEnvironment::Thin => Ok(()),
         }
     }
 
@@ -3431,6 +3451,20 @@ fn placement_factory_result(factory: &Ty) -> Option<&Ty> {
         {
             Some(ret)
         }
+        _ => None,
+    }
+}
+
+/// The lambda a compile-time argument `argument` is, by position or by
+/// keyword.
+fn parameter_lambda(argument: &mojito_ast::ast::ParamArg) -> Option<&Expr> {
+    match argument {
+        mojito_ast::ast::ParamArg::Value(expression)
+            if matches!(expression.kind, ExprKind::Lambda { .. }) =>
+        {
+            Some(expression)
+        }
+        mojito_ast::ast::ParamArg::Named { value, .. } => parameter_lambda(value),
         _ => None,
     }
 }

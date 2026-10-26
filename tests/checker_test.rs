@@ -680,11 +680,12 @@ fn rejects_assignment_of_wrong_type() {
 #[test]
 fn rejects_assigning_a_closure() {
     // A capture-free nested `def` is a thin function value and binds like any
-    // other value; reassigning the binding to a capturing closure rejects.
+    // other value; a capturing closure is its own storage struct, which the
+    // thin binding does not hold.
     let e = err(
         "def outer():\n    var n = 1\n    def f() -> Int:\n        return 1\n    var h = f\n    def g() {n} -> Int:\n        return n\n    h = g\n",
     );
-    assert_eq!(e, TypeError::ClosureEscape);
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 // --- Control flow: if / while / for / break / continue ---
@@ -3109,11 +3110,20 @@ fn inferred_var_rejects_wrong_later_use() {
 }
 
 #[test]
-fn rejects_inferred_var_of_a_closure() {
-    let e = err(
-        "def outer():\n    var n = 1\n    def inner() {n} -> Int:\n        return n\n    var f = inner\n",
+fn accepts_inferred_var_of_a_closure() {
+    // A capture-list closure is a value of its storage struct, as at the pin.
+    ok(
+        "def outer():\n    var n = 1\n    def inner() {n} -> Int:\n        return n\n    var f = inner\n    _ = f()\n",
     );
-    assert_eq!(e, TypeError::ClosureEscape);
+}
+
+#[test]
+fn rejects_two_closures_in_one_binding() {
+    // Each closure is its own storage type.
+    let e = err(
+        "def outer():\n    var n = 1\n    def a() {var n} -> Int:\n        return n\n    def b() {var n} -> Int:\n        return n\n    var g = a\n    g = b\n",
+    );
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 }
 
 #[test]

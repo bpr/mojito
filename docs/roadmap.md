@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1432**.
+Next free ID: **R1437**.
 
 ## Ordered Work
 
@@ -400,9 +400,11 @@ which names the upstream pass each one follows. Each is measured by the
   - Lever: keep the callable type argument's `capturing` environment in
     the erased instance's types (`mono/substitute.rs`), so the splice
     types the slot as its caller does.
-  - Probe: `assets/ok/capturing_lambda_array_display.mojo` (`1 6 3 4 13`).
-  - Probe: `conformance/probes/capturing_lambda_display_inlined.mojo`
-    (`5 5`, `3 4`).
+  - Probe: `var fns: Array[def(x: Int) capturing[_] -> Int, 1] =
+    [lambda (x: Int) {var i} -> Int: x * i]`, an annotated display only
+    R176's leniency accepts (the pin reports "no matching function in
+    initialization"). An unannotated display holds the lambda's storage
+    struct, which no erasure respells (R1378).
   - Found while landing R1427 (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -1554,6 +1556,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `c` runs no `C.__moveinit__`.
   - A hand-written `__moveinit__` spelling `self.c = existing.c^` skips it
     the same way.
+  - Probe: `var h = g^` over `def g() {var t^} -> Int` and a `Tracked`
+    whose move initializer prints prints nothing, where the pin prints
+    `move 3`: the closure storage's synthesized `__moveinit__` moves its
+    field the same way.
   - Name a `constructor` on `place.move` as R1017 did for `var.use move`,
     respell it in `Specializer::name_lifecycle_calls`, and run it in both
     backends.
@@ -3104,12 +3110,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     statement-root registration that checks a lambda's hidden `def`
     (`Checker::check_lambda`) has run over it.
   - Probe: `conformance/probes/augmented_lambda_value.mojo`.
-  - Probe: `conformance/probes/capturing_lambda_type_parameter.mojo`. A
-    capturing lambda as a compile-time callable argument
-    (`observe[lambda (x: Int) -> Int: x * factor](5)`) trips the same
-    invariant, where the pin rejects it ("cannot use a capturing lambda in
-    type parameter"): a parameter list is also inferred before
-    `check_lambda` registers the lambda.
   - Found while planning R1138 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4176,6 +4176,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     carry `f`, where upstream's `liftClosureIntoMethod` makes every
     closure body its storage's method. Once a struct carries a callable
     parameter, drop that exception.
+  - Such a closure has no value either: its storage has no `__call__`
+    witness, so a first-class use of it lowers to `MirInstr::Unsupported`
+    (`closure_storage_read`, `mir/lower_expr/calls.rs`).
   - Found while probing deferred slots (2026-09-26).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -8554,25 +8557,28 @@ retained on purpose and re-probed rather than fixed; they are listed in
   locals and `mut self` conformers, where the pin takes them only as
   compile-time parameters**
 
-  Problem: four callable-shape leniencies. Mojito passes a capturing lambda
-  as a runtime argument, binds one to a local under an explicit
+  Problem: three callable-shape leniencies. Mojito passes a capturing
+  closure as a runtime argument, binds one to a local under an explicit
   `capturing[...]` annotation, and accepts a `mut self` `__call__` as a
   `def(...)` conformer.
-  - The pin takes a capturing callable only as a compile-time parameter,
-    and refuses a lambda even there.
-  - The pin types a capturing lambda as a plain `def(...) -> T` that
-    converts to nothing.
+  - A capture-list closure's or capturing lambda's value is its storage
+    struct (R1378), which runs where the pin runs it: an untyped local,
+    a generic container, a `F: def(...)` binder. Only these three
+    leniencies convert it to the closure of its body
+    (`SemanticAdjustment::ClosureCallable`).
+  - The pin rejects the conversion: `call_rt(inner, 1)` over `def
+    call_rt(f: def(Int) capturing[_] -> Int, a: Int)` reports "depends on
+    an unresolved parameter '__origins__'", where Mojito prints `11`.
   - The pin wants a read receiver on `__call__`.
   - Three corpus fixtures moved to `assets/extensions/`.
   - Three more were respelled onto `thin` contracts and `@parameter def`
     arguments.
-  - The four share one question — what a capturing callable *value* is —
-    and the plan settles that before any rejection.
+  - The bundled library's own run-time handler parameters come first
+    (R1433).
   - Ledger name: `capturing-lambda-argument`, `capturing-lambda-locals`,
     `owned-capture-closure-locals`, `mut-self-callable-struct`.
-  - Depends on nothing.
+  - Depends on R1433.
   - Model: Opus, Planned.
-
 - [ ] **R177 A struct field pointing into an owned interior of a generic
   origin parameter type-checks, though the pin calls that interior
   never-initialized**
@@ -9057,88 +9063,66 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R534 A closure with a by-value capture is accepted as a
-  compile-time callable argument; the pin rejects it**
+- [ ] **R1432 A closure's storage copies a `{var u}` capture once where it
+  is built, where the pin copies it twice**
 
-  Problem: `invoke[inner]()`, where `inner` is `def inner() {var x} -> Int`
-  and the parameter is `callback: def() capturing[origins] -> Int`, prints
-  10 in Mojito; the pin rejects it ("cannot use a dynamic value in a
-  parameter list").
-  - A generic closure of the same shape is refused, but only by the
-    elaborator ("captures by value"), not by the checker at the binding.
-  - Following the pin means the checker rejecting a by-value capturing
-    closure as a parameter argument.
-  - Pinned by `conformance/probes/callable_parameter_by_value_capture.mojo`.
-  - Ledger name: `callable-parameter-by-value-capture`.
-  - Found while landing R526 (2026-10-09).
+  A `def inner() {var u}` declaration and a lambda `{var u}` passed to a
+  `F: def() -> Int` binder, over an `ImplicitlyCopyable` struct, each
+  print `copy 4` once where Mojito builds the storage; the pin prints it
+  twice, and once for an immediately invoked lambda, as Mojito does.
+  - Upstream's storage `__init__` takes a copied capture as `ImmMem` and
+    copies it into its field (`liftClosure`'s initializer,
+    `emitStoreToLValue`); Mojito's synthesized `__init__` takes the
+    capture's value once (`build_closure_storage`, `mir/lower_stmt.rs`).
+  - Root-cause the immediately invoked lambda's single copy at the pin
+    before changing the initializer's convention.
+  - Probe: `conformance/probes/closure_value_copies_its_storage.mojo`
+    (`copy 4` twice on the value line at the pin, once on both backends).
+  - Probe: `print(once(lambda {var u} -> Int: u.n))`, then `def inner()
+    {var u} -> Int: return u.n`, over `u = Tracked(4)`.
+  - Found while landing R1378 (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1378 A capture-list closure is typed as a capturing function, where
-  the pin types it as its `__storage` struct, a runtime value only**
+- [ ] **R1435 A lambda expression is a temporary of its closure's storage,
+  where the pin's is an lvalue of its storage variable**
 
-  The checker types `def inner(x: Int) {var y, imm z} -> Int` as a capturing
-  `def(...)`, so it rejects `var g = inner` and passing `inner` to `f: F`
-  with `F: def(Int) -> Int` ("closures cannot escape their defining scope",
-  `inferred_binding_ty` in `checker/scopes.rs`), and accepts `inner` as a
-  compile-time callable argument. The pin does the opposite in each case,
-  because the value is a struct conforming to its `def(...)` closure trait.
-  - The lever: the closure's type is R1376's storage struct. A `F: def(...)`
-    binder is instantiated at that struct type, and a call through `f` is a
-    direct method call, as in the pin's
-    `apply[F=typevalue<...::inner::__storage>]`.
-  - Binding a capture-list closure to a compile-time `capturing[origins]`
-    parameter becomes a checker rejection matching the pin's "cannot use a
-    dynamic value in a parameter list", with an `assets/type_error` fixture
-    and its errors-TSV row.
-  - Probe: `return apply(inner, a) + g(1)` over the closure above prints 64
-    at the pin, where Mojito reports the escape error.
-  - Probe: `apply[inner](a)` with `{imm y}` and a `capturing[origins]`
-    binder fails at the pin, where Mojito prints 16.
-  - Probe: a closure value copied before an indirect call
-    (`elt_handler(...)` in `List.deinit_with`, and `map`, `and_then`,
-    `deinit_with`, `clear_with` across `Optional`, `Set`, `Dict`, `Array`
-    and `Variant`) is a `var.use copy` a `drop.reg` destroys. At the pin
-    the storage struct's `__del__is_trivial` is true exactly when every
-    capture is register-passable trivial (`ClosureEmitter.cpp`), so a
-    reference-capturing closure is never destroyed, while a `{var x}`
-    capture of a `String` is destroyed through the value. A
-    `def(...) capturing` type says neither, so `owned_register`
-    (`mir/register_ends.rs`) exempts only a thin function value.
-  - Probe: a first-class use of a capture-list `def` (`apply(inc)`) makes
-    a one-capture `closure.make` over its storage, kept live to the end of
-    the statement (`load_nested_closure`, `mir/lower_expr/calls.rs`), and
-    every capturing lambda used as a value moves its storage into a
-    one-capture `closure.make` (`lambda_closure`). Once the value is the struct,
-    the VM's `RefProjection::Capture` and owned-environment
-    `callee_place`, and Pliron's `m` capture-record slots and
-    `mjdrop_<n>` thunks (`lower/closures.rs`), lose their last producer.
-  - The storage's `ref` fields carry an untracked origin; upstream promotes
-    the captures' origins to struct parameters (`outlineAndPromoteOrigins`).
-  - The storage then needs upstream's `__copyinit__` and
-    `Copyable`/`ImplicitlyCopyable` when it is copyable, and its
-    `__moveinit__` (`liftClosure`'s `ClosureMethod::MOVE`), because a
-    `var.use` of the value names them. Today it declares neither, and the
-    move into its closure relocates it.
-  - Probe: `conformance/probes/closure_value_copies_its_storage.mojo`.
-    Passed to `twice[F: def() -> Int]` and called twice, a `{var u}`
-    lambda over an `ImplicitlyCopyable` struct prints `copy 4` twice at
-    the pin (the copy of the copyable storage), three times on the VM
-    (`var.use copy` before each call), and once natively.
-  - Probe: `assets/extensions/ok/pliron_closure_drop_order.mojo` prints
-    `token drop 7` twice on the VM, once natively: the `var.use copy` of
-    `peek` and the slot are each destroyed (bisected to `e77576f1`,
-    R1329).
-  - Probe: `twice(lambda {var s^} -> Int: (s.__iadd__("!"),
-    s.byte_length())[1])` over a `String` prints the pin's `34`, but with
-    `AUTOMATIC_INLINE` removed from `post_elaboration.rs` the VM stops on
-    "double free of Pointer allocation" (before R1427 too): each copy of
-    the closure value is destroyed.
-  - Closes R534 (broadened: the pin rejects every capturing capture-list
-    closure there). Shrinks R176 (capture-list locals run at the pin).
-  - Depends on R1427 and R1428: a lambda's value is its storage only
-    after R1427, and the `__call__` witness is R1428's method.
-  - Model: Fable, Planned.
+  `var peek = lambda {var token^} -> Int: token.id` over a `Movable`
+  `Token` runs in Mojito; the pin rejects it ("value of type 'def() -> Int'
+  cannot be implicitly copied, it does not conform to
+  'ImplicitlyCopyable'"), because upstream's `emitClosure` returns its
+  storage variable, which a binding or an owned argument copies.
+  - Mojito builds the storage as a call result (`lambda_storage_value`,
+    `mir/lower_expr/calls.rs`), which a binding moves.
+  - `check_callable_display_element` (`checker/inference.rs`) stands in
+    for the copy in a display, rejecting a lambda element whose moved
+    capture is not `ImplicitlyCopyable`
+    (`assets/type_error/capturing_lambda_display_transferred_uncopyable.mojo`);
+    drop that rule once the lambda is an lvalue.
+  - Probe: the `var peek = lambda {var token^} ...` binding above.
+  - Found while landing R1378 (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1433 The bundled handler APIs take run-time `def(...)
+  capturing[_]` arguments, where upstream's take closure-trait arguments**
+
+  `List.deinit_with`, `Optional.map`, `and_then`, `deinit_with` and
+  `__init__(init_with=)`, `Set.clear_with`, `Dict.deinit_with` and
+  `reap_with`, and `Array.deinit_with` take a run-time callable, so a
+  closure passed to one converts to the closure of its body
+  (`SemanticAdjustment::ClosureCallable`), where upstream takes the
+  storage through a closure trait (`deinit_func: Some[def(var Self.T)]`,
+  `map[To: Movable, //, Mapper: def(var Self.T) -> To]`).
+  - Port each signature and argument name (`deinit_func`, `destroy_func`,
+    `Mapper`) in `stdlib/std/collections/` to upstream's.
+  - `Some[def(...)]` is "unknown type 'Some'" today (R813), so spell an
+    explicit binder until it lands.
+  - Probe: `l^.deinit_with(h)` over `def h(var e: Int) {mut total}` and
+    `[1, 2, 3]` prints `6` on both, through a converted closure in Mojito.
+  - Found while landing R1378 (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R567 A user `std/` directory merges into the bundled `std`, where
   the pin binds `std` to its library package alone**
@@ -9465,6 +9449,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (with `@no_inline` on both), where upstream passes `p`'s address twice.
   - Probe: `bump(p)` over `def bump(mut a: Pt)` spells a `ref.make` and a
     whole `ref.read` of `p` before the call.
+  - Probe: a memory-only temporary at a `read` parameter has no place at
+    all, so a write through the callee's `read self` lands on the callee's
+    copy: `twice(lambda {var s^} -> Int: (s.__iadd__("!"),
+    s.byte_length())[1])` over a `String`, with `F: def() -> Int`, prints
+    the pin's `34`, but stops on "double free of Pointer allocation" on the
+    VM with `AUTOMATIC_INLINE` removed from `post_elaboration.rs`.
   - Fix: pass the address as the operand, a `ref.make` of the place, and
     teach the inliner's parameter binding, `sroa`, and `mem-2-reg` to read
     it as an address.
@@ -9499,7 +9489,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `MirDeclarations::register_passable` answers no for.
   - The remaining placements are copies and moves into a register, each
     with its own entry: `List`→`Span` copies (R117), read arguments by value (R677), `List.resize`'s double copy
-    (R1353), closure values (R1378),
+    (R1353),
     and a pending `Error` (R1293).
   - `owns_droppable_storage` (`mir/calls.rs`) omits `TyKind::Dependent`.
     Widening it double-frees in `assets/ok/container_hashable.mojo`,
@@ -11441,6 +11431,47 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     return n * 2` lowers `outer$helper` with `enclosing: outer`; the pin's
     `helper` is a top-level function parameterized on `n`.
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1436 The checker names a closure's type by its declaration site,
+  and MIR builds its storage struct, where upstream's front end builds the
+  struct and types the value with it**
+
+  A capture-list closure's or capturing lambda's checked type is a
+  `def(...)` whose environment is `CallableEnvironment::Storage` (its site,
+  captures, copyability, and passability), which
+  `nested::resolve_closure_types` replaces by the `__storage` struct
+  `closure_storage` derives in MIR, where upstream's `liftClosure`
+  declares the struct in the front end.
+  - Move `closure_storage`'s derivation into the checked program (a checked
+    storage declaration on `CheckedDef`), so the value's type is a
+    `TyKind::Struct` from the check on.
+  - The storage's `ref` fields carry an untracked origin; upstream promotes
+    the captures' origins to the struct's origin parameters
+    (`outlineAndPromoteOrigins`). The environment's capture set stands in
+    for them in the checker.
+  - The checker's copyability and passability of the storage duplicate
+    MIR's meet over the captures (`closure_storage`, `mir/nested.rs`).
+  - Found while landing R1378 (2026-10-25).
+  - Depends on R1430.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1434 A closure keeps owned captures, which no pin-shaped value
+  needs once a closure's value is its storage**
+
+  A capturing lambda converted to a run-time callable moves its storage
+  into a one-capture `closure.make` (`MirCaptureMode::Move`,
+  `lambda_closure` in `mir/lower_expr/calls.rs`), the only producer of an
+  owned capture.
+  - Its consumers exist for that shape alone: the VM's owned-capture
+    `RefProjection::Capture` and `callee_place` paths
+    (`closure_capture_arguments`, `backend/vm/references.rs`), and
+    Pliron's value capture slots and `mjdrop_<n>` thunks
+    (`lower/closures.rs`).
+  - Delete them once no run-time `capturing[...]` value holds a moved
+    storage.
+  - Found while landing R1378 (2026-10-25).
+  - Depends on R1433, R176.
   - Model: Opus, Not Planned.
 
 - [ ] **R538 Storage paths for reference-valued elements outlive the last spelling of one**

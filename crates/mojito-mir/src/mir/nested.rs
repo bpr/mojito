@@ -75,6 +75,12 @@ pub(super) fn lower_fn_nested(
         returned,
         overloads,
     } = request;
+    let starts = LoweredFrom {
+        functions: out.len(),
+        declarations: declarations.functions.len(),
+        structs: declarations.structs.len(),
+    };
+    let closure_types = std::cell::RefCell::new(HashMap::new());
     let children = analyze_root_children(checked, name, statements);
     let registry = scope_registry(
         checked,
@@ -82,6 +88,7 @@ pub(super) fn lower_fn_nested(
         &HashMap::new(),
         &enclosing_binders,
         declarations,
+        &closure_types,
         invariant_errors,
     );
 
@@ -166,9 +173,11 @@ pub(super) fn lower_fn_nested(
                 registry: &registry,
                 binders: &enclosing_binders,
                 locals: &value_parameter_locals,
+                closure_types: &closure_types,
             },
         );
     }
+    resolve_closure_types(&closure_types.into_inner(), &starts, out, declarations);
 }
 
 /// `RuntimePack` distinguishes per-position variadic checking but is not a
@@ -189,6 +198,224 @@ pub(super) fn mir_nested_callable_ty(mut ty: Ty) -> Ty {
         });
     }
     ty
+}
+
+/// Where one [`lower_fn_nested`] began pushing: the functions, function
+/// declarations, and struct declarations it lowers lie past these.
+struct LoweredFrom {
+    functions: usize,
+    declarations: usize,
+    structs: usize,
+}
+
+/// The storage struct each closure declared in one lowered body names,
+/// by the closure's declaration site, which its checked type carries
+/// ([`mojito_types::origin::CallableEnvironment::Storage`]).
+type ClosureTypes = std::cell::RefCell<HashMap<mojito_types::origin::ClosureSite, Ty>>;
+
+/// Whether a closure whose value type is `callable_ty` is copyable, as
+/// the check decided by upstream's `allCopyable`: a storage the check
+/// typed answers by its environment, any other closure is.
+fn closure_copyable(callable_ty: Option<&Ty>) -> bool {
+    !matches!(
+        callable_ty.and_then(Ty::callable).map(|func| &func.environment),
+        Some(mojito_types::origin::CallableEnvironment::Storage(storage)) if !storage.copyable
+    )
+}
+
+/// The declaration site a closure's own value type names, `None` for any
+/// other type.
+fn closure_site(ty: &Ty) -> Option<&mojito_types::origin::ClosureSite> {
+    match &ty.callable()?.environment {
+        mojito_types::origin::CallableEnvironment::Storage(storage) => Some(&storage.site),
+        _ => None,
+    }
+}
+
+/// Replace each closure's checked type in what one [`lower_fn_nested`]
+/// lowered (`starts` on) by the storage struct `types` maps its site to,
+/// as upstream's front end types a closure's value by its storage. A type
+/// whose site has no storage stays for the verifier to report.
+fn resolve_closure_types(
+    types: &HashMap<mojito_types::origin::ClosureSite, Ty>,
+    starts: &LoweredFrom,
+    out: &mut [(String, MirFunction)],
+    declarations: &mut MirDeclarations,
+) {
+    if types.is_empty() {
+        return;
+    }
+    let mut resolver = ClosureStorageTypes(types);
+    let storages: HashSet<&str> = types
+        .values()
+        .filter_map(|ty| match ty.kind() {
+            TyKind::Struct(name, _) => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    for (_, function) in &mut out[starts.functions..] {
+        let Ok(()) = crate::mir::visit::walk_function_mut(&mut resolver, function);
+        retarget_storage_calls(&mut function.blocks, &function.reg_types, &storages);
+    }
+    for declaration in &mut declarations.functions[starts.declarations..] {
+        for ty in declaration
+            .param_types
+            .iter_mut()
+            .chain(std::iter::once(&mut declaration.ret_ty))
+            .chain(declaration.variadic.as_mut())
+            .chain(declaration.kw_variadic.as_mut())
+            .chain(declaration.error_ty.as_mut())
+        {
+            *ty = resolver.resolve(ty);
+        }
+    }
+    for declaration in &mut declarations.structs[starts.structs..] {
+        for (_, ty) in &mut declaration.fields {
+            *ty = resolver.resolve(ty);
+        }
+    }
+}
+
+/// Retarget each indirect call in `blocks` through a closure's storage
+/// (one of `storages`, by the callee's type in `reg_types` or its
+/// place's) from the closure trait's dispatch to the storage's `__call__`
+/// witness, as a call through a value of a struct conforming to a closure
+/// trait selects its `__call__`.
+fn retarget_storage_calls(
+    blocks: &mut [MirBlock],
+    reg_types: &HashMap<u32, Ty>,
+    storages: &HashSet<&str>,
+) {
+    for instruction in blocks.iter_mut().flat_map(|block| &mut block.instrs) {
+        if let MirInstr::CallIndirect {
+            callee,
+            resolved,
+            callee_place,
+            ..
+        } = instruction
+            && let Some(TyKind::Struct(name, _)) = reg_types
+                .get(&callee.0)
+                .or_else(|| callee_place.as_ref().and_then(|place| place.ty.as_ref()))
+                .map(Ty::kind)
+            && storages.contains(name.as_str())
+        {
+            *resolved = Some(format!("{name}.__call__"));
+        }
+        for region in instruction_regions_mut(instruction) {
+            retarget_storage_calls(region, reg_types, storages);
+        }
+    }
+}
+
+/// The rewrite [`resolve_closure_types`] applies at every type site.
+struct ClosureStorageTypes<'a>(&'a HashMap<mojito_types::origin::ClosureSite, Ty>);
+
+impl ClosureStorageTypes<'_> {
+    fn resolve(&mut self, ty: &Ty) -> Ty {
+        mojito_types::types::rewrite_ty(ty, self).unwrap_or_else(|_| ty.clone())
+    }
+}
+
+impl mojito_types::types::TyRewrite for ClosureStorageTypes<'_> {
+    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        closure_site(ty).and_then(|site| self.0.get(site).cloned())
+    }
+
+    fn expr(
+        &mut self,
+        expr: &ParamExpr,
+    ) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
+        Ok(expr.clone())
+    }
+
+    fn visits_closed(&self) -> bool {
+        true
+    }
+}
+
+impl crate::mir::visit::MutTypeVisitor for ClosureStorageTypes<'_> {
+    type Error = std::convert::Infallible;
+
+    fn visit_ty(&mut self, ty: &mut Ty, _: crate::mir::visit::TySite) -> Result<(), Self::Error> {
+        *ty = self.resolve(ty);
+        Ok(())
+    }
+
+    fn visit_ty_arg(&mut self, arg: &mut TyArg) -> Result<(), Self::Error> {
+        if let Ok(resolved) = mojito_types::types::rewrite_tyargs(std::slice::from_ref(arg), self)
+            && let Some(resolved) = resolved.into_iter().next()
+        {
+            *arg = resolved;
+        }
+        Ok(())
+    }
+
+    fn visit_variant_alternatives(
+        &mut self,
+        alternatives: &mut Vec<Ty>,
+    ) -> Result<(), Self::Error> {
+        for ty in alternatives {
+            *ty = self.resolve(ty);
+        }
+        Ok(())
+    }
+
+    fn visit_variant_index(
+        &mut self,
+        _: &mut mojito_types::types::VariantIndex,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_lane_mask(
+        &mut self,
+        _: &mut mojito_types::types::LaneMask,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_param_arg(
+        &mut self,
+        _: &mut MirParamArg,
+        _: crate::mir::visit::ParamArgSite,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_param_decls(
+        &mut self,
+        _: &mut [ParamDecl],
+        _: crate::mir::visit::ParamDeclSite,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_constant(&mut self, constant: &mut Const) -> Result<(), Self::Error> {
+        if let Const::Value(value) = constant
+            && let Ok(resolved) = mojito_types::types::rewrite_value(value, self)
+        {
+            *value = resolved;
+        }
+        Ok(())
+    }
+
+    fn visit_param_ref(
+        &mut self,
+        _: &mut mojito_types::param_expr::ParamRef,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_constraint(&mut self, _: &mut GenericConstraint) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn visit_sequence(
+        &mut self,
+        _: &mut mojito_checked::checked::ComptimeSequence,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 /// Collect the declarations belonging to one lexical function scope (those in
@@ -411,6 +638,7 @@ fn scope_registry(
     inherited: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     binders: &EnclosingBinders,
     declarations: &MirDeclarations,
+    closure_types: &ClosureTypes,
     invariant_errors: &mut Vec<String>,
 ) -> HashMap<mojito_types::origin::OwnerId, NestedInfo> {
     let mut registry = inherited.clone();
@@ -436,6 +664,13 @@ fn scope_registry(
                 "nested def `{}`: its closure storage names a parameter no enclosing declaration binds",
                 child.source_name
             ));
+        }
+        if let (Some(storage), Some(site)) =
+            (&storage, child.callable_ty.as_ref().and_then(closure_site))
+        {
+            closure_types
+                .borrow_mut()
+                .insert(site.clone(), storage.ty.clone());
         }
         let mangled = storage
             .as_ref()
@@ -789,18 +1024,23 @@ fn capture_referent(capture: &NestedCapture) -> Ty {
 /// fieldwise `__init__` the declaration statement calls, as upstream's
 /// `ClosureEmitter` synthesizes it, reading a `var` capture, taking a
 /// moved one, and storing a reference to a reference capture's referent,
-/// and a `__deinit__` when a field has a destructor to run. A body that
+/// and, unless the storage is trivially register-passable, its fieldwise
+/// `__deinit__`, `__moveinit__`, and (when every capture is copyable)
+/// `__copyinit__`, as upstream's `liftClosure` synthesizes them; its
+/// conformances follow (`Copyable` and `ImplicitlyCopyable` by
+/// `allCopyable`, the `IsTrivially*` markers by triviality). A body that
 /// is its method, declared `method`, and owns a moved capture writes its
 /// `self`: the struct lists it among the methods writing `self`, so a
 /// call on the storage's place leaves the call's `self` in it, as
 /// upstream's call by address writes it in place.
 fn lower_closure_storage(
-    storage: &ClosureStorage,
+    (storage, callable_ty): (&ClosureStorage, Option<&Ty>),
     captures: &[NestedCapture],
     method: &str,
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
 ) {
+    let copyable = closure_copyable(callable_ty);
     let TyKind::Struct(name, _) = storage.ty.kind() else {
         unreachable!("a closure's storage is a struct")
     };
@@ -845,11 +1085,10 @@ fn lower_closure_storage(
         functions,
         declarations,
     );
-    let destroys = !storage
-        .fields
-        .iter()
-        .all(|(_, ty)| declarations.drop_runs_no_code(ty));
-    if destroys {
+    // Upstream's storage `__del__` is trivial exactly when the storage is
+    // trivially register-passable (`ClosureEmitter`'s
+    // `__del__is_trivial`), as are its copy and move.
+    if !storage.trivial {
         lower_synthesized_member(
             (name, &[]),
             &storage.fields,
@@ -857,6 +1096,27 @@ fn lower_closure_storage(
             functions,
             declarations,
         );
+    }
+    // Upstream's `liftClosure` synthesizes the fieldwise move and, for a
+    // copyable storage, copy; a trivially register-passable storage's are
+    // the value itself.
+    if !storage.trivial {
+        lower_synthesized_member(
+            (name, &storage.param_decls),
+            &storage.fields,
+            SynthesizedMember::Move,
+            functions,
+            declarations,
+        );
+        if copyable {
+            lower_synthesized_member(
+                (name, &storage.param_decls),
+                &storage.fields,
+                SynthesizedMember::Copy,
+                functions,
+                declarations,
+            );
+        }
     }
     let writes_self = storage.method.is_some()
         && captures
@@ -873,12 +1133,37 @@ fn lower_closure_storage(
         param_decls: storage.param_decls.clone(),
         explicit_destructors: HashMap::new(),
         explicit_destroy: None,
-        conformances: Vec::new(),
+        conformances: [
+            ("Copyable", copyable),
+            ("ImplicitlyCopyable", copyable),
+            ("Movable", true),
+            ("Deinitable", true),
+            ("IsTriviallyCopyable", storage.trivial),
+            ("IsTriviallyMovable", storage.trivial),
+            ("IsTriviallyDeinitable", storage.trivial),
+        ]
+        .into_iter()
+        .map(
+            |(trait_name, holds)| mojito_checked::checked::StructConformance {
+                trait_name: trait_name.to_string(),
+                conditions: holds
+                    .then_some(GenericConstraint::Bool(true))
+                    .into_iter()
+                    .collect(),
+            },
+        )
+        .collect(),
         declared: ["Movable", "Deinitable"]
             .into_iter()
+            .chain(
+                copyable
+                    .then_some(["Copyable", "ImplicitlyCopyable"])
+                    .into_iter()
+                    .flatten(),
+            )
             .map(|trait_name| mojito_checked::checked::StructConformance {
                 trait_name: trait_name.to_string(),
-                conditions: Vec::new(),
+                conditions: vec![GenericConstraint::Bool(true)],
             })
             .chain(
                 [
@@ -904,6 +1189,191 @@ fn lower_closure_storage(
     });
 }
 
+/// Push upstream's `__call__` witness of the closure storage `storage`
+/// (`emitStorageCallWitness`): an always-inline method forwarding every
+/// argument to the storage's method, as `declarations` declares it, and
+/// returning its result, so
+/// the storage conforms to its closure trait and a call through a value of
+/// it devirtualizes to the witness. A generic, variadic, or
+/// reference-returning closure gets none: no closure trait spells its
+/// signature.
+fn lower_storage_call_witness(
+    storage: &ClosureStorage,
+    functions: &mut Vec<(String, MirFunction)>,
+    declarations: &mut MirDeclarations,
+) {
+    let (TyKind::Struct(name, _), Some(method)) = (
+        storage.ty.kind(),
+        storage
+            .method
+            .as_deref()
+            .and_then(|method| declarations.function(method))
+            .cloned(),
+    ) else {
+        return;
+    };
+    let method = &method;
+    if !method.param_decls.is_empty()
+        || method.variadic.is_some()
+        || method.kw_variadic.is_some()
+        || method.returns_reference
+    {
+        return;
+    }
+    let symbol = format!("{name}.__call__");
+    let mut reg_types = HashMap::new();
+    let mut register = |ty: &Ty| {
+        let reg = Reg(reg_types.len() as u32);
+        reg_types.insert(reg.0, ty.clone());
+        reg
+    };
+    let root = |var: usize, ty: &Ty| MirPlace::root(var as VarId, Some(ty.clone()));
+    let mut instrs = Vec::new();
+    let recv = register(&storage.ty);
+    instrs.push(MirInstr::LoadPlace {
+        dest: recv,
+        place: root(0, &storage.ty),
+    });
+    let mut args = Vec::new();
+    let mut arg_places = Vec::new();
+    for (index, (ty, convention)) in method
+        .param_types
+        .iter()
+        .zip(&method.param_conventions)
+        .enumerate()
+    {
+        let var = index + 1;
+        let dest = register(ty);
+        if is_owned(convention) {
+            instrs.push(MirInstr::UseVar {
+                dest,
+                var: var as VarId,
+                mode: UseMode::Move,
+                constructor: None,
+            });
+            arg_places.push(None);
+        } else {
+            instrs.push(MirInstr::LoadPlace {
+                dest,
+                place: root(var, ty),
+            });
+            arg_places.push(Some(root(var, ty)));
+        }
+        args.push(dest);
+    }
+    let dest = register(&method.ret_ty);
+    let raises = method.raises.then(|| Raises {
+        ty: method.error_ty.clone().unwrap_or_else(Ty::error),
+        flag: register(&Ty::bool()),
+        error: register(&method.error_ty.clone().unwrap_or_else(Ty::error)),
+    });
+    let writes_self = declarations
+        .structure(name)
+        .is_some_and(|declaration| declaration.mut_self_methods.contains(&method_name(method)));
+    instrs.push(MirInstr::MethodCall {
+        dest,
+        recv,
+        method: method_name(method),
+        resolved: Some(method.lowered_name.clone()),
+        raises: raises.clone(),
+        reference_result: None,
+        result_adapter: None,
+        args,
+        kwargs: Vec::new(),
+        recv_place: (!storage.register_passable).then(|| Box::new(root(0, &storage.ty))),
+        recv_writes: writes_self,
+        receiver_convention: None,
+        arg_places,
+        kwarg_places: Vec::new(),
+        capture_accesses: Vec::new(),
+        param_arg_regs: Vec::new(),
+        param_decls: Vec::new(),
+        instantiated_args: Vec::new(),
+        spread: None,
+    });
+    if let Some(raises) = &raises {
+        let region = |instrs, term| vec![MirBlock { instrs, term }];
+        instrs.push(MirInstr::If {
+            results: Vec::new(),
+            cond: raises.flag,
+            then: region(
+                Vec::new(),
+                MirTerm::Raise {
+                    src: raises.error,
+                    label: None,
+                    values: Vec::new(),
+                },
+            ),
+            elifs: Vec::new(),
+            else_args: Vec::new(),
+            orelse: region(Vec::new(), MirTerm::Yield(Vec::new())),
+        });
+    }
+    let returned = (method.ret_ty != TyKind::None).then_some(dest);
+    if let Some(declaration) = declarations
+        .structs
+        .iter_mut()
+        .find(|declaration| declaration.name == *name)
+    {
+        if writes_self {
+            declaration.mut_self_methods.insert("__call__".to_string());
+        }
+        declaration.record_member("__call__", &symbol);
+    }
+    let mut witness = method.clone();
+    witness.lowered_name.clone_from(&symbol);
+    witness.defaults = vec![None; method.param_types.len()];
+    witness.required = vec![true; method.param_types.len()];
+    witness.inline = mojito_checked::declaration::InlineLevel::Always;
+    witness.provenance = mojito_checked::declaration::FunctionProvenance::Synthesized;
+    witness.enclosing = None;
+    declarations.functions.push(witness);
+    let param_types: Vec<Ty> = std::iter::once(storage.ty.clone())
+        .chain(method.param_types.iter().cloned())
+        .collect();
+    let n_params = param_types.len();
+    functions.push((
+        symbol,
+        MirFunction {
+            blocks: vec![MirBlock {
+                instrs,
+                term: MirTerm::Return(returned),
+            }],
+            n_regs: reg_types.len() as u32,
+            n_vars: n_params,
+            var_names: std::iter::once("self".to_string())
+                .chain(method.param_names.iter().cloned())
+                .collect(),
+            n_params,
+            owned_params: std::iter::once(false)
+                .chain(method.param_conventions.iter().map(is_owned))
+                .collect(),
+            deinit_params: vec![false; n_params],
+            ref_params: std::iter::once(false)
+                .chain(method.ref_params.iter().copied())
+                .collect(),
+            var_tys: param_types
+                .iter()
+                .enumerate()
+                .map(|(var, ty)| (var as VarId, ty.clone()))
+                .collect(),
+            param_types,
+            reg_types,
+            ret_ty: Some(method.ret_ty.clone()),
+            raises: method.raises,
+            error_ty: method.error_ty.clone(),
+            ..MirFunction::default()
+        },
+    ));
+}
+
+/// The source name of the closure method `method`, its symbol's last
+/// segment.
+fn method_name(method: &mojito_checked::declaration::FunctionDeclaration) -> String {
+    mojito_symbol::symbol::split_method_symbol(&method.lowered_name)
+        .map_or_else(|| method.lowered_name.clone(), |(_, name)| name.to_string())
+}
+
 /// The declaration a nested function is lowered inside: its lowered name,
 /// the nested `def`s registered in its scope, the binders in scope there,
 /// and the frame locals of its callable and constructible type binders and
@@ -915,6 +1385,7 @@ struct Enclosing<'a> {
     registry: &'a HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     binders: &'a EnclosingBinders,
     locals: &'a [(String, Ty)],
+    closure_types: &'a ClosureTypes,
 }
 
 impl Enclosing<'_> {
@@ -967,12 +1438,14 @@ fn lower_nested_node(
         enclosing.registry,
         enclosing_binders,
         declarations,
+        enclosing.closure_types,
         invariant_errors,
     );
     let captures = &node.captures;
     let mangled = &symbol;
     if let Some(storage) = &storage {
-        lower_closure_storage(storage, captures, &node.source_name, out, declarations);
+        let closure = (storage, node.callable_ty.as_ref());
+        lower_closure_storage(closure, captures, &node.source_name, out, declarations);
     }
     let (capture_types, capture_writes) = capture_parameters(captures, enclosing.registry);
     let named_result = dparams
@@ -1155,6 +1628,9 @@ fn lower_nested_node(
         inline: def.inline,
         provenance: mojito_checked::declaration::FunctionProvenance::Source,
     });
+    if let Some(storage) = storage.as_ref().filter(|_| method) {
+        lower_storage_call_witness(storage, out, declarations);
+    }
     let immutable_captures: HashSet<String> = captures
         .iter()
         .zip(&capture_writes)
@@ -1249,6 +1725,7 @@ fn lower_nested_node(
                 registry: &registry,
                 binders: enclosing_binders,
                 locals: &value_parameter_locals,
+                closure_types: enclosing.closure_types,
             },
         );
     }

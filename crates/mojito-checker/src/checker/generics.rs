@@ -904,10 +904,7 @@ impl Checker {
         // that has a capture environment.
         if !arguments.is_empty()
             && let Some(FuncTy { environment, .. }) = callable.callable()
-            && matches!(
-                environment,
-                mojito_types::origin::CallableEnvironment::Capturing(_)
-            )
+            && environment.captures().is_some()
         {
             return Err(TypeError::Unsupported(format!(
                 "cannot materialize an explicit Origin specialization of '{name}': it has a \

@@ -685,6 +685,26 @@ pub(super) fn verify_function(
             ));
         }
     }
+    // A closure's value is its storage struct, which lowering names in
+    // place of the checked type naming its site.
+    let unresolved_closure = |ty: &Ty| {
+        mojito_types::types::mentions(ty, &|ty| {
+            matches!(
+                ty.callable().map(|func| &func.environment),
+                Some(mojito_types::origin::CallableEnvironment::Storage(_))
+            )
+        })
+    };
+    if function
+        .var_tys
+        .values()
+        .chain(function.reg_types.values())
+        .any(unresolved_closure)
+    {
+        errors.push(format!(
+            "MIR function '{name}' retains a closure's checked type its lowering did not resolve to the closure's storage"
+        ));
+    }
     for (description, ty) in [
         ("return", function.ret_ty.as_ref()),
         ("error", function.error_ty.as_ref()),

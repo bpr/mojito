@@ -1162,7 +1162,7 @@ impl Checker {
     }
 
     fn concrete_callable_captures(&self, ty: &Ty) -> Vec<mojito_types::origin::CaptureOrigin> {
-        use mojito_types::origin::{CallableEnvironment, CaptureOriginSet};
+        use mojito_types::origin::CaptureOriginSet;
         let callable = match ty.kind() {
             TyKind::Struct(name, _) => self
                 .structs
@@ -1170,16 +1170,11 @@ impl Checker {
                 .and_then(|info| info.callable_conformance.as_ref()),
             _ => Some(ty),
         };
-        match callable {
-            Some(callable)
-                if let Some(FuncTy {
-                    environment:
-                        CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
-                    ..
-                }) = callable.callable() =>
-            {
-                captures.clone()
-            }
+        match callable
+            .and_then(Ty::callable)
+            .and_then(|func| func.environment.captures())
+        {
+            Some(CaptureOriginSet::Concrete(captures)) => captures.clone(),
             _ => Vec::new(),
         }
     }
@@ -1935,12 +1930,19 @@ impl Checker {
     /// Retain every exact-literal boundary selected by contextual typing.  The
     /// recursion matters for aggregates: `(1, 2.0)` materialized as
     /// `Tuple[Int, Float64]` has two scalar boundaries, not one tuple cast.
+    /// A closure's storage accepted as a run-time callable is converted to
+    /// its closure the same way
+    /// ([`mojito_checked::checked::SemanticAdjustment::ClosureCallable`]).
     fn record_literal_materializations(
         &self,
         expression: &Expr,
         from: &Ty,
         to: &Ty,
     ) -> Result<(), TypeError> {
+        if closure_converts_to_callable(from, to) {
+            self.record_at(expression.source_span()).closure_callable = true;
+            return Ok(());
+        }
         let scalar_boundary = matches!(from.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
             && (matches!(to.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
                 || matches!(to.kind(), TyKind::Simd { width, .. } if !width.is_inferred()));
@@ -2060,10 +2062,17 @@ impl Checker {
     fn record_result_conventions(&self) {
         // A compiler-known type upstream declares `TrivialRegisterPassable`
         // (a scalar, a pointer, a literal) and a function value, which
-        // upstream holds as a raw MLIR value, are passed in registers.
+        // upstream holds as a raw MLIR value, are passed in registers; a
+        // closure's storage is a struct, passed as its captures allow.
         let memory_only = |ty: &Ty| {
+            let function = ty.callable().is_some_and(|func| {
+                !matches!(
+                    func.environment,
+                    mojito_types::origin::CallableEnvironment::Storage(_)
+                )
+            });
             !mojito_types::types::trivially_register_passable_leaf(ty.kind())
-                && !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+                && !function
                 && self.register_passability(ty) != traits::RegisterPassability::Proven
         };
         // An initializer's declared result is its `out self`, the struct at

@@ -1,6 +1,7 @@
 # A display of a capturing lambda cannot be reassigned from another display:
-# the stored closure would move to an outer binding.
-# expect: closures cannot escape
+# each lambda is its own closure storage type, so the second display's
+# element is not the first's.
+# expect: type mismatch for collection display element
 def main():
     var k = 3
     var fns = [lambda (x: Int) {k} -> Int: x * k]

@@ -194,6 +194,14 @@ pub fn leaf_conforms(
                 TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
                     items.iter().all(|item| element(item, trait_name))
                 }
+                // A closure's storage is copyable exactly when each of its
+                // captures is.
+                TyKind::Func(func) if matches!(trait_name, "Copyable" | "ImplicitlyCopyable") => {
+                    match &func.environment {
+                        crate::origin::CallableEnvironment::Storage(storage) => storage.copyable,
+                        _ => true,
+                    }
+                }
                 _ => true,
             }
         }

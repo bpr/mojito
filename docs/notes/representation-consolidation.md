@@ -104,19 +104,21 @@ the entries named. A single command cannot use both.
    (size).
    - R1376 and R1377 landed: every capture-list `def` builds the pin's
      `__storage` struct at its declaration, its lifted body takes the
-     struct as `self`, and every call passes it. A first-class use makes a
-     closure capturing it by reference until R1378.
+     struct as `self`, and every call passes it.
    - R1427 landed: every capturing lambda builds its storage where it
      stands, an immediately invoked one calls the body passing it, and
      one used as a value moves it into its closure. R1428 makes the body
      a real method of the struct.
-   - R1378 types the closure as the struct, a runtime value only.
+   - R1378 landed: the closure's value is the struct, a runtime value
+     only, which the check names by its site and MIR resolves (R1436
+     moves the struct into the check). Run-time `capturing[...]` values
+     still convert it to a closure of its body until R1433, R176, and
+     R1434 withdraw them.
    - Legacy `@parameter` closures keep upstream's environment-pointer path,
      which R533 finishes.
    - R1344 and R1345 serve capture-free and `@parameter` closures.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1378 -n 0
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R533 --only R1344 --only R1345 -n 0
    ```
 
@@ -195,7 +197,7 @@ are conformance only.
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1356 | about 25 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662 (= R950), R663, R471 | R788, R378, R472, R508, R602, R1194 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1360–R1363, R705, R424, R578 → R577; R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
-| G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427 (landed) → R1428 → R1378; R533, R1344 → R1345 for the other closure forms | R1104, R100, R1230, R1333 (closed), R534, R176 | yes |
+| G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 for the other closure forms | R1104, R100, R1230, R1333 (closed), R534, R176 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R603; R1379–R1388 | about 45 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 | about 20 (below) | slight |
 
@@ -285,8 +287,9 @@ missing.
 - **Cores**:
   - R1376 builds the storage struct.
   - R1377 makes the body a method taking it.
-  - R1378 types the closure as the struct, a runtime value only. The pin
-    rejects a capturing capture-list closure as a compile-time argument.
+  - R1378 (landed) types the closure as the struct, a runtime value only.
+    The pin rejects a capturing capture-list closure as a compile-time
+    argument.
 - **Members**:
   - R1104 closes. R100, R534, and R176 close or shrink.
   - R983, R980, R172, and R303 follow R533, not the struct.

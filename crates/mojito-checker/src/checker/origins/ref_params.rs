@@ -146,7 +146,7 @@ impl Checker {
         &self,
         ty: &Ty,
     ) -> Vec<mojito_types::origin::CaptureOrigin> {
-        use mojito_types::origin::{CallableEnvironment, CaptureOrigin, CaptureOriginSet};
+        use mojito_types::origin::{CaptureOrigin, CaptureOriginSet};
 
         fn collect(checker: &Checker, ty: &Ty, out: &mut Vec<CaptureOrigin>) {
             if let Some(element) = list_element(ty).or_else(|| set_element(ty)) {
@@ -190,11 +190,8 @@ impl Checker {
                     }
                 }
                 TyKind::Func(_) | TyKind::GenericFunc(_)
-                    if let Some(FuncTy {
-                        environment:
-                            CallableEnvironment::Capturing(CaptureOriginSet::Concrete(captures)),
-                        ..
-                    }) = ty.callable() =>
+                    if let Some(CaptureOriginSet::Concrete(captures)) =
+                        ty.callable().and_then(|func| func.environment.captures()) =>
                 {
                     out.extend(captures.iter().cloned());
                 }
@@ -300,13 +297,8 @@ impl Checker {
                     result
                 }
                 TyKind::Func(_) | TyKind::GenericFunc(_)
-                    if let Some(FuncTy {
-                        environment:
-                            mojito_types::origin::CallableEnvironment::Capturing(
-                                mojito_types::origin::CaptureOriginSet::Concrete(captures),
-                            ),
-                        ..
-                    }) = ty.callable() =>
+                    if let Some(mojito_types::origin::CaptureOriginSet::Concrete(captures)) =
+                        ty.callable().and_then(|func| func.environment.captures()) =>
                 {
                     captures.iter().any(|capture| {
                         matches!(

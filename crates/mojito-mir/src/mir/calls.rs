@@ -2073,9 +2073,15 @@ impl<'a> Flatten<'a> {
             return self.lower_borrowed_element_read(expression, object);
         }
         let name = self.name_spelled(expression)?;
+        // A closure's storage value is the declaration's slot, lent as any
+        // local is; its conversion to a closure, and a body without
+        // storage, are values with no slot to lend.
+        let closure_storage = self
+            .nested_info(expression)
+            .map(|info| info.storage.is_some() && !expression.closure_callable());
         // A module constant read is a value with no slot of its own.
         if expression.resolved_callable().is_some()
-            || self.nested_info(expression).is_some()
+            || closure_storage == Some(false)
             || expression.is_origin_bearing_pointer()
             || expression.constant_param_value()
             || (!self.vars.contains(&name) && self.overloads.is_function(&name))
@@ -2091,18 +2097,27 @@ impl<'a> Flatten<'a> {
             return None;
         }
         let ty = expression.ty()?;
-        if !matches!(
-            ty.kind(),
-            TyKind::Struct(..)
-                | TyKind::Error
-                | TyKind::Tuple(_)
-                | TyKind::RuntimePack(_)
-                | TyKind::VariadicPack(_)
-                | TyKind::Variant(_)
-                | TyKind::Param { .. }
-                | TyKind::Assoc { .. }
-                | TyKind::Dependent(_)
-        ) {
+        // A closure's value is its storage struct, whatever binding holds
+        // it.
+        let storage_value = matches!(
+            ty.callable().map(|func| &func.environment),
+            Some(mojito_types::origin::CallableEnvironment::Storage(_))
+        );
+        if closure_storage != Some(true)
+            && !storage_value
+            && !matches!(
+                ty.kind(),
+                TyKind::Struct(..)
+                    | TyKind::Error
+                    | TyKind::Tuple(_)
+                    | TyKind::RuntimePack(_)
+                    | TyKind::VariadicPack(_)
+                    | TyKind::Variant(_)
+                    | TyKind::Param { .. }
+                    | TyKind::Assoc { .. }
+                    | TyKind::Dependent(_)
+            )
+        {
             return None;
         }
         let var = self.expression_var(&name, expression);

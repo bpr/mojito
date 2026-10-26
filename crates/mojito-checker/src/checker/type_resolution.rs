@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::origin::CallableEnvironment;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 
@@ -2523,6 +2524,19 @@ impl Checker {
                     // the erased generic-identity marker used by this resolver.
                     if matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) {
                         let actual = self.infer(expr)?;
+                        // A closure's storage is a run-time value, and so is
+                        // a capturing lambda's closure, as at the pin.
+                        let environment = actual.callable().map(|func| &func.environment);
+                        if matches!(expr.kind, ExprKind::Lambda { .. })
+                            && environment
+                                .and_then(CallableEnvironment::captures)
+                                .is_some()
+                        {
+                            return Err(TypeError::CapturingLambdaParameter);
+                        }
+                        if matches!(environment, Some(CallableEnvironment::Storage(_))) {
+                            return Err(TypeError::DynamicParameterValue);
+                        }
                         if !self.value_coerces(&actual, ty) {
                             return Err(TypeError::TypeMismatch {
                                 expected: ty.to_string(),

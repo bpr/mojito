@@ -3048,6 +3048,15 @@ impl Checker {
                 }
             }
             TyKind::Assoc { .. } | TyKind::SelfType | TyKind::Dependent(_) => Possible,
+            // A closure's storage meets its captures' passabilities.
+            TyKind::Func(func) => match &func.environment {
+                mojito_types::origin::CallableEnvironment::Storage(storage)
+                    if storage.register_passable =>
+                {
+                    Proven
+                }
+                _ => Excluded,
+            },
             _ => Excluded,
         }
     }
@@ -3181,8 +3190,15 @@ impl Checker {
                     true
                 }
             }),
-            TyKind::Param { binder, bounds, .. } => {
-                self.trait_bounded_binders.contains_key(&binder.id)
+            // A closure trait refines `Deinitable`, as upstream's closure
+            // storage conforms to it.
+            TyKind::Param {
+                binder,
+                bounds,
+                callable_bound,
+            } => {
+                callable_bound.is_some()
+                    || self.trait_bounded_binders.contains_key(&binder.id)
                     || self.bounds_prove_deinitable(bounds)
             }
             // Every other type answers by its shape, an aggregate by its

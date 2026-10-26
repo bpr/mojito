@@ -658,6 +658,17 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// Whether this closure's storage value is converted to the closure of
+    /// its body ([`mojito_checked::checked::SemanticAdjustment::ClosureCallable`]).
+    pub(super) fn closure_callable(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::ClosureCallable
+            )
+        })
+    }
+
     /// Whether the value this node lowers to is returned through memory, as
     /// upstream's `ByRefResult` argument: an implicit conversion's when its
     /// constructor's is, a conditional expression's when the checker did

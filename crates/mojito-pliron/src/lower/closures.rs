@@ -291,13 +291,29 @@ impl FnLowering<'_> {
             contract = reference.referent.clone();
         }
         if let TyKind::Struct(name, _) = contract.kind() {
-            // Monomorphization devirtualizes nominal callables into direct
-            // `__call__` method calls; one that survives to lowering is a
-            // shape it could not rewrite.
-            return Err(self.unsupported_reg(
-                format!("indirect call through nominal callable `{name}`"),
+            // Monomorphization devirtualizes a call through a nominal
+            // callable into a direct `__call__` method call; a `Variant`
+            // owning operation's struct handler (a closure's storage) is
+            // called through its `__call__` here.
+            let Some(target) = self.struct_member(name, "__call__", args.len() + kwargs.len())
+            else {
+                return Err(self.unsupported_reg(
+                    format!("indirect call through nominal callable `{name}`"),
+                    dest,
+                ));
+            };
+            return self.lower_method_call(
+                ctx,
                 dest,
-            ));
+                callee,
+                "__call__",
+                Some(target),
+                args,
+                kwargs,
+                arg_places,
+                kwarg_places,
+                None,
+            );
         }
         let abi = self.contract_abi(ctx, &contract, dest)?;
         let bound =

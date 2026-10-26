@@ -662,6 +662,59 @@ impl<'a> Flatten<'a> {
         }
     }
 
+    /// The value of the capture-list `def` `info`, read by name at `node`
+    /// where it is not converted to a closure
+    /// ([`Node::closure_callable`]): its storage struct, read from the
+    /// declaration's slot as any local is, as upstream's `emitClosure`
+    /// returns the storage. A body that is no method of its storage (one
+    /// naming an enclosing callable binder) has no value (R92).
+    pub(in crate::mir) fn closure_storage_read(
+        &mut self,
+        node: Node<'a>,
+        name: &str,
+        info: &NestedInfo,
+    ) -> Reg {
+        if info
+            .storage
+            .as_ref()
+            .is_none_or(|storage| storage.method.is_none())
+        {
+            return self.unsupported_value(
+                node.location(),
+                "a closure naming an enclosing callable parameter is not a value (R92)",
+            );
+        }
+        match self.owner_vars.get(&info.binding).copied() {
+            Some(var) => self.read_slot(var, node.location(), Some(node.checked)),
+            None => self.unsupported_value(
+                node.location(),
+                &format!("closure `{name}` is used where no frame holds its storage"),
+            ),
+        }
+    }
+
+    /// The value of the capturing lambda `info` at `at` where it is not
+    /// converted to a closure: its storage struct, built here, once per
+    /// evaluation, as upstream's `resolveAnonymousClosure` emits it where
+    /// the lambda stands.
+    pub(in crate::mir) fn lambda_storage_value(
+        &mut self,
+        info: &NestedInfo,
+        at: SourceSpan,
+    ) -> Reg {
+        let storage = info
+            .storage
+            .as_ref()
+            .expect("a lambda's storage value has a storage");
+        if storage.method.is_none() {
+            return self.unsupported_value(
+                at,
+                "a closure naming an enclosing callable parameter is not a value (R92)",
+            );
+        }
+        self.build_closure_storage(info, storage, &at)
+    }
+
     /// The closure value of the lambda `info` at `at`: a capturing
     /// lambda builds its storage here, once per evaluation, and moves it
     /// into a closure of its lifted body, whose `self` it is; a lambda
@@ -671,8 +724,8 @@ impl<'a> Flatten<'a> {
             return self.emit_nested_closure(info, at);
         };
         let slot = self.lambda_storage_slot(info, storage, &at);
-        let dest = match &info.callable_ty {
-            Some(ty) => self.fresh_typed(at, None, ty.clone()),
+        let dest = match Self::closure_value_ty(info) {
+            Some(ty) => self.fresh_typed(at, None, ty),
             None => self.fresh(at, None),
         };
         self.emit(MirInstr::MakeClosure {
@@ -703,8 +756,8 @@ impl<'a> Flatten<'a> {
                 destructor: None,
             })
             .collect();
-        let dest = match &info.callable_ty {
-            Some(ty) => self.fresh_typed(at, None, ty.clone()),
+        let dest = match Self::closure_value_ty(info) {
+            Some(ty) => self.fresh_typed(at, None, ty),
             None => self.fresh(at, None),
         };
         self.emit(MirInstr::MakeClosure {
@@ -729,8 +782,8 @@ impl<'a> Flatten<'a> {
             if !self.pending_argument_anchors.contains(&place.root) {
                 self.pending_argument_anchors.push(place.root);
             }
-            let dest = match &info.callable_ty {
-                Some(ty) => self.fresh_typed(at, None, ty.clone()),
+            let dest = match Self::closure_value_ty(info) {
+                Some(ty) => self.fresh_typed(at, None, ty),
                 None => self.fresh(at, None),
             };
             self.emit(MirInstr::MakeClosure {
@@ -931,5 +984,22 @@ impl<'a> Flatten<'a> {
             elems: vec![value],
         });
         dest
+    }
+
+    /// The type of the closure of the body `info` as a function value: its
+    /// checked type, a storage value's environment read as the storage's
+    /// captures.
+    fn closure_value_ty(info: &NestedInfo) -> Option<Ty> {
+        let mut ty = info.callable_ty.clone()?;
+        ty.update(|kind| {
+            if let Some(func) = kind.callable_mut()
+                && let mojito_types::origin::CallableEnvironment::Storage(storage) =
+                    &func.environment
+            {
+                func.environment =
+                    mojito_types::origin::CallableEnvironment::Capturing(storage.captures.clone());
+            }
+        });
+        Some(ty)
     }
 }

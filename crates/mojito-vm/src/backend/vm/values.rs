@@ -599,6 +599,15 @@ impl VmBackend {
                 }
                 (function.clone(), materialized)
             }
+            // A closure's storage, or any struct conforming to a closure
+            // trait, is called through its `__call__`, the struct its
+            // receiver.
+            Value::Struct { name, .. } => {
+                let index = prog
+                    .selected_struct_member(name, "__call__", None, arguments.len())
+                    .ok_or_else(|| RuntimeError::NotCallable(format!("{name}.__call__")))?;
+                (prog.mir.functions[index].0.clone(), vec![callable.clone()])
+            }
             value => {
                 return Err(RuntimeError::NotCallable(crate::runtime::type_name(value)));
             }

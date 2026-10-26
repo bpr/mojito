@@ -67,11 +67,13 @@ assets/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	san
 assets/ok/capturing_callable_parameter_with_locals.mojo	main	exe-differential	sanitized
 assets/ok/capturing_generic_callable_parameter_environment.mojo	main	exe-differential	sanitized
 assets/ok/capturing_lambda_array_display.mojo	main	exe-differential	sanitized
+assets/ok/capturing_lambda_display_inlined.mojo	main	exe-differential	sanitized
 assets/ok/capturing_lambda_storage.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison_link_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison_operand_copy.mojo	main	exe-differential	sanitized
 assets/ok/closure_storage_method_binders.mojo	main	exe-differential	sanitized
+assets/ok/closure_storage_values.mojo	main	exe-differential	sanitized
 assets/ok/closures.mojo	main	exe-differential	sanitized
 assets/ok/collection_display_default.mojo	main	exe-differential	sanitized
 assets/ok/collection_truthiness.mojo	main	exe-differential	sanitized

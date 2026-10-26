@@ -749,9 +749,16 @@ policy or data-model responsibilities to focused children:
   trivially so) by the meet over its captures, a reference capture
   contributing its referent's, as upstream's `ClosureEmitter::emitClosure`
   decides. MIR lowering synthesizes the struct's declaration, its
-  fieldwise `__init__`, which the declaration calls with the captures, and
-  a `__deinit__` when a field has a destructor
-  (`nested::lower_closure_storage`). The lifted body is the storage's
+  fieldwise `__init__`, which the declaration calls with the captures,
+  and, unless it is trivially register-passable, its fieldwise
+  `__deinit__`, `__moveinit__`, and (when every capture is copyable,
+  upstream's `allCopyable`) `__copyinit__`, with the matching `Copyable`,
+  `ImplicitlyCopyable`, and `IsTrivially*` conformances
+  (`nested::lower_closure_storage`), as upstream's `liftClosure` does. It
+  also synthesizes the storage's `__call__` witness, an always-inline
+  method forwarding to the closure's method
+  (`nested::lower_storage_call_witness`, upstream's
+  `emitStorageCallWitness`), so the storage conforms to its closure trait. The lifted body is the storage's
   method `<lifted>$__storage.<name>` (`symbol::closure_method_name`), as
   upstream's `liftClosureIntoMethod` nests it in `fn::__storage`: its
   declaration has a `read` receiver, only its own parameters, and no
@@ -769,12 +776,24 @@ policy or data-model responsibilities to focused children:
   register-passable, so a moved capture the body writes is written in
   that call's copy, and through the storage's place otherwise, which a
   body owning a moved capture writes back (the struct lists the method in
-  `mut_self_methods`). A first-class use makes a closure over the method
-  capturing the storage by reference, kept live to the end of its
-  statement (`Flatten::load_nested_closure`); the verifier binds the
-  first capture to the method's receiver, and `native::mono`
-  instantiates the method at the storage instance it captures
-  (`Specializer::instantiate_nested_bodies`). A body naming an enclosing
+  `mut_self_methods`). A first-class use is the storage itself, as
+  upstream's `emitClosure` returns it: the check types the value as a
+  `def(...)` whose environment is `CallableEnvironment::Storage` (the
+  closure's declaration site, its captures, copyability, and
+  passability), MIR reads the declaration's slot as any local
+  (`Flatten::closure_storage_read`), and `nested::resolve_closure_types`
+  replaces every such type in the functions and declarations one body
+  lowers by the storage struct its site maps to, retargeting an indirect
+  call through one to the witness (`retarget_storage_calls`). A
+  `F: def(...)` binder is therefore instantiated at the struct, and
+  `native::mono` devirtualizes a call through `f` to the witness. Where
+  the check converts the value to a run-time `def(...) capturing[...]`
+  callable (`SemanticAdjustment::ClosureCallable`), the use instead makes
+  a closure over the method capturing the storage by reference, kept
+  live to the end of its statement (`Flatten::load_nested_closure`); the
+  verifier binds the first capture to the method's receiver, and
+  `native::mono` instantiates the method at the storage instance it
+  captures (`Specializer::instantiate_nested_bodies`). A body naming an enclosing
   callable binder, which no struct instance carries as a parameter yet,
   stays a generator nested in its enclosing declaration, taking the
   storage as its leading `read` parameter (`ClosureStorage::method`).
@@ -785,11 +804,10 @@ policy or data-model responsibilities to focused children:
   non-thin lambda through `emitClosureInstance`
   (`Flatten::build_closure_storage`, into a hidden slot,
   `Flatten::lambda_storage_slot`): an immediately invoked lambda calls
-  its method on the storage (`lower_direct_nested_call`), and a lambda
-  used as a value moves the storage into a one-capture `closure.make`
-  (`Flatten::lambda_closure`),
-  which relocates it, running no `__moveinit__`, since upstream's value
-  is the storage itself. The storage's `__init__` takes a moved capture
+  its method on the storage (`lower_direct_nested_call`), a lambda used
+  as a value is the storage it builds (`Flatten::lambda_storage_value`),
+  and one the check converts to a run-time callable moves the storage
+  into a one-capture `closure.make` (`Flatten::lambda_closure`). The storage's `__init__` takes a moved capture
   by forwarding its storage to the `var` parameter, as an owned argument
   binds it, so the capture moves once, into the field. Only a
   `@parameter` closure, upstream's legacy capturing closure, which

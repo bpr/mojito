@@ -8,6 +8,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A capture-list closure's value, and a capturing lambda's, is now its
+  closure's `__storage` struct, as at the pin (R1378): `var g = inner`,
+  `Optional(a)`, `[a, a]`, `var h = peek^` and a `F: def(...)` binder all
+  run, each closure its own type, and a call through the value borrows the
+  storage and devirtualizes to its synthesized `__call__` witness. The
+  storage gains upstream's fieldwise copy and move initializers,
+  `Copyable`/`ImplicitlyCopyable` exactly when every capture is copyable,
+  and trivial lifecycles exactly when it is trivially register-passable,
+  so a closure value is no longer copied and destroyed around each call
+  (`pliron_closure_drop_order` prints `token drop 7` once on the VM).
+  Binding a capture-list closure or a capturing lambda to a compile-time
+  callable parameter is now rejected as at the pin (R534 closed), where a
+  capturing lambda there was a compiler invariant violation; a thin lambda
+  there now runs. A display of one capturing lambda now runs on both
+  backends, where it failed to verify after `automatic-inline`.
+
 - A capture-list nested `def` a sibling captures now builds upstream's
   `__storage` struct at its declaration, one field per capture (an owned
   value for a `var` or moved capture, a `ref` for a reference capture),

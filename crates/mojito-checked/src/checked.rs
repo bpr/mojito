@@ -835,6 +835,11 @@ pub enum SemanticAdjustment {
     /// argument is memory-only and passed by address: lowering retains its
     /// place, so the callee binds the caller's storage.
     RegisterPassableRead,
+    /// A closure's storage value (a capture-list `def`'s name, a capturing
+    /// lambda) converted to a run-time `def(...) capturing[...]` value:
+    /// lowering makes the closure of the storage's method over the storage.
+    /// Any other use of the value is the storage struct itself.
+    ClosureCallable,
     /// A call, dispatched operator, by-value subscript, or display whose
     /// selected callee returns its result through memory, as upstream's
     /// signature synthesizes a `ByRefResult` argument: the callee's declared
@@ -6416,6 +6421,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if facts.register_passable_read {
         adjustments.push(SemanticAdjustment::RegisterPassableRead);
     }
+    if facts.closure_callable {
+        adjustments.push(SemanticAdjustment::ClosureCallable);
+    }
     if facts.indirect_result
         && matches!(
             expression.kind,
@@ -6732,6 +6740,8 @@ node_facts! {
         register_passable_result,
         /// See [`SemanticAdjustment::RegisterPassableRead`].
         register_passable_read,
+        /// See [`SemanticAdjustment::ClosureCallable`].
+        closure_callable,
         /// See [`SemanticAdjustment::IndirectResult`].
         indirect_result,
         /// See [`SemanticAdjustment::ConversionIndirectResult`].

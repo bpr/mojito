@@ -3287,6 +3287,7 @@ impl Checker {
         let lambda_forces_closure = lambda
             && (captures.as_ref().is_some_and(|list| list.default.is_some())
                 || !type_params.is_empty());
+        let captures_list = captures.is_some();
         if result.is_ok() {
             let captures = self
                 .fact(&stmt.source_span(), |facts| facts.captures.as_ref())
@@ -3296,8 +3297,36 @@ impl Checker {
                     .iter()
                     .flat_map(|capture| capture.origins.iter().cloned()),
             );
-            let environment = if parameter_closure || lambda_forces_closure || !captures.is_empty()
-            {
+            // A capture-list closure or capturing lambda that captures is
+            // its storage struct, as upstream's `emitClosure` returns the
+            // storage, copyable when each moved capture's type is
+            // (`allCopyable`).
+            let storage_backed =
+                !parameter_closure && (lambda || captures_list) && !captures.is_empty();
+            let environment = if storage_backed {
+                mojito_types::origin::CallableEnvironment::Storage(Box::new(
+                    mojito_types::origin::ClosureStorageEnvironment {
+                        site: mojito_types::origin::ClosureSite {
+                            module: stmt.module.clone(),
+                            declaration: stmt.span,
+                            syntax: stmt.syntax_id,
+                        },
+                        captures: concrete,
+                        copyable: captures.iter().all(|capture| {
+                            capture.kind != mojito_ast::ast::CaptureKind::Move
+                                || self.is_copyable(&capture.ty)
+                        }),
+                        register_passable: captures.iter().all(|capture| {
+                            let referent = match capture.ty.kind() {
+                                TyKind::Ref(reference) => &reference.referent,
+                                _ => &capture.ty,
+                            };
+                            self.register_passability(referent)
+                                == super::traits::RegisterPassability::Proven
+                        }),
+                    },
+                ))
+            } else if parameter_closure || lambda_forces_closure || !captures.is_empty() {
                 mojito_types::origin::CallableEnvironment::Capturing(concrete)
             } else {
                 mojito_types::origin::CallableEnvironment::Thin
@@ -3620,9 +3649,10 @@ pub(super) fn reject_default_lambdas(params: &[FnParam]) -> Result<(), TypeError
 }
 
 /// Whether a value of `ty` is, or stores, a closure: a callable whose
-/// environment is not `thin`, directly or as a struct argument, tuple or
-/// variant element. A generic `def` that captures nothing is thin exactly as
-/// a plain one is, so `(identity, offset)` stores no closure. A thin
+/// environment is neither `thin` nor a closure's own storage struct,
+/// directly or as a struct argument, tuple or variant element. A generic
+/// `def` that captures nothing is thin exactly as a plain one is, so
+/// `(identity, offset)` stores no closure. A thin
 /// callable's signature is not searched, since the value captures nothing
 /// whatever contracts its parameters name.
 ///
@@ -3635,6 +3665,7 @@ fn holds_closure(ty: &Ty) -> bool {
             !matches!(
                 func.environment,
                 mojito_types::origin::CallableEnvironment::Thin
+                    | mojito_types::origin::CallableEnvironment::Storage(_)
             )
         }),
         TyKind::Overload(_) => true,

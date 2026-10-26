@@ -10,11 +10,10 @@
 #   copy 4
 #   5
 #
-# The pin's value is the storage struct, copied by its `__copyinit__` when
-# it is copyable. Mojito's is a closure over the storage: the VM copies the
-# value before each call through `f` (`var.use copy`), running each
-# capture's copy (`copy 3` twice, `copy 4` three times), and native runs
-# none (`copy 4` once) (R1378).
+# Mojito prints `copy 4` once on the value line, on both backends: each
+# value is the lambda's storage struct, which `twice` borrows, so no call
+# copies it. The pin's two copies are both made where the storage is
+# built (R1432); the immediately invoked lambda's single copy agrees.
 # When Mojito runs it, promote this file to `assets/ok/` with its manifest rows.
 #
 # Observed 2026-10-25 against `Mojo 1.2.0.dev2026101705 (46f49943)`.

@@ -220,6 +220,7 @@ impl Checker {
     /// the caller's value. A trivial register value transfers as a copy. A
     /// compile-time binding, or a field chain off one, is a parameter
     /// expression, which holds no storage to move out of, whatever its type.
+    /// A closure's declaration owns its storage, which moves out of it.
     pub(super) fn check_transfer_source(&self, source: &Expr, ty: &Ty) -> Result<(), TypeError> {
         if self.is_parameter_read(source) {
             return Err(TypeError::ParameterTransfer);
@@ -227,7 +228,12 @@ impl Checker {
         let Some(root) = field_chain_root(source) else {
             return Ok(());
         };
-        if self.is_binding_mutable(root)
+        let closure_storage = matches!(
+            ty.callable().map(|func| &func.environment),
+            Some(mojito_types::origin::CallableEnvironment::Storage(_))
+        );
+        if closure_storage
+            || self.is_binding_mutable(root)
             || self.is_compile_time_binding(root)
             || self
                 .lookup(root)
