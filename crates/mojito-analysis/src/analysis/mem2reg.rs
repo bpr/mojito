@@ -22,7 +22,11 @@
 //! capture, a loan, or a projected place keeps the slot too. A slot every
 //! store of which is a closure of reference captures is one too: that
 //! closure is a struct of pointers, trivially register-passable as
-//! upstream's is, and a call through the slot keeps it.
+//! upstream's is, and a call through it needs no stable storage, nor
+//! through a thin function's, so a `call.indirect` naming such a slot as
+//! its `callee_place` leaves it, and a shared borrow of it read only as
+//! such a call's callee is a read of its value, as upstream's call of a
+//! promoted closure reads the value.
 //!
 //! A structured body is promoted as upstream's `processRegion` promotes
 //! `hlcf`: one scoped walk, each region a scope, in which a store binds the
@@ -56,6 +60,7 @@ use mojito_mir::mir::{
     retire_slots, try_raises_mut,
 };
 use mojito_symbol::symbol::is_initializer_symbol;
+use mojito_types::origin::CallableEnvironment;
 use mojito_types::types::Ty;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
@@ -250,6 +255,20 @@ enum Mention {
     Kill,
     /// A `ref.make` of the slot's address, which leaves its value.
     Address,
+    /// A shared borrow into the register, read only as the callee of a
+    /// `call.indirect`: a read of a slot holding a closure.
+    CalleeRead { dest: Reg },
+    /// A `call.indirect` naming the whole slot as its `callee_place`, and
+    /// no other place, which a closure value does not need.
+    CalleePlace,
+}
+
+/// The facts [`slot_use`] reads mentions by: the registers each holding a
+/// slot's address, and the registers read only as the callee of a
+/// `call.indirect`.
+struct Uses {
+    addresses: Addresses,
+    callees: HashSet<u32>,
 }
 
 /// The registers each holding the address of a slot, by register number:
@@ -272,7 +291,7 @@ struct Facts {
     reads: Vec<u32>,
     /// The registers defined by a `closure.make` of reference captures.
     closures: HashSet<u32>,
-    addresses: Addresses,
+    uses: Uses,
 }
 
 impl Facts {
@@ -292,19 +311,30 @@ impl Facts {
                 definitions.get(at) == Some(&1) && reads.get(at) == through.get(at)
             })
             .collect();
+        let mut called = vec![0_u32; function.n_regs as usize];
+        callee_reads(&function.blocks, &mut called);
+        let callees = (0..function.n_regs)
+            .filter(|&reg| {
+                let at = reg as usize;
+                called[at] > 0 && reads.get(at) == called.get(at)
+            })
+            .collect();
         Self {
             definitions,
             reads,
             closures,
-            addresses,
+            uses: Uses { addresses, callees },
         }
     }
 
     /// Whether `var`, whose census is `entry`, may be promoted: a local (or
-    /// one of the `entry_stored` parameters) of a promotable type, or one
-    /// every store of which is a closure of reference captures, kept by no
-    /// mention, whose stores each store a register defined once and read
-    /// only there, and whose reads read its type.
+    /// one of the `entry_stored` parameters) of a promotable type or a thin
+    /// function type, or one every store of which is a closure of reference
+    /// captures, kept by no mention, whose stores each store a register
+    /// defined once and read only there, and whose reads read its type. A
+    /// call through the slot leaves only a slot of a thin function type, or
+    /// a local some store of which gives it a closure: neither value
+    /// carries storage it lends.
     fn candidate(
         &self,
         function: &MirFunction,
@@ -316,18 +346,34 @@ impl Facts {
         let typed = function.var_tys.get(&var);
         let stores_closures = entry.mentions.iter().all(|(_, mention)| match *mention {
             Mention::Store(src) => self.closures.contains(&src.0),
-            Mention::Read { .. } | Mention::Declare | Mention::Kill | Mention::Address => true,
+            _ => true,
         });
+        let thin = typed
+            .and_then(|ty| ty.kind().as_func())
+            .is_some_and(|func| matches!(func.environment, CallableEnvironment::Thin));
+        let callable_value = thin
+            || stores_closures
+                && !entry_stored.contains(&var)
+                && entry
+                    .mentions
+                    .iter()
+                    .any(|(_, mention)| matches!(mention, Mention::Store(_)));
         (var as usize >= function.n_params || entry_stored.contains(&var))
             && !entry.kept
-            && typed.is_some_and(|ty| declarations.copy_is_identity(ty) || stores_closures)
+            && (thin
+                || stores_closures
+                || typed.is_some_and(|ty| declarations.copy_is_identity(ty)))
             && entry.mentions.iter().all(|(_, mention)| match *mention {
                 Mention::Store(src) => {
                     function.reg_types.get(&src.0) == typed
                         && self.definitions.get(src.0 as usize) == Some(&1)
                         && self.reads.get(src.0 as usize) == Some(&1)
                 }
-                Mention::Read { dest, .. } => function.reg_types.get(&dest.0) == typed,
+                Mention::Read { dest } => function.reg_types.get(&dest.0) == typed,
+                Mention::CalleeRead { dest } => {
+                    callable_value && function.reg_types.get(&dest.0) == typed
+                }
+                Mention::CalleePlace => callable_value,
                 Mention::Declare | Mention::Kill | Mention::Address => true,
             })
     }
@@ -340,7 +386,7 @@ fn promote_in_regions(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
 ) -> (BTreeSet<VarId>, HashSet<u32>, usize) {
-    let (slots, variants, addresses) = variance(function, declarations, &BTreeSet::new());
+    let (slots, variants, uses) = variance(function, declarations, &BTreeSet::new());
     if slots.is_empty() {
         return (slots, HashSet::new(), 0);
     }
@@ -348,7 +394,7 @@ fn promote_in_regions(
     let mut promoter = Promoter {
         var_tys: &function.var_tys,
         slots: &slots,
-        addresses: &addresses,
+        uses: &uses,
         variants,
         scopes: Vec::new(),
         frames: Vec::new(),
@@ -386,13 +432,13 @@ fn variance(
     function: &mut MirFunction,
     declarations: &MirDeclarations,
     entry_stored: &BTreeSet<VarId>,
-) -> (BTreeSet<VarId>, HashMap<usize, Vec<VarId>>, Addresses) {
+) -> (BTreeSet<VarId>, HashMap<usize, Vec<VarId>>, Uses) {
     let facts = Facts::of(function);
     let mut regions = Vec::new();
     collect_regions(&function.blocks, None, &mut regions, &mut 0);
     let mut census: HashMap<VarId, Census> = HashMap::new();
     for (list, region) in regions.iter().enumerate() {
-        take_census(list, region.blocks, &facts.addresses, &mut census);
+        take_census(list, region.blocks, &facts.uses, &mut census);
     }
     // A raise out of the function hands its error slot out whole.
     keep(&mut census, function.error_slot);
@@ -444,7 +490,7 @@ fn variance(
             variants.entry(op).or_default().push(var);
         }
     }
-    (slots, variants, facts.addresses)
+    (slots, variants, facts.uses)
 }
 
 /// One region of a structured body, in preorder.
@@ -516,7 +562,7 @@ struct Frame {
 struct Promoter<'a> {
     var_tys: &'a HashMap<VarId, Ty>,
     slots: &'a BTreeSet<VarId>,
-    addresses: &'a Addresses,
+    uses: &'a Uses,
     /// The variant slots of each region op not yet walked, by preorder
     /// number.
     variants: HashMap<usize, Vec<VarId>>,
@@ -561,13 +607,13 @@ impl Promoter<'_> {
     fn walk_block(&mut self, block: &mut MirBlock) {
         let mut out = Vec::with_capacity(block.instrs.len());
         for mut instruction in std::mem::take(&mut block.instrs) {
-            if let Some((var, mention)) = slot_use(&instruction, self.addresses)
+            if let Some((var, mention)) = slot_use(&instruction, self.uses)
                 && self.slots.contains(&var)
             {
                 match mention {
                     Mention::Store(src) => self.bind(var, Some(src)),
                     Mention::Declare => self.bind(var, None),
-                    Mention::Read { dest, .. } => {
+                    Mention::Read { dest } | Mention::CalleeRead { dest } => {
                         let value = self.current_or_undef(var, &mut out);
                         out.push(MirInstr::CopyValue {
                             dest,
@@ -580,6 +626,13 @@ impl Promoter<'_> {
                     // `StackAllocLifetimeEndOp` does, and so does naming
                     // the address.
                     Mention::Kill | Mention::Address => {}
+                    Mention::CalleePlace => {
+                        if let MirInstr::CallIndirect { callee_place, .. } = &mut instruction {
+                            *callee_place = None;
+                        }
+                        out.push(instruction);
+                        continue;
+                    }
                 }
                 let mut results = Vec::new();
                 instruction_result_regs(&instruction, &mut results);
@@ -906,17 +959,12 @@ fn reference_closures(blocks: &[MirBlock], closures: &mut HashSet<u32>) {
 
 /// Record every slot mention of the region `list`'s own blocks (not of the
 /// regions they hold) in `census`, a `ref.read` or `ref.write` through one
-/// of the `addresses` mentioning its slot.
-fn take_census(
-    list: usize,
-    blocks: &[MirBlock],
-    addresses: &Addresses,
-    census: &mut HashMap<VarId, Census>,
-) {
+/// of the [`Uses::addresses`] mentioning its slot.
+fn take_census(list: usize, blocks: &[MirBlock], uses: &Uses, census: &mut HashMap<VarId, Census>) {
     for block in blocks {
         for instruction in &block.instrs {
             let slots = instruction_slots(instruction);
-            match slot_use(instruction, addresses) {
+            match slot_use(instruction, uses) {
                 Some((var, mention)) if slots.iter().all(|&slot| slot == var) => {
                     census
                         .entry(var)
@@ -938,9 +986,11 @@ fn keep(census: &mut HashMap<VarId, Census>, slots: impl IntoIterator<Item = Var
 }
 
 /// The slot `instruction` mentions as a promotable use, and how; a
-/// `ref.read` or `ref.write` through one of the `addresses` mentions the
-/// slot it addresses.
-fn slot_use(instruction: &MirInstr, addresses: &Addresses) -> Option<(VarId, Mention)> {
+/// `ref.read` or `ref.write` through one of the [`Uses::addresses`]
+/// mentions the slot it addresses, and a shared borrow into one of the
+/// [`Uses::callees`] the slot it borrows.
+fn slot_use(instruction: &MirInstr, uses: &Uses) -> Option<(VarId, Mention)> {
+    let addresses = &uses.addresses;
     match instruction {
         MirInstr::DefVar { var, src, .. } => Some((*var, Mention::Store(*src))),
         MirInstr::UseVar {
@@ -949,8 +999,20 @@ fn slot_use(instruction: &MirInstr, addresses: &Addresses) -> Option<(VarId, Men
             UseMode::Copy | UseMode::Move | UseMode::Forward => {
                 Some((*var, Mention::Read { dest: *dest }))
             }
+            UseMode::BorrowShared if uses.callees.contains(&dest.0) => {
+                Some((*var, Mention::CalleeRead { dest: *dest }))
+            }
             UseMode::BorrowShared | UseMode::BorrowMut => None,
         },
+        MirInstr::CallIndirect {
+            callee_place: Some(place),
+            ..
+        } if place.is_whole_root()
+            && place.through.is_none()
+            && instruction_slots(instruction).len() == 1 =>
+        {
+            Some((place.root, Mention::CalleePlace))
+        }
         MirInstr::LoadPlace { dest, place } if place.proj.is_empty() && place.through.is_none() => {
             Some((place.root, Mention::Read { dest: *dest }))
         }
@@ -989,6 +1051,21 @@ fn slot_references(blocks: &[MirBlock], made: &mut Addresses, through: &mut [u32
                 }
             }
             _ => {}
+        }
+    }
+}
+
+/// Count in `called` each register's reads as the callee of a
+/// `call.indirect` in `blocks`, its regions included.
+fn callee_reads(blocks: &[MirBlock], called: &mut [u32]) {
+    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
+        for region in instruction_regions(instruction) {
+            callee_reads(region, called);
+        }
+        if let MirInstr::CallIndirect { callee, .. } = instruction
+            && let Some(count) = called.get_mut(callee.0 as usize)
+        {
+            *count += 1;
         }
     }
 }

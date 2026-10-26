@@ -6052,8 +6052,9 @@ point where a slot declared in a loop is uninitialized again.
   (`tests/mir_passes/canonicalize/indirect_known_callee.mir`). So round
   2's fold hands round 3's `inline-parametric` a direct call, and an
   inlined `apply[double]` inlines a `nodebug` `double` too. A capturing
-  closure keeps the indirect call (R1345), and a closure read out of a
-  slot is no known callee (R1344). Then, until nothing
+  closure keeps the indirect call (R1345); a closure stored in a slot
+  reaches the fold once `mem-2-reg` promotes the slot through the call
+  (R1344). Then, until nothing
   changes, it erases each instruction whose results nothing reads and
   that `MirInstr::would_be_trivially_dead` declares free of effects but
   reading (MLIR's `wouldOpBeTriviallyDead`): constants, literal

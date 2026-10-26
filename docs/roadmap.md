@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1468**.
+Next free ID: **R1469**.
 
 ## Ordered Work
 
@@ -495,30 +495,26 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1344 `mem-2-reg` keeps the slot of a closure a call goes
-  through**
+- [ ] **R1468 `MirDeclarations::copy_is_identity` does not hold of a thin
+  function value**
 
-  A nested `def` passed as a callable binder or bound to a local stays in
-  a slot, so a call of it that is not inlined reads `var.use` of the slot
-  and stays `call.indirect` until the elaborator resolves it per instance,
-  where upstream's `Mem2Reg` promotes the closure and its canonicalizer
-  then folds the call to the closure's function.
-  - `call.indirect`'s `callee_place` names the slot, which keeps it
-    (`mem2reg.rs`: "a call through the slot keeps it"); `canonicalize`
-    folds only a callee register that `closure.make` itself defines.
-  - Lever: decide what `callee_place` still records for a closure value
-    (loans over its captures), and promote the slot when nothing needs
-    it, so the call reads the `closure.make` register.
-  - Probe: `print(apply[inner](3))` over a capture-free nested
-    `def inner(x: Int) -> Int` and a `nodebug`
-    `def apply[f: def(Int) thin -> Int](x: Int) -> Int: return f(x)`
-    keeps a `var.store` of `closure.make "main$inner"` and a `var.use`
-    feeding a `call.indirect` in `emit-mir`'s `main`.
-  - Probe: `var g = inner` then `print(g(1))` keeps the same slot.
-  - A `nodebug` nested `def` already inlines through the slot
-    (`inline-parametric`'s `closures.called`), so this is the call's
-    shape, not inlining reach.
-  - Found while landing R1098 (2026-10-24).
+  A `def(...) thin` value is a bare code pointer, trivially
+  register-passable as upstream's thin function value is, but
+  `MirDeclarations::copy_is_identity` (`mojito-mir/src/mir.rs`) answers
+  false for every `TyKind::Func`.
+  - `canonicalize`'s `forward_copies` therefore keeps a `value.copy` of
+    one, and `mem-2-reg` admits a thin function's slot by a test of its
+    own (`thin` in `Facts::candidate`, `analysis/mem2reg.rs`).
+  - Lever: answer true for a `TyKind::Func` whose environment is
+    `CallableEnvironment::Thin`, then drop `mem-2-reg`'s own test; check
+    that the `TrivialRegisterPassable` conformance answer beside it and
+    Pliron's `copy_is_identity` users (`lower/support.rs`,
+    `lower/instr.rs`) still hold for the two-word function value.
+  - Probe: `def apply(f: def(Int) thin -> Int, x: Int) -> Int: return
+    f(x)` called with a nested `def` keeps a `value.copy` of the
+    parameter's `place.load` feeding the `call.indirect` in `emit-mir`'s
+    `apply`.
+  - Found while landing R1344 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -542,6 +538,11 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: `outer` in
     `tests/mir_passes/canonicalize/indirect_known_callee.mir` keeps its
     `call.indirect` through `closure.make "outer$plus"`.
+  - Probe: a `nodebug`
+    `apply[origins: OriginSet, //, f: def(Int) capturing[origins] -> Int]`
+    returning `f(x)`, called as `apply[plus](3)` over an `@parameter`
+    nested `def plus` reading a local, keeps a `call.indirect` through
+    `closure.make "main$plus"` in `emit-mir`'s `main`.
   - Found while landing R1098 (2026-10-24).
   - Depends on R1344, which makes the shape reachable from source.
   - Model: Opus, Not Planned.
@@ -10645,6 +10646,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`lower/closures.rs`).
   - Delete them once no run-time `capturing[...]` value holds a moved
     storage.
+  - Once deleted, `mem-2-reg`'s call-through rule (`Facts::candidate`,
+    `analysis/mem2reg.rs`) can admit every function-typed slot, not only
+    a thin one or a local holding a closure of reference captures: a
+    call through a parameter of a `capturing` function type still keeps
+    its `callee_place` and the slot it names.
   - Found while landing R1378 (2026-10-25).
   - Depends on R1433, R176.
   - Model: Opus, Not Planned.

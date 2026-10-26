@@ -182,6 +182,12 @@ to evolve under the `0.x` compatibility rules.
   `nodebug` `double` inlines in the third round and folds, as at the pin.
   A call through a capturing closure stays indirect (R1345), and so does
   one through a closure held in a slot (R1344).
+- `mem-2-reg` promotes the slot of a closure a call goes through (R1344):
+  a slot of a thin function type, or a local holding a closure of
+  reference captures, no longer stays behind a `call.indirect`'s
+  `callee_place`, which such a value never needs, so `var g = inner;
+  g(1)` and a non-inlined `apply[inner](3)` call `inner` directly before
+  elaboration, as upstream's `Mem2Reg` and canonicalizer leave them.
 - The post-elaboration pipeline runs upstream's `AutomaticInline`
   (`automatic-inline`, R1271): callees first over the call graph's
   strongly connected components, each concrete function takes the bodies of
