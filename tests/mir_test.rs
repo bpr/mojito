@@ -4103,7 +4103,7 @@ fn recursively_lifted_declarations_preserve_checked_call_abis() {
         .iter()
         .find(|declaration| declaration.lowered_name == "outer$middle$inner")
         .expect("deep declaration");
-    assert_eq!(declaration.param_names, ["base", "head", "tail", "bump"]);
+    assert_eq!(declaration.param_names, ["self", "head", "tail", "bump"]);
     assert_eq!(declaration.param_types.len(), 4);
     assert_eq!(declaration.defaults.len(), 4);
     assert!(declaration.defaults[2].is_some());
@@ -4113,7 +4113,7 @@ fn recursively_lifted_declarations_preserve_checked_call_abis() {
     assert_eq!(declaration.keyword_only, Some(3));
     assert!(declaration.raises);
     assert_eq!(declaration.ret_ty, Ty::int());
-    assert_eq!(declaration.ref_params, [true, false, false, false]);
+    assert_eq!(declaration.ref_params, [false, false, false, false]);
 
     let function = &mir
         .functions
@@ -4158,9 +4158,11 @@ fn recursively_lifted_reference_return_keeps_its_checked_contract() {
 fn nested_def_statement_materializes_explicit_capture_modes_once() {
     use mojito::mir::UseMode;
 
-    // Each owned capture is materialized once, into a capture slot of its
-    // own, by its mode (`{var copied}` a copy, `{var moved^}` a move), and a
-    // call of the nested `def` by name passes that slot.
+    // Each declaration builds its closure's storage struct once, by its
+    // captures' modes (`{var copied}` read in place by the storage's
+    // `__init__`, `{var moved^}` moved into it), and a call of the nested
+    // `def` by name passes the storage: by value when it is
+    // register-passable, by address when it is memory-only.
     let src = "def main():\n    var copied = 40\n    var moved: List[Int] = [40]\n    def snapshot() {var copied} -> Int:\n        return copied\n    def take() {var moved^} -> Int:\n        return moved[0]\n    print(snapshot(), take())\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     let main = &mir
@@ -4176,39 +4178,50 @@ fn nested_def_statement_materializes_explicit_capture_modes_once() {
             .position(|candidate| candidate == name)
             .unwrap_or_else(|| panic!("slot '{name}'")) as u32
     };
-    let source_reads = |source: u32, mode: UseMode| {
+    let call = |callee: &str| {
+        let calls: Vec<_> = instructions
+            .iter()
+            .filter_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func,
+                    args,
+                    arg_places,
+                    ..
+                } if func.0 == callee => Some((args, arg_places)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(calls.len(), 1, "one call of {callee}");
+        calls[0]
+    };
+    let (_, init_places) = call("main$snapshot$__storage.__init__");
+    assert_eq!(
+        init_places[0].as_ref().map(|place| place.root),
+        Some(slot("copied"))
+    );
+    assert_eq!(
         instructions
             .iter()
-            .filter(|instruction| {
-                matches!(instruction, MirInstr::UseVar { var, mode: used, .. }
-                    if *var == source && *used == mode)
-            })
-            .count()
-    };
-    assert_eq!(source_reads(slot("copied"), UseMode::Copy), 1);
-    assert_eq!(
-        source_reads(slot("moved"), UseMode::Forward) + source_reads(slot("moved"), UseMode::Move),
+            .filter(
+                |instruction| matches!(instruction, MirInstr::UseVar { var, mode, .. }
+                if *var == slot("moved") && matches!(mode, UseMode::Move | UseMode::Forward))
+            )
+            .count(),
         1
     );
-    for (capture, callee) in [
-        ("snapshot$copied", "main$snapshot"),
-        ("take$moved", "main$take"),
-    ] {
-        let capture = slot(capture);
-        assert_eq!(
-            instructions
-                .iter()
-                .filter(|instruction| matches!(instruction, MirInstr::DefVar { var, .. } if *var == capture))
-                .count(),
-            1,
-            "the capture is materialized once"
-        );
-        assert!(instructions.iter().any(|instruction| matches!(
-            instruction,
-            MirInstr::Call { func, arg_places, .. } if func.0 == callee
-                && arg_places.iter().flatten().any(|place| place.root == capture)
-        )));
-    }
+    let (args, places) = call("main$snapshot");
+    assert_eq!(args.len(), 1);
+    assert!(
+        places[0].is_none(),
+        "a register-passable storage is a value"
+    );
+    let (args, places) = call("main$take");
+    assert_eq!(args.len(), 1);
+    assert_eq!(
+        places[0].as_ref().map(|place| place.root),
+        Some(slot("take")),
+        "a memory-only storage is passed by address"
+    );
     assert!(
         !instructions
             .iter()
@@ -4218,11 +4231,12 @@ fn nested_def_statement_materializes_explicit_capture_modes_once() {
 }
 
 #[test]
-fn sibling_capture_keeps_the_materialized_closure_slot_as_its_environment() {
+fn sibling_capture_holds_a_reference_to_the_sibling_storage() {
     // `helper` copies its capture, so its statement builds its storage
     // struct through the storage's `__init__` and keeps it in its slot;
-    // `caller` captures that slot, its direct call passes the slot's place,
-    // never `x`'s, and its call of `helper` passes the storage's field.
+    // `caller`'s storage holds a reference to that slot, never to `x`,
+    // and `caller`'s body calls `helper` passing the storage it reaches
+    // through that reference.
     let src = "def main():\n    var x = 1\n    def helper() {var x} -> Int:\n        return x\n    x = 2\n    def caller() {helper} -> Int:\n        return helper()\n    print(caller())\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     let function = |name: &str| {
@@ -4241,7 +4255,6 @@ fn sibling_capture_keeps_the_materialized_closure_slot_as_its_environment() {
             .unwrap_or_else(|| panic!("{name} slot")) as u32
     };
     let helper_slot = slot(main, "helper");
-    let x_slot = slot(main, "x");
     let instructions: Vec<_> = main.blocks.iter().flat_map(|block| &block.instrs).collect();
     assert!(
         !instructions
@@ -4261,37 +4274,54 @@ fn sibling_capture_keeps_the_materialized_closure_slot_as_its_environment() {
         instruction,
         MirInstr::DefVar { var, src, .. } if *var == helper_slot && *src == storage
     )));
-    let caller_capture = instructions
+    let captured = instructions
         .iter()
         .find_map(|instruction| match instruction {
             MirInstr::Call {
                 func, arg_places, ..
-            } if func.0 == "main$caller" => arg_places.first().cloned().flatten(),
+            } if func.0 == "main$caller$__storage.__init__" => {
+                arg_places.first().cloned().flatten()
+            }
             _ => None,
         })
-        .expect("caller's direct call passes its captured sibling slot");
-    assert_eq!(caller_capture.root, helper_slot);
-    assert_ne!(caller_capture.root, x_slot);
+        .expect("caller's storage lends helper's slot");
+    assert_eq!(captured.root, helper_slot);
+    let caller_storage = mir
+        .declarations
+        .structure("main$caller$__storage")
+        .expect("caller's storage is declared");
+    assert!(matches!(
+        caller_storage.fields.as_slice(),
+        [(field, ty)] if field == "helper" && matches!(ty.kind(), TyKind::Ref(reference)
+            if matches!(reference.referent.kind(), TyKind::Struct(name, _) if name == "main$helper$__storage"))
+    ));
     let caller = function("main$caller");
-    let field = caller
+    let caller_instructions: Vec<_> = caller
         .blocks
         .iter()
         .flat_map(|block| &block.instrs)
+        .collect();
+    let argument = caller_instructions
+        .iter()
         .find_map(|instruction| match instruction {
-            MirInstr::Call {
-                func, arg_places, ..
-            } if func.0 == "main$helper" => arg_places.first().cloned().flatten(),
+            MirInstr::Call { func, args, .. } if func.0 == "main$helper" => args.first().copied(),
             _ => None,
         })
         .expect("caller calls helper directly");
-    assert_eq!(field.root, slot(caller, "helper"));
-    assert!(matches!(field.proj.as_slice(), [Proj::Field(name)] if name == "x"));
+    assert!(caller_instructions.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::LoadPlace { dest, place } if *dest == argument
+            && place.root == slot(caller, "helper") && place.proj.is_empty()
+    )));
 }
 
 #[test]
-fn sibling_capture_of_a_reference_capture_passes_its_reference_field() {
+fn lifted_body_takes_its_storage_and_reads_captures_through_its_fields() {
     // `get` captures `k` by reference, so its storage's field is a `ref`
-    // to `k`, which `twice`'s direct call of `get` passes.
+    // to `k`. Its lifted body takes the storage as its one leading `read`
+    // parameter and binds `k` to the reference that field stores, and
+    // `twice`'s direct call of `get` passes the storage it reaches through
+    // its own capture of `get`.
     let src = "def main():\n    var k = 1\n    def get() {imm k} -> Int:\n        return k\n    def twice() {get} -> Int:\n        return get() + get()\n    k = 2\n    print(twice())\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     let storage = mir
@@ -4302,27 +4332,43 @@ fn sibling_capture_of_a_reference_capture_passes_its_reference_field() {
         storage.fields.as_slice(),
         [(field, ty)] if field == "k" && matches!(ty.kind(), TyKind::Ref(_))
     ));
+    let declaration = mir
+        .declarations
+        .functions
+        .iter()
+        .find(|declaration| declaration.lowered_name == "main$get")
+        .expect("get declared");
+    assert_eq!(declaration.param_names, ["self"]);
+    assert_eq!(declaration.ref_params, [false]);
+    assert_eq!(declaration.param_conventions, [None]);
+    let get = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main$get")
+        .expect("get lifted")
+        .1;
+    assert_eq!(get.n_params, 1);
+    assert!(get.blocks[0].instrs.iter().any(|instruction| matches!(
+        instruction,
+        MirInstr::MakeRef { place, .. } if place.root == 0
+            && matches!(place.proj.as_slice(), [Proj::Field(name)] if name == "k")
+    )));
     let twice = &mir
         .functions
         .iter()
         .find(|(name, _)| name == "main$twice")
         .expect("twice lifted")
         .1;
-    let field = twice
+    let calls = twice
         .blocks
         .iter()
         .flat_map(|block| &block.instrs)
-        .find_map(|instruction| match instruction {
-            MirInstr::Call {
-                func, arg_places, ..
-            } if func.0 == "main$get" => arg_places.first().cloned().flatten(),
-            _ => None,
+        .filter(|instruction| {
+            matches!(instruction, MirInstr::Call { func, args, .. }
+                if func.0 == "main$get" && args.len() == 1)
         })
-        .expect("twice calls get directly");
-    assert!(matches!(
-        field.ty.as_ref().map(Ty::kind),
-        Some(TyKind::Ref(_))
-    ));
+        .count();
+    assert_eq!(calls, 2, "twice calls get directly, passing its storage");
 }
 
 #[test]
@@ -4343,7 +4389,8 @@ fn forwarded_sibling_capture_parameter_keeps_its_storage_type() {
     let storage = |ty: Option<&Ty>| {
         matches!(
             ty.map(Ty::kind),
-            Some(TyKind::Struct(name, _)) if name == "outer$helper$__storage"
+            Some(TyKind::Ref(reference)) if matches!(reference.referent.kind(),
+                TyKind::Struct(name, _) if name == "outer$helper$__storage")
         )
     };
     assert!(storage(middle.var_tys.get(&helper_slot)));
@@ -4354,10 +4401,12 @@ fn forwarded_sibling_capture_parameter_keeps_its_storage_type() {
         .find_map(|instruction| match instruction {
             MirInstr::Call {
                 func, arg_places, ..
-            } if func.0 == "outer$middle$inner" => arg_places.first().cloned().flatten(),
+            } if func.0 == "outer$middle$inner$__storage.__init__" => {
+                arg_places.first().cloned().flatten()
+            }
             _ => None,
         })
-        .expect("inner's direct call passes the forwarded helper");
+        .expect("inner's storage lends the forwarded helper");
     assert_eq!(capture.root, helper_slot);
     assert!(storage(capture.root_ty.as_ref()));
 }
@@ -4383,11 +4432,12 @@ fn same_named_block_defs_call_distinct_lifted_bodies() {
 }
 
 #[test]
-fn nested_call_by_name_is_a_direct_call_passing_its_captures() {
+fn nested_call_by_name_passes_its_closure_storage() {
     // A call of a nested `def` by name is a direct call of its lifted
-    // body, whose leading parameters are the captures, passed as the
-    // captured places; no closure is made for it. An `imm` capture is a
-    // read parameter, a `mut` one a written one.
+    // body, whose one leading parameter is its closure's storage, the
+    // declaration's slot; no closure is made for it. The storage is a
+    // `read` parameter: a `mut` capture writes its referent, not the
+    // storage.
     let src = "def outer(k: Int) -> Int:\n    var m = k\n    def cap(x: Int) {imm k} -> Int:\n        return k + x\n    def bump(x: Int) {mut m} -> Int:\n        m += x\n        return m\n    return cap(5) + bump(1)\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     let outer = &mir
@@ -4411,26 +4461,19 @@ fn nested_call_by_name_is_a_direct_call_passing_its_captures() {
         )),
         "no closure stands between the caller and the body"
     );
-    for (callee, captured) in [("outer$cap", slot("k")), ("outer$bump", slot("m"))] {
-        let (args, arg_places) = instructions
+    for (callee, storage) in [("outer$cap", slot("cap")), ("outer$bump", slot("bump"))] {
+        let args = instructions
             .iter()
             .find_map(|instruction| match instruction {
-                MirInstr::Call {
-                    func,
-                    args,
-                    arg_places,
-                    ..
-                } if func.0 == callee => Some((args, arg_places)),
+                MirInstr::Call { func, args, .. } if func.0 == callee => Some(args),
                 _ => None,
             })
             .unwrap_or_else(|| panic!("direct call of {callee}"));
         assert_eq!(args.len(), 2);
-        assert_eq!(arg_places.len(), 2);
-        assert_eq!(
-            arg_places[0].as_ref().map(|place| place.root),
-            Some(captured)
-        );
-        assert!(arg_places[1].is_none());
+        assert!(instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::LoadPlace { dest, place } if *dest == args[0] && place.root == storage
+        )));
     }
     let declaration = |name: &str| {
         mir.declarations
@@ -4439,9 +4482,9 @@ fn nested_call_by_name_is_a_direct_call_passing_its_captures() {
             .find(|declaration| declaration.lowered_name == name)
             .unwrap_or_else(|| panic!("declaration {name}"))
     };
-    assert_eq!(declaration("outer$cap").ref_params, [true, false]);
+    assert_eq!(declaration("outer$cap").ref_params, [false, false]);
     assert_eq!(declaration("outer$cap").param_writes, [false, false]);
-    assert_eq!(declaration("outer$bump").param_writes, [true, false]);
+    assert_eq!(declaration("outer$bump").param_writes, [false, false]);
 }
 
 #[test]
@@ -4473,9 +4516,10 @@ fn nested_def_closure_is_made_at_its_first_class_use() {
 }
 
 #[test]
-fn copied_capture_keeps_the_capture_slot_and_the_direct_call() {
+fn copied_capture_lives_in_the_storage_slot() {
     // A call of a nested `def` by name is a direct call of its lifted body,
-    // which takes its `var` capture's copy from a capture slot of its own.
+    // which takes its `var` capture's copy from the storage the
+    // declaration builds in its slot.
     let src = "def outer(k: Int) -> Int:\n    var m = k\n    def vc(x: Int) {var m} -> Int:\n        return m + x\n    return vc(2)\n";
     let mir = lower_program(&parse(src).expect("parse")).expect("checked lowering");
     let outer = &mir
@@ -4489,15 +4533,16 @@ fn copied_capture_keeps_the_capture_slot_and_the_direct_call() {
         .iter()
         .flat_map(|block| &block.instrs)
         .collect();
-    let capture = outer
+    let storage = outer
         .var_names
         .iter()
-        .position(|name| name == "vc$m")
-        .expect("the capture slot") as u32;
+        .position(|name| name == "vc")
+        .expect("the storage slot") as u32;
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
-        MirInstr::DefVar { var, .. } if *var == capture
+        MirInstr::DefVar { var, .. } if *var == storage
     )));
+    assert!(!outer.var_names.iter().any(|name| name == "vc$m"));
     assert!(instructions.iter().any(|instruction| matches!(
         instruction,
         MirInstr::Call { func, .. } if func.0 == "outer$vc"
@@ -5503,7 +5548,7 @@ def main() raises:
         [("$default$outer$inner$y".to_string(), 1)]
     );
     // A call of the nested `def` by name is a direct call of its lifted
-    // body: the captured `base`, then `x`, then `y`, filled or written.
+    // body: its closure's storage, then `x`, then `y`, filled or written.
     let inner_arities: Vec<usize> = outer
         .iter()
         .filter_map(|instruction| match instruction {

@@ -292,10 +292,9 @@ impl<'a> Flatten<'a> {
 
     /// Lower a call of a nested `def` by name. A body whose storage this
     /// frame holds, or whose captures are all places this frame holds, is
-    /// called directly, as the pin calls the lifted closure generator: a
-    /// `call` of the lifted body passing the storage's fields or the
-    /// captured places as its leading reference arguments. Any other body
-    /// (a sibling reached only through a captured closure value) is called
+    /// called directly, as the pin calls the lifted closure method: a
+    /// `call` of the lifted body passing the storage, or the captured
+    /// places as its leading reference arguments. Any other body is called
     /// through its closure value.
     pub(in crate::mir) fn lower_nested_call(
         &mut self,
@@ -387,70 +386,44 @@ impl<'a> Flatten<'a> {
 
     /// Whether a call of `info` by name is a direct call of its lifted
     /// body: the frame holds its storage ([`NestedInfo::storage`]), its
-    /// declaration's slot or a sibling's capture of it, or each captured
-    /// place, its own local or a forwarded environment parameter for a
-    /// reference capture, and the environment slot of a copied or moved
-    /// one ([`NestedInfo::holds_environment`]).
+    /// declaration's slot or a sibling's capture of it, or the body has no
+    /// storage and the frame holds each captured place, its own local or
+    /// a forwarded reference parameter.
     pub(in crate::mir) fn calls_nested_directly(&self, info: &NestedInfo) -> bool {
-        if info.storage.is_some() && self.owner_vars.contains_key(&info.binding) {
-            return true;
+        match &info.storage {
+            Some(_) => self.owner_vars.contains_key(&info.binding),
+            None => info.captures.iter().all(|capture| match capture.kind {
+                mojito_ast::ast::CaptureKind::Imm
+                | mojito_ast::ast::CaptureKind::Mut
+                | mojito_ast::ast::CaptureKind::Ref => {
+                    info.materialized_here || self.owner_vars.contains_key(&capture.binding)
+                }
+                mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move => false,
+            }),
         }
-        info.captures.iter().all(|capture| match capture.kind {
-            mojito_ast::ast::CaptureKind::Imm
-            | mojito_ast::ast::CaptureKind::Mut
-            | mojito_ast::ast::CaptureKind::Ref => {
-                info.materialized_here || self.owner_vars.contains_key(&capture.binding)
-            }
-            mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move => self
-                .environment
-                .contains_key(&(info.binding, capture.binding)),
+    }
+
+    /// The place of the storage of `info` this frame holds: the
+    /// declaration's slot, or a capture of it holding a reference to it;
+    /// `None` when the frame holds no storage of it.
+    pub(in crate::mir) fn storage_place(&mut self, info: &NestedInfo) -> Option<MirPlace> {
+        let storage = info.storage.as_ref()?;
+        self.owner_vars.contains_key(&info.binding).then(|| {
+            self.capture_place(&NestedCapture {
+                name: info.source_name.clone(),
+                binding: info.binding,
+                ty: storage.ty.clone(),
+                kind: mojito_ast::ast::CaptureKind::Imm,
+            })
         })
     }
 
-    /// The place a call of `info` by name passes for `capture`: the field
-    /// of the storage this frame holds that keeps it, which for a
-    /// reference capture holds the handle the call binds, the environment
-    /// slot holding a copied or moved capture, else the captured place.
-    fn nested_capture_argument(&mut self, info: &NestedInfo, capture: &NestedCapture) -> MirPlace {
-        if let Some(place) = self.storage_field_place(info, capture) {
-            return place;
-        }
-        match self.environment.get(&(info.binding, capture.binding)) {
-            Some(var) => MirPlace::root(*var, self.var_types.get(var).cloned()),
-            None => self.capture_place(capture),
-        }
-    }
-
-    /// The field of the storage of `info` this frame holds that keeps
-    /// `capture`, `None` when the frame holds no storage of it.
-    fn storage_field_place(
-        &mut self,
-        info: &NestedInfo,
-        capture: &NestedCapture,
-    ) -> Option<MirPlace> {
-        let storage = info.storage.as_ref()?;
-        if !self.owner_vars.contains_key(&info.binding) {
-            return None;
-        }
-        let (field, ty) = info
-            .captures
-            .iter()
-            .zip(&storage.fields)
-            .find_map(|(candidate, field)| (candidate == capture).then_some(field))?;
-        let mut place = self.binding_place(info.binding, &info.source_name);
-        if place.root_ty.is_none() && place.through.is_none() {
-            place.root_ty = Some(storage.ty.clone());
-        }
-        place.proj.push(Proj::Field(field.clone()));
-        place.projection_tys.push(ty.clone());
-        place.ty = Some(ty.clone());
-        Some(place)
-    }
-
-    /// The direct call of the lifted body of `info`: its captured places,
-    /// loaded in capture order, lead the explicit arguments and are
-    /// retained as the call's places for the body's leading reference
-    /// parameters.
+    /// The direct call of the lifted body of `info`: the storage this
+    /// frame holds, as upstream passes a closure's `self`, retained as the
+    /// call's place when it is memory-only (by address), else its captured
+    /// places, loaded in capture order and retained as the call's places
+    /// for the body's leading reference parameters, lead the explicit
+    /// arguments.
     fn lower_direct_nested_call(
         &mut self,
         call: Node<'a>,
@@ -467,25 +440,34 @@ impl<'a> Flatten<'a> {
         let (kw_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         self.close_call_setup(Some(call));
         self.allow_argument_anchors = saved_anchor_permission;
-        let through_storage = info.storage.is_some() && self.owner_vars.contains_key(&info.binding);
-        let captured: Vec<(Reg, MirPlace)> = info
-            .captures
-            .iter()
-            .map(|capture| {
-                let place = self.nested_capture_argument(info, capture);
-                // A storage's reference field binds the handle it holds.
-                let ty = match place.ty.as_ref().map(Ty::kind) {
-                    Some(TyKind::Ref(reference)) if through_storage => reference.referent.clone(),
-                    _ => place.ty.clone().unwrap_or_else(|| capture.ty.clone()),
-                };
-                let dest = self.fresh_typed(call.location(), Some(place.root), ty);
+        let captured: Vec<(Reg, Option<MirPlace>)> = match self.storage_place(info) {
+            Some(place) => {
+                let storage = info
+                    .storage
+                    .as_ref()
+                    .expect("a storage place has a storage");
+                let dest = self.fresh_typed(call.location(), Some(place.root), storage.ty.clone());
                 self.emit(MirInstr::LoadPlace {
                     dest,
                     place: place.clone(),
                 });
-                (dest, place)
-            })
-            .collect();
+                vec![(dest, (!storage.register_passable).then_some(place))]
+            }
+            None => info
+                .captures
+                .iter()
+                .map(|capture| {
+                    let place = self.capture_place(capture);
+                    let ty = place.ty.clone().unwrap_or_else(|| capture.ty.clone());
+                    let dest = self.fresh_typed(call.location(), Some(place.root), ty);
+                    self.emit(MirInstr::LoadPlace {
+                        dest,
+                        place: place.clone(),
+                    });
+                    (dest, Some(place))
+                })
+                .collect(),
+        };
         let d = self.fresh(call.location(), None);
         self.emit_call_invalidations(call, args, kwargs);
         let capture_accesses = self.call_capture_accesses(call);
@@ -502,7 +484,7 @@ impl<'a> Flatten<'a> {
         let mut all_args: Vec<Reg> = captured.iter().map(|(reg, _)| *reg).collect();
         all_args.extend(arg_regs);
         let mut all_places: Vec<Option<MirPlace>> =
-            captured.into_iter().map(|(_, place)| Some(place)).collect();
+            captured.into_iter().map(|(_, place)| place).collect();
         all_places.extend(arg_places);
         let raises = self.raises(call.raises(), call.location());
         self.emit_call(MirInstr::Call {
@@ -527,8 +509,8 @@ impl<'a> Flatten<'a> {
     }
 
     /// Keep the owners of the reference captures of `info`, and the
-    /// storage or environment slots holding its copied or moved ones, alive
-    /// through a call of it.
+    /// storage slot holding its copied or moved ones, alive through a call
+    /// of it.
     fn emit_capture_keepalives(&mut self, info: &NestedInfo) {
         let mut owners = Vec::new();
         let mut seen = HashSet::new();
@@ -538,15 +520,11 @@ impl<'a> Flatten<'a> {
             .and_then(|_| self.owner_vars.get(&info.binding).copied());
         owners.extend(storage);
         for capture in &info.captures {
-            let owned = matches!(
+            if !matches!(
                 capture.kind,
                 mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move
-            );
-            match self.environment.get(&(info.binding, capture.binding)) {
-                Some(var) if !owners.contains(var) => owners.push(*var),
-                Some(_) => {}
-                None if storage.is_some() && owned => {}
-                None => self.collect_capture_keepalives(capture, &mut owners, &mut seen),
+            ) {
+                self.collect_capture_keepalives(capture, &mut owners, &mut seen);
             }
         }
         for var in owners {
@@ -687,6 +665,30 @@ impl<'a> Flatten<'a> {
         info: &NestedInfo,
         at: SourceSpan,
     ) -> Reg {
+        // A body with storage is the closure of its lifted body over that
+        // storage, captured by reference. The closure is a temporary of the
+        // statement that takes it, so the storage stays live to the
+        // statement's end.
+        if let Some(place) = self.storage_place(info) {
+            if !self.pending_argument_anchors.contains(&place.root) {
+                self.pending_argument_anchors.push(place.root);
+            }
+            let dest = match &info.callable_ty {
+                Some(ty) => self.fresh_typed(at, None, ty.clone()),
+                None => self.fresh(at, None),
+            };
+            self.emit(MirInstr::MakeClosure {
+                dest,
+                function: info.mangled.clone(),
+                captures: vec![MirClosureCapture {
+                    place,
+                    mode: MirCaptureMode::Reference,
+                    constructor: None,
+                    destructor: None,
+                }],
+            });
+            return dest;
+        }
         if !self.owner_vars.contains_key(&info.binding) {
             // A declaration without a slot makes its closure at each
             // first-class use. A lifted body has no direct access to an

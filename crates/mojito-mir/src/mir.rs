@@ -130,7 +130,7 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &std::sync::Arc::default(),
         false,
         &[],
-        &[],
+        &CaptureSlots::default(),
         &[],
         None,
         &EnclosingBinders::default(),
@@ -487,7 +487,8 @@ impl MirDeclarations {
 
     /// Whether dropping a value of `ty` runs no code, as upstream's
     /// `IsTriviallyDeinitable` answers: a compiler-known scalar
-    /// ([`has_no_destructor`]), a pointer, a tuple or pack of such types,
+    /// ([`has_no_destructor`]), a pointer or reference, a tuple or pack of
+    /// such types,
     /// a struct with no explicit-destroy obligation whose
     /// `IsTriviallyDeinitable` row holds at its arguments, as upstream's
     /// `CheckLifetimes` binds a destructor's `__del__is_trivial` witness to
@@ -514,7 +515,7 @@ impl MirDeclarations {
             return true;
         }
         match ty.kind() {
-            TyKind::Pointer { .. } => true,
+            TyKind::Pointer { .. } | TyKind::Ref(_) => true,
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => items
                 .iter()
                 .all(|item| self.drop_runs_no_code_within(item, visiting)),
@@ -1141,7 +1142,7 @@ fn lower_program(
             overloads,
             false,
             &[],
-            &[],
+            &CaptureSlots::default(),
             &[],
             None,
             &EnclosingBinders::default(),
@@ -1507,6 +1508,12 @@ fn lower_fieldwise_members(
         .iter()
         .map(|(_, ty, _)| referent(ty).unwrap_or_else(|| ty.clone()))
         .collect();
+    // An immutable reference field stores an immutable handle, which an
+    // immutable argument can lend.
+    let mutable = |ty: &Ty| {
+        !matches!(ty.kind(), TyKind::Ref(reference)
+            if reference.mutability == mojito_types::origin::Mutability::Immutable)
+    };
     let mut instrs = Vec::new();
     let mut reg_types = HashMap::new();
     for (position, (field, ty, convention)) in fields.iter().enumerate() {
@@ -1521,10 +1528,15 @@ fn lower_fieldwise_members(
             through: None,
         };
         if let Some(referent) = referent(ty) {
+            let mutable = mutable(ty);
             let reference: Ty = TyKind::Ref(mojito_types::origin::RefTy {
                 referent: referent.clone(),
-                origin: mojito_types::origin::Origin::Untracked { mutable: true },
-                mutability: mojito_types::origin::Mutability::Mutable,
+                origin: mojito_types::origin::Origin::Untracked { mutable },
+                mutability: if mutable {
+                    mojito_types::origin::Mutability::Mutable
+                } else {
+                    mojito_types::origin::Mutability::Immutable
+                },
             })
             .into();
             reg_types.insert(reg.0, reference);
@@ -3090,10 +3102,6 @@ struct Flatten<'a> {
     /// `GetIter` reads it: a raising `__iter__` is called on it.
     iteration_sources: HashMap<VarId, MirPlace>,
     runtime_aliases: std::collections::HashSet<VarId>,
-    /// The frame slot holding each copied or moved capture of a nested
-    /// `def` that holds its environment ([`NestedInfo::holds_environment`]),
-    /// keyed by the declaration's binding and the capture's.
-    environment: HashMap<(mojito_types::origin::OwnerId, mojito_types::origin::OwnerId), VarId>,
     /// Persistent owner loans carried by reference-bearing aggregate variables.
     /// The runtime value contains the handles; this map transfers their static
     /// loans when an aggregate is moved or forwarded into a new binding.
@@ -3990,6 +3998,55 @@ impl<'a> Flatten<'a> {
         place
     }
 
+    /// The instructions binding each capture slot of a body taking its
+    /// closure's `storage` to a reference to the field keeping it: a
+    /// reference field's stored handle, which a `MakeRef` typed as it
+    /// forwards, else a handle to the owned field.
+    fn capture_storage_prologue(&mut self, storage: &CaptureStorage) -> Vec<MirInstr> {
+        let entry = MirBlock {
+            instrs: Vec::new(),
+            term: MirTerm::Unreachable,
+        };
+        let outer = std::mem::replace(&mut self.f.blocks, vec![entry]);
+        let cur = std::mem::replace(&mut self.cur, 0);
+        for (slot, field, field_ty, mutable) in &storage.fields {
+            let reference_ty: Ty = match field_ty.kind() {
+                TyKind::Ref(_) => field_ty.clone(),
+                _ => TyKind::Ref(mojito_types::origin::RefTy {
+                    referent: field_ty.clone(),
+                    origin: mojito_types::origin::Origin::Untracked { mutable: *mutable },
+                    mutability: if *mutable {
+                        mojito_types::origin::Mutability::Mutable
+                    } else {
+                        mojito_types::origin::Mutability::Immutable
+                    },
+                })
+                .into(),
+            };
+            let mut place = MirPlace::root(storage.slot, Some(storage.ty.clone()));
+            place.project(Proj::Field(field.clone()), field_ty.clone());
+            let dest = self.fresh_typed(
+                storage.location.clone(),
+                Some(storage.slot),
+                reference_ty.clone(),
+            );
+            self.emit(MirInstr::MakeRef { dest, place });
+            self.var_types.insert(*slot, reference_ty.clone());
+            self.runtime_aliases.insert(*slot);
+            self.emit(MirInstr::DefVar {
+                var: *slot,
+                src: dest,
+                binding_ty: Some(reference_ty),
+                in_place: false,
+            });
+        }
+        self.cur = cur;
+        std::mem::replace(&mut self.f.blocks, outer)
+            .pop()
+            .map(|block| block.instrs)
+            .unwrap_or_default()
+    }
+
     fn resolved_place(&mut self, name: &str) -> MirPlace {
         let var = self.var(name);
         self.var_place(var)
@@ -4524,42 +4581,31 @@ impl<'a> Flatten<'a> {
 }
 
 /// A nested `def` lifted to a top-level function: the mangled name it becomes and
-/// the enclosing locals it captures. Captures are the lifted body's leading
-/// reference parameters, which a call by name passes the captured places
-/// for, and a closure value's environment.
+/// the enclosing locals it captures. A statement-declared body takes its
+/// closure's storage ([`Self::storage`]); a lambda's takes its captures as
+/// leading reference parameters, its closure value's environment.
 #[derive(Clone)]
 struct NestedInfo {
     binding: mojito_types::origin::OwnerId,
     source_name: String,
     mangled: String,
     /// True when this declaration belongs to the function currently being
-    /// lowered, so its statement creates a closure slot that later uses load.
-    /// Inherited entries (including self-recursion) rebuild from forwarded
-    /// environment parameters because their declaration slot lives in an outer
-    /// frame.
+    /// lowered, so its statement builds the storage or slot later uses
+    /// read. An inherited entry is reached through a capture of it, as its
+    /// declaration's slot lives in an outer frame.
     materialized_here: bool,
-    /// True when the declaration statement makes the closure and stores it
-    /// in a slot of its own, which later uses load: the body copies or
-    /// moves a capture and has a use other than a call by name in its
-    /// declaring body, or a sibling captures the closure itself, whose
-    /// place the sibling's call and environment name. Otherwise the
-    /// statement makes no closure: a call by name is a direct call of the
-    /// lifted body, and a first-class use makes the closure where it
-    /// stands, as the pin takes the function value at the use. A slotted
-    /// body with [`Self::storage`] keeps its storage in the slot instead.
+    /// True when the declaration has no storage and a sibling captures
+    /// it: its statement stores its closure in a slot of its own, which
+    /// the sibling's capture names.
     slotted: bool,
-    /// True when the body copies or moves a capture and is only called by
-    /// name in its declaring body: the declaration statement copies or
-    /// moves each such capture into a frame slot of its own, its closure
-    /// environment's entry, and a call by name passes that slot as the
-    /// lifted body's leading reference argument, the shape upstream's SROA
-    /// leaves of the closure's `__storage` struct.
-    holds_environment: bool,
-    /// The storage struct a slotted capture-list `def` declared by a
-    /// statement builds in its slot instead of a closure, as upstream's
-    /// `ClosureEmitter::emitClosure` builds `fn::__storage`: a call of the
-    /// body by name, or through a sibling capturing it, passes the
-    /// storage's fields as the lifted body's leading reference arguments.
+    /// The storage struct a capture-list `def` declared by a statement
+    /// builds in its slot, as upstream's `ClosureEmitter::emitClosure`
+    /// builds `fn::__storage`: the lifted body takes it as its one leading
+    /// `read` parameter, as upstream's lifted method takes `self`, and
+    /// reads each capture through a reference to the field keeping it. A
+    /// call by name, or through a sibling capturing it, passes the
+    /// storage, and a first-class use makes a closure capturing it by
+    /// reference.
     storage: Option<ClosureStorage>,
     /// Captured enclosing-local names, in a deterministic (sorted) order shared by
     /// the lifted function's parameter list and every rewritten call site.
@@ -4583,16 +4629,49 @@ struct ClosureStorage {
     /// Whether a call of the body may write the storage: it owns a field,
     /// or a field is a mutable reference.
     writes: bool,
+    /// Whether the storage is register-passable, as upstream's
+    /// `emitClosure` meets its captures' passabilities, a reference
+    /// capture contributing its referent's: a call passes it by value,
+    /// else by address.
+    register_passable: bool,
+    /// Whether the storage is trivially register-passable, by the same
+    /// meet.
+    trivial: bool,
+}
+
+/// The frame slots a lifted nested body binds its captures to: each
+/// capture's checked binding and the slot spelling it, a leading reference
+/// parameter of a lambda's body, or a local of a body taking its
+/// closure's storage ([`CaptureStorage`]).
+#[derive(Default)]
+struct CaptureSlots {
+    owners: Vec<(mojito_types::origin::OwnerId, VarId)>,
+    storage: Option<CaptureStorage>,
+}
+
+/// The storage parameter of a lifted body: the frame's last slots, one per
+/// capture, each hold a reference to the storage's field keeping it, made
+/// at the head of the body, as upstream's `liftClosureIntoMethod` rewires
+/// a capture's uses to a `RefStructGEROp` of `self` (and a `RefLoadOp` of
+/// a reference capture's stored reference).
+struct CaptureStorage {
+    /// The storage parameter's slot.
+    slot: VarId,
+    ty: Ty,
+    /// Each capture's slot, the field keeping it, that field's type, and
+    /// whether a write through the capture may reach an owned field.
+    fields: Vec<(VarId, String, Ty, bool)>,
+    location: SourceSpan,
 }
 
 /// [`lower_cfg`] with a nested-`def` registry in scope: a call of a registered
-/// nested `def` by name is a direct call of its lifted function (captures
-/// prepended), and a first-class use of it makes its closure. `declared` types the slots the
-/// frame's declaration binds before its body runs (parameters, value
-/// parameters, a named result); every other slot is typed by the op that
-/// declares it as the body lowers. The body stays structured, as upstream's
-/// generators hold it in `hlcf`: each region, the body included, is one
-/// block, which `verify` requires.
+/// nested `def` by name is a direct call of its lifted function (its storage
+/// or captures prepended), and a first-class use of it makes its closure.
+/// `declared` types the slots the frame's declaration binds before its body
+/// runs (parameters, value parameters, a named result); every other slot is
+/// typed by the op that declares it as the body lowers. The body stays
+/// structured, as upstream's generators hold it in `hlcf`: each region, the
+/// body included, is one block, which `verify` requires.
 #[allow(clippy::too_many_arguments)]
 fn lower_cfg_nested(
     cfg: &Cfg,
@@ -4601,7 +4680,7 @@ fn lower_cfg_nested(
     overloads: &std::sync::Arc<mojito_checked::package::ProgramOverloads>,
     returns_reference: bool,
     reference_parameters: &[bool],
-    capture_bindings: &[mojito_types::origin::OwnerId],
+    captures: &CaptureSlots,
     receiver_value_parameters: &[(String, Ty)],
     static_receiver: Option<&Ty>,
     enclosing_binders: &EnclosingBinders,
@@ -4612,7 +4691,13 @@ fn lower_cfg_nested(
         n_regs: 0,
         n_vars: cfg.vars.len(),
         var_names: cfg.vars.clone(),
-        n_params: cfg.n_params,
+        // A body's capture locals follow its parameters and value
+        // parameters.
+        n_params: cfg.n_params
+            - captures
+                .storage
+                .as_ref()
+                .map_or(0, |storage| storage.fields.len()),
         param_types: Vec::new(),
         owned_params: Vec::new(),
         deinit_params: Vec::new(),
@@ -4638,11 +4723,10 @@ fn lower_cfg_nested(
             next_reg: 0,
             vars: cfg.vars.clone(),
             var_types: declared,
-            owner_vars: capture_bindings
+            owner_vars: captures
+                .owners
                 .iter()
                 .copied()
-                .enumerate()
-                .map(|(slot, binding)| (binding, slot as VarId))
                 .chain(cfg.aliases.iter().map(|(binding, slot)| (*binding, *slot)))
                 .collect(),
             nested: nested.clone(),
@@ -4665,7 +4749,6 @@ fn lower_cfg_nested(
                 .enumerate()
                 .filter_map(|(slot, reference)| reference.then_some(slot as VarId))
                 .collect(),
-            environment: HashMap::new(),
             aggregate_loans: HashMap::new(),
             pointer_addresses: HashMap::new(),
             conversion_view_loans: HashMap::new(),
@@ -4682,7 +4765,15 @@ fn lower_cfg_nested(
             raise_target: None,
         };
         fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
+        let prologue = captures
+            .storage
+            .as_ref()
+            .map(|storage| fl.capture_storage_prologue(storage))
+            .unwrap_or_default();
         fl.f.blocks = fl.hir_region(&cfg.root);
+        if let Some(entry) = fl.f.blocks.first_mut() {
+            entry.instrs.splice(0..0, prologue);
+        }
         fl.f.n_regs = fl.next_reg;
         // The MIR flattener may intern additional locals beyond the HIR's set
         // (conditional-result / iterator temporaries), so take the final interner.

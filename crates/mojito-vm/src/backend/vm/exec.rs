@@ -138,11 +138,25 @@ impl VmBackend {
                     slot,
                     projection,
                 };
+                let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
+                // A projected place ending at a stored reference forwards
+                // the stored handle when the destination is typed as that
+                // handle (`ref s = self.src` reborrows), as the native
+                // lowering loads it.
+                if !place.proj.is_empty()
+                    && let (Some(TyKind::Ref(stored)), Some(TyKind::Ref(made))) =
+                        (place.ty.as_ref().map(Ty::kind), target.map(Ty::kind))
+                    && made.referent == stored.referent
+                    && let stored @ (Value::Ref { .. } | Value::Pointer { .. }) =
+                        self.read_reference(&handle, frame_id, vars)?
+                {
+                    regs[dest.0 as usize] = stored;
+                    return Ok(());
+                }
                 // A reference to an element reached through a pointer the
                 // place holds (`span._data[i]`) designates the heap element,
                 // as such a call result does: it outlives the storage
                 // holding the pointer.
-                let target = prog.mir.functions[function].1.reg_types.get(&dest.0);
                 regs[dest.0 as usize] = self.heap_reference_result(handle, target, frame_id, vars);
             }
             MirInstr::ReadRef { dest, reference } => {

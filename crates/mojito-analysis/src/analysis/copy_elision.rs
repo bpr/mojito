@@ -55,8 +55,7 @@ use mojito_hir::hir::VarId;
 use mojito_mir::mir::verify::instruction_operand_regs;
 use mojito_mir::mir::{
     CALL_RESULT_SLOT, MirBlock, MirDeclarations, MirFunction, MirInstr, MirPlace, Reg,
-    RegisterEnds, UseMode, instruction_regions, instruction_regions_mut, is_environment_slot,
-    terminator_regs,
+    RegisterEnds, UseMode, instruction_regions, instruction_regions_mut, terminator_regs,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -495,11 +494,8 @@ fn dead_value(instruction: &MirInstr) -> Option<Reg> {
 /// dropping that `DropVar`: the slot dies right at the copy, so the copy
 /// takes its value, as `optimizeCopyDestroys` turns a copy of a dying
 /// value into a move. An unbound copy a callee takes at its setup
-/// ([`taken_at_setup`]) becomes the slot's forwarding instead, and a copy
-/// bound into a nested `def`'s environment ([`is_environment_slot`]) stays
-/// one.
+/// ([`taken_at_setup`]) becomes the slot's forwarding instead.
 fn move_dying_slot_copies(instrs: &mut Vec<MirInstr>, elision: &Elision) {
-    let var_names = elision.var_names;
     let mut at = 0;
     while at < instrs.len() {
         let MirInstr::UseVar {
@@ -512,20 +508,6 @@ fn move_dying_slot_copies(instrs: &mut Vec<MirInstr>, elision: &Elision) {
             at += 1;
             continue;
         };
-        let environment = instrs[at + 1..]
-            .iter()
-            .find(|instruction| !is_drop(instruction))
-            .is_some_and(|instruction| {
-                matches!(instruction, MirInstr::DefVar { src, var: slot, .. }
-                    if *src == dest
-                        && var_names
-                            .get(*slot as usize)
-                            .is_some_and(|name| is_environment_slot(name)))
-            });
-        if environment {
-            at += 1;
-            continue;
-        }
         let after = match instrs.get(at + 1) {
             Some(MirInstr::DefVar { src, .. }) if *src == dest => at + 1,
             _ => at,

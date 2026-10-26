@@ -1087,6 +1087,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every capture-list nested `def` now builds upstream's `__storage` struct
+  at its declaration, and its lifted body takes that struct as its one
+  leading `read` parameter, `self`, as upstream's lifted method does,
+  reading each capture through a reference to its field, where the body
+  took each capture as a leading reference argument (R1377). Every call,
+  by name or through a sibling, passes the one struct: by value when every
+  capture is register-passable (a reference capture by its referent), as
+  at the pin, so a moved `Int` capture the body writes is written in that
+  call's copy (`505`, where Mojito printed `506`), and by address
+  otherwise. A first-class use makes a closure capturing the storage by
+  reference. A `{var a}` or `{imm a}` capture of a reference binding now
+  copies or borrows the referent, as at the pin (R1230's `def` half), and
+  the copy elision's environment-slot name test is gone (R1333). A
+  `@parameter` closure and a lambda keep their leading captures (R1427).
+  The checked `def` records whether it declares a capture list, and the
+  package format moves to `mojito-package 98`. The VM's `MakeRef` of a
+  place ending at a stored reference now forwards that reference when the
+  destination is typed as it, as Pliron's does, and a reference field
+  drops trivially.
+
 - A memory-only value passed to a `read` parameter reaches the callee as
   the caller's storage at every call, as upstream passes it by address,
   where the VM used to bind a copy unless the call's result borrowed the

@@ -3,11 +3,9 @@
 # The pin runs it and prints:
 #   331
 #
-# Mojito: "copied value has type Int, destination has type ref Int" for the
-# `{var a}` def; alone, the `{imm a}` def fails elaboration ("loads the handle
-# of reference slot ... instead of its referent"), and the `{var r}` lambda
-# runs on the VM but crashes natively. Each capture keeps the binding's `ref`
-# type instead of its referent's (R1230).
+# Mojito prints 331 on the VM but crashes natively: the two `def`s copy or
+# borrow the referent through their closure's storage, while the `{var r}`
+# lambda still captures the `ref` itself as a leading argument (R1427).
 # When Mojito runs it, promote this file to `assets/ok/` with its manifest rows.
 #
 # Observed 2026-10-20 against `Mojo 1.2.0.dev2026101705 (46f49943)`.

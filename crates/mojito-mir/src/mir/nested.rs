@@ -8,10 +8,11 @@ use mojito_types::types::TyKind;
 
 /// Lower a function body (`name` its registered/mangled name) plus every nested
 /// `def` it defines, pushing the function and each lifted nested function into
-/// `out`. A liftable nested `def` becomes `name$inner` with its captured enclosing
-/// locals as leading `mut` parameters (checker-typed where declared and opaque
-/// for captured storage);
-/// a nested `def` we can't lift stays a clean `Unsupported` at execution.
+/// `out`. A liftable nested `def` becomes `name$inner`, taking its closure's
+/// storage struct as its leading parameter, or, for a lambda or a
+/// `@parameter` closure, its captured enclosing locals as leading reference
+/// parameters; a nested `def` we can't lift stays a clean `Unsupported` at
+/// execution.
 pub(super) struct FunctionLowering<'a> {
     pub(super) checked: &'a mojito_checked::checked::CheckedProgram,
     pub(super) name: &'a str,
@@ -76,11 +77,11 @@ pub(super) fn lower_fn_nested(
     } = request;
     let children = analyze_root_children(checked, name, statements);
     let registry = scope_registry(
-        checked,
-        statements,
         &children,
         &HashMap::new(),
         &enclosing_binders,
+        declarations,
+        invariant_errors,
     );
 
     let cfg = returned.map_or_else(
@@ -116,7 +117,7 @@ pub(super) fn lower_fn_nested(
         overloads,
         returns_reference,
         &ref_params,
-        &[],
+        &CaptureSlots::default(),
         &receiver_value_parameters,
         static_receiver.as_ref(),
         &enclosing_binders,
@@ -310,6 +311,10 @@ struct NestedNode {
     /// Whether a lambda expression declares it, which makes its closure
     /// where it stands rather than at a declaration statement.
     lambda: bool,
+    /// Whether it declares a capture list ([`CheckedDef::capture_list`]).
+    ///
+    /// [`CheckedDef::capture_list`]: mojito_checked::checked::CheckedDef::capture_list
+    capture_list: bool,
     /// Each parameter's checked default node.
     defaults: Vec<Option<CheckedNodeId>>,
     children: Vec<Self>,
@@ -379,41 +384,39 @@ fn analyze_node(
             .cloned()
             .map(mir_nested_callable_ty),
         lambda,
+        capture_list: def.capture_list,
         defaults: def.params.iter().map(|param| param.default).collect(),
         children,
     }
 }
 
 /// Build the callable registry visible in one lexical function, whose
-/// body is statement nodes `statements`. Direct declarations and inherited
+/// direct nested declarations are `children`. Direct declarations and inherited
 /// callables are keyed by checked identity, so same-spelled bindings
-/// coexist without shadow-removal heuristics. A direct declaration that
-/// copies or moves a capture holds its environment in the frame
-/// ([`NestedInfo::holds_environment`]) when every use of it is a call by
-/// name in this body; it is slotted ([`NestedInfo::slotted`]) when it
-/// copies or moves a capture and has any other use, or a sibling captures
-/// it. A slotted declaration with captures whose every use, here or in a
-/// nested body, is a call by name builds its storage struct
-/// ([`NestedInfo::storage`]).
+/// coexist without shadow-removal heuristics. Every direct declaration
+/// with a non-empty capture list builds its storage struct
+/// ([`NestedInfo::storage`]), as upstream's `constructClosure` emits a
+/// closure instance for every one; one without storage a sibling
+/// captures keeps its closure in a slot ([`NestedInfo::slotted`]). A lambda
+/// makes its closure where it stands, and a `@parameter` closure, which
+/// captures without a list, takes its captures as leading reference
+/// parameters. A declaration whose storage names a
+/// binder no enclosing declaration binds is an invariant failure,
+/// recorded in `invariant_errors`.
 fn scope_registry(
-    checked: &mojito_checked::checked::CheckedProgram,
-    statements: &[CheckedStmtId],
     children: &[NestedNode],
     inherited: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     binders: &EnclosingBinders,
+    declarations: &MirDeclarations,
+    invariant_errors: &mut Vec<String>,
 ) -> HashMap<mojito_types::origin::OwnerId, NestedInfo> {
     let mut registry = inherited.clone();
     for info in registry.values_mut() {
         info.materialized_here = false;
     }
-    let called_by_name_only = called_by_name_only(checked.tables(), statements);
+    // A sibling's storage is the referent of a field capturing it, and a
+    // body captures only siblings declared before it.
     for child in children {
-        let owns_environment = child.captures.iter().any(|capture| {
-            matches!(
-                capture.kind,
-                mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move
-            )
-        });
         let captured_by_sibling = children.iter().any(|sibling| {
             sibling.binding != child.binding
                 && sibling
@@ -421,10 +424,16 @@ fn scope_registry(
                     .iter()
                     .any(|capture| capture.binding == child.binding)
         });
-        let holds_environment = owns_environment
-            && !captured_by_sibling
-            && called_by_name_only.contains(&child.binding);
-        let slotted = (owns_environment && !holds_environment) || captured_by_sibling;
+        let storage_backed = !child.lambda && child.capture_list && !child.captures.is_empty();
+        let storage = storage_backed
+            .then(|| closure_storage(child, &registry, binders, declarations))
+            .flatten();
+        if storage_backed && storage.is_none() {
+            invariant_errors.push(format!(
+                "nested def `{}`: its closure storage names a parameter no enclosing declaration binds",
+                child.source_name
+            ));
+        }
         registry.insert(
             child.binding,
             NestedInfo {
@@ -432,35 +441,17 @@ fn scope_registry(
                 source_name: child.source_name.clone(),
                 mangled: child.mangled.clone(),
                 materialized_here: true,
-                slotted,
-                holds_environment,
-                storage: None,
+                slotted: captured_by_sibling && storage.is_none(),
+                storage,
                 captures: child.captures.clone(),
                 callable_ty: child.callable_ty.clone(),
             },
         );
     }
-    // A sibling's storage is the referent of a field capturing it, and a
-    // body captures only siblings declared before it. A body with a
-    // first-class use keeps its closure value until that value is the
-    // storage itself.
-    let called_by_name = called_by_name_everywhere(checked.tables(), statements);
-    for child in children {
-        if registry[&child.binding].slotted
-            && !child.lambda
-            && called_by_name.contains(&child.binding)
-        {
-            let storage = closure_storage(child, &registry, binders);
-            if let Some(info) = registry.get_mut(&child.binding) {
-                info.storage = storage;
-            }
-        }
-    }
-
     registry
 }
 
-/// The storage struct of the slotted capture-list `def` `child`, whose
+/// The storage struct of the capture-list `def` `child`, whose
 /// captured siblings `registry` registers, declared where `binders` are in
 /// scope: its parameters are the binders its fields name, as upstream
 /// promotes the captures' parameters to the storage's own. `None` for a
@@ -470,11 +461,17 @@ fn closure_storage(
     child: &NestedNode,
     registry: &HashMap<mojito_types::origin::OwnerId, NestedInfo>,
     binders: &EnclosingBinders,
+    declarations: &MirDeclarations,
 ) -> Option<ClosureStorage> {
     if child.captures.is_empty() {
         return None;
     }
     let mut writes = false;
+    let (mut register_passable, mut trivial) = (true, true);
+    let mut meet = |passable: bool, identity: bool| {
+        register_passable &= passable;
+        trivial &= identity;
+    };
     let fields: Vec<(String, Ty)> = child
         .captures
         .iter()
@@ -482,18 +479,40 @@ fn closure_storage(
             let ty = match capture.kind {
                 mojito_ast::ast::CaptureKind::Copy | mojito_ast::ast::CaptureKind::Move => {
                     writes = true;
-                    mir_nested_callable_ty(capture.ty.clone())
+                    // A copy of a reference binding copies its referent.
+                    let ty = capture_referent(capture);
+                    meet(
+                        declarations.register_passable(&ty),
+                        declarations.copy_is_identity(&ty),
+                    );
+                    ty
                 }
                 mojito_ast::ast::CaptureKind::Imm
                 | mojito_ast::ast::CaptureKind::Mut
                 | mojito_ast::ast::CaptureKind::Ref => {
-                    let (referent, mutable) = match captured_storage(registry, capture) {
-                        Some(storage) => (storage.ty.clone(), storage.writes),
-                        None => (
-                            capture_referent(capture),
-                            capture.kind != mojito_ast::ast::CaptureKind::Imm,
-                        ),
-                    };
+                    let (referent, mutable, passable, identity) =
+                        captured_storage(registry, capture).map_or_else(
+                            || {
+                                let referent = capture_referent(capture);
+                                let passable = declarations.register_passable(&referent);
+                                let identity = declarations.copy_is_identity(&referent);
+                                (
+                                    referent,
+                                    capture.kind != mojito_ast::ast::CaptureKind::Imm,
+                                    passable,
+                                    identity,
+                                )
+                            },
+                            |storage| {
+                                (
+                                    storage.ty.clone(),
+                                    storage.writes,
+                                    storage.register_passable,
+                                    storage.trivial,
+                                )
+                            },
+                        );
+                    meet(passable, identity);
                     writes |= mutable;
                     TyKind::Ref(mojito_types::origin::RefTy {
                         referent,
@@ -511,6 +530,14 @@ fn closure_storage(
         })
         .collect();
     let in_scope = binders.with(&child.region_binders());
+    // A reference field names the binders its referent names.
+    let contents: Vec<&Ty> = fields
+        .iter()
+        .map(|(_, ty)| match ty.kind() {
+            TyKind::Ref(reference) => &reference.referent,
+            _ => ty,
+        })
+        .collect();
     let names_binder = |ty: &Ty, id: &mojito_types::param_expr::ParamId| {
         mojito_types::types::mentions(
             ty,
@@ -518,7 +545,7 @@ fn closure_storage(
         )
     };
     let mut values = HashSet::new();
-    for (_, ty) in &fields {
+    for ty in &contents {
         mojito_types::types::referenced_parameters(ty, &mut values);
     }
     let param_decls: Vec<ParamDecl> = in_scope
@@ -526,13 +553,11 @@ fn closure_storage(
         .iter()
         .filter(|declaration| {
             values.contains(declaration.name().trim_start_matches('*'))
-                || fields
-                    .iter()
-                    .any(|(_, ty)| names_binder(ty, declaration.id()))
+                || contents.iter().any(|ty| names_binder(ty, declaration.id()))
         })
         .cloned()
         .collect();
-    let unbound = fields.iter().any(|(_, ty)| {
+    let unbound = contents.iter().any(|ty| {
         mojito_types::types::mentions(ty, &|ty| {
             matches!(ty.kind(), TyKind::Param { binder, .. }
                 if !param_decls.iter().any(|declaration| *declaration.id() == binder.id))
@@ -554,6 +579,8 @@ fn closure_storage(
         fields,
         param_decls,
         writes,
+        register_passable,
+        trivial,
     })
 }
 
@@ -658,6 +685,20 @@ fn lower_closure_storage(
                 trait_name: trait_name.to_string(),
                 conditions: Vec::new(),
             })
+            .chain(
+                [
+                    (storage.trivial, "TrivialRegisterPassable"),
+                    (storage.register_passable, "RegisterPassable"),
+                ]
+                .into_iter()
+                .filter(|(holds, _)| *holds)
+                .map(|(_, trait_name)| {
+                    mojito_checked::checked::StructConformance {
+                        trait_name: trait_name.to_string(),
+                        conditions: vec![GenericConstraint::Bool(true)],
+                    }
+                }),
+            )
             .collect(),
         associated_types: Vec::new(),
         parameterized_associated_types: Vec::new(),
@@ -666,91 +707,6 @@ fn lower_closure_storage(
         witness_tables: Vec::new(),
         members: Vec::new(),
     });
-}
-
-/// The nested declarations every use of which, in the lexical body of
-/// statement nodes `statements` and the bodies nested in it, is a call by
-/// name in that body itself: a call node whose binding is the
-/// declaration's. A name read, a type application, a lambda, and a call
-/// from a nested body are other uses.
-fn called_by_name_only(
-    tables: &mojito_checked::checked::CheckedTables,
-    statements: &[CheckedStmtId],
-) -> HashSet<mojito_types::origin::OwnerId> {
-    let mut calls = HashMap::<mojito_types::origin::OwnerId, usize>::new();
-    tables.walk(statements, &mut |walked| match walked {
-        Walked::Statement(statement) if matches!(statement.op, CheckedStmtOp::Def(_)) => {
-            WalkResult::SkipBodies
-        }
-        Walked::Expression(node) if matches!(node.op, CheckedOp::Lambda { .. }) => {
-            WalkResult::SkipBodies
-        }
-        Walked::Expression(node) => {
-            if let (CheckedOp::Call { .. }, Some(binding)) = (&node.op, node.binding) {
-                *calls.entry(binding).or_default() += 1;
-            }
-            WalkResult::Advance
-        }
-        Walked::Statement(_) => WalkResult::Advance,
-    });
-    let mut uses = HashMap::<mojito_types::origin::OwnerId, usize>::new();
-    tables.walk(statements, &mut |walked| {
-        if let Walked::Expression(node) = walked {
-            let lambda = match &node.op {
-                CheckedOp::Lambda { def } => tables
-                    .statement(*def)
-                    .and_then(|statement| statement.declaration)
-                    .and_then(|id| tables.declaration(id))
-                    .and_then(|declaration| declaration.binding),
-                _ => None,
-            };
-            for binding in node.binding.into_iter().chain(lambda) {
-                *uses.entry(binding).or_default() += 1;
-            }
-        }
-        WalkResult::Advance
-    });
-    calls
-        .into_iter()
-        .filter(|(binding, count)| uses.get(binding) == Some(count))
-        .map(|(binding, _)| binding)
-        .collect()
-}
-
-/// The nested declarations every use of which, in the lexical body of
-/// statement nodes `statements` and the bodies nested in it, is a call by
-/// name, in that body or a nested one: a name read, a type application,
-/// and a lambda are other uses.
-fn called_by_name_everywhere(
-    tables: &mojito_checked::checked::CheckedTables,
-    statements: &[CheckedStmtId],
-) -> HashSet<mojito_types::origin::OwnerId> {
-    let mut calls = HashMap::<mojito_types::origin::OwnerId, usize>::new();
-    let mut uses = HashMap::<mojito_types::origin::OwnerId, usize>::new();
-    tables.walk(statements, &mut |walked| {
-        if let Walked::Expression(node) = walked {
-            let lambda = match &node.op {
-                CheckedOp::Lambda { def } => tables
-                    .statement(*def)
-                    .and_then(|statement| statement.declaration)
-                    .and_then(|id| tables.declaration(id))
-                    .and_then(|declaration| declaration.binding),
-                _ => None,
-            };
-            if let (CheckedOp::Call { .. }, Some(binding)) = (&node.op, node.binding) {
-                *calls.entry(binding).or_default() += 1;
-            }
-            for binding in node.binding.into_iter().chain(lambda) {
-                *uses.entry(binding).or_default() += 1;
-            }
-        }
-        WalkResult::Advance
-    });
-    calls
-        .into_iter()
-        .filter(|(binding, count)| uses.get(binding) == Some(count))
-        .map(|(binding, _)| binding)
-        .collect()
 }
 
 /// The declaration a nested function is lowered inside: its lowered name,
@@ -801,19 +757,19 @@ fn lower_nested_node(
         .with_loops(&node.loop_indices)
         .with(&param_decls);
     let registry = scope_registry(
-        checked,
-        &def.body,
         &node.children,
         enclosing.registry,
         enclosing_binders,
+        declarations,
+        invariant_errors,
     );
     let captures = &node.captures;
     let mangled = &node.mangled;
-    if let Some(storage) = enclosing
+    let storage = enclosing
         .registry
         .get(&node.binding)
-        .and_then(|info| info.storage.as_ref())
-    {
+        .and_then(|info| info.storage.clone());
+    if let Some(storage) = &storage {
         lower_closure_storage(storage, captures, out, declarations);
     }
     // A reference capture of a reference binding (a loop's reference
@@ -853,10 +809,20 @@ fn lower_nested_node(
         .enumerate()
         .filter(|(_, parameter)| !matches!(parameter.convention, Some(ArgConvention::Out)))
         .collect();
-    let mut names: Vec<String> = captures
+    // A body with storage takes it as its one leading `read` parameter,
+    // as upstream's lifted method takes `self`, and holds its captures in
+    // frame locals; a lambda's body takes each capture as a leading
+    // reference parameter.
+    let capture_names: Vec<String> = captures
         .iter()
         .map(|capture| capture.name.clone())
         .collect();
+    let (leading_names, leading_types, leading_writes) = match &storage {
+        Some(storage) => storage_parameter(storage, captures),
+        None => (capture_names.clone(), capture_types, capture_writes.clone()),
+    };
+    let leading = leading_names.len();
+    let mut names = leading_names.clone();
     names.extend(
         caller_params
             .iter()
@@ -867,7 +833,11 @@ fn lower_nested_node(
     }
     let value_parameter_locals = enclosing.frame_locals(&param_decls);
     names.extend(value_parameter_locals.iter().map(|(name, _)| name.clone()));
-    let mut ptys = capture_types.clone();
+    let capture_locals = names.len();
+    if storage.is_some() {
+        names.extend(capture_names);
+    }
+    let mut ptys = leading_types.clone();
     ptys.extend(caller_params.iter().map(|(param, p)| {
         let ty = signature.param(*param).cloned().unwrap_or_else(|| {
             panic!(
@@ -878,25 +848,26 @@ fn lower_nested_node(
         body_parameter_ty(p, ty)
     }));
     // The closure object owns declaration-time copy/move captures. A lifted
-    // invocation only borrows those environment slots, just as it borrows
-    // explicit read/mut/ref captures; it must neither destroy nor duplicate
-    // them on each call.
-    let mut owned2: Vec<bool> = vec![false; captures.len()];
+    // invocation only borrows its storage or those environment slots, just
+    // as it borrows explicit read/mut/ref captures; it must neither destroy
+    // nor duplicate them on each call.
+    let mut owned2: Vec<bool> = vec![false; leading];
     owned2.extend(
         caller_params
             .iter()
             .map(|(_, parameter)| is_owned(&parameter.convention)),
     );
     // Captures are borrowed, never `deinit` sources.
-    let mut deinit2: Vec<bool> = vec![false; captures.len()];
+    let mut deinit2: Vec<bool> = vec![false; leading];
     deinit2.extend(
         caller_params
             .iter()
             .map(|(_, parameter)| is_deinit(&parameter.convention)),
     );
-    // Captures are `mut` (their final value is written back to the enclosing
-    // variable — reference-capture semantics).
-    let mut refp2: Vec<bool> = vec![true; captures.len()];
+    // A lambda's captures are `mut` (their final value is written back to
+    // the enclosing variable — reference-capture semantics); a storage is
+    // read.
+    let mut refp2: Vec<bool> = vec![storage.is_none(); leading];
     refp2.extend(
         caller_params
             .iter()
@@ -913,12 +884,9 @@ fn lower_nested_node(
                 && !matches!(parameter.convention, Some(ArgConvention::Out))
         })
         .collect();
-    let mut declaration_names: Vec<String> = captures
-        .iter()
-        .map(|capture| capture.name.clone())
-        .collect();
+    let mut declaration_names = leading_names;
     declaration_names.extend(regular.iter().map(|(_, parameter)| parameter.name.clone()));
-    let mut declaration_types = capture_types;
+    let mut declaration_types = leading_types;
     declaration_types.extend(regular.iter().map(|(index, parameter)| {
         signature.param(*index).cloned().unwrap_or_else(|| {
             panic!(
@@ -929,7 +897,7 @@ fn lower_nested_node(
     }));
     let return_ty = signature.result.clone().unwrap_or_else(Ty::none);
     let effect = signature.effect.clone().unwrap_or_default();
-    let capture_count = captures.len();
+    let capture_count = leading;
     let binders = enclosing_binders.with(&param_decls);
     let defaults: Vec<_> = std::iter::repeat_n(None, capture_count)
         .chain(regular.iter().enumerate().map(|(slot, (i, parameter))| {
@@ -976,23 +944,25 @@ fn lower_nested_node(
         param_decls,
         has_receiver: false,
         receiver_convention: None,
-        param_conventions: std::iter::repeat_n(Some(ArgConvention::Ref), capture_count)
-            .chain(regular.iter().map(|(_, parameter)| parameter.convention))
-            .collect(),
+        param_conventions: std::iter::repeat_n(
+            storage.is_none().then_some(ArgConvention::Ref),
+            capture_count,
+        )
+        .chain(regular.iter().map(|(_, parameter)| parameter.convention))
+        .collect(),
         ret_ty: return_ty,
         returns_reference: effect.returns_reference,
         raises: effect.raises,
         error_ty: effect.error,
-        ref_params: std::iter::repeat_n(true, captures.len())
+        ref_params: std::iter::repeat_n(storage.is_none(), capture_count)
             .chain(
                 regular
                     .iter()
                     .map(|(_, parameter)| is_ref(&parameter.convention)),
             )
             .collect(),
-        param_writes: capture_writes
-            .iter()
-            .copied()
+        param_writes: leading_writes
+            .into_iter()
             .chain(effect.param_writes.iter().copied())
             .collect(),
         availability: Vec::new(),
@@ -1024,6 +994,16 @@ fn lower_nested_node(
             .expect("nested value parameter was seeded into the function CFG");
         declared.insert(slot as VarId, ty.clone());
     }
+    let capture_slots = capture_slots(
+        captures,
+        storage.as_ref(),
+        if storage.is_some() { capture_locals } else { 0 },
+        checked
+            .tables()
+            .statement(node.node)
+            .expect("a nested def names a node of its tables")
+            .location(),
+    );
     let mut thunks = ComptimeThunks::for_owner(mangled);
     let mut nf = lower_cfg_nested(
         &ncfg,
@@ -1032,10 +1012,7 @@ fn lower_nested_node(
         overloads,
         effect.returns_reference,
         &refp2,
-        &captures
-            .iter()
-            .map(|capture| capture.binding)
-            .collect::<Vec<_>>(),
+        &capture_slots,
         &[],
         None,
         enclosing_binders,
@@ -1090,6 +1067,66 @@ fn lower_nested_node(
                 locals: &value_parameter_locals,
             },
         );
+    }
+}
+
+/// The leading parameter of a body taking its closure's `storage`, whose
+/// `captures` its fields hold: its name, `self` as upstream's lifted
+/// method spells it unless a capture is, its type, and whether a call
+/// writes it, which only a body owning a moved capture can.
+fn storage_parameter(
+    storage: &ClosureStorage,
+    captures: &[NestedCapture],
+) -> (Vec<String>, Vec<Ty>, Vec<bool>) {
+    let name = if captures.iter().any(|capture| capture.name == "self") {
+        "__closure_self"
+    } else {
+        "self"
+    };
+    let writes = captures
+        .iter()
+        .any(|capture| capture.kind == mojito_ast::ast::CaptureKind::Move);
+    (
+        vec![name.to_string()],
+        vec![storage.ty.clone()],
+        vec![writes],
+    )
+}
+
+/// The slots `captures` bind in a lifted body, from slot `first` on: each
+/// a local holding a reference to its field of `storage` when the body
+/// takes it, at `location`, else each a leading reference parameter.
+fn capture_slots(
+    captures: &[NestedCapture],
+    storage: Option<&ClosureStorage>,
+    first: usize,
+    location: SourceSpan,
+) -> CaptureSlots {
+    let slot = |index: usize| (first + index) as VarId;
+    CaptureSlots {
+        owners: captures
+            .iter()
+            .enumerate()
+            .map(|(index, capture)| (capture.binding, slot(index)))
+            .collect(),
+        storage: storage.map(|storage| CaptureStorage {
+            slot: 0,
+            ty: storage.ty.clone(),
+            fields: captures
+                .iter()
+                .zip(&storage.fields)
+                .enumerate()
+                .map(|(index, (capture, (field, ty)))| {
+                    (
+                        slot(index),
+                        field.clone(),
+                        ty.clone(),
+                        capture.kind == mojito_ast::ast::CaptureKind::Move,
+                    )
+                })
+                .collect(),
+            location,
+        }),
     }
 }
 

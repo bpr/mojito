@@ -128,9 +128,10 @@
 //! to the call's user. A nested `def`'s captures, its leading parameters, are
 //! the places the closure captures by reference, and a read of an
 //! enclosing declaration's value binder is a reference to that binder, in
-//! whose scope the caller lies. A copied or moved capture the caller's
-//! frame holds as an environment slot of its own binds as a reference
-//! capture of that slot; one a closure value holds keeps the call. A body
+//! whose scope the caller lies. A closure's storage, the leading `read`
+//! parameter of a capture-list `def`'s body, binds the storage place the
+//! closure captures by reference, unless the body writes it; a capture a
+//! closure value holds by copy or move keeps the call. A body
 //! declared in a `comptime for` names the loop's binder, which the
 //! caller's own scope or a `comptime for` holding the call declares, as
 //! upstream inlines the generator inside the loop it unrolls; one called
@@ -1397,8 +1398,10 @@ impl<'c> Inliner<'_, 'c> {
                 },
                 SlotParameter::Position(position) if position < site.captures.len() => {
                     let capture = &site.captures[position];
+                    let borrowed_storage = !is_owned_parameter(callee, param)
+                        && !declaration.param_writes.get(param).copied().unwrap_or(true);
                     if capture.mode != MirCaptureMode::Reference
-                        || !is_reference_parameter(callee, param)
+                        || !(is_reference_parameter(callee, param) || borrowed_storage)
                     {
                         return None;
                     }

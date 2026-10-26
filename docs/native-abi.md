@@ -273,6 +273,10 @@ Rules:
   place address and an owned (`copy`/`move`) slot passes the slot's own
   address — the record is the stable storage whose in-place mutation across
   repeated invocations the VM achieves by re-referencing the closure value.
+  A capture-list `def`'s body instead takes its closure's storage struct as
+  its one leading `read` parameter, which a struct parameter receives by
+  address: its closure's one `Reference` slot holds the storage's address,
+  which the thunk passes.
 - The **environment record** is frame-local storage of the creating
   `MakeClosure` (one entry allocation per site, slots re-stored on each
   execution): `{ drop: ptr, slots... }` laid out by the ordinary aggregate

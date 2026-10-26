@@ -147,15 +147,21 @@ impl<'a> Flatten<'a> {
     pub(in crate::mir) fn transfer(&mut self, e: Node<'a>, inner: Node<'a>) -> Reg {
         if let Some(name) = self.name_spelled(inner) {
             let var = self.expression_var(&name, inner);
-            // A `mut` parameter's slot holds the handle to the caller's
-            // storage, so the transfer takes the referent out through it. A
-            // value that owns no storage transfers as a copy and leaves the
-            // caller's value in place; a captured pack owns its elements.
-            if (var as usize) < self.f.n_params
+            // A `mut` parameter's slot, or a capture's reference slot,
+            // holds the handle to the caller's storage, so the transfer
+            // takes the referent out through it. A value that owns no
+            // storage transfers as a copy and leaves the caller's value in
+            // place; a captured pack owns its elements.
+            let slot_ty = self.var_types.get(&var).cloned();
+            let reference_slot = matches!(slot_ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
+            if ((var as usize) < self.f.n_params || reference_slot)
                 && self.runtime_aliases.contains(&var)
                 && !self.pointer_valued_slot(var)
             {
-                let ty = self.var_types.get(&var).cloned();
+                let ty = match slot_ty.as_ref().map(Ty::kind) {
+                    Some(TyKind::Ref(reference)) => Some(reference.referent.clone()),
+                    _ => slot_ty.clone(),
+                };
                 if !ty.as_ref().is_some_and(|ty| {
                     crate::mir::calls::owns_droppable_storage(ty)
                         || matches!(ty.kind(), TyKind::VariadicPack(_))
@@ -163,7 +169,8 @@ impl<'a> Flatten<'a> {
                     return self.expr(inner);
                 }
                 let d = self.fresh(e.location(), Some(var));
-                let mut place = MirPlace::root(var, ty);
+                let mut place = MirPlace::root(var, slot_ty);
+                place.ty = ty;
                 place.through = Some(var);
                 self.emit(MirInstr::MovePlace { dest: d, place });
                 return d;

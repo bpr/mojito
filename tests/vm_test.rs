@@ -700,8 +700,9 @@ fn owned_closure_captures_materialize_at_the_declaration() {
     let copy = "def main():\n    var x = 40\n    def snapshot() {var x} -> Int:\n        return x\n    x = 42\n    print(snapshot(), x)\n";
     assert_eq!(parity(copy), "40 42\n");
 
-    // A move capture transfers the source at the declaration, then owns one
-    // persistent environment slot. Calls borrow that slot instead of cloning it.
+    // A move capture transfers the source into the closure's storage at the
+    // declaration. A memory-only storage is passed by address, so each call
+    // writes the one storage instead of a copy of it.
     let moved = "def main():\n    var box = [40]\n    def get() {var box^} -> Int:\n        box[0] += 1\n        return box[0]\n    print(get())\n    print(get())\n";
     assert_eq!(parity(moved), "41\n42\n");
 

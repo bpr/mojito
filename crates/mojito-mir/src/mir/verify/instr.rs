@@ -2,6 +2,8 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::{MirCaptureMode, MirClosureCapture};
+use mojito_ast::ast::ArgConvention;
 use mojito_types::types::TyKind;
 
 pub(super) fn verify_instruction(
@@ -751,14 +753,20 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                             declaration.param_types.len()
                         ));
                     }
-                    if declaration
-                        .ref_params
-                        .iter()
-                        .take(captures.len())
-                        .any(|is_reference| !is_reference)
-                    {
+                    // A capture binds a leading reference parameter, or by
+                    // reference a leading `read` one: a closure's storage,
+                    // its lifted method's `self`.
+                    let binds = |(index, capture): (usize, &MirClosureCapture)| {
+                        declaration.ref_params.get(index).copied().unwrap_or(false)
+                            || (capture.mode == MirCaptureMode::Reference
+                                && matches!(
+                                    declaration.param_conventions.get(index),
+                                    Some(None | Some(ArgConvention::Imm))
+                                ))
+                    };
+                    if !captures.iter().enumerate().all(binds) {
                         errors.push(format!(
-                            "{prefix}: closure environment for '{target}' is not a reference-parameter prefix"
+                            "{prefix}: closure environment for '{target}' binds neither a leading reference parameter nor, by reference, a leading `read` one"
                         ));
                     }
                 }

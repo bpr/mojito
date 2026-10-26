@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1427**.
+Next free ID: **R1429**.
 
 ## Ordered Work
 
@@ -495,9 +495,10 @@ which names the upstream pass each one follows. Each is measured by the
     entry and `capture_accesses`.
   - Lever: build those operands from the `closure.make`'s `captures` in
     `fold_known_callees` (`analysis/canonicalize.rs`): a load of each
-    reference capture's place and its access; a copy or move capture
-    (`{var x}`, `{s^}`), which only a lambda or a first-class use makes now
-    (R1378), needs its holding slot first.
+    reference capture's place and its access. A first-class use of a
+    capture-list `def` captures its storage by reference since R1377, so
+    it folds the same way; a copy or move capture (`{var x}`, `{s^}`),
+    which only a lambda makes now (R1427), needs its holding slot first.
   - Probe: `outer` in
     `tests/mir_passes/canonicalize/indirect_known_callee.mir` keeps its
     `call.indirect` through `closure.make "outer$plus"`.
@@ -2049,28 +2050,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while planning R1135 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1230 A by-value capture of a reference binding keeps the
-  reference's type**
-
-  Problem: a nested `def f() {imm a}` or `def h() {var a}`, or a
-  `lambda {var a}`, over a reference binding `a` (`for a in xs`, a bare
-  loop-target leaf, `ref a = xs[0]`) captures the `ref` type itself, where
-  the pin copies the referent into the closure.
-  - The capture's declared parameter is `ref Int` with mode `copy`
-    (`closure.make` in `mojito emit-mir`), so the `{var a}` def fails MIR
-    ("copied value has type Int, destination has type ref Int"), the
-    `{imm a}` def fails elaboration ("loads the handle of reference slot
-    ... instead of its referent"), and the `{var a}` lambda runs on the VM
-    but crashes natively.
-  - Lever: a copying capture of a reference binding reads through it, as
-    a `var c = a` initializer does, and the closure's parameter takes the
-    referent's type.
-  - Probe: `conformance/probes/reference_binding_value_capture.mojo`
-    (the pin prints `331`).
-  - Found while landing R1138 (2026-10-20).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1232 A sequence store's nested tuple element followed by a `try`
   that redeclares its leaves fails MIR verification**
@@ -9084,11 +9063,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     capture of a `String` is destroyed through the value. A
     `def(...) capturing` type says neither, so `owned_register`
     (`mir/register_ends.rs`) exempts only a thin function value.
-  - Probe: a first-class use of a sibling-captured `inc() {var x}`
-    (`apply(inc)` beside `twice() {inc}`) makes R1376's storage give way to
-    a stored `closure.make` (`called_by_name_everywhere` in
-    `mir/nested.rs`), and every lambda with a `var` or moved capture makes
-    an owned `closure.make` where it stands. Once the value is the struct,
+  - Probe: a first-class use of a capture-list `def` (`apply(inc)`) makes
+    a one-capture `closure.make` over its storage, kept live to the end of
+    the statement (`load_nested_closure`, `mir/lower_expr/calls.rs`), and
+    every lambda with a `var` or moved capture makes an owned
+    `closure.make` where it stands. Once the value is the struct,
     the VM's `RefProjection::Capture` and owned-environment
     `callee_place`, and Pliron's `c`/`m` capture-record slots and
     `mjdrop_<n>` thunks (`lower/closures.rs`), lose their last producer.
@@ -9096,8 +9075,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
     the captures' origins to struct parameters (`outlineAndPromoteOrigins`).
   - Closes R534 (broadened: the pin rejects every capturing capture-list
     closure there). Shrinks R176 (capture-list locals run at the pin).
-  - Depends on R1377, which gives calls through the struct their method
-    shape.
+  - Depends on R1427 and R1428: a lambda's value is its storage only
+    after R1427, and the `__call__` witness is R1428's method.
   - Model: Fable, Planned.
 
 - [ ] **R567 A user `std/` directory merges into the bundled `std`, where
@@ -9343,24 +9322,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1267 (2026-10-23).
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R1333 A nested `def`'s `{var x}` capture copy is a `var.use` copy
-  told apart by its slot's name**
-
-  MIR lowers a `{var x}` capture as a `var.use` copy bound into the
-  environment slot `{def}${capture}`, where upstream copies inside the
-  closure's creation, after `CheckLifetimes`, so its lifetime check sees
-  only a read of `x`.
-  - Copy elision must not turn that copy into `x`'s move when `x` dies
-    there (the pin prints `copy 100` then `del 0` in
-    `assets/ok/nested_def_inline_shapes.mojo`'s `looped`), so
-    `move_dying_slot_copies` (`analysis/copy_elision.rs`) skips a copy
-    bound into a slot `mir::is_environment_slot` recognizes by its name.
-  - Fix: lower the environment copy as part of the nested `def`'s
-    creation (`lower_nested_environment`, `mir/lower_stmt.rs`), as a
-    `closure.make` capture copies, and drop the name test.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1335 The MIR verifier does not reject an owned register no path
   ends**
@@ -11380,27 +11341,56 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1377 A capture-list closure's lifted body takes its captures as
-  leading arguments, where the pin makes it a `__storage` method taking the
-  struct**
+- [ ] **R1427 A capturing lambda passes its captures to its lifted body as
+  leading reference arguments, where the pin builds the lambda's
+  `__storage` struct and calls its method**
 
-  The lifted body `outer$inner` takes each capture as a separate leading
-  reference argument, where upstream's `liftClosureIntoMethod` moves the
-  body into the storage struct as a method receiving it as `self`, so the
-  pin calls `__storage::inner({ i64, ptr }, i64)`.
-  - The lever: the body reads captured names as fields of `self`, and every
-    call, by name or through the value, passes the one struct.
-  - `NestedInfo::holds_environment` and the slotted/unslotted split go. The
-    declaration always builds the storage, and `sroa` and `mem-2-reg` take
-    it apart when it is register-passable. Today only a slotted body called
-    only by name builds it (`NestedInfo::storage`, `closure_storage` in
-    `mir/nested.rs`).
-  - Probe: `outer(4)` over `def get() {imm y} -> Int` called twice. At the
-    pin both calls pass one `{ ptr }` value, where Mojito passes `y`'s place
-    to each.
-  - Depends on R1376, which builds the storage struct.
+  A lambda with captures makes a `closure.make` of its lifted body, which
+  takes each capture as a leading reference parameter, where upstream's
+  `resolveAnonymousClosure` sends every capturing lambda through
+  `emitClosureInstance`, as a capture-list `def` has been since R1377: the
+  pin calls `` `lambda_0::__storage::`lambda_0(i64, i64) `` directly.
+  - Lever: the lambda builds its storage where it stands
+    (`lower_closure_storage_value`, `mir/lower_stmt.rs`, into a hidden
+    slot) and its `closure.make` moves it in, so a display or a loop still
+    snapshots per evaluation.
+  - The storage then needs `__copyinit__`/`__moveinit__` members where a
+    field's run code, as upstream's `synthesizeValueMethodBody` adds them.
+  - Afterwards only a `@parameter` closure, upstream's legacy capturing
+    closure, keeps the leading-captures ABI: the `None` arm of
+    `capture_slots` (`mir/nested.rs`), `emit_nested_closure`'s copy and
+    move modes, and owned captures in the verifier's `MakeClosure` rule.
+  - Probe: `conformance/probes/reference_binding_value_capture.mojo`. Its
+    `lambda {var r}` over `ref r = xs[0]` captures the `ref` itself, so it
+    crashes natively, where the pin prints 331; its two `def`s copy the
+    referent since R1377.
+  - Probe: `assets/ok/capturing_lambda_array_display.mojo` and
+    `assets/ok/lambda_in_control_flow.mojo` keep their output.
+  - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R1428 A capture-list closure's lifted body is a nested generator
+  taking its storage first, where the pin nests it in the `__storage`
+  struct as a method**
+
+  The lifted body `outer$inner` takes its closure's storage as its one
+  leading `read` parameter, `self`, but it stays a nested generator of its
+  enclosing declaration (`Specializer::instantiate_nested_bodies`), where
+  upstream's `liftClosureIntoMethod` makes it the storage's method
+  `outer::inner::__storage::inner`.
+  - Lever: name it `<storage>.<source name>`, set `has_receiver: true`,
+    and call it as a `MethodCall` with its resolved symbol.
+  - The storage's parameters become every binder the closure names: its
+    signature's, its body's, and its fields', as upstream's
+    `createSelfContainedSignature` and body parameter captures promote
+    them. Today they are only the binders its fields name
+    (`closure_storage`, `mir/nested.rs`).
+  - The elaborator then instantiates the body as a member of the storage
+    instance.
+  - Probe: `generic_body` in `assets/ok/nested_def_capture_storage.mojo`,
+    whose `scaled[k]() {var x}` storage would carry `k`.
+  - Depends on R1427.
+  - Model: Opus, Planned.
 - [ ] **R538 Storage paths for reference-valued elements outlive the last spelling of one**
 
   Problem: the checker, MIR, VM, and native backend keep paths for an element whose type is itself `ref[o] T`, though `List[ref[o] T]` and `Tuple[ref[o] T]` are now rejected at parse, as at the pin.

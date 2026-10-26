@@ -1333,17 +1333,6 @@ impl UseMode {
 /// elision forwards or lends the source's storage instead.
 pub const CALL_RESULT_SLOT: &str = "$call_result_tmp_r";
 
-/// Whether a slot named `name` holds an entry of a nested `def`'s
-/// environment, `{def}${capture}`.
-///
-/// It holds a `{var x}` capture's copy, which upstream makes inside the
-/// closure's creation, after the lifetime check, where it reads `x` and
-/// copies no dying value. A compiler temporary's name starts with `$`; no
-/// source identifier holds one.
-pub fn is_environment_slot(name: &str) -> bool {
-    !name.starts_with('$') && name.contains('$')
-}
-
 /// One already-evaluated argument to a multi-dimensional subscript.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum MirSubscriptArg {

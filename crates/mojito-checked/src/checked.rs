@@ -2542,6 +2542,10 @@ pub struct CheckedDef {
     /// upstream's closure op holds its captured values; default captures
     /// are found from its body's checked bindings.
     pub captures: Vec<CheckedCapture>,
+    /// Whether it declares a capture list (`{...}`), for which upstream's
+    /// `constructClosure` builds a closure storage struct; a `@parameter`
+    /// closure captures without one.
+    pub capture_list: bool,
     /// The level its inline decorator names, as upstream's function op
     /// records it.
     pub inline: crate::declaration::InlineLevel,
@@ -5854,6 +5858,7 @@ impl<'a> ArenaBuilder<'a> {
                 where_clauses,
                 body,
                 decorators,
+                captures,
                 ..
             } => CheckedStmtOp::Def(Box::new(CheckedDef {
                 name: name.clone(),
@@ -5870,6 +5875,7 @@ impl<'a> ArenaBuilder<'a> {
                     .captures
                     .clone()
                     .unwrap_or_default(),
+                capture_list: captures.is_some(),
                 inline: crate::declaration::InlineLevel::of(decorators).unwrap_or_default(),
                 unavailable: mojito_ast::ast::is_unavailable(decorators),
             })),

@@ -541,6 +541,11 @@ argument records whether its type is proven register-passable
 retains the place of every other read argument, which upstream passes by
 address. The MIR text is unchanged.
 
+The package format moves to `mojito-package 98` when a checked `def`
+records whether it declares a capture list (`capture_list`), for which
+MIR lowering builds the closure's storage struct, as upstream's
+`constructClosure` does. The MIR text is unchanged.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

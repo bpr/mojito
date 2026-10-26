@@ -731,34 +731,37 @@ policy or data-model responsibilities to focused children:
   of that declaration (`Specializer::instantiate_nested_bodies`). One
   declared inside a kept `comptime for` is a generator over the loop's
   index too (`MirFunctionDeclaration::region_binders`), instantiated once
-  per unrolled copy of the loop (`instantiate_region_references`). A call
-  of a nested `def` by name is a direct `call` of the lifted function
-  passing the captured places as its leading reference arguments
-  (`Flatten::lower_nested_call`), as the pin calls the lifted closure
-  generator. A body with a copied or moved capture and no use but calls
-  by name holds its environment in its declaring frame
-  (`NestedInfo::holds_environment`): the declaration copies or moves each
-  such capture into a slot of its own, and a call passes that slot, the
-  shape upstream's SROA leaves of the closure's `__storage` struct. A
-  body a sibling captures, or one with a copied or moved capture and
-  another use, keeps a slot of its own (`NestedInfo::slotted`). When
-  every use of a slotted body with captures, in its declaring frame or a
-  nested body, is a call by name, the slot holds the body's storage struct
-  (`NestedInfo::storage`, `<lifted>$__storage`, one field per capture in
-  capture order): an owned field for a copied or moved capture, a `ref`
-  field for a reference capture, whose referent is the captured sibling's
-  storage for a sibling with one, and the struct's parameters the
-  enclosing binders its fields name, as upstream's
-  `ClosureEmitter::emitClosure` builds it. MIR lowering synthesizes the
-  struct's declaration, its fieldwise `__init__`, which the declaration
-  calls with the captures, and a `__deinit__` when a field has a
-  destructor (`nested::lower_closure_storage`). A call of the body by
-  name, or through a sibling capturing it, passes the storage's fields as
-  the lifted body's leading reference arguments, a `ref` field the handle
-  it holds. Otherwise a closure (`closure.make`) is made at a first-class
-  use, or held in the slot, and only a slotted body without storage whose
-  captures the calling frame does not hold is called through its closure
-  value.
+  per unrolled copy of the loop (`instantiate_region_references`). Every
+  statement-declared `def` with a non-empty capture list
+  (`CheckedDef::capture_list`) builds its closure's storage struct at its
+  declaration (`NestedInfo::storage`, `<lifted>$__storage`, one field per
+  capture in capture order), as upstream's `constructClosure` emits a
+  closure instance for every one: an owned field for a copied or moved
+  capture, the referent's copy for a reference binding, and a `ref` field
+  for a reference capture, whose referent is the captured sibling's
+  storage for a sibling capture. The struct's parameters are the
+  enclosing binders its fields name, and it is register-passable (and
+  trivially so) by the meet over its captures, a reference capture
+  contributing its referent's, as upstream's `ClosureEmitter::emitClosure`
+  decides. MIR lowering synthesizes the struct's declaration, its
+  fieldwise `__init__`, which the declaration calls with the captures, and
+  a `__deinit__` when a field has a destructor
+  (`nested::lower_closure_storage`). The lifted body takes the storage as
+  its one leading `read` parameter, `self`, as upstream's lifted method
+  does, and binds each capture to a frame local holding a reference to
+  the field keeping it, made at the head of the body (`CaptureStorage`,
+  `Flatten::capture_storage_prologue`), as `liftClosureIntoMethod`
+  rewires a capture's uses to a field reference of `self`. A call by name,
+  or through a sibling capturing it, is a direct `call` passing the
+  storage (`Flatten::lower_direct_nested_call`): by value when it is
+  register-passable, so a moved capture the body writes is written in
+  that call's copy, and by address otherwise. A first-class use makes a
+  closure capturing the storage by reference, kept live to the end of
+  its statement (`Flatten::load_nested_closure`). A lambda, and a
+  `@parameter` closure, which captures without a list, still take their
+  captures as leading reference parameters, and a call by name passes the
+  captured places (`Flatten::lower_nested_call`); one without storage a
+  sibling captures keeps its closure in a slot (`NestedInfo::slotted`).
 - `backend/vm.rs` drives execution; `backend/vm/calls.rs` owns runtime argument
   binding and construction, while `backend/vm/places.rs` owns projected storage
   navigation and access; further `impl VmBackend` clusters live in
@@ -4061,15 +4064,14 @@ appear directly as `{...}` after effects; the removed `unified {...}` spelling
 is rejected with a contextual parse error. `imm`, `mut`,
 and `ref` captures become stable frame/slot handles with their checked
 permissions, `var` clones the value when the declaration executes, and move
-capture transfers the value at that same point. Direct nested calls use the same
-materialized closure and `CallIndirect` path as closure values rather than
-rebuilding an environment at each call.
+capture transfers the value at that same point: a capture-list `def` stores
+each in its closure's storage struct, which every call passes.
 
 The stored reference handle is not itself a persistent loan spanning declaration
 to invocation. The enclosing code may access or update its owner between those
 events, and an `imm` capture observes that current value. Loan conflicts apply
 when the closure is used under its checked capture convention; owned copy/move
-captures instead operate on their independent environment slot.
+captures instead operate on their field of the closure's storage.
 
 The checker resolves every explicit, defaulted, and intermediate forwarding
 capture to a stable `OwnerId`, exact storage `Ty`, and capture convention. This
@@ -4950,9 +4952,9 @@ argument its entry defines and it never reads
 (`BackwardScan::region_args`). Copy elision then applies both halves of
 upstream's `optimizeCopyDestroys`: a copy or constant whose one use is the
 `drop.reg` right after it goes with that drop, and a `var.use` copy whose
-source slot's `drop.var` follows it becomes the slot's move, except a copy
-into a nested `def`'s environment, which upstream makes inside the
-closure's creation (`mir::is_environment_slot`). `canonicalize` erases a
+source slot's `drop.var` follows it becomes the slot's move; a `{var x}`
+capture's copy is made inside its storage's `__init__`, as upstream makes
+it inside the closure's creation, so the frame only lends `x`. `canonicalize` erases a
 `drop.reg` whose register an instantiation made trivially destructible,
 before a fold can forward the register past it. Since no drop is tested, every
 producer emits only decided drops: a store's overwrite drop only where the

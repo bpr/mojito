@@ -473,6 +473,7 @@ assets/ok/nested_def_enclosing_binders.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_inline_shapes.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_reads_comptime_for_index.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_reads_enclosing_parameter.mojo	main	exe-differential	sanitized
+assets/ok/nested_def_storage_method.mojo	main	exe-differential	sanitized
 assets/ok/nested_def_value_argument.mojo	main	exe-differential	sanitized
 assets/ok/nested_generic_unread_own_instances.mojo	main	exe-differential	sanitized
 assets/ok/nested_index_store.mojo	main	exe-differential	sanitized

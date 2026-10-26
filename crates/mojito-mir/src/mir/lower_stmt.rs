@@ -1949,8 +1949,9 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// Make the closure of the slotted nested `def` `info`, declared
-    /// `name` at `at`, and store it in the declaration's slot.
+    /// Make the closure of the nested `def` `info` without storage that a
+    /// sibling captures ([`NestedInfo::slotted`]), declared `name` at `at`,
+    /// and store it in the declaration's slot.
     fn lower_slotted_nested_def(&mut self, info: &NestedInfo, name: &str, at: SourceSpan) {
         let src = self.emit_nested_closure(info, at, false);
         let var = self.declare_binding_var(info.binding, name);
@@ -1965,8 +1966,8 @@ impl<'a> Flatten<'a> {
         });
     }
 
-    /// Build the storage struct `storage` of the slotted capture-list
-    /// `def` `info`, declared `name` at `at`, in the declaration's slot, as
+    /// Build the storage struct `storage` of the capture-list `def`
+    /// `info`, declared `name` at `at`, in the declaration's slot, as
     /// upstream's `ClosureEmitter::emitClosure` calls the storage's
     /// `__init__` with the captures: a `var` capture's place is read, a
     /// moved capture's value moves in, and a reference capture's place,
@@ -2032,66 +2033,6 @@ impl<'a> Flatten<'a> {
             binding_ty: Some(storage.ty.clone()),
             in_place: false,
         });
-    }
-
-    /// Copy or move each copied or moved capture of nested `def` `info`,
-    /// declared at `at`, into the frame slot that holds that entry of its
-    /// environment ([`NestedInfo::holds_environment`]).
-    fn lower_nested_environment(&mut self, info: &NestedInfo, at: &SourceSpan) {
-        for capture in &info.captures {
-            let mode = match capture.kind {
-                mojito_ast::ast::CaptureKind::Copy => UseMode::Copy,
-                mojito_ast::ast::CaptureKind::Move => UseMode::Move,
-                mojito_ast::ast::CaptureKind::Imm
-                | mojito_ast::ast::CaptureKind::Mut
-                | mojito_ast::ast::CaptureKind::Ref => continue,
-            };
-            let ty = mir_nested_callable_ty(capture.ty.clone());
-            let place = self.capture_place(capture);
-            let direct = place.through.is_none()
-                && place.proj.is_empty()
-                && !self.runtime_aliases.contains(&place.root);
-            let src = if direct || mode == UseMode::Move {
-                let dest = self.fresh_typed(at.clone(), Some(place.root), ty.clone());
-                self.emit(MirInstr::UseVar {
-                    dest,
-                    var: place.root,
-                    mode,
-                    constructor: None,
-                });
-                dest
-            } else {
-                let value = self.read_slot(place.root, at.clone(), None);
-                let dest = self.fresh_typed(at.clone(), Some(place.root), ty.clone());
-                self.emit(MirInstr::CopyValue {
-                    dest,
-                    value,
-                    constructor: None,
-                });
-                dest
-            };
-            let key = (info.binding, capture.binding);
-            let var = if let Some(var) = self.environment.get(&key) {
-                *var
-            } else {
-                let name = format!("{}${}", info.source_name, capture.name);
-                let name = if self.vars.contains(&name) {
-                    format!("{name}$binding{}", info.binding.0)
-                } else {
-                    name
-                };
-                let var = self.var(&name);
-                self.environment.insert(key, var);
-                var
-            };
-            self.var_types.insert(var, ty.clone());
-            self.emit(MirInstr::DefVar {
-                var,
-                src,
-                binding_ty: Some(ty),
-                in_place: false,
-            });
-        }
     }
 
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
@@ -2669,23 +2610,17 @@ impl<'a> Flatten<'a> {
                 _,
             ) => {}
 
-            // A direct nested declaration lowers to nothing unless it needs
-            // a slot (`NestedInfo::slotted`) or holds its environment
-            // (`NestedInfo::holds_environment`): then it builds its storage
-            // (`NestedInfo::storage`) or closure, or its environment's
-            // entries, exactly here, so copy and move captures snapshot or
-            // transfer before any following statement can mutate or use the
-            // source binding.
+            // A direct nested declaration with captures builds its storage
+            // (`NestedInfo::storage`) exactly here, so copy and move
+            // captures snapshot or transfer before any following statement
+            // can mutate or use the source binding. Any other lowers to
+            // nothing unless a sibling captures it (`NestedInfo::slotted`).
             (CheckedStmtOp::Def(def), _) => {
                 let info = statement_binding
                     .and_then(|binding| self.nested.get(&binding))
                     .filter(|info| info.materialized_here)
                     .cloned();
                 match info {
-                    Some(info) if info.holds_environment => {
-                        self.lower_nested_environment(&info, &node.location());
-                    }
-                    Some(info) if !info.slotted => {}
                     Some(info) => match &info.storage {
                         Some(storage) => self.lower_closure_storage_value(
                             &info,
@@ -2693,7 +2628,10 @@ impl<'a> Flatten<'a> {
                             &def.name,
                             &node.location(),
                         ),
-                        None => self.lower_slotted_nested_def(&info, &def.name, node.location()),
+                        None if info.slotted => {
+                            self.lower_slotted_nested_def(&info, &def.name, node.location());
+                        }
+                        None => {}
                     },
                     None => self.emit(MirInstr::Unsupported(
                         "nested def/struct/trait declaration".into(),
