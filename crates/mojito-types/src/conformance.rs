@@ -19,7 +19,6 @@ pub const COMPILER_TRAITS: &[&str] = &[
     "Copyable",
     "ImplicitlyCopyable",
     "Representable",
-    "Writable",
     "Writer",
     "Iterable",
     "IterableOwned",
@@ -185,10 +184,6 @@ pub fn leaf_conforms(
                 _ => true,
             }
         }
-        "Writable" => !matches!(
-            ty.kind(),
-            TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
-        ),
         "Writer" => false,
         "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
         | "Modable" => is_numeric_like(ty),
@@ -234,6 +229,9 @@ pub fn leaf_conforms(
 /// conforms, which `element` answers. A closure's storage is
 /// `RegisterPassable` where each of its captures is.
 ///
+/// Every modelled leaf but a callable lists `Writable`; `Tuple` and
+/// `Variant` list it where every element conforms, which `element` answers.
+///
 /// A struct or a type parameter answers by its own declaration or bounds
 /// instead.
 pub fn modelled_declares(
@@ -271,6 +269,13 @@ pub fn modelled_declares(
         }
         "Absable" | "Powable" | "Roundable" | "DivModable" | "CeilDivable" => is_numeric_like(ty),
         "Hashable" => builtin_hashable_ty(ty),
+        "Writable" => match ty.kind() {
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
+                items.iter().all(|item| element(item, trait_name))
+            }
+            TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_) => false,
+            _ => true,
+        },
         "Defaultable" => match ty.kind() {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
                 items.iter().all(|item| element(item, trait_name))

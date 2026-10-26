@@ -443,6 +443,13 @@ pub fn hasher_trait() -> String {
     mojito_module::module::linked_item_name("std.hash.hasher", "Hasher")
 }
 
+/// The linked name of the bundled `std.format` helper a synthesized
+/// `Writable` default writes each field through, which no user spelling
+/// reaches: the compiler names it by module path.
+pub fn writable_field_writer() -> String {
+    mojito_module::module::linked_item_name("std.format", "_reflection_write_field_to")
+}
+
 /// A static type checker over the parsed AST.
 ///
 /// Top-level struct and trait declarations register order-independently

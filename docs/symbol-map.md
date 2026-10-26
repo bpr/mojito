@@ -1482,6 +1482,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`rewrite_stmt_cloned`, `rewrite_expr`), type-binding substitution
   (`substitute_type_bindings_in_{block,type}`), `mark_struct_names`, and
   `pack_element_construction`.
+- `comptime/synth.rs` owns the synthesized conformance members, run by
+  `prepare_importing`: `synthesize_copyable_copy`,
+  `synthesize_hashable_hash`, `synthesize_equatable_eq`, and
+  `synthesize_writable_defaults` (`Writable`'s reflective `write_to` and
+  `write_repr_to` for a conformer, direct or through a refinement, without
+  a `Writer`-fed member: each field through the bundled
+  `std.format._reflection_write_field_to`, which the compiler names by
+  `mojito_checker::checker::writable_field_writer`). Neither backend
+  formats a struct's fields itself: the VM's `format_value`
+  (`backend/vm/dispatch.rs`) and Pliron's `append_struct_display`
+  (`lower/print.rs`) call the struct's `write_to`/`write_repr_to` instance,
+  which Pliron's `dispatch_edges` (`lib.rs`) makes reachable for every
+  `print`, `repr`, and `$write_formatted` argument.
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
   (`desugar_simd_wildcard_parameters`: an infer-only `DType` and
   `SIMDLength` binder pair per wildcard parameter of a `def`, method, or

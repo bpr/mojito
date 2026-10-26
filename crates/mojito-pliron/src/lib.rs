@@ -1077,9 +1077,9 @@ impl<'p> CallEdges<'p, '_> {
                 }
             }
             // The VM-synthesized `Writer.write` dispatch lowers to
-            // `write_string` calls that exist only in the expansion; the
-            // builtin-string writer displays nominal arguments through
-            // their `write_to` instances.
+            // `write_string` calls that exist only in the expansion, and
+            // displays each nominal argument through its `write_to`
+            // instance first, whatever the writer.
             MirInstr::MethodCall {
                 recv,
                 method,
@@ -1096,16 +1096,12 @@ impl<'p> CallEdges<'p, '_> {
                 {
                     self.push_members(name, "write_string");
                 }
-                if matches!(
-                    self.function.reg_types.get(&recv.0).map(Ty::kind),
-                    Some(TyKind::StringLiteral)
-                ) {
-                    for arg in args {
-                        if let Some(TyKind::Struct(name, _)) =
-                            self.function.reg_types.get(&arg.0).map(Ty::kind)
-                        {
-                            self.push_members(name, "write_to");
-                        }
+                for arg in args {
+                    if let Some(TyKind::Struct(name, _)) =
+                        self.function.reg_types.get(&arg.0).map(Ty::kind)
+                        && !mojito_symbol::symbol::is_stdlib_string_struct(name)
+                    {
+                        self.push_members(name, "write_to");
                     }
                 }
             }

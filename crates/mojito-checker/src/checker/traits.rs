@@ -1559,10 +1559,6 @@ impl Checker {
             // effectiveness is enforced at the transfer/consuming use sites.
             "Movable" => true,
             "Deinitable" => true,
-            // A struct without a `Writer`-fed `write_to` writes through the
-            // reflective `Name(field=...)` default; any other `write_to` is an
-            // ordinary overload beside it, as in current Mojo.
-            "Writable" => self.structs.contains_key(name),
             // An operation trait with a known dunder signature requires the
             // struct to define that dunder (`Addable` needs `__add__`, etc.).
             // Layout/backend markers without a dunder remain accepted-but-shallow.
@@ -1929,12 +1925,6 @@ impl Checker {
                 "ImplicitlyCopyable" => self.is_implicitly_copyable(ty),
                 "Movable" => self.is_movable(ty),
                 "Deinitable" => self.is_deinitable(ty),
-                "Writable" => match ty.kind() {
-                    TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                    TyKind::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
-                    TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_) => false,
-                    _ => true,
-                },
                 "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
                 | "Modable" => is_numeric_like(ty),
                 "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {

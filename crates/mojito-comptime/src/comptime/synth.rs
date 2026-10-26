@@ -1,5 +1,5 @@
 //! Synthesized conformance methods: `Copyable.copy`, `Hashable.__hash__`,
-//! and `Equatable.__eq__` bodies, plus upstream's `SIMD[_, _]` parameter
+//! `Equatable.__eq__`, and `Writable.write_to`/`write_repr_to` bodies, plus upstream's `SIMD[_, _]` parameter
 //! desugar, the vector-alias bound fold, the KGEN-typed binder fold, and
 //! the value reading of a `Self.`-spelled `materialize` operand.
 
@@ -24,23 +24,9 @@ pub(super) fn synthesize_copyable_copy(
     program: &mut [Stmt],
     installed: Option<&InstalledInterfaces>,
 ) {
-    let declared: HashMap<String, Vec<String>> = program
-        .iter()
-        .filter_map(|statement| match &statement.kind {
-            StmtKind::Trait { name, refines, .. } => Some((name.clone(), refines.clone())),
-            _ => None,
-        })
-        .collect();
-    let parents = |name: &str| {
-        declared
-            .get(name)
-            .map(Vec::as_slice)
-            .or_else(|| installed?.trait_parents(name))
-    };
-    let copyable = |conformance: &String| {
-        conformance == "Copyable"
-            || mojito_types::conformance::refines(&parents, conformance, "Copyable")
-    };
+    let declared = declared_trait_parents(program);
+    let copyable =
+        |conformance: &String| conformance_reaches(&declared, installed, conformance, "Copyable");
     for statement in program {
         let span = statement.span;
         let module = statement.module.clone();
@@ -260,6 +246,99 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
     }
 }
 
+/// Materialize `Writable`'s reflective `write_to` and `write_repr_to`
+/// defaults as ordinary source AST, for a struct conforming to `Writable`
+/// directly or through a declared refinement without that member taking a
+/// `Writer`. As upstream's default over `reflect[Self]` does, the body
+/// writes `Name[params](field=value, ...)`: the type through
+/// `_unqualified_type_name[Self]()`, each field through the bundled
+/// `_reflection_write_field_to`, whose `conforms_to(FieldType, Writable)`
+/// assert defers the field check to the default's instantiation. A
+/// `write_to` taking any other writer is an ordinary overload beside the
+/// default, as in current Mojo. An `enum`'s members are the parser's, and a
+/// conditional conformance carries its predicate onto the synthesized
+/// methods.
+pub(super) fn synthesize_writable_defaults(
+    program: &mut [Stmt],
+    installed: Option<&InstalledInterfaces>,
+) {
+    let declared = declared_trait_parents(program);
+    let writable =
+        |conformance: &String| conformance_reaches(&declared, installed, conformance, "Writable");
+    let field_writer = mojito_checker::checker::writable_field_writer();
+    for statement in program {
+        let span = statement.span;
+        let module = statement.module.clone();
+        let StmtKind::Struct {
+            conforms,
+            conformance_conditions,
+            fields,
+            methods,
+            enum_cases: None,
+            ..
+        } = &mut statement.kind
+        else {
+            continue;
+        };
+        if !conforms.iter().any(writable) {
+            continue;
+        }
+        let declares_writable = conforms.iter().any(|conformance| conformance == "Writable");
+        let where_clauses = conformance_conditions
+            .iter()
+            .find(|(trait_name, _)| trait_name == "Writable")
+            .or_else(|| {
+                conformance_conditions
+                    .iter()
+                    .find(|(trait_name, _)| !declares_writable && writable(trait_name))
+            })
+            .map(|(_, condition)| vec![condition.clone()])
+            .unwrap_or_default();
+        for (member, is_repr) in [("write_to", false), ("write_repr_to", true)] {
+            if methods
+                .iter()
+                .any(|method| method.name == member && takes_writer(method))
+            {
+                continue;
+            }
+            let mut body = writable_default_body(fields, &field_writer, is_repr, span);
+            if let Some(module) = &module {
+                mojito_ast::ast::stamp_source(&mut body, module);
+            }
+            methods.push(mojito_ast::ast::Method {
+                name: member.to_string(),
+                type_params: Vec::new(),
+                has_self: true,
+                self_convention: None,
+                self_origin: None,
+                decorators: Vec::new(),
+                params: vec![mojito_ast::ast::FnParam {
+                    name: "writer".to_string(),
+                    ty: Type::Named(
+                        "Some".to_string(),
+                        vec![ParamArg::Type(Type::Named(
+                            "Writer".to_string(),
+                            Vec::new(),
+                        ))],
+                    ),
+                    default: None,
+                    kind: mojito_ast::ast::ParamKind::Regular,
+                    convention: Some(mojito_ast::ast::ArgConvention::Mut),
+                    origin: None,
+                }],
+                positional_only: None,
+                keyword_only: None,
+                raises: false,
+                raises_type: None,
+                ret: None,
+                where_clauses: where_clauses.clone(),
+                body,
+                provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,
+            });
+        }
+    }
+}
+
 /// Materialize `Equatable`'s reflective `__eq__` default as ordinary source
 /// AST, for a struct declaring `Equatable` or `Comparable` without an
 /// `__eq__` taking `Self`: every field compares with `!=` in declaration
@@ -437,6 +516,35 @@ pub(super) fn read_materialize_self_operands(program: &mut [Stmt]) {
         }
     }
     mojito_ast::visit::walk_block_mut(&mut Operands, program);
+}
+
+/// Each trait the program declares, with the traits it refines.
+fn declared_trait_parents(program: &[Stmt]) -> HashMap<String, Vec<String>> {
+    program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Trait { name, refines, .. } => Some((name.clone(), refines.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether a struct's declared conformance `conformance` is `required` or
+/// refines it, through the program's `declared` traits and the `installed`
+/// package's.
+fn conformance_reaches(
+    declared: &HashMap<String, Vec<String>>,
+    installed: Option<&InstalledInterfaces>,
+    conformance: &str,
+    required: &str,
+) -> bool {
+    let parents = |name: &str| {
+        declared
+            .get(name)
+            .map(Vec::as_slice)
+            .or_else(|| installed?.trait_parents(name))
+    };
+    conformance == required || mojito_types::conformance::refines(&parents, conformance, required)
 }
 
 fn desugar_wildcard_parameters(
@@ -716,4 +824,94 @@ impl mojito_ast::visit::MutVisitor for KgenTypeFold<'_> {
             _ => {}
         }
     }
+}
+
+/// Whether `method` takes one `mut` writer, `Some[Writer]` or a binder of
+/// its own bounded by `Writer`, as `Writable`'s requirements do.
+fn takes_writer(method: &mojito_ast::ast::Method) -> bool {
+    let names_writer = |arg: &ParamArg| match arg {
+        ParamArg::Type(Type::Named(name, args)) => name == "Writer" && args.is_empty(),
+        ParamArg::Value(expr) => {
+            matches!(&expr.kind, ExprKind::Identifier(name) if name == "Writer")
+        }
+        _ => false,
+    };
+    matches!(
+        method.params.as_slice(),
+        [parameter] if parameter.convention == Some(mojito_ast::ast::ArgConvention::Mut)
+            && match &parameter.ty {
+                Type::Named(some, args) if some == "Some" => {
+                    matches!(args.as_slice(), [arg] if names_writer(arg))
+                }
+                Type::Named(binder, args) if args.is_empty() => method
+                    .type_params
+                    .iter()
+                    .any(|param| param.name == *binder && param.bounds.iter().any(|bound| bound == "Writer")),
+                _ => false,
+            }
+    )
+}
+
+/// The body of a synthesized `Writable` default: `Name[params](`, each
+/// field's `name=` and value through `field_writer`, then `)`.
+fn writable_default_body(
+    fields: &[mojito_ast::ast::Param],
+    field_writer: &str,
+    is_repr: bool,
+    span: Span,
+) -> Vec<Stmt> {
+    let identifier = |name: &str| Expr::new(ExprKind::Identifier(name.to_string()), span);
+    let write_string = |text: Expr| {
+        mk(
+            StmtKind::Expr(Expr::new(
+                ExprKind::MethodCall {
+                    object: Box::new(identifier("writer")),
+                    method: "write_string".to_string(),
+                    args: vec![text],
+                    kwargs: Vec::new(),
+                },
+                span,
+            )),
+            span,
+        )
+    };
+    let literal = |text: String| Expr::new(ExprKind::Str(text), span);
+    let type_name = Expr::new(
+        ExprKind::Call {
+            name: "_unqualified_type_name".to_string(),
+            param_args: vec![ParamArg::Type(Type::SelfType)],
+            args: Vec::new(),
+            kwargs: Vec::new(),
+        },
+        span,
+    );
+    let mut body = vec![
+        write_string(type_name),
+        write_string(literal("(".to_string())),
+    ];
+    for (index, field) in fields.iter().enumerate() {
+        let separator = if index == 0 { "" } else { ", " };
+        body.push(write_string(literal(format!("{separator}{}=", field.name))));
+        let value = Expr::new(
+            ExprKind::Member {
+                object: Box::new(identifier("self")),
+                field: field.name.clone(),
+            },
+            span,
+        );
+        body.push(mk(
+            StmtKind::Expr(Expr::new(
+                ExprKind::Call {
+                    name: field_writer.to_string(),
+                    param_args: vec![ParamArg::Value(Expr::new(ExprKind::Bool(is_repr), span))],
+                    args: vec![value, identifier("writer")],
+                    kwargs: Vec::new(),
+                },
+                span,
+            )),
+            span,
+        ));
+    }
+    body.push(write_string(literal(")".to_string())));
+    body
 }

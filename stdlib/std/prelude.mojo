@@ -7,7 +7,7 @@
 
 from std.collections.array import Array
 from std.collections.list import List
-from std.format import Writer
+from std.format import Writable, Writer
 from std.format.tstring import TString
 from std.string import Codepoint, String, StringSpan, atof, atol
 from std.collections.set import Set
@@ -39,6 +39,7 @@ from std.io import RawFileDescriptor, FileHandle, open
 
 # Linked for its bodies, not for a name: the compiler calls these by symbol.
 from std._intrinsics import _pow_int
+from std.format import _reflection_write_field_to
 from std.builtin._stubs import (
     paramfor_has_next,
     paramfor_next_iter,

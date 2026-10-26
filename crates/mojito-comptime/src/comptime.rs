@@ -258,7 +258,8 @@ pub struct ImportedScope<'a> {
 
 /// Prepare a linked program for source validation and elaboration.
 ///
-/// Qualify struct packs, synthesize the derived `copy`/`__hash__` methods,
+/// Qualify struct packs, synthesize the derived `copy`, `__hash__`,
+/// `__eq__`, `write_to`, and `write_repr_to` methods,
 /// desugar `SIMD[_, _]` parameters, fold SIMD alias bounds, and fold a
 /// `!kgen.type`-typed parameter into a type binder. A trait
 /// default stays in its trait; a conformer's wrapper for a default it
@@ -285,6 +286,7 @@ pub fn prepare_importing(
     synthesize_copyable_copy(&mut own, installed);
     synthesize_hashable_hash(&mut own);
     synthesize_equatable_eq(&mut own);
+    synthesize_writable_defaults(&mut own, installed);
     desugar_simd_wildcard_parameters(&mut own);
     fold_simd_alias_bounds(&mut own, installed);
     fold_kgen_type_parameters(&mut own, installed)?;

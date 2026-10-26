@@ -8,6 +8,7 @@
 # Writable machinery.
 
 from std.range import range
+from std.format import _reflection_write_field_to
 
 
 struct TString[*Ts: Movable & Writable](Deinitable, Movable, Writable):
@@ -25,6 +26,11 @@ struct TString[*Ts: Movable & Writable](Deinitable, Movable, Writable):
             if True:
                 ref element = self.storage[i]
                 writer.write(element)
+
+    # The interpolated values are not shown, as upstream's
+    # `FormatStruct(writer, "TString").fields()` shows none.
+    def write_repr_to(self, mut writer: Some[Writer]):
+        writer.write("TString()")
 
 
 @inline(.always)

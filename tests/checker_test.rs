@@ -1831,11 +1831,11 @@ fn composes_inherited_associated_type_bounds() {
 
 #[test]
 fn checks_composed_associated_type_bounds() {
-    ok(
+    ok_std(
         "trait Container:\n    comptime Element: Writable & Copyable & Deinitable\n\n@fieldwise_init\nstruct IntContainer(Container):\n    comptime Element = Int\n    var value: Int\n",
     );
 
-    let e = err(
+    let e = err_std(
         "trait Container:\n    comptime Element: Writable & Copyable\n\n@fieldwise_init\nstruct Opaque:\n    var value: Int\n\n@fieldwise_init\nstruct Bad(Container):\n    comptime Element = Opaque\n    var value: Opaque\n",
     );
     assert!(matches!(
@@ -1856,11 +1856,11 @@ fn rejects_conflicting_inherited_associated_member_kinds() {
 
 #[test]
 fn applies_conditional_conformance_after_specialization() {
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Wrapper[T: Movable & Deinitable](Writable where conforms_to(T, Writable)):\n    var value: Self.T\n\ndef accept[T: Writable](value: T):\n    pass\n\ndef main():\n    accept(Wrapper[Int](1))\n",
     );
 
-    let e = err(
+    let e = err_std(
         "@fieldwise_init\nstruct Opaque:\n    pass\n\n@fieldwise_init\nstruct Wrapper[T: Movable & Deinitable](Writable where conforms_to(T, Writable)):\n    var value: Self.T\n\ndef accept[T: Writable](value: T):\n    pass\n\ndef main():\n    accept(Wrapper[Opaque](Opaque()))\n",
     );
     assert!(
@@ -1871,10 +1871,10 @@ fn applies_conditional_conformance_after_specialization() {
 
 #[test]
 fn conditional_conformance_accepts_value_predicates() {
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Window[size: Int](Writable where size > 0):\n    var value: Int\n\ndef accept[T: Writable](value: T):\n    pass\n\ndef main():\n    accept(Window[1](4))\n",
     );
-    let e = err(
+    let e = err_std(
         "@fieldwise_init\nstruct Window[size: Int](Writable where size > 0):\n    var value: Int\n\ndef accept[T: Writable](value: T):\n    pass\n\ndef main():\n    accept(Window[0](4))\n",
     );
     assert!(matches!(
@@ -3864,11 +3864,11 @@ fn struct_pack_collector_rejects_a_pack_of_other_bounds() {
 
 #[test]
 fn nightly_pack_conformance_checks_every_type_value() {
-    ok(
+    ok_std(
         "def count[*Ts: AnyType](*args: *Ts) -> Int where conforms_to(Ts.values, Writable):\n    return len(args)\n\ndef main():\n    var n = count(1, \"two\", True)\n",
     );
     assert!(matches!(
-        err(
+        err_std(
             "@fieldwise_init\nstruct Opaque:\n    var n: Int\n\ndef count[*Ts: AnyType](*args: *Ts) -> Int where conforms_to(Ts.values, Writable):\n    return len(args)\n\ndef main():\n    var n = count(Opaque(1))\n"
         ),
         TypeError::BadCall { .. }
@@ -7785,11 +7785,11 @@ fn print_keywords_are_checked() {
 
 #[test]
 fn collector_position_distinguishes_overloads() {
-    ok(
+    ok_std(
         "def pos[*Ts: Writable](a: Int, *rest: *Ts) -> Int:\n    return 1\n\n\
          def pos[*Ts: Writable](*rest: *Ts, a: Int) -> Int:\n    return 2\n",
     );
-    let e = err(
+    let e = err_std(
         "def pos[*Ts: Writable](a: Int, *rest: *Ts) -> Int:\n    return 1\n\n\
          def pos[*Ts: Writable](a: Int, *others: *Ts) -> Int:\n    return 2\n",
     );

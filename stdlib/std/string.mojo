@@ -12,6 +12,7 @@
 # simplified to "never break after ZWJ" and GB9b (Prepend) omitted.
 
 from std.memory.alloc import unsafe_alloc
+from std.format import _reflection_write_field_to
 
 from std.collections.list import List
 from std.collections.optional import Optional
@@ -1411,6 +1412,10 @@ struct Codepoint(Comparable, ImplicitlyCopyable, Intable, Movable, Writable):
 
     def write_to(self, mut writer: Some[Writer]):
         writer.write(self._text)
+
+    # Upstream's `FormatStruct(writer, "Codepoint").fields(self._scalar_value)`.
+    def write_repr_to(self, mut writer: Some[Writer]):
+        writer.write("Codepoint(", self._scalar, ")")
 
 
 # A borrowed byte view over a String's UTF-8 buffer: current Mojo's

@@ -11,6 +11,7 @@ from std.collections.list import List
 from std.builtin.builtin_slice import ContiguousSlice
 from std.iter import Iterable, Iterator, StopIteration
 from std.string import String, StringSpan
+from std.format import _reflection_write_field_to
 
 # The audited head's strict-slice abort messages with the index and valid
 # range interpolated, mirroring `std.string.check_slice_bounds`. This module

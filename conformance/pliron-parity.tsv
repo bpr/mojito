@@ -1257,6 +1257,7 @@ assets/ok/with_multiple_dependent.mojo	main	exe-differential	sanitized
 assets/ok/with_statement.mojo	main	exe-differential	sanitized
 assets/ok/witness_default_differs_from_requirement.mojo	main	exe-differential	sanitized
 assets/ok/writable_extra_write_to_overload.mojo	main	exe-differential	sanitized
+assets/ok/writable_trait_library.mojo	main	exe-differential	sanitized
 assets/ok/writer_write_override.mojo	main	exe-differential	sanitized
 assets/ownership_ok/both_branches_move_then_reinit.mojo	main	exe-differential	sanitized
 assets/ownership_ok/comptime_for_break_continue.mojo	main	exe-differential	sanitized

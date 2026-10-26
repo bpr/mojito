@@ -687,6 +687,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Writable` is now upstream's library trait, declared beside `Writer` in
+  the bundled `std/format/__init__.mojo` and exported by the prelude
+  (R424), where the compiler knew it by name and each backend formatted a
+  struct without a `write_to` field by field. A conformer without its own
+  `write_to` or `write_repr_to` now gets upstream's reflective default as
+  an ordinary method, so the default names a generic instance by its
+  parameters (`G[SIMD[DType.int, 1]](v=5)`, not `G$mono$TInt(v=5)`),
+  writes a `String` field's repr as `'s'`, can be called directly
+  (`p.write_to(s)`), and runs natively under `repr` (R434). A declared
+  trait may refine `Writable`, a field that is not `Writable` is rejected
+  only where the default is instantiated, and a `write_to` under a `where`
+  clause no longer satisfies an unconditional conformance (R109), all as
+  at the pin. `Codepoint` and `TString` gain upstream's `write_repr_to`.
+  Natively, every struct a `Writer.write` writes now runs its own
+  `write_to`, so a pack element's or a `format` argument's text matches the
+  VM (R433), and `Named` loses its by-name formatting arm (R1424).
+
 - `Defaultable`, `RegisterPassable`, and `TrivialRegisterPassable` are now
   upstream's library traits, declared in the bundled
   `std/builtin/value.mojo` and exported from the prelude (R1363), where the

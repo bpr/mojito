@@ -1,5 +1,7 @@
 """Time utilities (subset): the C `timespec` record."""
 
+from std.format import _reflection_write_field_to
+
 comptime _NSEC_PER_SEC = 1_000_000_000
 
 

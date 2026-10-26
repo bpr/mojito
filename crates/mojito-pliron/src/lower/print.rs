@@ -6,42 +6,6 @@ use super::*;
 use mojito_types::types::TyKind;
 
 impl<'a> FnLowering<'a> {
-    pub(super) fn append_string_pair(
-        &mut self,
-        ctx: &mut Context,
-        descriptor: Value,
-        chunk: Value,
-        chunk_len: Value,
-        dest: Reg,
-    ) {
-        let i64_handle: TypeHandle = IntegerType::get(ctx, 64, Signedness::Signless).into();
-        let ptr_handle: TypeHandle = PointerType::get(ctx, 0).into();
-        let i8_ty: TypeHandle = IntegerType::get(ctx, 8, Signedness::Signless).into();
-        let data = LoadOp::new(ctx, descriptor, ptr_handle);
-        self.append(ctx, data.get_operation(), Some(dest));
-        let len_address = self.offset_address(ctx, descriptor, 8);
-        let len = LoadOp::new(ctx, len_address, i64_handle);
-        self.append(ctx, len.get_operation(), Some(dest));
-        let total =
-            AddOp::new_with_overflow_flag(ctx, len.get_result(ctx), chunk_len, no_overflow_flags());
-        self.append(ctx, total.get_operation(), Some(dest));
-        let merged = self.emit_alloc(ctx, total.get_result(ctx), 1, dest);
-        self.mem_copy_dynamic(ctx, merged, data.get_result(ctx), len.get_result(ctx), dest);
-        let tail = GetElementPtrOp::new(
-            ctx,
-            merged,
-            vec![GepIndex::Value(len.get_result(ctx))],
-            i8_ty,
-        );
-        self.append(ctx, tail.get_operation(), Some(dest));
-        self.mem_copy_dynamic(ctx, tail.get_result(ctx), chunk, chunk_len, dest);
-        self.emit_free(ctx, data.get_result(ctx));
-        let store = StoreOp::new(ctx, merged, descriptor);
-        self.append(ctx, store.get_operation(), Some(dest));
-        let store = StoreOp::new(ctx, total.get_result(ctx), len_address);
-        self.append(ctx, store.get_operation(), Some(dest));
-    }
-
     /// `print(args…, sep=, end=, flush=, file=)`: format each argument
     /// through the runtime `mjrt_fmt_*` family (string-literal, Bool, and
     /// None text comes from the constant pool), joined by `sep` (default one
@@ -949,9 +913,8 @@ impl<'a> FnLowering<'a> {
     }
 
     /// Append the display text of the struct stored at `receiver`: its
-    /// unique compiled `write_to` instance, or, when the struct has no
-    /// `Writer`-fed `write_to`, the reflective `Name(field=value, ...)`
-    /// default the VM's `format_value` writes.
+    /// unique compiled `write_to` instance, its own or the synthesized
+    /// `Writable` default.
     fn append_struct_display(
         &mut self,
         ctx: &mut Context,
@@ -961,7 +924,10 @@ impl<'a> FnLowering<'a> {
         dest: Reg,
     ) -> Result<(), PlironError> {
         let Some(symbol) = self.display_member(name, "write_to", dest)? else {
-            return self.append_reflective_struct(ctx, receiver, name, writer, dest);
+            return Err(self.unsupported_reg(
+                format!("display of `{name}` without a compiled `write_to`"),
+                dest,
+            ));
         };
         let signature = &self.signatures[symbol];
         if signature.outcome.is_some() {
@@ -1015,81 +981,6 @@ impl<'a> FnLowering<'a> {
                 dest,
             )),
         }
-    }
-
-    /// Append constant `bytes` to a builtin-string writer.
-    fn append_literal(&mut self, ctx: &mut Context, writer: Value, bytes: &[u8], dest: Reg) {
-        let global = self.shared.intern_string(ctx, bytes);
-        let data = self.global_address(ctx, &global, dest);
-        let len = self.uint_constant(ctx, bytes.len() as u64);
-        self.append_string_pair(ctx, writer, data, len, dest);
-    }
-
-    /// The reflective display of a struct with no `Writer`-fed `write_to`:
-    /// `Name(field=value, ...)`, each field written through its own display.
-    fn append_reflective_struct(
-        &mut self,
-        ctx: &mut Context,
-        receiver: Value,
-        name: &str,
-        writer: Value,
-        dest: Reg,
-    ) -> Result<(), PlironError> {
-        let Some(declaration) = self.struct_decls.get(name).copied() else {
-            return Err(self.unsupported_reg(
-                format!("display of `{name}` without a compiled `write_to`"),
-                dest,
-            ));
-        };
-        let field_tys: Vec<Ty> = declaration
-            .fields
-            .iter()
-            .map(|(_, ty)| ty.clone())
-            .collect();
-        let layout = self.struct_layout_of(&field_tys, dest)?;
-        let template = name.split("$mono").next().unwrap_or(name);
-        self.append_literal(ctx, writer, format!("{template}(").as_bytes(), dest);
-        for (index, (field, ty)) in declaration.fields.iter().enumerate() {
-            if index > 0 {
-                self.append_literal(ctx, writer, b", ", dest);
-            }
-            self.append_literal(ctx, writer, format!("{field}=").as_bytes(), dest);
-            let address = self.gep_byte(ctx, receiver, layout.offsets[index], dest);
-            self.append_field_display(ctx, address, ty, writer, dest)?;
-        }
-        self.append_literal(ctx, writer, b")", dest);
-        Ok(())
-    }
-
-    /// Append the display text of the `ty` value stored at `address`.
-    fn append_field_display(
-        &mut self,
-        ctx: &mut Context,
-        address: Value,
-        ty: &Ty,
-        writer: Value,
-        dest: Reg,
-    ) -> Result<(), PlironError> {
-        if let TyKind::Struct(name, _) = ty.kind() {
-            if mojito_symbol::symbol::is_stdlib_string_struct(name)
-                || mojito_types::types::is_stdlib_string_span_struct(name)
-            {
-                let (data, len) = self.string_parts(ctx, address, dest);
-                self.append_string_pair(ctx, writer, data, len, dest);
-                return Ok(());
-            }
-            return self.append_struct_display(ctx, address, name, writer, dest);
-        }
-        let LowerTy::Scalar(scalar) = lower_ty(self.name, ty, &self.layout, self.reg_span(dest))?
-        else {
-            return Err(self.unsupported_reg(format!("reflective display of a `{ty}` field"), dest));
-        };
-        let handle = scalar.handle(ctx);
-        let load = LoadOp::new(ctx, address, handle);
-        self.append(ctx, load.get_operation(), Some(dest));
-        let (data, len) = self.format_scalar(ctx, scalar, load.get_result(ctx), dest)?;
-        self.append_string_pair(ctx, writer, data, len, dest);
-        Ok(())
     }
 }
 

@@ -634,10 +634,9 @@ impl VmBackend {
     }
 
     /// Format one value as `print`/`String`/`repr`/`Writer.write` do. A
-    /// nominal struct writes itself through `write_to`/`write_repr_to`,
-    /// dispatched by runtime struct name — or, when the caller knows the
-    /// argument's checked static type and it names a closed generic-struct
-    /// instance, through that instance's per-instantiation clone.
+    /// nominal struct writes itself through its `write_to`/`write_repr_to`
+    /// instance, its own or the synthesized `Writable` default, dispatched
+    /// by runtime struct name.
     pub(super) fn format_value(
         &mut self,
         prog: &Prog,
@@ -699,11 +698,9 @@ impl VmBackend {
                 ))),
             };
         }
-        let mut cells = Vec::with_capacity(fields.len());
-        for (field, value) in fields {
-            cells.push(format!("{field}={}", self.format_value(prog, value, repr)?));
-        }
-        Ok(format!("{name}({})", cells.join(", ")))
+        Err(RuntimeError::TypeError(format!(
+            "vm: `{name}` has no `{method}` instance to display it, though the check proved it `Writable`"
+        )))
     }
 
     /// The decimal text of a runtime integer: the bundled

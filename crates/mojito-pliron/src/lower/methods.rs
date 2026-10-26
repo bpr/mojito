@@ -716,40 +716,6 @@ impl FnLowering<'_> {
                 if mojito_symbol::symbol::is_stdlib_string_span_struct(name) {
                     let span = self.reg_ptr(ctx, *arg)?;
                     self.string_parts(ctx, span, dest)
-                } else if (name.contains("$Named$mono$") || name.ends_with("$Named"))
-                    && let named_ty = self.func.reg_types[&arg.0].clone()
-                    && let Ok((value_offset, value_ty)) =
-                        self.field_offset(&named_ty, "_value", dest)
-                    && let TyKind::Pointer { element, .. } = value_ty.kind()
-                    && let Ok(LowerTy::Scalar(scalar)) =
-                        lower_ty(self.name, element, &self.layout, self.reg_span(dest))
-                {
-                    // A scalar value formats inline; any other value's
-                    // `Named` writes through its compiled `write_to`.
-                    let base = self.reg_ptr(ctx, *arg)?;
-                    let (name_offset, _) = self.field_offset(&named_ty, "_name", dest)?;
-                    let name_address = self.offset_address(ctx, base, name_offset);
-                    let (name_data, name_len) = self.string_parts(ctx, name_address, dest);
-                    let descriptor = self.entry_alloca(ctx, 16, 8);
-                    self.mem_zero(ctx, descriptor, 16);
-                    self.append_string_pair(ctx, descriptor, name_data, name_len, dest);
-                    let equals = self.shared.intern_string(ctx, b"=");
-                    let equals = self.global_address(ctx, &equals, dest);
-                    let one = self.uint_constant(ctx, 1);
-                    self.append_string_pair(ctx, descriptor, equals, one, dest);
-                    let pointer_address = self.offset_address(ctx, base, value_offset);
-                    let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
-                    let pointer = LoadOp::new(ctx, pointer_address, ptr_ty);
-                    self.append(ctx, pointer.get_operation(), Some(dest));
-                    let handle = scalar.handle(ctx);
-                    let value = LoadOp::new(ctx, pointer.get_result(ctx), handle);
-                    self.append(ctx, value.get_operation(), Some(dest));
-                    let (value_data, value_len) =
-                        self.format_scalar(ctx, scalar, value.get_result(ctx), dest)?;
-                    self.append_string_pair(ctx, descriptor, value_data, value_len, dest);
-                    let parts = self.string_parts(ctx, descriptor, dest);
-                    temporary = Some(parts.0);
-                    parts
                 } else {
                     let descriptor = self.entry_alloca(ctx, 16, 8);
                     self.mem_zero(ctx, descriptor, 16);

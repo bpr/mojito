@@ -62,7 +62,8 @@ Mojito generates the same names and lists, written as Mojo and parsed
   count; nothing but `size_of` observes it.
 - **The default `Writable` text** is generated per enum (`write_to`,
   `write_repr_to`), with upstream's `_enum_reflection_write_to` shape, since
-  Mojito's reflective default is a compiler builtin (R424).
+  Mojito's reflective defaults are synthesized per conformer, not the
+  trait's own bodies (R1461).
 
 A case without a payload is a `comptime` member whose value the check
 freezes as the enum over a frozen variant (`CtValue::Variant`), which both

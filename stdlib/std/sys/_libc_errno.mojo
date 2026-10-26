@@ -3,6 +3,7 @@
 # Loaded while the prelude bootstraps (through `std.io`), so `String` is
 # imported explicitly rather than taken from the prelude.
 from std.string import String
+from std.format import _reflection_write_field_to
 
 
 def _errno_ptr() -> Pointer[Int32, MutUntrackedOrigin]:

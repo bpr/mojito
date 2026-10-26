@@ -2543,12 +2543,19 @@ owned value parameter) or reads in place (a `read` one). Either way the RHS is
 the dunder's argument, passed by its convention.
 
 Printing and `String()` require `Writable`. A custom `write_to` or
-`write_repr_to` receives `Some[Writer]`; `Writer` is the bundled trait
-(`std/format/__init__.mojo`), whose default `write` writes each heterogeneous
-Writable argument through its `write_to`, and a builtin's `write_to` feeds its
-host-formatted UTF-8 text to `write_string` (`$write_formatted`). The VM's
-buffer writer uses `String` as the `StringSlice` representation. When a Writable
-method is absent, field reflection produces the default display or repr form.
+`write_repr_to` receives `Some[Writer]`; `Writer` and `Writable` are the
+bundled traits (`std/format/__init__.mojo`). `Writer`'s default `write` writes
+each heterogeneous Writable argument through its `write_to`, and a builtin's
+`write_to` feeds its host-formatted UTF-8 text to `write_string`
+(`$write_formatted`). The VM's buffer writer uses `String` as the `StringSlice`
+representation. A conformer without a `Writer`-fed `write_to` or
+`write_repr_to` gains upstream's reflective default as a synthesized member at
+preparation (`synthesize_writable_defaults`), writing `Name[params](` and each
+field through the bundled `_reflection_write_field_to`, whose `comptime
+assert` checks the field's conformance where the default is instantiated. So
+every `Writable` struct has both members, and neither backend formats a
+struct's fields itself: a struct reaching display without its instance is an
+invariant violation.
 `String.format` supports automatic/manual fields, repr selection, escaped braces,
 and accepts format-spec syntax; the scalar width/alignment mini-language remains
 representation-level work rather than a return to deprecated `__str__` hooks.

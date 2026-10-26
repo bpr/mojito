@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1461**.
+Next free ID: **R1464**.
 
 ## Ordered Work
 
@@ -902,9 +902,9 @@ which names the upstream pass each one follows. Each is measured by the
     `Instances::dispatched_overload_target`.
   - Read `StructDeclaration::witness` (the template's table) instead, and
     delete `dispatched_overload_target`; never compose the name (R1027).
-  - Compiler-known traits (`Writable`, `Copyable.copy`) have no
-    declaration, so their conformances record no table; their dispatches
-    keep the composed name until the bundled library declares them.
+  - A compiler-known trait (`Copyable.copy`) has no declaration, so its
+    conformances record no table; its dispatches keep the composed name
+    until the bundled library declares it.
   - No abstract dispatch survives into concrete MIR, so the VM keeps no
     retargeting of its own; this site is the last one.
   - Probe: `assets/ok/trait_bound_comparison_drop_order.mojo` and
@@ -1224,39 +1224,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R433 Natively, a struct pack element's `write_to` takes the
-  reflective default**
-
-  Problem: `a[i].write_to(w)` over a pack element whose type declares its
-  own `write_to` prints `P(1)` on the VM and at the pin, but `P(x=1)`
-  natively.
-  - Probe: `def f[*Ts: Writable](mut w: String, *a: *Ts)` writing each
-    `a[i]` into `w`, called as `f(s, P(1), 2)`.
-  - `"{}".format(P(1))` reaches the same call through the bundled
-    `_FormatCurlyEntry._format`, so native `format` of such a struct is
-    wrong too.
-  - Found while landing R421 (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R434 Natively, a struct without its own `write_repr_to` cannot be
-  formatted through a pack**
-
-  Problem: `"{}".format(P(1))` over a struct declaring only `write_to`
-  stops natively with "unsupported repr of `P` without compiled
-  write_repr_to", where the VM and the pin print it.
-  - `_FormatCurlyEntry._format` holds both `write_to` and `write_repr_to`
-    calls per element, so every element type instantiates the repr branch.
-  - The reflective default `write_repr_to` is synthesized in the checker
-    (R424) and has no native body.
-  - Probe: an `enum` declaring `Writable` with a case over a struct that
-    declares `Writable` without `write_repr_to` stops natively at its
-    generated `write_repr_to` ("unsupported repr of `Tracked` without
-    compiled write_repr_to"), where the VM and the pin print it.
-  - Found while landing R421 (2026-10-06).
-  - Depends on R424.
-  - Model: Opus, Not Planned.
-
 - [ ] **R541 Natively, an applied constant of a sized scalar type fails IR
   verification**
 
@@ -1282,25 +1249,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - R541 is the same failure for an applied constant of a sized scalar
     type, so one fix may close both.
   - Found while landing R563 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1424 Native `Writer.write` recognizes a `Named` argument by name**
-
-  The `Writer.write` lowering (`lower/methods.rs`) formats a `Named` over a
-  scalar inline by matching `$Named` in its struct name, where upstream
-  calls `Named.write_to` like any struct's.
-  - Without that arm, `text.write(Named("n", w))`
-    (`conformance/fixtures/view_temporary_write.mojo`) stops natively with
-    "unsupported display of a Pointer": no `Named.write_to` instance bound
-    to the builtin string writer reaches the native program, so
-    `append_struct_display` falls back to the reflective display of its
-    `Pointer` field.
-  - A `Named` over an aggregate, such as `Slice.write_repr_to`'s
-    `Optional[Int]` bounds, already writes through its compiled `write_to`.
-  - The lever: demand each struct argument's builtin-writer `write_to`
-    instance at a native `Writer.write`, then delete the `Named` arm.
-  - Found while landing R1158 (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4124,26 +4072,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R109 A `Writable` conformance whose only `write_to` witness is
-  conditional compiles**
-
-  Problem: `struct Box[T](Writable)` whose `write_to(self, mut writer:
-  Some[Writer])` carries `where conforms_to(Self.T, Writable)` is accepted,
-  where the pin rejects it ("does not implement all requirements for
-  'Writable'").
-  - `verify_builtin_conformance` accepts any struct for `Writable`, because
-    a struct without a `Writer`-fed `write_to` writes through the reflective
-    default.
-  - The pin also reports the conditional witness ambiguous beside its
-    generated default.
-  - This is the one case left where a call through a bound finds no member
-    witnessing its requirement (`traits.rs:requirement_witnesses`), so the
-    instance is checked again.
-  - Found while the ranking fallback of bound-witness selection was removed
-    (2026-09-29).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R113 `==` through a bound reaches an `__eq__` over another type**
 
   Problem: `self.first == self.second` over `T: Equatable` stops in
@@ -6600,8 +6528,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `ref[s]` the field (`lit.ref.struct.ger`), so in MIR it is a field
     projection of the argument's place at the field's name.
   - Upstream's `Equatable`, `Hashable`, and `Writable` defaults read fields
-    through it. Mojito's `Hashable` default is synthesized
-    (`comptime/synth.rs`), so no bundled body needs it yet.
+    through it. Mojito's `Hashable` and `Writable` defaults are synthesized
+    (`comptime/synth.rs`), so no bundled body needs it yet (R1461).
   - Probe: `print(reflect[P].field_ref[0](p), reflect[P].field_ref[1](p))`
     over `P(3, 4)` (pin: `3 4`).
   - Probe: a generic `total[T](x: T)` summing `rebind[Int](r.field_ref[i](x))`
@@ -6800,6 +6728,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     not a type.
   - Spelling the type out (`unsafe_alloc[Pointer[Int, origin_of(x)]]`)
     runs.
+  - Probe: a body's `comptime WriterType = type_of(writer)` in `def
+    show[W: Writer](mut writer: W)` stops with "a compile-time call of
+    'type_of' is not evaluated above the check", where the pin runs it.
+    Upstream's `Writable` defaults open with it (R1461).
   - Found while fixing a pointer dereference through a generic struct's
     field (2026-10-03).
   - Depends on nothing.
@@ -8256,6 +8188,44 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on R276, which moves the scalar text into Mojo bodies.
   - Model: Opus, Not Planned.
 
+- [ ] **R1462 A `write_to` through a `Writable` bound is a host-formatted
+  write, where upstream calls the conformer's witness**
+
+  Problem: `x.write_to(w)` over `T: Writable` is checked as an inverted
+  write (`SemanticAdjustment::InvertedWrite`,
+  `checker/method_calls/intrinsic_receivers.rs`), which formats `x` and
+  hands the text to `w.write_string`, so a writer overriding `write` is not
+  re-entered by the conformer's own `writer.write(...)`.
+  - Probe: `show[T: Writable](x: T, mut w: Wrap)` calling `x.write_to(w)`
+    over a struct whose `write_to` is `writer.write("P")`, with `Wrap.write`
+    wrapping its arguments in `<`/`>`, leaves `P` where the pin leaves
+    `<P>`, on both backends. The direct call `P(1).write_to(w)` matches.
+  - A call through the bound needs every type that can bind `T` to answer
+    `write_to` as a witness, which the scalars, `Bool`, and the literals do
+    only once their text is Mojo (R276).
+  - Found while landing R424 (2026-10-26).
+  - Depends on R276.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1463 A `Pointer` conforms to `Writable` but cannot be printed**
+
+  Problem: `print(Pointer(to=x))` is rejected ("does not conform to trait
+  'Writable'"), where the pin prints the address, though
+  `modelled_declares` answers `Writable` for `TyKind::Pointer`, as
+  upstream's `Pointer` declares.
+  - The checker's `printable_argument` (`checker/builtins.rs`) does not
+    take a pointer, the VM's `format_value` writes `Pointer(0x11+0)`, and the
+    native lowering has no display of one.
+  - Upstream's `write_to` writes the address in hex and `write_repr_to`
+    writes `Pointer[mut=True, SIMD[DType.int, 1],
+    address_space=AddressSpace.GENERIC](0x...)`.
+  - Probe: `repr(Span(xs))`, which takes `Writable`'s synthesized default
+    until R761, writes its `_data` field as `Pointer(0x11+0)` on the VM and
+    stops natively with "unsupported display of a Pointer".
+  - Found while landing R424 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R425 A malformed literal `format` template aborts at run time where
   the pin rejects it at compile time**
 
@@ -9499,9 +9469,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `Self.mut` in a method of `struct V[mut: Bool, //, origin:
     Origin[mut=mut]]` is rejected ("'Self.mut' is not a type parameter of
     the enclosing struct"), where the pin reads it. The bundled `Span` has
-    no `write_repr_to` for it, so `repr(Span(xs))` is the reflective
-    default where the pin prints `Span[mut=True, SIMD[DType.int, 1]]([Int(1),
-    Int(2)])`.
+    no `write_repr_to` for it, so `repr(Span(xs))` is `Writable`'s
+    synthesized default (`Span[SIMD[DType.int, 1], origin#2](_data=...,
+    _size=Int(2))`) where the pin prints `Span[mut=True, SIMD[DType.int,
+    1]]([Int(1), Int(2)])`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -10354,7 +10325,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `write_to` still prints the reflective field form.
   - Delete the generation once `Writable`'s defaults are library code.
   - Found while landing `enum` (2026-10-25).
-  - Depends on R424 (`Writable` declared in `std/format`).
+  - Depends on R1461 (`Writable`'s defaults as the trait's bodies).
   - Model: Opus, Not Planned.
 
 - [ ] **R324 `reflect[T]` is a compiler builtin where upstream's is a
@@ -10549,30 +10520,35 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R424 `Writable` is a compiler builtin where upstream declares it in
-  `std/format`**
+- [ ] **R1461 `Writable`'s reflective defaults are synthesized per
+  conformer, where upstream's are the trait's own bodies**
 
-  Problem: `Writable` and its `write_to`/`write_repr_to` requirements are
-  synthesized in the checker (`builtin_requirements`, `checker/traits.rs`),
-  where upstream's `std/format/__init__.mojo` declares the trait beside
-  `Writer`, with Mojo default bodies.
-  - The reflective `Name(field=value, ...)` default the checker synthesizes
-    for a conformer without a `write_to` is upstream's default body.
-  - `Writer` moved to the bundled `std/format/__init__.mojo` with R414, so
-    this is the remaining half of that module.
-  - Found while landing R414 (2026-10-06).
-  - Probe: `repr(P[Int](1))` over `struct P[T: AnyType](Writable)` with
-    only a `write_to` prints the elaborated instance name
-    `P$mono$TInt(x=Int(1))`, where upstream's default body prints
-    `P[SIMD[DType.int, 1]](x=Int(1))`.
-  - Probe: `trait Shown(Writable)` is rejected ("user trait 'Shown'
-    cannot refine builtin trait 'Writable' yet"), where the pin runs a
-    `T: Shown` printing its argument. `Checker::check_trait` lets a
-    declared trait refine only `AnyType` and the lifecycle traits among
-    the compiler-known ones, which declare no member a refinement
-    inherits.
-  - Depends on nothing.
-  - Model: Fable, Planned.
+  `synthesize_writable_defaults` (`comptime/synth.rs`) gives each conformer
+  without a `Writer`-fed member a `write_to` and `write_repr_to` that write
+  each field through the bundled `_reflection_write_field_to`, where
+  upstream's `Writable` declares both as default bodies over
+  `_reflection_write_to` (and `_enum_reflection_write_to` for an
+  `EnumLike`).
+  - The bundled trait's requirements stay `...` until upstream's body
+    checks: its `comptime WriterType = type_of(writer)` binding (R134) and
+    `r.field_ref[i](this)` (R77).
+  - Each bundled module hosting a defaulted conformer imports
+    `_reflection_write_field_to` (`std/span.mojo`, `std/string.mojo`, and
+    five more), since the synthesized call names it by its linked name.
+  - Probe: printing a conformer whose field is not `Writable` fails with
+    "Could not derive Writable - a member field does not implement
+    Writable", where the pin's `_field_conforms_to_error` names both
+    ("Could not derive Writable for Holder - member field `o: Opaque` does
+    not implement Writable"). The helper's assert message must be a
+    literal (R1210).
+  - Probe: a user trait whose default is upstream's body text stops at
+    `comptime WriterType = type_of(writer)`.
+  - Done when the trait declares upstream's bodies and the synthesis, the
+    helper, and its imports are gone; R1409's generated enum members go
+    next.
+  - Found while landing R424 (2026-10-26).
+  - Depends on R134, R77, and R1210.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1287 `print` is a compiler builtin where upstream's is an
   `@inline(.never)` library function**

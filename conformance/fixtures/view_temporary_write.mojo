@@ -1,9 +1,7 @@
 # Temporaries passed straight to `Writer.write` at their source's last use:
 # a subscript view keeps its source alive through the call, and a `Named`
 # temporary holding a pointer to a caller local reads it (upstream's
-# temporary lifetime). Native `Writer.write` takes neither a `StringSpan` nor
-# a struct argument yet, so these shapes are pinned against the pinned Mojo
-# on the VM only.
+# temporary lifetime).
 from std.format._utils import Named
 
 def main():

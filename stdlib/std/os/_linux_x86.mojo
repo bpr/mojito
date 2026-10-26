@@ -3,6 +3,7 @@
 from std.ffi import external_call
 from std.string import String
 from std.time.time import _CTimeSpec
+from std.format import _reflection_write_field_to
 
 comptime dev_t = Int64
 comptime mode_t = Int32
