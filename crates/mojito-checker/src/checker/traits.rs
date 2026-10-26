@@ -2469,7 +2469,12 @@ impl Checker {
     /// The row of `IsTrivially*[Self]` for a generic struct, as
     /// [`Self::is_trivially`] answers it: the `register_passable` conditions
     /// of a declared `TrivialRegisterPassable`, or the base capability with
-    /// no user lifecycle member for the facet and every field trivial.
+    /// the struct's declared hook for the facet
+    /// ([`mojito_types::types::trivial_hook_name`]) holding, or, where it
+    /// declares none, with no user lifecycle member for the facet and every
+    /// field trivial, as upstream's `IsTriviallyDeinitable` reads the
+    /// `__del__is_trivial` witness `populateSpecialFnIsTrivial` synthesizes
+    /// for a struct that declares none.
     fn trivial_lifecycle_conditions(
         &self,
         name: &str,
@@ -2478,7 +2483,10 @@ impl Checker {
         mut register_passable: Vec<GenericConstraint>,
     ) -> Option<Vec<GenericConstraint>> {
         use mojito_types::types::TrivialLifecycle;
-        if user_lifecycle_defeats(info, kind) {
+        let hook = info
+            .associated
+            .get(mojito_types::types::trivial_hook_name(kind));
+        if hook.is_none() && user_lifecycle_defeats(info, kind) {
             return Some(register_passable);
         }
         let base = match kind {
@@ -2490,6 +2498,24 @@ impl Checker {
             .struct_conformance_conditions(name, info, base)?
             .into_iter()
             .reduce(|left, right| GenericConstraint::Or(Box::new(left), Box::new(right)));
+        if let Some(hook) = hook {
+            let holds = match hook {
+                CtValue::Bool(true) => capability,
+                CtValue::Bool(false) => None,
+                value => capability.map(|capability| {
+                    let holds = GenericConstraint::Eq(
+                        ConstraintOperand::Value(value.clone()),
+                        ConstraintOperand::Value(CtValue::Bool(true)),
+                    );
+                    match capability {
+                        GenericConstraint::Bool(true) => holds,
+                        capability => GenericConstraint::And(Box::new(capability), Box::new(holds)),
+                    }
+                }),
+            };
+            register_passable.extend(holds);
+            return Some(register_passable);
+        }
         // A field whose facet no binder decides is folded here, as it holds
         // or fails at every instance: a concrete type answers either way,
         // and a scalar or pointer over a binder answers where its structure
@@ -3028,7 +3054,10 @@ impl Checker {
 
     /// The `IsTrivially{Movable,Copyable,Deinitable}[T]` predicate: the type
     /// conforms to `TrivialRegisterPassable`, OR the base capability holds AND
-    /// the corresponding lifecycle operation is compiler-generated (no user
+    /// the struct's declared hook for the facet
+    /// ([`mojito_types::types::trivial_hook_name`]) is `True` at its
+    /// arguments, or, where it declares none, the corresponding lifecycle
+    /// operation is compiler-generated (no user
     /// `__moveinit__`/`__copyinit__`/`__deinit__` or named destructor for the
     /// queried facet) AND every field is recursively trivial — a bitwise
     /// move/copy or a no-op destructor, matching upstream `std.traits`.
@@ -3107,6 +3136,15 @@ impl Checker {
                     return true;
                 }
                 let result = self.structs.get(name).is_some_and(|info| {
+                    // A declared hook decides the facet at these arguments.
+                    if let Some(hook) = info
+                        .associated
+                        .get(mojito_types::types::trivial_hook_name(kind))
+                    {
+                        return self
+                            .struct_member_at(info, args, hook)
+                            .is_ok_and(|value| value.into_value() == CtValue::Bool(true));
+                    }
                     // Fields are stored at the declaration's parameters;
                     // recurse at this instantiation's arguments so a generic
                     // payload field answers for the concrete element.

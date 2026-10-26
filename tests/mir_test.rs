@@ -621,6 +621,34 @@ fn raising_next_is_called_in_a_try_whose_handler_breaks() {
 }
 
 #[test]
+fn read_collector_list_is_not_destroyed() {
+    // `VariadicList`'s `__del__is_trivial` is `not Self.is_owned`, so drop
+    // elaboration destroys the list a call builds for a read `*xs` collector
+    // nowhere, as the pin's `CheckLifetimes` calls no destructor there, and
+    // still destroys an owned collector's list in its callee.
+    let source = "def total(*xs: String) -> Int:\n    return len(xs)\n\ndef own(var *xs: String) -> Int:\n    return len(xs)\n\ndef main():\n    print(total(\"a\", \"b\"))\n    print(own(String(\"c\")))\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let destroys_list = |name: &str| {
+        let function = mir_function(compiled.elaborated_mir(), name);
+        nested_instructions(&function.blocks)
+            .into_iter()
+            .any(|instruction| match instruction {
+                MirInstr::MethodCall { resolved, .. } => {
+                    resolved.as_deref() == Some("VariadicList.__deinit__")
+                }
+                MirInstr::Drop { reg, .. } => function.reg_types.get(&reg.0).is_some_and(
+                    |ty| matches!(ty.kind(), TyKind::Struct(name, _) if name == "VariadicList"),
+                ),
+                _ => false,
+            })
+    };
+    assert!(!destroys_list("main"));
+    assert!(destroys_list("own"));
+}
+
+#[test]
 fn verify_rejects_an_untyped_used_slot() {
     let program = |typed: bool| {
         let mut var_tys = HashMap::from([(0, Ty::int())]);

@@ -1805,6 +1805,22 @@ pub const fn trivial_predicate_spelling(kind: TrivialLifecycle) -> &'static str 
     }
 }
 
+/// The `comptime` member through which a struct decides a
+/// [`TrivialLifecycle`] facet itself.
+///
+/// These are upstream's `__del__is_trivial`, `__copy_ctor_is_trivial`, and
+/// `__move_ctor_is_trivial` witnesses: a struct that declares one is
+/// trivial for the facet exactly where its value is `True` at the
+/// instance's arguments (`comptime __del__is_trivial: Bool = not
+/// Self.is_owned`), whatever its lifecycle members and fields.
+pub const fn trivial_hook_name(kind: TrivialLifecycle) -> &'static str {
+    match kind {
+        TrivialLifecycle::Movable => "__move_ctor_is_trivial",
+        TrivialLifecycle::Copyable => "__copy_ctor_is_trivial",
+        TrivialLifecycle::Deinitable => "__del__is_trivial",
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum GenericConstraint {
     /// A top-level `where (condition, "message")` clause. The message affects
@@ -3502,6 +3518,29 @@ pub fn struct_field_types<'a>(
         return Some(std::borrow::Cow::Borrowed(fields));
     }
     let context = ParamContext::detached();
+    let bindings = struct_argument_bindings(&context, decls, arguments);
+    fields
+        .iter()
+        .map(|(name, field)| {
+            replace_parameters(&context, field, &bindings, 0)
+                .ok()
+                .filter(|field| !names_own_binder(field))
+                .map(|field| (name.clone(), field))
+        })
+        .collect::<Option<Vec<_>>>()
+        .map(std::borrow::Cow::Owned)
+}
+
+/// The bindings a struct application's `arguments` give its declared
+/// non-variadic binders `decls`.
+///
+/// Each binds by identity: a type binder its type and a value binder its
+/// constant. An argument the elaborator removed binds nothing.
+pub fn struct_argument_bindings(
+    context: &ParamContext,
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+) -> ParamBindings {
     let mut bindings = ParamBindings::new();
     for (decl, argument) in decls.iter().zip(arguments) {
         match (decl, argument) {
@@ -3531,16 +3570,7 @@ pub fn struct_field_types<'a>(
             _ => {}
         }
     }
-    fields
-        .iter()
-        .map(|(name, field)| {
-            replace_parameters(&context, field, &bindings, 0)
-                .ok()
-                .filter(|field| !names_own_binder(field))
-                .map(|field| (name.clone(), field))
-        })
-        .collect::<Option<Vec<_>>>()
-        .map(std::borrow::Cow::Owned)
+    bindings
 }
 
 /// [`substitute`] under the solutions of type packs and of compile-time

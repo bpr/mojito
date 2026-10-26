@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct decides its own destructor's triviality through a declared
+  `comptime __del__is_trivial: Bool` member (and copy/move through
+  `__copy_ctor_is_trivial`/`__move_ctor_is_trivial`), as at the pin:
+  `IsTriviallyDeinitable[S[False]]` holds for `__del__is_trivial = not
+  Self.flag` even though `S` declares a `__deinit__`, where Mojito answered
+  no (R1334). Drop elaboration destroys no value of an instance whose hook
+  is `True`, so the `VariadicList` a call builds for a read `*xs`
+  collector, which now declares upstream's `not Self.is_owned`, gets no
+  destructor call.
+
 - `Slice` and the three `slice(...)` functions are the library code
   upstream's `builtin_slice.mojo` declares, prelude names as at the pin, so
   a slice is an ordinary struct on every backend (R1158). A literal bound to

@@ -9115,6 +9115,16 @@ retained on purpose and re-probed rather than fixed; they are listed in
     at the pin, where Mojito reports the escape error.
   - Probe: `apply[inner](a)` with `{imm y}` and a `capturing[origins]`
     binder fails at the pin, where Mojito prints 16.
+  - Probe: a closure value copied before an indirect call
+    (`elt_handler(...)` in `List.deinit_with`, and `map`, `and_then`,
+    `deinit_with`, `clear_with` across `Optional`, `Set`, `Dict`, `Array`
+    and `Variant`) is a `var.use copy` a `drop.reg` destroys. At the pin
+    the storage struct's `__del__is_trivial` is true exactly when every
+    capture is register-passable trivial (`ClosureEmitter.cpp`), so a
+    reference-capturing closure is never destroyed, while a `{var x}`
+    capture of a `String` is destroyed through the value. A
+    `def(...) capturing` type says neither, so `owned_register`
+    (`mir/register_ends.rs`) exempts only a thin function value.
   - Closes R534 (broadened: the pin rejects every capturing capture-list
     closure there). Shrinks R176 (capture-list locals run at the pin).
   - Depends on R1377, which gives calls through the struct their method
@@ -9383,34 +9393,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1334 A trivially destructible library value gets a `drop.reg`
-  that runs no code**
-
-  Drop elaboration destroys every owned register whose type
-  `MirDeclarations::drop_runs_no_code` does not clear, and that answer is
-  no for some library types upstream never destroys at run time, so their
-  registers get a destructor call that does nothing.
-  - Probe: a non-owned `VariadicList[T, False]` (the `struct.create` a
-    call builds for a read `*xs: T` collector) is destroyed by
-    `VariadicList.__deinit__`, whose `comptime if` on ownership runs
-    nothing; the row its `IsTriviallyDeinitable` conformance gets holds no
-    condition over the `is_owned` parameter.
-  - Upstream tracks no register-passable trivial value
-    (`isRegisterPassableTrivial`, `CheckLifetimes.cpp`), and decides a
-    parameterized destructor per instance.
-  - Probe: a capturing closure value copied before an indirect call
-    (`elt_handler(...)` in `List.deinit_with`, and `map`, `and_then`,
-    `deinit_with`, `clear_with` across `Optional`, `Set`, `Dict`, `Array`
-    and `Variant`) is a `var.use copy` a `drop.reg` destroys, where
-    upstream's `isRegisterPassableTrivial` answers true for a raw MLIR
-    value, which a closure is, so `ValueSet` never tracks it. Mojito's
-    `owned_register` (`mir/register_ends.rs`) exempts only a thin function
-    value. Check first whether a closure holding a `{var x}` capture
-    destroys its environment through the value; if so only the
-    by-reference closures are trivial.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1335 The MIR verifier does not reject an owned register no path
   ends**
 
@@ -9526,7 +9508,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `MirDeclarations::register_passable` answers no for.
   - The remaining placements are copies and moves into a register, each
     with its own entry: `List`→`Span` copies (R117), read arguments by value (R677), `List.resize`'s double copy
-    (R1353), closure values (R1334),
+    (R1353), closure values (R1378),
     and a pending `Error` (R1293).
   - `owns_droppable_storage` (`mir/calls.rs`) omits `TyKind::Dependent`.
     Widening it double-frees in `assets/ok/container_hashable.mojo`,
@@ -9541,7 +9523,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     answers no for any conditional row.
   - Re-run the `emit-mir` census over `assets/ok` and
     `assets/ownership_ok` before landing it.
-  - Depends on R1249, R117, R677, R1353, R1354, R1426, R1334, R1293.
+  - Depends on R1249, R117, R677, R1353, R1354, R1426, R1334, R1378, R1293.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler

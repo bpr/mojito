@@ -34,8 +34,7 @@
 #   of the elements' and the list's origins, and binds the span's pointer
 #   before indexing it;
 # - `__deinit__` reaches each element pointer through the span where
-#   upstream's takes `Pointer(to=self[i])`, and `__del__is_trivial` is not
-#   declared;
+#   upstream's takes `Pointer(to=self[i])`;
 # - `_VariadicListIter` writes its constructor out (no `@fieldwise_init`
 #   beside it), its `variadic_list_type` names no `origin` (an alias's
 #   keyword argument for an infer-only parameter does not resolve yet), and
@@ -380,6 +379,9 @@ struct VariadicList[
     # ===-------------------------------------------------------------------===#
     # Life cycle methods
     # ===-------------------------------------------------------------------===#
+
+    # The destructor for this type is trivial if not an "owned" list.
+    comptime __del__is_trivial: Bool = not Self.is_owned
 
     @inline(.always)
     def __deinit__(deinit self):

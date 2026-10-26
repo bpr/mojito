@@ -39,6 +39,7 @@ use mojito_common::token::{DUMMY_SPAN, SourceSpan};
 use mojito_hir::hir::{self, Cfg, HirInstr, Terminator, VarId};
 use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::ct::{CtValue, ScalarConversion};
+use mojito_types::param_expr::fold::integer_value;
 use mojito_types::param_expr::{ParamContext, ParamExpr};
 use mojito_types::types::TyKind;
 use mojito_types::types::{
@@ -487,8 +488,12 @@ impl MirDeclarations {
     /// Whether dropping a value of `ty` runs no code, as upstream's
     /// `IsTriviallyDeinitable` answers: a compiler-known scalar
     /// ([`has_no_destructor`]), a pointer, a tuple or pack of such types,
-    /// or a struct with no declared destructor and no explicit-destroy
-    /// obligation whose every field answers so, judged at the struct's
+    /// a struct with no explicit-destroy obligation whose
+    /// `IsTriviallyDeinitable` row holds at its arguments, as upstream's
+    /// `CheckLifetimes` binds a destructor's `__del__is_trivial` witness to
+    /// the instance's parameters and calls none where it is `True`
+    /// (`VariadicList[T, False]`), or a struct with no declared destructor
+    /// whose every field answers so, judged at the struct's
     /// arguments ([`Self::field_types`]) or, when they leave one open, as
     /// declared. A destructor the struct's `IsTriviallyDeinitable`
     /// conformance conditions on its fields is the synthesized one, which
@@ -514,22 +519,28 @@ impl MirDeclarations {
                 .iter()
                 .all(|item| self.drop_runs_no_code_within(item, visiting)),
             TyKind::PopArray { element, .. } => self.drop_runs_no_code_within(element, visiting),
-            TyKind::Struct(name, _) if !visiting.contains(name) => {
+            TyKind::Struct(name, arguments) if !visiting.contains(name) => {
                 let Some(declaration) = self.structure(name) else {
                     return false;
                 };
-                let fieldwise = declaration.conformances.iter().any(|row| {
-                    row.trait_name == "IsTriviallyDeinitable"
-                        && !matches!(row.conditions.as_slice(), [] | [GenericConstraint::Bool(_)])
-                });
-                let never = declaration.conformances.iter().any(|row| {
-                    row.trait_name == "IsTriviallyDeinitable" && row.conditions.is_empty()
-                });
-                if never
-                    || declaration.explicit_destroy.is_some()
+                let row = declaration
+                    .conformances
+                    .iter()
+                    .find(|row| row.trait_name == "IsTriviallyDeinitable");
+                if declaration.explicit_destroy.is_some()
                     || !declaration.explicit_destructors.is_empty()
-                    || (declaration.member("__deinit__").is_some() && !fieldwise)
                 {
+                    return false;
+                }
+                if let Some(holds) = row.and_then(|row| {
+                    row_holds_at(&row.conditions, &declaration.param_decls, arguments)
+                }) {
+                    return holds;
+                }
+                let fieldwise = row.is_some_and(|row| {
+                    !matches!(row.conditions.as_slice(), [] | [GenericConstraint::Bool(_)])
+                });
+                if declaration.member("__deinit__").is_some() && !fieldwise {
                     return false;
                 }
                 visiting.push(name.clone());
@@ -5552,6 +5563,77 @@ mod nested;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use nested::*;
 use node::Node;
+
+/// Whether a conformance row's `conditions` hold at a struct
+/// application's `arguments` over its binders `decls`: any condition
+/// holding proves it and none means no instance conforms. `None` where a
+/// condition asks what these arguments leave open or what only the
+/// elaborator decides (a conformance, a field's facet).
+fn row_holds_at(
+    conditions: &[GenericConstraint],
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+) -> Option<bool> {
+    let context = ParamContext::detached();
+    let bindings = mojito_types::types::struct_argument_bindings(&context, decls, arguments);
+    let mut verdict = Some(false);
+    for condition in conditions {
+        match constraint_holds_at(condition, &context, &bindings) {
+            Some(true) => return Some(true),
+            Some(false) => {}
+            None => verdict = None,
+        }
+    }
+    verdict
+}
+
+/// [`row_holds_at`] of one condition under `bindings`.
+fn constraint_holds_at(
+    condition: &GenericConstraint,
+    context: &ParamContext,
+    bindings: &mojito_types::param_expr::ParamBindings,
+) -> Option<bool> {
+    let holds = |inner: &GenericConstraint| constraint_holds_at(inner, context, bindings);
+    match condition {
+        GenericConstraint::WithMessage(inner, _) => holds(inner),
+        GenericConstraint::Bool(value) => Some(*value),
+        GenericConstraint::Not(inner) => holds(inner).map(|value| !value),
+        GenericConstraint::And(left, right) => match (holds(left), holds(right)) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        },
+        GenericConstraint::Or(left, right) => match (holds(left), holds(right)) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        },
+        GenericConstraint::Eq(left, right) | GenericConstraint::Ne(left, right) => {
+            let value = |operand: &ConstraintOperand| {
+                let expression = match operand {
+                    ConstraintOperand::Value(CtValue::Expr(expression))
+                    | ConstraintOperand::Expr(expression) => expression.clone(),
+                    ConstraintOperand::Value(value) => return Some(value.clone()),
+                    ConstraintOperand::Param(param) => bindings.lookup(param)?.clone(),
+                    _ => return None,
+                };
+                let value = context
+                    .replace(&expression, bindings)
+                    .and_then(|replaced| context.fold(&replaced))
+                    .ok()?
+                    .into_value();
+                (!matches!(value, CtValue::Expr(_))).then_some(value)
+            };
+            let (left, right) = (value(left)?, value(right)?);
+            let equal = match (integer_value(&left), integer_value(&right)) {
+                (Some(left), Some(right)) => left == right,
+                _ => left == right,
+            };
+            Some(equal == matches!(condition, GenericConstraint::Eq(..)))
+        }
+        _ => None,
+    }
+}
 
 /// Whether a bracket attribute has no slot value at run time: an origin,
 /// a trait (`g[Copyable]()`), a type list (`L[Ts.values]()`), or a KGEN

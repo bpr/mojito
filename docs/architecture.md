@@ -631,7 +631,10 @@ Concrete MIR reaches `compile` structured, every region one block, as
 (`mir::RegisterEnds`): drop elaboration places a `drop.reg` at each owned
 register's death, and the operand that takes it ends it otherwise, so
 Pliron keeps no register bookkeeping of its own and releases no register
-temporary. A `raise` of a `String` register MIR owns consumes it, so its
+temporary. A register whose type's `IsTriviallyDeinitable` row holds at
+its arguments (`MirDeclarations::drop_runs_no_code`) owns nothing, as
+upstream's `CheckLifetimes` binds a struct's `__del__is_trivial` witness
+to the instance and calls no destructor where it is `True`. A `raise` of a `String` register MIR owns consumes it, so its
 buffer becomes the error's message (`FnLowering::mir_owned`).
 
 Variant storage lowering (the `__VariantStorage` primitive behind the
