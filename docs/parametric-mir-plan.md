@@ -409,7 +409,7 @@ interleaved, debug profile, `total` from `--timings`, median of three:
   obligation is classified
   ([`docs/notes/generator-contract.md`](notes/generator-contract.md)). Two
   obligations turned out to be checks the pin makes on the declaration and
-  Mojito does not. They were roadmap entries (row 20's is still R112), and P2 depends on them.
+  Mojito does not. They were roadmap entries, and P2 depends on them; both now agree with the pin.
 - An ordinary generic struct's methods are cloned per instance only so the
   checker can check them concretely. With P1, the elaborator instantiates the
   template's MIR instead.

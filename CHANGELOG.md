@@ -687,6 +687,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A triage of twelve `calls` entries (R1404) re-ran each probe against the
+  pin. Five already matched it on both backends and are closed: R719 (a
+  raising `__neg__` in a non-raising `main` is rejected), R112 (an
+  `@implicit` conversion in a generic method is selected once), R119
+  (`P[Int, 3](7)` runs a generic constructor beside a declared one, now
+  `assets/ok/value_struct_generic_constructor_overload.mojo`), R91
+  (same-arity generic method overloads on a generic struct), and R128 (the
+  pin now accepts `Tuple[Int, T]` over `T: Writable`, as Mojito does).
+  R81's remaining shape, a tuple of a user `Comparable` struct, merged into
+  R1359, which now also waits on R707.
+
 - An owner whose last use is the copy of its field into an argument is now
   destroyed once the copy is made, before the call, as at the pin:
   `obj.own2(y=h1.c, x=h2.c)` prints `copy 5, del 5, copy 4, del 4` before

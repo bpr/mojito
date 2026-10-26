@@ -2868,43 +2868,6 @@ Track: `calls`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R1404 Twelve `calls` entries are fixed, assume per-instance
-  clones, or lack their new cores' Depends links**
-
-  Some `calls` entries were fixed by later work, three assume re-checked
-  per-instance method clones the template no longer makes, and four members
-  of the cores filed 10-25 do not yet depend on them.
-  - Fixed: R719. A raising `__neg__` in a non-raising `main` is rejected as
-    at the pin.
-  - Partly fixed: R81. Built-in mixed tuples such as `(1, String("b")) <
-    ...` run. Only a user-`Comparable` element remains, which R1359 closes.
-  - Cite gone code: R409 (`comptime/unparse.rs`) and R119
-    (`generate_instance_clones`).
-  - Assume per-instance clones that are re-checked: R112, R91, and R420.
-  - Wait on landed entries: R1242 (R1241 landed with R1140 and R1237).
-  - Overtaken: R548, by R1103 and R743, though its diagnostic remains in
-    `inference.rs`.
-  - Add `Depends on R1364` to R667: its `is_deinitable` half is the
-    three-valued conformance query.
-  - Add `Depends on R1374` to R1224: the nested sequence store goes through
-    the destructuring lvalue.
-  - R128's rejection comes from the compiler-side `Tuple`, not missing
-    evidence: upstream's `Tuple[*Ts: AnyType]` has no `Movable` bound.
-    Rewrite its cause, and add `Depends on R341`.
-  - For each entry, run its probe (or the program its first sentence names)
-    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
-    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
-  - Delete an entry whose probe now matches the pin, and record it in
-    `CHANGELOG.md`.
-  - Rewrite an entry that still fails so its cause names today's code, and
-    keep its ID.
-  - Merge a duplicate into the entry it restates, carrying its probes, and
-    delete it.
-  - Done when every entry listed here is deleted, rewritten against today's
-    code, or merged.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1172 Overloads that differ only in compile-time parameter types
   collapse to the last one**
 
@@ -3040,10 +3003,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     order, so the nested list's length check runs before later siblings
     are stored; the plan must sequence its stores around it, or a tuple
     holding a sequence target must desugar whole.
+  - R1374 makes each leaf store through its own destructuring lvalue, the
+    path a nested sequence target's store takes in place of the one plan.
   - Stop: the shape above runs, a wrong inner length raises before `c` is
     stored, and a non-raising context rejects.
   - Found while planning R1136 (2026-10-20).
-  - Depends on nothing.
+  - Depends on R1374.
   - Model: Fable, Not Planned.
 
 - [ ] **R1231 A lambda called in an augmented assignment's value is a
@@ -3108,7 +3073,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     uninitialized at return, where the pin prints `x` (found while landing
     R875, 2026-10-21).
   - Found while landing R1134 (2026-10-20).
-  - Depends on R1241.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1238 A leading-dot operand of `==` has no contextual type**
@@ -3292,20 +3257,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R719 A raising prefix dunder is not a raising call**
-
-  Problem: `var x = -S(3)` over `def __neg__(self) raises -> S` in a
-  non-raising `main` runs, where the pin rejects it: "cannot call function
-  that may raise in a context that cannot raise".
-  - `infer_prefix` (`checker/operators.rs`) takes no span, so it records
-    no call effect and requires no raising context, as `infer_infix` now
-    does for a struct infix dunder.
-  - MIR therefore cannot tell a raising prefix dunder from a non-raising
-    one, and `produced_in_place` never binds a prefix result in place.
-  - Found while landing R714 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1332 A struct prefix operator records no call contract, so a
   `deinit self` dunder is rejected**
 
@@ -3348,8 +3299,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     Equatable](x: T)`. The pin says "lacking evidence to prove correctness",
     Mojito says "violated constraint".
   - Closes R698 (a missing conformance is reported as violated, not
-    unproven). Shrinks R667 (its `is_deinitable` half), R128, and R129 (the
-    pin rejects it when checking the conformance).
+    unproven). Shrinks R667 (its `is_deinitable` half) and R129 (the pin
+    rejects it when checking the conformance).
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -3405,6 +3356,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     refinement between compiler-known traits.
   - `compiler_trait_declaration` (`mojito-checked::declaration`) already
     records `Comparable` refining `Equatable`.
+  - Probe: `p.__lt__(q)` over `p = (Tag(2), 1)`, where `Tag` declares
+    `Comparable`, is rejected because `Tuple.__lt__`'s `where` clause
+    `conforms_to(Ts.values, Equatable)` folds False. The pin prints `True`.
   - Found while landing R702 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3472,24 +3426,29 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 - [ ] **R667 An associated projection is treated as `Deinitable` and
   `Movable` whatever its bounds**
 
-  Problem: `def g[T: Iterator](mut it: T)` doing `_ = it.__next__()`
-  checks, but the pin rejects it: "'(expression temporary)' abandoned
-  without being explicitly destroyed".
-  - `Iterator.Element` is bound only by `Movable`. Upstream's own
-    `_DropIterator` asserts `conforms_to(Self.Element, Deinitable)` before
-    it discards one.
+  Problem: `def g[T: Source](mut s: T)` doing `_ = s.get()`, where
+  `Source` declares `comptime Element: Movable` and `def get(mut self) ->
+  Self.Element`, runs, but the pin rejects it: "'(expression temporary)'
+  abandoned without being explicitly destroyed".
+  - Upstream's own `_DropIterator` asserts `conforms_to(Self.Element,
+    Deinitable)` before it discards an `Iterator.Element`, which is bound
+    only by `Movable`.
   - The cause: `is_deinitable` and `is_movable`
     (`crates/mojito-checker/src/checker/traits.rs`) fall through to
     `leaf_conforms(..).unwrap_or(true)` for every `Assoc`.
-  - The lever: answer an `Assoc` from `projection_bounds`, as
-    `assoc_member_bound_proves` already does for `Copyable`.
+  - The lever: R1364's three-valued query answers an `Assoc` from
+    `projection_bounds`, as `assoc_member_bound_proves` already does for
+    `Copyable`.
+  - The same discard of `it.__next__()` over `T: Iterator` is rejected
+    first by R1152: `__next__` raises `StopIteration` into a plain
+    `raises` context.
   - Expect fallout in generic bundled-std bodies that drop a projected
     value.
   - `moving_an_iterable_while_its_generic_iterator_lives_rejects`
     (`tests/vm_test.rs`) discards an element. If it starts failing for
     this reason, give it a non-discarding read.
   - Found while landing R665 (2026-10-13).
-  - Depends on nothing.
+  - Depends on R1364.
   - Model: Opus, Not Planned.
 
 - [ ] **R792 `conforms_to` takes only a parameter name and one trait**
@@ -3553,9 +3512,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     struct operator does.
   - Probe: `(Tag(2), 1) < (Tag(2), 3)` over a user `Comparable` `Tag` prints
     `True` at the pin. Mojito rejects it.
-  - Mixed built-in elements, such as `(1, String("b")) < ...`, already run.
-  - Closes R81 (mixed-element tuple ordering rejected).
-  - Depends on R1357.
+  - Mixed built-in elements, such as `(1, String("b")) < ...` and
+    `(2.0, String("x")) < ...`, already run.
+  - `Tuple.__lt__` itself rejects `Tag` until R707 makes a `Comparable`
+    struct `Equatable`.
+  - Depends on R1357 and R707.
   - Model: Opus, Not Planned.
 
 - [ ] **R726 A constructor with its own origin parameter matches no
@@ -4069,36 +4030,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R81 Ordering a tuple of mixed element types is rejected**
-
-  Problem: `(1, String("b")) < (1, String("c"))` reports "operator '<' is
-  not defined for Tuple[Int, String] and Tuple[Int, String]"; the pin prints
-  `True`.
-  - The checker decides tuple ordering structurally
-    (`operators.rs`, `tuple_order_compatible`) instead of dispatching
-    `Tuple.__lt__`, and that rule refuses most element mixes:
-    `(Tag(2), 1)` over a user `Comparable` struct and `(2.0, String("x"))`
-    fail too, while `(String("b"), 1)` and homogeneous tuples pass.
-  - Calling `p.__lt__(q)` directly works, and so does the derived
-    `Tuple.__lt__` behind it.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R91 Same-arity overloads of a generic method on a generic struct stop
-  at run time**
-
-  Problem: `b.pick(1.5, 4)` on `Box[Int]`, whose `pick[U]` has a second
-  overload of the same arity, stops with "vm: unknown method 'Box.pick'".
-  - The pin prints both results.
-  - The call resolves to the instance clone's overload symbol with `U`
-    spelled with its bounds (`Box.pick$y3:Int$ov$U$Copyable$Deinitable$Int`),
-    which no declaration carries (`Box.pick$y3:Int$ov$U$Int`).
-  - It never reaches the per-call clone (`Box.pick$y3:Int$y7:Float64`), and
-    two overloads called at one `U` would mint the same per-call name.
-  - A non-generic struct, or overloads of different arities, run.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R92 A struct's callable-value parameter neither elaborates nor
   reads inside its methods**
 
@@ -4237,25 +4168,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R112 An implicit conversion in a cloned generic method is selected
-  again per instance**
-
-  Problem: `var w: Wrapper[Self.T] = self.item` in a method holding a
-  `comptime if` is rejected for `Box[Int]` ("ambiguous implicit conversion
-  from 'Int' to 'Wrapper[Int]'") when `Wrapper` has `@implicit` constructors
-  over `Int` and over `Self.T`, where the pin prints 2 for every instance.
-  - The pin selects the constructor while it checks the method, where the
-    source is `Self.T`.
-  - A method the template serves agrees with the pin
-    (`assets/ok/implicit_conversion_bound_on_declaration.mojo`). A method
-    that still clones repeats the selection at the instance's types, in its
-    clone check and in its derivation.
-  - Probe: `conformance/probes/implicit_conversion_bound_on_declaration.mojo`.
-  - Found while classifying instance obligations
-    (`docs/notes/generator-contract.md`, row 20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R113 `==` through a bound reaches an `__eq__` over another type**
 
   Problem: `self.first == self.second` over `T: Equatable` stops in
@@ -4275,26 +4187,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (2026-10-01).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R119 A generic constructor beside a declared one cannot be
-  constructed on a struct with a value parameter**
-
-  Problem: `P[Int, 3](7)` for `struct P[U: AnyType, n: Int]` declaring
-  `__init__(out self, var a: String)` beside
-  `__init__[T: Writable](out self, a: T)` prints `5` at the pin and fails in
-  Mojito with "vm backend does not support the built-in or callee
-  'P.__init__$ov$T$Writable' yet".
-  - The same pair runs on a struct whose parameters are all plain type
-    parameters (`assets/ok/generic_struct_generic_constructor_overload.mojo`).
-  - Such an instance mints the constructor's clone with its other per-call
-    clones (`generate_instance_clones`). An instance with a value, origin or
-    callable-bounded parameter mints no clones (`instance_arguments`), so the
-    request has no owner to mint it.
-  - The erased path cannot run it either: `--erased` reports "checked
-    constructor 'P.__init__$ov$T$Writable' is missing from MIR".
-  - Probe: `conformance/probes/value_struct_generic_constructor_overload.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R127 A method cannot call a generic `def` declared after its
   struct**
@@ -4380,19 +4272,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R128 A `Tuple` over a type parameter needs no evidence the
-  parameter is `Movable`**
-
-  Problem: `def total[T: Writable](pair: Tuple[Int, T])` runs in Mojito and
-  the pin rejects the signature: "lacking evidence to prove correctness ...
-  needs evidence for 'conforms_to(T, Movable)'".
-  - `Tuple`'s element bound is `Movable`; a type parameter spelled as an
-    element must prove it by its own bounds or a `where` clause.
-  - Found while probing closed calls of a generic `def`.
-  - Probe: `conformance/probes/tuple_over_unbounded_parameter.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R283 Constructing a type parameter through a user trait's
   `__init__` requirement is unsupported**
 
@@ -4474,18 +4353,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R409 A template-served method's violated `where` clause is spelled
-  from its folded constraint**
+- [ ] **R409 A violated `where` clause is quoted from its folded
+  constraint, not as declared**
 
   Problem: `v.set[Conn](Conn(4))` on a `Variant[Conn]` whose `Conn` is not
-  `Deinitable` reports "expected 'conforms_to(Ts.values, Deinitable)'",
-  where the clause is declared, and the pin quotes it, as
-  `Ts.all_conforms_to[Deinitable]()`.
-  - Both spellings fold to one `GenericConstraint::ConformsPack`, and
-    `violated_constraint_reason` (`checker/generics.rs`) prints its
-    `Display`.
-  - A method the cloner specialized was unparsed from its source
-    (`comptime/unparse.rs`), as `Variant`'s were until 2026-10-06.
+  `Deinitable` notes "expected 'conforms_to(Ts.values, Deinitable)'". The
+  pin quotes the declared clause, `Self.Ts.all_conforms_to[Deinitable]()`,
+  as "expected 'TypeList.all_conforms_to[Deinitable]()'".
+  - The cause: `violated_constraint_reason` (`checker/generics.rs`) prints
+    the `Display` of the folded `GenericConstraint` (`ConformsPack` here),
+    which keeps no trace of the clause's source expression.
+  - Upstream's note prints the clause's own expression, rendering `Self.Ts`
+    by its type, `TypeList`.
+  - The lever: carry the declared clause on the constraint and quote it.
+  - The pin's error line also differs: "no matching method in call to
+    'set'", with a "candidate not viable: violated constraint" note.
   - `assets/type_error/variant_set_linear_alternative.mojo` expects only the
     note's prefix until this is fixed.
   - Depends on nothing.
@@ -4499,16 +4381,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   fails with "binding 'x' of 'f' by name through a trait bound whose
   conformer renames it". The pin binds the keywords by the requirement's
   names and passes the values to the witness by position.
-  - Pinned by `conformance/probes/keyword_through_bound_renamed_witness.mojo`
+  - Probe: `conformance/probes/keyword_through_bound_renamed_witness.mojo`
     (the pin prints `312`).
   - The rejection is `Checker::record_bound_default_arguments`
     (`checker/bound_defaults.rs`). It also covers a requirement default the
     check would spell by a renamed name.
-  - Cause: a call through the bound reaches the witness by name, in a clone
-    re-checked nominally and in `native::mono`'s `infer_call` alike.
-  - The lever is to lower such a call positionally, by the requirement's
-    binding, which the checked call contract already records.
-  - Found while landing R418 with R414 (2026-10-06).
+  - The cause: MIR keeps the call's keywords by name on its `call.method`
+    to `__trait_dispatch.f$ov$Int$Int`, and `native::mono` binds them
+    against the witness `S.f` it resolves the dispatch to. Without the
+    rejection the probe prints `321`.
+  - The lever: lower a call through a bound positionally, in the
+    requirement's parameter order the checked call binding already records.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4517,11 +4400,16 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Problem: `return g(*xs^)` in `def f(var *xs: Int)`, where `g` takes
   `var *xs: Int`, runs at the pin, while Mojito reports "call spread
   outside a specialized type pack".
-  - Only a type pack (`*args: *Ts`) is forwarded today
-    (`lower_pack_spread_argument` in `mir/calls.rs`).
-  - So a trait default with a homogeneous collector (`def f(self, var *xs:
-    Int)`) is rejected at each conformer that inherits it, since its
-    forwarding wrapper spells that spread (`checker/trait_defaults.rs`).
+  - The rejection is the `ExprKind::Spread` arm of inference
+    (`checker/inference.rs`): only a spread of a type pack has a rule.
+  - A homogeneous collector is already the bundled `VariadicList[T,
+    is_owned]` in its callee's body, and a whole type-pack spread already
+    passes the caller's pack itself. The lever is the same pass-through for
+    the caller's `VariadicList`.
+  - Probe: a trait default `def sum(self, var *xs: Int) -> Int` inherited
+    by a conformer, called as `A(1).sum(1, 2, 3)`, prints `6` at the pin.
+    Mojito rejects it in `unforwardable` (`checker/trait_defaults.rs`),
+    since the conformer's forwarding wrapper spells that spread.
   - Found while landing R544 (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Planned.
