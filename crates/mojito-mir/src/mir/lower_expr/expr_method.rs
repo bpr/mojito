@@ -333,7 +333,7 @@ impl<'a> Flatten<'a> {
             })
         {
             let writer = *args.first().expect("checked write_repr_to has one writer");
-            let value = self.expr(object);
+            let value = self.read_operand(object);
             let repr = self.fresh_typed(object.location(), None, repr_ty);
             let value_place = self.simple_place(object);
             self.emit(MirInstr::Call {

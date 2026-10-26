@@ -14,6 +14,7 @@ from std.memory.alloc import unsafe_alloc
 
 from std.reflection.type_info import _unqualified_type_name
 from std.hash import Hasher
+from std.range import range
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration
 
 from std.collections.optional import Optional
@@ -398,16 +399,14 @@ struct List[T: AnyType](
         self.data[idx] = value^
 
     # Upstream feeds each element to the caller's hasher with no length
-    # prefix (`element.__hash__(hasher)`; `update` dispatches the same
-    # method). The walk indexes through `unsafe_get`: the borrowed `for
+    # prefix (`element.__hash__(hasher)`), read where it lies. The walk
+    # indexes through `unsafe_get`: the borrowed `for
     # element in self` loop would need `Copyable` (`_ListIter` is `Iterator
     # where conforms_to(T, Copyable)`), while the conformance is
     # Hashable-only as upstream's.
     def __hash__[H: Hasher](self, mut hasher: H) where conforms_to(Self.T, Hashable):
-        var i = 0
-        while i < len(self):
-            hasher.update(self.unsafe_get(i))
-            i += 1
+        for i in range(len(self)):
+            self.unsafe_get(i).__hash__(hasher)
 
     def __contains__(self, value: Self.T) -> Bool where conforms_to(
         Self.T, Equatable

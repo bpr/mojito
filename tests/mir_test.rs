@@ -3850,6 +3850,55 @@ fn memory_only_read_argument_retains_its_place_and_register_passable_does_not() 
 }
 
 #[test]
+fn pack_element_read_argument_retains_its_place() {
+    // A pack element `Ts[i]` is one more type known only per instance:
+    // `print` and an ordinary `read` parameter read it where it lies, as
+    // upstream passes a memory-only value by address, and nothing copies or
+    // moves its slot.
+    let src = "def show[T: Writable](x: T):\n    print(x)\n\ndef build[*Ts: Writable & Defaultable & Deinitable]():\n    comptime for i in range(len(Ts)):\n        comptime T = Ts[i]\n        var value: T = T()\n        print(value)\n        show(value)\n\ndef main():\n    build[Int, String]()\n";
+    let compiled = Compiler::default()
+        .compile_source(src, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let mir = compiled.elaborated_mir();
+    let build = mir_function(mir, "build");
+    let value = build
+        .var_names
+        .iter()
+        .position(|name| name == "value")
+        .expect("slot value") as u32;
+    let instructions = nested_instructions(&build.blocks);
+    for callee in ["print", "show"] {
+        let places = instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                MirInstr::Call {
+                    func, arg_places, ..
+                } if func.0 == callee => Some(arg_places.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("call of {callee}"));
+        assert!(
+            places
+                .iter()
+                .all(|place| place.as_ref().map(|place| place.root) == Some(value)),
+            "{callee}: {places:?}"
+        );
+    }
+    assert!(
+        !instructions.iter().any(|instruction| matches!(
+            instruction,
+            MirInstr::UseVar { var, mode: UseMode::Copy | UseMode::Move, .. } if *var == value
+        )),
+        "the pack element's slot is copied or moved"
+    );
+    assert!(
+        mir.invariant_errors.is_empty(),
+        "{:?}",
+        mir.invariant_errors
+    );
+}
+
+#[test]
 fn dynamic_reference_returning_call_actual_retains_one_hidden_place() {
     let src = "@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.value)] Int:\n        return self.value\n\ndef index() -> Int:\n    return 0\n\ndef bump(mut value: Int):\n    value += 2\n\ndef main():\n    var box = Box(40)\n    bump(box[index()])\n";
     let checked = mojito::check_program(&parse(src).expect("parse")).expect("check");

@@ -8,6 +8,7 @@
 from std.memory.alloc import unsafe_alloc
 
 from std.hash import Hasher
+from std.range import range
 from std.iter import Iterable, IterableOwned, Iterator, StopIteration
 from std.reflection.type_info import _unqualified_type_name
 
@@ -205,13 +206,11 @@ struct Array[T: AnyType, length: Int](
     ):
         return not self == other
 
-    # Upstream feeds each element to the caller's hasher, no length prefix
-    # (`element.__hash__(hasher)`; `update` dispatches the same method).
+    # Each element feeds the caller's hasher through its own `__hash__`, no
+    # length prefix, read where it lies, as upstream's body does.
     def __hash__[H: Hasher](self, mut hasher: H) where conforms_to(Self.T, Hashable):
-        var i = 0
-        while i < Self.length:
-            hasher.update(self.unsafe_get(i))
-            i += 1
+        for i in range(Self.length):
+            self.unsafe_get(i).__hash__(hasher)
 
     # Lexicographic ordering (upstream 2026-08): elements compare pairwise
     # and the first differing pair decides the result.

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1426**.
+Next free ID: **R1427**.
 
 ## Ordered Work
 
@@ -1495,6 +1495,29 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1426 An augmented store through a reference getter copies its
+  value and moves the element out and back**
+
+  `l[0] += x` over a `List[C]` copies `x` and moves the element through a
+  temporary, where the pin calls `__iadd__` on the element in place and
+  copies nothing.
+  - Mojito prints `copy 4`, `del 4`, `move 7`, and the pin prints nothing.
+  - Probe: generic `items[i] += x` over `List[T]` is the same
+    (`Rack.accumulate` in
+    `assets/ok/template_method_parameter_built_store.mojo`).
+  - Cause: `lower_augmented_subscript` (`mir/lower_stmt.rs`), with no
+    setter, reads the referent (`ReadRef`), runs the dunder on that copy,
+    and writes it back (`WriteRef`) through `__moveinit__`.
+  - Cause: `lower_augmented_operand` lowers the value with `self.expr`, a
+    copy, where `lower_augmented_in_place` passes it as a read argument.
+  - Probe: the value-getter arm (`Rack.fold` over `Duo`) is upstream's
+    get-operate-set, but its setter argument is a `var.use move` that a
+    `drop.reg` destroys, where upstream lends the temporary to
+    `__setitem__`.
+  - Found while planning R1354 (2026-10-25).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
 - [ ] **R731 A transferred call temporary skips the move initializer the
   pin runs**
 
@@ -2789,6 +2812,12 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: a `mut` parameter too: `bump(ps[0])` over `List[P]`, `def
     bump(mut p: P)`, `P` only `Copyable`, is rejected the same way, where
     the pin writes the element in place (found landing R117, 2026-10-25).
+  - Probe: a call's reference result read by a read consumer.
+    `print(l.unsafe_get(0))` and `items.unsafe_get(0).write_repr_to(s)`
+    over `List[T]` copy the element, and `show(l.unsafe_get(0))` is
+    rejected even over a concrete `List[C]`, where the pin borrows both.
+    `lower_borrowed_read_argument` returns `None` for a call, which spells
+    no name (found landing R1354, 2026-10-25).
   - The rejection is the checker's implicit-copy test on a reference
     result (`crates/mojito-checker/src/checker.rs`), which treats the
     `ref` slot as a consuming read.
@@ -9430,24 +9459,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1354 A generic `T` a body only reads is copied into an owned
-  register**
-
-  A generic body holds a `var.use copy` or `value.copy` of a `T` or a pack
-  element `Ts[i]` that only a read consumes, where upstream passes a
-  memory-only `T` by address and copies nothing for a read.
-  - At a last use, copy elision turns the copy into a `var.use move`,
-    which still lands in a register a `drop.reg` destroys.
-  - Probe: `print(value)` in `assets/ok/pack_element_alias_served.mojo`
-    (21 such moves across the corpus, census of 2026-10-24).
-  - Probe: `List.__hash__`, `Array.__hash__`, `String.join`, and
-    `Tuple.__contains__`'s `value.rebind` each copy a `T` they only read.
-  - Probe: `Rack.accumulate`'s `__iadd__` argument
-    (`assets/ok/template_method_parameter_built_store.mojo`).
-  - Related: R677.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1418 A loan anchor or borrow slot binds a memory-only call
   result a second time, where upstream borrows its call-result slot**
 
@@ -9538,8 +9549,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `MirDeclarations::register_passable` answers no for.
   - The remaining placements are copies and moves into a register, each
     with its own entry: `List`→`Span` copies (R117), read arguments by value (R677), `List.resize`'s double copy
-    (R1353), generic reads (R1354), closure values (R1334), and a pending
-    `Error` (R1293).
+    (R1353), an augmented store's operand (R1426), closure values (R1334),
+    and a pending `Error` (R1293).
+  - `owns_droppable_storage` (`mir/calls.rs`) omits `TyKind::Dependent`.
+    Widening it double-frees in `assets/ok/container_hashable.mojo`,
+    `variant_hash_dict_key.mojo`, and `variant_generic_def_operations.mojo`
+    through `Flatten::call_result`, so a dependent-typed memory-only call
+    result keeps its register. Root-cause it before this rule lands.
   - Probe: the rule must judge a conditional conformance at closed
     arguments, as upstream's `getRegisterPassability` does:
     `Bool(f.try_index(42))` (`assets/ok/list_methods_growth.mojo`) keeps
@@ -9548,7 +9564,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     answers no for any conditional row.
   - Re-run the `emit-mir` census over `assets/ok` and
     `assets/ownership_ok` before landing it.
-  - Depends on R1249, R117, R677, R1353, R1354, R1334, R1293.
+  - Depends on R1249, R117, R677, R1353, R1354, R1426, R1334, R1293.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
@@ -9667,6 +9683,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `from std.math import Ceilable` fails in Mojito ("has no
     declaration named 'Ceilable'").
   - Closes R579's `Ceilable` half (resolves with no import).
+  - Probe: `abs(x)`, `round(x)`, and `divmod(a, b)` over `x: T` lower as a
+    `var.use copy` that a `drop.reg` destroys (census:
+    `numeric_operation_traits.mojo`, `boolable_and_divmod.mojo`). Only
+    scalars instantiate today, so nothing observes it; library functions
+    with `read` parameters remove it.
   - Done when `Shallow` answers only `AnyType` and `Representable`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -12333,6 +12354,10 @@ residue found inside a task moves to the task that owns its fix.
     `rebind[_MLIR.KGENParamListType[downcast[Self.type, Copyable]]]`
     laundering of `Self.values` and is gated `where conforms_to(Self.type,
     Copyable)`.
+  - `List.__iter__(ref self)` carries `where conforms_to(Self.T,
+    Copyable)`, where the pin's asserts the bound with `comptime assert`
+    and `downcast`, so `List.__hash__` cannot use the pin's `for element
+    in self` body and indexes through `unsafe_get` instead.
   - Depends on nothing.
   - Model: Opus, Planned.
 

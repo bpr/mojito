@@ -2101,6 +2101,7 @@ impl<'a> Flatten<'a> {
                 | TyKind::Variant(_)
                 | TyKind::Param { .. }
                 | TyKind::Assoc { .. }
+                | TyKind::Dependent(_)
         ) {
             return None;
         }
@@ -2138,8 +2139,9 @@ impl<'a> Flatten<'a> {
             return None;
         }
         if let Some(reference) = expression.reference_result() {
-            return owns_droppable_storage(&reference.referent)
-                .then(|| self.lower_call_receiver(expression).0);
+            return (owns_droppable_storage(&reference.referent)
+                || matches!(reference.referent.kind(), TyKind::Dependent(_)))
+            .then(|| self.lower_call_receiver(expression).0);
         }
         if expression.call_contract().is_some()
             || !matches!(

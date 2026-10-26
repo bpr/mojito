@@ -951,6 +951,11 @@ impl Checker {
                     context: "SIMD element".to_string(),
                 });
             }
+            if intable_object {
+                self.borrow_nominal_place_argument(arg, &aty);
+                self.borrow_parameter_place_argument(arg, &aty);
+                self.record_read_temporary_argument(arg);
+            }
         }
         Ok(())
     }

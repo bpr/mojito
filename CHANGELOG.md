@@ -646,6 +646,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A generic body that only reads a pack element `Ts[i]` now reads it where
+  it lies, as upstream passes a memory-only value by address, instead of
+  copying it or running its move initializer: `print`, the `Bool`/`String`/
+  `repr`/`Int` conversions, `==`, and an ordinary `read` parameter (R1354).
+  `if value:` over a `Boolable` pack element is accepted, as at the pin.
+  `Byte(x)` over an `Intable` parameter, `write_repr_to` on a generic
+  element, and `hash` of a `List` or `Array` copy no element, and `in` over
+  a `Tuple` no longer destroys an extra copy of the matched element.
+
 - `List.resize(n, fill)`, `List(length=n, fill=x)`, and `List.copy()` copy
   each element once, as at the pin, instead of copying it twice and
   destroying the first copy: `unsafe_write(copy=v)` reads `v` where it lies

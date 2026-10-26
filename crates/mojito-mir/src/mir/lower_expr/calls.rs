@@ -278,7 +278,7 @@ impl<'a> Flatten<'a> {
                 vec![self.constant(call, Const::Bool(false))]
             }
             ([], []) => vec![self.constant(call, Const::IntLiteral(0.into()))],
-            _ => self.args(args),
+            _ => args.iter().map(|arg| self.read_operand(*arg)).collect(),
         };
         let d = self.fresh(call.location(), None);
         self.emit(MirInstr::MakeSimd {

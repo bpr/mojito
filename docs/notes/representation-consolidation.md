@@ -218,7 +218,7 @@ are conformance only.
   forwards or moves, and R827 closed with it. R473 stays open: its
   discard still copies, and a move into storage that dies unread runs.
 - **R1356 then rejects the class.** It waits on R1157, R1158, R1249, R117,
-  R677, R1353, R1354, R1334, and R1293.
+  R677, R1353, R1426, R1334, and R1293.
 
 ### F. Members reached by name, not called as the requirement
 

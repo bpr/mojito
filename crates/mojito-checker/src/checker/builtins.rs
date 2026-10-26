@@ -588,16 +588,17 @@ impl Checker {
         }
     }
 
-    /// A read dunder reached through a bound reads a named operand of the
-    /// parameter type where it lies, as [`Self::borrow_nominal_place_argument`]
-    /// reads a struct operand: the instance's dunder takes it by `read`. An
-    /// element an accessor returns by reference (`bag.storage[i]`) is read
-    /// through that reference likewise.
+    /// A read dunder reached through a bound reads a named operand of a
+    /// parameter type or a pack element (`Ts[i]`) where it lies, as
+    /// [`Self::borrow_nominal_place_argument`] reads a struct operand: the
+    /// instance's dunder takes it by `read`. An element an accessor returns
+    /// by reference (`bag.storage[i]`) is read through that reference
+    /// likewise.
     pub(super) fn borrow_parameter_place_argument(&self, argument: &Expr, ty: &Ty) {
         let named = matches!(argument.kind, ExprKind::Identifier(_));
         let element = matches!(argument.kind, ExprKind::Index { .. })
             && self.infer_reference_value(argument).is_some();
-        if (named || element) && matches!(ty.kind(), TyKind::Param { .. }) {
+        if (named || element) && matches!(ty.kind(), TyKind::Param { .. } | TyKind::Dependent(_)) {
             self.record_at(argument.source_span())
                 .borrowed_read_call_place = true;
         }
