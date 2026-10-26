@@ -5636,10 +5636,11 @@ fn chained_comparison_links_name_their_dunders() {
 #[test]
 fn bound_comparison_names_its_requirement() {
     // A comparison through a `Comparable` bound is its requirement's call,
-    // and the bound finds `__eq__` on the `Equatable` it refines.
-    let mir = checked_program_mir(
-        "def f[T: Comparable](a: T, b: T) -> Bool:\n    return a < b and a == b\n\ndef main():\n    print(f(1, 2))\n",
-    );
+    // and the bound finds `__eq__` on the `Equatable` it refines, both
+    // declared by the bundled library, whose declarations the driver's MIR
+    // imports.
+    let source = "def f[T: Comparable](a: T, b: T) -> Bool:\n    return a < b and a == b\n\ndef main():\n    print(f(1, 2))\n";
+    let mir = checked_program_mir(source);
     let resolved = nested_instructions(&mir_function(&mir, "f").blocks)
         .into_iter()
         .filter_map(|instruction| match instruction {
@@ -5655,6 +5656,7 @@ fn bound_comparison_names_its_requirement() {
         ]
     );
     let bounds = ["Comparable".to_string()];
+    let mir = driver_mir(source);
     let equal = mir
         .declarations
         .bound_requirement(&bounds, "__trait_dispatch.__eq__$ov$Self")

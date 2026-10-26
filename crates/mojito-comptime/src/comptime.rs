@@ -284,6 +284,7 @@ pub fn prepare_importing(
     pack_qualification::qualify_struct_packs(&mut own)?;
     synthesize_copyable_copy(&mut own);
     synthesize_hashable_hash(&mut own);
+    synthesize_equatable_eq(&mut own);
     desugar_simd_wildcard_parameters(&mut own);
     fold_simd_alias_bounds(&mut own, installed);
     fold_kgen_type_parameters(&mut own, installed)?;

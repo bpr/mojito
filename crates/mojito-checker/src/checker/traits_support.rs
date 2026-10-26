@@ -170,7 +170,9 @@ pub(super) fn competing_setitem_value_shapes(a: &MethodSig, b: &MethodSig) -> bo
 ///
 /// Defaults are the witness's own: a call through the bound binds each slot
 /// it leaves out from the requirement's default (`bound_default_arguments`),
-/// so a witness may default differently, or not at all.
+/// so a witness may default differently, or not at all. So is its
+/// positional-only marker: the pin lets `__lt__(self, rhs: Self, /)`
+/// witness `Comparable.__lt__(self, rhs: Self)`, and the reverse.
 pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig) -> bool {
     let mut got_shape = canonical_method_shape(got);
     got_shape.raises = false;
@@ -178,6 +180,8 @@ pub(super) fn method_satisfies_requirement(got: &MethodSig, required: &MethodSig
     got_shape.overload = None;
     got_shape.required.clone_from(&required.required);
     got_shape.defaults.clone_from(&required.defaults);
+    got_shape.positional_only = required.positional_only;
+    got_shape.synthesized_default = required.synthesized_default;
     // A collector is never bound by name, so a witness may rename it, and a
     // call through the bound binds a positional parameter by the
     // requirement's name, so the witness may rename that too.

@@ -642,10 +642,15 @@ pub fn apply_infix(op: InfixOp, l: Value, r: Value) -> Result<Value, RuntimeErro
     if let (Some(a), Some(b)) = (as_num(&l), as_num(&r)) {
         return numeric_op(op, a, b);
     }
-    // Equality between non-numeric values (Bool/String/None).
-    match op {
-        InfixOp::Eq => Ok(Value::Bool(values_equal(&l, &r)?)),
-        InfixOp::Ne => Ok(Value::Bool(!values_equal(&l, &r)?)),
+    // Equality between non-numeric values (Bool/String/None), and `Bool`'s
+    // `Comparable` order, `False` before `True`.
+    match (op, &l, &r) {
+        (InfixOp::Eq, ..) => Ok(Value::Bool(values_equal(&l, &r)?)),
+        (InfixOp::Ne, ..) => Ok(Value::Bool(!values_equal(&l, &r)?)),
+        (InfixOp::Lt, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a < b)),
+        (InfixOp::Le, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a <= b)),
+        (InfixOp::Gt, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a > b)),
+        (InfixOp::Ge, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a >= b)),
         _ => Err(RuntimeError::TypeError(format!(
             "operator {:?} is not defined for {} and {}",
             op,

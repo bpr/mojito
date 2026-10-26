@@ -26,8 +26,6 @@ pub const COMPILER_TRAITS: &[&str] = &[
     "Intable",
     "Floatable",
     "Indexer",
-    "Equatable",
-    "Comparable",
     "Hashable",
     "Hasher",
     "Identifiable",
@@ -217,8 +215,6 @@ pub fn leaf_conforms(
             _ => false,
         },
         "Indexer" => matches!(ty.kind(), TyKind::Int | TyKind::IntLiteral),
-        "Equatable" => is_scalar(ty) || is_numeric_like(ty) || is_scalar_simd(ty),
-        "Comparable" => is_numeric_like(ty) || is_scalar_simd(ty),
         "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
         | "Divisible" | "FloorDivisible" | "Modable" | "Floatable" => is_numeric_like(ty),
         "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {
@@ -246,10 +242,20 @@ pub fn leaf_conforms(
 /// `trait_name`, as the upstream struct it stands in for declares.
 ///
 /// Upstream's `SIMD` (whose scalars `Int`, `UInt`, and `Float64` are),
-/// `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`. A struct or a
-/// type parameter answers by its own declaration or bounds instead.
+/// `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`. `SIMD` and
+/// `Bool` list `Equatable` and `Comparable`, and `DType` lists `Equatable`;
+/// a numeric literal answers as the scalar it materializes to. Only a
+/// scalar `SIMD` conforms here, since a vector's comparison through the
+/// bound is not yet its reducing `__eq__`. A struct or a type parameter
+/// answers by its own declaration or bounds instead.
 pub fn modelled_declares(ty: &Ty, trait_name: &str) -> bool {
     match trait_name {
+        "Equatable" => {
+            is_numeric_like(ty)
+                || is_scalar_simd(ty)
+                || matches!(ty.kind(), TyKind::Bool | TyKind::Dtype)
+        }
+        "Comparable" => is_numeric_like(ty) || is_scalar_simd(ty) || *ty == TyKind::Bool,
         "Sized" => matches!(
             ty.kind(),
             TyKind::Int

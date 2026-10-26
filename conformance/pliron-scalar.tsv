@@ -79,6 +79,7 @@ assets/ok/closures.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/collection_display_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/collection_truthiness.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/collector_runtime_index.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comparable_library_traits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comparable_ordered_algorithms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comprehension_destructuring_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comprehension_temporary_source_drop.mojo	-	ineligible	no-scalar-entry-shape
@@ -1106,6 +1107,7 @@ assets/ok/trait_default_refinement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_default_wrapper_conventions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_inheritance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_method_binder_spelling.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/trait_method_parameter_markers.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_parameterized_comptime_default.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_parameterized_value_requirement.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/trait_reads_module_struct_member.mojo	-	ineligible	no-scalar-entry-shape

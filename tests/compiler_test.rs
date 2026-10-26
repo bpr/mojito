@@ -3031,10 +3031,10 @@ fn template_method_converting_bindings_run() {
 #[test]
 fn template_method_operator_dispatch_runs() {
     // Equality, `!=`, and an ordering over two places of the struct's
-    // parameter type; `!=` served by the instance's `__eq__` and a negation
-    // (`Tag` declares no `__ne__`); and `+` over two places whose type is
-    // built over the parameter, whose result is a temporary of that type
-    // rather than a `Bool`.
+    // parameter type; `!=` served by `Equatable`'s default `__ne__`, which
+    // calls the instance's `__eq__` (`Tag` declares no `__ne__`); and `+`
+    // over two places whose type is built over the parameter, whose result
+    // is a temporary of that type rather than a `Bool`.
     assert_entry_output(
         include_str!("../assets/ok/template_method_operator_dispatch.mojo"),
         "False True False True\n1 2\nTrue True True False\nFalse False 1\n3 7\n",

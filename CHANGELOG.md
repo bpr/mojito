@@ -687,6 +687,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Equatable` and `Comparable` are now upstream's library traits, declared
+  in the bundled `std/builtin/comparable.mojo` and exported by the prelude
+  (R705), where the compiler knew them by name. `Equatable` defaults
+  `__ne__` through `__eq__`, and `Comparable` defaults `__gt__`, `__le__`,
+  and `__ge__` through `__lt__`, so a struct declaring only `__eq__` and
+  `__lt__` has every comparison, directly and through a bound (R706), and
+  `a.__lt__(b)` through `T: Comparable` runs (R708). `!=` calls the
+  inherited `__ne__` member, and the checker's `NegatedEquality`, the
+  elaborator's, and the VM's `!=`-through-`__eq__` stand-ins are gone. A
+  struct declaring either trait without an `__eq__` over `Self` gets a
+  fieldwise `__eq__`, the stand-in for upstream's reflective default
+  until R269, so `Point(1, 2) == Point(1, 2)` runs where it was rejected.
+  `Bool` is now `Comparable` (`True > False`), `NoneType` and
+  `StringLiteral` no longer conform, as at the pin, and a `SIMD` vector
+  still conforms to neither (R1456). A trait method may declare `/` and
+  `*` markers (R419); a witness may differ from its requirement in a
+  positional-only marker or leave an origin to inference (`StringSpan`'s
+  `__eq__(self, rhs: StringSpan)`); and a default inherited under a
+  conditional conformance is available, and checked, under its condition.
+  The package format is 102.
+
 - The bundled library types declare the conformances upstream's do (R578):
   `List[T]` is `Defaultable` and `Equatable where T: Equatable`, `Dict` is
   `Defaultable`, `Set` is `Comparable`, `String` and `StringSpan` are no

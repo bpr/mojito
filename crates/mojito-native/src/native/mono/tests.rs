@@ -2517,7 +2517,7 @@ const WBOX_SOURCE: &str = "@fieldwise_init\n\
      \x20   var a = WBox[1](1)\n\
      \x20   var b = WBox[2](2)\n\
      \x20   print(a, b)\n\
-     \x20   print(a == WBox[1](1), b != WBox[2](2))\n";
+     \x20   print(a == WBox[1](1), b == WBox[2](2))\n";
 
 #[test]
 fn a_display_member_that_reads_no_struct_parameter_is_one_instance() {

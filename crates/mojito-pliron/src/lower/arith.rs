@@ -262,8 +262,14 @@ impl FnLowering<'_> {
         operand_ty: ScalarTy,
     ) -> Result<(), PlironError> {
         match operand_ty {
+            // `Bool` is `Comparable`, `False` before `True`: its `i1` orders
+            // unsigned.
+            ScalarTy::Bool => {
+                let cmp = ICmpOp::new(ctx, unsigned_predicate(op), lhs, rhs);
+                self.define(ctx, dest, cmp.get_operation(), cmp.get_result(ctx))
+            }
             // `DType` compares its code by identity, as upstream's `__eq__`.
-            ScalarTy::Bool | ScalarTy::Dtype => {
+            ScalarTy::Dtype => {
                 if !matches!(op, InfixOp::Eq | InfixOp::Ne) {
                     return Err(self.unsupported_reg(
                         format!("operator `{op:?}` on {} operands", operand_ty.name()),

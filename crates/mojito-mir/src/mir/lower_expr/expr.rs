@@ -9,12 +9,11 @@ use mojito_checked::checked::{
 use mojito_types::types::TyKind;
 
 /// What the checker dispatched one operator to: the selected dunder's
-/// lowered symbol (`None` for a built-in operator), the error type its call
-/// raises, and whether it is Equatable's default `!=`.
+/// lowered symbol (`None` for a built-in operator), and the error type its
+/// call raises.
 pub(in crate::mir) struct OperatorDispatch {
     pub(in crate::mir) resolved: Option<String>,
     pub(in crate::mir) raises: Option<Ty>,
-    pub(in crate::mir) negated_equality: bool,
 }
 
 impl<'a> Flatten<'a> {
@@ -294,24 +293,16 @@ impl<'a> Flatten<'a> {
             )
         });
         let (ra, rb) = if reflected { (rb, ra) } else { (ra, rb) };
-        let negated_equality = node.adjustments().iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::NegatedEquality
-            )
-        });
         let dispatch = OperatorDispatch {
             resolved,
             raises: node.raises(),
-            negated_equality,
         };
         self.emit_comparison(node.location(), op, ra, rb, dispatch)
     }
 
     /// Emit one dispatched operator over `a` and `b`: `BinOp.resolved`
     /// names the dunder the checker selected, so the operator is that
-    /// method's call, raising what it raises. Equatable's default `__ne__`
-    /// (`negated_equality`) dispatches `__eq__` and negates its result.
+    /// method's call, raising what it raises.
     pub(in crate::mir) fn emit_comparison(
         &mut self,
         location: SourceSpan,
@@ -320,31 +311,8 @@ impl<'a> Flatten<'a> {
         b: Reg,
         dispatch: OperatorDispatch,
     ) -> Reg {
-        let OperatorDispatch {
-            resolved,
-            raises,
-            negated_equality,
-        } = dispatch;
+        let OperatorDispatch { resolved, raises } = dispatch;
         let raises = self.raises(raises, location.clone());
-        if op == InfixOp::Ne && negated_equality {
-            let equal = self.fresh_typed(location.clone(), None, Ty::bool());
-            self.emit(MirInstr::BinOp {
-                op: InfixOp::Eq,
-                dest: equal,
-                a,
-                b,
-                resolved,
-                raises,
-            });
-            let dest = self.fresh_typed(location, None, Ty::bool());
-            self.emit(MirInstr::UnOp {
-                op: PrefixOp::Not,
-                dest,
-                a: equal,
-                raises: None,
-            });
-            return dest;
-        }
         let d = self.fresh(location, None);
         self.emit(MirInstr::BinOp {
             op,

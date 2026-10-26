@@ -1222,11 +1222,11 @@ impl Checker {
     /// conforms_to(Self.T, Copyable)` on a `T: Movable` struct).
     pub(super) fn method_where_assumptions(
         &self,
-        m: &Method,
+        where_clauses: &[Expr],
         method_decls: &[ParamDecl],
     ) -> Result<HashSet<(AssumedSubject, String)>, TypeError> {
         let mut facts = HashSet::new();
-        for condition in &m.where_clauses {
+        for condition in where_clauses {
             let constraint = self.compile_where_clause(condition)?;
             guaranteed_conformance_atoms(
                 &self.bind_constraint(&constraint, method_decls),
@@ -1291,10 +1291,10 @@ impl Checker {
         let saved = self.enclosing_type_params.clone();
         let saved_struct_count = self.enclosing_struct_type_params.replace(saved.len());
         self.enclosing_type_params.extend(m.type_params.clone());
-        let assumptions = self.method_where_assumptions(m, &decls);
+        let assumptions = self.method_where_assumptions(&m.where_clauses, &decls);
         let result = match assumptions {
             Ok(assumptions) => {
-                self.assume_method_propositions(m, &decls);
+                self.assume_method_propositions(&m.where_clauses, &decls);
                 self.assumed_conformances.borrow_mut().push(assumptions);
                 let result = (|| {
                     for param in 0..m.params.len() {

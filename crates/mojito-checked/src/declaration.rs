@@ -256,59 +256,36 @@ pub struct TraitDeclaration {
 /// The declaration of the compiler-known trait `name` a witness table
 /// records the requirements of.
 ///
-/// They are `Defaultable`, as upstream's `std/builtin/value.mojo` declares
-/// it, whose `__init__(out self)` takes no parameter, and the comparison
-/// traits `Equatable` and `Comparable`, as its `std/builtin/comparable.mojo`
-/// declares them, whose each requirement's parameter is `Self`.
+/// It is `Defaultable`, as upstream's `std/builtin/value.mojo` declares
+/// it, whose `__init__(out self)` takes no parameter.
 ///
-/// Until the bundled library declares them, this is their declaration. A
+/// Until the bundled library declares it, this is its declaration. A
 /// program or package that declares a trait of the name shadows it.
 pub fn compiler_trait_declaration(name: &str) -> Option<&'static TraitDeclaration> {
-    static DECLARATIONS: LazyLock<[TraitDeclaration; 3]> = LazyLock::new(|| {
-        let declaration =
-            |name: &str, refines: &[&str], parameter: Option<&str>, methods: &[&str]| {
-                let param_types: Vec<Ty> = parameter.iter().map(|_| Ty::self_type()).collect();
-                TraitDeclaration {
-                    name: name.to_string(),
-                    refines: refines.iter().map(ToString::to_string).collect(),
-                    requirements: methods
-                        .iter()
-                        .map(|method| TraitRequirement {
-                            name: (*method).to_string(),
-                            arity: param_types.len(),
-                            dispatch: method_symbol(
-                                TRAIT_DISPATCH,
-                                method,
-                                &SignatureKey::from_tys_with_self(&param_types, None),
-                            ),
-                            param_names: parameter.iter().map(ToString::to_string).collect(),
-                            param_types: param_types.clone(),
-                            param_conventions: vec![None; param_types.len()],
-                            variadic_index: None,
-                            required: vec![true; param_types.len()],
-                            positional_only: None,
-                            keyword_only: None,
-                            variadic: None,
-                            kw_variadic: None,
-                            variadic_convention: None,
-                        })
-                        .collect(),
-                }
-            };
-        [
-            declaration("Defaultable", &[], None, &["__init__"]),
-            declaration("Equatable", &[], Some("other"), &["__eq__", "__ne__"]),
-            declaration(
-                "Comparable",
-                &["Equatable"],
-                Some("rhs"),
-                &["__lt__", "__gt__", "__le__", "__ge__"],
+    static DEFAULTABLE: LazyLock<TraitDeclaration> = LazyLock::new(|| TraitDeclaration {
+        name: "Defaultable".to_string(),
+        refines: Vec::new(),
+        requirements: vec![TraitRequirement {
+            name: "__init__".to_string(),
+            arity: 0,
+            dispatch: method_symbol(
+                TRAIT_DISPATCH,
+                "__init__",
+                &SignatureKey::from_tys_with_self(&[], None),
             ),
-        ]
+            param_names: Vec::new(),
+            param_types: Vec::new(),
+            param_conventions: Vec::new(),
+            variadic_index: None,
+            required: Vec::new(),
+            positional_only: None,
+            keyword_only: None,
+            variadic: None,
+            kw_variadic: None,
+            variadic_convention: None,
+        }],
     });
-    DECLARATIONS
-        .iter()
-        .find(|declaration| declaration.name == name)
+    (name == DEFAULTABLE.name).then(|| &*DEFAULTABLE)
 }
 
 /// One requirement of a trait declaration, a bodyless method declaration.

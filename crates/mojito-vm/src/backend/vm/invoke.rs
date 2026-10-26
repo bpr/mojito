@@ -345,6 +345,16 @@ impl VmBackend {
                     Value::Simd { lanes, .. } => return Ok(Value::Int(lanes.width() as i64)),
                     _ => {}
                 },
+                // `Equatable` and `Comparable` on a scalar: its operator.
+                ("__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__", 1) if !matches!(&recv, Value::Simd { lanes, .. } if lanes.width() != 1) =>
+                {
+                    use mojito_ast::ast::InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
+                    let op = [Eq, Ne, Lt, Le, Gt, Ge]
+                        .into_iter()
+                        .find(|op| op.dunder() == Some(method))
+                        .unwrap_or(Ge);
+                    return crate::runtime::apply_infix(op, recv, args[0].clone());
+                }
                 _ => {}
             }
         }

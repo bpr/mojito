@@ -118,11 +118,23 @@ pub(super) fn generic_constraint_implies(
     premise: &GenericConstraint,
     consequence: &GenericConstraint,
 ) -> bool {
+    constraint_implies_by(premise, consequence, &builtin_trait_implies)
+}
+
+/// [`generic_constraint_implies`] where `implies` answers whether
+/// conformance to one trait proves conformance to another, as a checker
+/// knowing the declared refinements answers (`Comparable` proves
+/// `Equatable`).
+pub(super) fn constraint_implies_by(
+    premise: &GenericConstraint,
+    consequence: &GenericConstraint,
+    implies: &dyn Fn(&str, &str) -> bool,
+) -> bool {
     if let GenericConstraint::WithMessage(condition, _) = premise {
-        return generic_constraint_implies(condition, consequence);
+        return constraint_implies_by(condition, consequence, implies);
     }
     if let GenericConstraint::WithMessage(condition, _) = consequence {
-        return generic_constraint_implies(premise, condition);
+        return constraint_implies_by(premise, condition, implies);
     }
     if same_proposition(premise, consequence)
         || matches!(consequence, GenericConstraint::Bool(true))
@@ -139,13 +151,14 @@ pub(super) fn generic_constraint_implies(
                 operand: needed,
                 trait_name: required,
             },
-        ) if known == needed => builtin_trait_implies(available, required),
+        ) if known == needed => implies(available, required),
         (_, GenericConstraint::And(left, right)) => {
-            generic_constraint_implies(premise, left) && generic_constraint_implies(premise, right)
+            constraint_implies_by(premise, left, implies)
+                && constraint_implies_by(premise, right, implies)
         }
         (GenericConstraint::And(left, right), _) => {
-            generic_constraint_implies(left, consequence)
-                || generic_constraint_implies(right, consequence)
+            constraint_implies_by(left, consequence, implies)
+                || constraint_implies_by(right, consequence, implies)
         }
         _ => false,
     }

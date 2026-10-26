@@ -1,5 +1,5 @@
-//! Synthesized conformance methods: `Copyable.copy` and
-//! `Hashable.__hash__` bodies, plus upstream's `SIMD[_, _]` parameter
+//! Synthesized conformance methods: `Copyable.copy`, `Hashable.__hash__`,
+//! and `Equatable.__eq__` bodies, plus upstream's `SIMD[_, _]` parameter
 //! desugar, the vector-alias bound fold, the KGEN-typed binder fold, and
 //! the value reading of a `Self.`-spelled `materialize` operand.
 
@@ -233,6 +233,129 @@ pub(super) fn synthesize_hashable_hash(program: &mut [Stmt]) {
             raises: false,
             raises_type: None,
             ret: None,
+            where_clauses,
+            body,
+            provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,
+        });
+    }
+}
+
+/// Materialize `Equatable`'s reflective `__eq__` default as ordinary source
+/// AST, for a struct declaring `Equatable` or `Comparable` without an
+/// `__eq__` taking `Self`: every field compares with `!=` in declaration
+/// order, the first unequal pair answering `False`, as upstream's default
+/// does over `reflect[Self]`. An `enum` derives none, as upstream rejects
+/// deriving one. A conditional conformance carries its predicate onto the
+/// synthesized method.
+pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
+    for statement in program {
+        let span = statement.span;
+        let StmtKind::Struct {
+            name,
+            conforms,
+            conformance_conditions,
+            fields,
+            methods,
+            enum_cases: None,
+            ..
+        } = &mut statement.kind
+        else {
+            continue;
+        };
+        let equatable = |trait_name: &str| matches!(trait_name, "Equatable" | "Comparable");
+        let takes_self = |method: &mojito_ast::ast::Method| {
+            matches!(
+                method.params.as_slice(),
+                [parameter] if matches!(&parameter.ty, Type::SelfType)
+                    || matches!(&parameter.ty, Type::Named(named, _) if named == name)
+            )
+        };
+        if !conforms.iter().any(|conformance| equatable(conformance))
+            || methods
+                .iter()
+                .any(|method| method.name == "__eq__" && takes_self(method))
+        {
+            continue;
+        }
+        let identifier = |name: &str| Expr::new(ExprKind::Identifier(name.to_string()), span);
+        let field_of = |object: &str, field: &str| {
+            Expr::new(
+                ExprKind::Member {
+                    object: Box::new(identifier(object)),
+                    field: field.to_string(),
+                },
+                span,
+            )
+        };
+        let answer = |value: bool| {
+            mk(
+                StmtKind::Return(Some(Expr::new(ExprKind::Bool(value), span))),
+                span,
+            )
+        };
+        let mut body: Vec<Stmt> = fields
+            .iter()
+            .map(|field| {
+                let differs = Expr::new(
+                    ExprKind::Infix(
+                        mojito_ast::ast::InfixOp::Ne,
+                        Box::new(field_of("self", &field.name)),
+                        Box::new(field_of("other", &field.name)),
+                    ),
+                    span,
+                );
+                mk(
+                    StmtKind::If {
+                        branches: vec![(
+                            mojito_ast::ast::Condition::Expr(differs),
+                            vec![answer(false)],
+                        )],
+                        orelse: None,
+                    },
+                    span,
+                )
+            })
+            .collect();
+        body.push(answer(true));
+        if let Some(module) = &statement.module {
+            mojito_ast::ast::stamp_source(&mut body, module);
+        }
+        // The member is as available as the struct's `Equatable`
+        // conformance: unconditionally when it declares `Equatable` without
+        // a condition, under `Comparable`'s when only that refines it.
+        let declares_equatable = conforms
+            .iter()
+            .any(|conformance| conformance == "Equatable");
+        let where_clauses = conformance_conditions
+            .iter()
+            .find(|(trait_name, _)| trait_name == "Equatable")
+            .or_else(|| {
+                conformance_conditions
+                    .iter()
+                    .find(|(trait_name, _)| !declares_equatable && trait_name == "Comparable")
+            })
+            .map(|(_, condition)| vec![condition.clone()])
+            .unwrap_or_default();
+        methods.push(mojito_ast::ast::Method {
+            name: "__eq__".to_string(),
+            type_params: Vec::new(),
+            has_self: true,
+            self_convention: None,
+            self_origin: None,
+            decorators: Vec::new(),
+            params: vec![mojito_ast::ast::FnParam {
+                name: "other".to_string(),
+                ty: Type::SelfType,
+                default: None,
+                kind: mojito_ast::ast::ParamKind::Regular,
+                convention: None,
+                origin: None,
+            }],
+            positional_only: Some(1),
+            keyword_only: None,
+            raises: false,
+            raises_type: None,
+            ret: Some(Type::Named("Bool".to_string(), Vec::new())),
             where_clauses,
             body,
             provenance: mojito_ast::ast::MethodProvenance::SynthesizedDefault,

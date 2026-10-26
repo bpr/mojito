@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1456**.
+Next free ID: **R1457**.
 
 ## Ordered Work
 
@@ -3215,7 +3215,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     argument is.
   - Keep the `overload_target` fact, derived from the contract, until R1348
     lowers the call from it.
-  - `NegatedEquality` stays until R705 bundles `Equatable.__ne__`'s default.
   - Probe: `l == [1]` over `l: List[Int]` (R697) and `print(-(n^))` over
     `__neg__(deinit self)` (R1332) run at the pin and fail in Mojito.
   - Closes R1332 (a prefix dunder records no call contract) and R697 (a
@@ -3312,32 +3311,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R708 A dunder call through a compiler-known comparison bound is
-  rejected**
-
-  Problem: `a.__lt__(b)` in `def g[T: Comparable](a: T, b: T)` is
-  rejected with "type 'T' has no method '__lt__'", where the pin runs it.
-  - Method resolution over a bound reads only the declared traits
-    (`self.traits`), and `Equatable`/`Comparable` are compiler-known.
-  - `compiler_trait_declaration` holds the requirement signatures, and an
-    operator over the bound already names the same
-    `__trait_dispatch.__lt__$ov$Self` target.
-  - Found while landing R702 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R706 A struct declaring only `__lt__` has no `>`, `<=`, or `>=`**
-
-  Problem: over a `struct S(Comparable)` declaring `__lt__` and `__eq__`,
-  `S(2) >= S(1)` is rejected with "operator '>=' is not defined", and
-  `a >= b` through `T: Comparable` stops in the VM with "unknown method
-  'S.__ge__'", where the pin prints `True` both times.
-  - Upstream's `Comparable` defaults `__gt__`, `__le__`, and `__ge__`
-    through `__lt__`; Mojito has no declaration to take them from.
-  - Found while landing R702 (2026-10-13).
-  - Depends on R705.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1358 An operator over a bound type parameter is not a call of the
   bound's requirement**
 
@@ -3355,6 +3328,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     rejected).
   - Depends on R1357 (the operator is a method call) and R705 (comparisons
     find declared requirements).
+  - Model: Opus, Not Planned.
+
+- [ ] **R1456 A `SIMD` vector is neither `Equatable` nor `Comparable`**
+
+  Upstream's `SIMD` declares both at every width, and its `__eq__` and
+  `__ne__` return a `Bool` reducing every lane, where Mojito's comparison
+  through a bound over a vector instance is a lane mask the elaborator
+  converts through `Bool(mask)` (the mask conversion after the operator
+  rewrite in `Specializer`, `native/mono/specializer.rs`).
+  - So `modelled_declares` (`mojito-types::conformance`) answers both traits
+    for a scalar `SIMD` only, and a vector fails the bound.
+  - The lever: a comparison through `Equatable` on a vector calls a reducing
+    `__eq__`/`__ne__`, as upstream's `SIMD` declares them; ordering stays
+    constrained to scalars, as upstream's `__lt__` is.
+  - Probe: `same[T: Equatable](a, b)` returning `a == b` over two
+    `SIMD[DType.float32, 4]` values prints `True False` at the pin, where
+    Mojito says "does not conform to trait 'Equatable'".
+  - Found while landing R705 (2026-10-26).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R690 A subscript assignment is accepted without a `__getitem__`
@@ -3464,6 +3456,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `tuple_order_compatible` rather than `Tuple.__lt__`.
   - Mixed built-in elements, such as `(1, String("b")) < ...` and
     `(2.0, String("x")) < ...`, already run.
+  - Probe: `conforms_to(Tuple[Int, Int], Comparable)` is `True` at the pin,
+    whose `Tuple` conforms where its elements do, and `False` in Mojito,
+    whose `modelled_declares` (`mojito-types::conformance`) answers no
+    tuple for `Equatable` or `Comparable`, so a tuple fails either bound.
   - Depends on R1357 and R707.
   - Model: Opus, Not Planned.
 
@@ -4450,19 +4446,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Before R568 the cloned wrapper failed too, with "returned reference
     escapes storage outside its declared origin".
   - Found while landing R568 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R419 A trait method cannot declare a `*` or `/` marker**
-
-  Problem: `def f(self, *, k: Int) -> Int` in a trait body fails with
-  "positional-only/keyword-only markers on trait methods", where the pin
-  accepts it and dispatches `t.f(k=4)` through a bound.
-  - The rejection is in `Checker::check_trait` (`checker/traits.rs`).
-  - The requirement's keyword-only boundary is already built by the rule a
-    struct method uses (`Collectors::of`), so a `*args` collector's
-    boundary is modeled; the explicit markers are not.
-  - Found while landing R413 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6509,6 +6492,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The elaborator walks a plain struct's method bodies with no binding for
     `Self`, so `reflect[Self]` has no subject.
   - Both the bound form and `comptime n = reflect[Self].field_count()` fail.
+  - Once it runs, upstream's reflective `Equatable.__eq__` default moves
+    into the bundled `std/builtin/comparable.mojo`, and the comptime
+    stand-in `synthesize_equatable_eq` (`comptime/synth.rs`) goes, as
+    Hashable's `synthesize_hashable_hash` does with R1362.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -8971,22 +8958,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R705 `Equatable` and `Comparable` are compiler-known, where
-  upstream's library declares them**
-
-  Upstream declares both traits in `std/builtin/comparable.mojo`, with
-  `__ne__` defaulted through `__eq__` and `__gt__`/`__le__`/`__ge__`
-  through `__lt__`; Mojito knows them by name.
-  - `compiler_trait_declaration` (`mojito-checked::declaration`) stands in
-    for their requirements, and the checker's `has_equality_bound`,
-    `has_order_bound`, and `NegatedEquality` stand in for the defaults.
-  - This entry bundles the two declarations with their non-reflective
-    defaults and deletes `compiler_trait_declaration`; upstream's
-    reflective `__eq__` default stays out, waiting on R269.
-  - Found while landing R702 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1360 `Boolable`, `Intable`, `Floatable`, `Indexer`, and
   `Identifiable` are compiler-known, where upstream's library declares
   them**
@@ -9062,8 +9033,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   only its `RegisterPassable` parent, so a `TrivialRegisterPassable` struct
   is not `Copyable` and an undeclaring struct passes the bound.
   - Bundle the three in a new `stdlib/std/builtin/value.mojo`, exported from
-    the prelude. Delete `compiler_trait_refines` and `Defaultable`'s row in
-    `compiler_trait_declaration`.
+    the prelude. Delete `compiler_trait_refines` and
+    `compiler_trait_declaration`, whose only row is `Defaultable`'s.
   - Probe:
     `conformance/probes/copyable_struct_trivial_register_passable_field.mojo`,
     and `trivial_register_passable_copy_method.mojo`.

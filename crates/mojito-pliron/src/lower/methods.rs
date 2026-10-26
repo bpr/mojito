@@ -183,6 +183,28 @@ impl FnLowering<'_> {
                 _ => {}
             }
         }
+        // `Equatable` and `Comparable` on a scalar: its operator, as the VM
+        // dispatches it.
+        if resolved.is_none()
+            && args.len() == 1
+            && kwargs.is_empty()
+            && matches!(
+                self.func.reg_types.get(&recv.0).map(Ty::kind),
+                Some(TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Bool)
+            )
+            && let Some(op) = [
+                InfixOp::Eq,
+                InfixOp::Ne,
+                InfixOp::Lt,
+                InfixOp::Le,
+                InfixOp::Gt,
+                InfixOp::Ge,
+            ]
+            .into_iter()
+            .find(|op| op.dunder() == Some(method))
+        {
+            return self.lower_binop(ctx, op, dest, recv, args[0], None);
+        }
         let Some(resolved) = resolved else {
             let receiver = self.func.reg_types.get(&recv.0).map_or_else(
                 || "an untyped register".to_string(),

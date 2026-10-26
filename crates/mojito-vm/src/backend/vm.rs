@@ -409,14 +409,6 @@ impl VmBackend {
             None => prog.struct_member(sname, method, argc),
         };
         let Some(idx) = idx else {
-            // `Equatable`'s default `!=`: a struct that declares `__eq__`
-            // and no `__ne__` negates its `__eq__`.
-            if method == "__ne__"
-                && let Some(eq) = prog.struct_member(sname, "__eq__", argc)
-                && let Value::Bool(equal) = self.call_function(prog, eq, args)?
-            {
-                return Ok(Value::Bool(!equal));
-            }
             return Err(RuntimeError::Unsupported(format!(
                 "vm: struct '{sname}' has no method '{method}'"
             )));

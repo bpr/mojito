@@ -4,7 +4,6 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{CheckedCompareLink, SemanticAdjustment};
-use mojito_checked::declaration::compiler_trait_declaration;
 use mojito_symbol::symbol::TRAIT_DISPATCH;
 use mojito_types::types::TyKind;
 
@@ -99,7 +98,7 @@ impl Checker {
     pub(in crate::checker) fn tuple_elements_equatable_nominal(&self, elements: &[Ty]) -> bool {
         elements.iter().all(|element| match element.kind() {
             TyKind::Tuple(nested) => self.tuple_elements_equatable_nominal(nested),
-            _ => has_equality_bound_or_concrete(self, element),
+            _ => self.equatable_element(element),
         })
     }
 
@@ -177,7 +176,7 @@ impl Checker {
                         && self.tuple_elements_equatable_nominal(left)
                         && self.tuple_elements_equatable_nominal(right)
                 }
-                Lt | Gt | Le | Ge => same_self && tuple_order_compatible(left, right),
+                Lt | Gt | Le | Ge => same_self && self.tuple_order_compatible(left, right),
                 _ => false,
             };
             if supported {
@@ -197,7 +196,7 @@ impl Checker {
                         && self.tuple_elements_equatable_nominal(&left)
                         && self.tuple_elements_equatable_nominal(&right)
                 }
-                Lt | Gt | Le | Ge => same_self && tuple_order_compatible(&left, &right),
+                Lt | Gt | Le | Ge => same_self && self.tuple_order_compatible(&left, &right),
                 _ => false,
             };
             if supported {
@@ -294,13 +293,12 @@ impl Checker {
                     Ty::float64()
                 },
             ),
-            // Ordering between numbers, or between equal opaque type parameters
-            // whose bound promises an ordering (`T: Comparable`).
+            // Ordering between numbers, between `Bool`s (upstream's `Bool` is
+            // `Comparable`), or between equal opaque type parameters whose
+            // bound promises an ordering (`T: Comparable`).
             Lt | Gt | Le | Ge
                 if common.is_some()
-                    || (lt == rt
-                        && (has_order_bound(&lt)
-                            || self.has_assumed_conformance(&lt, "Comparable"))) =>
+                    || (lt == rt && (lt == TyKind::Bool || self.comparable_bound(&lt))) =>
             {
                 Some(Ty::bool())
             }
@@ -308,11 +306,7 @@ impl Checker {
             // scalars (Bool/String/None).
             Eq | Ne
                 if common.is_some()
-                    || (lt == rt
-                        && (is_scalar(&lt)
-                            || has_equality_bound(&lt)
-                            || self.has_assumed_conformance(&lt, "Equatable")
-                            || self.has_assumed_conformance(&lt, "Comparable"))) =>
+                    || (lt == rt && (is_scalar(&lt) || self.equatable_bound(&lt))) =>
             {
                 Some(Ty::bool())
             }
@@ -366,7 +360,6 @@ impl Checker {
         {
             if let Some(span) = span
                 && let Some(dispatch) = self.struct_infix_dispatch(op, &nominal_ty, &nominal_ty)?
-                && !dispatch.negated_equality
             {
                 // The literal side is a converted temporary; only the
                 // nominal side is a place the read dunder borrows.
@@ -406,11 +399,6 @@ impl Checker {
                     self.borrow_operator_operand(right, &rt);
                 }
                 self.record_operator_temporaries(left, right, dispatch.reads, dispatch.owns);
-                if dispatch.negated_equality {
-                    self.record_at(span.clone()).adjustment = Some(Box::new(
-                        mojito_checked::checked::SemanticAdjustment::NegatedEquality,
-                    ));
-                }
                 self.record_struct_instantiation(
                     &dispatch.struct_name,
                     &dispatch.struct_args,
@@ -422,11 +410,7 @@ impl Checker {
                 }
                 self.record_at(span).overload_target = Some(dispatch.target);
             }
-            let dunder = if dispatch.negated_equality {
-                "__eq__"
-            } else {
-                op.dunder().expect("a dispatched operator has a dunder")
-            };
+            let dunder = op.dunder().expect("a dispatched operator has a dunder");
             return self
                 .struct_dunder(&lt, dunder, &[&dispatch.operand_ty])
                 .expect("dunder signature was resolved");
@@ -496,17 +480,7 @@ impl Checker {
                 });
             }
             let target = self.clear_fact(&span, |facts| facts.overload_target.take());
-            let negated_equality = self
-                .clear_fact(&span, |facts| {
-                    facts
-                        .adjustment
-                        .take_if(|adjustment| **adjustment == SemanticAdjustment::NegatedEquality)
-                })
-                .is_some();
-            links.push(CheckedCompareLink {
-                target,
-                negated_equality,
-            });
+            links.push(CheckedCompareLink { target });
             left = right;
         }
         for (_, middle) in rest.split_last().map_or(&[][..], |(_, middles)| middles) {
@@ -535,15 +509,9 @@ impl Checker {
     /// coercion, then through an `@implicit` conversion of the right operand,
     /// as a call argument would convert; `BinOp.resolved` names the selected
     /// dunder's lowered symbol, so the operator is that method's call.
-    /// `a != b` on an Equatable struct declaring `__eq__` without `__ne__` is
-    /// Equatable's default `__ne__` (`not (a == b)`): the operator dispatches
-    /// `__eq__` and MIR negates the result. The default is the trait's, so a
-    /// struct that does not conform to `Equatable` has no `__ne__` (Mojo:
-    /// "does not implement the '__ne__' method"). `struct_dunder_signature_for`
-    /// falls back to the first same-arity declaration for diagnostics, so
-    /// acceptance is re-checked here: a `__ne__` overload set that accepts
-    /// no operand of this type still defers to `__eq__`. The dunder's
-    /// availability clause (`__eq__ ... where conforms_to(Self.T,
+    /// An `Equatable` struct declaring `__eq__` without `__ne__` inherits
+    /// the trait's default `__ne__` as a member, so `a != b` calls it. The
+    /// dunder's availability clause (`__eq__ ... where conforms_to(Self.T,
     /// Equatable)`) is judged against the receiver's arguments, as a method
     /// call judges it; a failing clause leaves the operator undefined for
     /// these operands.
@@ -555,22 +523,7 @@ impl Checker {
         lt: &Ty,
         rt: &Ty,
     ) -> Result<Option<StructInfixDispatch>, TypeError> {
-        let dunder_accepts = |dunder: &str| {
-            self.struct_dunder_signature_for(lt, dunder, &[rt])
-                .is_some_and(|(info, sig, targs)| {
-                    self.value_coerces(rt, &substitute_at(&sig.params[0], info, targs))
-                })
-        };
-        let negated_equality = op == InfixOp::Ne
-            && !dunder_accepts("__ne__")
-            && dunder_accepts("__eq__")
-            && self.conforms_to(lt, "Equatable");
-        let dunder = if negated_equality {
-            Some("__eq__")
-        } else {
-            op.dunder()
-        };
-        let Some(dunder) = dunder else {
+        let Some(dunder) = op.dunder() else {
             return Ok(None);
         };
         let Some((info, sig, targs)) = self.struct_dunder_signature_for(lt, dunder, &[rt]) else {
@@ -621,7 +574,6 @@ impl Checker {
         Ok(Some(StructInfixDispatch {
             target,
             error: dunder_error(selected),
-            negated_equality,
             operand_ty,
             converted,
             consumes,
@@ -687,13 +639,13 @@ impl Checker {
         let nominal_ok = match rt.kind() {
             TyKind::Struct(name, _) if !self.structs.contains_key(name) => {
                 if let Some(element) = list_element(rt).or_else(|| set_element(rt)) {
-                    coerces(lt, element) && is_list_equatable(element)
+                    coerces(lt, element) && self.is_list_equatable(element)
                 } else if let Some((key, _)) = dict_elements(rt) {
-                    coerces(lt, key) && is_list_equatable(key)
+                    coerces(lt, key) && self.is_list_equatable(key)
                 } else if let Some(elements) = tuple_elements(rt) {
                     elements
                         .into_iter()
-                        .any(|element| coerces(lt, element) && is_list_equatable(element))
+                        .any(|element| coerces(lt, element) && self.is_list_equatable(element))
                 } else {
                     false
                 }
@@ -703,8 +655,8 @@ impl Checker {
         let ok = nominal_ok
             || match rt.kind() {
                 TyKind::Tuple(_) => match lt.kind() {
-                    TyKind::Tuple(elements) => tuple_elements_equatable(elements),
-                    _ => is_list_equatable(lt),
+                    TyKind::Tuple(elements) => self.tuple_elements_equatable(elements),
+                    _ => self.is_list_equatable(lt),
                 },
                 TyKind::StringLiteral => *lt == TyKind::StringLiteral,
                 _ => false,
@@ -1228,8 +1180,8 @@ impl Checker {
     }
 
     /// The requirement a comparison over a bound type parameter selects
-    /// (`__trait_dispatch.__lt__$ov$Self`): the comparison trait's the
-    /// program declares, else the compiler-known one's.
+    /// (`__trait_dispatch.__lt__$ov$Self`), as the bundled `Equatable` or
+    /// `Comparable` declares it.
     fn bound_comparison_target(&self, op: InfixOp) -> Option<String> {
         let trait_name = match op {
             InfixOp::Eq | InfixOp::Ne => "Equatable",
@@ -1237,19 +1189,13 @@ impl Checker {
             _ => return None,
         };
         let dunder = op.dunder()?;
-        if let Some(info) = self.traits.get(trait_name) {
-            return info
-                .methods
-                .get(dunder)?
-                .iter()
-                .find(|sig| matches!(sig.params.as_slice(), [param] if *param == TyKind::SelfType))
-                .map(|sig| method_lowered_name(TRAIT_DISPATCH, dunder, sig, None));
-        }
-        compiler_trait_declaration(trait_name)?
-            .requirements
+        self.traits
+            .get(trait_name)?
+            .methods
+            .get(dunder)?
             .iter()
-            .find(|requirement| requirement.name == dunder)
-            .map(|requirement| requirement.dispatch.clone())
+            .find(|sig| matches!(sig.params.as_slice(), [param] if *param == TyKind::SelfType))
+            .map(|sig| method_lowered_name(TRAIT_DISPATCH, dunder, sig, None))
     }
 }
 
@@ -1299,8 +1245,6 @@ pub(super) struct StructInfixDispatch {
     pub(super) target: String,
     /// The error the selected dunder raises, if it raises.
     pub(super) error: Option<Ty>,
-    /// `!=` served by `__eq__` and a negation.
-    pub(super) negated_equality: bool,
     /// The right operand's type as the selected dunder takes it.
     pub(super) operand_ty: Ty,
     /// Whether the right operand converts to `operand_ty` through an

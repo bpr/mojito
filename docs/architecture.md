@@ -5400,8 +5400,8 @@ current Mojo:
   the requirement the bound trait or a parent declares, found by the call's
   `__trait_dispatch.*` symbol (`MirDeclarations::bound_requirement`), as
   upstream binds such a call to the trait's declared requirement. The
-  compiler-known `Defaultable` and comparison traits, which the bundled
-  library does not yet declare, answer from `compiler_trait_declaration`. A
+  compiler-known `Defaultable`, which the bundled library does not yet
+  declare, answers from `compiler_trait_declaration`. A
   memory-only parameter takes the argument's address: a generic `T`, a
   variadic collector, or a callee with no declaration (`t.n` fed to `print`).
   Its owner then lives through the call, so the owner's `DropVar` follows the

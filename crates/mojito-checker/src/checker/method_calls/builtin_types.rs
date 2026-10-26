@@ -535,7 +535,7 @@ impl Checker {
             return Err(TypeError::MutationRequiresVariable(method.to_string()));
         }
         // `remove`/`count`/`index` compare elements, so require an equatable type.
-        if matches!(method, "remove" | "count" | "index") && !is_list_equatable(elem) {
+        if matches!(method, "remove" | "count" | "index") && !self.is_list_equatable(elem) {
             return Err(TypeError::TypeMismatch {
                 expected: "an equatable element type".to_string(),
                 found: elem.to_string(),

@@ -530,12 +530,10 @@ impl std::fmt::Display for ComptimeSequence {
 /// What one link of a chained comparison dispatched.
 ///
 /// It is what a lone operator records: the selected dunder's lowered symbol
-/// (`None` for a built-in comparison), and whether the link is Equatable's
-/// default `!=`.
+/// (`None` for a built-in comparison).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CheckedCompareLink {
     pub target: Option<String>,
-    pub negated_equality: bool,
 }
 
 /// Checker decisions which lowering must apply explicitly.
@@ -780,10 +778,6 @@ pub enum SemanticAdjustment {
     /// tombstoning the caller's place. This coexists with parameterized-method
     /// metadata and is consumed directly by MIR lowering.
     ImplicitlyCopyConsumingReceiver,
-    /// `a != b` on a struct that declares `__eq__` but no `__ne__`:
-    /// Equatable's default `__ne__` is `not (a == b)`, so MIR dispatches
-    /// `__eq__` and negates the result.
-    NegatedEquality,
     /// `a OP b` answered by the right operand's reflected dunder (`1 + m`
     /// → `m.__radd__(1)`): MIR swaps the operands and `BinOp.resolved`
     /// names the reflected method.
@@ -4122,6 +4116,9 @@ pub struct CheckedDefaultWrapper {
     pub self_convention: Option<mojito_ast::ast::ArgConvention>,
     /// Every declared parameter but the receiver, in order.
     pub params: Vec<SignatureParam>,
+    /// Its default's `/` and `*` markers, as indexes into `params`.
+    pub positional_only: Option<usize>,
+    pub keyword_only: Option<usize>,
     /// Its checked signature, read from its member sites when the program
     /// is assembled.
     pub signature: CheckedSignature,

@@ -73,13 +73,14 @@ the entries named. A single command cannot use both.
    conformance has a witness table. The entries are R1360 (`Boolable`,
    `Intable`, `Floatable`, `Indexer`, `Identifiable`), R1361 (the
    `std.math` traits), R1362 (`Hashable`, `Hasher`), R1363
-   (`Defaultable`, `RegisterPassable`, `TrivialRegisterPassable`), R705
-   (`Equatable`, `Comparable`), R424 (`Writable`), and R578 (the bundled
-   types declare what upstream's do):
+   (`Defaultable`, `RegisterPassable`, `TrivialRegisterPassable`), and
+   R424 (`Writable`). R578 (the bundled types declare what upstream's do)
+   and R705 (`Equatable`, `Comparable`, with R706, R708, and R419) landed
+   on 2026-10-26. The rest:
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1360 --only R1361 --only R1362 \
-     --only R1363 --only R705 --only R424 --only R578 -n 0
+     --only R1363 --only R424 -n 0
    ```
 
    Second, operators become calls of the requirement. R1357 has the checker
@@ -198,7 +199,7 @@ are conformance only.
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1440–R1444, then R1445 | about 25 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662, R663 (landed), R1449, R1451 | R788, R378, R472, R508, R602, R1194 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1360–R1363, R705, R424, R578; R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1360–R1363, R424, R705 and R578 (landed); R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 for the other closure forms | R1104, R100, R1230, R1333 (closed), R534, R176 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R603; R1379–R1388 | about 45 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 | about 20 (below) | slight |
@@ -268,8 +269,8 @@ missing.
   - R1348's operators and R1280's iteration step cannot inline.
 - **Closes**:
   - Dispatch: R1109, R1031, R1280.
-  - Operators: R708, R1332, R1282, R81, R697, R1238.
-  - Traits: R707, R706 (after R705), R109 (after R424), R712, R579, R191.
+  - Operators: R1332, R1282, R81, R697, R1238 (R708 closed).
+  - Traits: R109 (after R424), R712, R579, R191 (R707 and R706 closed).
 - **Shrinks** R987, R1291, R684, R113, R1119, R25, R817, R862, R860,
   R861, and R863.
 
@@ -377,7 +378,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 | Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | R1389–R1399 (`Int`, `UInt`, and `Float64` become width-one `SIMD`, then the library `SIMD` port, R1397), R160, R1188, R276, R1192 | R1408 (after R1392), R143, R339, R335, R331, R430, R850, R212, R1019, R423, R1352, R186, R185, R851, R187, R171, R330, R336, R857, R1189, R427, R432 |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R424 → R422 → R1287 (R424 is also gap F) | R1409, R433, R434, R275, R18, R159, R937 |
 | Reflection is a builtin, not `Reflected[T]` | R324 (after gap H) | R271, R497, R272, R76, R569, R270, R77, R78, R79, R75, R443, R444, R273, R900, R904 |
-| A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R419, R1165, R67, R571, R284, R550, R570 |
+| A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
 | The checked handoff is rebuilt from span-keyed facts | R764 → R765 → R766 → R767 | R756, R757, R755, R626, R627, R754, R768, R521 |
 | The parser decides type versus value | R1369 → R1370 → R1371, R1372 | R377, R381, R512, R383, R482, R1203, R72, R326, R490, R134 |
 | Origins are dropped from `ParamDecl` | R761 → R762 → R763 | R1300, R1299, R1213, R674, R133, R353, R104, R242, R726 |

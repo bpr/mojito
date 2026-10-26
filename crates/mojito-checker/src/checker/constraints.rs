@@ -3144,7 +3144,7 @@ impl Checker {
     /// clauses, over the struct's parameters (`Self.n`) and its own.
     pub(super) fn assume_method_propositions(
         &self,
-        method: &mojito_ast::ast::Method,
+        where_clauses: &[mojito_ast::ast::Expr],
         method_decls: &[ParamDecl],
     ) {
         let struct_decls = self.self_decls.clone();
@@ -3152,8 +3152,7 @@ impl Checker {
         let method_arguments = params_as_args(method_decls);
         let mut environment = ConstraintEnvironment::declared(&struct_decls, &struct_arguments);
         environment.bind_declared(method_decls, &method_arguments);
-        let assumed = method
-            .where_clauses
+        let assumed = where_clauses
             .iter()
             .filter_map(|condition| self.compile_where_clause(condition).ok())
             .map(|constraint| self.bind_constraint(&constraint, method_decls))

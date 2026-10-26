@@ -79,6 +79,7 @@ assets/ok/closures.mojo	main	exe-differential	sanitized
 assets/ok/collection_display_default.mojo	main	exe-differential	sanitized
 assets/ok/collection_truthiness.mojo	main	exe-differential	sanitized
 assets/ok/collector_runtime_index.mojo	main	exe-differential	sanitized
+assets/ok/comparable_library_traits.mojo	main	exe-differential	sanitized
 assets/ok/comparable_ordered_algorithms.mojo	main	exe-differential	sanitized
 assets/ok/comprehension_destructuring_targets.mojo	main	exe-differential	sanitized
 assets/ok/comprehension_temporary_source_drop.mojo	main	exe-differential	sanitized
@@ -1106,6 +1107,7 @@ assets/ok/trait_default_refinement.mojo	main	exe-differential	sanitized
 assets/ok/trait_default_wrapper_conventions.mojo	main	exe-differential	sanitized
 assets/ok/trait_inheritance.mojo	main	exe-differential	sanitized
 assets/ok/trait_method_binder_spelling.mojo	main	exe-differential	sanitized
+assets/ok/trait_method_parameter_markers.mojo	main	exe-differential	sanitized
 assets/ok/trait_parameterized_comptime_default.mojo	main	exe-differential	sanitized
 assets/ok/trait_parameterized_value_requirement.mojo	main	exe-differential	sanitized
 assets/ok/trait_reads_module_struct_member.mojo	main	exe-differential	sanitized

@@ -71,6 +71,14 @@ point, as upstream's toolchain does.
   A struct conforms by
   declaring one, and the compiler-modelled `SIMD` scalars, tuples, and packs
   conform as the upstream structs they stand in for declare `Sized`.
+- `std/builtin/comparable.mojo` — upstream's `Equatable` and
+  `Comparable(Equatable)` traits: `__ne__` defaulted through `__eq__`, and
+  `__gt__`, `__le__`, and `__ge__` through `__lt__`; the prelude exports
+  both. Upstream's reflective `__eq__` default is a stand-in the compiler
+  synthesizes per conformer until `reflect[Self]` reads a plain struct's
+  fields (R269), so `__eq__` stays a requirement here. The
+  compiler-modelled scalars and `Bool` conform to both, and `DType` to
+  `Equatable`, as the upstream structs they stand in for declare.
 - `std/builtin/_stubs.mojo` — upstream's `paramfor_has_next`,
   `paramfor_next_iter`, and `paramfor_next_value`, which step a `comptime
   for` iterator at compile time. The prelude links them for their bodies:

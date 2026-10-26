@@ -390,14 +390,12 @@ impl MirDeclarations {
         self.traits.iter().chain(imported)
     }
 
-    /// Whether the trait `candidate` refines `required`, directly or
-    /// through its parents: a declared trait's, else a compiler-known
-    /// trait's declaration (`Comparable` refines `Equatable`).
+    /// Whether the declared trait `candidate` refines `required`, directly
+    /// or through its parents (`Comparable` refines `Equatable`).
     pub fn trait_refines(&self, candidate: &str, required: &str) -> bool {
         mojito_types::conformance::refines(
             &|name| {
                 self.trait_declaration(name)
-                    .or_else(|| compiler_trait_declaration(name))
                     .map(|declaration| declaration.refines.as_slice())
             },
             candidate,
@@ -594,8 +592,8 @@ impl MirDeclarations {
 
     /// The requirement a call through `bounds` selects by its `dispatch`
     /// symbol: one a bound trait declares, or a parent it refines, nearest
-    /// first. A compiler-known comparison trait the program does not
-    /// declare answers from [`compiler_trait_declaration`].
+    /// first. `Defaultable`, which the bundled library does not declare,
+    /// answers from [`compiler_trait_declaration`].
     pub fn bound_requirement(
         &self,
         bounds: &[String],
@@ -943,8 +941,8 @@ pub fn lower_unit(
                     params: &wrapper.params,
                     has_self: true,
                     self_convention: wrapper.self_convention,
-                    positional_only: None,
-                    keyword_only: None,
+                    positional_only: wrapper.positional_only,
+                    keyword_only: wrapper.keyword_only,
                     statements: checked.tables().wrapper_roots(index),
                     defaults: Vec::new(),
                     inline: mojito_checked::checked::CheckedDefaultWrapper::INLINE,

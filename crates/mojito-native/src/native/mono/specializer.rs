@@ -2366,34 +2366,9 @@ impl<'a> Specializer<'a> {
                         Some(TyKind::Struct(..))
                     )
                 {
-                    // A type that declares `__eq__` and no `__ne__` takes
-                    // `Equatable`'s default `!=`, through a bound as well:
-                    // dispatch `__eq__` and negate its result.
-                    if *op == mojito_ast::ast::InfixOp::Ne
-                        && resolved
-                            .as_deref()
-                            .is_none_or(mojito_symbol::symbol::is_trait_dispatch_symbol)
-                        && self.negates_equality(function, *a)
-                    {
-                        let equal = Reg(function.n_regs);
-                        function.n_regs += 1;
-                        function.reg_types.insert(equal.0, Ty::bool());
-                        conversions.push((
-                            index,
-                            MirInstr::UnOp {
-                                op: mojito_ast::ast::PrefixOp::Not,
-                                dest: *dest,
-                                a: equal,
-                                raises: None,
-                            },
-                        ));
-                        *instruction =
-                            dunder_method_call(equal, *a, "__eq__", None, raises.take(), vec![*b]);
-                    } else {
-                        let (resolved, raises) = (resolved.take(), raises.take());
-                        *instruction =
-                            dunder_method_call(*dest, *a, method, resolved, raises, vec![*b]);
-                    }
+                    let (resolved, raises) = (resolved.take(), raises.take());
+                    *instruction =
+                        dunder_method_call(*dest, *a, method, resolved, raises, vec![*b]);
                 }
                 // A comparison a template typed `Bool` through its bound
                 // yields a mask over sized scalars: convert it, as the
@@ -3717,26 +3692,6 @@ impl<'a> Specializer<'a> {
             enqueued.push((candidate, instance));
         }
         Ok(enqueued)
-    }
-
-    /// Whether a `!=` on `receiver` is served by `Equatable`'s default: its
-    /// struct declares an `__eq__` and no `__ne__`.
-    fn negates_equality(&self, function: &MirFunction, receiver: Reg) -> bool {
-        let Some(TyKind::Struct(name, _)) =
-            (function.reg_types.get(&receiver.0).map(peel_refs)).map(Ty::kind)
-        else {
-            return false;
-        };
-        let declares = |method: &str| {
-            let base = format!("{}.{method}", nominal_template(name));
-            self.functions.prefixed(base.clone()).any(|candidate| {
-                candidate
-                    .name
-                    .strip_prefix(base.as_str())
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('$'))
-            })
-        };
-        declares("__eq__") && !declares("__ne__")
     }
 
     /// The captured places a direct call to the lifted body `target` passes

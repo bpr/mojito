@@ -932,7 +932,6 @@ impl<'a> Flatten<'a> {
         let dispatch = OperatorDispatch {
             raises: resolved.as_ref().and_then(|_| chain.raises()),
             resolved,
-            negated_equality: link.is_some_and(|link| link.negated_equality),
         };
         let cmp = self.emit_comparison(sp.clone(), op, left, cur, dispatch);
         if index + 1 == rest.len() {

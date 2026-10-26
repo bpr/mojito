@@ -595,6 +595,14 @@ the iterator into a slot of its own, as upstream's `emitForStmt` does, so
 names no `__iter__` (R1286). An older artifact spelling either field no
 longer loads. The package format is unchanged.
 
+The package format moves to `mojito-package 102` when a trait default's
+wrapper records its default's `/` and `*` markers
+(`CheckedDefaultWrapper::{positional_only, keyword_only}`), which MIR
+lowering declares it with, and a chained comparison's link and an
+operator record no `NegatedEquality` adjustment, since an `Equatable`
+struct's `!=` calls the `__ne__` the bundled trait defaults (R705). The MIR
+text is unchanged.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

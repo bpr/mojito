@@ -57,43 +57,6 @@ pub(super) fn hasher_simd_update_binders() -> (ParamRef, ParamRef) {
     (binder(0, "$dtype_value"), binder(1, "$length_value"))
 }
 
-/// Whether an opaque type parameter carries a bound that promises equality.
-/// Built-in bounds are intentionally shallow today, but `T: Equatable` should at
-/// least let generic library code type-check `T == T`. `Comparable` refines
-/// equality (roadmap milestone 4), so it counts too; `Hashable` deliberately does **not**
-/// (a hash-backed key bounds `K: Hashable & Equatable` when it needs both).
-pub(super) fn has_equality_bound(ty: &Ty) -> bool {
-    match ty.kind() {
-        TyKind::Param { bounds, .. } => bounds.iter().any(|b| {
-            matches!(
-                b.as_str(),
-                "Equatable" | "Comparable" | "EqualityComparable"
-            )
-        }),
-        _ => false,
-    }
-}
-
-pub(super) fn has_equality_bound_or_concrete(checker: &Checker, ty: &Ty) -> bool {
-    match ty.kind() {
-        // A conditional conformance (`Equatable where conforms_to(T,
-        // Equatable)`) is judged against the struct's arguments.
-        TyKind::Struct(name, args) => checker.struct_conformance_applies(name, args, "Equatable"),
-        _ => has_equality_bound(ty) || is_scalar(ty) || is_numeric_like(ty) || is_scalar_simd(ty),
-    }
-}
-
-/// Whether an opaque type parameter carries a bound that promises an ordering
-/// (`<`/`<=`/`>`/`>=`). Only `Comparable` grants this — a plain `T: Equatable`
-/// permits `==`/`!=` but *not* ordering (see `has_equality_bound`). In current
-/// Mojo `Comparable` also implies equality, which `has_equality_bound` reflects.
-pub(super) fn has_order_bound(ty: &Ty) -> bool {
-    match ty.kind() {
-        TyKind::Param { bounds, .. } => bounds.iter().any(|b| b.as_str() == "Comparable"),
-        _ => false,
-    }
-}
-
 /// Upstream's `print` rejection: its variadic `*values` pack element does not
 /// conform to `Writable`.
 pub(super) fn not_writable(ty: &Ty) -> TypeError {
@@ -281,38 +244,6 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
     }
 }
 
-/// Whether list elements of type `ty` can be compared for equality (needed by
-/// `List.remove`/`count`/`index`) — the same scalar set `==`/`!=` accept.
-pub(super) fn is_list_equatable(ty: &Ty) -> bool {
-    is_numeric(ty)
-        || matches!(
-            ty.kind(),
-            TyKind::Bool | TyKind::StringLiteral | TyKind::None | TyKind::Dtype
-        )
-        || has_equality_bound(ty)
-}
-
-/// Whether every element in a tuple supports equality. Tuples recurse so nested
-/// tuple comparisons and membership stay structural without making `List`
-/// equality part of this compiler-known subset.
-pub(super) fn tuple_elements_equatable(elements: &[Ty]) -> bool {
-    elements.iter().all(|ty| match ty.kind() {
-        TyKind::Tuple(nested) => tuple_elements_equatable(nested),
-        _ => is_list_equatable(ty),
-    })
-}
-
-/// Tuple ordering is lexicographic. Every element must be comparable, and each
-/// pair in the common prefix must have a compatible comparison operation.
-pub(super) fn tuple_order_compatible(left: &[Ty], right: &[Ty]) -> bool {
-    tuple_elements_comparable(left)
-        && tuple_elements_comparable(right)
-        && left
-            .iter()
-            .zip(right)
-            .all(|(left, right)| tuple_order_pair_compatible(left, right))
-}
-
 /// Whether a value of type `ty` can be `print`ed (has a user-facing display).
 /// Functions, ranges, and opaque type parameters are not printable.
 pub(super) fn is_printable(ty: &Ty) -> bool {
@@ -446,6 +377,66 @@ pub(super) fn common_numeric(a: &Ty, b: &Ty) -> Option<Ty> {
 /// Type inference for compiler-known builtin free functions
 /// (`print`, `len`, `range`, conversions, `divmod`, …). Moved from `checker.rs`.
 impl Checker {
+    /// Whether the type parameter `ty` is `Equatable` by its bounds or an
+    /// assumed conformance, so `==` and `!=` call its requirements.
+    pub(super) fn equatable_bound(&self, ty: &Ty) -> bool {
+        matches!(ty.kind(), TyKind::Param { .. }) && self.conforms_to(ty, "Equatable")
+    }
+
+    /// Whether the type parameter `ty` is `Comparable` by its bounds or an
+    /// assumed conformance, so the ordering operators call its requirements.
+    pub(super) fn comparable_bound(&self, ty: &Ty) -> bool {
+        matches!(ty.kind(), TyKind::Param { .. }) && self.conforms_to(ty, "Comparable")
+    }
+
+    /// Whether a tuple element of type `ty` supports `==`/`!=`: an
+    /// `Equatable` struct or type parameter, or a scalar.
+    pub(super) fn equatable_element(&self, ty: &Ty) -> bool {
+        match ty.kind() {
+            TyKind::Struct(..) => self.conforms_to(ty, "Equatable"),
+            _ => {
+                self.equatable_bound(ty)
+                    || is_scalar(ty)
+                    || is_numeric_like(ty)
+                    || is_scalar_simd(ty)
+            }
+        }
+    }
+
+    /// Whether list elements of type `ty` can be compared for equality
+    /// (needed by `List.remove`/`count`/`index`) — the same scalar set
+    /// `==`/`!=` accept.
+    pub(super) fn is_list_equatable(&self, ty: &Ty) -> bool {
+        is_numeric(ty)
+            || matches!(
+                ty.kind(),
+                TyKind::Bool | TyKind::StringLiteral | TyKind::None | TyKind::Dtype
+            )
+            || self.equatable_bound(ty)
+    }
+
+    /// Whether every element in a tuple supports equality. Tuples recurse so
+    /// nested tuple comparisons and membership stay structural without making
+    /// `List` equality part of this compiler-known subset.
+    pub(super) fn tuple_elements_equatable(&self, elements: &[Ty]) -> bool {
+        elements.iter().all(|ty| match ty.kind() {
+            TyKind::Tuple(nested) => self.tuple_elements_equatable(nested),
+            _ => self.is_list_equatable(ty),
+        })
+    }
+
+    /// Tuple ordering is lexicographic. Every element must be comparable, and
+    /// each pair in the common prefix must have a compatible comparison
+    /// operation.
+    pub(super) fn tuple_order_compatible(&self, left: &[Ty], right: &[Ty]) -> bool {
+        self.tuple_elements_comparable(left)
+            && self.tuple_elements_comparable(right)
+            && left
+                .iter()
+                .zip(right)
+                .all(|(left, right)| self.tuple_order_pair_compatible(left, right))
+    }
+
     /// Type `print(...)`. Intrinsic scalars have builtin writing; nominal values,
     /// including public collections, opt into current `Writable`.
     /// Type the built-in `print(*args, sep=, end=, flush=, file=)`: every
@@ -1086,27 +1077,29 @@ impl Checker {
             operands: format!("{} and {}", tys[0], tys[1]),
         })
     }
-}
 
-fn tuple_elements_comparable(elements: &[Ty]) -> bool {
-    elements.iter().all(tuple_element_comparable)
-}
-
-fn tuple_element_comparable(ty: &Ty) -> bool {
-    match ty.kind() {
-        TyKind::Tuple(nested) => tuple_elements_comparable(nested),
-        TyKind::StringLiteral => true,
-        _ => is_numeric(ty) || has_order_bound(ty) || is_scalar_simd(ty),
+    fn tuple_elements_comparable(&self, elements: &[Ty]) -> bool {
+        elements
+            .iter()
+            .all(|element| self.tuple_element_comparable(element))
     }
-}
 
-fn tuple_order_pair_compatible(left: &Ty, right: &Ty) -> bool {
-    if common_numeric(left, right).is_some() {
-        return true;
+    fn tuple_element_comparable(&self, ty: &Ty) -> bool {
+        match ty.kind() {
+            TyKind::Tuple(nested) => self.tuple_elements_comparable(nested),
+            TyKind::StringLiteral => true,
+            _ => is_numeric(ty) || self.comparable_bound(ty) || is_scalar_simd(ty),
+        }
     }
-    match (left.kind(), right.kind()) {
-        (TyKind::StringLiteral, TyKind::StringLiteral) => true,
-        (TyKind::Tuple(left), TyKind::Tuple(right)) => tuple_order_compatible(left, right),
-        _ => left == right && (has_order_bound(left) || is_scalar_simd(left)),
+
+    fn tuple_order_pair_compatible(&self, left: &Ty, right: &Ty) -> bool {
+        if common_numeric(left, right).is_some() {
+            return true;
+        }
+        match (left.kind(), right.kind()) {
+            (TyKind::StringLiteral, TyKind::StringLiteral) => true,
+            (TyKind::Tuple(left), TyKind::Tuple(right)) => self.tuple_order_compatible(left, right),
+            _ => left == right && (self.comparable_bound(left) || is_scalar_simd(left)),
+        }
     }
 }

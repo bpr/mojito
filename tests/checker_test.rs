@@ -3778,7 +3778,7 @@ fn checks_generic_trait_method_signatures_in_their_parameter_scope() {
 
 #[test]
 fn enforces_trailing_where_constraints_and_type_equality() {
-    ok(
+    ok_std(
         "def positive[n: Int]() -> Int where n > 0:\n    return n\n\ndef comparable[T: AnyType](value: T) -> Int where conforms_to(T, Comparable) and T == Int:\n    return 1\n\nvar a = positive[2]()\nvar b = comparable(3)\n",
     );
     assert!(matches!(
@@ -3786,7 +3786,7 @@ fn enforces_trailing_where_constraints_and_type_equality() {
         TypeError::BadCall { .. }
     ));
     assert!(matches!(
-        err(
+        err_std(
             "def comparable[T: AnyType](value: T) -> Int where conforms_to(T, Comparable):\n    return 1\n\nvar a = comparable(\"no\")\n"
         ),
         TypeError::BadCall { .. }
@@ -5963,21 +5963,21 @@ fn generic_hand_written_init() {
 fn comparable_bound_permits_ordering() {
     // `<`/`<=`/`>`/`>=` between equal opaque type parameters type-check when the
     // parameter is bounded by `Comparable` (Phase 4).
-    ok("def less[T: Comparable](a: T, b: T) -> Bool:\n    return a < b\n");
-    ok(
+    ok_std("def less[T: Comparable](a: T, b: T) -> Bool:\n    return a < b\n");
+    ok_std(
         "def ordered[T: Comparable](a: T, b: T) -> Bool:\n    return a < b and a <= b and a > b and a >= b\n",
     );
     // `Comparable` implies equality-capable in mojito (as in current Mojo).
-    ok("def eq[T: Comparable](a: T, b: T) -> Bool:\n    return a == b\n");
+    ok_std("def eq[T: Comparable](a: T, b: T) -> Bool:\n    return a == b\n");
 }
 
 #[test]
 fn equatable_bound_does_not_permit_ordering() {
     // A plain `T: Equatable` grants `==`/`!=` but *not* ordering — `<` on such a
     // `T` is a `BadOperator` (Phase 4).
-    ok("def eq[T: Equatable](a: T, b: T) -> Bool:\n    return a == b\n");
+    ok_std("def eq[T: Equatable](a: T, b: T) -> Bool:\n    return a == b\n");
     assert!(matches!(
-        err("def less[T: Equatable](a: T, b: T) -> Bool:\n    return a < b\n"),
+        err_std("def less[T: Equatable](a: T, b: T) -> Bool:\n    return a < b\n"),
         TypeError::BadOperator { .. }
     ));
 }
@@ -6094,7 +6094,7 @@ fn hashable_bound_does_not_permit_equality() {
         TypeError::BadOperator { .. }
     ));
     // Naming both bounds restores equality (a hash-backed key's typical bound).
-    ok("def eq[K: Hashable & Equatable](a: K, b: K) -> Bool:\n    return a == b\n");
+    ok_std("def eq[K: Hashable & Equatable](a: K, b: K) -> Bool:\n    return a == b\n");
 }
 
 #[test]
@@ -6248,7 +6248,7 @@ fn conditional_iterable_conformance_proves_its_associated_iterator_contract() {
 
 #[test]
 fn unrelated_conditional_conformance_does_not_prove_an_iterator_contract() {
-    let error = err(
+    let error = err_std(
         "trait IteratorContract:\n    comptime Element: Movable\n    def next(self) -> Self.Element: ...\n\ntrait IterableContract:\n    comptime Element: Movable\n    comptime Iter: IteratorContract\n    def iter(self) -> Self.Iter: ...\n\n@fieldwise_init\nstruct Cursor[T: Movable & Deinitable](IteratorContract where conforms_to(T, Copyable)):\n    comptime Element = Self.T\n    var value: Self.T\n    def next(self) -> Self.T where conforms_to(Self.T, Copyable):\n        return self.value.copy()\n\n@fieldwise_init\nstruct BadContainer[T: Movable & Deinitable](IterableContract where conforms_to(T, Equatable)):\n    comptime Element = Self.T\n    comptime Iter = Cursor[Self.T]\n    var value: Self.T\n    def iter(self) -> Cursor[Self.T] where conforms_to(Self.T, Equatable):\n        return Cursor[Self.T](self.value.copy())\n",
     );
     assert!(

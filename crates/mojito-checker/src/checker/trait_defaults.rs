@@ -131,6 +131,10 @@ pub(super) struct DefaultShape {
     /// are the member's, which its declaration holds.
     pub(super) params: Vec<SignatureParam>,
     receiver: Option<ArgConvention>,
+    /// Its `/` and `*` markers, as its declaration places them among
+    /// [`Self::params`].
+    positional_only: Option<usize>,
+    keyword_only: Option<usize>,
     /// Whether it declares a result, which the forwarding call returns.
     returns: bool,
     /// Whether it declares `raises`.
@@ -154,6 +158,11 @@ impl DefaultShape {
 /// What a trait gives a conformer: its refinements, and its own defaults.
 pub(super) type TraitDefaults = (Vec<String>, Vec<DefaultShape>);
 
+/// A default a conformer inherits: the trait declaring it, its shape, and
+/// the `where` condition of the conformance it is inherited under, `None`
+/// when one reaching it holds unconditionally.
+pub(super) type InheritedDefault = (String, DefaultShape, Option<Expr>);
+
 /// A trait default the check checked as its trait's member.
 pub(super) struct TraitMember {
     module: Option<String>,
@@ -173,6 +182,9 @@ pub(super) struct DefaultWrapper {
     pub(super) declaration: String,
     pub(super) trait_name: String,
     pub(super) shape: DefaultShape,
+    /// The condition of the conformance it is inherited under, which is its
+    /// availability clause, as a method's `where` clause would be.
+    pub(super) condition: Option<Expr>,
     /// Its member position: after the struct's spelled methods, in the order
     /// its defaults are reached.
     pub(super) method_index: usize,
@@ -220,6 +232,8 @@ pub(super) fn default_shapes(
                 })
                 .collect(),
             receiver: method.self_convention,
+            positional_only: method.positional_only,
+            keyword_only: method.keyword_only,
             returns: method.ret.is_some(),
             raises: method.raises,
             explicit_self: !method
@@ -248,11 +262,12 @@ pub(super) fn default_shapes(
 pub(super) fn inherited_defaults(
     stmt: &Stmt,
     traits: &dyn Fn(&str) -> Option<TraitDefaults>,
-) -> Result<Vec<(String, DefaultShape)>, TypeError> {
+) -> Result<Vec<InheritedDefault>, TypeError> {
     let StmtKind::Struct {
         name,
         type_params,
         conforms,
+        conformance_conditions,
         methods,
         ..
     } = &stmt.kind
@@ -270,16 +285,37 @@ pub(super) fn inherited_defaults(
             )
         })
         .collect();
+    // A default is as available as the conformances reaching it: always,
+    // when one of them holds unconditionally.
     let mut reached: Vec<(String, DefaultShape)> = Vec::new();
-    for trait_name in conforms {
-        defaults_for(trait_name, traits, &mut HashSet::new(), &mut reached)?;
+    let mut conditions: HashMap<String, Option<&Expr>> = HashMap::new();
+    for conformance in conforms {
+        let condition = conformance_conditions
+            .iter()
+            .find(|(trait_name, _)| trait_name == conformance)
+            .map(|(_, condition)| condition);
+        let mut through = Vec::new();
+        defaults_for(conformance, traits, &mut HashSet::new(), &mut through)?;
+        for (trait_name, default) in through {
+            let member = default.member.clone();
+            if !reached.iter().any(|(_, seen)| seen.member == member) {
+                reached.push((trait_name, default));
+            }
+            conditions
+                .entry(member)
+                .and_modify(|known| *known = known.and(condition))
+                .or_insert(condition);
+        }
     }
-    let mut inherited: Vec<(String, DefaultShape)> = Vec::new();
+    let mut inherited: Vec<InheritedDefault> = Vec::new();
     for (trait_name, default) in reached {
         if explicit.contains(&default.key) {
             continue;
         }
-        if let Some((original, _)) = inherited.iter().find(|(_, seen)| seen.key == default.key) {
+        if let Some((original, ..)) = inherited
+            .iter()
+            .find(|(_, seen, _)| seen.key == default.key)
+        {
             return Err(TypeError::ConflictingTraitDefaults {
                 method: default.method,
                 original: original.clone(),
@@ -293,7 +329,8 @@ pub(super) fn inherited_defaults(
         }) {
             return Err(TypeError::TraitDefaultParameterConflict(conflict.clone()));
         }
-        inherited.push((trait_name, default));
+        let condition = conditions.get(&default.member).copied().flatten().cloned();
+        inherited.push((trait_name, default, condition));
     }
     Ok(inherited)
 }
@@ -319,7 +356,7 @@ pub(super) fn default_wrappers(
     inherited_defaults(stmt, traits)?
         .into_iter()
         .enumerate()
-        .map(|(index, (trait_name, shape))| {
+        .map(|(index, (trait_name, shape, condition))| {
             if let Some(reason) = &shape.unforwardable {
                 return Err(TypeError::Unsupported(reason.clone()));
             }
@@ -334,6 +371,7 @@ pub(super) fn default_wrappers(
                 lowered_name: format!("{name}.{}", shape.method),
                 trait_name,
                 shape,
+                condition,
                 method_index: methods.len() + index,
                 body,
             })
@@ -556,6 +594,8 @@ impl Checker {
                 member: wrapper.shape.member.clone(),
                 self_convention: wrapper.shape.receiver,
                 params: wrapper.shape.params.clone(),
+                positional_only: wrapper.shape.positional_only,
+                keyword_only: wrapper.shape.keyword_only,
                 signature: mojito_checked::checked::CheckedSignature::default(),
                 body: wrapper.body.clone(),
             })
@@ -624,6 +664,11 @@ impl Checker {
             *ty = moved(ty);
         }
         sig.ret = moved(&sig.ret);
+        if let Some(condition) = &wrapper.condition {
+            let constraint = self.compile_where_clause(condition)?;
+            sig.availability
+                .push(self.bind_constraint(&constraint, &sig.decls));
+        }
         sig.overload = overloaded
             .then(|| mojito_symbol::symbol::overload_qualifier(&lowered).map(str::to_string))
             .flatten();
@@ -723,10 +768,15 @@ impl Checker {
         let saved_struct_count = self
             .enclosing_struct_type_params
             .replace(self.enclosing_type_params.len());
-        self.assume_propositions(Vec::new());
-        self.assumed_conformances.borrow_mut().push(HashSet::new());
-        let result = self.check_default_wrapper_body(self_ty, wrapper, &signature, effect_key);
-        self.assumed_conformances.borrow_mut().pop();
+        let where_clauses: Vec<Expr> = wrapper.condition.iter().cloned().collect();
+        let assumptions = self.method_where_assumptions(&where_clauses, &signature.decls);
+        let result = assumptions.and_then(|assumptions| {
+            self.assume_method_propositions(&where_clauses, &signature.decls);
+            self.assumed_conformances.borrow_mut().push(assumptions);
+            let result = self.check_default_wrapper_body(self_ty, wrapper, &signature, effect_key);
+            self.assumed_conformances.borrow_mut().pop();
+            result
+        });
         self.enclosing_struct_type_params.set(saved_struct_count);
         self.tparams.pop();
         self.method_site = saved_site;
@@ -990,7 +1040,8 @@ fn forwarding_statement(shape: &DefaultShape, span: Span) -> Stmt {
     }];
     let mut kwargs = Vec::new();
     let mut keyword = false;
-    for param in &shape.params {
+    for (index, param) in shape.params.iter().enumerate() {
+        keyword |= shape.keyword_only == Some(index);
         let value = if owned(param.convention) {
             transfer(&param.name)
         } else {

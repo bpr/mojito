@@ -255,11 +255,6 @@ impl Checker {
                 if ct_members.contains_key(&m.name) {
                     return Err(TypeError::Redeclaration(m.name.clone()));
                 }
-                if m.positional_only.is_some() || m.keyword_only.is_some() {
-                    return Err(TypeError::Unsupported(
-                        "positional-only/keyword-only markers on trait methods".to_string(),
-                    ));
-                }
                 // An overloaded requirement owns its binders under the
                 // symbol its signature qualifies it to, so two overloads
                 // whose slots agree still bind distinct parameters.
@@ -855,7 +850,7 @@ impl Checker {
             // The method's own `where` clause refines its signature exactly as
             // it refines its body: a conditionally available method may name
             // types its receiver's bare bounds do not admit.
-            let signature = match self.method_where_assumptions(m, &method_decls) {
+            let signature = match self.method_where_assumptions(&m.where_clauses, &method_decls) {
                 Ok(assumptions) => {
                     self.assume_propositions(Vec::new());
                     self.assumed_conformances.borrow_mut().push(assumptions);
@@ -1215,10 +1210,10 @@ impl Checker {
                 }
                 let covered = conformance_assumption
                     .as_ref()
-                    .is_some_and(|premise| generic_constraint_implies(premise, constraint))
+                    .is_some_and(|premise| self.constraint_implies(premise, constraint))
                     || requirement_premise
                         .as_ref()
-                        .is_some_and(|premise| generic_constraint_implies(premise, constraint));
+                        .is_some_and(|premise| self.constraint_implies(premise, constraint));
                 if !covered {
                     let reason = match constraint {
                         GenericConstraint::WithMessage(_, message) => {
@@ -1347,12 +1342,11 @@ impl Checker {
     }
 
     /// The witness table of struct `name`'s conformance to the
-    /// compiler-declared trait `tr` (`Defaultable`, `Comparable`).
+    /// compiler-declared trait `tr` (`Defaultable`).
     ///
-    /// It records, its parents' requirements included, each requirement the
-    /// struct declares a method for whose parameters are the requirement's,
-    /// `Self` the struct: the nullary `__init__` overload for
-    /// `Defaultable`, a comparison taking the struct for the others.
+    /// It records each requirement the struct declares a method for whose
+    /// parameters are the requirement's, `Self` the struct: the nullary
+    /// `__init__` overload for `Defaultable`.
     fn compiler_trait_witness_table(
         &self,
         name: &str,
@@ -1360,16 +1354,11 @@ impl Checker {
         self_ty: &Ty,
     ) -> Option<WitnessTable> {
         let methods = &self.structs.get(name)?.methods;
-        let mut pending = vec![compiler_trait_declaration(tr)?];
-        let mut witnesses = Vec::new();
-        while let Some(declaration) = pending.pop() {
-            pending.extend(
-                declaration
-                    .refines
-                    .iter()
-                    .filter_map(|parent| compiler_trait_declaration(parent)),
-            );
-            witnesses.extend(declaration.requirements.iter().filter_map(|requirement| {
+        let declaration = compiler_trait_declaration(tr)?;
+        let mut witnesses: Vec<Witness> = declaration
+            .requirements
+            .iter()
+            .filter_map(|requirement| {
                 let got = methods.get(&requirement.name)?.iter().find(|got| {
                     got.has_self
                         && got.variadic.is_none()
@@ -1389,8 +1378,8 @@ impl Checker {
                         got.overload.as_deref(),
                     ),
                 })
-            }));
-        }
+            })
+            .collect();
         witnesses.sort_by(|left, right| left.requirement.cmp(&right.requirement));
         (!witnesses.is_empty()).then(|| WitnessTable {
             trait_name: tr.to_string(),
@@ -1414,17 +1403,27 @@ impl Checker {
             .all(|(canonical, constraint)| {
                 required_availability
                     .iter()
-                    .any(|premise| generic_constraint_implies(premise, canonical))
+                    .any(|premise| self.constraint_implies(premise, canonical))
                     || conformance_assumption
-                        .is_some_and(|premise| generic_constraint_implies(premise, constraint))
+                        .is_some_and(|premise| self.constraint_implies(premise, constraint))
             });
         if !availability_is_covered {
             return false;
         }
         // Availability was proved above. Normalize it to the requirement before
-        // comparing the remainder of the callable contract.
+        // comparing the remainder of the callable contract. A parameter
+        // leaving an origin to inference (`rhs: StringSpan`) takes the
+        // requirement's, as it accepts that one among any other.
         let mut normalized = got.clone();
         normalized.availability.clone_from(&required.availability);
+        if normalized.params.len() == required.params.len() {
+            normalized.params = normalized
+                .params
+                .iter()
+                .zip(&required.params)
+                .map(|(witness, requirement)| Self::bind_unbound_tails(witness, requirement))
+                .collect();
+        }
         if normalized.ref_return != required.ref_return {
             let copyable_reference_refinement = allow_copyable_iterator_reference
                 && normalized.ref_return.is_some()
@@ -1759,7 +1758,7 @@ impl Checker {
                 operand: ConstraintOperand::Param(binder.clone()),
                 trait_name: required.to_string(),
             };
-            return assumption.is_some_and(|known| generic_constraint_implies(known, &needed));
+            return assumption.is_some_and(|known| self.constraint_implies(known, &needed));
         }
         let TyKind::Struct(name, args) = ty.kind() else {
             return false;
@@ -2067,8 +2066,6 @@ impl Checker {
                     TyKind::Param { bounds, .. } => bounds.iter().any(|bound| bound == tr),
                     _ => false,
                 },
-                "Equatable" => has_equality_bound_or_concrete(self, ty),
-                "Comparable" => self.is_comparable(ty),
                 "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable"
                 | "Multipliable" | "Divisible" | "FloorDivisible" | "Modable" => {
                     is_numeric_like(ty)
@@ -2615,6 +2612,21 @@ impl Checker {
 
     pub(super) fn trait_refines(&self, candidate: &str, required: &str) -> bool {
         refines_trait(&self.traits, candidate, required)
+    }
+
+    /// Whether `premise` proves `consequence`, as
+    /// [`generic_constraint_implies`] decides it, with every trait proving
+    /// the traits it refines ([`Self::trait_implies`]).
+    pub(super) fn constraint_implies(
+        &self,
+        premise: &GenericConstraint,
+        consequence: &GenericConstraint,
+    ) -> bool {
+        super::overload_support::constraint_implies_by(
+            premise,
+            consequence,
+            &|available, required| self.trait_implies(available, required),
+        )
     }
 
     /// Whether the trait `available` is `required` or implies it: every trait
@@ -3241,17 +3253,6 @@ impl Checker {
         }
     }
 
-    pub(super) fn is_comparable(&self, ty: &Ty) -> bool {
-        if self.has_assumed_conformance(ty, "Comparable") {
-            return true;
-        }
-        match ty.kind() {
-            TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, "Comparable"),
-            TyKind::Param { bounds, .. } => bounds.iter().any(|b| b == "Comparable"),
-            _ => is_numeric_like(ty) || is_scalar_simd(ty),
-        }
-    }
-
     /// `assumption` is a conditional conformance's premise: a field of a
     /// parameter type the premise makes copyable counts as copyable.
     pub(super) fn struct_copyable_conformance_ok(
@@ -3723,23 +3724,15 @@ impl Checker {
     }
 }
 
-/// Whether the trait `candidate` refines `required`, directly or through
-/// its parents: a declared trait's, else a compiler-known trait's
-/// declaration (`Comparable` refines `Equatable`).
+/// Whether the declared trait `candidate` refines `required`, directly or
+/// through its parents (`Comparable` refines `Equatable`).
 pub(super) fn refines_trait(
     traits: &declaration_table::DeclarationTable<TraitInfo>,
     candidate: &str,
     required: &str,
 ) -> bool {
     mojito_types::conformance::refines(
-        &|name| {
-            traits
-                .get(name)
-                .map(|info| info.refines.as_slice())
-                .or_else(|| {
-                    compiler_trait_declaration(name).map(|trait_| trait_.refines.as_slice())
-                })
-        },
+        &|name| traits.get(name).map(|info| info.refines.as_slice()),
         candidate,
         required,
     )

@@ -175,17 +175,14 @@ struct Optional[T: AnyType](
     def __isnot__(self, other: NoneType) -> Bool:
         return self._size == 1
 
-    # `rhs` is spelled `Optional[Self.T]` rather than `Self` so the native
-    # monomorphizer sees the substituted receiver type (the bare `Self`
-    # spelling erases the argument list on the raw seam).
-    def __eq__(self, rhs: Optional[Self.T]) -> Bool where conforms_to(Self.T, Equatable):
+    def __eq__(self, rhs: Self) -> Bool where conforms_to(Self.T, Equatable):
         if self._size == 1:
             if rhs._size == 1:
                 return self.data[0] == rhs.data[0]
             return False
         return rhs._size == 0
 
-    def __ne__(self, rhs: Optional[Self.T]) -> Bool where conforms_to(Self.T, Equatable):
+    def __ne__(self, rhs: Self) -> Bool where conforms_to(Self.T, Equatable):
         return not (self == rhs)
 
     # Upstream feeds a `UInt8` presence tag before the payload.
