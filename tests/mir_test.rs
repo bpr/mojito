@@ -1507,6 +1507,83 @@ fn implicitly_copied_tuple_transform_receivers_do_not_retain_a_consuming_place()
 }
 
 #[test]
+fn parameterized_explicit_destroy_receiver_consumes_its_place() {
+    // `counter^.take_param[2]()` hands the `deinit` receiver `counter`'s
+    // place, as the unparameterized `counter^.take()` does: the call
+    // consumes the storage, with no forwarded copy of it in a register.
+    let source = "struct Counter(Movable):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def take_param[n: Int](deinit self) -> Int:\n        return self.value + n\n\ndef main():\n    var counter = Counter(40)\n    print(counter^.take_param[2]())\n";
+    let mir = lower_program(&parse(source).expect("parse")).expect("checked lowering");
+    let main = &mir
+        .functions
+        .iter()
+        .find(|(name, _)| name == "main")
+        .expect("main MIR")
+        .1;
+    let counter = main
+        .var_names
+        .iter()
+        .position(|name| name == "counter")
+        .expect("counter variable") as u32;
+    let place = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .find_map(|instruction| match instruction {
+            MirInstr::MethodCall {
+                method, recv_place, ..
+            } if method == "take_param" => Some(recv_place.clone()),
+            _ => None,
+        })
+        .expect("parameterized method call")
+        .expect("the explicit destroy keeps its receiver place");
+    assert!(place.is_whole_root() && place.root == counter, "{main:#?}");
+    assert!(
+        !main
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .any(|instruction| matches!(
+                instruction,
+                MirInstr::UseVar { var, mode: UseMode::Forward, .. } if *var == counter
+            )),
+        "{main:#?}"
+    );
+}
+
+#[test]
+fn memory_only_slice_literal_is_read_from_its_call_result_slot() {
+    // A `ContiguousSlice` is memory-only, so the literal a subscript binds
+    // to it, positional or keyword, lives in a call-result slot the
+    // subscript reads in place, as upstream's `__call_result_tmp__`.
+    let source = "def main():\n    var xs: List[Int] = [0, 1, 2, 3]\n    print(len(xs[1:3]))\n    var e = StringSpan(\"xyz\")\n    print(e[byte=1:3])\n";
+    let compiled = Compiler::default()
+        .with_pre_elaboration(false)
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let main = mir_function(compiled.elaborated_mir(), "main");
+    let slot_place = |place: &Option<MirPlace>| {
+        place.as_ref().is_some_and(|place| {
+            place.is_whole_root()
+                && main.var_names[place.root as usize].starts_with(mojito::mir::CALL_RESULT_SLOT)
+        })
+    };
+    let subscripts = nested_instructions(&main.blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::MultiIndex {
+                arg_places,
+                kwarg_places,
+                ..
+            } => Some((arg_places, kwarg_places)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(subscripts.len(), 2, "{main:#?}");
+    assert!(slot_place(&subscripts[0].0[0]), "{main:#?}");
+    assert!(slot_place(&subscripts[1].1[0]), "{main:#?}");
+}
+
+#[test]
 fn parameterized_implicit_receiver_copy_drops_the_source_place_metadata() {
     let source = "@fieldwise_init\nstruct Counter(ImplicitlyCopyable):\n    var value: Int\n    def take_param[n: Int](deinit self) -> Int:\n        return self.value + n\n\ndef main():\n    var counter = Counter(40)\n    print(counter.take_param[2]())\n    print(counter.value)\n";
     let mir = lower_program(&parse(source).expect("parse")).expect("checked lowering");

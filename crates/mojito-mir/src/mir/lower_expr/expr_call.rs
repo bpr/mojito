@@ -926,8 +926,9 @@ impl<'a> Flatten<'a> {
             return dest;
         }
         let implicitly_copied_receiver = call.implicitly_copies_consuming_receiver();
+        let receiver_expr = call.destroyed_receiver(object);
         let (recv, recv_place) =
-            self.lower_setup_receiver(call, object, implicitly_copied_receiver);
+            self.lower_setup_receiver(call, receiver_expr, implicitly_copied_receiver);
         // A per-call clone has baked its method parameters into
         // the selected symbol. Source brackets remain in the AST,
         // but an empty declaration list means they occupy no MIR
@@ -948,10 +949,12 @@ impl<'a> Flatten<'a> {
         let (keyword_regs, kwarg_places) = self.lower_call_keywords(kwargs, lends_reads);
         self.close_call_setup(Some(call));
         let dest = self.fresh(call.location(), None);
-        self.emit_interior_invalidations(object, None);
+        self.emit_interior_invalidations(receiver_expr, None);
         self.emit_call_invalidations(call, args, kwargs);
         self.record_call(dest, callable_target(&node.adjustments), 0);
         let raises = self.raises(call.raises(), call.location());
+        let transfer_recv_place = recv_place.clone();
+        let transfer_arg_places = arg_places.clone();
         self.emit_call(MirInstr::MethodCall {
             dest,
             recv,
@@ -984,6 +987,7 @@ impl<'a> Flatten<'a> {
             spread: Self::spread_position(args),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
+        self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);
         self.error_region(raises);
         dest
     }

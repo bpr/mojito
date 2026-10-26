@@ -580,6 +580,13 @@ error slot, a fresh `$error` the reader adds to a raising function or to
 one holding such a raise, followed by its `error_return`. The package
 format moves to `mojito-package 100`.
 
+The package format moves to `mojito-package 101` when a checked slice
+literal records whether its `__slice_literal__` constructor returns
+through memory (`CheckedSliceLiteral::indirect_result`), as a call's
+`IndirectResult` does: MIR lowering binds such a literal to a
+call-result slot its subscript reads in place, keyword or positional.
+The MIR text is unchanged.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

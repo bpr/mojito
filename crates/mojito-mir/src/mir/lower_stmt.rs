@@ -967,7 +967,7 @@ impl<'a> Flatten<'a> {
             rhs: rhs_expression,
         } = *store;
         let (receiver, receiver_place) = self.lower_call_receiver(object);
-        let argument = self.slice_set_argument(target, descriptor, bounds);
+        let (argument, argument_place) = self.slice_set_argument(target, descriptor, bounds);
         let getter_call =
             self.mir_subscript_call_contract(plan.getter.clone(), &[], target.location());
         if plan.setter.is_none() {
@@ -976,7 +976,7 @@ impl<'a> Flatten<'a> {
             self.emit_slice_read(
                 handle,
                 receiver,
-                argument,
+                (argument, argument_place),
                 receiver_place,
                 Some(getter_call),
             );
@@ -990,7 +990,7 @@ impl<'a> Flatten<'a> {
         self.emit_slice_read(
             current,
             receiver,
-            argument.clone(),
+            (argument.clone(), argument_place.clone()),
             receiver_place.clone(),
             Some(getter_call),
         );
@@ -1014,7 +1014,7 @@ impl<'a> Flatten<'a> {
             receiver: setter_receiver,
             receiver_place: receiver_place.map(Box::new),
             args: vec![argument],
-            arg_places: vec![None],
+            arg_places: vec![argument_place],
             value,
             value_place: value_place.map(Box::new),
             value_keyword,
@@ -1065,9 +1065,14 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::CheckedSubscriptArg::Slice {
                     lower, upper, step, ..
                 } => {
-                    source_places.push(None);
+                    let (argument, place) = self.slice_set_argument(
+                        target,
+                        descriptor.clone(),
+                        [*lower, *upper, *step],
+                    );
+                    source_places.push(place);
                     source_spans.push(None);
-                    self.slice_set_argument(target, descriptor.clone(), [*lower, *upper, *step])
+                    argument
                 }
                 _ => {
                     unreachable!("keyword subscript assignment is rejected at checking")
@@ -1557,19 +1562,22 @@ impl<'a> Flatten<'a> {
                         step,
                         ..
                     } => {
-                        arg_places.push(None);
-                        self.slice_set_argument(target, descriptor, [*lower, *upper, *step])
+                        let (argument, place) =
+                            self.slice_set_argument(target, descriptor, [*lower, *upper, *step]);
+                        arg_places.push(place);
+                        argument
                     }
                     _ => unreachable!("keyword subscript assignment is rejected at checking"),
                 })
                 .collect(),
             SetArguments::Slice([lower, upper, step]) => {
-                arg_places.push(None);
-                vec![self.slice_set_argument(
+                let (argument, place) = self.slice_set_argument(
                     target,
                     descriptors.first().cloned().flatten(),
                     [lower, upper, step],
-                )]
+                );
+                arg_places.push(place);
+                vec![argument]
             }
         };
         let (value, value_place) =
@@ -1627,13 +1635,14 @@ impl<'a> Flatten<'a> {
 
     /// The subscript argument the slice literal `descriptor` of subscript
     /// `subscript` passes, whose operand nodes are `operands`, evaluated
-    /// outside the subscript call's setup.
+    /// outside the subscript call's setup, with the place it is read from
+    /// ([`Self::slice_literal_argument`]).
     fn slice_set_argument(
         &mut self,
         subscript: Node<'a>,
         descriptor: Option<mojito_checked::checked::CheckedSliceLiteral>,
         operands: [Option<mojito_checked::checked::CheckedNodeId>; 3],
-    ) -> MirSubscriptArg {
+    ) -> (MirSubscriptArg, Option<MirPlace>) {
         let descriptor = descriptor.expect("a slice argument has a bound literal");
         let operands = operands.map(|id| id.map(|id| self.slice_bound(subscript, id)));
         self.outside_call_setup(|this| {

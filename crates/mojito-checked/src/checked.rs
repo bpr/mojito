@@ -1223,6 +1223,10 @@ pub struct CheckedSliceLiteral {
     /// Per operand (lower, upper, stride): `None` when the operand is
     /// written, or how the omitted operand's `None` reaches its parameter.
     pub omitted: [Option<OmittedSliceOperand>; 3],
+    /// Whether the constructor returns through memory, as a call's
+    /// [`SemanticAdjustment::IndirectResult`] records: the constructed
+    /// value then lives in a call-result slot its subscript reads.
+    pub indirect_result: bool,
 }
 
 /// The `None` an omitted slice-literal operand passes: as is to a

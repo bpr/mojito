@@ -1103,6 +1103,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Register passability now judges a conditional `RegisterPassable`
+  conformance at the instance's arguments, as upstream's
+  `getRegisterPassability` does, a pack's condition element by element:
+  `Optional[Int]` and `Tuple[Int, Bool]` are register-passable and
+  `Optional[String]` is not, where every conditional row answered
+  memory-only. A function value other than a closure's storage is
+  register-passable too, as the checker already judged it (R1356, in
+  part). A slice literal whose `__slice_literal__` constructor returns
+  through memory, every library slice type's, is now written to a
+  call-result slot its subscript reads in place, positional or keyword,
+  as upstream gives it a `__call_result_tmp__`; the package format moves
+  to `mojito-package 101`. A subscript's keyword argument place is now
+  among the places every slot rewrite and scan sees (`sroa`, the move
+  scan, interior uses), which the slot of `e[byte=1:3]` needs. An
+  explicit destroy with compile-time
+  arguments (`self^.consume_elements[h]()`) now consumes its receiver's
+  place as `x^.finish()` does, where it forwarded a copy of the storage
+  in a register. A memory-only value still reaches a register through
+  copies and operands R1440–R1444 name, so the verifier rule rejecting
+  its destruction there is R1445. No program's output changes.
+
 - A raise out of a function now stores its error into the function's
   error slot and leaves through an `error_return` carrying no error, as
   upstream's raise outside every `try` writes the raising function's

@@ -2473,17 +2473,22 @@ impl Checker {
                 }
             }
         }
+        let instance = self.self_instance_ty(name);
         let constructor = constructor_symbol(
             name,
             "__init__",
             constructors.len() > 1,
             signature,
-            self.self_instance_ty(name).as_ref(),
+            instance.as_ref(),
         );
+        // The initializer's declared result is the struct at its own
+        // parameters, as a construction's is judged.
+        let indirect_result = self.memory_only(instance.as_ref().unwrap_or(target));
         Ok(Some(mojito_checked::checked::CheckedSliceLiteral {
             target: target.clone(),
             constructor,
             omitted,
+            indirect_result,
         }))
     }
 }

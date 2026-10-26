@@ -10,23 +10,26 @@ The next step is always at the top. Finished steps are deleted;
 
 Entries are cited by stable ID and the order is computed, so every command
 below stays valid as entries are filed and landed. Before a run, preview it
-with `--dry-run` or `scripts/roadmap.py deps R1356`. Every command runs on
+with `--dry-run` or `scripts/roadmap.py deps R1445`. Every command runs on
 Opus, with a plan pass for each entry whose `Model:` bullet says Fable.
 `--task` runs an entry after its open prerequisites. `--only` runs exactly
 the entries named. A single command cannot use both.
 
 ## Recommended order
 
-1. **Finish gap D** (size). One entry remains from the first pass (gap
-   B closed with R1338 and R136 with its copy elision on 10-25):
-   - R1355 gives a memory-only call result one slot, chosen at the call.
-     That closes or shrinks about 13 `ownership` entries (gap D′ below).
+1. **Finish gap D** (size). R1356 landed in part on 10-26: register
+   passability judges a conditional conformance at closed arguments, and
+   a memory-only slice literal lives in its call-result slot. Its census
+   filed the shapes that still destroy a memory-only register as R1440
+   (reference results copied for a `read` parameter), R1441 (builtin
+   arguments), R1442 (operands off the call-result path), R1443 (copied
+   consuming receivers), and R1444 (callable binder copies), with probes
+   on R1435 and R1095.
 
-   R1356, the verifier rule, comes last, behind the copy entries it names.
+   R1445, the verifier rule, comes last, behind all of them.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1355 -n 0
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1356 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1445 -n 0
    ```
 
 2. **Sweep the stale entries** (leverage, cheap). R1400–R1406 cover 99
@@ -194,7 +197,7 @@ are conformance only.
 
 | gap | upstream's shape | core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
-| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1356 | about 25 (below) | yes |
+| D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1440–R1444, then R1445 | about 25 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662 (= R950), R663, R471 | R788, R378, R472, R508, R602, R1194 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1360–R1363, R705, R424, R578 → R577; R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 for the other closure forms | R1104, R100, R1230, R1333 (closed), R534, R176 | yes |
@@ -230,8 +233,8 @@ are conformance only.
 - **R1437** landed 10-26: a raise out of a function stores its error into
   the function's error slot, which dies as a variable too. A raising call
   still hands its callee's error back in a register (R1438).
-- **R1356 then rejects the class.** It waits on R1157, R1158, R1249, R117,
-  R677, R1353, and R1334.
+- **R1356** landed in part 10-26 (see *Recommended order*): **R1445 then
+  rejects the class**, behind R1440–R1444, R1435, and R1095.
 
 ### F. Members reached by name, not called as the requirement
 
@@ -479,6 +482,6 @@ The second pass (10-21 to 10-24) landed:
   R1070, R1073, R1304);
 - gap B (R1049, R1050, R1052, R1029, R1097, R988, R1075,
   R1283, R1278, and on 10-25 R1338);
-- gap D except R1355 and R1356 (R1251, R1252, R931, R932, R1306, R832,
-  R1310–R1313, R1309, R1319, R1320, R1325, R1329, R1327, R1336, R1321,
-  R1330, R1326, R1337, R1328).
+- gap D except R1445 and its prerequisites (R1251, R1252, R931, R932,
+  R1306, R832, R1310–R1313, R1309, R1319, R1320, R1325, R1329, R1327,
+  R1336, R1321, R1330, R1326, R1337, R1328, R1355, and R1356).

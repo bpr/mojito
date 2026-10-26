@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1440**.
+Next free ID: **R1446**.
 
 ## Ordered Work
 
@@ -1537,6 +1537,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: `assets/ok/value_parameter_field_read.mojo` (`var r = q`),
     `assets/ok/def_aggregate_value_binder_served.mojo` (`p[0]` over a
     `Tuple[Int, Int]` binder).
+  - Probe: `print(T.S)` over a `comptime S: String` member materializes
+    the `String` as a register constant that a `deinit` call destroys,
+    which R1445's rule rejects
+    (`assets/ok/trait_comptime_requirement_default.mojo`, `show`).
   - Materialize the parameter's value into storage once per read, as
     upstream's `kgen.param.constant` is a value, and lower the copy or
     move of it to the constructor call as any other.
@@ -9125,6 +9129,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     (`assets/type_error/capturing_lambda_display_transferred_uncopyable.mojo`);
     drop that rule once the lambda is an lvalue.
   - Probe: the `var peek = lambda {var token^} ...` binding above.
+  - Probe: `transform(lambda (x: Int) {k} -> Int: x * k, 3)` passes the
+    storage, a call result in a register, to a `read` parameter and
+    destroys it there, which R1445's rule rejects
+    (`assets/ok/capturing_lambda_storage.mojo`).
   - Found while landing R1378 (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9503,33 +9511,159 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1356 The MIR verifier does not reject a `drop.reg` of a
-  memory-only register**
+- [ ] **R1440 A reference result passed to a `read` parameter is copied,
+  where upstream binds the parameter to the reference**
 
-  `verify/drops.rs` accepts a `drop.reg` of any owned register, where
-  upstream's register values are register-passable only (`numValueBits =
-  1` in `ValueSet::addValue`, `CheckLifetimes.cpp`) and a memory-only
-  value is destroyed as an indirect value.
-  - The rule: reject a `drop.reg` whose register type
+  `show(o.value())` over `def show(s: String)` and an `Optional[String]`
+  copies the `String` (`String.__copyinit__` into a register), passes the
+  copy, and destroys it after the call, where upstream's `read` argument is
+  the reference `value()` returned.
+  - Cause: the checker treats a reference result's ordinary value use as
+    owning an independent value (`Checker::check_reference_result_reads`),
+    so MIR lowers it to a `ReadRef` and a `CopyValue`, even when the
+    consumer is a `read` parameter that only borrows it.
+  - So a memory-only value lives in a register that a `deinit` call on it
+    destroys, which R1445's verifier rule rejects.
+  - Probe: `isdir(default_dir.value())` in
+    `assets/ok/tempfile_mkdtemp.mojo` (a generic `read` parameter).
+  - Probe: `s.append(c)` over a `Codepoint` read through a reference
+    (`assets/ok/nominal_string_bytes_capacity.mojo`,
+    `nominal_string_bytes_peek_split.mojo`, `view_temporary_origins.mojo`).
+  - Probe: `print(o.value())` and its kin, a builtin's argument too
+    (R1441): `optional_string_from_stringify.mojo`,
+    `template_method_reference_result.mojo`,
+    `module_reference_result_reads.mojo`,
+    `always_inline_nodebug_reference_results.mojo`,
+    `origin_binder_result_keeps_argument.mojo`, `ctfe_optional_result.mojo`,
+    `match_enum_cases_optional.mojo`, `pack_element_rebind.mojo`, and the
+    `template_method_*` reference fixtures, all under `assets/ok/`.
+  - Found while landing R1356 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1441 A builtin call's memory-only argument reaches it in a
+  register, where upstream's library function reads it in place**
+
+  `print`, `input`, `abort`'s `_mojito_abort`, `Error(...)`, `Int(...)`,
+  `divmod`, `abs`, and `round` are checked and lowered as builtins
+  (`checker/call_inference.rs`), so no argument binds a `read` parameter
+  and MIR lowers each as a plain value.
+  - So a memory-only argument is a register: a copy of a `read` parameter,
+    a moved value, or a call or subscript result kept in its register
+    rather than its call-result slot, which a `deinit` call then destroys.
+  - Upstream declares each as a library function whose `read` parameters
+    bind a place or a `__call_result_tmp__`.
+  - Lever: record a read convention per builtin argument
+    (`BorrowReadArgument` / `ReadTemporaryArgument`), so MIR lowers it
+    through `Flatten::read_operand` (`mir/call_results.rs`). R1287 makes
+    `print` itself a library function.
+  - Probe: `print(s[byte=1:3])` and kin (`assets/ok/nominal_string_graphemes.mojo`,
+    `nominal_string_keyword_slices.mojo`, `slice_literal_constructor_binding.mojo`).
+  - Probe: `print(xs[::2])` over a `List[Int]` (`assets/ok/slice.mojo`,
+    `slice_none_bound.mojo`, `list_strided_slice_normalizes.mojo`,
+    `pliron_slice_desc.mojo`), and `Int(s[0])` over a `Codepoint`
+    (`nominal_string_indexing.mojo`).
+  - Probe: `input(prompt)` (`assets/ok/input.mojo`,
+    `pliron_input_echo.mojo`) and `abort(msg)` (`with_statement.mojo`,
+    `with_multiple.mojo`, `file_handle_roundtrip.mojo`,
+    `file_descriptor_stdout_order.mojo`) copy their `String` parameter.
+  - Probe: `raise Error(message)` in the bundled `atof` moves its `String`
+    into a register (`nominal_string_parse.mojo`,
+    `nominal_string_parse_errors.mojo`, `nominal_string_atof_rounding.mojo`,
+    `list_unsafe_uninit_length.mojo`).
+  - Probe: `divmod(a, b)`, `round(x)`, and `abs(x)` over a generic `T` copy
+    their operands (`boolable_and_divmod.mojo`,
+    `numeric_operation_traits.mojo`).
+  - Found while landing R1356 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1442 A t-string, conversion, subscript-index, or trait-dispatched
+  receiver operand keeps a memory-only call result in its register**
+
+  These consumers lower their operand with `Flatten::expr`, not the
+  call-result path (`expr_c`, `operand_c`, `take_c` in
+  `mir/call_results.rs`), so a result the checker marked `IndirectResult`
+  never reaches its `$call_result_tmp_r` slot.
+  - Upstream's call emission writes every memory-only result to its
+    destination or a `__call_result_tmp__`, whatever consumes it.
+  - Probe: `repr(x)` as a t-string or `format` operand, a
+    `$write_formatted` argument (`assets/ok/generic_reads_copy_nothing.mojo`,
+    `parameter_list_of_alias.mojo`, `parameter_list_raw_values.mojo`,
+    `path_operations.mojo`, `string_format_declared.mojo`,
+    `value_pack_parameter_list_writable.mojo`).
+  - Probe: a `Slice` call result or moved `Slice` converted to
+    `StridedSlice` (`slice_kind_construction.mojo`,
+    `slice_library_struct.mojo`, `slice_descriptor_protocols.mojo`), and a
+    `StridedSlice(...)` subscript index (`slice_descriptor_protocols.mojo`).
+  - Probe: an implicitly converted argument in a generic method,
+    `self.keep(x)` building a `Wrapper[T]`
+    (`template_method_converting_call_argument.mojo`).
+  - Probe: `pk(x).release()` over a generic `-> T`, an owned receiver
+    through a trait bound (`comptime_if_arm_destroy_joins.mojo`,
+    `through`).
+  - Found while landing R1356 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1443 An implicitly copied consuming receiver is copied into a
+  register, where upstream copies it into a temporary the call consumes**
+
+  `v.unwrap[Int]()` over an `ImplicitlyCopyable` `Variant[Int, String]`
+  copies `v` (`var.use copy`, or `copy_consuming_receiver` in `mir.rs`)
+  and hands the `deinit` receiver the copy's register, with no place.
+  - Upstream's owned argument is the address of the copy's temporary,
+    which the callee consumes.
+  - Lever: copy into a call-result slot and pass its place as the
+    receiver place, which the call consumes, as an explicit destroy's
+    receiver place is. Both method-call paths drop the place of a
+    copied receiver (`ordinary_method_call`, `parameterized_method_call`).
+  - Probe: `v.unwrap[Int]()`, `w.unsafe_unwrap[Int]()`, and
+    `x.deinit_with(h)` (`assets/ok/variant_owning_api.mojo`).
+  - Probe: `t.reverse()` and `t.concat(u)` over a `Tuple[Int, String]`
+    (`tuple_template_served.mojo`), and `self.x.or_else(d)` over an
+    `Optional[T]` (`template_method_copied_consuming_receiver.mojo`).
+  - Found while landing R1356 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1444 A callable binder's value is copied into a register to be
+  called or handed to a `Variant` handler**
+
+  `Variant.__init__(init_with=f)` and `Variant.deinit_with(f)` copy their
+  `F` parameter (`var.use copy`) into the `call.indirect` or the
+  storage's handler operand (`variant.deinit_with`), then destroy the
+  copy by a `drop.reg`.
+  - `F` is a type parameter, so memory-only, as upstream's default is.
+  - Upstream calls a callable binder through its `__call__`, which borrows
+    it, and passes the handler by reference.
+  - Probe: `assets/ok/variant_init_with_constructor.mojo` and
+    `variant_deinit_with_linear_payload.mojo`.
+  - Found while landing R1356 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1445 The MIR verifier does not reject a destroy of a memory-only
+  register**
+
+  `verify/drops.rs` accepts a `drop.reg`, or the `deinit`-receiver call
+  `lower_drops` turns it into, of any owned register, where upstream's
+  `CheckLifetimes` tracks only register-passable values as SSA values
+  (`numValueBits = 1` in `ValueSet::addValue`) and destroys a memory-only
+  one through its storage.
+  - The rule: reject a `drop.reg`, and a `deinit`-receiver call with no
+    receiver place, whose register type
     `MirDeclarations::register_passable` answers no for.
-  - The remaining placements are copies and moves into a register, each
-    with its own entry: `List`→`Span` copies (R117), read arguments by value (R677), `List.resize`'s double copy
-    (R1353).
-  - `owns_droppable_storage` (`mir/calls.rs`) omits `TyKind::Dependent`.
-    Widening it double-frees in `assets/ok/container_hashable.mojo`,
-    `variant_hash_dict_key.mojo`, and `variant_generic_def_operations.mojo`
-    through `Flatten::call_result`, so a dependent-typed memory-only call
-    result keeps its register. Root-cause it before this rule lands.
-  - Probe: the rule must judge a conditional conformance at closed
-    arguments, as upstream's `getRegisterPassability` does:
-    `Bool(f.try_index(42))` (`assets/ok/list_methods_growth.mojo`) keeps
-    its `Optional[Int]` in a register, which upstream passes as a
-    register-passable value, but `MirDeclarations::register_passable`
-    answers no for any conditional row.
-  - Re-run the `emit-mir` census over `assets/ok` and
-    `assets/ownership_ok` before landing it.
-  - Depends on R1249, R117, R677, R1353, R1354, R1426, R1334, R1378, R1293,
-    R1437.
+  - Exempt a receiver a forwarding `var.use` defines: that is the slot's
+    storage handed over, the form `lower_drops` gives every slot drop.
+  - A 2026-10-26 census of `assets/ok` with the rule on found 58
+    fixtures, every one a probe of R1440 through R1444, R1435
+    (`capturing_lambda_storage.mojo`), or R1095
+    (`trait_comptime_requirement_default.mojo`).
+  - Re-run the census over `assets/ok` and `assets/ownership_ok`, with
+    `MOJITO_PRE_ELABORATION=0` too, before landing it: the rule runs
+    after every pass in a debug build.
+  - Depends on R1440, R1441, R1442, R1443, R1444, R1435, R1095.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
@@ -9573,6 +9707,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The side table's names (`SliceDescriptors`, `subscript_descriptor`,
     `synthetic_slice_descriptor`) still say "descriptor", from before
     `Slice` was a library struct; they go with it.
+  - `CheckedSliceLiteral::indirect_result` goes with it too: the literal's
+    node then records its own `IndirectResult`.
   - Depends on R1371, which makes every bracket an index of expressions.
   - Model: Fable, Not Planned.
 

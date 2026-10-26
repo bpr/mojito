@@ -777,21 +777,11 @@ impl<'a> Flatten<'a> {
         kwargs: &[(&'a str, Node<'a>)],
     ) -> Reg {
         let node = call.checked;
-        let explicit_destroy = node.adjustments.iter().any(|adjustment| {
-            matches!(
-                adjustment,
-                mojito_checked::checked::SemanticAdjustment::ExplicitDestroy
-            )
-        });
         let implicitly_copied_receiver = call.implicitly_copies_consuming_receiver();
         // If the receiver is a place, load it through that place (indices
         // evaluated once) and keep the place for write-back; otherwise it is
         // a temporary evaluated for its value only.
-        let receiver_expr = if explicit_destroy {
-            object.transfer_operand().unwrap_or(object)
-        } else {
-            object
-        };
+        let receiver_expr = call.destroyed_receiver(object);
         let (recv, recv_place) =
             self.lower_setup_receiver(call, receiver_expr, implicitly_copied_receiver);
         // Retain checker-selected `mut`/`ref` ordinary-argument places,

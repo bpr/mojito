@@ -3951,6 +3951,89 @@ mod tests {
         );
     }
 
+    #[test]
+    fn register_passable_judges_a_conditional_row_at_closed_arguments() {
+        use mojito_checked::checked::StructConformance;
+        use mojito_types::param_expr::{ParamId, ParamRef};
+        use mojito_types::types::{ConstraintOperand, ParamDecl, TyArg};
+        // `Optional[T]` is `RegisterPassable where conforms_to(T,
+        // RegisterPassable)` and `Tuple[*Ts]` is `RegisterPassable where
+        // conforms_to(Ts.values, RegisterPassable)`.
+        let structure = |name: &str, variadic: bool| {
+            let id = ParamId::new(name, 0);
+            let operand = ConstraintOperand::Param(ParamRef {
+                id: id.clone(),
+                name: "T".into(),
+            });
+            let trait_name = "RegisterPassable".to_string();
+            MirStructDeclaration {
+                name: name.into(),
+                fields: Vec::new(),
+                mut_self_methods: HashSet::new(),
+                fieldwise_init: false,
+                param_decls: vec![ParamDecl::Type {
+                    id,
+                    name: "T".into(),
+                    bounds: Vec::new(),
+                    trait_param: None,
+                    callable_bound: None,
+                    default: None,
+                    infer_only: false,
+                    variadic,
+                    constraints: Vec::new(),
+                }],
+                explicit_destructors: HashMap::new(),
+                explicit_destroy: None,
+                conformances: Vec::new(),
+                declared: vec![StructConformance {
+                    trait_name: trait_name.clone(),
+                    conditions: vec![if variadic {
+                        GenericConstraint::ConformsPack {
+                            operand,
+                            trait_name,
+                        }
+                    } else {
+                        GenericConstraint::Conforms {
+                            operand,
+                            trait_name,
+                        }
+                    }],
+                }],
+                associated_types: Vec::new(),
+                parameterized_associated_types: Vec::new(),
+                associated_values: Vec::new(),
+                parameterized_associated_values: Vec::new(),
+                witness_tables: Vec::new(),
+                members: Vec::new(),
+            }
+        };
+        let declarations = MirDeclarations {
+            structs: vec![structure("Opt", false), structure("Tup", true)],
+            ..MirDeclarations::default()
+        };
+        let applied = |name: &str, arguments: Vec<Ty>| {
+            Ty::new(TyKind::Struct(
+                name.into(),
+                arguments.into_iter().map(TyArg::Ty).collect(),
+            ))
+        };
+        let string = || Ty::new(TyKind::Struct("String".into(), Vec::new()));
+        assert!(declarations.register_passable(&applied("Opt", vec![Ty::new(TyKind::Int)])));
+        assert!(!declarations.register_passable(&applied("Opt", vec![string()])));
+        assert!(!declarations.register_passable(&applied("Opt", Vec::new())));
+        assert!(declarations.register_passable(&applied(
+            "Tup",
+            vec![Ty::new(TyKind::Int), Ty::new(TyKind::Bool)]
+        )));
+        assert!(
+            !declarations.register_passable(&applied("Tup", vec![Ty::new(TyKind::Int), string()]))
+        );
+        assert!(declarations.register_passable(&applied(
+            "Opt",
+            vec![applied("Tup", vec![Ty::new(TyKind::Int)])]
+        )));
+    }
+
     fn fold_binary(
         op: InfixOp,
         a: Const,

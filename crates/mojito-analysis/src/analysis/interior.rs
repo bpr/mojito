@@ -417,6 +417,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
             dest,
             object_place,
             arg_places,
+            kwarg_places,
             call: Some(call),
             ..
         } => add_subscript_call_places(
@@ -424,7 +425,7 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
             call,
             object_place.as_deref(),
             arg_places,
-            &[],
+            kwarg_places,
             *dest,
         ),
         MirInstr::VariantSet { place, value, .. }

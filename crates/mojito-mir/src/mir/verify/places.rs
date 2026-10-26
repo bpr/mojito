@@ -117,11 +117,13 @@ pub fn instruction_places(instruction: &MirInstr) -> Vec<&MirPlace> {
         MirInstr::MultiIndex {
             object_place,
             arg_places,
+            kwarg_places,
             ..
         } => object_place
             .as_deref()
             .into_iter()
             .chain(arg_places.iter().flatten())
+            .chain(kwarg_places.iter().flatten())
             .collect(),
         MirInstr::MultiSet {
             receiver_place,
@@ -206,11 +208,13 @@ pub fn instruction_places_mut(instruction: &mut MirInstr) -> Vec<&mut MirPlace> 
         MirInstr::MultiIndex {
             object_place,
             arg_places,
+            kwarg_places,
             ..
         } => object_place
             .as_deref_mut()
             .into_iter()
             .chain(arg_places.iter_mut().flatten())
+            .chain(kwarg_places.iter_mut().flatten())
             .collect(),
         MirInstr::MultiSet {
             receiver_place,

@@ -175,6 +175,7 @@ pub(super) fn instruction_uses(i: &MirInstr) -> Vec<(Used<'_>, Reg)> {
             dest,
             object_place: base_place,
             arg_places: index_place,
+            kwarg_places,
             call,
             ..
         } => {
@@ -182,6 +183,7 @@ pub(super) fn instruction_uses(i: &MirInstr) -> Vec<(Used<'_>, Reg)> {
                 .as_deref()
                 .into_iter()
                 .chain(index_place.iter().flatten())
+                .chain(kwarg_places.iter().flatten())
                 .map(|place| (Used::Place(place), *dest))
                 .collect::<Vec<_>>();
             if let Some(call) = call {

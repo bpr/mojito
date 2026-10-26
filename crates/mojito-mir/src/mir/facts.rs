@@ -116,6 +116,23 @@ impl<'a> Node<'a> {
         self.sole_operand(|op| matches!(op, CheckedOp::Transfer(_)))
     }
 
+    /// The receiver method call `self` evaluates for `object`: an explicit
+    /// destroy (`x^.finish()`) names the transfer's operand, whose place
+    /// its `deinit` receiver consumes, as upstream's call consumes a
+    /// `DeinitMem` operand's address; any other call names `object`.
+    pub(super) fn destroyed_receiver(self, object: Self) -> Self {
+        let explicit_destroy = self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::ExplicitDestroy
+            )
+        });
+        explicit_destroy
+            .then(|| object.transfer_operand())
+            .flatten()
+            .unwrap_or(object)
+    }
+
     /// The operand of a spread: `None` when this is not one.
     pub(super) fn spread_operand(self) -> Option<Self> {
         self.sole_operand(|op| matches!(op, CheckedOp::Spread(_)))

@@ -268,6 +268,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             object_place,
             arg_places,
             kwargs,
+            kwarg_places,
             call,
             ..
         } => {
@@ -281,7 +282,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             if let Some(object_place) = object_place {
                 index_regs(object_place, out);
             }
-            for argument_place in arg_places.iter().flatten() {
+            for argument_place in arg_places.iter().chain(kwarg_places).flatten() {
                 index_regs(argument_place, out);
             }
             if let Some(call) = call {

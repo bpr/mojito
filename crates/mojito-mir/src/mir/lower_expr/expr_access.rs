@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::mir::call_results::CValue;
 use mojito_checked::checked::{
     CheckedExpr, CheckedNodeId, CheckedSliceLiteral, CheckedSubscriptArg, SemanticAdjustment,
 };
@@ -349,14 +350,15 @@ impl<'a> Flatten<'a> {
         let descriptor = slice_descriptors(e.checked)
             .and_then(|descriptors| descriptors.first().cloned().flatten())
             .expect("checked slice has a selected descriptor");
-        let argument = self.slice_literal_argument(e, &descriptor, [lower, upper, step]);
+        let (argument, argument_place) =
+            self.slice_literal_argument(e, &descriptor, [lower, upper, step]);
         // No intrinsic slice channel remains: StringLiteral
         // positional slicing was removed at the audited head, so
         // every checked slice routes through a nominal call.
         let call = self.subscript_call_contract(e, std::slice::from_ref(&argument));
         let d = self.fresh(e.location(), None);
         self.emit_interior_invalidations(e, None);
-        self.emit_slice_read(d, obj, argument, object_place, call);
+        self.emit_slice_read(d, obj, (argument, argument_place), object_place, call);
         d
     }
 
@@ -364,13 +366,15 @@ impl<'a> Flatten<'a> {
     /// `node` passes, its written operands (lower, upper, stride) already
     /// lowered to `operands`: the value its `__slice_literal__` constructor
     /// call returns, upstream's `T(lower, upper, stride,
-    /// __slice_literal__=None)` with `None` for an omitted operand.
+    /// __slice_literal__=None)` with `None` for an omitted operand. A
+    /// value returned through memory lives in its call-result slot, which
+    /// the subscript reads in place: the slot's place comes with it.
     pub(in crate::mir) fn slice_literal_argument(
         &mut self,
         node: Node<'a>,
         construction: &CheckedSliceLiteral,
         operands: [Option<Reg>; 3],
-    ) -> MirSubscriptArg {
+    ) -> (MirSubscriptArg, Option<MirPlace>) {
         let args = operands
             .into_iter()
             .zip(&construction.omitted)
@@ -394,22 +398,29 @@ impl<'a> Flatten<'a> {
             })
             .collect();
         let marker = self.none_register(node);
-        MirSubscriptArg::Index(self.constructor_call(
+        let value = self.constructor_call(
             node,
             &construction.constructor,
             construction.target.clone(),
             args,
             vec![("__slice_literal__".to_string(), marker)],
-        ))
+        );
+        if !construction.indirect_result {
+            return (MirSubscriptArg::Index(value), None);
+        }
+        let slot = self.call_result_slot(value, construction.target.clone(), true);
+        let (read, place) = self.read_c(node, CValue::Slot(slot));
+        (MirSubscriptArg::Index(read), place)
     }
 
     /// Emit the read of `object` subscripted by the one constructed slice
-    /// value `argument` into `dest`, passed like any index.
+    /// value `argument`, with the place it is read from, into `dest`,
+    /// passed like any index.
     pub(in crate::mir) fn emit_slice_read(
         &mut self,
         dest: Reg,
         object: Reg,
-        argument: MirSubscriptArg,
+        (argument, argument_place): (MirSubscriptArg, Option<MirPlace>),
         object_place: Option<MirPlace>,
         call: Option<MirSubscriptCall>,
     ) {
@@ -419,7 +430,7 @@ impl<'a> Flatten<'a> {
             object,
             args: vec![argument],
             object_place: object_place.map(Box::new),
-            arg_places: vec![None],
+            arg_places: vec![argument_place],
             kwargs: Vec::new(),
             kwarg_places: Vec::new(),
             call: call.map(Box::new),
@@ -477,13 +488,13 @@ impl<'a> Flatten<'a> {
                     step,
                     ..
                 } => {
-                    kwarg_places.push(None);
                     let descriptor =
                         descriptor.expect("keyword slice argument has a bound literal");
                     let operands = [bound(self, *lower), bound(self, *upper), bound(self, *step)];
-                    let argument = self.outside_call_setup(|this| {
+                    let (argument, place) = self.outside_call_setup(|this| {
                         this.slice_literal_argument(e, &descriptor, operands)
                     });
+                    kwarg_places.push(place);
                     kwargs.push((name.clone(), argument));
                     None
                 }
@@ -496,12 +507,13 @@ impl<'a> Flatten<'a> {
                 CheckedSubscriptArg::Slice {
                     lower, upper, step, ..
                 } => {
-                    arg_places.push(None);
                     let descriptor = descriptor.expect("slice argument has a bound literal");
                     let operands = [bound(self, *lower), bound(self, *upper), bound(self, *step)];
-                    Some(self.outside_call_setup(|this| {
+                    let (argument, place) = self.outside_call_setup(|this| {
                         this.slice_literal_argument(e, &descriptor, operands)
-                    }))
+                    });
+                    arg_places.push(place);
+                    Some(argument)
                 }
             })
             .collect();

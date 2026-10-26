@@ -65,7 +65,14 @@ impl<'a> Flatten<'a> {
         {
             return CValue::Value(value);
         }
-        let in_place = self.produced_in_place(value, e.raises().is_none());
+        CValue::Slot(self.call_result_slot(value, ty, e.raises().is_none()))
+    }
+
+    /// Bind `value`, of type `ty`, which its producer returned through
+    /// memory, to a call-result slot of its own, right after the producer,
+    /// in place when the producer cannot raise (`non_raising`).
+    pub(super) fn call_result_slot(&mut self, value: Reg, ty: Ty, non_raising: bool) -> VarId {
+        let in_place = self.produced_in_place(value, non_raising);
         let slot = self.var(&format!("{}{}", crate::mir::CALL_RESULT_SLOT, value.0));
         self.var_types.insert(slot, ty.clone());
         self.emit(MirInstr::DefVar {
@@ -75,7 +82,7 @@ impl<'a> Flatten<'a> {
             in_place,
         });
         self.call_result_slots.insert(value.0, slot);
-        CValue::Slot(slot)
+        slot
     }
 
     /// `value` read by a consumer that reads it, with the storage it read:

@@ -962,6 +962,24 @@ impl Checker {
         Self::new_seeded(HashMap::new(), HashMap::new())
     }
 
+    /// Whether a value of `ty` is memory-only, which upstream passes to and
+    /// returns from a call by address. A compiler-known type upstream
+    /// declares `TrivialRegisterPassable` (a scalar, a pointer, a literal)
+    /// and a function value, which upstream holds as a raw MLIR value, are
+    /// passed in registers; a closure's storage is a struct, passed as its
+    /// captures allow.
+    pub(crate) fn memory_only(&self, ty: &Ty) -> bool {
+        let function = ty.callable().is_some_and(|func| {
+            !matches!(
+                func.environment,
+                mojito_types::origin::CallableEnvironment::Storage(_)
+            )
+        });
+        !mojito_types::types::trivially_register_passable_leaf(ty.kind())
+            && !function
+            && self.register_passability(ty) != traits::RegisterPassability::Proven
+    }
+
     fn new_seeded(
         transfer_seed: HashMap<String, Vec<mojito_checked::checked::TransferEffect>>,
         call_through_seed: HashMap<String, Vec<mojito_checked::checked::CallThroughEffect>>,
@@ -2060,21 +2078,7 @@ impl Checker {
     /// whose type is not memory-only is passed by value
     /// ([`mojito_checked::checked::SemanticAdjustment::RegisterPassableRead`]).
     fn record_result_conventions(&self) {
-        // A compiler-known type upstream declares `TrivialRegisterPassable`
-        // (a scalar, a pointer, a literal) and a function value, which
-        // upstream holds as a raw MLIR value, are passed in registers; a
-        // closure's storage is a struct, passed as its captures allow.
-        let memory_only = |ty: &Ty| {
-            let function = ty.callable().is_some_and(|func| {
-                !matches!(
-                    func.environment,
-                    mojito_types::origin::CallableEnvironment::Storage(_)
-                )
-            });
-            !mojito_types::types::trivially_register_passable_leaf(ty.kind())
-                && !function
-                && self.register_passability(ty) != traits::RegisterPassability::Proven
-        };
+        let memory_only = |ty: &Ty| self.memory_only(ty);
         // An initializer's declared result is its `out self`, the struct at
         // its own parameters, so a conditional `RegisterPassable`
         // conformance is not proven there.

@@ -455,23 +455,34 @@ impl MirDeclarations {
     /// Whether a value of `ty` is register-passable, as upstream's
     /// `getRegisterPassability` answers anything but `MemoryOnly`: a type
     /// whose copy is the value itself ([`Self::copy_is_identity`]), a
-    /// `StringLiteral` or `None`, a tuple or pack of register-passable
-    /// elements, or a struct declaring `RegisterPassable` or
+    /// `StringLiteral` or `None`, a function value other than a closure's
+    /// storage (a struct), which upstream holds as a raw MLIR value, a
+    /// tuple or pack of register-passable elements, or a struct declaring
+    /// `RegisterPassable` or
     /// `TrivialRegisterPassable` unconditionally, directly or through a
-    /// refining trait. Anything else is memory-only, which upstream passes
-    /// to and returns from a call by address: a conditional conformance and
-    /// a type parameter included, as `MemoryOnly` is upstream's default.
+    /// refining trait, or conditionally where its conditions hold at the
+    /// struct's arguments, as upstream's `getRegisterPassability` judges a
+    /// conditional conformance at the instance (`Optional[Int]`). Anything
+    /// else is memory-only, which upstream passes to and returns from a call
+    /// by address: a conditional conformance its arguments leave open and a
+    /// type parameter included, as `MemoryOnly` is upstream's default.
     pub fn register_passable(&self, ty: &Ty) -> bool {
         if self.copy_is_identity(ty) {
             return true;
         }
         match ty.kind() {
             TyKind::StringLiteral | TyKind::None => true,
+            TyKind::Func(_) | TyKind::GenericFunc(_) => ty.callable().is_some_and(|function| {
+                !matches!(
+                    function.environment,
+                    mojito_types::origin::CallableEnvironment::Storage(_)
+                )
+            }),
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
                 items.iter().all(|item| self.register_passable(item))
             }
             TyKind::PopArray { element, .. } => self.register_passable(element),
-            TyKind::Struct(name, _) => self.structure(name).is_some_and(|declaration| {
+            TyKind::Struct(name, arguments) => self.structure(name).is_some_and(|declaration| {
                 declaration.declared.iter().any(|row| {
                     ["RegisterPassable", "TrivialRegisterPassable"]
                         .iter()
@@ -479,10 +490,28 @@ impl MirDeclarations {
                             row.trait_name == *required
                                 || self.trait_refines(&row.trait_name, required)
                         })
-                        && matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
+                        && (matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
+                            || row_holds_at(
+                                &row.conditions,
+                                &declaration.param_decls,
+                                arguments,
+                                &|ty, trait_name| self.passability_conformance(ty, trait_name),
+                            ) == Some(true))
                 })
             }),
             _ => false,
+        }
+    }
+
+    /// Whether `ty` conforms to `trait_name` where the trait is one
+    /// register-passability decides: `RegisterPassable` by
+    /// [`Self::register_passable`], `TrivialRegisterPassable` by
+    /// [`Self::copy_is_identity`]; `None` for any other trait.
+    fn passability_conformance(&self, ty: &Ty, trait_name: &str) -> Option<bool> {
+        match trait_name {
+            "RegisterPassable" => Some(self.register_passable(ty)),
+            "TrivialRegisterPassable" => Some(self.copy_is_identity(ty)),
+            _ => None,
         }
     }
 
@@ -535,7 +564,12 @@ impl MirDeclarations {
                     return false;
                 }
                 if let Some(holds) = row.and_then(|row| {
-                    row_holds_at(&row.conditions, &declaration.param_decls, arguments)
+                    row_holds_at(
+                        &row.conditions,
+                        &declaration.param_decls,
+                        arguments,
+                        &|_, _| None,
+                    )
                 }) {
                     return holds;
                 }
@@ -5797,19 +5831,28 @@ use node::Node;
 
 /// Whether a conformance row's `conditions` hold at a struct
 /// application's `arguments` over its binders `decls`: any condition
-/// holding proves it and none means no instance conforms. `None` where a
-/// condition asks what these arguments leave open or what only the
-/// elaborator decides (a conformance, a field's facet).
+/// holding proves it and none means no instance conforms. A conformance
+/// of a type is what `conforms` answers for it. `None` where a condition
+/// asks what these arguments leave open or what only the elaborator
+/// decides (a conformance `conforms` leaves open, a field's facet).
 fn row_holds_at(
     conditions: &[GenericConstraint],
     decls: &[ParamDecl],
     arguments: &[TyArg],
+    conforms: &dyn Fn(&Ty, &str) -> Option<bool>,
 ) -> Option<bool> {
     let context = ParamContext::detached();
     let bindings = mojito_types::types::struct_argument_bindings(&context, decls, arguments);
+    let packs = struct_pack_arguments(decls, arguments);
+    let judge = Judge {
+        context: &context,
+        bindings: &bindings,
+        packs: &packs,
+        conforms,
+    };
     let mut verdict = Some(false);
     for condition in conditions {
-        match constraint_holds_at(condition, &context, &bindings) {
+        match judge.holds(condition) {
             Some(true) => return Some(true),
             Some(false) => {}
             None => verdict = None,
@@ -5818,51 +5861,108 @@ fn row_holds_at(
     verdict
 }
 
-/// [`row_holds_at`] of one condition under `bindings`.
-fn constraint_holds_at(
-    condition: &GenericConstraint,
-    context: &ParamContext,
-    bindings: &mojito_types::param_expr::ParamBindings,
-) -> Option<bool> {
-    let holds = |inner: &GenericConstraint| constraint_holds_at(inner, context, bindings);
-    match condition {
-        GenericConstraint::WithMessage(inner, _) => holds(inner),
-        GenericConstraint::Bool(value) => Some(*value),
-        GenericConstraint::Not(inner) => holds(inner).map(|value| !value),
-        GenericConstraint::And(left, right) => match (holds(left), holds(right)) {
-            (Some(false), _) | (_, Some(false)) => Some(false),
-            (Some(true), Some(true)) => Some(true),
+/// The element types a struct application's `arguments` give each of its
+/// declared variadic type binders `decls`: every argument from the
+/// binder's position on, as a pack's elements trail its application
+/// (`Tuple[Int, Bool]`).
+fn struct_pack_arguments(
+    decls: &[ParamDecl],
+    arguments: &[TyArg],
+) -> HashMap<mojito_types::param_expr::ParamId, Vec<Ty>> {
+    decls
+        .iter()
+        .enumerate()
+        .filter_map(|(position, decl)| match decl {
+            ParamDecl::Type {
+                id, variadic: true, ..
+            } => arguments
+                .get(position..)?
+                .iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => Some(ty.clone()),
+                    TyArg::Val(_) | TyArg::Origin(_) => None,
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|elements| (id.clone(), elements)),
             _ => None,
-        },
-        GenericConstraint::Or(left, right) => match (holds(left), holds(right)) {
-            (Some(true), _) | (_, Some(true)) => Some(true),
-            (Some(false), Some(false)) => Some(false),
-            _ => None,
-        },
-        GenericConstraint::Eq(left, right) | GenericConstraint::Ne(left, right) => {
-            let value = |operand: &ConstraintOperand| {
-                let expression = match operand {
-                    ConstraintOperand::Value(CtValue::Expr(expression))
-                    | ConstraintOperand::Expr(expression) => expression.clone(),
-                    ConstraintOperand::Value(value) => return Some(value.clone()),
-                    ConstraintOperand::Param(param) => bindings.lookup(param)?.clone(),
-                    _ => return None,
+        })
+        .collect()
+}
+
+/// The verdict of a conformance row's conditions at one struct
+/// application: its binders' `bindings`, its packs' elements `packs`, and
+/// the conformances `conforms` decides.
+struct Judge<'a> {
+    context: &'a ParamContext,
+    bindings: &'a mojito_types::param_expr::ParamBindings,
+    packs: &'a HashMap<mojito_types::param_expr::ParamId, Vec<Ty>>,
+    conforms: &'a dyn Fn(&Ty, &str) -> Option<bool>,
+}
+
+impl Judge<'_> {
+    /// [`row_holds_at`] of one condition.
+    fn holds(&self, condition: &GenericConstraint) -> Option<bool> {
+        let (context, bindings) = (self.context, self.bindings);
+        let holds = |inner: &GenericConstraint| self.holds(inner);
+        match condition {
+            GenericConstraint::Conforms {
+                operand,
+                trait_name,
+            } => match operand {
+                ConstraintOperand::Param(param) => {
+                    (self.conforms)(bindings.types().get(&param.id)?, trait_name)
+                }
+                ConstraintOperand::Type(ty) => (self.conforms)(ty, trait_name),
+                _ => None,
+            },
+            GenericConstraint::ConformsPack {
+                operand: ConstraintOperand::Param(param),
+                trait_name,
+            } => self
+                .packs
+                .get(&param.id)?
+                .iter()
+                .try_fold(true, |all, element| {
+                    Some(all && (self.conforms)(element, trait_name)?)
+                }),
+            GenericConstraint::WithMessage(inner, _) => holds(inner),
+            GenericConstraint::Bool(value) => Some(*value),
+            GenericConstraint::Not(inner) => holds(inner).map(|value| !value),
+            GenericConstraint::And(left, right) => match (holds(left), holds(right)) {
+                (Some(false), _) | (_, Some(false)) => Some(false),
+                (Some(true), Some(true)) => Some(true),
+                _ => None,
+            },
+            GenericConstraint::Or(left, right) => match (holds(left), holds(right)) {
+                (Some(true), _) | (_, Some(true)) => Some(true),
+                (Some(false), Some(false)) => Some(false),
+                _ => None,
+            },
+            GenericConstraint::Eq(left, right) | GenericConstraint::Ne(left, right) => {
+                let value = |operand: &ConstraintOperand| {
+                    let expression = match operand {
+                        ConstraintOperand::Value(CtValue::Expr(expression))
+                        | ConstraintOperand::Expr(expression) => expression.clone(),
+                        ConstraintOperand::Value(value) => return Some(value.clone()),
+                        ConstraintOperand::Param(param) => bindings.lookup(param)?.clone(),
+                        _ => return None,
+                    };
+                    let value = context
+                        .replace(&expression, bindings)
+                        .and_then(|replaced| context.fold(&replaced))
+                        .ok()?
+                        .into_value();
+                    (!matches!(value, CtValue::Expr(_))).then_some(value)
                 };
-                let value = context
-                    .replace(&expression, bindings)
-                    .and_then(|replaced| context.fold(&replaced))
-                    .ok()?
-                    .into_value();
-                (!matches!(value, CtValue::Expr(_))).then_some(value)
-            };
-            let (left, right) = (value(left)?, value(right)?);
-            let equal = match (integer_value(&left), integer_value(&right)) {
-                (Some(left), Some(right)) => left == right,
-                _ => left == right,
-            };
-            Some(equal == matches!(condition, GenericConstraint::Eq(..)))
+                let (left, right) = (value(left)?, value(right)?);
+                let equal = match (integer_value(&left), integer_value(&right)) {
+                    (Some(left), Some(right)) => left == right,
+                    _ => left == right,
+                };
+                Some(equal == matches!(condition, GenericConstraint::Eq(..)))
+            }
+            _ => None,
         }
-        _ => None,
     }
 }
 
