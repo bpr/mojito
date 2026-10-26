@@ -39,9 +39,7 @@ trait Absable:
         ...
 
 
-# Upstream's refines `ImplicitlyCopyable`, which a declared trait cannot
-# refine yet (R1459).
-trait DivModable:
+trait DivModable(ImplicitlyCopyable):
     def __divmod__(self, denominator: Self) -> Tuple[Self, Self]:
         ...
 

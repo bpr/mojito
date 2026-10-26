@@ -3930,7 +3930,9 @@ fn memory_only_read_argument_retains_its_place_and_register_passable_does_not() 
     // register-passable one by value: only the first retains its caller
     // place, which the VM binds as the callee's parameter.
     let src = "@fieldwise_init\nstruct Pt(Copyable, Movable):\n    var x: Int\n\n@fieldwise_init\nstruct Q(TrivialRegisterPassable):\n    var x: Int\n\ndef pt(a: Pt, b: Pt) -> Int:\n    return a.x + b.x\n\ndef q(a: Q, b: Q) -> Int:\n    return a.x + b.x\n\ndef main():\n    var p = Pt(1)\n    var r = Q(2)\n    print(pt(p, p) + q(r, r))\n";
-    let checked = mojito::check_program(&parse(src).expect("parse")).expect("check");
+    let linked = mojito::link_source(src, Path::new("mir_test.mojo")).expect("link");
+    let checked =
+        mojito::check_program(&mojito::elaborate(linked).expect("elaborate")).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     let (_, main) = mir
         .functions

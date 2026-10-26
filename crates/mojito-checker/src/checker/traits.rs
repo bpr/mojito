@@ -6,7 +6,7 @@
 use super::decorators::DecoratorSite;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_checked::declaration::{Witness, WitnessTable, compiler_trait_declaration};
+use mojito_checked::declaration::{Witness, WitnessTable};
 use mojito_symbol::symbol::{TRAIT_DISPATCH, qualified_method_symbol};
 use mojito_types::conformance::{LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule};
 use mojito_types::origin::{Mutability, Origin, RefSig, SigMutability, SigOrigin};
@@ -163,7 +163,10 @@ impl Checker {
         }
         for parent in refines {
             self.check_trait_name(parent)?;
-            if COMPILER_TRAITS.contains(&parent.as_str()) && !self.traits.contains_key(parent) {
+            if COMPILER_TRAITS.contains(&parent.as_str())
+                && !self.traits.contains_key(parent)
+                && !is_lifecycle_trait(parent)
+            {
                 return Err(TypeError::Unsupported(format!(
                     "user trait '{name}' cannot refine builtin trait '{parent}' yet"
                 )));
@@ -171,7 +174,9 @@ impl Checker {
         }
         let mut ct_members = HashMap::new();
         let mut ct_constraints = HashMap::new();
-        for parent in refines {
+        // A compiler-known lifecycle parent declares no member a refinement
+        // inherits here; the conformance rules answer it by refinement.
+        for parent in refines.iter().filter(|parent| !is_lifecycle_trait(parent)) {
             let inherited = self.traits.get(parent).ok_or_else(|| {
                 TypeError::InvariantViolation(format!("trait '{parent}' was not registered"))
             })?;
@@ -209,8 +214,8 @@ impl Checker {
                     // per-clause messages.
                     let previous = fold_constraint_conjunction(&previous);
                     let declared = fold_constraint_conjunction(&constraints);
-                    if !generic_constraint_implies(&previous, &declared)
-                        && !generic_constraint_implies(&declared, &previous)
+                    if !self.constraint_implies(&previous, &declared)
+                        && !self.constraint_implies(&declared, &previous)
                     {
                         return Err(TypeError::Unsupported(format!(
                             "conflicting inherited constraints on associated member '{}'",
@@ -233,7 +238,7 @@ impl Checker {
             let mut sigs: HashMap<String, Vec<MethodSig>> = HashMap::new();
             let mut default_overloads = Vec::new();
             let mut requirements = Vec::new();
-            for parent in refines {
+            for parent in refines.iter().filter(|parent| !is_lifecycle_trait(parent)) {
                 let inherited = &self.traits[parent].methods;
                 for (method, parent_sigs) in inherited {
                     let overloads = sigs.entry(method.clone()).or_default();
@@ -1137,7 +1142,7 @@ impl Checker {
         // builtin compatibility spelling must not bypass their requirements.
         if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
             self.verify_builtin_conformance(name, tr, self_ty, declared_condition.as_ref())?;
-            return Ok(self.compiler_trait_witness_table(name, tr, self_ty));
+            return Ok(None);
         }
         let Some(trait_info) = self.traits.get(tr) else {
             return Ok(None);
@@ -1341,52 +1346,6 @@ impl Checker {
         }))
     }
 
-    /// The witness table of struct `name`'s conformance to the
-    /// compiler-declared trait `tr` (`Defaultable`).
-    ///
-    /// It records each requirement the struct declares a method for whose
-    /// parameters are the requirement's, `Self` the struct: the nullary
-    /// `__init__` overload for `Defaultable`.
-    fn compiler_trait_witness_table(
-        &self,
-        name: &str,
-        tr: &str,
-        self_ty: &Ty,
-    ) -> Option<WitnessTable> {
-        let methods = &self.structs.get(name)?.methods;
-        let declaration = compiler_trait_declaration(tr)?;
-        let mut witnesses: Vec<Witness> = declaration
-            .requirements
-            .iter()
-            .filter_map(|requirement| {
-                let got = methods.get(&requirement.name)?.iter().find(|got| {
-                    got.has_self
-                        && got.variadic.is_none()
-                        && got.kw_variadic.is_none()
-                        && got.params.len() == requirement.param_types.len()
-                        && got
-                            .params
-                            .iter()
-                            .zip(&requirement.param_types)
-                            .all(|(got, want)| *got == substitute_self(want, self_ty))
-                })?;
-                Some(Witness {
-                    requirement: requirement.dispatch.clone(),
-                    member: qualified_method_symbol(
-                        name,
-                        &requirement.name,
-                        got.overload.as_deref(),
-                    ),
-                })
-            })
-            .collect();
-        witnesses.sort_by(|left, right| left.requirement.cmp(&right.requirement));
-        (!witnesses.is_empty()).then(|| WitnessTable {
-            trait_name: tr.to_string(),
-            witnesses,
-        })
-    }
-
     pub(super) fn method_satisfies_requirement_under(
         &self,
         got: &MethodSig,
@@ -1517,11 +1476,17 @@ impl Checker {
                 .iter()
                 .all(|alternative| self.is_copyable_under_assumption(alternative, assumption)),
             TyKind::Param { binder, bounds, .. } => {
-                bounds.iter().any(|bound| {
-                    matches!(bound.as_str(), "Copyable" | "ImplicitlyCopyable")
-                        || self.trait_refines(bound, "Copyable")
-                }) || assumption
-                    .is_some_and(|known| binder_conformance_assumed(binder, "Copyable", known))
+                bounds
+                    .iter()
+                    .any(|bound| self.trait_implies(bound, "Copyable"))
+                    || assumption.is_some_and(|known| {
+                        binder_conformance_assumed(
+                            binder,
+                            "Copyable",
+                            known,
+                            &|available, required| self.trait_implies(available, required),
+                        )
+                    })
             }
             TyKind::Assoc { .. } => self.assoc_member_bound_proves(ty, "Copyable"),
             TyKind::Struct(name, arguments) => {
@@ -1550,7 +1515,7 @@ impl Checker {
                     });
                 }
                 info.conforms.iter().any(|declared| {
-                    if !matches!(declared.as_str(), "Copyable" | "ImplicitlyCopyable") {
+                    if !self.trait_implies(declared, "Copyable") {
                         return false;
                     }
                     let Some(condition) = info.conformance_conditions.get(declared) else {
@@ -1781,7 +1746,12 @@ impl Checker {
                     {
                         self.conforms_to(pack, trait_name)
                             || assumption.is_some_and(|known| {
-                                binder_conformance_assumed(binder, trait_name, known)
+                                binder_conformance_assumed(
+                                    binder,
+                                    trait_name,
+                                    known,
+                                    &|available, required| self.trait_implies(available, required),
+                                )
                             })
                     }
                     _ => false,
@@ -1965,36 +1935,12 @@ impl Checker {
                     TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_) => false,
                     _ => true,
                 },
-                // Default construction is a declared conformance on structs
-                // (current `Tuple`/`Array` default-construct their elements
-                // through it); the scalar built-ins and `None` answer
-                // structurally.
-                "Defaultable" => match ty.kind() {
-                    TyKind::Int
-                    | TyKind::IntLiteral
-                    | TyKind::UInt
-                    | TyKind::Float64
-                    | TyKind::FloatLiteral
-                    | TyKind::Bool
-                    | TyKind::StringLiteral
-                    | TyKind::None
-                    | TyKind::Simd { .. } => true,
-                    TyKind::Tuple(elements) | TyKind::RuntimePack(elements) => {
-                        elements.iter().all(|element| self.conforms_to(element, tr))
-                    }
-                    TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                    TyKind::Param { bounds, .. } => bounds
-                        .iter()
-                        .any(|bound| bound == tr || self.trait_refines(bound, tr)),
-                    _ => false,
-                },
                 "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
                 | "Modable" => is_numeric_like(ty),
                 "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {
                     is_integer_like(ty)
                 }
                 "Negatable" => is_signed_numeric_like(ty),
-                "RegisterPassable" => self.register_passability(ty) == RegisterPassability::Proven,
                 // A struct answers by its declared conformances, as upstream
                 // decides any trait; a leaf's shape alone holds the rest.
                 _ => match ty.kind() {
@@ -2011,7 +1957,9 @@ impl Checker {
             TyKind::Param { bounds, .. } => bounds
                 .iter()
                 .any(|bound| bound == tr || self.trait_refines(bound, tr)),
-            _ => mojito_types::conformance::modelled_declares(ty, tr),
+            _ => mojito_types::conformance::modelled_declares(ty, tr, &mut |element, tr| {
+                self.conforms_to(element, tr)
+            }),
         }
     }
 
@@ -2345,12 +2293,7 @@ impl Checker {
         };
         Some(match lifecycle {
             "Copyable" => {
-                let family = |declared: &str| {
-                    matches!(
-                        declared,
-                        "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
-                    )
-                };
+                let family = |declared: &str| self.trait_implies(declared, "Copyable");
                 if info.conforms.iter().any(|declared| family(declared)) {
                     declared(&family)
                 } else if info.methods.contains_key("__copyinit__") {
@@ -2360,9 +2303,7 @@ impl Checker {
                 }
             }
             "ImplicitlyCopyable" if self.struct_implicitly_copyable_conformance_ok(name, None) => {
-                declared(&|declared| {
-                    matches!(declared, "ImplicitlyCopyable" | "TrivialRegisterPassable")
-                })
+                declared(&|declared| self.trait_implies(declared, "ImplicitlyCopyable"))
             }
             "ImplicitlyCopyable" => Vec::new(),
             _ => {
@@ -2533,7 +2474,7 @@ impl Checker {
     }
 
     /// Whether `premise` proves `consequence`, as
-    /// [`generic_constraint_implies`] decides it, with every trait proving
+    /// [`constraint_implies_by`] decides it, with every trait proving
     /// the traits it refines ([`Self::trait_implies`]).
     pub(super) fn constraint_implies(
         &self,
@@ -2659,12 +2600,7 @@ impl Checker {
                 let mut declared = s
                     .conforms
                     .iter()
-                    .filter(|c| {
-                        matches!(
-                            c.as_str(),
-                            "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
-                        )
-                    })
+                    .filter(|c| self.trait_implies(c, "Copyable"))
                     .peekable();
                 if declared.peek().is_some() {
                     declared.any(|c| {
@@ -2676,12 +2612,9 @@ impl Checker {
                     s.methods.contains_key("__copyinit__")
                 }
             }),
-            TyKind::Param { bounds, .. } => bounds.iter().any(|bound| {
-                matches!(
-                    bound.as_str(),
-                    "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
-                ) || self.trait_refines(bound, "Copyable")
-            }),
+            TyKind::Param { bounds, .. } => bounds
+                .iter()
+                .any(|bound| self.trait_implies(bound, "Copyable")),
             // An abstract associated type (`C.Element`) is copyable only when
             // the bound trait's member declaration proves it — never
             // vacuously.
@@ -2730,7 +2663,7 @@ impl Checker {
                 // the declaration. An unconditional one holds fieldwise.
                 |s| {
                     s.conforms.iter().any(|c| {
-                        matches!(c.as_str(), "ImplicitlyCopyable" | "TrivialRegisterPassable")
+                        self.trait_implies(c, "ImplicitlyCopyable")
                             && s.conformance_conditions.get(c).map_or_else(
                                 || self.struct_implicitly_copyable_conformance_ok(name, None),
                                 |condition| self.eval_conformance_condition(s, args, condition),
@@ -2738,12 +2671,9 @@ impl Checker {
                     })
                 },
             ),
-            TyKind::Param { bounds, .. } => bounds.iter().any(|bound| {
-                matches!(
-                    bound.as_str(),
-                    "ImplicitlyCopyable" | "TrivialRegisterPassable"
-                ) || self.trait_refines(bound, "ImplicitlyCopyable")
-            }),
+            TyKind::Param { bounds, .. } => bounds
+                .iter()
+                .any(|bound| self.trait_implies(bound, "ImplicitlyCopyable")),
             // An abstract associated type is implicitly copyable only when its
             // declared member bounds say so, mirroring the `TyKind::Param` rule.
             TyKind::Assoc { .. } => self.assoc_member_bound_proves(ty, "ImplicitlyCopyable"),
@@ -2803,8 +2733,7 @@ impl Checker {
         self.projection_bounds(ty).is_some_and(|associated_bounds| {
             associated_bounds.iter().any(|bound| {
                 bound == required
-                    || (required == "Copyable"
-                        && (bound == "ImplicitlyCopyable" || self.trait_refines(bound, "Copyable")))
+                    || (required == "Copyable" && self.trait_implies(bound, "Copyable"))
             })
         })
     }
@@ -2844,16 +2773,12 @@ impl Checker {
         }
     }
 
-    /// Whether a parameter's bounds prove `Movable`: the trait itself, a
-    /// trait refining it (`Copyable` and what refines that), or the
-    /// trivial-lifecycle marker that implies it.
+    /// Whether a parameter's bounds prove `Movable`: the trait itself or a
+    /// trait refining it (`Copyable` and what refines that).
     pub(super) fn bounds_prove_movable(&self, bounds: &[String]) -> bool {
-        bounds.iter().any(|bound| {
-            matches!(
-                bound.as_str(),
-                "Movable" | "Copyable" | "ImplicitlyCopyable" | "TrivialRegisterPassable"
-            ) || self.trait_refines(bound, "Movable")
-        })
+        bounds
+            .iter()
+            .any(|bound| self.trait_implies(bound, "Movable"))
     }
 
     /// Whether `ty` conforms to `TrivialRegisterPassable`: a numeric, `Bool`,
@@ -2874,7 +2799,7 @@ impl Checker {
                 TyKind::Param { bounds, .. } => {
                     bounds
                         .iter()
-                        .any(|bound| bound == "TrivialRegisterPassable")
+                        .any(|bound| self.trait_implies(bound, "TrivialRegisterPassable"))
                         || self.has_assumed_conformance(ty, "TrivialRegisterPassable")
                 }
                 _ => false,
@@ -2895,11 +2820,7 @@ impl Checker {
         if self.is_trivial_register_passable(ty) {
             return Proven;
         }
-        let proves = |bound: &str| {
-            matches!(bound, "RegisterPassable" | "TrivialRegisterPassable")
-                || self.trait_refines(bound, "RegisterPassable")
-                || self.trait_refines(bound, "TrivialRegisterPassable")
-        };
+        let proves = |bound: &str| self.trait_implies(bound, "RegisterPassable");
         match ty.kind() {
             TyKind::StringLiteral | TyKind::None => Proven,
             TyKind::Tuple(elements) => elements.iter().fold(Proven, |joined, element| {
@@ -2910,9 +2831,7 @@ impl Checker {
                 }
             }),
             TyKind::Struct(name, args) => {
-                if self.struct_conformance_applies(name, args, "RegisterPassable")
-                    || self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
-                {
+                if self.struct_conformance_applies(name, args, "RegisterPassable") {
                     return Proven;
                 }
                 let conditional = self.structs.get(name).is_some_and(|info| {
@@ -2986,7 +2905,7 @@ impl Checker {
             TyKind::Param { bounds, .. } => {
                 bounds
                     .iter()
-                    .any(|bound| bound == "TrivialRegisterPassable")
+                    .any(|bound| self.trait_implies(bound, "TrivialRegisterPassable"))
                     || self.has_assumed_conformance(ty, "TrivialRegisterPassable")
             }
             _ => false,
@@ -3094,14 +3013,12 @@ impl Checker {
         }
     }
 
-    /// Whether a parameter's bounds prove `Deinitable`: the trait itself, a
-    /// trait refining it, or the trivial-lifecycle marker that implies it.
+    /// Whether a parameter's bounds prove `Deinitable`: the trait itself or
+    /// a trait refining it (`TrivialRegisterPassable`).
     pub(super) fn bounds_prove_deinitable(&self, bounds: &[String]) -> bool {
-        bounds.iter().any(|bound| {
-            bound == "Deinitable"
-                || bound == "TrivialRegisterPassable"
-                || self.trait_refines(bound, "Deinitable")
-        })
+        bounds
+            .iter()
+            .any(|bound| self.trait_implies(bound, "Deinitable"))
     }
 
     /// `assumption` is a conditional conformance's premise: a field of a
@@ -3137,7 +3054,12 @@ impl Checker {
         let assumed = |element: &Ty| {
             matches!(element.kind(), TyKind::Param { binder, .. }
             if assumption.is_some_and(|known| {
-                binder_conformance_assumed(binder, "ImplicitlyCopyable", known)
+                binder_conformance_assumed(
+                    binder,
+                    "ImplicitlyCopyable",
+                    known,
+                    &|available, required| self.trait_implies(available, required),
+                )
             }))
         };
         info.methods.contains_key("__copyinit__")
@@ -3307,11 +3229,7 @@ impl Checker {
         // `copy(self) -> Self`; elaboration synthesizes the concrete method on
         // every conforming struct, and a Copyable-bounded parameter resolves
         // the same contract here.
-        if method == "copy"
-            && argc == 0
-            && bounds
-                .iter()
-                .any(|b| matches!(b.as_str(), "Copyable" | "ImplicitlyCopyable"))
+        if method == "copy" && argc == 0 && bounds.iter().any(|b| self.trait_implies(b, "Copyable"))
         {
             methods.push(MethodSig::intrinsic(vec![], Ty::self_type()));
         }
@@ -3528,6 +3446,17 @@ pub(super) fn refines_trait(
         &|name| traits.get(name).map(|info| info.refines.as_slice()),
         candidate,
         required,
+    )
+}
+
+/// Whether the compiler-known `name` is `AnyType` or a lifecycle trait,
+/// which a declared trait may refine as upstream's `std.traits` declares
+/// them: none has a member a refinement inherits, and the conformance
+/// rules answer each through the refinement.
+fn is_lifecycle_trait(name: &str) -> bool {
+    matches!(
+        name,
+        "AnyType" | "Movable" | "Copyable" | "ImplicitlyCopyable" | "Deinitable"
     )
 }
 

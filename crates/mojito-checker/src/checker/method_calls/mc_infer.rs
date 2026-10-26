@@ -131,7 +131,7 @@ impl Checker {
             && kwargs.is_empty()
             && param_args.is_empty()
             && (is_numeric_like(&obj_ty) || is_scalar_simd(&obj_ty) || obj_ty == TyKind::Bool)
-            && mojito_types::conformance::modelled_declares(&obj_ty, trait_name)
+            && mojito_types::conformance::modelled_declares(&obj_ty, trait_name, &mut |_, _| true)
         {
             return Ok(result);
         }

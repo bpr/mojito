@@ -10,15 +10,37 @@ use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 /// Materialize the `Copyable` trait's default `copy` method (current Mojo:
 /// `def copy(self) -> Self: return Self(copy=self)`; overriding it is not
 /// allowed). Mojito models the built-in traits structurally, so every struct
-/// declaring `Copyable` — directly or through `ImplicitlyCopyable` — gains the
-/// method here as ordinary source AST, keeping the checker, HIR, MIR, and VM on
+/// declaring `Copyable` — directly or through a trait refining it
+/// (`ImplicitlyCopyable`, `TrivialRegisterPassable`), whose parents the
+/// program's own trait declarations or the `installed` package's answer —
+/// gains the method here as ordinary source AST, keeping the checker, HIR, MIR, and VM on
 /// their existing method and constructor paths. A struct with an explicit copy
 /// constructor delegates to it (propagating its raising effect); a fieldwise
 /// Copyable struct uses the same explicit copy-construction spelling, which
 /// lowers to the synthesized fieldwise copy lifecycle. A conditional conformance carries its predicate over as the
 /// method's `where` clause. Structs that already spell `copy` keep their own
 /// (the self-hosted collections predate this synthesis).
-pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
+pub(super) fn synthesize_copyable_copy(
+    program: &mut [Stmt],
+    installed: Option<&InstalledInterfaces>,
+) {
+    let declared: HashMap<String, Vec<String>> = program
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Trait { name, refines, .. } => Some((name.clone(), refines.clone())),
+            _ => None,
+        })
+        .collect();
+    let parents = |name: &str| {
+        declared
+            .get(name)
+            .map(Vec::as_slice)
+            .or_else(|| installed?.trait_parents(name))
+    };
+    let copyable = |conformance: &String| {
+        conformance == "Copyable"
+            || mojito_types::conformance::refines(&parents, conformance, "Copyable")
+    };
     for statement in program {
         let span = statement.span;
         let module = statement.module.clone();
@@ -31,9 +53,6 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
         } = &mut statement.kind
         else {
             continue;
-        };
-        let copyable = |conformance: &String| {
-            matches!(conformance.as_str(), "Copyable" | "ImplicitlyCopyable")
         };
         if !conforms.iter().any(copyable) || methods.iter().any(|m| m.name == "copy") {
             continue;
@@ -70,15 +89,16 @@ pub(super) fn synthesize_copyable_copy(program: &mut [Stmt]) {
         });
         // The member is as available as the struct's `Copyable` conformance:
         // unconditionally when it declares `Copyable` without a condition,
-        // under `ImplicitlyCopyable`'s condition when only that refines it.
+        // under a refining conformance's condition when only that declares
+        // it.
         let declares_copyable = conforms.iter().any(|conformance| conformance == "Copyable");
         let where_clauses = conformance_conditions
             .iter()
             .find(|(trait_name, _)| trait_name == "Copyable")
             .or_else(|| {
-                conformance_conditions.iter().find(|(trait_name, _)| {
-                    !declares_copyable && trait_name == "ImplicitlyCopyable"
-                })
+                conformance_conditions
+                    .iter()
+                    .find(|(trait_name, _)| !declares_copyable && copyable(trait_name))
             })
             .map(|(_, condition)| vec![condition.clone()])
             .unwrap_or_default();

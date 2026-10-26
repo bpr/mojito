@@ -623,10 +623,13 @@ impl Checker {
                 "constructing '{name}' names no type parameter"
             )));
         };
+        // A nullary requirement (`Defaultable`'s) is `T()`'s, never this
+        // call's.
         if let Some(bound) = bounds.iter().find(|bound| {
             self.traits
                 .get(bound.as_str())
-                .is_some_and(|info| info.methods.contains_key("__init__"))
+                .and_then(|info| info.methods.get("__init__"))
+                .is_some_and(|inits| inits.iter().any(|init| !init.params.is_empty()))
         }) {
             return Err(TypeError::Unsupported(format!(
                 "constructing type parameter '{name}' through the `__init__` requirement \

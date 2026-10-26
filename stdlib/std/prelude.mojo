@@ -18,6 +18,11 @@ from std.builtin.comparable import Comparable, Equatable
 from std.builtin.bool import Boolable
 from std.builtin.floatable import Floatable, FloatableRaising
 from std.builtin.identifiable import Identifiable
+from std.builtin.value import (
+    Defaultable,
+    RegisterPassable,
+    TrivialRegisterPassable,
+)
 from std.builtin.int import Indexer, Intable, IntableRaising
 from std.math import Absable, Powable, Roundable
 from std.builtin.enum_like import EnumLike

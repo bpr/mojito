@@ -10,7 +10,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::StructConformance;
-use mojito_types::conformance::{StructTraitRule, compiler_trait_refines, struct_trait_rule};
+use mojito_types::conformance::{StructTraitRule, struct_trait_rule};
 use mojito_types::param_expr::fold::integer_value;
 use mojito_types::types::TyKind;
 use mojito_types::types::{
@@ -266,24 +266,22 @@ impl Specializer<'_> {
     ) -> Option<bool> {
         let declarations = &self.source.declarations;
         let TyKind::Struct(name, arguments) = ty.kind() else {
-            if declarations.declares_trait(trait_name) {
+            let mut undecided = false;
+            let mut element = |element: &Ty, required: &str| {
+                self.type_conforms(element, required, visiting)
+                    .unwrap_or_else(|| {
+                        undecided = true;
+                        true
+                    })
+            };
+            let conforms = if declarations.declares_trait(trait_name) {
                 // A compiler-known type conforms to a declared trait only as
                 // the upstream struct it models declares.
-                return mojito_types::conformance::leaf_conforms(ty, trait_name, &mut |_, _| true)
-                    .map(|_| mojito_types::conformance::modelled_declares(ty, trait_name));
-            }
-            let mut undecided = false;
-            let conforms = mojito_types::conformance::leaf_conforms(
-                ty,
-                trait_name,
-                &mut |element, required| {
-                    self.type_conforms(element, required, visiting)
-                        .unwrap_or_else(|| {
-                            undecided = true;
-                            true
-                        })
-                },
-            )?;
+                mojito_types::conformance::leaf_conforms(ty, trait_name, &mut |_, _| true)?;
+                mojito_types::conformance::modelled_declares(ty, trait_name, &mut element)
+            } else {
+                mojito_types::conformance::leaf_conforms(ty, trait_name, &mut element)?
+            };
             // An undecided element counted as conforming, so only a
             // conforming aggregate is in doubt.
             return (!conforms || !undecided).then_some(conforms);
@@ -309,7 +307,6 @@ impl Specializer<'_> {
                     .filter(|declared| {
                         declared.trait_name == trait_name
                             || declarations.trait_refines(&declared.trait_name, trait_name)
-                            || compiler_trait_refines(&declared.trait_name, trait_name)
                     })
                     .flat_map(|declared| &declared.conditions)
                     .collect(),

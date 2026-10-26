@@ -6827,7 +6827,7 @@ fn trivially_predicates_serve_where_clauses_but_not_bounds() {
 fn trivial_register_passable_bound_serves_trivially_where_clauses() {
     // The predicate's first disjunct — `conforms_to(T, TrivialRegisterPassable)`
     // — proves triviality from the bound alone.
-    ok(
+    ok_std(
         "def f[T: TrivialRegisterPassable](value: T) -> Int where IsTriviallyMovable[T]:\n    return 1\n\ndef main():\n    var chosen = f(42)\n",
     );
 }
@@ -7548,7 +7548,7 @@ fn implicit_copy_diagnostic_notes_follow_the_source_binding() {
 fn implicitly_copyable_refining_bounds_permit_place_copies() {
     // `TrivialRegisterPassable` refines `ImplicitlyCopyable`; a plain
     // `Copyable` bound does not permit the implicit copy.
-    ok(
+    ok_std(
         "def dup[T: TrivialRegisterPassable](x: T) -> T:\n    var y: T = x\n    return y\n\nvar n: Int = dup(5)\n",
     );
     // The local copy of a non-`Deinitable` `T` must still be consumed

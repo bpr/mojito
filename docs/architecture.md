@@ -5403,9 +5403,7 @@ current Mojo:
   its declaration's, or for a call through a trait bound in a generic body,
   the requirement the bound trait or a parent declares, found by the call's
   `__trait_dispatch.*` symbol (`MirDeclarations::bound_requirement`), as
-  upstream binds such a call to the trait's declared requirement. The
-  compiler-known `Defaultable`, which the bundled library does not yet
-  declare, answers from `compiler_trait_declaration`. A
+  upstream binds such a call to the trait's declared requirement. A
   memory-only parameter takes the argument's address: a generic `T`, a
   variadic collector, or a callee with no declaration (`t.n` fed to `print`).
   Its owner then lives through the call, so the owner's `DropVar` follows the
@@ -6375,9 +6373,9 @@ point where a slot declared in a loop is uninitialized again.
   trivially register-passable (`MirDeclarations::copy_is_identity`, which
   judges a struct's fields at its arguments), whatever binders it names,
   as upstream's `canPromote` has no type test (a `SIMD[DType.int64, n]`
-  slot in a body over `n` is promoted; a `T: TrivialRegisterPassable`
-  slot is not, while that bound admits a non-trivial type: R1363), it is no
-  parameter, and every
+  slot in a body over `n` is promoted, and so is a slot of a `T` whose
+  bound is or refines `TrivialRegisterPassable`), it is no parameter, and
+  every
   mention of it is a `var.store` of a register defined once and read by
   the store alone; a `var.use` (copy, move, or forward)
   or a whole-root `place.load` at the slot's type; or a `var.declare`,

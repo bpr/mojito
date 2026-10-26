@@ -27,7 +27,6 @@ use mojito_checked::checked::{
     CheckedConst, CheckedNodeId, CheckedOp, CheckedParamArg, CheckedProgram, CheckedStmt,
     CheckedStmtId, CheckedStmtOp, WalkResult, Walked,
 };
-use mojito_checked::declaration::compiler_trait_declaration;
 pub use mojito_checked::declaration::{
     FunctionDeclaration as MirFunctionDeclaration, SlotParameter,
     StructDeclaration as MirStructDeclaration, StructMember as MirStructMember, TraitDeclaration,
@@ -331,8 +330,7 @@ impl MirDeclarations {
             return None;
         };
         let requirement = self
-            .trait_declaration("Defaultable")
-            .or_else(|| compiler_trait_declaration("Defaultable"))?
+            .trait_declaration("Defaultable")?
             .requirements
             .iter()
             .find(|requirement| requirement.name == "__init__" && requirement.arity == 0)?;
@@ -428,18 +426,27 @@ impl MirDeclarations {
     /// `__copyinit__` or `__deinit__` and holds only fields this answers
     /// for, each judged at the struct's arguments ([`Self::field_types`]).
     /// A field the arguments leave open answers no, and a conditional
-    /// conformance until the elaborator decides it.
+    /// conformance until the elaborator decides it. A type parameter
+    /// answers yes where a bound is or refines `TrivialRegisterPassable`,
+    /// since every type it binds is one of these.
     pub fn copy_is_identity(&self, ty: &Ty) -> bool {
         if mojito_types::types::trivially_register_passable_leaf(ty.kind()) {
             return true;
         }
-        let TyKind::Struct(name, _) = ty.kind() else {
-            return false;
+        let refines_trivial = |trait_name: &str| {
+            trait_name == "TrivialRegisterPassable"
+                || self.trait_refines(trait_name, "TrivialRegisterPassable")
+        };
+        let name = match ty.kind() {
+            TyKind::Struct(name, _) => name,
+            TyKind::Param { bounds, .. } => {
+                return bounds.iter().any(|bound| refines_trivial(bound));
+            }
+            _ => return false,
         };
         self.structure(name).is_some_and(|declaration| {
             declaration.declared.iter().any(|row| {
-                (row.trait_name == "TrivialRegisterPassable"
-                    || self.trait_refines(&row.trait_name, "TrivialRegisterPassable"))
+                refines_trivial(&row.trait_name)
                     && matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
             }) && ["__copyinit__", "__deinit__"]
                 .iter()
@@ -592,8 +599,7 @@ impl MirDeclarations {
 
     /// The requirement a call through `bounds` selects by its `dispatch`
     /// symbol: one a bound trait declares, or a parent it refines, nearest
-    /// first. `Defaultable`, which the bundled library does not declare,
-    /// answers from [`compiler_trait_declaration`].
+    /// first.
     pub fn bound_requirement(
         &self,
         bounds: &[String],
@@ -605,10 +611,7 @@ impl MirDeclarations {
             if !visited.insert(name) {
                 continue;
             }
-            let Some(declaration) = self
-                .trait_declaration(name)
-                .or_else(|| compiler_trait_declaration(name))
-            else {
+            let Some(declaration) = self.trait_declaration(name) else {
                 continue;
             };
             if let Some(requirement) = declaration
@@ -649,10 +652,7 @@ impl MirDeclarations {
             if !visited.insert(name) {
                 continue;
             }
-            let Some(declaration) = self
-                .trait_declaration(name)
-                .or_else(|| compiler_trait_declaration(name))
-            else {
+            let Some(declaration) = self.trait_declaration(name) else {
                 if mojito_types::conformance::LIFECYCLE_TRAITS.contains(&name) {
                     continue;
                 }

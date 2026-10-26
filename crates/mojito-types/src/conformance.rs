@@ -18,9 +18,6 @@ pub const COMPILER_TRAITS: &[&str] = &[
     "Movable",
     "Copyable",
     "ImplicitlyCopyable",
-    "RegisterPassable",
-    "TrivialRegisterPassable",
-    "Defaultable",
     "Representable",
     "Writable",
     "Writer",
@@ -88,19 +85,23 @@ pub fn struct_trait_rule(trait_name: &str, declared_by_program: bool) -> StructT
     }
 }
 
-/// Whether the compiler-known trait `candidate` refines the compiler-known
-/// `required`, as upstream declares `TrivialRegisterPassable` a refinement
-/// of `RegisterPassable`, where no program declares either.
-pub fn compiler_trait_refines(candidate: &str, required: &str) -> bool {
-    matches!(
-        (candidate, required),
-        ("TrivialRegisterPassable", "RegisterPassable")
-    )
+/// The parents upstream's `std.traits` declares for the compiler-known
+/// lifecycle trait `name`, which no declaration answers here:
+/// `Copyable(Movable)` and `ImplicitlyCopyable(Copyable)`.
+pub fn compiler_trait_parents(name: &str) -> &'static [&'static str] {
+    match name {
+        "Copyable" => &["Movable"],
+        "ImplicitlyCopyable" => &["Copyable"],
+        _ => &[],
+    }
 }
 
 /// Whether the trait `candidate` refines `required`, directly or through
-/// its parents, where `parents` answers a declared trait's parents. A
-/// refinement cycle proves nothing.
+/// its parents.
+///
+/// `parents` answers a declared trait's parents and
+/// [`compiler_trait_parents`] a compiler-known one's. A refinement cycle
+/// proves nothing.
 pub fn refines<'a>(
     parents: &dyn Fn(&str) -> Option<&'a [String]>,
     candidate: &str,
@@ -112,12 +113,17 @@ pub fn refines<'a>(
         required: &str,
         visiting: &mut std::collections::HashSet<String>,
     ) -> bool {
-        visiting.insert(candidate.to_string())
-            && parents(candidate).is_some_and(|parents_of| {
-                parents_of
-                    .iter()
-                    .any(|parent| parent == required || walk(parents, parent, required, visiting))
-            })
+        if !visiting.insert(candidate.to_string()) {
+            return false;
+        }
+        let mut reaches =
+            |parent: &str| parent == required || walk(parents, parent, required, visiting);
+        match parents(candidate) {
+            Some(declared) => declared.iter().any(|parent| reaches(parent)),
+            None => compiler_trait_parents(candidate)
+                .iter()
+                .any(|parent| reaches(parent)),
+        }
     }
     walk(
         parents,
@@ -160,7 +166,7 @@ pub fn leaf_conforms(
         return None;
     }
     Some(match trait_name {
-        "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" | "RegisterPassable" => {
+        "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => {
             match ty.kind() {
                 TyKind::ComptimeList(item) | TyKind::PopArray { element: item, .. } => {
                     element(item, trait_name)
@@ -184,21 +190,6 @@ pub fn leaf_conforms(
             TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
         ),
         "Writer" => false,
-        "Defaultable" => match ty.kind() {
-            TyKind::Int
-            | TyKind::IntLiteral
-            | TyKind::UInt
-            | TyKind::Float64
-            | TyKind::FloatLiteral
-            | TyKind::Bool
-            | TyKind::StringLiteral
-            | TyKind::None
-            | TyKind::Simd { .. } => true,
-            TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
-                items.iter().all(|item| element(item, trait_name))
-            }
-            _ => false,
-        },
         "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
         | "Modable" => is_numeric_like(ty),
         "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {
@@ -234,9 +225,22 @@ pub fn leaf_conforms(
 /// the operations over no other `SIMD` (R1457).
 ///
 /// `SIMD`, `Bool`, `StringLiteral`, and `DType` list `Hashable`; none lists
-/// `Hasher`. A struct or a type parameter answers by its own declaration or
-/// bounds instead.
-pub fn modelled_declares(ty: &Ty, trait_name: &str) -> bool {
+/// `Hasher`.
+///
+/// `SIMD`, `Bool`, the literals, and `NoneType` list `Defaultable`, and
+/// `SIMD`, `Bool`, the numeric literals, `NoneType`, and `DType`
+/// `TrivialRegisterPassable`, which refines `RegisterPassable`; `Tuple`
+/// lists `Defaultable` and `RegisterPassable` where every element
+/// conforms, which `element` answers. A closure's storage is
+/// `RegisterPassable` where each of its captures is.
+///
+/// A struct or a type parameter answers by its own declaration or bounds
+/// instead.
+pub fn modelled_declares(
+    ty: &Ty,
+    trait_name: &str,
+    element: &mut dyn FnMut(&Ty, &str) -> bool,
+) -> bool {
     // The `std.math` traits outside the prelude answer by their linked name.
     match trait_name
         .strip_prefix("__module$std$math$")
@@ -267,6 +271,29 @@ pub fn modelled_declares(ty: &Ty, trait_name: &str) -> bool {
         }
         "Absable" | "Powable" | "Roundable" | "DivModable" | "CeilDivable" => is_numeric_like(ty),
         "Hashable" => builtin_hashable_ty(ty),
+        "Defaultable" => match ty.kind() {
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
+                items.iter().all(|item| element(item, trait_name))
+            }
+            _ => {
+                is_numeric_like(ty)
+                    || matches!(
+                        ty.kind(),
+                        TyKind::Bool | TyKind::StringLiteral | TyKind::None | TyKind::Simd { .. }
+                    )
+            }
+        },
+        "TrivialRegisterPassable" => modelled_trivial_register_passable(ty),
+        "RegisterPassable" => match ty.kind() {
+            TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
+                items.iter().all(|item| element(item, trait_name))
+            }
+            TyKind::Func(func) => matches!(
+                &func.environment,
+                crate::origin::CallableEnvironment::Storage(storage) if storage.register_passable
+            ),
+            _ => modelled_trivial_register_passable(ty),
+        },
         "Sized" => matches!(
             ty.kind(),
             TyKind::Int
@@ -332,4 +359,13 @@ pub fn builtin_hashable_ty(ty: &Ty) -> bool {
 /// `SIMD[dtype, width]` — the types the hidden `$SIMD` bound admits.
 pub fn simd_valued_ty(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Simd { .. }) || simd_shape(ty).is_some()
+}
+
+/// Whether the compiler-modelled `ty` stands in for an upstream struct
+/// declaring `TrivialRegisterPassable`: a `SIMD` value, `Bool`, a numeric
+/// literal, `NoneType`, or `DType`.
+fn modelled_trivial_register_passable(ty: &Ty) -> bool {
+    is_numeric_like(ty)
+        || simd_valued_ty(ty)
+        || matches!(ty.kind(), TyKind::Bool | TyKind::None | TyKind::Dtype)
 }

@@ -7,15 +7,11 @@
 use crate::checked::{CheckedConst, ExplicitDestroyInfo, StructConformance};
 use mojito_ast::ast::{ArgConvention, CONTEXTUAL_SENTINEL, Decorator, ExprKind};
 use mojito_common::error::TypeError;
-use mojito_symbol::symbol::{
-    OverloadFamily, OverloadSets, SignatureKey, TRAIT_DISPATCH, method_symbol, overload_family,
-    split_method_symbol,
-};
+use mojito_symbol::symbol::{OverloadFamily, OverloadSets, overload_family, split_method_symbol};
 use mojito_types::origin::OriginParamId;
 use mojito_types::param_expr::{ParamExpr, ParamRef};
 use mojito_types::types::{GenericConstraint, ParamDecl, Ty};
 use std::collections::{HashMap, HashSet};
-use std::sync::LazyLock;
 
 /// A package stores each one as a bytecode record, its sets and maps
 /// written sorted, so equal declarations encode equal bytes.
@@ -251,41 +247,6 @@ pub struct TraitDeclaration {
     /// upstream's trait declares each, and a defaulted one's member
     /// function is its body, not another declaration of the name.
     pub requirements: Vec<TraitRequirement>,
-}
-
-/// The declaration of the compiler-known trait `name` a witness table
-/// records the requirements of.
-///
-/// It is `Defaultable`, as upstream's `std/builtin/value.mojo` declares
-/// it, whose `__init__(out self)` takes no parameter.
-///
-/// Until the bundled library declares it, this is its declaration. A
-/// program or package that declares a trait of the name shadows it.
-pub fn compiler_trait_declaration(name: &str) -> Option<&'static TraitDeclaration> {
-    static DEFAULTABLE: LazyLock<TraitDeclaration> = LazyLock::new(|| TraitDeclaration {
-        name: "Defaultable".to_string(),
-        refines: Vec::new(),
-        requirements: vec![TraitRequirement {
-            name: "__init__".to_string(),
-            arity: 0,
-            dispatch: method_symbol(
-                TRAIT_DISPATCH,
-                "__init__",
-                &SignatureKey::from_tys_with_self(&[], None),
-            ),
-            param_names: Vec::new(),
-            param_types: Vec::new(),
-            param_conventions: Vec::new(),
-            variadic_index: None,
-            required: Vec::new(),
-            positional_only: None,
-            keyword_only: None,
-            variadic: None,
-            kw_variadic: None,
-            variadic_convention: None,
-        }],
-    });
-    (name == DEFAULTABLE.name).then(|| &*DEFAULTABLE)
 }
 
 /// One requirement of a trait declaration, a bodyless method declaration.

@@ -4123,9 +4123,11 @@ impl Checker {
         let sigs = info.methods.get("__copyinit__");
         let sig = sigs.and_then(|sigs| sigs.iter().find(|sig| sig.params.len() == 1));
         if sig.is_none() {
-            if !info.conforms.iter().any(|conformance| {
-                matches!(conformance.as_str(), "Copyable" | "ImplicitlyCopyable")
-            }) {
+            if !info
+                .conforms
+                .iter()
+                .any(|conformance| self.trait_implies(conformance, "Copyable"))
+            {
                 return Err(TypeError::BadCall {
                     func: name.to_string(),
                     reason: "no matching copy constructor".to_string(),

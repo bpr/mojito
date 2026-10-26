@@ -675,7 +675,11 @@ impl Checker {
         }
         // A literal argument materializes, and `SIMD.__len__` returns the
         // lane count of every scalar it models.
-        if mojito_types::conformance::modelled_declares(&default_literal(ty), "Sized") {
+        if mojito_types::conformance::modelled_declares(
+            &default_literal(ty),
+            "Sized",
+            &mut |_, _| true,
+        ) {
             return Ok(Some(Ty::int()));
         }
         if let TyKind::Struct(name, _) = ty.kind()

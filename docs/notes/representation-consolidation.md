@@ -70,18 +70,18 @@ the entries named. A single command cannot use both.
    lever left, about 30 entries). It lands in three stages.
 
    First, the bundled library declares the compiler-known traits, so every
-   conformance has a witness table. The entries are R1363 (`Defaultable`,
-   `RegisterPassable`, `TrivialRegisterPassable`) and R424 (`Writable`).
+   conformance has a witness table. The entry left is R424 (`Writable`).
    R578 (the bundled types declare what upstream's do), R705 (`Equatable`,
    `Comparable`, with R706, R708, and R419), R1360 (`Boolable`, `Intable`,
    `Floatable`, `Indexer`, `Identifiable`, with R191), R1361 (the
-   `std.math` traits), and R1362 (`Hashable`, `Hasher`) landed on
-   2026-10-26. R1361 left R1457 (the other `SIMD` values), R1458 (`abs`,
-   `round`, `divmod`, `pow` as library functions), and R1459 (a trait
-   refining a compiler-known one). The rest:
+   `std.math` traits), R1362 (`Hashable`, `Hasher`), and R1363
+   (`Defaultable`, `RegisterPassable`, `TrivialRegisterPassable`, with
+   R861, R863, and R1459) landed on 2026-10-26. R1361 left R1457 (the
+   other `SIMD` values) and R1458 (`abs`, `round`, `divmod`, `pow` as
+   library functions). The rest:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1363 --only R424 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R424 -n 0
    ```
 
    Second, operators become calls of the requirement. R1357 has the checker
@@ -272,8 +272,8 @@ missing.
   - Dispatch: R1109, R1031, R1280.
   - Operators: R1332, R1282, R81, R697, R1238 (R708 closed).
   - Traits: R109 (after R424), R712, R579 (R707, R706, and R191 closed).
-- **Shrinks** R987, R1291, R684, R113, R1119, R25, R817, R862, R860,
-  R861, and R863.
+- **Shrinks** R987, R1291, R684, R113, R1119, R25, R817, R862, and R860
+  (R861 and R863 closed).
 
 ### G. A capture-list closure is a capture list
 

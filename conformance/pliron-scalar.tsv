@@ -1213,6 +1213,7 @@ assets/ok/value_parameter_method_aggregate.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/value_parameter_string_aggregate.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_params.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_struct_generic_constructor_overload.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/value_traits_library.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variable_scoping.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_args.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/variadic_collector_forwarded_and_borrowed.mojo	-	ineligible	no-scalar-entry-shape

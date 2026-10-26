@@ -91,6 +91,14 @@ point, as upstream's toolchain does.
   Only a scalar `SIMD` is `Intable`, and only an integral one `Indexer`,
   since upstream's methods assert as much (R1397). A scalar answers a
   requirement through its builtin conversion.
+- `std/builtin/value.mojo` — upstream's `Defaultable`, `RegisterPassable`,
+  and `TrivialRegisterPassable` traits; the prelude exports all three.
+  `TrivialRegisterPassable` refines `Deinitable`, `ImplicitlyCopyable`,
+  `Movable`, and `RegisterPassable`, so a struct declaring it is copyable.
+  `Defaultable.__init__` stays a requirement until a trait default can
+  construct `self` field by field, as upstream's reflective default does
+  (R1119). The compiler-modelled scalars, `Bool`, `NoneType`, and `DType`
+  conform as the upstream structs they stand in for declare.
 - `std/builtin/_stubs.mojo` — upstream's `paramfor_has_next`,
   `paramfor_next_iter`, and `paramfor_next_value`, which step a `comptime
   for` iterator at compile time. The prelude links them for their bodies:
@@ -182,8 +190,7 @@ point, as upstream's toolchain does.
   `floor`/`ceil`/`trunc`/`ceildiv`, each generic over its trait. The prelude
   exports `Absable`, `Powable`, and `Roundable`, as upstream's does; the rest
   must be imported (`from std.math import floor`). `abs`/`round`/`divmod` are
-  still compiler builtins (R1458), and `DivModable` omits upstream's
-  `ImplicitlyCopyable` parent (R1459). `Int`, `UInt`, and `Float64` conform
+  still compiler builtins (R1458). `Int`, `UInt`, and `Float64` conform
   as upstream's `SIMD` declares and answer each requirement intrinsically;
   other `SIMD` values conform only to the rounding traits, and only as float
   scalars (R1457).

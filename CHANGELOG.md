@@ -687,6 +687,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- `Defaultable`, `RegisterPassable`, and `TrivialRegisterPassable` are now
+  upstream's library traits, declared in the bundled
+  `std/builtin/value.mojo` and exported from the prelude (R1363), where the
+  compiler knew them by name. A declared trait may now refine `AnyType` and
+  the lifecycle traits, as upstream's `std.traits` declares them (R1459),
+  so `TrivialRegisterPassable` refines `ImplicitlyCopyable`: a struct
+  declaring only it has `copy()` and `P(copy=q)` and may be a `Copyable`
+  struct's field, directly and through a `Copyable` bound (R861, R863), and
+  the bundled `DivModable` gains upstream's `ImplicitlyCopyable` parent. A
+  `T: TrivialRegisterPassable` value's copy is the value itself, so
+  `mem-2-reg`, `cse`, and `imm-arguments` treat it as they treat `Int`. A
+  `Defaultable` conformance records the ordinary witness table of its
+  declared `__init__` requirement; upstream's reflective default body is
+  still R1119.
+
 - `Hashable` and `Hasher` are now upstream's library traits, declared in
   the bundled `std/hash/hash.mojo` and `hasher.mojo` (R1362), where the
   compiler knew them by name and checked a conformer's shape. Each

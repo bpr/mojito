@@ -109,22 +109,14 @@ pub(super) fn ct_integer(value: &CtValue) -> Option<mojito_common::literal::IntL
     }
 }
 
-/// A deliberately small implication relation for declaration availability.
-/// It proves only facts which are syntactically present in a positive
-/// conjunction (plus exact predicates).  In particular it does not turn a
-/// failed symbolic evaluation, a negation, or either arm of a disjunction into
-/// an assumption.
-pub(super) fn generic_constraint_implies(
-    premise: &GenericConstraint,
-    consequence: &GenericConstraint,
-) -> bool {
-    constraint_implies_by(premise, consequence, &builtin_trait_implies)
-}
-
-/// [`generic_constraint_implies`] where `implies` answers whether
-/// conformance to one trait proves conformance to another, as a checker
-/// knowing the declared refinements answers (`Comparable` proves
-/// `Equatable`).
+/// A deliberately small implication relation for declaration availability,
+/// where `implies` answers whether conformance to one trait proves
+/// conformance to another, as a checker knowing the declared refinements
+/// answers (`Comparable` proves `Equatable`). It proves only facts which are
+/// syntactically present in a positive conjunction (plus exact
+/// predicates). In particular it does not turn a failed symbolic
+/// evaluation, a negation, or either arm of a disjunction into an
+/// assumption.
 pub(super) fn constraint_implies_by(
     premise: &GenericConstraint,
     consequence: &GenericConstraint,
@@ -166,15 +158,17 @@ pub(super) fn constraint_implies_by(
 
 /// Whether `premise` guarantees that `binder` conforms to `required`: of the
 /// type itself, or of every element when `binder` is a pack
-/// (`conforms_to(Ts.values, Trait)`).
+/// (`conforms_to(Ts.values, Trait)`), where `implies` answers whether one
+/// trait proves another.
 pub(super) fn binder_conformance_assumed(
     binder: &ParamRef,
     required: &str,
     premise: &GenericConstraint,
+    implies: &dyn Fn(&str, &str) -> bool,
 ) -> bool {
     match premise {
         GenericConstraint::WithMessage(condition, _) => {
-            binder_conformance_assumed(binder, required, condition)
+            binder_conformance_assumed(binder, required, condition, implies)
         }
         GenericConstraint::Conforms {
             operand,
@@ -185,31 +179,23 @@ pub(super) fn binder_conformance_assumed(
             trait_name,
         } => {
             matches!(operand, mojito_types::types::ConstraintOperand::Param(param) if param == binder)
-                && (trait_name == required || builtin_trait_implies(trait_name, required))
+                && (trait_name == required || implies(trait_name, required))
         }
         GenericConstraint::And(left, right) => {
-            binder_conformance_assumed(binder, required, left)
-                || binder_conformance_assumed(binder, required, right)
+            binder_conformance_assumed(binder, required, left, implies)
+                || binder_conformance_assumed(binder, required, right, implies)
         }
         _ => false,
     }
 }
 
-/// Whether conformance to the built-in trait `available` proves conformance
-/// to `required`: the lifecycle traits refine one another, and a trivial
-/// marker implies the lifecycle it makes trivial.
+/// Whether the trivial-lifecycle predicate `available` proves the
+/// lifecycle trait `required` it makes trivial. The traits' own
+/// refinements are [`mojito_types::conformance::refines`]'s.
 pub(super) fn builtin_trait_implies(available: &str, required: &str) -> bool {
     matches!(
         (available, required),
-        ("ImplicitlyCopyable", "Copyable")
-            | (
-                "Copyable" | "ImplicitlyCopyable" | "IsTriviallyMovable",
-                "Movable"
-            )
-            | (
-                "TrivialRegisterPassable",
-                "ImplicitlyCopyable" | "Copyable" | "Movable" | "Deinitable"
-            )
+        ("IsTriviallyMovable", "Movable")
             | ("IsTriviallyCopyable", "Copyable" | "ImplicitlyCopyable")
             | ("IsTriviallyDeinitable", "Deinitable")
     )

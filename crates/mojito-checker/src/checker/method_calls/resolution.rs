@@ -743,7 +743,7 @@ fn scalar_declares_math_trait(ty: &Ty, trait_name: &str) -> bool {
     match ty.kind() {
         TyKind::IntLiteral => matches!(trait_name, "Ceilable" | "Floorable" | "Truncable"),
         TyKind::FloatLiteral => false,
-        _ => mojito_types::conformance::modelled_declares(ty, trait_name),
+        _ => mojito_types::conformance::modelled_declares(ty, trait_name, &mut |_, _| true),
     }
 }
 

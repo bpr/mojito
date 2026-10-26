@@ -1213,6 +1213,7 @@ assets/ok/value_parameter_method_aggregate.mojo	main	exe-differential	sanitized
 assets/ok/value_parameter_string_aggregate.mojo	main	exe-differential	sanitized
 assets/ok/value_params.mojo	main	exe-differential	sanitized
 assets/ok/value_struct_generic_constructor_overload.mojo	main	exe-differential	sanitized
+assets/ok/value_traits_library.mojo	main	exe-differential	sanitized
 assets/ok/variable_scoping.mojo	main	exe-differential	sanitized
 assets/ok/variadic_args.mojo	main	exe-differential	sanitized
 assets/ok/variadic_collector_forwarded_and_borrowed.mojo	main	exe-differential	sanitized

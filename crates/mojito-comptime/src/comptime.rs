@@ -282,7 +282,7 @@ pub fn prepare_importing(
     installed: Option<&InstalledInterfaces>,
 ) -> Result<Vec<Stmt>, ComptimeError> {
     pack_qualification::qualify_struct_packs(&mut own)?;
-    synthesize_copyable_copy(&mut own);
+    synthesize_copyable_copy(&mut own, installed);
     synthesize_hashable_hash(&mut own);
     synthesize_equatable_eq(&mut own);
     desugar_simd_wildcard_parameters(&mut own);

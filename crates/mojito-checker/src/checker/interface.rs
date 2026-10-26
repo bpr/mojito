@@ -277,6 +277,16 @@ impl InstalledInterfaces {
             .map(|position| &constants[position].1)
     }
 
+    /// The parents the reached trait `name` declares, decoding its
+    /// declaration's record on first use.
+    pub fn trait_parents(&self, name: &str) -> Option<&[String]> {
+        self.declaration(Table::Traits, name)?
+            .traits
+            .iter()
+            .find(|(trait_name, _)| trait_name == name)
+            .map(|(_, info)| info.refines.as_slice())
+    }
+
     /// The reached part of the package, whose declarations answer a name
     /// the program's own overload sets miss.
     pub fn package_scope(&self) -> mojito_checked::package::PackageScope {

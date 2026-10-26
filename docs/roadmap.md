@@ -3156,10 +3156,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: a trait default body for `Defaultable.__init__` over
     `reflect[Self]`'s fields, the way the `Hashable`/`Writable` defaults
     read them.
+  - The default body goes in the bundled declaration
+    (`stdlib/std/builtin/value.mojo`), whose `__init__` is a requirement
+    until then.
   - The synthesized `__init__` must be the member the struct's
-    `Defaultable` witness table records (`compiler_trait_witness_table`
-    in `checker/traits.rs`), since `T()` at a struct names that witness
-    (`MirDeclarations::default_initializer`).
+    `Defaultable` witness table records, since `T()` at a struct names
+    that witness (`MirDeclarations::default_initializer`).
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -3307,27 +3309,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `MirDeclarations::bound_requirement` and keeps `b` through the call.
     The fix must give the drop analysis the assumed trait too.
   - Found while landing R682 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1459 A declared trait cannot refine a compiler-known trait**
-
-  `trait Foo(ImplicitlyCopyable)` is rejected ("user trait 'Foo' cannot
-  refine builtin trait 'ImplicitlyCopyable' yet"), where the pin accepts it
-  and a `T: Foo` copies.
-  - Cause: `Checker::check_trait` refuses a parent on `COMPILER_TRAITS`
-    that no declaration answers, since nothing inherits from one.
-  - A bound already reads through `trait_refines`, but a struct's
-    lifecycle answer (`is_copyable`, `is_implicitly_copyable`,
-    `is_movable`) counts only a declared trait of the lifecycle name, and
-    the elaborator's `Lifecycle` rows likewise.
-  - Probe: the bundled `DivModable` (`stdlib/std/math.mojo`) omits
-    upstream's `ImplicitlyCopyable` parent, so a `T: DivModable` is not
-    copyable through its bound.
-  - Probe: `trait Foo(ImplicitlyCopyable)` with `def two[T: Foo](x: T)`
-    copying `x`, conformed by a `@fieldwise_init struct S(Foo)` holding an
-    `Int`.
-  - Found while landing R1361 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7496,39 +7477,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R838 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-- [ ] **R861 A `Copyable` struct holding a `TrivialRegisterPassable` field
-  is rejected as not `Copyable`**
-
-  `struct Box(Copyable): var p: P`, with `P` declaring
-  `TrivialRegisterPassable`, fails with "type 'Box' for parameter 'Self'
-  does not conform to trait 'Copyable'", where the pin runs it.
-  - `TrivialRegisterPassable` refines `ImplicitlyCopyable`, so the field is
-    copyable; the synthesized `Copyable` row apparently misses the
-    refinement.
-  - The cause is not yet traced.
-  - Pinned by
-    `conformance/probes/copyable_struct_trivial_register_passable_field.mojo`;
-    promote it to `assets/ok/` when it runs.
-  - Found while landing R838 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-- [ ] **R863 A `TrivialRegisterPassable` struct that does not declare
-  `Copyable` cannot be copied explicitly**
-
-  `q.copy()` fails the check with "type 'P' has no method 'copy'", and a
-  generic `x.copy()` or `T(copy=x)` at `P` stops in the VM, where the pin
-  runs all of them.
-  - `TrivialRegisterPassable` refines `ImplicitlyCopyable`, which refines
-    `Copyable`, so the struct's copy members should be synthesized as if
-    `Copyable` were declared; declaring it makes every case run.
-  - Likely the same missed refinement as R861.
-  - Pinned by `conformance/probes/trivial_register_passable_copy_method.mojo`
-    and `trivial_register_passable_generic_copy.mojo`; promote them to
-    `assets/ok/` when they run.
-  - Found while landing R839 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1453 Bundled types do not declare upstream's `RegisterPassable`
   and `TrivialRegisterPassable`**
 
@@ -7542,11 +7490,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `Allocation`, `ThinAllocation`, and `Variant where
     Ts.all_conforms_to[RegisterPassable]()`.
   - Cause: either declaration changes how the value passes natively, so
-    the native ABI rows in `docs/native-abi.md` must follow, and
-    `TrivialRegisterPassable` is not yet a checked conformance (R1363).
+    the native ABI rows in `docs/native-abi.md` must follow, and the
+    checker does not yet enforce `TrivialRegisterPassable`'s rules at a
+    declaration (R860).
   - `Span`'s is R1226.
   - Found while landing R578 (2026-10-26).
-  - Depends on R1363 and R1226.
+  - Depends on R860 and R1226.
   - Model: Opus, Not Planned.
 
 - [ ] **R1454 Bundled types lack the members and traits upstream's other
@@ -9025,32 +8974,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Closes R1441's `divmod`/`round`/`abs` probe: a `read` parameter binds
     the argument in place.
   - Found while landing R1361 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1363 `Defaultable`, `RegisterPassable`, and
-  `TrivialRegisterPassable` are compiler-known, where upstream's
-  `std/builtin/value.mojo` declares them**
-
-  Upstream declares `TrivialRegisterPassable(Deinitable, ImplicitlyCopyable,
-  Movable, RegisterPassable)`, and Mojito's `compiler_trait_refines` knows
-  only its `RegisterPassable` parent, so a `TrivialRegisterPassable` struct
-  is not `Copyable` and an undeclaring struct passes the bound.
-  - Bundle the three in a new `stdlib/std/builtin/value.mojo`, exported from
-    the prelude. Delete `compiler_trait_refines` and
-    `compiler_trait_declaration`, whose only row is `Defaultable`'s.
-  - Probe:
-    `conformance/probes/copyable_struct_trivial_register_passable_field.mojo`,
-    and `trivial_register_passable_copy_method.mojo`.
-  - Closes R861 and R863 (the missed refinement to `Copyable`). Shrinks
-    R860 and R1119 (its default body goes in this declaration).
-  - Probe: once the bound holds, `MirDeclarations::copy_is_identity`
-    answers yes for a type parameter whose bound is or refines
-    `TrivialRegisterPassable`. Until then `cse` keeps two `var.use` copies
-    of `x` in `def both[T: TrivialRegisterPassable](x: T) -> Int: return
-    pair(x, x)`, `mem-2-reg` keeps `y`'s slot in `def keep[T:
-    TrivialRegisterPassable](x: T) -> T: var y = x; return y`, and
-    `imm-arguments` leaves a `read x: T` in its parameter slot.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10642,6 +10565,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     only a `write_to` prints the elaborated instance name
     `P$mono$TInt(x=Int(1))`, where upstream's default body prints
     `P[SIMD[DType.int, 1]](x=Int(1))`.
+  - Probe: `trait Shown(Writable)` is rejected ("user trait 'Shown'
+    cannot refine builtin trait 'Writable' yet"), where the pin runs a
+    `T: Shown` printing its argument. `Checker::check_trait` lets a
+    declared trait refine only `AnyType` and the lifecycle traits among
+    the compiler-known ones, which declare no member a refinement
+    inherits.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -11198,8 +11127,8 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: `conformance/probes/span_ref_binding_register_passable.mojo`,
     which also holds the starred `case [f, *ref rr]` the pin rejects the
     same way.
-  - Watch R1363: Mojito's `TrivialRegisterPassable` is not yet a checked
-    conformance.
+  - Watch R860: the checker does not yet enforce
+    `TrivialRegisterPassable`'s rules at a declaration.
   - Found while planning R1137 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
