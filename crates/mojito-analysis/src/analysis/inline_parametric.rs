@@ -168,8 +168,8 @@ use super::pre_elaboration::{CallGraphPass, Callees, Cycles};
 use super::region_walk::region_op;
 use mojito_ast::ast::{ArgConvention, Dtype, FORWARDED_KWARGS_NAME};
 use mojito_ast::call::{ArgSlot, CallSlots, CallVariadics, bind_spread, match_call_slots};
-use mojito_checked::checked::CheckedConst;
 use mojito_checked::checked::ComptimeSequence;
+use mojito_checked::checked::{CheckedCallArgumentSource, CheckedConst};
 use mojito_checked::declaration::{InlineLevel, SlotParameter};
 use mojito_common::token::SourceSpan;
 use mojito_hir::hir::VarId;
@@ -180,14 +180,15 @@ use mojito_mir::mir::visit::{
 use mojito_mir::mir::{
     Const, ConstructionTypes, FuncRef, LoopLabel, MirBlock, MirCaptureAccess, MirCaptureMode,
     MirClosureCapture, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirPlace, MirSubscriptCall, MirTerm, Proj, Raises, Reg, RegionFrame, RegisterEnds,
-    TypeConstructionError, UseMode, callable_targets, construct_type_parameters, converts_to_error,
-    count_register_reads, erase_removed_operands, error_conversion, fresh_register,
-    has_no_destructor, instruction_regions, instruction_regions_mut, instruction_regs_mut,
-    instruction_slots, instruction_subscript_call, instruction_subscript_call_mut, loop_breaks_mut,
-    loop_continues_mut, lower_copies_and_moves, member_receiver_ty, name_constructors, region_exit,
-    removed_argument_operands, renumber_block_slots, terminator_regs_mut,
-    with_removed_argument_forwards_erased, without_removed_arguments,
+    MirPlace, MirSubscriptArg, MirSubscriptCall, MirTerm, Proj, Raises, Reg, RegionFrame,
+    RegisterEnds, TypeConstructionError, UseMode, callable_targets, construct_type_parameters,
+    converts_to_error, count_register_reads, dunder_method_call, erase_removed_operands,
+    error_conversion, fresh_register, has_no_destructor, instruction_regions,
+    instruction_regions_mut, instruction_regs_mut, instruction_slots, instruction_subscript_call,
+    instruction_subscript_call_mut, loop_breaks_mut, loop_continues_mut, lower_copies_and_moves,
+    member_receiver_ty, name_constructors, operator_method, region_exit, removed_argument_operands,
+    renumber_block_slots, terminator_regs_mut, with_removed_argument_forwards_erased,
+    without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::origin::{Mutability, Origin, OriginParamId, RefTy};
@@ -993,10 +994,7 @@ impl<'c> Inliner<'_, 'c> {
     /// makes is a call of the nested `def` it lifts, whose captures bind
     /// the places the closure captures.
     fn inlinable(&self, block: &MirBlock, index: usize) -> Option<Inlinable<'c>> {
-        let index_places = match &block.instrs[index] {
-            MirInstr::Index { index_place, .. } => vec![index_place.as_deref().cloned()],
-            _ => Vec::new(),
-        };
+        let subscript = subscript_operands(&block.instrs[index]);
         let (
             dest,
             target,
@@ -1076,43 +1074,34 @@ impl<'c> Inliner<'_, 'c> {
                 capture_accesses.as_slice(),
             ),
             // A checker-selected subscript calls its accessor on the
-            // base, passing the index as the accessor's one runtime
-            // argument or, to one keyed on a value parameter of its own
-            // (`Tuple.__getitem_param__[index: Int]`), as that
-            // parameter's constant, as the VM and the elaborator pass it.
+            // base, passing its operands as `subscript_operands` binds them,
+            // as the VM and the elaborator pass them.
             MirInstr::Index {
                 dest,
                 base,
-                index: operand,
                 base_place,
-                call: Some(subscript),
+                call: Some(accessor),
                 intrinsic: None,
                 ..
-            } if subscript.capture_accesses.is_empty() => {
-                let parameterless = subscript.arguments.is_empty();
-                let (args, arg_places) = if parameterless {
-                    (&[][..], &[][..])
-                } else {
-                    (std::slice::from_ref(operand), index_places.as_slice())
-                };
-                (
-                    *dest,
-                    Cow::Borrowed(subscript.target.as_str()),
-                    CallArguments {
-                        args,
-                        arg_places,
-                        kwargs: &[],
-                        kwarg_places: &[],
-                    },
-                    Cow::Owned(subscript_parameter_arguments(block, index, subscript)?),
-                    &[][..],
-                    Some(Receiver::Argument(*base)),
-                    base_place.as_deref(),
-                    &[][..],
-                    None,
-                    &[][..],
-                )
             }
+            | MirInstr::MultiIndex {
+                dest,
+                object: base,
+                object_place: base_place,
+                call: Some(accessor),
+                ..
+            } if accessor.capture_accesses.is_empty() => (
+                *dest,
+                Cow::Borrowed(accessor.target.as_str()),
+                subscript.as_ref()?.arguments(),
+                Cow::Owned(subscript_parameter_arguments(block, index, accessor)?),
+                &[][..],
+                Some(Receiver::Argument(*base)),
+                base_place.as_deref(),
+                &[][..],
+                None,
+                &[][..],
+            ),
             MirInstr::CallIndirect {
                 dest,
                 callee,
@@ -3458,6 +3447,35 @@ fn fold_witnesses(blocks: &mut [MirBlock], function: &MirFunction, declarations:
                     *resolved = Some(member);
                     param_decls.clone_from(&declaration.param_decls);
                 }
+                // An operator through a bound is its member's call once
+                // the receiver is a struct, as a struct operator is.
+                MirInstr::BinOp {
+                    op,
+                    dest,
+                    a,
+                    b,
+                    raises,
+                    ..
+                } if declaration.param_decls.is_empty()
+                    && let Some(method) = operator_method(*op) =>
+                {
+                    let mut call = dunder_method_call(
+                        *dest,
+                        *a,
+                        method,
+                        Some(member),
+                        raises.take(),
+                        vec![*b],
+                    );
+                    if let MirInstr::MethodCall {
+                        receiver_convention,
+                        ..
+                    } = &mut call
+                    {
+                        *receiver_convention = declaration.receiver_convention;
+                    }
+                    *instruction = call;
+                }
                 MirInstr::BinOp { resolved, .. } if declaration.param_decls.is_empty() => {
                     *resolved = Some(member);
                 }
@@ -3530,6 +3548,90 @@ fn subscript_parameter_arguments(
             .map(TyArg::Val)
         })
         .collect()
+}
+
+/// A subscript read's operands, as the call of its accessor passes them.
+struct SubscriptOperands {
+    args: Vec<Reg>,
+    arg_places: Vec<Option<MirPlace>>,
+    kwargs: Vec<(String, Reg)>,
+    kwarg_places: Vec<Option<MirPlace>>,
+}
+
+impl SubscriptOperands {
+    fn arguments(&self) -> CallArguments<'_> {
+        CallArguments {
+            args: &self.args,
+            arg_places: &self.arg_places,
+            kwargs: &self.kwargs,
+            kwarg_places: &self.kwarg_places,
+        }
+    }
+}
+
+/// The operands the checker-selected subscript read `instruction` passes
+/// its accessor: its bracket's operands when the accessor's contract takes
+/// each of them as a runtime argument, as a method call's contract takes
+/// its arguments, and none to an accessor keyed on value parameters of its
+/// own (`Tuple.__getitem_param__[index: Int]`), which takes them as
+/// constants. `None` for any other instruction, and for a contract taking
+/// only some.
+fn subscript_operands(instruction: &MirInstr) -> Option<SubscriptOperands> {
+    let (call, args, arg_places, kwargs, kwarg_places) = match instruction {
+        MirInstr::Index {
+            index,
+            index_place,
+            call: Some(call),
+            ..
+        } => (
+            call,
+            vec![*index],
+            vec![index_place.as_deref().cloned()],
+            Vec::new(),
+            Vec::new(),
+        ),
+        MirInstr::MultiIndex {
+            args,
+            arg_places,
+            kwargs,
+            kwarg_places,
+            call: Some(call),
+            ..
+        } => (
+            call,
+            args.iter()
+                .map(|MirSubscriptArg::Index(reg)| *reg)
+                .collect(),
+            arg_places.clone(),
+            kwargs
+                .iter()
+                .map(|(name, MirSubscriptArg::Index(reg))| (name.clone(), *reg))
+                .collect(),
+            kwarg_places.clone(),
+        ),
+        _ => return None,
+    };
+    if call.arguments.is_empty() {
+        return Some(SubscriptOperands {
+            args: Vec::new(),
+            arg_places: Vec::new(),
+            kwargs: Vec::new(),
+            kwarg_places: Vec::new(),
+        });
+    }
+    let takes = |source: CheckedCallArgumentSource| {
+        call.arguments
+            .iter()
+            .any(|argument| argument.source == source)
+    };
+    ((0..args.len()).all(|at| takes(CheckedCallArgumentSource::Positional(at)))
+        && (0..kwargs.len()).all(|at| takes(CheckedCallArgumentSource::Keyword(at))))
+    .then_some(SubscriptOperands {
+        args,
+        arg_places,
+        kwargs,
+        kwarg_places,
+    })
 }
 
 /// The constant the last of `instructions` defining `reg` gives it, through

@@ -1,0 +1,135 @@
+mojito-mir 1.109
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: V, fields: [field { name: x, type: Int }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [] }
+  ],
+  decls: [
+    decl { lowered_name: "V.__add__", param_names: [o], param_types: [struct_type { name: V, arguments: [] }], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: "V.__getitem__", param_names: [i, j], param_types: [Int, Int], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: absent, param_conventions: [absent, absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [], inline: nodebug },
+    decl { lowered_name: via_op, param_names: [a, b], param_types: [struct_type { name: V, arguments: [] }, struct_type { name: V, arguments: [] }], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: via_sub, param_names: [a, i], param_types: [struct_type { name: V, arguments: [] }, Int], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: "V.__add__",
+        registers: 3,
+        vars: 2,
+        var_names: [self, o],
+        params: 2,
+        param_types: [struct_type { name: V, arguments: [] }, struct_type { name: V, arguments: [] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: V, arguments: [] } }, var_type { var: $v1, type: struct_type { name: V, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 153, end: 159, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 162, end: 165, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 153, end: 165, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: V, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: V, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              binary { op: add, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: "V.__getitem__",
+        registers: 5,
+        vars: 3,
+        var_names: [self, i, j],
+        params: 3,
+        param_types: [struct_type { name: V, arguments: [] }, Int, Int],
+        owned_params: [false, false, false],
+        deinit_params: [false, false, false],
+        ref_params: [false, false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: V, arguments: [] } }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 262, end: 268, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 271, end: 272, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 262, end: 272, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 275, end: 276, origin: present($v2) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 262, end: 276, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: V, arguments: [] }), projections: [projection { op: field(x), type: Int }], type: present(Int), through: absent } },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              binary { op: mul, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent },
+              var.use { dest: %r3, var: $v2, mode: copy },
+              binary { op: add, dest: %r4, a: %r2, b: %r3, resolved: absent, raises: absent }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      },
+      fn {
+        name: via_op,
+        registers: 3,
+        vars: 2,
+        var_names: [a, b],
+        params: 2,
+        param_types: [struct_type { name: V, arguments: [] }, struct_type { name: V, arguments: [] }],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: V, arguments: [] } }, var_type { var: $v1, type: struct_type { name: V, arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: V, arguments: [] } }, reg_type { reg: %r1, type: struct_type { name: V, arguments: [] } }, reg_type { reg: %r2, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 321, end: 322, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 325, end: 326, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 321, end: 326, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: V, arguments: [] }), projections: [], type: present(struct_type { name: V, arguments: [] }), through: absent } },
+              place.load { dest: %r1, place: place { root: $v1, root_type: present(struct_type { name: V, arguments: [] }), projections: [], type: present(struct_type { name: V, arguments: [] }), through: absent } },
+              call.method { dest: %r2, recv: %r0, method: __add__, resolved: present("V.__add__"), raises: absent, reference_result: absent, result_adapter: absent, args: [%r1], kwargs: [], recv_place: absent, recv_writes: false, receiver_convention: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], param_decls: [], instantiated_args: [], spread: absent }
+            ],
+            terminator: return { value: present(%r2) }
+          }
+        ]
+      },
+      fn {
+        name: via_sub,
+        registers: 5,
+        vars: 2,
+        var_names: [a, i],
+        params: 2,
+        param_types: [struct_type { name: V, arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: V, arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: struct_type { name: V, arguments: [] } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 374, end: 375, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 376, end: 377, origin: present($v1) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 379, end: 380, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 379, end: 380, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 374, end: 381, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r2, value: int_literal(2) },
+              literal.materialize { dest: %r3, value: %r2, target: Int },
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: V, arguments: [] }), projections: [], type: present(struct_type { name: V, arguments: [] }), through: absent } },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              index.multi { dest: %r4, object: %r0, args: [index(%r1), index(%r3)], object_place: present(place { root: $v0, root_type: present(struct_type { name: V, arguments: [] }), projections: [], type: present(struct_type { name: V, arguments: [] }), through: absent }), arg_places: [absent, absent], kwargs: [], kwarg_places: [], call: present(subscript_call { target: "V.__getitem__", raises: absent, result_type: Int, receiver_requires_place: false, receiver_convention: absent, arguments: [call_argument { source: positional(0), parameter_type: Int, requires_place: false, convention: absent }, call_argument { source: positional(1), parameter_type: Int, requires_place: false, convention: absent }], capture_accesses: [], reference_result: absent, param_arg_regs: [], param_decls: [] }) }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]
+}

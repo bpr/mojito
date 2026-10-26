@@ -727,31 +727,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1031.
   - Model: Fable, Not Planned.
 
-- [ ] **R1348 A struct operator and a multi-subscript are not calls in
-  MIR, so `inline-parametric` keeps a `nodebug` dunder they reach**
-
-  MIR lowering emits `a + b` on a struct as a `binary` naming its dunder
-  and `g[i, j]` or `g[i:j]` as an `index.multi` or `slice` naming its
-  accessor, where upstream's parser emits the dunder's call, as Mojito's
-  `prefix_op` already does for `-x`.
-  - Each pass that reads calls has to know these instructions as calls:
-    `unused_args` and `unused_params` now do (R1110), but
-    `Inliner::inlinable` reads a `call`, a resolved `call.method`, a
-    one-operand `index.get`, and a devirtualized `call.indirect` only.
-  - Probe: `via_op(a: V, b: V)` returning `a + b`, over an
-    `@always_inline("nodebug") def __add__(self, o: V) -> Int`, keeps the
-    `binary` after pre-elaboration, while `a.plus(b)` over the same body
-    inlines.
-  - Probe: `via_sub(a: V, i: Int)` returning `a[i, 2]`, over an
-    `@always_inline("nodebug") def __getitem__(self, i: Int, j: Int)`,
-    keeps the `index.multi`.
-  - Lever: lower a struct operator to the dunder's `call.method`, as
-    `prefix_op` does, and have the inliner bind a subscript's operands
-    through its contract, as its `index.get` arm does.
-  - Found while landing R1110 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1035 A package body's cycle check misses the calls its drops
   add**
 
@@ -3162,13 +3137,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     dunder, so it records the whole `SelectedCall` contract, its raise
     effect, and the right operand typed by the selected parameter, as an
     argument is.
-  - Keep the `overload_target` fact, derived from the contract, until R1348
-    lowers the call from it.
+  - MIR lowers a struct operator to its dunder's `call.method`
+    (`struct_operator_method`), but the `overload_target` fact names no
+    receiver convention, so a dunder owning its receiver (`var self`,
+    `deinit self`) still lowers to a `binary`: the contract's
+    `receiver_convention` lets that one be a call too, and a
+    `nodebug` one inline.
+  - Probe: `N(3) - 1` over `@always_inline("nodebug") def __sub__(deinit
+    self, o: Int) -> Int` keeps its `binary` after pre-elaboration.
   - Probe: `l == [1]` over `l: List[Int]` (R697) and `print(-(n^))` over
     `__neg__(deinit self)` (R1332) run at the pin and fail in Mojito.
   - Closes R1332 (a prefix dunder records no call contract) and R697 (a
-    display right operand is not typed by the dunder). Shrinks R1348 and
-    R1238.
+    display right operand is not typed by the dunder). Shrinks R1238.
   - Depends on nothing.
   - Model: Fable, Planned.
 

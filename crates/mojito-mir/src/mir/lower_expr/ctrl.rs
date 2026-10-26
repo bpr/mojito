@@ -929,9 +929,13 @@ impl<'a> Flatten<'a> {
         let resolved = link.and_then(|link| link.target.clone());
         // A link records no effect of its own: a dispatched link raises
         // what the chain does.
+        let receiver = index
+            .checked_sub(1)
+            .map_or(first, |previous| rest[previous].1);
         let dispatch = OperatorDispatch {
             raises: resolved.as_ref().and_then(|_| chain.raises()),
             resolved,
+            method: super::expr::struct_operator_method(op, receiver, false),
         };
         let cmp = self.emit_comparison(sp.clone(), op, left, cur, dispatch);
         if index + 1 == rest.len() {

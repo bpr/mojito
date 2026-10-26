@@ -2503,9 +2503,13 @@ paths opaque parameters already used. Builtin scalars keep primitive execution
 through its dunder (`apply_binop`/`apply_prefix`, and the `abs`/`round`/`Int`
 builtins). The checker records every struct operator's selected dunder as the
 operator's `BinOp.resolved` — a lone one as `{struct}.{dunder}`, an overloaded
-one by its overload key — so the operator is that method call: ownership treats
-a resolved `BinOp` as a call, and its operands' owners die at the operator, as
-after `a.__add__(b)`. A comparison over a type parameter bounded by
+one by its overload key — and MIR lowers an operator whose receiver (the left
+operand, or a reflected operator's right) is a struct to that dunder's
+`MethodCall` (`struct_operator_method`), as upstream's parser spells `a + b` as
+`a.__add__(b)`, so every pass that reads calls reads it as one; its operands'
+owners die at the call. A dunder owning its receiver (`var`/`deinit self`)
+keeps a resolved `BinOp`, which ownership treats as the same call, because
+the check records no receiver convention for it (R1357). A comparison over a type parameter bounded by
 `Equatable` or `Comparable` names the bound's requirement
 (`__trait_dispatch.__lt__$ov$Self`), so it too is a call; the elaborator
 retargets it at a struct instance and clears it at a builtin one. Any other
@@ -2513,7 +2517,7 @@ operator over a type parameter names no dunder; the elaborator retargets it at
 each instance. A chained comparison has no occurrence per link, so its own
 record holds one `CheckedCompareLink` per link (the selected dunder and
 whether it is Equatable's default `!=`), and MIR emits each link as that
-dunder's `BinOp` through the same emitter as a lone operator
+dunder's call through the same emitter as a lone operator
 (`Flatten::emit_comparison`). Right after the first link, the first middle
 operand becomes an owned temporary in a hidden `$chain_middle` slot (a
 place copied, a temporary or `^` moved), which drop elaboration destroys
@@ -6057,7 +6061,13 @@ point where a slot declared in a loop is uninitialized again.
   upstream's `InlineParametric`. It follows the callees whose declaration's
   `InlineLevel` is `NoDebug`, `Builtin`, or `Always`
   (`is_inlined_before_elaboration`), and replaces a call to one with the
-  callee's finished body, drops already inserted: a `nodebug` or `builtin`
+  callee's finished body, drops already inserted. A call is a `call`, a
+  resolved `call.method` (a struct operator among them), a devirtualized
+  `call.indirect`, or a subscript read with its accessor's contract: an
+  `index.get` passing its one operand, and an `index.multi` passing its
+  bracket's operands where the contract takes each of them
+  (`subscript_operands`), or none to an accessor keyed on value
+  parameters of its own. It inlines a `nodebug` or `builtin`
   callee at any size, as the pin inlines it, and a plain `@always_inline`
   callee only while its body's `inline_cost` is below `INLINE_SIZE_BOUND`
   (32), the pin's count of the operations its first round leaves,
@@ -6168,7 +6178,8 @@ point where a slot declared in a loop is uninitialized again.
   struct's witness table records for the requirement
   (`MirDeclarations::witness`, from `StructDeclaration::witness_tables`,
   which the checker's `verify_conformance` records per declared
-  conformance), a method call taking the member's own `param_decls`, as
+  conformance), a method call taking the member's own `param_decls` and an
+  operator becoming the member's `MethodCall`, as a struct operator is, as
   upstream's substitution folds the witness. `remove-unused-params` then
   reads only the struct arguments that member kept. A call with a result
   adapter, a differing result ABI or parameter count, an iteration step

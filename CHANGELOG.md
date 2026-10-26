@@ -1355,6 +1355,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A struct operator is now its dunder's method call in MIR, as upstream's
+  parser spells `a + b` as `a.__add__(b)` (R1348), and an operator through
+  a bound becomes its member's call once `inline-parametric` substitutes a
+  struct receiver. `inline-parametric` also inlines the accessor of a
+  multi-subscript (`g[i, j]`, `g[i:j, k]`), so a `nodebug` dunder or
+  accessor reached through either inlines like a direct call. A dunder
+  owning its receiver still lowers to a `binary` (R1357).
+
 - `inline-parametric` and `automatic-inline` now inline a callee holding a
   `try`, splicing it into the caller's block as an inlined `if` is, as the
   pin does (R1288). So an `@always_inline` function holding a `for` loop

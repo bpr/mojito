@@ -14,6 +14,33 @@ use mojito_types::types::TyKind;
 pub(in crate::mir) struct OperatorDispatch {
     pub(in crate::mir) resolved: Option<String>,
     pub(in crate::mir) raises: Option<Ty>,
+    /// The method a struct receiver answers the operator with, when the
+    /// operator is that method's call ([`struct_operator_method`]).
+    pub(in crate::mir) method: Option<&'static str>,
+}
+
+/// The method struct value `receiver` answers operator `op` with, as
+/// upstream's parser spells the operator: `a + b` is `a.__add__(b)` and a
+/// reflected `1 + m` is `m.__radd__(1)`. `None` for any other receiver,
+/// whose operator stays a `binary`, for `in`, which calls the right
+/// operand's `__contains__`, and for a dunder owning its receiver, whose
+/// `var` or `deinit` convention the check does not record.
+pub(in crate::mir) fn struct_operator_method(
+    op: InfixOp,
+    receiver: Node<'_>,
+    reflected: bool,
+) -> Option<&'static str> {
+    let method = crate::mir::operator_method(op)?;
+    (receiver
+        .ty()
+        .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+        && !receiver.forwarded())
+    .then(|| {
+        reflected
+            .then(|| op.reflected_dunder())
+            .flatten()
+            .unwrap_or(method)
+    })
 }
 
 impl<'a> Flatten<'a> {
@@ -293,16 +320,20 @@ impl<'a> Flatten<'a> {
             )
         });
         let (ra, rb) = if reflected { (rb, ra) } else { (ra, rb) };
+        let receiver = if reflected { b } else { a };
         let dispatch = OperatorDispatch {
             resolved,
             raises: node.raises(),
+            method: struct_operator_method(op, receiver, reflected),
         };
         self.emit_comparison(node.location(), op, ra, rb, dispatch)
     }
 
-    /// Emit one dispatched operator over `a` and `b`: `BinOp.resolved`
-    /// names the dunder the checker selected, so the operator is that
-    /// method's call, raising what it raises.
+    /// Emit one dispatched operator over `a` and `b`: the dunder the
+    /// checker selected for a struct receiver is called as a method, as
+    /// upstream's parser spells `a + b` as `a.__add__(b)`; any other
+    /// operator is a `binary`, whose `resolved` names a bound's
+    /// requirement the elaborator answers per instance.
     pub(in crate::mir) fn emit_comparison(
         &mut self,
         location: SourceSpan,
@@ -311,16 +342,25 @@ impl<'a> Flatten<'a> {
         b: Reg,
         dispatch: OperatorDispatch,
     ) -> Reg {
-        let OperatorDispatch { resolved, raises } = dispatch;
-        let raises = self.raises(raises, location.clone());
-        let d = self.fresh(location, None);
-        self.emit(MirInstr::BinOp {
-            op,
-            dest: d,
-            a,
-            b,
+        let OperatorDispatch {
             resolved,
             raises,
+            method,
+        } = dispatch;
+        let raises = self.raises(raises, location.clone());
+        let d = self.fresh(location, None);
+        self.emit(match (resolved, method) {
+            (Some(resolved), Some(method)) => {
+                crate::mir::dunder_method_call(d, a, method, Some(resolved), raises, vec![b])
+            }
+            (resolved, _) => MirInstr::BinOp {
+                op,
+                dest: d,
+                a,
+                b,
+                resolved,
+                raises,
+            },
         });
         d
     }
