@@ -52,7 +52,7 @@ the entries named. A single command cannot use both.
 3. **Gap E: compile-time values are slots** (size, small).
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R662 --only R663 --only R471 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R662 --only R663 -n 0
    ```
 
    R950, which restated R662, was merged into it by R1402.
@@ -198,7 +198,7 @@ are conformance only.
 | gap | upstream's shape | core entries | entries that close or shrink | size lever |
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1440–R1444, then R1445 | about 25 (below) | yes |
-| E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662, R663, R471 | R788, R378, R472, R508, R602, R1194 | yes |
+| E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662, R663 | R788, R378, R472, R508, R602, R1194 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1360–R1363, R705, R424, R578 → R577; R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 for the other closure forms | R1104, R100, R1230, R1333 (closed), R534, R176 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R603; R1379–R1388 | about 45 (below) | partial |

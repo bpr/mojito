@@ -4961,21 +4961,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R471 A local `comptime` struct binding in a plain `def` is stored
-  and destroyed**
-
-  Problem: `comptime c = N(8)` then `print(c.a)` twice in `main`, over a
-  `struct N` with a printing `__deinit__`, prints `8 / 8 / del 8` in
-  Mojito, where the pin prints `8 / 8` and never destroys a `N`.
-  - MIR gives `c` a frame slot that holds the frozen value and drops it, as
-    if it were a `var`.
-  - At the pin the binding is a parameter: a field read is a constant, and
-    only a run-time use of the whole value materializes a temporary.
-  - In a generic `def`, a value parameter's field read already folds.
-  - Found while landing R467 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R472 A plain `def`'s `comptime for` element read through a `String`
   field materializes the whole element**
 

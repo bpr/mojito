@@ -687,6 +687,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A local `comptime` struct binding in a plain `def` is a parameter with no
+  storage, as at the pin (R471 closed): `comptime c = N(8)` read as `c.a`
+  is a compile-time constant and never destroys an `N`, and each run-time
+  use of the whole value materializes its own temporary
+  (`assets/ok/comptime_local_struct_binding.mojo`).
+
 - A triage of nine `stdlib` entries (R1405) re-ran each probe against the
   pin. R213 (`"abc".byte_length()` prints 3), R216 (`isdir("/tmp")`), and
   R220 (`Array[Int8, 4]()`) already matched it and are closed, as are R206

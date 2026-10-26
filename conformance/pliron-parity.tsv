@@ -166,6 +166,7 @@ assets/ok/comptime_local_application_per_read.mojo	main	exe-differential	sanitiz
 assets/ok/comptime_local_binder_alias.mojo	main	exe-differential	sanitized
 assets/ok/comptime_local_display_applications.mojo	main	exe-differential	sanitized
 assets/ok/comptime_local_over_binder.mojo	main	exe-differential	sanitized
+assets/ok/comptime_local_struct_binding.mojo	main	exe-differential	sanitized
 assets/ok/comptime_match_coverage_warnings.mojo	main	exe-differential	sanitized
 assets/ok/comptime_match_forms.mojo	main	exe-differential	sanitized
 assets/ok/comptime_match_patterns.mojo	main	exe-differential	sanitized
