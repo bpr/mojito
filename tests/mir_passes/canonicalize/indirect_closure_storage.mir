@@ -1,0 +1,111 @@
+mojito-mir 1.109
+artifact {
+  features: [],
+  files: [
+    file { id: file0, path: present("cases.mojo"), module: absent }
+  ],
+  traits: [],
+  structs: [
+    struct { name: "storage_fold$get$__storage", fields: [field { name: k, type: ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable } }], mut_self_methods: [], fieldwise_init: true, param_decls: [], explicit_destroy_message: absent, explicit_destructors: [], explicit_destroy_declared: false, explicit_destroy_fields: [], conformances: [conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyMovable, conditions: [constraint_bool(true)] }, conformance { trait: IsTriviallyDeinitable, conditions: [constraint_bool(true)] }], declared: [conformance { trait: Movable, conditions: [constraint_bool(true)] }, conformance { trait: Deinitable, conditions: [constraint_bool(true)] }, conformance { trait: Copyable, conditions: [constraint_bool(true)] }, conformance { trait: ImplicitlyCopyable, conditions: [constraint_bool(true)] }, conformance { trait: TrivialRegisterPassable, conditions: [constraint_bool(true)] }, conformance { trait: RegisterPassable, conditions: [constraint_bool(true)] }], associated_types: [], parameterized_associated_types: [], associated_values: [], members: [member { name: __call__, symbol: "storage_fold$get$__storage.__call__" }] }
+  ],
+  decls: [
+    decl { lowered_name: storage_fold, param_names: [k], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] },
+    decl { lowered_name: "storage_fold$get$__storage.__init__", param_names: [k], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: present(out), param_conventions: [present(ref)], return_type: None, returns_reference: false, raises: false, error_type: absent, ref_params: [true], param_writes: [false], availability: [], enclosing: absent, region_binders: [], inline: nodebug, synthesized: true },
+    decl { lowered_name: "storage_fold$get$__storage.get", param_names: [y], param_types: [Int], defaults: [absent], required: [true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: true, receiver_convention: absent, param_conventions: [absent], return_type: Int, returns_reference: false, raises: false, error_type: absent, ref_params: [false], param_writes: [false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: storage_fold,
+        registers: 6,
+        vars: 2,
+        var_names: [k, get],
+        params: 1,
+        param_types: [Int],
+        owned_params: [false],
+        deinit_params: [false],
+        ref_params: [false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: struct_type { name: "storage_fold$get$__storage", arguments: [] } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: struct_type { name: "storage_fold$get$__storage", arguments: [] } }, reg_type { reg: %r2, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v144, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }, reg_type { reg: %r5, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 115, end: 163, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 115, end: 163, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 183, end: 186, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 188, end: 189, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 188, end: 189, origin: absent }) }, reg_loc { reg: %r5, location: present(loc { file: file0, start: 176, end: 190, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              place.load { dest: %r0, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              call { dest: %r1, func: "storage_fold$get$__storage.__init__", raises: absent, args: [%r0], kwargs: [], arg_places: [present(place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent })], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              var.store { var: $v1, src: %r1, binding_type: present(struct_type { name: "storage_fold$get$__storage", arguments: [] }), in_place: false },
+              closure.make { dest: %r2, function: "storage_fold$get$__storage.get", captures: [closure_capture { place: place { root: $v1, root_type: present(struct_type { name: "storage_fold$get$__storage", arguments: [] }), projections: [], type: present(struct_type { name: "storage_fold$get$__storage", arguments: [] }), through: absent }, mode: reference }] },
+              const { dest: %r3, value: int_literal(1) },
+              literal.materialize { dest: %r4, value: %r3, target: Int },
+              call.indirect { dest: %r5, callee: %r2, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r4], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
+              drop.reg { reg: %r2 },
+              drop.var { var: $v1 }
+            ],
+            terminator: return { value: present(%r5) }
+          }
+        ]
+      },
+      fn {
+        name: "storage_fold$get$__storage.__init__",
+        registers: 1,
+        vars: 2,
+        var_names: [self, k],
+        params: 2,
+        param_types: [struct_type { name: "storage_fold$get$__storage", arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, true],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: "storage_fold$get$__storage", arguments: [] } }, var_type { var: $v1, type: Int }],
+        return_type: present(None),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable } }],
+        locations: [reg_loc { reg: %r0, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r0, place: place { root: $v1, root_type: present(Int), projections: [], type: present(Int), through: present($v1) } },
+              place.store_ref { place: place { root: $v0, root_type: present(struct_type { name: "storage_fold$get$__storage", arguments: [] }), projections: [projection { op: field(k), type: ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable } }], type: present(ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable }), through: absent }, reference: %r0 }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: "storage_fold$get$__storage.get",
+        registers: 5,
+        vars: 3,
+        var_names: [self, y, k],
+        params: 2,
+        param_types: [struct_type { name: "storage_fold$get$__storage", arguments: [] }, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: struct_type { name: "storage_fold$get$__storage", arguments: [] } }, var_type { var: $v1, type: Int }, var_type { var: $v2, type: ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable } }],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable } }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 115, end: 163, origin: present($v0) }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 158, end: 159, origin: present($v2) }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 158, end: 159, origin: present($v2) }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 162, end: 163, origin: present($v1) }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 158, end: 163, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              ref.make { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: "storage_fold$get$__storage", arguments: [] }), projections: [projection { op: field(k), type: ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable } }], type: present(ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable }), through: absent } },
+              var.store { var: $v2, src: %r0, binding_type: present(ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable }), in_place: false },
+              ref.make { dest: %r2, place: place { root: $v2, root_type: present(ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable }), projections: [], type: present(ref { referent: Int, origin: origin_untracked { mutable: false }, mutability: immutable }), through: present($v2) } },
+              ref.read { dest: %r1, reference: %r2 },
+              var.use { dest: %r3, var: $v1, mode: copy },
+              binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent },
+              drop.var { var: $v2 }
+            ],
+            terminator: return { value: present(%r4) }
+          }
+        ]
+      }
+  ]
+}

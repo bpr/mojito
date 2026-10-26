@@ -182,6 +182,13 @@ to evolve under the `0.x` compatibility rules.
   `nodebug` `double` inlines in the third round and folds, as at the pin.
   A call through a capturing closure stays indirect (R1345), and so does
   one through a closure held in a slot (R1344).
+- `canonicalize` folds a call through a closure of reference captures too
+  (R1345), as `CallIndirectOp::canonicalize` prepends a `create_closure`'s
+  captures: an inlined `apply[plus](3)` over an `@parameter` `plus` now
+  calls `plus` directly, each captured place a leading argument at its
+  place, and a closure over a capture-list `def`'s storage becomes the
+  method call on that storage a call of the `def` by name is. A call
+  through a lambda's moved storage stays indirect (R1434).
 - `mem-2-reg` promotes the slot of a closure a call goes through (R1344):
   a slot of a thin function type, or a local holding a closure of
   reference captures, no longer stays behind a `call.indirect`'s

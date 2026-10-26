@@ -6051,10 +6051,19 @@ point where a slot declared in a loop is uninitialized again.
   or collectors and its signature is the callee's function type
   (`tests/mir_passes/canonicalize/indirect_known_callee.mir`). So round
   2's fold hands round 3's `inline-parametric` a direct call, and an
-  inlined `apply[double]` inlines a `nodebug` `double` too. A capturing
-  closure keeps the indirect call (R1345); a closure stored in a slot
-  reaches the fold once `mem-2-reg` promotes the slot through the call
-  (R1344). Then, until nothing
+  inlined `apply[double]` inlines a `nodebug` `double` too. A closure of
+  reference captures folds the same way, as `CallIndirectOp::canonicalize`
+  prepends a `create_closure`'s captures: each captured place is a
+  `place.load` before the call, passed at its `arg_places` entry with a
+  `capture_accesses` entry its parameter's `param_writes` decides, as a
+  direct call of an `@parameter` nested `def` passes it; a closure over a
+  capture-list `def`'s storage becomes the `call.method` of the storage's
+  method on that storage, as a call of the `def` by name is
+  (`indirect_closure_storage.mir`). Its `drop.reg`, when its last
+  reader, goes with it, since a closure of references destroys nothing.
+  A closure holding a lambda's moved storage keeps the indirect call
+  (R1434). A closure stored in a slot reaches the fold once `mem-2-reg`
+  promotes the slot through the call (R1344). Then, until nothing
   changes, it erases each instruction whose results nothing reads and
   that `MirInstr::would_be_trivially_dead` declares free of effects but
   reading (MLIR's `wouldOpBeTriviallyDead`): constants, literal

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1469**.
+Next free ID: **R1470**.
 
 ## Ordered Work
 
@@ -518,33 +518,34 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1345 `canonicalize` keeps a `call.indirect` through a capturing
-  closure**
+- [ ] **R1469 The inliner binds no function value passed to a run-time
+  `def(...)` parameter**
 
-  A `call.indirect` whose callee register is a `closure.make` with
-  captures stays indirect, where upstream's
-  `CallIndirectOp::canonicalize` folds a `create_closure` callee into a
-  call of its function with the captures prepended to the arguments.
-  - A direct call of a capturing nested `def` already has that shape:
-    each captured place is a leading `args` operand, with its `arg_places`
-    entry and `capture_accesses`.
-  - Lever: build those operands from the `closure.make`'s `captures` in
-    `fold_known_callees` (`analysis/canonicalize.rs`): a load of each
-    reference capture's place and its access. A first-class use of a
-    capture-list `def` captures its storage by reference since R1377, so
-    it folds the same way; a lambda used as a value moves its storage into
-    its closure since R1427, so the fold passes the closure's storage as
-    the body's `self`.
-  - Probe: `outer` in
-    `tests/mir_passes/canonicalize/indirect_known_callee.mir` keeps its
-    `call.indirect` through `closure.make "outer$plus"`.
-  - Probe: a `nodebug`
-    `apply[origins: OriginSet, //, f: def(Int) capturing[origins] -> Int]`
-    returning `f(x)`, called as `apply[plus](3)` over an `@parameter`
-    nested `def plus` reading a local, keeps a `call.indirect` through
-    `closure.make "main$plus"` in `emit-mir`'s `main`.
-  - Found while landing R1098 (2026-10-24).
-  - Depends on R1344, which makes the shape reachable from source.
+  A `nodebug` callee taking a run-time `def(...)` parameter is never
+  inlined at a call passing it a function or a closure, where upstream's
+  inliner substitutes the value for the parameter.
+  - `MirDeclarations::drop_runs_no_code` (`mojito-mir/src/mir.rs`) answers
+    false for every `TyKind::Func`, so `Inliner::bindings`
+    (`analysis/inline_parametric.rs`) finds no `read` binding for a
+    function constant or a closure of reference captures, though neither
+    destroys anything.
+  - A closure argument's `capture_accesses` are refused too: only a
+    compile-time callable binder's closure is one `instantiated_callee`
+    accepts (`accessed_through`).
+  - So `canonicalize` never sees the call through the parameter, and its
+    fold of a call through a closure of reference captures is reached
+    only by a compile-time callable binder.
+  - Probe: `run_thin(double, 2)` over `@always_inline("nodebug") def
+    run_thin(f: def(Int) -> Int, x: Int) -> Int` keeps its call in
+    concrete MIR, even with `f` unused.
+  - Probe: `run_it(get, 1)` over `@always_inline("nodebug") def run_it(f:
+    def(Int) capturing[_] -> Int, x: Int) -> Int: return f(x)` and a
+    capture-list `def get(y: Int) {k} -> Int` keeps its call; once
+    inlined, `canonicalize` folds the call through the closure to
+    `get`'s method call on its storage
+    (`tests/mir_passes/canonicalize/indirect_closure_storage.mir`).
+  - Found while landing R1345 (2026-10-26).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1346 A `read` argument read through a pointer register keeps
@@ -6726,6 +6727,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`tests/param_callable_value_test.rs`) pin it.
   - A legacy `@parameter` closure follows R533's environment path, not
     R1376's storage struct.
+  - Probe: with `invoke_captured` `@always_inline("nodebug")`,
+    `inline-parametric` splices `callback[2](40)` into `main` as a
+    `call.indirect` the verifier rejects ("indirect-call compile-time
+    parameter metadata does not match its callable contract"), so
+    `canonicalize` folds no call that carries compile-time arguments.
   - Depends on R533.
   - Model: Fable, Planned.
 
@@ -10651,6 +10657,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     a thin one or a local holding a closure of reference captures: a
     call through a parameter of a `capturing` function type still keeps
     its `callee_place` and the slot it names.
+  - `canonicalize`'s `fold_known_callees` folds a call through a closure
+    of reference captures only: a closure holding a lambda's moved
+    storage has no place to pass as its body's `self`, so a call through
+    `closure.make` of a `$lambda` storage method stays `call.indirect`.
+  - A capturing closure's register is owned (`owned_register`,
+    `mir/register_ends.rs`) for the same reason, so a closure of
+    reference captures keeps its `drop.reg` until `canonicalize` erases
+    it once its calls are folded.
   - Found while landing R1378 (2026-10-25).
   - Depends on R1433, R176.
   - Model: Opus, Not Planned.

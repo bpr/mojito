@@ -13,9 +13,10 @@
 //! whose results nothing reads goes when it has no effect but reading
 //! ([`MirInstr::would_be_trivially_dead`]), repeated until nothing changes.
 //! A `call.indirect` whose callee is defined once by a function constant,
-//! or by a closure of no captures, becomes a direct `call` of that
-//! function, as KGEN's `CallParamOp` and `CallIndirectOp` canonicalizers
-//! fold a known callee.
+//! or by a closure of reference captures, becomes a direct call of that
+//! function, its captured places prepended to the arguments or its
+//! storage the receiver, as KGEN's `CallParamOp` and `CallIndirectOp`
+//! canonicalizers fold a known callee.
 //! A `drop.reg` of a register whose type an instantiation made one whose
 //! destruction runs no code goes first, as upstream tracks no
 //! register-passable trivial value: a fold may then forward the register
@@ -39,9 +40,11 @@ use super::pre_elaboration::BodyPass;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
-    Const, FuncRef, MirBlock, MirDeclarations, MirFunction, MirInstr, Reg, count_register_reads,
+    Const, FuncRef, MirBlock, MirCaptureAccess, MirCaptureMode, MirDeclarations, MirFunction,
+    MirFunctionDeclaration, MirInstr, MirPlace, Proj, Reg, count_register_reads, fresh_register,
     instruction_regions_mut, instruction_regs_mut, terminator_regs_mut,
 };
+use mojito_types::origin::{CaptureAccess, OriginSeg};
 use mojito_types::types::{Ty, TyKind};
 use std::collections::{HashMap, HashSet};
 
@@ -427,71 +430,138 @@ fn erase_dead(blocks: &mut [MirBlock], reads: &[u32], erased: &mut HashSet<u32>)
 }
 
 /// Rewrite each `call.indirect` of `function` whose callee register is
-/// defined once by a function constant, or by a closure of no captures,
-/// into a direct `call` of that function; returns how many were rewritten.
+/// defined once by a function constant, or by a closure of reference
+/// captures, into a direct call of that function; returns how many were
+/// rewritten.
 ///
 /// This is KGEN's `CallParamOp::canonicalize`, a call of a known callee
-/// symbol, and its `CallIndirectOp::canonicalize` over a `create_closure`
-/// with nothing to prepend. A copied callee was forwarded to its constant
-/// already; one read out of a slot is not a known callee.
+/// symbol, and its `CallIndirectOp::canonicalize` over a `create_closure`,
+/// which prepends the closure's captures to the arguments: each captured
+/// place is loaded before the call and passed as a direct call of a
+/// capturing nested `def` passes it. A closure holding a lambda's moved
+/// storage has no place to load it from and stays indirect. A copied
+/// callee was forwarded to its constant already; one read out of a slot
+/// is not a known callee.
 fn fold_known_callees(function: &mut MirFunction, declarations: &MirDeclarations) -> usize {
     let definitions = definition_counts(&mut function.blocks, function.n_regs);
     let mut callees = HashMap::new();
     visit_blocks(&mut function.blocks, &mut |block| {
         for instruction in &block.instrs {
-            let (dest, name) = match instruction {
+            let (dest, callee) = match instruction {
                 MirInstr::Const {
                     dest,
                     k: Const::Function(name),
-                } => (dest, name),
+                } => (dest, KnownCallee::new(name, Vec::new())),
                 MirInstr::MakeClosure {
                     dest,
                     function,
                     captures,
-                } if captures.is_empty() => (dest, function),
+                } if captures
+                    .iter()
+                    .all(|capture| capture.mode == MirCaptureMode::Reference) =>
+                {
+                    let places = captures.iter().map(|capture| capture.place.clone());
+                    (dest, KnownCallee::new(function, places.collect()))
+                }
                 _ => continue,
             };
             if definitions.get(dest.0 as usize) == Some(&1) {
-                callees.insert(dest.0, name.clone());
+                callees.insert(dest.0, callee);
             }
         }
     });
     if callees.is_empty() {
         return 0;
     }
-    let reg_types = &function.reg_types;
+    let mut blocks = std::mem::take(&mut function.blocks);
     let mut folded = 0;
-    visit_blocks(&mut function.blocks, &mut |block| {
-        for instruction in &mut block.instrs {
-            if let Some(call) = direct_call(instruction, &callees, reg_types, declarations) {
-                *instruction = call;
+    visit_blocks(&mut blocks, &mut |block| {
+        let mut instructions = Vec::with_capacity(block.instrs.len());
+        for mut instruction in std::mem::take(&mut block.instrs) {
+            if let Some((callee, declaration)) =
+                folded_callee(&instruction, &callees, function, declarations)
+            {
+                instructions.extend(direct_call(
+                    &mut instruction,
+                    callee,
+                    declaration,
+                    function,
+                    declarations,
+                ));
                 folded += 1;
             }
+            instructions.push(instruction);
         }
+        block.instrs = instructions;
     });
+    function.blocks = blocks;
+    if folded > 0 {
+        erase_closure_drops(function, &callees);
+    }
     folded
 }
 
-/// The direct `call` a `call.indirect` through one of `callees` is, when
-/// it binds its operands as the indirect call did: the target declares no
-/// compile-time parameters or collectors, its signature is the callee's
-/// function type (upstream's `verifyCallOp` agreement), and any keyword
-/// names a parameter the declaration names alike.
-fn direct_call(
-    instruction: &mut MirInstr,
-    callees: &HashMap<u32, String>,
-    reg_types: &HashMap<u32, Ty>,
-    declarations: &MirDeclarations,
-) -> Option<MirInstr> {
+/// Erase each `drop.reg` of a closure in `callees` that is its last
+/// reader: a closure of references destroys nothing, so once its calls
+/// are direct it goes with the erasure of dead instructions.
+fn erase_closure_drops(function: &mut MirFunction, callees: &HashMap<u32, KnownCallee>) {
+    let mut reads = vec![0; function.n_regs as usize];
+    count_register_reads(&mut function.blocks, &mut reads);
+    let mut drops: HashMap<u32, u32> = HashMap::new();
+    visit_blocks(&mut function.blocks, &mut |block| {
+        for instruction in &block.instrs {
+            if let MirInstr::Drop { reg, .. } = instruction
+                && callees.contains_key(&reg.0)
+            {
+                *drops.entry(reg.0).or_default() += 1;
+            }
+        }
+    });
+    drops.retain(|reg, count| reads.get(*reg as usize) == Some(count));
+    if drops.is_empty() {
+        return;
+    }
+    visit_blocks(&mut function.blocks, &mut |block| {
+        block.instrs.retain(|instruction| match instruction {
+            MirInstr::Drop { reg, .. } => !drops.contains_key(&reg.0),
+            _ => true,
+        });
+    });
+}
+
+/// The callee a `call.indirect` is known to call: the function a constant
+/// names, or a closure's with the places it captures by reference.
+struct KnownCallee {
+    name: String,
+    captures: Vec<MirPlace>,
+}
+
+impl KnownCallee {
+    fn new(name: &str, captures: Vec<MirPlace>) -> Self {
+        Self {
+            name: name.to_owned(),
+            captures,
+        }
+    }
+}
+
+/// The known callee a `call.indirect` through one of `callees` folds to,
+/// with its declaration, when a direct call binds its operands as the
+/// indirect call did: the target declares no compile-time parameters or
+/// collectors, the closure's captures are its storage, which a closure's
+/// method reads as `self`, or its leading parameters, each a reference to
+/// its captured place's type, the rest are the callee's function type
+/// (upstream's `verifyCallOp` agreement), and any keyword names a
+/// parameter the declaration names alike.
+fn folded_callee<'c, 'd>(
+    instruction: &MirInstr,
+    callees: &'c HashMap<u32, KnownCallee>,
+    function: &MirFunction,
+    declarations: &'d MirDeclarations,
+) -> Option<(&'c KnownCallee, &'d MirFunctionDeclaration)> {
     let MirInstr::CallIndirect {
-        dest,
         callee,
-        raises,
-        args,
         kwargs,
-        arg_places,
-        kwarg_places,
-        capture_accesses,
         param_arg_regs,
         instantiated_args,
         spread,
@@ -500,35 +570,165 @@ fn direct_call(
     else {
         return None;
     };
-    let name = callees.get(&callee.0)?;
-    let declaration = declarations.function(name)?;
-    let contract = reg_types.get(&callee.0)?.as_func()?;
-    let binds = declaration.param_decls.is_empty()
+    let known = callees.get(&callee.0)?;
+    let declaration = declarations.function(&known.name)?;
+    let contract = function.reg_types.get(&callee.0)?.as_func()?;
+    let (captures_bind, leading) = if declaration.is_closure_method() {
+        let reads_storage = matches!(known.captures.as_slice(), [storage] if storage.ty.is_some())
+            && declaration.receiver_convention.is_none()
+            && !declaration.returns_reference;
+        (reads_storage, 0)
+    } else {
+        let captures_bind = known.captures.iter().enumerate().all(|(index, place)| {
+            declaration.ref_params.get(index) == Some(&true)
+                && place
+                    .ty
+                    .as_ref()
+                    .is_some_and(|ty| declaration.param_types.get(index) == Some(ty))
+        });
+        (captures_bind, known.captures.len())
+    };
+    let binds = captures_bind
+        && declaration.param_decls.is_empty()
         && param_arg_regs.is_empty()
         && instantiated_args.is_empty()
         && spread.is_none()
         && declaration.variadic.is_none()
         && declaration.kw_variadic.is_none()
-        && contract.params == declaration.param_types
-        && contract.conventions == declaration.param_conventions
+        && declaration.param_types.get(leading..) == Some(contract.params.as_slice())
+        && declaration.param_conventions.get(leading..) == Some(contract.conventions.as_slice())
         && contract.ret == declaration.ret_ty
         && contract.ref_return.is_some() == declaration.returns_reference
         && contract.raises == declaration.raises
-        && (kwargs.is_empty() || contract.names == declaration.param_names);
-    binds.then(|| MirInstr::Call {
+        && (kwargs.is_empty()
+            || declaration.param_names.get(leading..) == Some(contract.names.as_slice()));
+    binds.then_some((known, declaration))
+}
+
+/// Rewrite the `call.indirect` `instruction` into the direct call of
+/// `callee`, declared as `declaration`, returning the loads of its
+/// captured places the call now takes first.
+///
+/// A closure's method is called on its storage, passed at its place when
+/// memory-only, as a capture-list `def` called by name is; any other
+/// target takes each captured place as a leading reference argument, with
+/// the access its parameter makes to it.
+fn direct_call(
+    instruction: &mut MirInstr,
+    callee: &KnownCallee,
+    declaration: &MirFunctionDeclaration,
+    function: &mut MirFunction,
+    declarations: &MirDeclarations,
+) -> Vec<MirInstr> {
+    let MirInstr::CallIndirect {
+        dest,
+        raises,
+        args,
+        kwargs,
+        arg_places,
+        kwarg_places,
+        capture_accesses,
+        ..
+    } = instruction
+    else {
+        return Vec::new();
+    };
+    let span = function.spans.0.get(&dest.0).map(|(span, _)| span.clone());
+    let mut loads = Vec::with_capacity(callee.captures.len());
+    let mut operands = Vec::with_capacity(callee.captures.len());
+    for place in &callee.captures {
+        let Some(ty) = place.ty.clone() else {
+            continue;
+        };
+        let load = fresh_register(function, ty, span.as_ref());
+        loads.push(MirInstr::LoadPlace {
+            dest: load,
+            place: place.clone(),
+        });
+        operands.push((load, place));
+    }
+    if declaration.is_closure_method()
+        && let [(recv, storage)] = operands.as_slice()
+    {
+        let method = mojito_symbol::symbol::split_method_symbol(&callee.name)
+            .map_or(callee.name.as_str(), |(_, method)| method);
+        let memory_only = storage
+            .ty
+            .as_ref()
+            .is_some_and(|ty| !declarations.register_passable(ty));
+        *instruction = MirInstr::MethodCall {
+            dest: *dest,
+            recv: *recv,
+            method: method.to_owned(),
+            resolved: Some(callee.name.clone()),
+            raises: raises.take(),
+            reference_result: None,
+            result_adapter: None,
+            args: std::mem::take(args),
+            kwargs: std::mem::take(kwargs),
+            recv_place: memory_only.then(|| Box::new((*storage).clone())),
+            recv_writes: false,
+            receiver_convention: None,
+            arg_places: std::mem::take(arg_places),
+            kwarg_places: std::mem::take(kwarg_places),
+            capture_accesses: std::mem::take(capture_accesses),
+            param_arg_regs: Vec::new(),
+            param_decls: Vec::new(),
+            instantiated_args: Vec::new(),
+            spread: None,
+        };
+        return loads;
+    }
+    let mut accesses = std::mem::take(capture_accesses);
+    let mut places = Vec::with_capacity(operands.len() + arg_places.len());
+    for (index, (_, place)) in operands.iter().enumerate() {
+        places.push(Some((*place).clone()));
+        let access = MirCaptureAccess {
+            root: place.root,
+            path: capture_path(place),
+            access: if declaration.param_writes.get(index) == Some(&true) {
+                CaptureAccess::Write
+            } else {
+                CaptureAccess::Read
+            },
+        };
+        if !accesses.contains(&access) {
+            accesses.push(access);
+        }
+    }
+    places.append(arg_places);
+    *instruction = MirInstr::Call {
         dest: *dest,
-        func: FuncRef(name.clone()),
+        func: FuncRef(callee.name.clone()),
         raises: raises.take(),
-        args: std::mem::take(args),
+        args: operands
+            .iter()
+            .map(|(load, _)| *load)
+            .chain(args.drain(..))
+            .collect(),
         kwargs: std::mem::take(kwargs),
-        arg_places: std::mem::take(arg_places),
+        arg_places: places,
         kwarg_places: std::mem::take(kwarg_places),
-        capture_accesses: std::mem::take(capture_accesses),
+        capture_accesses: accesses,
         param_arg_regs: Vec::new(),
         receiver: None,
         instantiated_args: Vec::new(),
         spread: None,
-    })
+    };
+    loads
+}
+
+/// The origin path a capture access names for `place`: its leading field
+/// projections, the narrowest path that still covers every step after
+/// them.
+fn capture_path(place: &MirPlace) -> Vec<OriginSeg> {
+    place
+        .steps()
+        .map_while(|step| match step {
+            Proj::Field(name) => Some(OriginSeg::Field(name.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Remove the instructions defining `roots`' keys from `blocks` and their

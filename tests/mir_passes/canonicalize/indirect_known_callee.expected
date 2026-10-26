@@ -85,7 +85,7 @@
       },
       fn {
         name: outer,
-        registers: 8,
+        registers: 9,
         vars: 1,
         var_names: [k],
         params: 1,
@@ -98,14 +98,14 @@
         return_type: present(Int),
         raises: false,
         error_type: absent,
-        register_types: [reg_type { reg: %r0, type: func { environment: capturing(capture_set([capture_origin { origin: origin_place { root: $v0, path: [] }, access: read }])), param_decls: [], params: [Int], names: [y], return_type: Int, required: [true], variadic: absent, kw_variadic: absent, positional_only: absent, keyword_only: absent, raises: false, error_type: absent, conventions: [absent], ref_params: [absent], ref_return: absent, transfers: [] } }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }],
-        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }],
+        register_types: [reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: Int }, reg_type { reg: %r5, type: Int }, reg_type { reg: %r6, type: Int }, reg_type { reg: %r8, type: Int }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }],
         blocks: [
           bb0 {
             instructions: [
-              closure.make { dest: %r0, function: "outer$plus", captures: [closure_capture { place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }, mode: reference }] },
               const { dest: %r2, value: int(3) },
-              call.indirect { dest: %r3, callee: %r0, resolved: present("__trait_dispatch.__call__$ov$Int"), raises: absent, args: [%r2], kwargs: [], callee_place: absent, arg_places: [absent], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], param_decls: [], instantiated_contract: absent, instantiated_args: [], spread: absent },
+              place.load { dest: %r8, place: place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent } },
+              call { dest: %r3, func: "outer$plus", raises: absent, args: [%r8, %r2], kwargs: [], arg_places: [present(place { root: $v0, root_type: present(Int), projections: [], type: present(Int), through: absent }), absent], kwarg_places: [], capture_accesses: [capture_access { root: $v0, path: [], access: read }], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               call { dest: %r5, func: "outer$minus", raises: absent, args: [%r3], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               binary { op: add, dest: %r6, a: %r3, b: %r5, resolved: absent, raises: absent }
             ],
