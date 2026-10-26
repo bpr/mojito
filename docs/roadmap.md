@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1449**.
+Next free ID: **R1451**.
 
 ## Ordered Work
 
@@ -1161,6 +1161,28 @@ Track: `native`.
 The ABI-bump collector is last whatever else moves, because it batches every
 change that needs a new `MJRT_ABI_VERSION`.
 
+- [ ] **R1450 An `Int`-literal constant two inlined instances share
+  fails native verification**
+
+  `assets/ok/simd_symbolic_surface.mojo` stops in the native backend
+  ("builtin.integer or its vector element type does not implement
+  interface", at its `inferred_lane(Float32(1.5), Float32(2.0))` call),
+  where the VM prints its golden and the parity manifest says
+  `exe-differential`.
+  - It fails at HEAD before R662 too.
+  - Concrete `main` has one `const int_literal(1)` register that the
+    inlined `Int32` and `Float32` bodies of `a * b + 1` both add, so the
+    `Float32` add reads an integer constant.
+  - It takes both instances of `inferred_lane[dt]` and of a second
+    generic (`rebound[dt]`, whose `comptime lane = dt` body adds
+    `Scalar[lane](1)`) to show; either call pair alone runs.
+  - Lever: find the pass that shares the literal across the two bodies
+    (`cse` after `automatic-inline` is the first suspect), or type the
+    literal at each use as upstream's literal conversion does.
+  - Found while landing R662 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1265 pliron 0.20.0's DCE panics when it queues one block
   argument twice**
 
@@ -1489,13 +1511,13 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   `var r = q` over a struct value parameter `q: Q` whose `__init__(copy)`
   prints runs no copy constructor, where the pin materializes `q` and
   calls it.
-  - The slot of a value parameter holds no value: the elaborator replaces
-    each read of it with the parameter's constant
-    (`substitute_value_parameter_reads`), and materializes a constructed
-    value through its constructor, so `lower_copies_and_moves` keeps such
-    a `var.use copy` or `var.use move` a use (`materialized_parameter_slots`
-    names the slots), as a lowered call would read storage the slot does
-    not hold.
+  - A read of a value parameter is its parameter constant (R662), which
+    the elaborator materializes, a constructed value through its
+    constructor, so `var r = q` copies the constant's register and no
+    copy constructor runs.
+  - Probe at 2026-10-26: a `Q(ImplicitlyCopyable)` whose
+    `__init__(out self, *, copy: Self)` prints, read `var r = q`, prints
+    no copy on the pin either. Recheck the claim before fixing.
   - Probe: `assets/ok/value_parameter_field_read.mojo` (`var r = q`),
     `assets/ok/def_aggregate_value_binder_served.mojo` (`p[0]` over a
     `Tuple[Int, Int]` binder).
@@ -9377,42 +9399,48 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1315, R1316, and R1317 (the constructor's vocabulary).
   - Model: Fable, Not Planned.
 
-- [ ] **R662 A value binder read is a frame slot, not a parameter
-  reference**
-
-  `identifier_read` (`lower_expr/expr.rs`) lowers a read of a scalar value
-  binder (`n` in `def plain[n: Int]`) to a slot `Flatten::var` interns,
-  which holds nothing until mono rewrites each read.
-  - Upstream reads a parameter as `kgen.param.constant` of the binder's
-    declaration reference (an attribute), with no storage.
-  - The lever: lower the read as `param_value_register` lowers a recorded
-    parameter value (`Const::Param`, answered by mono), from the checked
-    binding the read names, as a lifted thunk's `parameter_reads` already
-    does.
-  - Both name-keyed rewrites then go: the elaborator's
-    `substitute_value_parameter_reads` (`mono/substitute.rs`) and
-    `inline-parametric`'s `read_binder`.
-  - `mem-2-reg` refuses a slot nothing stores or declares for this reason
-    (`variance`): its reads are binder reads, and that rule goes with the
-    slot. Probe: `n` in `$comptime$unrolled$0` of a `comptime for k in
-    range(n)` body.
-  - Done when a value binder's read takes no slot in MIR, and VM and
-    `--backend pliron` output is unchanged.
-  - Found while landing R660 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R663 Mono still rewrites value binder slots MIR no longer
   creates**
 
-  Once binder reads are parameter references, the binder half of mono's
-  slot machinery is dead weight.
-  - `materialized_parameter_slots`' binder role,
-    `substitute_value_parameter_reads`' binder half, and
-    `seed_captured_parameter_slots` exist to serve the slot.
+  A non-callable value binder's read is its parameter constant since
+  R662, so the binder half of the slot machinery serves no slot.
+  - `materialized_parameter_slots` and `parameter_slots` (`mir.rs`, read
+    by copy lowering and drop elaboration), `seed_captured_parameter_slots`
+    and `reject_parameter_storage_reads` (`mono/substitute.rs`) still look
+    for a slot named after any value binder.
+  - `substitute_callable_binder_reads` and `inline-parametric`'s
+    `read_binder` already serve only callable binders (R1449).
   - Done when they serve only what still takes a slot, or are deleted.
   - Found while landing R660 (2026-10-13).
   - Depends on R662.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1449 A callable value binder's read is a frame slot, not a
+  parameter reference**
+
+  A body reads a callable binder (`f` in `def apply[f: def(Int) thin ->
+  Int]`) from a slot nothing stores, which the elaborator and
+  `inline-parametric` rewrite by name into the bound function, where
+  upstream reads it as `kgen.param.constant` of the binder like any other
+  parameter.
+  - Mojito binds a capturing closure argument as a runtime parameter of
+    the instance (`Bindings::runtime_callables`, `mono/promote.rs`), so
+    the slot is the closure's storage there, and the check keeps callable
+    binders out of `Checker::value_binder_read`.
+  - The by-name rewrites: `substitute_callable_binder_reads`
+    (`mono/substitute.rs`) and `inline-parametric`'s `read_binder`.
+  - `mem-2-reg` skips a slot nothing stores or declares for this reason
+    (`variance`).
+  - Probe: `f(x)` in `assets/ok/nested_def_reads_enclosing_parameter.mojo`
+    and `assets/ok/thin_nested_def_reads_value_parameter.mojo`.
+  - Probe: `F[4](x)` in `assets/ok/function_type_where_bound.mojo`.
+  - Probe: the `f` slot `mem-2-reg` keeps in
+    `assets/ok/unread_callable_parameter_instances.mojo`.
+  - Probe: `callback` in
+    `assets/ok/capturing_generic_callable_parameter_environment.mojo`.
+  - Found while landing R662 (2026-10-26).
+  - Depends on R533: a capturing closure must leave the runtime-parameter
+    path first.
   - Model: Opus, Not Planned.
 
 - [ ] **R1292 A MIR `try` may lack its `except` or `else` region, where

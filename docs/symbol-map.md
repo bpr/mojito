@@ -1817,7 +1817,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mir::LoopLabel::PARAM_FOR_OUTER`; then a fresh slot from `fresh_slots`
   for each slot whose type names the index
   (`mojito_types::types::names_binder`), nested `unroll_in`,
-  `substitute_value_parameter_reads` with the index among the locals,
+  `substitute_callable_binder_reads`,
   `substitute_blocks_metadata`, `select_comptime_ifs`, and
   `instantiate_region_references`. `simplify_param_for_loop` folds each
   iteration loop and then the outer one (`Simplified`), `FrameTables::forget`
@@ -1834,8 +1834,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   addressed_slots, retire_slots, retire_parameters}`, shared by runtime
   promotion (`mono/promote.rs`), unrolling, and `mem-2-reg`. A type parameter
   has no frame slot (`callable_parameter_locals`, `mir.rs`), as Mojo gives
-  it no storage; a non-callable value binder's slot, interned at its first
-  read by `Flatten::var`, is typed by the binder's declared type. The comptime
+  it no storage, and neither has a non-callable value binder, whose read is
+  the `Const::Param` of its declaration reference
+  (`Checker::value_binder_read`, `checker/constraints.rs`;
+  `Flatten::enclosing_value_binder_read` and `Flatten::param_arg_reg`,
+  `mir.rs`). The comptime
   elaborator keeps a `comptime for`'s index symbolic
   (`Elab::keep_template_comptime_for`, `comptime/elab.rs`), so a struct
   applied over it (`Lanes[i]`) reaches the check as a parameter expression.
@@ -1919,8 +1922,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Const::of_parameter_value` (`mir/ir.rs`, shared with
   `inline-parametric`) build it, a whole
   place read and the field-projection loads folding through the bound value
-  (`substitute_value_parameter_reads`'s `LoadPlace` arm and
-  `Const::of_projected_parameter_value`, and the `LoadPlace` arm of the
+  (`Const::of_projected_parameter_value`, and the `LoadPlace` arm of the
   specializer's rewrite), each typed by the read's register;
   `CtValue::is_materialized_constant` (`mojito-types/src/ct.rs`, called
   from `verify/instr.rs`) admits it, a bare string only at the nominal

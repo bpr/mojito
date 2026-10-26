@@ -1246,6 +1246,29 @@ impl Checker {
             .cloned()
     }
 
+    /// The reference a read of the value binder `name` is, upstream's
+    /// `kgen.param.constant` of the binder's declaration: the read takes
+    /// no storage. A callable binder, a pack, and a raw parameter list keep
+    /// their own readings. `None` for any other binding, and for a name an
+    /// inner binding shadows.
+    pub(super) fn value_binder_read(&self, name: &str) -> Option<ParamExpr> {
+        if !self.is_value_parameter(name)
+            || self.lookup(name).is_none_or(|ty| {
+                matches!(
+                    ty.kind(),
+                    TyKind::Func(_)
+                        | TyKind::GenericFunc(_)
+                        | TyKind::VariadicPack(_)
+                        | TyKind::ParamList(_)
+                        | TyKind::KgenString
+                )
+            })
+        {
+            return None;
+        }
+        self.value_parameter_in_scope(name)
+    }
+
     /// The parameter expression the module constant `name` denotes where a
     /// body reads it, unless a local shadows the name: a folded `Int` is its
     /// literal, an applied constant its application, and a literal its

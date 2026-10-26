@@ -1109,13 +1109,15 @@ impl Checker {
                         "variable '{name}' may be uninitialized"
                     )));
                 }
-                // A read of a module constant, or of a local binding of an
-                // application, is the parameter value its declaration
-                // denotes, as upstream's alias reference is. A re-inference
-                // keeps the temporary a borrow of the read already
-                // materialized it as, which the borrow's origin names.
+                // A read of a value binder, a module constant, or a local
+                // binding of an application is the parameter value its
+                // declaration denotes, as upstream's parameter and alias
+                // references are. A re-inference keeps the temporary a
+                // borrow of the read already materialized it as, which the
+                // borrow's origin names.
                 if let Some(value) = self
-                    .module_constant_value(name)
+                    .value_binder_read(name)
+                    .or_else(|| self.module_constant_value(name))
                     .or_else(|| self.local_comptime_application(name))
                 {
                     let mut record = self.record_at(expr.source_span());

@@ -356,7 +356,7 @@ impl Specializer<'_> {
         // else of the clone may be substituted without.
         self.unroll_in(blocks, frame, iteration, tables)?;
         let locals = bound_parameter_locals(frame.scope, bindings);
-        substitute_value_parameter_reads(
+        substitute_callable_binder_reads(
             blocks,
             tables.var_names,
             tables.var_tys,

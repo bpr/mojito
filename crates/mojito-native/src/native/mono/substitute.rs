@@ -80,16 +80,16 @@ pub(super) fn default_construct_parameters(
 }
 
 /// Substitute `bindings` through `function`, whose declaration declares the
-/// compile-time parameters in `scope`. Each read of a value parameter is its
-/// typed constant. A slot of a value owning storage holds nothing, so no
-/// place of it may remain.
+/// compile-time parameters in `scope`. Each read of a callable binder's slot
+/// is the function it is bound to. A slot of a value owning storage holds
+/// nothing, so no place of it may remain.
 pub(super) fn substitute_function(
     function: &mut MirFunction,
     bindings: &Bindings,
     scope: &[ParamDecl],
 ) -> Result<(), MonoError> {
     let locals = bound_parameter_locals(scope, bindings);
-    substitute_value_parameter_reads(
+    substitute_callable_binder_reads(
         &mut function.blocks,
         &function.var_names,
         &function.var_tys,
@@ -159,7 +159,12 @@ pub(super) fn copy_builtin_receivers(blocks: &mut [MirBlock], reg_types: &HashMa
     }
 }
 
-pub(super) fn substitute_value_parameter_reads(
+/// Rewrite each read of a callable binder's slot in `blocks`, its regions
+/// included, into the function the binder is bound to. A callable binder is
+/// the one value binder a body still reads from a frame slot; any other
+/// value binder's read is its parameter constant, which the substitution
+/// closes.
+pub(super) fn substitute_callable_binder_reads(
     blocks: &mut [MirBlock],
     var_names: &[String],
     var_tys: &HashMap<u32, Ty>,
@@ -170,45 +175,30 @@ pub(super) fn substitute_value_parameter_reads(
         for instruction in &mut block.instrs {
             if let MirInstr::UseVar { dest, var, .. } = instruction
                 && let Some(name) = var_names.get(*var as usize)
-                && (callables.contains_key(name) || locals.contains_key(name))
+                && let Some(constant) = callables
+                    .get(name)
+                    .map(|callable| Ok(Const::Function(callable.clone())))
+                    .or_else(|| {
+                        let ty = var_tys.get(var).filter(|ty| {
+                            matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+                        })?;
+                        let value = locals.get(name.as_str())?;
+                        Some(
+                            Const::of_parameter_value(value, Some(ty)).ok_or_else(|| MonoError {
+                                kind: MonoErrorKind::Unsupported,
+                                function: None,
+                                construct: format!("unsupported runtime value parameter `{value}`"),
+                            }),
+                        )
+                    })
             {
-                let constant = if let Some(callable) = callables.get(name) {
-                    Const::Function(callable.clone())
-                } else {
-                    let value = locals[name];
-                    Const::of_parameter_value(value, var_tys.get(var)).ok_or_else(|| MonoError {
-                        kind: MonoErrorKind::Unsupported,
-                        function: None,
-                        construct: format!("unsupported runtime value parameter `{value}`"),
-                    })?
-                };
                 *instruction = MirInstr::Const {
                     dest: *dest,
-                    k: constant,
-                };
-            } else if let MirInstr::LoadPlace { dest, place } = instruction
-                && let Some(value) = var_names
-                    .get(place.root as usize)
-                    .and_then(|name| locals.get(name))
-                && let Some(constant) = if place.is_whole_root() {
-                    Const::of_parameter_value(value, var_tys.get(&place.root))
-                } else {
-                    Const::of_projected_parameter_value(
-                        value,
-                        &place.storage().proj,
-                        place.ty.as_ref(),
-                    )
-                }
-            {
-                // A whole aggregate parameter read as a place (`h(p)`), or a
-                // field of a struct-typed one (`e.rows`).
-                *instruction = MirInstr::Const {
-                    dest: *dest,
-                    k: constant,
+                    k: constant?,
                 };
             } else {
                 for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                    substitute_value_parameter_reads(
+                    substitute_callable_binder_reads(
                         region, var_names, var_tys, locals, callables,
                     )?;
                 }

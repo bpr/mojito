@@ -1276,7 +1276,7 @@ impl<'c> Inliner<'_, 'c> {
             Some(None) => return None,
         };
         let Instantiated {
-            body: mut callee,
+            body: callee,
             closures,
         } = self.instantiated_callee(
             (block, index),
@@ -1284,9 +1284,6 @@ impl<'c> Inliner<'_, 'c> {
             (full, reduced.as_ref(), declaration),
             owner.as_ref(),
         )?;
-        if declaration.enclosing.is_some() {
-            read_enclosing_binders(callee.to_mut(), declaration, self.declarations)?;
-        }
         let bindings = self.bindings(
             block,
             index,
@@ -3654,63 +3651,6 @@ impl Arguments<'_> {
     }
 }
 
-/// Rewrite each read of an enclosing declaration's value binder in
-/// `callee`, a nested `def`'s body, which spells it as a slot of its own,
-/// into a reference to that binder, which the caller, a body in the
-/// binder's scope, reads as its own; `None` when such a slot is used
-/// otherwise.
-fn read_enclosing_binders(
-    callee: &mut MirFunction,
-    declaration: &MirFunctionDeclaration,
-    declarations: &MirDeclarations,
-) -> Option<()> {
-    let mut shadowed: Vec<&str> = declaration
-        .param_decls
-        .iter()
-        .map(ParamDecl::name)
-        .collect();
-    let mut enclosing = declaration.enclosing.as_deref();
-    while let Some(name) = enclosing {
-        let scope = declarations.function(name)?;
-        for decl in &scope.param_decls {
-            let ParamDecl::Value {
-                id,
-                name,
-                ty,
-                variadic: false,
-                ..
-            } = decl
-            else {
-                continue;
-            };
-            if shadowed.contains(&name.as_str())
-                || matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
-            {
-                continue;
-            }
-            shadowed.push(name);
-            let Some(slot) = callee
-                .var_names
-                .iter()
-                .skip(callee.n_params)
-                .position(|var| var == name)
-            else {
-                continue;
-            };
-            let value =
-                ParamContext::detached().decl_ref(id.clone(), name, MetaTy::value(ty.clone()));
-            read_binder(
-                &mut callee.blocks,
-                (slot + callee.n_params) as VarId,
-                &SlotValue::Parameter(&value),
-                &callee.reg_types,
-            )?;
-        }
-        enclosing = scope.enclosing.as_deref();
-    }
-    Some(())
-}
-
 /// What a binder was bound to.
 enum Bound {
     Type,
@@ -3731,9 +3671,6 @@ struct Instantiation {
     /// The owner's name and the type the body's bare spelling of it
     /// denotes.
     owner: Option<(String, Ty)>,
-    /// Each value binder's spelling, which names the slot a read of it
-    /// loads, and its argument.
-    values: Vec<(String, ParamExpr)>,
     /// Each owner value binder's spelling, which names the receiver's
     /// member a read of it loads, and its argument.
     members: Vec<(String, ParamExpr)>,
@@ -3778,7 +3715,6 @@ impl Instantiation {
         let mut instantiation = Self {
             bindings: ParamBindings::new(),
             owner: owner.map(|owner| (owner.template.clone(), owner.ty.clone())),
-            values: Vec::new(),
             members: Vec::new(),
             callables: Vec::new(),
             closures: Vec::new(),
@@ -3805,10 +3741,9 @@ impl Instantiation {
         for (decl, (argument, callable)) in own.iter().zip(own_arguments) {
             let name = decl.name().trim_start_matches('*').to_string();
             match instantiation.bind(decl, argument, *callable)? {
-                Bound::Value(value) => instantiation.values.push((name, value)),
                 Bound::Callable(function) => instantiation.callables.push((name, function)),
                 Bound::Closure(closure) => instantiation.closures.push((name, closure)),
-                Bound::Type => {}
+                Bound::Value(_) | Bound::Type => {}
             }
         }
         Some(instantiation)
@@ -3954,25 +3889,15 @@ impl Instantiation {
         Ok(ty)
     }
 
-    /// Rewrite each read of a value binder's slot in `function` into its
-    /// argument as a constant, a callable's into the function it names,
-    /// and delete the slot's drops: the slot holds nothing. A callable
+    /// Rewrite each read of a callable binder's slot in `function` into the
+    /// function it names, and delete the slot's drops: the slot holds
+    /// nothing. A value binder's read is already its parameter constant,
+    /// which the substitution closes. A callable
     /// bound to a caller's closure keeps its slot, which the inlined entry
     /// stores the closure into, as upstream substitutes the closure value
     /// for the parameter: returns each such slot with the closure's
     /// register. `None` when a binder's slot is used otherwise.
     fn read_binders(&self, function: &mut MirFunction) -> Option<Vec<(VarId, Reg)>> {
-        for (name, value) in &self.values {
-            let Some(slot) = function.var_names.iter().position(|var| var == name) else {
-                continue;
-            };
-            read_binder(
-                &mut function.blocks,
-                slot as VarId,
-                &SlotValue::Parameter(value),
-                &function.reg_types,
-            )?;
-        }
         for (name, callable) in &self.callables {
             let slot = function
                 .var_names
@@ -3980,12 +3905,7 @@ impl Instantiation {
                 .skip(function.n_params)
                 .position(|var| var == name)?
                 + function.n_params;
-            read_binder(
-                &mut function.blocks,
-                slot as VarId,
-                &SlotValue::Function(callable),
-                &function.reg_types,
-            )?;
+            read_binder(&mut function.blocks, slot as VarId, callable)?;
         }
         if !self.members.is_empty() {
             read_members(&mut function.blocks, &self.members, &function.reg_types);
@@ -4144,52 +4064,17 @@ impl ConstructionTypes for Instantiation {
     }
 }
 
-/// What a read of a binder's slot becomes.
-enum SlotValue<'a> {
-    /// A value binder's argument, as a constant typed by the read.
-    Parameter(&'a ParamExpr),
-    /// A callable binder's argument: the function its register names, as
-    /// the constant upstream's substitution leaves; a call through the
-    /// slot becomes a call through that constant.
-    Function(&'a str),
-}
-
-impl SlotValue<'_> {
-    /// The constant a read of the slot typed `ty`, through `place` when it
-    /// loads one, becomes; `None` for a projection of a callable or of a
-    /// value not closed enough to project.
-    fn constant(&self, ty: Option<&Ty>, place: Option<&MirPlace>) -> Option<Const> {
-        match (self, place) {
-            (Self::Parameter(value), None) => Some(parameter_constant(value, ty)),
-            (Self::Parameter(value), Some(place)) if place.is_whole_root() => {
-                Some(parameter_constant(value, ty))
-            }
-            (Self::Parameter(value), Some(place)) => Const::of_projected_parameter_value(
-                value.as_constant()?,
-                &place.storage().proj,
-                place.ty.as_ref(),
-            ),
-            (Self::Function(function), place) => place
-                .is_none_or(MirPlace::is_whole_root)
-                .then(|| Const::Function((*function).to_string())),
-        }
-    }
-}
-
-/// Rewrite each read of the binder slot `slot` in `blocks`, its regions
-/// included, into `value` as a constant typed by the read's register, and
-/// delete the slot's drops; `None` when the slot is used otherwise.
-fn read_binder(
-    blocks: &mut [MirBlock],
-    slot: VarId,
-    value: &SlotValue<'_>,
-    reg_types: &std::collections::HashMap<u32, Ty>,
-) -> Option<()> {
+/// Rewrite each read of the callable binder slot `slot` in `blocks`, its
+/// regions included, into the function `function` its argument names, as
+/// the constant upstream's substitution leaves, a call through the slot
+/// into a call through that constant, and delete the slot's drops; `None`
+/// when the slot is used otherwise.
+fn read_binder(blocks: &mut [MirBlock], slot: VarId, function: &str) -> Option<()> {
     for block in blocks {
         let mut kept = Vec::with_capacity(block.instrs.len());
         for mut instruction in std::mem::take(&mut block.instrs) {
             for region in instruction_regions_mut(&mut instruction) {
-                read_binder(region, slot, value, reg_types)?;
+                read_binder(region, slot, function)?;
             }
             let read = match &instruction {
                 MirInstr::UseVar { dest, var, .. } if *var == slot => Some((*dest, None)),
@@ -4202,12 +4087,16 @@ fn read_binder(
                 _ => None,
             };
             if let Some((dest, place)) = read {
-                let k = value.constant(reg_types.get(&dest.0), place)?;
-                kept.push(MirInstr::Const { dest, k });
+                if place.is_some_and(|place| !place.is_whole_root()) {
+                    return None;
+                }
+                kept.push(MirInstr::Const {
+                    dest,
+                    k: Const::Function(function.to_string()),
+                });
                 continue;
             }
-            if let (SlotValue::Function(_), MirInstr::CallIndirect { callee_place, .. }) =
-                (value, &mut instruction)
+            if let MirInstr::CallIndirect { callee_place, .. } = &mut instruction
                 && callee_place
                     .as_deref()
                     .is_some_and(|place| place.root == slot && place.is_whole_root())

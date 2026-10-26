@@ -131,7 +131,6 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         false,
         &[],
         &CaptureSlots::default(),
-        &[],
         &EnclosingBinders::default(),
         &mut ComptimeThunks::default(),
         None,
@@ -1191,7 +1190,6 @@ fn lower_program(
             false,
             &[],
             &CaptureSlots::default(),
-            &[],
             &EnclosingBinders::default(),
             &mut thunks,
             None,
@@ -2030,7 +2028,6 @@ fn lower_function(
             parameter_names: &names,
             parameter_types: ptys,
             value_parameter_locals,
-            receiver_value_parameters: Vec::new(),
             enclosing_binders,
             owned_parameters: owned,
             deinit_parameters: deinit,
@@ -2116,32 +2113,13 @@ fn lower_struct_member<P: DeclaredParam>(
     let enclosing_binders = EnclosingBinders::of(
         checked
             .generic_parameters_at(&GenericSite::Struct {
-                module: module.clone(),
+                module,
                 declaration: name.to_string(),
             })
             .unwrap_or(&[])
             .iter()
             .chain(&signature.parameters),
     );
-    let receiver_value_parameters: Vec<(String, Ty)> = checked
-        .generic_parameters_at(&GenericSite::Struct {
-            module,
-            declaration: name.to_string(),
-        })
-        .unwrap_or(&[])
-        .iter()
-        .filter_map(|decl| match decl {
-            ParamDecl::Value {
-                name,
-                ty,
-                variadic: false,
-                ..
-            } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {
-                Some((name.clone(), ty.clone()))
-            }
-            _ => None,
-        })
-        .collect();
     let defaults = regular
         .iter()
         .map(|param| {
@@ -2277,7 +2255,6 @@ fn lower_struct_member<P: DeclaredParam>(
             parameter_names: &names,
             parameter_types: ptys,
             value_parameter_locals,
-            receiver_value_parameters,
             enclosing_binders,
             owned_parameters: owned,
             deinit_parameters: deinit,
@@ -2460,7 +2437,6 @@ fn lower_expression_thunk(
             parameter_names: &parameter_names,
             parameter_types: Vec::new(),
             value_parameter_locals: parameter_locals,
-            receiver_value_parameters: Vec::new(),
             enclosing_binders: binders.clone(),
             owned_parameters: Vec::new(),
             deinit_parameters: Vec::new(),
@@ -3181,10 +3157,6 @@ struct Flatten<'a> {
     /// (`(root, path)`), so repeated transfers into one domain merge while
     /// sibling domains keep independent generations.
     transfer_domain_loans: HashMap<(VarId, Vec<mojito_types::origin::OriginSeg>), Vec<MirLoan>>,
-    /// The enclosing struct's non-callable value parameters when lowering a
-    /// method: `Self.n` reads the binder's parameter constant, never a local
-    /// of its name.
-    receiver_value_parameters: Vec<(String, Ty)>,
     /// The enclosing struct's binders, then the function's own: a bracket
     /// argument forwarding a type binder (`hash[Self.H](key)`) records the
     /// binder it names, and one built from value binders (`f[1 + n]()`) the
@@ -3951,28 +3923,13 @@ impl<'a> Flatten<'a> {
     }
 
     /// Intern a variable name to a stable `VarId` (matches `hir::Lower::var`).
-    /// HIR interns every local at its declaring op, so a name first interned
-    /// here that names a value binder in scope is that binder's slot, typed by
-    /// the binder's declared type. A struct's own binder is its parameter
-    /// constant, never a local of its name.
+    /// HIR interns every local at its declaring op, which types it.
     fn var(&mut self, name: &str) -> VarId {
         if let Some(i) = self.vars.iter().position(|n| n == name) {
             return i as VarId;
         }
         self.vars.push(name.to_string());
-        let var = (self.vars.len() - 1) as VarId;
-        let struct_binder = self
-            .receiver_value_parameters
-            .iter()
-            .any(|(parameter, _)| parameter == name);
-        if let Some(ty) = self
-            .enclosing_binders
-            .value_named(name)
-            .filter(|_| !struct_binder)
-        {
-            self.var_types.entry(var).or_insert_with(|| ty.clone());
-        }
-        var
+        (self.vars.len() - 1) as VarId
     }
 
     /// Intern the runtime slot for one checked binding. Same-spelled lexical
@@ -4198,11 +4155,21 @@ impl<'a> Flatten<'a> {
             CheckedParamArg::Attribute { .. } => return None,
         }?;
         // An argument read off a local display binding (`g[L[0]]()`) is the
-        // application the elaborator runs.
-        Some(match self.display_read(operand) {
-            Some((value, _)) => value,
-            None => self.expr(operand),
-        })
+        // application the elaborator runs; one over the enclosing value
+        // binders (`f[k]()`, `f[n + 1]()`) is the parameter constant of its
+        // expression, as upstream's `kgen.param.constant` is.
+        if let Some((value, _)) = self.display_read(operand) {
+            return Some(value);
+        }
+        Some(
+            match self
+                .value_binder_node(operand.id())
+                .filter(|value| value.as_constant().is_none() && value.meta().as_value().is_some())
+            {
+                Some(value) => self.param_value_register(operand, value),
+                None => self.expr(operand),
+            },
+        )
     }
 
     /// The register of a compile-time value a type-shaped bracket argument
@@ -4497,8 +4464,8 @@ impl<'a> Flatten<'a> {
     /// elaborator answers, and the `+`, `*`, `-`, and negation it is built
     /// from. `None` for any other shape.
     fn inferred_value_register(&mut self, expr: &ParamExpr, site: &SourceSpan) -> Option<Reg> {
-        // A binder of any scalar type reads its own slot; a `DType` constant
-        // is its own; the arithmetic below is over `Int` alone.
+        // A binder of any scalar type is its parameter constant; a `DType`
+        // constant is its own; the arithmetic below is over `Int` alone.
         if let mojito_types::param_expr::ParamKind::DeclRef(_) = expr.kind() {
             return self.enclosing_value_binder_read(expr, site);
         }
@@ -4587,38 +4554,18 @@ impl<'a> Flatten<'a> {
     }
 
     /// A read of the enclosing value binder `expr` names, when it is exactly
-    /// such a reference: the parameter constant of the enclosing struct's
-    /// own (`Self.k`), upstream's `kgen.param.constant`, otherwise the
-    /// function's local of its name.
+    /// such a reference: upstream's `kgen.param.constant` of the binder.
     fn enclosing_value_binder_read(&mut self, expr: &ParamExpr, site: &SourceSpan) -> Option<Reg> {
         let mojito_types::param_expr::ParamKind::DeclRef(reference) = expr.kind() else {
             return None;
         };
-        let values = &self.enclosing_binders.values;
-        let ty = values
+        let ty = self
+            .enclosing_binders
+            .values
             .iter()
             .rfind(|(binder, _)| binder == reference)
             .map(|(_, ty)| ty.clone())?;
-        let struct_binder = values
-            .iter()
-            .find(|(binder, _)| binder.name == reference.name)
-            .is_some_and(|(binder, _)| binder == reference)
-            && self
-                .receiver_value_parameters
-                .iter()
-                .any(|(name, _)| name.as_str() == reference.name.as_ref());
-        if struct_binder {
-            return Some(self.param_value_register_at(site.clone(), Some(ty), expr.clone()));
-        }
-        let var = self.var(&reference.name);
-        let dest = self.fresh_typed(site.clone(), Some(var), ty);
-        self.emit(MirInstr::UseVar {
-            dest,
-            var,
-            mode: UseMode::Copy,
-            constructor: None,
-        });
-        Some(dest)
+        Some(self.param_value_register_at(site.clone(), Some(ty), expr.clone()))
     }
 
     /// Intern a fresh synthetic variable (a `$`-prefixed name never produced by
@@ -4746,7 +4693,6 @@ fn lower_cfg_nested(
     returns_reference: bool,
     reference_parameters: &[bool],
     captures: &CaptureSlots,
-    receiver_value_parameters: &[(String, Ty)],
     enclosing_binders: &EnclosingBinders,
     comptime_thunks: &mut ComptimeThunks,
     error: Option<Ty>,
@@ -4796,7 +4742,6 @@ fn lower_cfg_nested(
                 .chain(cfg.aliases.iter().map(|(binding, slot)| (*binding, *slot)))
                 .collect(),
             nested: nested.clone(),
-            receiver_value_parameters: receiver_value_parameters.to_vec(),
             enclosing_binders: enclosing_binders.clone(),
             comptime_thunks: std::mem::take(comptime_thunks),
             parameter_reads: enclosing_binders.loop_bindings.iter().cloned().collect(),
@@ -5610,14 +5555,6 @@ impl EnclosingBinders {
             binders.declarations.push(declaration.clone());
         }
         binders
-    }
-
-    /// The declared type of the innermost value binder named `name`.
-    fn value_named(&self, name: &str) -> Option<&Ty> {
-        self.values
-            .iter()
-            .rfind(|(binder, _)| binder.name.as_ref() == name)
-            .map(|(_, ty)| ty)
     }
 
     /// These binders, then the indices of the `comptime for` loops

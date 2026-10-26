@@ -1233,6 +1233,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A read of a value binder (`n` in `def plain[n: Int]`) is now the
+  parameter constant of the binder's declaration reference, upstream's
+  `kgen.param.constant`, which the check records on the read and the
+  elaborator answers per instance, where MIR read a frame slot that held
+  nothing until the elaborator rewrote each read by name (R662). A lane
+  slot or bracket argument over a binder (`v.length`, `f[n + 1]()`) and
+  a nested `def`'s read of its enclosing function's binder lower the
+  same way, so no generic body, lifted `comptime for` thunk included,
+  keeps a slot for a non-callable binder. The elaborator's and
+  `inline-parametric`'s by-name rewrites now serve only callable binders,
+  which still read a slot (R1449). Output is unchanged on both backends.
+
 - Register passability now judges a conditional `RegisterPassable`
   conformance at the instance's arguments, as upstream's
   `getRegisterPassability` does, a pack's condition element by element:
