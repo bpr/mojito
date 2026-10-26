@@ -81,22 +81,28 @@ which names the upstream pass each one follows. Each is measured by the
   `inline-parametric` leaves its copy constructor reading the struct's
   parameter**
 
-  `struct S[n: Int](Copyable, Movable)` holding `var s: String`, built
-  once in `main`, stops with "after pre-elaboration pass
+  `struct S[n: Int](Copyable, Movable)` holding `var s: String`, only
+  built and printed in `main`, stops with "after pre-elaboration pass
   `inline-parametric`: MIR function 'S.__copyinit__' removes parameter
-  slot 0 of `S`, which it reads", where the pin runs it.
+  slot 0 of `S`, which it reads", where the pin runs it. It still fails
+  after R1283 and R1278 reworked copy and constructor synthesis
+  (2026-10-26), and `MOJITO_PRE_ELABORATION=0` runs it.
   - `remove-unused-params` removes `n` from the synthesized
-    `S.__copyinit__`, which reads none of it.
+    `S.__copyinit__` (`$v1.s` loaded, `String.__copyinit__` called), which
+    reads none of it.
   - Inlining `String.__copyinit__` splices places rooted at the bare
-    receiver `S` (`$v1.s.size`, `$v1.s.data`, an `index.get` over it).
-  - The parameter-use walker (`mir::unread_parameters_of`) then counts
-    `n` as read.
-  - Suspect: a bare self spelling with no struct arguments reads every
-    slot (`Walker::serialize_seq`).
+    receiver type `S` with no arguments.
+  - The parameter-use walker (`unread_parameters_of`,
+    `mir/param_uses.rs`) then counts `n` as read: its `serialize_seq`
+    arm takes a bare self spelling with no struct arguments as
+    `LayoutReads::All`, every slot.
+  - Recipe: `MOJITO_PRE_ELABORATION=0 mojito emit-mir` the program, then
+    `mojito opt --pass remove-unused-params --pass inline-parametric` over
+    the text reproduces it.
   - Probes: the same over `T: AnyType`, an `@always_inline("nodebug")`
-    written copy constructor, and `S[n](copy=c)` in a generic `dup[n]`.
+    written copy constructor (which also names `S.copy`), and
+    `S[n](copy=c)` in a generic `dup[n]` (which also names `dup`).
   - A `Movable`-only `S` runs.
-  - Fails at `b93e0128`, before R1050.
   - Found while landing R1050 (2026-10-22).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -950,7 +956,8 @@ which names the upstream pass each one follows. Each is measured by the
     elaborator binds no closure for it (R910), which hides the gap.
   - The elaborator should bind a capturing closure's environment for an
     uncalled parameter as it does for a called one.
-  - Depends on nothing.
+  - Depends on R533: the uncalled parameter takes the environment path
+    R533 moves every capturing closure onto.
   - Model: Opus, Not Planned.
 
 - [ ] **R1350 `mem-2-reg` keeps a slot whose stored register another
@@ -1287,25 +1294,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R299 Native lowering cannot lay out a struct a served pack binds
-  only as an element**
-
-  Problem: `show(String("tmp"), [7, 8])` and `show(Named("k", w), …)` into
-  a template-served `def show[*Ts: Writable](*args: *Ts)` stop natively with
-  "unsupported aggregate layout (struct 'List' has no MIR declaration to lay
-  out)", where the VM and the pin print
-  (`assets/ok/pack_argument_destroyed_after_call.mojo`,
-  `assets/ok/pack_element_temporaries.mojo`, both `exe-differential` rows
-  of `conformance/pliron-parity.tsv`).
-  - The struct appears only as an element of the call's pack, so no
-    declaration of it reaches the native program's layout table.
-  - Before R252 landed, `pack_element_temporaries` stopped earlier, at
-    "unsupported heterogeneous runtime pack projection": a folded constant
-    index into a served `def`'s pack was projected by stride.
-  - Found while landing R252 (2026-10-04).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1424 Native `Writer.write` recognizes a `Named` argument by name**
 
   The `Writer.write` lowering (`lower/methods.rs`) formats a `Named` over a
@@ -1322,21 +1310,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - The lever: demand each struct argument's builtin-writer `write_to`
     instance at a native `Writer.write`, then delete the `Named` arm.
   - Found while landing R1158 (2026-10-25).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R633 Natively, a subscript method with a homogeneous variadic
-  index is unsupported**
-
-  Problem: `cube[1, 2, 3]` over `def __getitem__(self, *indices: Int)`
-  prints `123` on the VM, but the native backend stops with "unsupported
-  type `VariadicPack(Int)`" in `Cube.__getitem__`.
-  - The `__setitem__` form (`*indices: Int, *, value: Int`) is the same
-    shape.
-  - Pinned on the VM by `vm_test`'s
-    `multi_index_dispatch_supports_variadic_getitem` and
-    `multidimensional_assignment_supports_variadic_setitem`.
-  - Found while triaging the 2026-10-12 overnight gate.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2039,7 +2012,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: `conformance/probes/ref_binding_owned_subscript_result.mojo`.
   - Probe: the same over an `Int` result (`ref q = t[1]`) fails the same
     way, where the pin rejects it with "value of type 'Int' doesn't have a
-    memory origin in 'ref' binding", the rule R1145 brings to the plain
+    memory origin in 'ref' binding", the rule R169 brings to the plain
     `ref` declaration.
   - A sequence pattern's owned element read avoids it by reading into a
     hidden `var`.
@@ -7212,48 +7185,6 @@ for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
 
-- [ ] **R1403 Nineteen entries in `divergences`, `pmir`, `native`,
-  `code-org`, and `tooling` name gone code or predate the work that touched
-  them**
-
-  These entries' causes were written before later work reworked their code,
-  so a session reading them looks for functions that no longer exist.
-  - Partly fixed: R862. Its `conforms_to` probe prints the pin's `False True
-    True False`, and `struct_trait_rule` maps `TrivialRegisterPassable` to
-    `Declared` since R1267. Only the bound half remains, which R1363 closes.
-  - Cite gone code: R245 (`unroll_comptime_for`, and R246 landed), R163
-    (`generate_def_spec`), R1018 (`Prog::selected_struct_member`), and R423
-    (`$write_formatted`).
-  - Wait on landed entries: R162 (R7) and R182 (R27).
-  - Overtaken: R1144 by R1329's copy elision, and R173
-    (`try_region_drop_timing`) by gap A's explicit raise exits.
-  - Duplicate: R1145 (`ref z = Int()`) restates R169's `RefDecl`
-    materialization fallback.
-  - `pmir`: R1279, filed before R1283 and R1278 reworked copy and
-    constructor synthesis. Add `Depends on R533` to R983.
-  - `native`: R633 (`VariadicPack(Int)`), filed before R743, and R299 (an
-    element struct layout), filed before R1102 and R1073.
-  - `code-org`: R457 (`checked_var_types` is gone, and so is R147's bullet
-    naming it) and R521 (`check_program_for_discovery` is gone,
-    `DiscoveryResult` remains).
-  - `tooling`: R823's version numbers are stale. The snapshots read 1.98,
-    and the reader accepts up to 1.102.
-  - Add `Depends on R533` to R172: its elaboration half follows R533's
-    environment path.
-  - For each entry, run its probe (or the program its first sentence names)
-    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
-    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
-  - Delete an entry whose probe now matches the pin, and record it in
-    `CHANGELOG.md`.
-  - Rewrite an entry that still fails so its cause names today's code, and
-    keep its ID.
-  - Merge a duplicate into the entry it restates, carrying its probes, and
-    delete it.
-  - Done when every entry listed here is deleted, rewritten against today's
-    code, or merged.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1439 A `try` whose first raise is a `String` catches an
   `Error`**
 
@@ -7313,20 +7244,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1144 A copy that is its source's last use stays a copy**
+- [ ] **R1144 A `var` case binding that is a named subject's last use stays
+  a copy**
 
-  Problem: `var u = t` with no later use of `t`, and `match make(): case
-  var x:` over a temporary, print `copy` and two `del`s in Mojito, where
-  the pin moves the dying source into the binding and prints one `del`.
-  - `analysis/copy_elision.rs` keys on a `DropVar` directly after the copy
-    construction; the binding's `var.store` comes first here, and a match
-    binding reads through the hidden `$match` slot.
-  - The `var u = t` form now moves as at the pin (R136's fixture
-    `assets/ok/implicit_copy_last_use_forwards.mojo`); the match-binding
-    forms remain.
-  - Probes: `conformance/probes/match_binding_kinds_on_temporary.mojo`,
-    `match_guard_copy_drop.mojo`, and
-    `match_temporary_subject_survives_failed_var_case.mojo` keep the traces;
+  Problem: `match t: case var b if guard(b.v): ... case _: ...` with no
+  later use of `t` prints `copy 1`, two `del 1`s, then `guard 1` in
+  Mojito, where the pin moves `t` into `b` and prints one `del 1` before
+  `guard 1`.
+  - The subject is bound to a hidden `$match` reference to `t`, and the
+    case's `var b` copies from `t` inside the `match` region's case body.
+  - `analysis/copy_elision.rs` turns a copy into a move only when the
+    source's `DropVar` follows the construction directly, and no scan
+    reaches past a region op other than `try`; `t` dies after the `match`.
+  - Over a temporary subject and a plain `var u = t`, the last-use copy
+    already moves as at the pin
+    (`assets/ok/match_binding_kinds_on_temporary.mojo`,
+    `assets/ok/match_guard_copy_drop.mojo`,
+    `assets/ok/implicit_copy_last_use_forwards.mojo`).
+  - Probe: `conformance/probes/match_temporary_subject_survives_failed_var_case.mojo`,
+    whose third `match` is this shape;
     `assets/ok/match_guards_and_var_bindings.mojo` reads the subject after
     every match to stay clear of it.
   - Depends on nothing.
@@ -7346,19 +7282,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     element reads need the same rule.
   - Ledger name: `conformance/probes/match_temporary_element_mutable.mojo`.
   - Found while landing R1133 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1145 `ref z = Int()` binds a register-passable temporary**
-
-  Problem: `ref z = Int()` runs in Mojito, where the pin rejects it: `value
-  of type 'Int' doesn't have a memory origin in 'ref' binding`.
-  - A `match` applies the rule to `case ref z` over a temporary subject
-    (`bind_subject` in `checker/patterns.rs`, `TypeError::NoMemoryOrigin`);
-    the plain `ref` declaration (`statements.rs`, the `RefDecl` arm) still
-    materializes the temporary into a hidden slot.
-  - Fixture: `assets/type_error/match_ref_binding_register_temporary.mojo`
-    is the match form; add the plain form beside it.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7449,23 +7372,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `conformance/assets-mojo-errors.tsv` row.
   - Unverified on the pin: the pin env was missing when R735 landed.
   - Found while landing R735 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1018 A struct value is accepted where a runtime function type is
-  expected**
-
-  Problem: `apply(Counter(10), 1)` for `def apply(f: def(Int) -> Int, x:
-  Int)` runs on Mojito, where the pin rejects it ("value passed to 'f'
-  cannot be converted from 'Counter' to 'def(Int) -> Int'"), for a
-  parametric and a non-parametric struct alike.
-  - The VM runs it through a `__trait_dispatch.__call__` contract
-    (`Prog::selected_struct_member`), and Pliron segfaults on it.
-  - R1009's `discover_structs` `__call__` demand exists only for this path.
-  - Fix: reject the conversion in the checker, with an
-    `assets/type_error` fixture and its
-    `conformance/assets-mojo-errors.tsv` row.
-  - Found while planning R1003 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7571,44 +7477,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R564 (2026-10-10).
   - Depends on R578.
   - Model: Opus, Not Planned.
-- [ ] **R862 `TrivialRegisterPassable` holds for a struct that never
-  declares it**
-
-  `conforms_to(T, TrivialRegisterPassable)` holds for a `Movable` struct and
-  `List[Int]`, and a `T: TrivialRegisterPassable` bound accepts both, where
-  the pin answers no and rejects the call.
-  - Cause: the shared rule answers the trait shallowly
-    (`StructTraitRule::Shallow` in `mojito_types::conformance`, and the
-    checker's `conforms_to` `_ => true` arm), as R577 describes for
-    `Boolable`.
-  - Unlike R577's traits, every fact is already at hand: a struct's
-    `declared` rows, and `types::trivially_register_passable_leaf` for the
-    compiler-known types upstream declares it on.
-    `MirDeclarations::copy_is_identity` already answers this way below the
-    waist.
-  - Pinned by
-    `conformance/probes/conforms_to_trivial_register_passable_undeclared.mojo`
-    and `conformance/probes/trivial_register_passable_bound_undeclared.mojo`.
-  - Probe: `cse` never merges a generator's result of a
-    `T: TrivialRegisterPassable` type, since the bound admits a `List`
-    instance whose consuming readers would share one buffer; once the
-    bound holds, `MirDeclarations::copy_is_identity` can answer yes for
-    such a `T`: `def both[T: TrivialRegisterPassable](x: T) -> Int:
-    return pair(x, x)` keeps two `var.use` copies of `x` in the generator.
-  - Probe: `mem-2-reg` keeps a slot of such a `T` for the same reason:
-    `def keep[T: TrivialRegisterPassable](x: T) -> T: var y = x; return y`
-    keeps `y`'s slot in the generator. Once the bound holds,
-    `MirDeclarations::copy_is_identity` answers yes for a type parameter
-    whose bound is or refines `TrivialRegisterPassable`, and the slot
-    promotes (found while landing R1266).
-  - Probe: `imm-arguments` leaves a `read x: T` of such a `T` in its
-    parameter slot for the same reason, so each read of `x` in the
-    generator is a separate `var.use`; once the bound holds it is read
-    once at the entry, as a concrete `Int` is (found while landing
-    R1076).
-  - Found while landing R838 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 - [ ] **R860 A `TrivialRegisterPassable` struct may define a copy
   constructor or `__del__`, or hold a non-trivial field**
 
@@ -7687,39 +7555,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - `TypeError` has no diagnostic-note channel.
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R162 A compile-time evaluation of a keyed function that recurses
-  under a runtime `if` prints a value where the pin expands it without
-  end**
-
-  Problem: `comptime R = rep[3]()`, where `rep[n: Int]` calls `rep[n - 1]()`
-  under a runtime `if n == 0`, prints `6` in Mojito. The pin expands the
-  instantiation without end (killed after 60 s, its depth unlimited by
-  default).
-  - Cause: Mojito's compile-time evaluation runs the erased body with `n`
-    reified at run time.
-  - Pinned by `conformance/probes/ctfe_plain_keyed_recursion.mojo`.
-  - Closes with R7, when the evaluation demands concrete instances and the
-    instance budget stops the expansion.
-  - Ledger name: `ctfe-plain-keyed-recursion`.
-  - The work is R7's, so this entry is taken as-is when R7 lands.
-  - Depends on R7, which makes the evaluation demand concrete instances.
-  - Model: Opus, Not Planned.
-
-- [ ] **R163 `len` over a runtime pack is accepted in a `comptime for`
-  header the pin rejects**
-
-  Problem: `comptime for i in range(len(items))` over a runtime pack
-  `*items: *Ts` runs in Mojito and is rejected upstream ("cannot use a
-  dynamic value in call argument"). Both accept `items.__len__()` there.
-  - Pinned by `conformance/probes/pack_len_comptime_for_header.mojo`.
-  - The lever is the builtin `len` over a `VariadicPack` under source
-    validation and the elaborator's `len(args)` fold
-    (`specialize.rs:generate_def_spec`).
-  - Both answer the arity where the pin treats the call as dynamic.
-  - Ledger name: `len-over-pack-in-comptime-for-header`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R442 `TString` is in scope in user code, where the pin has no such
   name**
@@ -7871,6 +7706,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `crates/mojito-checker/src/checker/statements.rs`, whose
     `materialized_reference_actual` fallback materializes any value.
   - Pinned by `conformance/probes/ref_binding_register_value.mojo`.
+  - Probe: `ref z = Int()` runs in Mojito, where the pin rejects it: "value
+    of type 'Int' doesn't have a memory origin in 'ref' binding". A `match`
+    already applies the rule to `case ref z` over a temporary subject
+    (`bind_subject` in `checker/patterns.rs`, `TypeError::NoMemoryOrigin`,
+    `assets/type_error/match_ref_binding_register_temporary.mojo`); add
+    the plain form beside that fixture.
   - The lever is named, but the rejection reaches wide fixture fallout, so
     it wants its own pass with the fallout enumerated first.
   - Ledger name: `ref-binding-register-value`.
@@ -7921,25 +7762,25 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R172 Binding a capturing closure to a method's compile-time callable
-  parameter retypes the captured value as `None`**
+- [ ] **R172 A capturing closure bound to a method's compile-time callable
+  parameter does not elaborate**
 
-  Problem: a method whose compile-time callable parameter binds a capturing
-  closure is rejected — "operator Mul is not defined for Int and None" —
-  while the pin runs it. The same closure through a free function is
+  Problem: a method whose compile-time callable parameter binds a
+  capturing closure (`runner.apply[scale](5)`, `scale` reading an enclosing
+  `var`) stops with "unsupported binding call to `main$scale` during
+  monomorphization: Missing("x")" in `Runner.apply`, while the pin prints
+  `15` then `115`. The same closure through a free function is
   `assets/ok/lambda_hof.mojo`.
-  - The method call is what breaks it: the program runs once the
-    `runner.apply[scale](5)` line goes.
-  - So binding the closure to a *method's* parameter is what retypes the
-    captured `factor` as `None`.
-  - Pinned by `conformance/probes/method_capturing_callable_parameter.mojo`.
-  - The native side of this shape is unbuilt behind the checker.
+  - The checker accepts it now; the gap is the elaborator's.
   - Only the direct-call arm promotes a capturing callable argument to a
-    runtime parameter (`mono/promote.rs`).
-  - So a `MethodCall` carrying one would still reject contextually at
-    monomorphization.
+    runtime parameter (`mono/promote.rs`, `Bindings::runtime_callables`),
+    so a `MethodCall` carrying one finds no binding for the callee's
+    argument.
+  - R533 moves every capturing closure onto the environment path, which
+    a method's instance can take as a free function's does.
+  - Pinned by `conformance/probes/method_capturing_callable_parameter.mojo`.
   - Ledger name: `method-capturing-callable-parameter`.
-  - Depends on nothing.
+  - Depends on R533: its elaboration follows R533's environment path.
   - Model: Opus, Planned.
 
 - [ ] **R980 A capturing callable parameter forwarded to a callee that
@@ -7971,23 +7812,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R910 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R173 Two corpus fixtures run their destructors later than the pin
-  does**
-
-  Problem: two corpus fixtures run the same destructors later than the pin
-  does (`conformance/assets-mojo-output-diffs.tsv`, family `drop-timing`):
-  `assets/ok/owned_pointer_api.mojo` and
-  `assets/ok/try_region_drop_timing.mojo`.
-  - The two `MaybeUninit` fixtures that used to skip destructors outright
-    left this list on 2026-09-17, when owning temporaries gained their
-    hidden slots.
-  - Both remaining cases are orderings rather than omissions.
-  - The plan establishes where the pin runs each destructor before Mojito's
-    schedule is moved.
-  - Ledger name: `destructor-timing-against-the-pin`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R174 A reference into what a `Pointer` field borrows cannot name the
   element sub-origin the pin requires**
@@ -8089,6 +7913,14 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - A slice span `Span[T, interior(o)]` therefore carries a doubly
     interior data pointer inside Mojito; no probe observes it.
   - Probe: `conformance/probes/span_of_list_survives_clear.mojo`.
+  - Probe: a `Pointer` over an owned interior does not keep its owner
+    alive, though a `Span` or `ref` over one does. `var p =
+    xs.unsafe_ptr(); print(p[0].id)` over a `List` of a printing
+    destructor destroys `xs` before the read, where the pin reads first.
+    So does `OwnedPointer.unsafe_ptr`, whose bundled return is also
+    interior where upstream's is `Pointer[T, origin]`
+    (`assets/ok/owned_pointer_api.mojo` prints `drop 9` before `held 9`;
+    `conformance/assets-mojo-output-diffs.tsv`, family `drop-timing`).
   - Found while landing R190 (2026-10-19).
   - Depends on R177.
   - Model: Fable, Not Planned.
@@ -8157,30 +7989,36 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R182 A view struct with a direct `ref` field still widens a
-  returned field view to `origin_of(self)`, which the pin rejects**
+- [ ] **R182 A struct's parametric `comptime` member over a bare
+  parametric struct is accepted, and a return typed through it escapes the
+  returned-origin check**
 
-  Problem: a view struct that stores its source in a direct `ref` field
-  still widens a returned field view to a declared `origin_of(self)`.
-  - `def view(ref self) -> View[origin_of(self)]` returning `View(source,
-    0)` over `ref source = self.items` passes when `View` holds `ref[o]
-    List[Int]`.
-  - The `Pointer`-field twin rejects with upstream's "cannot implicitly
-    convert 'View[origin_of(self.items)]' value to
-    'View[origin_of(self)]'"
+  Problem: `comptime ViewType[m: Bool, //, o: Origin[mut=m]] = View` inside
+  `struct Box`, with `def view(ref self) -> Self.ViewType[origin_of(self)]`
+  returning a view over `self.items`, runs in Mojito; the pin rejects the
+  use with "'View[_]' is not concrete, use '[]' to bind missing
+  parameters".
+  - The member's parameters never reach `View`, so the return type is
+    the unbound `View` and the returned `View[origin_of(self.items)]`
+    passes. Spelled `-> View[origin_of(self)]` directly, or through `=
+    View[o]`, the same return is rejected as at the pin, for a `ref`-field
+    `View` and its `Pointer`-field twin alike
     (`assets/type_error/return_origin_widening_field_view.mojo`).
-  - Why the tail escapes `reconcile_return_origin_tails`
-    (`checker/origins/solve.rs`) is not yet known.
-  - The likely lever is the tail the `ref`-field constructor binds.
-  - Pinned by `assets/extensions/ok/ref_field_view_for_temporary.mojo`,
+  - The member is resolved by `resolve_parameterized_member`
+    (`checker/type_resolution.rs`), which should reject a body naming a
+    parametric struct without its parameters, as a module-level alias's
+    application already stops (on its origin parameter).
+  - Probe: the `Pointer`-field `View` of the fixture above, returned through
+    `comptime ViewType[m: Bool, //, o: Origin[mut=m]] = View`, prints `7`.
+  - Five `assets/extensions/ok` fixtures return through such a member and
+    widen: `ref_field_view_for_temporary.mojo`,
     `ref_field_view_ref_yield.mojo`, `ref_field_view_method_return.mojo`,
     `ref_field_drain_mut_method.mojo`, and
-    `ref_field_chained_view_call.mojo`.
-  - The rule already exists; the gap is one constructor path.
+    `ref_field_chained_view_call.mojo`. Respell each member `= View[o]`
+    and each return over the field's own origin.
   - Ledger name: `ref-field-return-origin-widening`.
-  - Depends on R27, which tightens the returned-origin comparison this
-    constructor path escapes.
-  - Model: Opus, Planned.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R183 `s[0]` on a `String` yields an `Int` where the pin yields a
   character, and two other texts differ from the pin**
@@ -8349,24 +8187,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R245 A compile-time `break` or `continue` in a `comptime for` the
-  elaborator unrolls in the AST is rejected**
-
-  Problem: the pin honors a `break` or `continue` in every `comptime for`;
-  Mojito honors one only in a loop its template serves (a `range` loop of a
-  generic `def`), and rejects it with "a 'break' or 'continue' in a comptime
-  for over 'i' the elaborator unrolls" everywhere else.
-  - A loop in a non-generic `def` or a method, over a compile-time
-    collection or a pack, or with a local `comptime` binding in its body is
-    unrolled above MIR, where a spliced copy's `break` would leave the
-    enclosing loop instead (`comptime/elab.rs::unroll_comptime_for`).
-  - Closes when every `comptime for` is served by its template (R246, R2)
-    and a method's compile-time control flow is (stage P3e of
-    `docs/parametric-mir-plan.md`).
-  - Ledger name: `comptime-for-break-in-unrolled-loop`.
-  - Depends on R246.
-  - Model: Opus, Not Planned.
-
 - [ ] **R273 A runtime read of a symbolic `field_names()` binding in a
   generic body that is never called is accepted**
 
@@ -8453,9 +8273,14 @@ retained on purpose and re-probed rather than fixed; they are listed in
   `b.write(1, "x")` in Mojito and `<<>1x>` at the pin.
   - The pin's `Int.write_to` and `Float64.write_to` are Mojo bodies that
     call `writer.write` for their digits, which re-enters the override.
-  - Mojito formats a builtin scalar in the host and hands the text to
-    `write_string` (the `$write_formatted` primitive), so the override is
-    never re-entered.
+  - Mojito's checker marks `x.write_to(w)` on a builtin scalar
+    `SemanticAdjustment::InvertedWrite`, and MIR lowers it
+    (`mir/lower_expr/expr_method.rs`) to a `$write_formatted` method call
+    on the writer (`mojito_symbol::symbol::WRITE_FORMATTED`).
+  - The VM answers that call by formatting the value in the host
+    (`format_value` in `backend/vm/invoke.rs`) and calling the writer's
+    `write_string`, and Pliron's `lower/methods.rs` does the same, so the
+    override is never re-entered.
   - Pinned by `conformance/probes/writer_override_scalar_write_to.mojo`.
   - Ledger name: `writer-override-scalar-write-to`.
   - Found while landing R414 (2026-10-06).
@@ -9273,9 +9098,20 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `conformance/probes/copyable_struct_trivial_register_passable_field.mojo`,
     `trivial_register_passable_copy_method.mojo`, and
     `trivial_register_passable_bound_undeclared.mojo`.
-  - Closes R861 and R863 (the missed refinement to `Copyable`) and R862 (an
-    undeclared bound is accepted). Shrinks R860 and R1119 (its default body
-    goes in this declaration).
+  - Closes R861 and R863 (the missed refinement to `Copyable`). Shrinks
+    R860 and R1119 (its default body goes in this declaration).
+  - A `T: TrivialRegisterPassable` bound accepts a `Movable` struct and
+    `List[Int]`, where the pin rejects the call ("argument type 'S' does
+    not conform to trait 'TrivialRegisterPassable'"); `conforms_to` already
+    answers from the declaration
+    (`assets/ok/conforms_to_trivial_register_passable_undeclared.mojo`).
+  - Probe: once the bound holds, `MirDeclarations::copy_is_identity`
+    answers yes for a type parameter whose bound is or refines
+    `TrivialRegisterPassable`. Until then `cse` keeps two `var.use` copies
+    of `x` in `def both[T: TrivialRegisterPassable](x: T) -> Int: return
+    pair(x, x)`, `mem-2-reg` keeps `y`'s slot in `def keep[T:
+    TrivialRegisterPassable](x: T) -> T: var y = x; return y`, and
+    `imm-arguments` leaves a `read x: T` in its parameter slot.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9968,7 +9804,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `finalize`, and `PassCarry::into_result` go.
   - Delete the syntax half of `desugar::splice_desugars` if
     nothing but the arena builder reads the spliced statements.
-  - This also closes R521.
+  - Renaming `DiscoveryResult` first (to `CheckedFacts`, as its doc
+    describes it) is moot: the type goes here.
   - Update `docs/pliron-future.md`'s "checker (+ checked handoff)" row to
     say the output is emitted ops.
   - Then judge whether the node tree's remaining distance from `lit`'s
@@ -11512,7 +11349,7 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: `conformance/probes/span_ref_binding_register_passable.mojo`,
     which also holds the starred `case [f, *ref rr]` the pin rejects the
     same way.
-  - Watch R862: Mojito's `TrivialRegisterPassable` is not yet a checked
+  - Watch R1363: Mojito's `TrivialRegisterPassable` is not yet a checked
     conformance.
   - Found while planning R1137 (2026-10-20).
   - Depends on nothing.
@@ -12329,20 +12166,6 @@ residue found inside a task moves to the task that owns its fix.
 
 Track: `tooling`.
 
-- [ ] **R823 The MIR disassembler snapshots are stale**
-
-  `tests/snapshots/mir/{minimal,control_flow,metadata}.mir` still read
-  `mojito-mir 1.51` while the writer prints 1.52, so
-  `mir_disassembler_test::minimal_program_has_a_stable_snapshot` fails at
-  HEAD.
-  - The snapshots pin the version header and the declaration rows, so
-    every format bump breaks them in a lane the bumping session does not
-    run.
-  - Refresh them and pin them through `expect_test::expect_file!`, so
-    `UPDATE_EXPECT=1` blesses them, as `tests/mir_pass_test.rs` does.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1297 The MIR text reader hangs on an unbalanced type**
 
   `mojito opt` on an artifact whose register type reads
@@ -12416,8 +12239,7 @@ Track: `tooling`.
   - A body whose inputs are unchanged since the previous checker pass takes
     that pass's facts (`checker/body_carry.rs`), so the later passes of a
     compilation are cheap. The first pass still infers every prelude body.
-  - `checked_var_types` scans the whole expression table per variable, and
-    `explicit_destroy` re-derives deinitability per struct per pass.
+  - `explicit_destroy` re-derives deinitability per struct per pass.
   - Only then cache the elaborated/checked stdlib across processes.
   - R148, R149, and R150 are named costs under the same goal and land in
     any order.
@@ -12550,21 +12372,6 @@ lines. The rest needs semantic extraction, not line moves.
   - Depends on nothing. Split one of these only while touching it for
     another task.
 
-- [ ] **R457 HIR types a slot from the first identifier of its name in the
-  whole program**
-
-  Problem: `checked_var_types` (`mojito-hir/src/hir.rs`) types each slot of
-  a function's CFG from the first checked node anywhere in the program's
-  expression arena whose syntax is an identifier of the slot's name.
-  - A `comptime for` binder `p` over tuples was typed `Int` from an unrelated
-    stdlib `p`; MIR's loop header now types its slot from the binder, but any
-    other slot MIR does not retype keeps the stray type.
-  - Restricting the scan to the function body's own nodes should change no
-    current output, which is why the entry is here.
-  - Found while landing R405 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R692 An interior invalidation's `include_base_generation` has no
   producer**
 
@@ -12577,16 +12384,6 @@ lines. The rest needs semantic extraction, not line moves.
   - Found while landing R685 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R521 `check_program_for_discovery` and `DiscoveryResult` carry the
-  names of the deleted discovery rounds**
-
-  Problem: the checker entry that stops before the checked arena is built,
-  and its result type, are named for the discovery rounds R9 deleted.
-  - Rename to `check_program_facts` / `CheckedFacts`; `tests/compiler_test.rs`
-    and `docs/architecture.md` name both.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 ## Task Lifecycle Policy
 

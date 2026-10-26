@@ -21,7 +21,8 @@
 #   end
 #
 # Observed 2026-10-17 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: runs it, but copies the last-use `var` binding of the third match where the pin moves (R1144).
+# Mojito: runs it, but copies the last-use `var` binding of the third match,
+# over the named subject `t`, where the pin moves (R1144).
 # When Mojito runs it, promote this file to `assets/ok/` with its manifest rows.
 #
 # Run:    mojo run match_temporary_subject_survives_failed_var_case.mojo

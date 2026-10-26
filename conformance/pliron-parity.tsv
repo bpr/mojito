@@ -108,6 +108,7 @@ assets/ok/comptime_for_applied_sequence.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_body_binding_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_body_scope.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_borrowing_iterator.mojo	main	exe-differential	sanitized
+assets/ok/comptime_for_break_outside_generic_def.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_collection_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_display_binding.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_display_element_reads.mojo	main	exe-differential	sanitized
@@ -183,6 +184,7 @@ assets/ok/conditional_expression_transfer.mojo	main	exe-differential	sanitized
 assets/ok/conditional_member_availability.mojo	main	exe-differential	sanitized
 assets/ok/conditional_member_trivial_value_clauses.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_library_types_unasked_traits.mojo	main	exe-differential	sanitized
+assets/ok/conforms_to_trivial_register_passable_undeclared.mojo	main	exe-differential	sanitized
 assets/ok/conforms_to_user_and_unasked_traits.mojo	main	exe-differential	sanitized
 assets/ok/construction_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/constructor_read_temporary_drop_order.mojo	main	exe-differential	sanitized
@@ -425,6 +427,7 @@ assets/ok/local_comptime_float.mojo	main	exe-differential	sanitized
 assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/loop_result_two_breaks.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized
+assets/ok/match_binding_kinds_on_temporary.mojo	main	exe-differential	sanitized
 assets/ok/match_case_layouts.mojo	main	exe-differential	sanitized
 assets/ok/match_cluster_lifecycle.mojo	main	exe-differential	sanitized
 assets/ok/match_coverage_enum_like_conformers.mojo	main	exe-differential	sanitized
@@ -437,6 +440,7 @@ assets/ok/match_equality_effects.mojo	main	exe-differential	sanitized
 assets/ok/match_equality_effects_and_bindings.mojo	main	exe-differential	sanitized
 assets/ok/match_exits_and_return_analysis.mojo	main	exe-differential	sanitized
 assets/ok/match_exits_in_loops.mojo	main	exe-differential	sanitized
+assets/ok/match_guard_copy_drop.mojo	main	exe-differential	sanitized
 assets/ok/match_guards_and_var_bindings.mojo	main	exe-differential	sanitized
 assets/ok/match_literal_cases.mojo	main	exe-differential	sanitized
 assets/ok/match_literal_clusters.mojo	main	exe-differential	sanitized

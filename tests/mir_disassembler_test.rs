@@ -217,20 +217,20 @@ fn metadata_program() -> MirProgram {
 #[test]
 fn minimal_program_has_a_stable_snapshot() {
     let text = mir::text::disassemble(&identity_program()).expect("disassemble verified MIR");
-    assert_eq!(text, include_str!("snapshots/mir/minimal.mir"));
+    expect_test::expect_file!["snapshots/mir/minimal.mir"].assert_eq(&text);
     assert_eq!(text, mir::text::disassemble(&identity_program()).unwrap());
 }
 
 #[test]
 fn control_flow_and_literals_have_a_stable_snapshot() {
     let text = mir::text::disassemble(&control_flow_program()).expect("disassemble verified MIR");
-    assert_eq!(text, include_str!("snapshots/mir/control_flow.mir"));
+    expect_test::expect_file!["snapshots/mir/control_flow.mir"].assert_eq(&text);
 }
 
 #[test]
 fn declaration_metadata_has_a_stable_snapshot() {
     let text = mir::text::disassemble(&metadata_program()).expect("disassemble verified MIR");
-    assert_eq!(text, include_str!("snapshots/mir/metadata.mir"));
+    expect_test::expect_file!["snapshots/mir/metadata.mir"].assert_eq(&text);
 }
 
 #[test]

@@ -6364,7 +6364,7 @@ point where a slot declared in a loop is uninitialized again.
   judges a struct's fields at its arguments), whatever binders it names,
   as upstream's `canPromote` has no type test (a `SIMD[DType.int64, n]`
   slot in a body over `n` is promoted; a `T: TrivialRegisterPassable`
-  slot is not, while that bound admits a non-trivial type: R862), it is no
+  slot is not, while that bound admits a non-trivial type: R1363), it is no
   parameter, and every
   mention of it is a `var.store` of a register defined once and read by
   the store alone; a `var.use` (copy, move, or forward)

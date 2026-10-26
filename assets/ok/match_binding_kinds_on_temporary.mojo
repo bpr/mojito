@@ -1,29 +1,7 @@
-# PROBE: bare, `var`, `ref`, and `as` bindings over a temporary subject each see one value and no copy.
-#
-# The pin runs it and prints:
-#   make
-#   as 3
-#   del 3
-#   ---
-#   make
-#   bare 3
-#   del 3
-#   ---
-#   make
-#   var 3
-#   del 3
-#   ---
-#   make
-#   ref 3
-#   del 3
-#   end
-#
-# Observed 2026-10-17 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
-# Mojito: runs it, but copies the `var` binding of a dead temporary where the pin moves (R1144).
-# When Mojito runs it, promote this file to `assets/ok/` with its manifest rows.
-#
-# Run:    mojo run match_binding_kinds_on_temporary.mojo
-#         cargo run -- run conformance/probes/match_binding_kinds_on_temporary.mojo
+# Bare, `var`, `ref`, and `as` case bindings over a temporary subject each
+# see one value: the temporary is made once, the `var` binding takes it
+# without a copy, and it is destroyed once after the case body, as at the
+# pin.
 struct Box(ImplicitlyCopyable):
     var v: Int
 

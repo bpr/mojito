@@ -687,6 +687,28 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A triage of eighteen `divergences`, `pmir`, `native`, `code-org`, and
+  `tooling` entries (R1403) re-ran each probe against the pin. Eight
+  already match it and are closed: R245 (a compile-time `break` or
+  `continue` in a `comptime for` outside a generic `def`, now
+  `assets/ok/comptime_for_break_outside_generic_def.mojo`), R163 (`len`
+  over a runtime pack in a `comptime for` header is rejected, as
+  `assets/type_error/comptime_for_runtime_pack_length.mojo` pins), R1018
+  (a callable struct is no `def(...)` value, closed with R1009), R162 (a
+  keyed recursion under a run-time `if` in a compile-time evaluation stops
+  at the instance budget, now a `tests/compiler_test.rs` case), R173
+  (`try_region_drop_timing` now matches; `owned_pointer_api`'s early
+  destroy, an owned-interior `Pointer` that does not keep its owner alive,
+  joins R1155), R633 and R299 (a variadic subscript and a pack-element
+  struct now run natively), and R457 (closed by R634). R823 is fixed: the
+  MIR disassembler snapshots read 1.108 and are pinned through
+  `expect_file!`, so `UPDATE_EXPECT=1` blesses them. R862 merged into
+  R1363 (`conforms_to` now matches, and its two probes are `assets/ok`
+  fixtures with R1144's two match probes), R1145 into R169, and R521 into
+  R767. R423, R182 (a struct's parametric member over a bare struct, not
+  the `ref`-field constructor), R1144, R1279, and R172 are rewritten
+  against today's code, and R172 and R983 now wait on R533.
+
 - A triage of eighteen `comptime` entries (R1400) re-ran each probe against
   the pin. Sixteen already match it on both backends and are closed: R279
   (`Self.N` over an associated value), R278 (`reflect[Self]` in a generic

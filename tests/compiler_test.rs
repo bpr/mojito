@@ -917,6 +917,22 @@ fn inferred_polymorphic_recursion_reports_specialization_divergence() {
 }
 
 #[test]
+fn keyed_recursion_under_a_runtime_if_stops_at_the_instance_budget() {
+    // `rep[n]` demands `rep[n - 1]` under a run-time `if`, so a compile-time
+    // evaluation demands one concrete instance per value without end: the
+    // pin expands it until killed, and the instance budget stops Mojito's.
+    let compiler = Compiler::default();
+    let message = compiler
+        .compile_unlinked(
+            "def rep[n: Int]() -> Int:\n    if n == 0:\n        return 0\n    return n + rep[n - 1]()\n\ncomptime R = rep[3]()\n\ndef main():\n    print(R)\n",
+        )
+        .and_then(|program| compiler.execute(&program))
+        .expect_err("the keyed recursion cannot converge")
+        .to_string();
+    assert!(message.contains("instance budget"), "{message}");
+}
+
+#[test]
 fn callee_stores_transfer_loans_to_caller_bookkeeping() {
     // A callee's accepted store of a loan-carrying value into a `mut`
     // receiver or parameter records a transfer effect; call sites replay it,
