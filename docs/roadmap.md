@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1466**.
+Next free ID: **R1467**.
 
 ## Ordered Work
 
@@ -586,23 +586,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Lever: follow the local slot's one store to the reference it holds,
     and admit the slot's place when that reference is itself admitted.
   - Found while landing R1099 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1031 The VM still dispatches an indirect call on a struct value
-  by name**
-
-  `CallIndirect` over a `Value::Struct` callee looks `__call__` up through
-  `Prog::selected_struct_member`, though no checked program reaches it.
-  - R1009 made the checker reject a callable struct where a `def(...)`
-    value is expected, so a struct callee is only ever a direct call the
-    elaborator devirtualizes into a `MethodCall` naming the instance.
-  - Delete the `Value::Struct` arms in `backend/vm/frames.rs` and
-    `backend/vm/exec.rs` (and `nominal_receiver`), so a struct callee fails
-    as any other non-callable value, after confirming the elaborator's
-    devirtualization never `continue`s for a checked program.
-  - Done when the arms are gone and the HEAD differential is clean.
-  - Found while landing R1009 (2026-10-15).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3669,6 +3652,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The `Tuple` form, `PtrTuple((Pointer(to=left), Pointer(to=right)))`, runs.
   - The display's element is likely checked against the field type before the origin parameter is solved.
   - Found while planning R529 (2026-10-09).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1466 A call on a struct value is checked through its `def(...)`
+  conformance, not as its `__call__` method call**
+
+  `a(x)` over a struct value is checked against the contract
+  `declared_callable_contract` (`checker/call_inference.rs`) finds and
+  lowered as a `call.indirect` the elaborator devirtualizes, where
+  upstream resolves it as the method call `a.__call__(x)`.
+  - Probe: `print(a(1))` over `var a = Add(3)`, with `struct
+    Add(Copyable)` declaring `def __call__(self, x: Int) -> Int`, prints
+    `4` at the pin; Mojito reports "'a' has type Add and is not callable".
+  - Probe: `return f(x)` in `def apply[F: Caller](f: F, x: Int) -> Int`,
+    with `trait Caller` declaring `__call__`, prints `7` at the pin over
+    `apply(Add(3), 4)`; Mojito reports "'f' has type F and is not
+    callable".
+  - Lever: check a call on a non-function value as R1357 checks an
+    operator, as its `__call__` method call, and lower it as a
+    `call.method`; the specializer's `CallIndirect`-over-struct
+    devirtualization (`native/mono/specializer.rs`) then goes.
+  - Found while landing R1031 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

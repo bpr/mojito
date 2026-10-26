@@ -1355,6 +1355,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The VM no longer dispatches a `call.indirect` over a struct value to its
+  `__call__` by name (R1031): the elaborator devirtualizes every call on a
+  callable struct into the `__call__` instance's method call, so a struct
+  callee reaching the VM fails as any other non-callable value. A call on
+  a struct value is still checked through its `def(...)` conformance
+  rather than as its `__call__` method call (R1466).
+
 - A tuple comparison is now the call of the bundled `Tuple`'s dunder under
   its `where conforms_to` clause, as at the pin (R1359), where the checker
   decided it structurally by element type and the VM ordered tuples

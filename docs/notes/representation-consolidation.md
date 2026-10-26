@@ -87,7 +87,8 @@ the entries named. A single command cannot use both.
    comparison. R1348 (landed) made a struct operator a call in MIR.
 
    Third, R1281 reads the witness table instead of composing a name. R1109
-   and R1031 then become deletions:
+   then becomes a deletion (R1031, the VM's by-name `__call__` dispatch,
+   landed; R1466 makes a struct-value call `__call__`'s method call):
 
    ```sh
    scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1281 --task R1109 -n 0
@@ -261,7 +262,7 @@ missing.
     reached through trait-bound calls.
   - R1280's iteration step cannot inline.
 - **Closes**:
-  - Dispatch: R1109, R1031, R1280.
+  - Dispatch: R1109, R1280, R1466 (R1031 closed).
   - Operators: R81, R1238 (R708, R1332, R697, and R1282 closed).
   - Traits: R712, R579 (R707, R706, R191, and R109 closed).
 - **Shrinks** R987, R1291, R684, R113, R1119, R25, R817, R862, and R860

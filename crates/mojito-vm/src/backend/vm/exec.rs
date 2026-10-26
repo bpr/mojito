@@ -621,7 +621,6 @@ impl VmBackend {
             MirInstr::CallIndirect {
                 dest,
                 callee,
-                resolved,
                 args,
                 kwargs,
                 callee_place,
@@ -630,7 +629,6 @@ impl VmBackend {
                 ..
             } => {
                 let callable = regs[callee.0 as usize].clone();
-                let mut nominal_receiver = None;
                 let (function, captures) = match &callable {
                     Value::Function(function) => (function.clone(), Vec::new()),
                     Value::Closure {
@@ -646,18 +644,6 @@ impl VmBackend {
                             &prog.capture_writes(function),
                         )?,
                     ),
-                    Value::Struct { name, .. } => {
-                        nominal_receiver = Some(callable.clone());
-                        let index = prog
-                            .selected_struct_member(
-                                name,
-                                "__call__",
-                                resolved.as_deref(),
-                                args.len(),
-                            )
-                            .ok_or_else(|| RuntimeError::NotCallable(format!("{name}.__call__")))?;
-                        (prog.mir.functions[index].0.clone(), Vec::new())
-                    }
                     value => {
                         return Err(RuntimeError::NotCallable(crate::runtime::type_name(value)));
                     }
@@ -677,7 +663,7 @@ impl VmBackend {
                 let index = prog
                     .index_of(&function)
                     .ok_or_else(|| RuntimeError::NotCallable(function.clone()))?;
-                let (mut bound, slots) = match prog.sigs.get(&function) {
+                let (bound, slots) = match prog.sigs.get(&function) {
                     Some(signature) => self.bind_for_closure_call(
                         prog,
                         &function,
@@ -699,14 +685,35 @@ impl VmBackend {
                 // handles valid through the child call.
                 let definition = &prog.mir.functions[index].1;
                 let mut reference_inputs: Vec<(usize, Value)> = Vec::new();
-                if let Some(receiver) = nominal_receiver {
-                    for parameter in 1..definition.ref_params.len() {
+                for (parameter, is_ref) in definition.ref_params.iter().enumerate() {
+                    let captured_argument = match slots.get(parameter) {
+                        Some(ArgSlot::Positional(argument)) if *argument < capture_count => {
+                            Some(*argument)
+                        }
+                        _ => None,
+                    };
+                    let handle = if let Some(argument) = captured_argument {
+                        if !is_ref {
+                            continue;
+                        }
+                        let handle = bound[parameter].clone();
+                        if !matches!(handle, Value::Ref { .. }) {
+                            return Err(RuntimeError::TypeError(format!(
+                                "vm: reference capture {argument} for '{function}' lost its handle"
+                            )));
+                        }
+                        handle
+                    } else {
                         let place = bound_argument_place(
-                            slots.get(parameter - 1),
-                            prog.sigs
-                                .get(&function)
-                                .and_then(|signature| signature.frame_param_name(parameter - 1)),
-                            0,
+                            slots.get(parameter),
+                            prog.sigs.get(&function).and_then(|signature| {
+                                // A closure's storage is a method's receiver,
+                                // which its signature does not list.
+                                signature.frame_param_name(parameter.checked_sub(usize::from(
+                                    signature.has_receiver && capture_count > 0,
+                                ))?)
+                            }),
+                            capture_count,
                             arg_places,
                             &keyword_names,
                             kwarg_places,
@@ -720,66 +727,9 @@ impl VmBackend {
                         else {
                             continue;
                         };
-                        let handle = self.reference_argument(frame_id, regs, vars, place)?;
-                        reference_inputs.push((parameter, handle));
-                    }
-                    if definition.ref_params.first().copied().unwrap_or(false) {
-                        let place = callee_place.as_ref().ok_or_else(|| {
-                            RuntimeError::Unsupported(format!(
-                                "vm: reference receiver for callable '{function}' must be a place"
-                            ))
-                        })?;
-                        reference_inputs
-                            .push((0, self.reference_argument(frame_id, regs, vars, place)?));
-                    }
-                    bound.insert(0, receiver);
-                } else {
-                    for (parameter, is_ref) in definition.ref_params.iter().enumerate() {
-                        let captured_argument = match slots.get(parameter) {
-                            Some(ArgSlot::Positional(argument)) if *argument < capture_count => {
-                                Some(*argument)
-                            }
-                            _ => None,
-                        };
-                        let handle = if let Some(argument) = captured_argument {
-                            if !is_ref {
-                                continue;
-                            }
-                            let handle = bound[parameter].clone();
-                            if !matches!(handle, Value::Ref { .. }) {
-                                return Err(RuntimeError::TypeError(format!(
-                                    "vm: reference capture {argument} for '{function}' lost its handle"
-                                )));
-                            }
-                            handle
-                        } else {
-                            let place = bound_argument_place(
-                                slots.get(parameter),
-                                prog.sigs.get(&function).and_then(|signature| {
-                                    // A closure's storage is a method's receiver,
-                                    // which its signature does not list.
-                                    signature.frame_param_name(parameter.checked_sub(
-                                        usize::from(signature.has_receiver && capture_count > 0),
-                                    )?)
-                                }),
-                                capture_count,
-                                arg_places,
-                                &keyword_names,
-                                kwarg_places,
-                            );
-                            let Some(place) = caller_handle_place(definition, parameter, place)
-                                .map_err(|_| {
-                                    RuntimeError::Unsupported(format!(
-                                        "vm: a mut/ref argument to callable '{function}' must be a place"
-                                    ))
-                                })?
-                            else {
-                                continue;
-                            };
-                            self.reference_argument(frame_id, regs, vars, place)?
-                        };
-                        reference_inputs.push((parameter, handle));
-                    }
+                        self.reference_argument(frame_id, regs, vars, place)?
+                    };
+                    reference_inputs.push((parameter, handle));
                 }
                 let (result, _, _) = self.call_synchronously_with_references(
                     prog,

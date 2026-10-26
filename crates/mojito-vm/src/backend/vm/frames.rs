@@ -278,7 +278,6 @@ impl VmBackend {
         if let MirInstr::CallIndirect {
             dest,
             callee,
-            resolved,
             args,
             kwargs,
             callee_place,
@@ -288,7 +287,6 @@ impl VmBackend {
         } = instruction
         {
             let callable = &caller.registers[callee.0 as usize];
-            let mut nominal_receiver = None;
             let (function_name, captured) = match callable {
                 Value::Function(function_name) => (function_name.clone(), Vec::new()),
                 Value::Closure {
@@ -304,13 +302,6 @@ impl VmBackend {
                         &prog.capture_writes(function),
                     )?,
                 ),
-                Value::Struct { name, .. } => {
-                    nominal_receiver = Some(callable.clone());
-                    let index = prog
-                        .selected_struct_member(name, "__call__", resolved.as_deref(), args.len())
-                        .ok_or_else(|| RuntimeError::NotCallable(format!("{name}.__call__")))?;
-                    (prog.mir.functions[index].0.clone(), Vec::new())
-                }
                 value => {
                     return Err(RuntimeError::NotCallable(crate::runtime::type_name(value)));
                 }
@@ -348,100 +339,50 @@ impl VmBackend {
                 ),
             };
             let definition = &prog.mir.functions[index].1;
-            if let Some(receiver) = nominal_receiver {
-                for parameter in 1..definition.ref_params.len() {
-                    let place = bound_argument_place(
-                        slots.get(parameter - 1),
-                        prog.sigs
-                            .get(&function_name)
-                            .and_then(|signature| signature.frame_param_name(parameter - 1)),
-                        0,
-                        arg_places,
-                        &keyword_names,
-                        kwarg_places,
-                    );
-                    let Some(place) = caller_handle_place(definition, parameter, place)
-                        .map_err(|_| {
-                            RuntimeError::Unsupported(format!(
-                                "vm: a mut/ref argument to callable '{function_name}' must be a place"
-                            ))
-                        })?
-                    else {
-                        continue;
-                    };
-                    bound[parameter - 1] = self.reference_argument(
-                        caller.id,
-                        &caller.registers,
-                        &caller.variables,
-                        place,
-                    )?;
-                }
-                // As in the synchronous method path: a borrowed receiver whose
-                // result carries reference fields also enters as a caller-place
-                // handle, or the result's `ref` fields root in the callee frame.
-                let receiver = if definition.ref_params.first().copied().unwrap_or(false) {
-                    let place = callee_place.as_ref().ok_or_else(|| {
-                        RuntimeError::Unsupported(format!(
-                            "vm: reference receiver for callable '{function_name}' must be a place"
-                        ))
-                    })?;
-                    self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?
-                } else if let Some(place) = callee_place.as_ref()
-                    && !definition.owned_params.first().copied().unwrap_or(false)
-                    && !definition.deinit_params.first().copied().unwrap_or(false)
-                    && Self::function_result_carries_reference(prog, index)
-                {
-                    self.reference_argument(caller.id, &caller.registers, &caller.variables, place)?
-                } else {
-                    receiver
-                };
-                bound.insert(0, receiver);
-            } else {
-                for (parameter, is_ref) in definition.ref_params.iter().enumerate() {
-                    let captured_argument = match slots.get(parameter) {
-                        Some(ArgSlot::Positional(argument)) if *argument < capture_count => {
-                            Some(*argument)
-                        }
-                        _ => None,
-                    };
-                    if let Some(argument) = captured_argument {
-                        if *is_ref && !matches!(bound[parameter], Value::Ref { .. }) {
-                            return Err(RuntimeError::TypeError(format!(
-                                "vm: reference capture {argument} for '{function_name}' lost its handle"
-                            )));
-                        }
-                        continue;
+            for (parameter, is_ref) in definition.ref_params.iter().enumerate() {
+                let captured_argument = match slots.get(parameter) {
+                    Some(ArgSlot::Positional(argument)) if *argument < capture_count => {
+                        Some(*argument)
                     }
-                    let place = bound_argument_place(
-                        slots.get(parameter),
-                        prog.sigs.get(&function_name).and_then(|signature| {
-                            // A closure's storage is a method's receiver,
-                            // which its signature does not list.
-                            signature.frame_param_name(parameter.checked_sub(usize::from(
-                                signature.has_receiver && capture_count > 0,
-                            ))?)
-                        }),
-                        capture_count,
-                        arg_places,
-                        &keyword_names,
-                        kwarg_places,
-                    );
-                    let Some(place) = caller_handle_place(definition, parameter, place)
-                        .map_err(|_| {
-                            RuntimeError::Unsupported(format!(
-                                "vm: a mut/ref argument to callable '{function_name}' must be a place"
-                            ))
-                        })?
-                    else {
-                        continue;
-                    };
-                    bound[parameter] = self.reference_argument(
-                        caller.id,
-                        &caller.registers,
-                        &caller.variables,
-                        place,
-                    )?;
+                    _ => None,
+                };
+                if let Some(argument) = captured_argument {
+                    if *is_ref && !matches!(bound[parameter], Value::Ref { .. }) {
+                        return Err(RuntimeError::TypeError(format!(
+                            "vm: reference capture {argument} for '{function_name}' lost its handle"
+                        )));
+                    }
+                    continue;
                 }
+                let place = bound_argument_place(
+                    slots.get(parameter),
+                    prog.sigs.get(&function_name).and_then(|signature| {
+                        // A closure's storage is a method's receiver,
+                        // which its signature does not list.
+                        signature.frame_param_name(parameter.checked_sub(usize::from(
+                            signature.has_receiver && capture_count > 0,
+                        ))?)
+                    }),
+                    capture_count,
+                    arg_places,
+                    &keyword_names,
+                    kwarg_places,
+                );
+                let Some(place) =
+                    caller_handle_place(definition, parameter, place).map_err(|_| {
+                        RuntimeError::Unsupported(format!(
+                            "vm: a mut/ref argument to callable '{function_name}' must be a place"
+                        ))
+                    })?
+                else {
+                    continue;
+                };
+                bound[parameter] = self.reference_argument(
+                    caller.id,
+                    &caller.registers,
+                    &caller.variables,
+                    place,
+                )?;
             }
             return self
                 .make_frame(
