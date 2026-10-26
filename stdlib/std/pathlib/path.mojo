@@ -30,11 +30,8 @@ def cwd() raises -> Path:
 struct Path(
     Boolable,
     Comparable,
-    Copyable,
-    Equatable,
     Hashable,
     ImplicitlyCopyable,
-    Movable,
     PathLike,
     Writable,
 ):

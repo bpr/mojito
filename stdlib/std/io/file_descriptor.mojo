@@ -8,7 +8,7 @@ from std.string import String, StringSpan
 from .file import FileHandle
 
 
-struct RawFileDescriptor(Copyable, ImplicitlyCopyable, Movable, TrivialRegisterPassable, Writer):
+struct RawFileDescriptor(TrivialRegisterPassable, Writer):
     """File descriptor of a file."""
 
     var _value: Int

@@ -2320,24 +2320,33 @@ impl Checker {
                         ));
                     }
                 };
-                let ExprKind::Identifier(trait_name) = &args[1].kind else {
+                // A composition (`Deinitable & Movable`) is the conjunction
+                // of its traits' conformances.
+                let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
                     return Err(TypeError::Unsupported(
                         "conforms_to requires a trait name".to_string(),
                     ));
                 };
-                self.check_trait_name(trait_name)?;
-                let operand = ConstraintOperand::Param(param);
-                if pack {
-                    GenericConstraint::ConformsPack {
-                        operand,
-                        trait_name: trait_name.clone(),
-                    }
-                } else {
-                    GenericConstraint::Conforms {
-                        operand,
-                        trait_name: trait_name.clone(),
-                    }
-                }
+                let conjuncts = trait_names
+                    .into_iter()
+                    .map(|trait_name| {
+                        self.check_trait_name(trait_name)?;
+                        let operand = ConstraintOperand::Param(param.clone());
+                        let trait_name = trait_name.to_string();
+                        Ok(if pack {
+                            GenericConstraint::ConformsPack {
+                                operand,
+                                trait_name,
+                            }
+                        } else {
+                            GenericConstraint::Conforms {
+                                operand,
+                                trait_name,
+                            }
+                        })
+                    })
+                    .collect::<Result<Vec<_>, TypeError>>()?;
+                overload_support::fold_constraint_conjunction(&conjuncts)
             }
             _ => {
                 return Err(TypeError::Unsupported(

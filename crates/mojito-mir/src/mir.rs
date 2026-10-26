@@ -390,12 +390,14 @@ impl MirDeclarations {
         self.traits.iter().chain(imported)
     }
 
-    /// Whether the declared trait `candidate` refines `required`, directly
-    /// or through its parents.
+    /// Whether the trait `candidate` refines `required`, directly or
+    /// through its parents: a declared trait's, else a compiler-known
+    /// trait's declaration (`Comparable` refines `Equatable`).
     pub fn trait_refines(&self, candidate: &str, required: &str) -> bool {
         mojito_types::conformance::refines(
             &|name| {
                 self.trait_declaration(name)
+                    .or_else(|| compiler_trait_declaration(name))
                     .map(|declaration| declaration.refines.as_slice())
             },
             candidate,

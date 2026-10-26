@@ -18,7 +18,9 @@ from std.collections.optional import Optional
 from std.builtin.builtin_slice import ContiguousSlice
 from std.span import Span
 
-from std.iter import Iterable, Iterator, StopIteration
+from std.builtin.floatable import FloatableRaising
+from std.builtin.int import IntableRaising
+from std.iter import Iterator, StopIteration
 from std.range import range
 from std._string_tables import _lower_table, _pow5_table, _upper_table, _upper2_table, _upper3_table
 
@@ -646,28 +648,21 @@ trait PathLike:
         ...
 
 
+# Upstream also declares `KeyElement`, a composition alias the bundled
+# library cannot spell (R1171); `Comparable` and `Hashable` answer its parts.
+# `String` iterates through `__iter__` but is not `Iterable`, as upstream.
 struct String(
     Boolable,
     Comparable,
-    Copyable,
     Defaultable,
-    Equatable,
+    FloatableRaising,
     Hashable,
     ImplicitlyCopyable,
-    Iterable,
-    Movable,
+    IntableRaising,
     PathLike,
     Writable,
     Writer,
 ):
-    # `Element` stays an unbound alias: `String` has no origin parameter to
-    # forward, and an alias declaration is a legal unbound position upstream
-    # (only storage annotations demand bound origin slots).
-    comptime Element = StringSpan
-    comptime IteratorType[
-        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _GraphemeIter[iterable_origin]
-
     var data: UnsafePointer[Byte]
     var size: Int
     var cap: Int
@@ -1168,7 +1163,7 @@ struct String(
 
     # Ordinary String iteration yields borrowed grapheme-cluster StringSpan
     # views (current Mojo); `__reversed__` walks the clusters back to front.
-    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+    def __iter__(ref self) -> _GraphemeIter[origin_of(self)]:
         return _GraphemeIter(StringSpan(self), 0)
 
     def __reversed__(self) -> _GraphemeReversedIter[origin_of(self)]:
@@ -1284,9 +1279,7 @@ struct String(
 # `Codepoint.from_u32(scalar)` (Mojito is Int-based), which UTF-8-encodes
 # the scalar in ordinary library code through runtime `Byte(Int)`
 # conversions.
-struct Codepoint(
-    Comparable, Copyable, Equatable, Deinitable, ImplicitlyCopyable, Intable, Movable, Writable
-):
+struct Codepoint(Comparable, ImplicitlyCopyable, Intable, Movable, Writable):
     var _scalar: Int
     var _text: String
 
@@ -1432,21 +1425,25 @@ struct Codepoint(
 # iteration) that run in place over this buffer.
 struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
     Boolable,
+    Defaultable,
     Equatable,
+    FloatableRaising,
     Hashable,
     ImplicitlyCopyable,
-    Iterable,
-    Movable,
+    IntableRaising,
     PathLike,
     Writable,
 ):
-    comptime Element = StringSpan[Self.origin]
-    comptime IteratorType[
-        iterable_mut: Bool, //, iterable_origin: Origin[mut=iterable_mut]
-    ] = _GraphemeIter[Self.origin]
-
     var _data: Pointer[Byte, Self.origin._get_owned_interior["bytes"]]
     var _size: Int
+
+    # The empty view, over the empty literal's bytes.
+    @inline(.always)
+    def __init__(out self):
+        self._data = "".ptr().unsafe_mut_cast[True]().unsafe_origin_cast[
+            origin._get_owned_interior["bytes"]
+        ]()
+        self._size = 0
 
     @implicit
     def __init__(out self, ref [Self.origin] src: String):
@@ -1467,8 +1464,15 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         self._size = literal.byte_length()
 
     # Ordinary StringSpan iteration also yields grapheme-cluster sub-views.
-    def __iter__(ref self) -> Self.IteratorType[origin_of(self)]:
+    def __iter__(self) -> _GraphemeIter[Self.origin]:
         return _GraphemeIter(self, 0)
+
+    # Numeric parsing through the free `atol`/`atof`, which take a `String`.
+    def __int__(self) raises -> Int:
+        return atol(String(self))
+
+    def __float__(self) raises -> Float64:
+        return atof(String(self))
 
     @inline(.always)
     def byte_length(self) -> Int:

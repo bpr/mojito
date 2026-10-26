@@ -687,6 +687,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The bundled library types declare the conformances upstream's do (R578):
+  `List[T]` is `Defaultable` and `Equatable where T: Equatable`, `Dict` is
+  `Defaultable`, `Set` is `Comparable`, `String` and `StringSpan` are no
+  longer `Iterable` (a `for` over one still walks its grapheme clusters)
+  but are `IntableRaising` and `FloatableRaising`, upstream's traits, now
+  bundled and exported by the prelude, and `StringSpan` is `Defaultable`,
+  so `Int(StringSpan("12"))` parses (R430). A `Comparable` struct now
+  conforms to `Equatable` (R707), and a `conforms_to` clause may name a
+  trait composition (`conforms_to(T, Deinitable & Movable)`). The
+  conformances that still differ are filed as R1453, R1454, and R1455.
+
 - A struct no longer conforms to a compiler-known trait it never declares
   (R577): `conforms_to(T, Boolable)` and a `T: Boolable` bound are false for
   a struct with a `__bool__` and no `Boolable` in its list, as at the pin,

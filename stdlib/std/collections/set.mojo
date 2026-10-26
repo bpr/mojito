@@ -48,10 +48,11 @@ struct Set[
     T: Hashable & Equatable & Movable, H: Hasher = default_hasher
 ](
     Boolable,
+    Comparable where conforms_to(T, Copyable) and conforms_to(T, Equatable),
     Copyable where conforms_to(T, Copyable),
     Deinitable where conforms_to(T, Deinitable),
-    Equatable where conforms_to(T, Copyable),
-    Hashable where conforms_to(T, Copyable),
+    Equatable where conforms_to(T, Copyable) and conforms_to(T, Equatable),
+    Hashable where conforms_to(T, Copyable) and conforms_to(T, Hashable),
     Iterable where conforms_to(T, Copyable),
     IterableOwned where conforms_to(T, Deinitable),
     Movable,

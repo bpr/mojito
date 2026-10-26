@@ -1791,6 +1791,8 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "Sized",
     "SizedRaising",
     "len",
+    "FloatableRaising",
+    "IntableRaising",
     "EnumLike",
     "range",
     "Slice",

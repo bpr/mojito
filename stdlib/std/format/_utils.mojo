@@ -18,7 +18,7 @@ from std.range import range
 # String]()` writes `SIMD[DType.int, 1], String`. The names are cut out of
 # the pack's `Tuple[...]` spelling (a pack spread expands per
 # specialization, where a variadic struct's bare `Self` would not).
-struct TypeNames[*Ts: Movable](ImplicitlyCopyable, Movable, Writable):
+struct TypeNames[*Ts: Movable](ImplicitlyCopyable, Writable):
     var _unused: Int
 
     def __init__(out self):
@@ -65,7 +65,7 @@ struct FormatStruct[T: Writer, o: Origin[mut=True]](Movable):
 
 
 # Upstream's `name=value` wrapper: a reference to the value, not a copy.
-struct Named[T: Writable, o: Origin[mut=False]](Copyable, Movable, Writable):
+struct Named[T: Writable, o: Origin[mut=False]](ImplicitlyCopyable, Writable):
     var _name: String
     var _value: Pointer[Self.T, Self.o]
 

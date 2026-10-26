@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1453**.
+Next free ID: **R1456**.
 
 ## Ordered Work
 
@@ -2951,6 +2951,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `where False`, message included.
   - `docs/grammar.md` first, then parser tests and an `assets/ok` fixture
     beside the `where False` ones.
+  - Probe: the bundled `Allocation` and `ThinAllocation` spell
+    `Deinitable where False`, where upstream's declare `not Deinitable`.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3310,27 +3312,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R707 A struct declaring `Comparable` does not conform to
-  `Equatable`**
-
-  Problem: `eq(S(9))` over `def eq[T: Equatable & Copyable](a: T)`, where
-  `S` declares `(Comparable, Copyable)`, is rejected with "type 'S' for
-  parameter 'T' does not conform to trait 'Equatable'", where the pin
-  accepts it because `Comparable` refines `Equatable`.
-  - `struct_conformance_applies` asks `trait_refines`, which knows no
-    refinement between compiler-known traits.
-  - `compiler_trait_declaration` (`mojito-checked::declaration`) already
-    records `Comparable` refining `Equatable`.
-  - Probe: `p.__lt__(q)` over `p = (Tag(2), 1)`, where `Tag` declares
-    `Comparable`, is rejected because `Tuple.__lt__`'s `where` clause
-    `conforms_to(Ts.values, Equatable)` folds False. The pin prints `True`.
-  - Probe: `Dict[P, Int]()`, where `P` declares `(Comparable, Copyable,
-    Hashable, Writable)`, is rejected with "type 'P' for parameter 'K' does
-    not conform to trait 'Equatable'"; the pin runs it.
-  - Found while landing R702 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R708 A dunder call through a compiler-known comparison bound is
   rejected**
 
@@ -3479,11 +3460,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Delete both structural arms. A tuple operand then dispatches as R1357's
     struct operator does.
   - Probe: `(Tag(2), 1) < (Tag(2), 3)` over a user `Comparable` `Tag` prints
-    `True` at the pin. Mojito rejects it.
+    `True` at the pin and in Mojito, which decides it through
+    `tuple_order_compatible` rather than `Tuple.__lt__`.
   - Mixed built-in elements, such as `(1, String("b")) < ...` and
     `(2.0, String("x")) < ...`, already run.
-  - `Tuple.__lt__` itself rejects `Tag` until R707 makes a `Comparable`
-    struct `Equatable`.
   - Depends on R1357 and R707.
   - Model: Opus, Not Planned.
 
@@ -3531,6 +3511,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A requirement needs a static shape in `TraitRequirement`, conformance
     matching against a struct's `@staticmethod`, and `T.make()` dispatch
     over a bound binder.
+  - Probe: the bundled `Array`, `Optional`, `OptionalReg`, and `Span`
+    omit upstream's `DevicePassable` conformance, a trait with
+    `@staticmethod` requirements.
   - Found while landing R914 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4617,6 +4600,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     expression into the (condition, message) pair the tuple form fills.
   - `docs/grammar.md` first, then parser tests and fixtures beside the
     tuple-form ones.
+  - Probe: the bundled `MaybeUninit` spells its three conditional
+    conformances in the tuple form, where upstream's use `where ... else`.
   - Found at the 2026-09-21 re-pin and left unfiled; refiled at the
     2026-10-17 re-pin.
   - Depends on nothing.
@@ -5849,6 +5834,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     this entry's.
   - Probe: `comptime MyTr = Copyable & Movable`, then `print(g[MyTr]())`,
     prints `1` at the pin.
+  - Probe: upstream's `std.collections.dict` declares `comptime KeyElement
+    = Movable & Hashable & Equatable`, which `String`, `StringSpan`, and
+    `Path` list as a conformance and `Dict` and `Set` take as a bound. The
+    bundle spells the composition out and omits it from the lists, so a
+    program naming `KeyElement` finds no declaration.
   - Found while landing R1166 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -7518,21 +7508,47 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R578 Bundled library types declare other conformances than
-  upstream's**
+- [ ] **R1453 Bundled types do not declare upstream's `RegisterPassable`
+  and `TrivialRegisterPassable`**
 
-  Problem: `List[Int]` is neither `Equatable` nor `Defaultable` in Mojito,
-  where the pin says it is both, and `String` is `Iterable` in Mojito but
-  not at the pin.
-  - Cause: the bundled `List` declares neither conformance, and the bundled
-    `String` declares `Iterable` where upstream's does not.
-  - A conformance is now decided from the declared list alone, so the
-    declarations are the whole answer.
-  - The fix is to declare each bundled type's conformances as the pin's
-    library does, conditions included (`Equatable where T: Equatable`).
-  - Pinned by
-    `conformance/probes/conforms_to_library_declared_conformances.mojo`.
-  - Found while landing R564 (2026-10-10).
+  Problem: `conforms_to(T, TrivialRegisterPassable)` is `False` in Mojito
+  and `True` at the pin for a `StringSpan` or a `range(n)` result, and
+  likewise for every bundled type whose upstream declaration lists one of
+  the two.
+  - `TrivialRegisterPassable`: `StringSpan`, `Layout`, `ErrNo`,
+    `_CTimeSpec`, `StopIteration`, and the three `range` structs.
+  - `RegisterPassable`: `EmptyOptionalError`, `OwnedPointer`, `TString`,
+    `Allocation`, `ThinAllocation`, and `Variant where
+    Ts.all_conforms_to[RegisterPassable]()`.
+  - Cause: either declaration changes how the value passes natively, so
+    the native ABI rows in `docs/native-abi.md` must follow, and
+    `TrivialRegisterPassable` is not yet a checked conformance (R1363).
+  - `Span`'s is R1226.
+  - Found while landing R578 (2026-10-26).
+  - Depends on R1363 and R1226.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1454 Bundled types lack the members and traits upstream's other
+  declared conformances need**
+
+  Problem: a few bundled types omit a conformance upstream's library
+  declares, because the bundled type lacks the member the trait requires
+  or the bundle lacks the trait, so `conforms_to` answers `False` where the
+  pin answers `True`.
+  - `Writable` (a `write_to`): `Layout`, `Allocation`, `ThinAllocation`,
+    `StopIteration`, `OwnedPointer where T: Writable`, and `StringDict
+    where V: Writable`.
+  - `IterableOwned` on `Dict`: an owning `__iter__(var self)` and its
+    iterator. Upstream's clause reads `KeyElement` (R1171); `K: Deinitable`
+    spells it meanwhile.
+  - `Defaultable` and `Hashable where T: Hashable` on `Span`: an empty
+    constructor and a `__hash__`.
+  - `ReversibleRange` on the three `range` structs: the bundle has no such
+    trait, so `reversed(range(n))` has an overload of its own
+    (`stdlib/std/builtin/reversed.mojo`).
+  - Probe: `comptime if conforms_to(T, IterableOwned)` at `T =
+    Dict[String, Int]` holds at the pin, not in Mojito.
+  - Found while landing R578 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10363,12 +10379,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port the overloads, including the refined `out self` they use, and
     delete the scalar arms of all three sites. R857's cast becomes their
     `pop.cast`.
-  - Probe: R430's `Int(StringSpan("12"))` and R339's `__int__`.
+  - Probe: R339's `__int__`, and `Int(StringSpan("12"))`, which the
+    checker's rule converts through `StringSpan.__int__`.
   - Probe: a struct whose `__int__` or `__float__` raises converts through
     `Int(x)` or `Float64(x)` without declaring `IntableRaising` or
-    `FloatableRaising`, which Mojito does not model; the checker's
-    conversion exempts a raising dunder from the declared-bound test.
-  - Closes R339 (`__int__` on a scalar) and R430 (`Int` of a `StringSpan`).
+    `FloatableRaising` (bundled in `std.builtin.int` and
+    `std.builtin.floatable`): the checker's conversion exempts a raising
+    dunder from the declared-bound test.
+  - Closes R339 (`__int__` on a scalar).
   - Depends on R1397.
   - Model: Fable, Not Planned.
 
@@ -11532,7 +11550,19 @@ residue found inside a task moves to the task that owns its fix.
     `IteratorType` is `_ArrayIter[downcast[Self.T, Copyable], ...]`;
     without the downcast, the `comptime for` bound rejects `_ArrayIter[P,
     2]` as not an `Iterator`.
-  - Depends on nothing.
+  - Probe: the bundled `List`, `Set`, `Array`, `Optional`, `StringDict`,
+    and `Dict` declare `Iterable where conforms_to(T, Copyable)` (`Dict`
+    over `K` and `V`), where upstream's declare it unconditionally, so
+    `conforms_to(List[P], Iterable)` over a non-`Copyable` `P` is `True` at
+    the pin and `False` here.
+  - Probe: the bundled `_ListIter`, `_ArrayIter`, `_SpanIter`,
+    `_DictKeyIter`, `_DictValueIter`, `_DictEntryIter`, and `_OptionalIter`
+    declare `Iterator where conforms_to(T, Copyable)`, where upstream's
+    take a `Copyable` element and are unconditionally `ImplicitlyCopyable`,
+    `Iterable`, and `Iterator`.
+  - An unconditional `Iterable` also needs R178: the bundled `Iterable`
+    requires `comptime Element: Copyable & Movable`.
+  - Depends on R178.
   - Model: Opus, Planned.
 
 - [ ] **R224 Nested struct names print unqualified where upstream keeps the
@@ -11810,16 +11840,6 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R430 `Int` does not parse a `StringSpan`**
-
-  Problem: `Int(StringSpan("12"))` is `12` at the pin and raises on a
-  non-number, while Mojito reports "expected a numeric or Bool value, found
-  StringSpan".
-  - Workaround: `atol(String(view))`.
-  - Found while landing R421 (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R431 `Span` has no `unsafe_get`**
 
   Problem: `bytes.unsafe_get(i)` over a `Span[UInt8]` reads the element at
@@ -11897,6 +11917,18 @@ residue found inside a task moves to the task that owns its fix.
   - Probe: the pin's enum integration test's `test_function_value`, `for
     token in map[Token.integer]([1, 2, 3])`.
   - Found while landing `enum` (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1455 The bundle has no `std.python`, so `String` is not
+  `ConvertibleFromPython`**
+
+  Problem: upstream's `String` declares `ConvertibleFromPython`, a
+  `std.python` trait, which the bundled `String` cannot name.
+  - The trait converts from a `PythonObject`, and Mojito has no Python
+    interop.
+  - If Python interop is out of scope, this moves to `docs/non-goals.md`.
+  - Found while landing R578 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

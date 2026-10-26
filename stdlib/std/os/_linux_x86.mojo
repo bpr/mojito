@@ -18,7 +18,7 @@ comptime blksize_t = Int64
 # C padding) matches `struct stat`; the trailing reserved words are spelled
 # as three fields because a Mojito `Array` is heap-backed. The VM fills the
 # fields by name.
-struct _c_stat(Copyable, Defaultable, Movable, Writable):
+struct _c_stat(Copyable, Defaultable, Writable):
     var st_dev: dev_t
     var st_ino: Int64
     var st_nlink: nlink_t

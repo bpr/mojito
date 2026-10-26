@@ -14,7 +14,10 @@ from std.collections.optional import Optional
 
 struct StringDict[V: Movable](
     Copyable where conforms_to(V, Copyable),
+    Defaultable,
+    Deinitable where conforms_to(V, Deinitable),
     Iterable where conforms_to(V, Copyable),
+    Movable,
     Sized,
 ):
     comptime Element = String

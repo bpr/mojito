@@ -187,6 +187,7 @@ struct Dict[
 ](
     Boolable,
     Copyable where conforms_to(K, Copyable) and conforms_to(V, Copyable),
+    Defaultable,
     Deinitable where conforms_to(K, Deinitable) and conforms_to(V, Deinitable),
     Equatable where conforms_to(K, Copyable) and conforms_to(V, Equatable),
     Hashable where conforms_to(K, Copyable) and conforms_to(V, Hashable),

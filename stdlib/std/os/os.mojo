@@ -20,7 +20,7 @@ comptime _DIRENT_NAME_OFFSET = 19
 
 
 # A directory stream (`opendir`/`readdir`/`closedir`).
-struct _DirHandle(Movable):
+struct _DirHandle:
     var _handle: Pointer[UInt8, MutUntrackedOrigin]
 
     def __init__(out self, var path: String) raises:

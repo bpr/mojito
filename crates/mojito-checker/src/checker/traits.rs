@@ -3723,15 +3723,23 @@ impl Checker {
     }
 }
 
-/// Whether the declared trait `candidate` refines `required`, directly or
-/// through its parents.
+/// Whether the trait `candidate` refines `required`, directly or through
+/// its parents: a declared trait's, else a compiler-known trait's
+/// declaration (`Comparable` refines `Equatable`).
 pub(super) fn refines_trait(
     traits: &declaration_table::DeclarationTable<TraitInfo>,
     candidate: &str,
     required: &str,
 ) -> bool {
     mojito_types::conformance::refines(
-        &|name| traits.get(name).map(|info| info.refines.as_slice()),
+        &|name| {
+            traits
+                .get(name)
+                .map(|info| info.refines.as_slice())
+                .or_else(|| {
+                    compiler_trait_declaration(name).map(|trait_| trait_.refines.as_slice())
+                })
+        },
         candidate,
         required,
     )

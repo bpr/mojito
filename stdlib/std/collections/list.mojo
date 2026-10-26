@@ -128,10 +128,12 @@ struct _ListOwnedIter[T: AnyType](
 struct List[T: AnyType](
     Boolable,
     Copyable where conforms_to(T, Copyable),
+    Defaultable,
     Deinitable where conforms_to(T, Deinitable),
+    Equatable where conforms_to(T, Equatable),
     Hashable where conforms_to(T, Hashable),
     Iterable where conforms_to(T, Copyable),
-    IterableOwned where conforms_to(T, Deinitable) and conforms_to(T, Movable),
+    IterableOwned where conforms_to(T, Deinitable & Movable),
     Movable,
     Sized,
     Writable where conforms_to(T, Writable),
