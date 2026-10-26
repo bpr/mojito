@@ -81,29 +81,19 @@ pub(super) fn default_construct_parameters(
 
 /// Substitute `bindings` through `function`, whose declaration declares the
 /// compile-time parameters in `scope`. Each read of a callable binder's slot
-/// is the function it is bound to. A slot of a value owning storage holds
-/// nothing, so no place of it may remain.
+/// is the function it is bound to.
 pub(super) fn substitute_function(
     function: &mut MirFunction,
     bindings: &Bindings,
     scope: &[ParamDecl],
 ) -> Result<(), MonoError> {
-    let locals = bound_parameter_locals(scope, bindings);
     substitute_callable_binder_reads(
         &mut function.blocks,
         &function.var_names,
         &function.var_tys,
-        &locals,
+        &bound_parameter_locals(scope, bindings),
         &bindings.callables,
     )?;
-    seed_captured_parameter_slots(function, &locals, &bindings.callables);
-    for (var, name) in function.var_names.iter().enumerate() {
-        if let Some(value) = locals.get(name.as_str())
-            && value.is_constructed_parameter_value()
-        {
-            reject_parameter_storage_reads(&function.blocks, var as u32, value)?;
-        }
-    }
     walk_function_mut(&mut Substitution { bindings }, function)?;
     check_reinterpretation_widths(&function.blocks, &function.reg_types)?;
     copy_builtin_receivers(&mut function.blocks, &function.reg_types);
@@ -203,41 +193,6 @@ pub(super) fn substitute_callable_binder_reads(
                     )?;
                 }
             }
-        }
-    }
-    Ok(())
-}
-
-/// Reject what is left of the slot `slot` of the compile-time parameter
-/// `value` once its reads are materialized: a place rooted at the slot, or
-/// a drop of it, remains only where the check or drop elaboration treated
-/// the parameter as storage, and is an error when the value owns storage
-/// its slot does not hold.
-pub(super) fn reject_parameter_storage_reads(
-    blocks: &[MirBlock],
-    slot: u32,
-    value: &CtValue,
-) -> Result<(), MonoError> {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        let regions = mojito_mir::mir::instruction_regions(instruction);
-        if !regions.is_empty() {
-            for region in regions {
-                reject_parameter_storage_reads(region, slot, value)?;
-            }
-        } else if matches!(
-            instruction,
-            MirInstr::DropVar { var, .. } | MirInstr::ConsumeVar { var } if *var == slot
-        ) || mojito_mir::mir::verify::instruction_places(instruction)
-            .iter()
-            .any(|place| place.root == slot || place.through == Some(slot))
-        {
-            return Err(MonoError {
-                kind: MonoErrorKind::Unsupported,
-                function: None,
-                construct: format!(
-                    "a place read of the compile-time parameter `{value}`, which holds no storage"
-                ),
-            });
         }
     }
     Ok(())
@@ -761,58 +716,6 @@ pub(super) fn constructed_parameter_constant(k: &Const, ty: &Ty) -> Option<CtVal
     }
 }
 
-/// Seed, at the entry block, every folded value parameter slot a closure
-/// captures. A folded slot is never stored, so the capture would borrow
-/// uninitialized storage: it is stored its constant first. A slot is no
-/// drop root, so a value owning a buffer is not seeded, and a string is
-/// its literal.
-fn seed_captured_parameter_slots(
-    function: &mut MirFunction,
-    locals: &HashMap<String, &CtValue>,
-    callables: &HashMap<String, String>,
-) {
-    let mut captured = HashSet::new();
-    collect_captured_vars(&function.blocks, &mut captured);
-    let mut initializers = Vec::new();
-    for (var, name) in function.var_names.iter().enumerate() {
-        let var = var as u32;
-        if !captured.contains(&var) {
-            continue;
-        }
-        let Some(ty) = function.var_tys.get(&var).cloned() else {
-            continue;
-        };
-        let constant = callables
-            .get(name)
-            .map(|callable| Const::Function(callable.clone()))
-            .or_else(|| {
-                locals
-                    .get(name.as_str())
-                    .filter(|value| !value.is_constructed_parameter_value())
-                    .and_then(|value| match Const::of_parameter_value(value, Some(&ty))? {
-                        Const::Value(CtValue::Str(text)) => Some(Const::Str(text)),
-                        constant => Some(constant),
-                    })
-            });
-        let Some(k) = constant else {
-            continue;
-        };
-        let dest = Reg(function.n_regs);
-        function.n_regs += 1;
-        function.reg_types.insert(dest.0, ty.clone());
-        initializers.push(MirInstr::Const { dest, k });
-        initializers.push(MirInstr::DefVar {
-            var,
-            src: dest,
-            binding_ty: Some(ty),
-            in_place: false,
-        });
-    }
-    if let Some(entry) = function.blocks.first_mut() {
-        entry.instrs.splice(0..0, initializers);
-    }
-}
-
 /// The run-time construction of the parameter value `value`, of the concrete
 /// type `ty`, into `dest`: a reflected field-name list at an `Array` is the
 /// list-literal initializer over its names (the call a display `[a, b]`
@@ -856,21 +759,6 @@ pub(super) fn array_display_construction(
         _ => {
             let k = Const::of_parameter_value(value, Some(ty)).ok_or_else(unsupported)?;
             Ok(vec![MirInstr::Const { dest, k }])
-        }
-    }
-}
-
-fn collect_captured_vars(blocks: &[MirBlock], captured: &mut HashSet<u32>) {
-    for instruction in blocks.iter().flat_map(|block| &block.instrs) {
-        match instruction {
-            MirInstr::MakeClosure { captures, .. } => {
-                captured.extend(captures.iter().map(|capture| capture.place.root));
-            }
-            instruction => {
-                for region in mojito_mir::mir::instruction_regions(instruction) {
-                    collect_captured_vars(region, captured);
-                }
-            }
         }
     }
 }

@@ -813,40 +813,14 @@ pub fn binder_scope<'a>(
     chain.into_iter().rev().flatten().collect()
 }
 
-/// The declared type of the materialized value parameter `name` in `scope`.
-///
-/// Such a parameter is non-variadic and declared at a type binder (`v: T`),
-/// an aggregate (`p: Tuple[Int, String]`), or a vector
-/// (`v: SIMD[DType.int32, 2]`).
-pub fn materialized_parameter_ty<'a>(
-    name: &str,
-    scope: impl IntoIterator<Item = &'a ParamDecl>,
-) -> Option<&'a Ty> {
-    scope.into_iter().find_map(|decl| match decl {
-        ParamDecl::Value {
-            name: declared,
-            ty,
-            variadic: false,
-            ..
-        } if declared == name
-            && matches!(
-                ty.kind(),
-                TyKind::Param { .. } | TyKind::Struct(..) | TyKind::Simd { .. }
-            ) =>
-        {
-            Some(ty)
-        }
-        _ => None,
-    })
-}
-
-/// The slots of `function` that name a non-variadic value parameter of
-/// `scope`, whatever its type.
+/// The slots of `function` that name a non-variadic value binder of `scope`
+/// whose read takes a slot ([`mojito_types::types::binder_read_takes_slot`]):
+/// a callable binder.
 ///
 /// Upstream has no variable for a compile-time parameter, so no such slot is
-/// a drop root: the elaborator folds its reads away, and a callable one it
-/// promotes becomes a borrowed run-time parameter. The
-/// [`materialized_parameter_slots`] are among them.
+/// a drop root: the elaborator rewrites its reads into the bound function,
+/// or promotes a capturing closure to a borrowed run-time parameter. Any
+/// other value binder's read is its parameter constant and has no slot.
 #[must_use]
 pub fn parameter_slots(function: &MirFunction, scope: &[&ParamDecl]) -> HashSet<VarId> {
     function
@@ -856,40 +830,9 @@ pub fn parameter_slots(function: &MirFunction, scope: &[&ParamDecl]) -> HashSet<
         .skip(function.n_params)
         .filter(|(_, name)| {
             scope.iter().any(|decl| {
-                matches!(decl, ParamDecl::Value { name: declared, variadic: false, .. }
-                    if declared == *name)
-            })
-        })
-        .filter_map(|(var, _)| VarId::try_from(var).ok())
-        .collect()
-}
-
-/// The slots of `function` that hold a value parameter of `scope` rather than
-/// storage.
-///
-/// Such a parameter ([`materialized_parameter_ty`]), like a `comptime for`
-/// binder, is materialized at each run-time read, whose consumer owns the
-/// result, so copy lowering reads it in place. A callable-bound parameter is
-/// left out: the elaborator may promote it to a run-time parameter.
-#[must_use]
-pub fn materialized_parameter_slots(
-    function: &MirFunction,
-    scope: &[&ParamDecl],
-) -> HashSet<VarId> {
-    function
-        .var_names
-        .iter()
-        .enumerate()
-        .skip(function.n_params)
-        .filter(|(_, name)| {
-            materialized_parameter_ty(name, scope.iter().copied()).is_some_and(|ty| {
-                !matches!(
-                    ty.kind(),
-                    TyKind::Param {
-                        callable_bound: Some(_),
-                        ..
-                    }
-                )
+                matches!(decl, ParamDecl::Value { name: declared, ty, variadic: false, .. }
+                    if declared == *name
+                        && mojito_types::types::binder_read_takes_slot(ty.kind()))
             })
         })
         .filter_map(|(var, _)| VarId::try_from(var).ok())

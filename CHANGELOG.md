@@ -1233,6 +1233,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Copy lowering, drop elaboration, and the elaborator no longer look for a
+  frame slot named after a non-callable value binder, which MIR stopped
+  creating with R662 (R663): `materialized_parameter_slots`, the
+  elaborator's seeding of a captured binder slot, and its rejection of a
+  place rooted at one are deleted, and `mir::parameter_slots` keeps only
+  the callable binders whose read still takes a slot
+  (`types::binder_read_takes_slot`, shared with the check). Output is
+  unchanged on the VM across the corpus.
+
 - A read of a value binder (`n` in `def plain[n: Int]`) is now the
   parameter constant of the binder's declaration reference, upstream's
   `kgen.param.constant`, which the check records on the read and the

@@ -38,7 +38,7 @@ use mojito_mir::mir::{instruction_regions, instruction_regions_mut};
 /// entry or before it.
 pub(super) fn elaborate_drops(
     mut function: MirFunction,
-    value_parameters: &HashSet<VarId>,
+    parameter_slots: &HashSet<VarId>,
     receiver: Option<VarId>,
     values: &DropValues,
     declarations: &MirDeclarations,
@@ -83,7 +83,7 @@ pub(super) fn elaborate_drops(
     let mut blocks = std::mem::take(&mut function.blocks);
     let splice = Splice {
         f: &function,
-        parameter_slots: value_parameters,
+        parameter_slots,
         receiver,
         demands: &demands,
         loan_roots: &loan_roots,
@@ -501,7 +501,7 @@ impl Effects {
 /// before the blocks holding them.
 struct Splice<'a> {
     f: &'a MirFunction,
-    /// The function's compile-time value parameter slots
+    /// The function's callable binder slots
     /// (`mojito_mir::mir::parameter_slots`), which it never drops.
     parameter_slots: &'a HashSet<VarId>,
     /// An initializer's `out self`, which a path leaving without returning
@@ -517,7 +517,7 @@ struct Splice<'a> {
 impl Splice<'_> {
     /// Whether the function drops the value in `v` whole: an owned
     /// register, a droppable variable ([`is_droppable_root`]), or an
-    /// initializer's receiver; a value parameter's slot never.
+    /// initializer's receiver; a callable binder's slot never.
     fn droppable(&self, v: VarId) -> bool {
         self.values.is_register_root(v)
             || self.receiver == Some(v)

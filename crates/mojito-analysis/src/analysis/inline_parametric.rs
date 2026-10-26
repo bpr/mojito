@@ -349,12 +349,7 @@ pub fn inline_calls(
     if changed {
         name_constructors(function, declarations);
         super::name_destructors(function, declarations);
-        lower_copies_and_moves(
-            name,
-            function,
-            &|name| declarations.function(name),
-            &|name| declarations.structure(name),
-        );
+        lower_copies_and_moves(function, &|name| declarations.function(name));
         record_lowered_callees(function, callees);
     }
     changed

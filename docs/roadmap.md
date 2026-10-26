@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1451**.
+Next free ID: **R1452**.
 
 ## Ordered Work
 
@@ -9399,20 +9399,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1315, R1316, and R1317 (the constructor's vocabulary).
   - Model: Fable, Not Planned.
 
-- [ ] **R663 Mono still rewrites value binder slots MIR no longer
-  creates**
+- [ ] **R1451 `remove-unused-params` still counts a read of a slot named
+  after any value binder**
 
-  A non-callable value binder's read is its parameter constant since
-  R662, so the binder half of the slot machinery serves no slot.
-  - `materialized_parameter_slots` and `parameter_slots` (`mir.rs`, read
-    by copy lowering and drop elaboration), `seed_captured_parameter_slots`
-    and `reject_parameter_storage_reads` (`mono/substitute.rs`) still look
-    for a slot named after any value binder.
-  - `substitute_callable_binder_reads` and `inline-parametric`'s
-    `read_binder` already serve only callable binders (R1449).
-  - Done when they serve only what still takes a slot, or are deleted.
-  - Found while landing R660 (2026-10-13).
-  - Depends on R662.
+  Its parameter-use analysis (`slot_reads`, `mir/param_uses.rs`) counts
+  any instruction naming a slot spelled like a value binder as a read of
+  the binder, though since R662 only a callable binder or a pack takes a
+  slot (`types::binder_read_takes_slot`); upstream's `RemoveUnusedParams`
+  sees a read only as a use of the parameter attribute.
+  - The pass cases under `tests/mir_passes/remove-unused-params/` still
+    spell an `Int` binder's read as `var.use` of a slot named after it
+    (`lifted.mir`, `forwarded.mir`, `default_kept.mir`,
+    `forwarded_argument.mir`, `lifecycle_member.mir`), a shape MIR no
+    longer lowers; narrowing `slot_reads` removes those binders.
+  - Done when the cases read a binder as `const { value:
+    param(param_decl_ref …) }`, as MIR lowers it today, and `slot_reads`
+    keeps only the binders `binder_read_takes_slot` names and packs.
+  - Found while landing R663 (2026-10-26).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1449 A callable value binder's read is a frame slot, not a

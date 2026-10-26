@@ -1253,16 +1253,9 @@ impl Checker {
     /// inner binding shadows.
     pub(super) fn value_binder_read(&self, name: &str) -> Option<ParamExpr> {
         if !self.is_value_parameter(name)
-            || self.lookup(name).is_none_or(|ty| {
-                matches!(
-                    ty.kind(),
-                    TyKind::Func(_)
-                        | TyKind::GenericFunc(_)
-                        | TyKind::VariadicPack(_)
-                        | TyKind::ParamList(_)
-                        | TyKind::KgenString
-                )
-            })
+            || self
+                .lookup(name)
+                .is_none_or(|ty| mojito_types::types::binder_read_takes_slot(ty.kind()))
         {
             return None;
         }

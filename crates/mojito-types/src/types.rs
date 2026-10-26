@@ -2982,6 +2982,25 @@ pub const fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
     )
 }
 
+/// Whether a body reads a value binder of this type from a frame slot
+/// rather than as upstream's `kgen.param.constant` of the binder.
+///
+/// A callable binder is still read from a slot, which the elaborator and
+/// `inline-parametric` rewrite into the bound function (or a promoted
+/// closure's storage); a pack and a raw parameter list keep their own
+/// readings. Every other value binder's read is its parameter constant
+/// and takes no storage.
+pub const fn binder_read_takes_slot(ty: &TyKind) -> bool {
+    matches!(
+        ty,
+        TyKind::Func(_)
+            | TyKind::GenericFunc(_)
+            | TyKind::VariadicPack(_)
+            | TyKind::ParamList(_)
+            | TyKind::KgenString
+    )
+}
+
 /// Whether a copy of a value of this type is its operand.
 ///
 /// The value is a scalar, pointer, `None`, or one SIMD lane, held whole in

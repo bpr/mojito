@@ -17,15 +17,12 @@
 //! construction does.
 //! A use naming none, a symbolic type's until the elaborator names its
 //! instance's, stays a use, which the backends copy or move by type. So
-//! does a use of a compile-time value parameter's slot, which holds no
-//! value: the elaborator materializes the parameter at each read. And so
 //! does the read of a variadic collector a call spreads (`show(*args)`),
 //! which the elaborator expands into the pack's element places.
 
 use super::{
-    FuncRef, MirBlock, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, Reg,
-    StructDeclarations, UseMode, VarId, binder_scope, fresh_register, instruction_regions_mut,
-    materialized_parameter_slots,
+    FuncRef, MirBlock, MirFunction, MirFunctionDeclaration, MirInstr, MirPlace, Reg, UseMode,
+    VarId, fresh_register, instruction_regions_mut,
 };
 use mojito_ast::ast::ArgConvention;
 use mojito_types::types::{ParamDecl, Ty, TyArg, TyKind};
@@ -34,24 +31,15 @@ use std::collections::HashSet;
 /// A function's declaration, by the function's name.
 pub type FunctionDeclarations<'d> = dyn Fn(&str) -> Option<&'d MirFunctionDeclaration> + 'd;
 
-/// Lower every copy and move of the function `name`, `function`, naming
-/// its constructor to a call of that constructor.
+/// Lower every copy and move of `function` naming its constructor to a
+/// call of that constructor.
 ///
 /// Regions are lowered too. The constructor's declaration, which
 /// `declarations` answers, decides how the call passes the value: a read
 /// of the source and the call, or the call alone for a register copy.
-/// `structs` answers the struct a closure's body is a method of, whose
-/// parameters are in its scope.
-pub fn lower_copies_and_moves<'d>(
-    name: &str,
-    function: &mut MirFunction,
-    declarations: &FunctionDeclarations<'d>,
-    structs: &StructDeclarations<'d>,
-) {
-    let parameters =
-        materialized_parameter_slots(function, &binder_scope(name, declarations, structs));
+pub fn lower_copies_and_moves(function: &mut MirFunction, declarations: &FunctionDeclarations<'_>) {
     let mut blocks = std::mem::take(&mut function.blocks);
-    lower_blocks(&mut blocks, function, declarations, &parameters);
+    lower_blocks(&mut blocks, function, declarations);
     function.blocks = blocks;
 }
 
@@ -59,7 +47,6 @@ fn lower_blocks(
     blocks: &mut [MirBlock],
     function: &mut MirFunction,
     declarations: &FunctionDeclarations<'_>,
-    parameters: &HashSet<VarId>,
 ) {
     for block in blocks {
         let spread: HashSet<u32> = block
@@ -82,14 +69,10 @@ fn lower_blocks(
         let mut lowered = Vec::with_capacity(block.instrs.len());
         for mut instruction in std::mem::take(&mut block.instrs) {
             for region in instruction_regions_mut(&mut instruction) {
-                lower_blocks(region, function, declarations, parameters);
+                lower_blocks(region, function, declarations);
             }
-            let kept = match &instruction {
-                MirInstr::UseVar { dest, var, .. } => {
-                    parameters.contains(var) || spread.contains(&dest.0)
-                }
-                _ => false,
-            };
+            let kept = matches!(&instruction,
+                MirInstr::UseVar { dest, .. } if spread.contains(&dest.0));
             match (!kept)
                 .then(|| call_of(&instruction, function, declarations))
                 .flatten()

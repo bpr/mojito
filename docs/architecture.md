@@ -1046,11 +1046,11 @@ register, a `String` leaf included, as upstream's `kgen.param.constant`
 materializes a parameter at each use: each backend writes the frozen
 fields into fresh storage, and no initializer runs again. An element of a
 nested list display is a frozen `Array` like any other struct. A tuple, struct, or vector value
-parameter's slot follows the same rule: it owns nothing and is no drop root
-(`mir::materialized_parameter_slots`), and each read of it is the value's
-typed constant, with nothing built at entry; a place of a slot whose value
-owns a buffer that survives the substitution is an error
-(`reject_parameter_storage_reads`). A field chain off
+parameter follows the same rule: its read is the parameter constant of its
+declaration (`Checker::value_binder_read`), with no slot, so each read is
+the value's typed constant, with nothing built at entry. Only a callable
+binder still has a slot (`types::binder_read_takes_slot`), which is no drop
+root (`mir::parameter_slots`). A field chain off
 either (`q.a`, `q.i.v`) is upstream's struct extract on the parameter
 attribute: the checker records it as a `SemanticAdjustment::ParamValue`
 (`Checker::infer_member` over `struct_value_field`), its root never read,
@@ -5192,10 +5192,9 @@ lowered per instance. Both backends run the call as any constructor call:
 the VM constructs through `__moveinit__` as it did through `__init__` and
 `__copyinit__` (`lifecycle_constructor`), and Pliron's compiled signature
 counts a `deinit` parameter as consuming, so the forwarded temporary
-transfers instead of being released after the call. Three uses stay uses:
-one naming no constructor, which the backends copy or move by type; one of
-a compile-time value parameter's slot, which holds no value and which the
-elaborator materializes at each read; and the read of a variadic collector
+transfers instead of being released after the call. Two uses stay uses:
+one naming no constructor, which the backends copy or move by type; and
+the read of a variadic collector
 a call spreads, which the call passes whole (a spread into the builtin
 `print` excepted, whose elements `expand_pack_spreads` reads, finding the
 collector's read in an earlier block once a pass has split the call's). The parameter-use
