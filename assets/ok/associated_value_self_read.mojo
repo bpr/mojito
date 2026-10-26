@@ -1,7 +1,5 @@
-# Pin gap probe (Mojo 1.2.0.dev2026092105): a struct's associated compile-time
-# value read as `Self.N` in its own method and in an inherited trait default
-# holding a `comptime if`. The pin prints `3`, `30`, and `1`; Mojito reports
-# "'Self.N' is not a type parameter of the enclosing struct". Roadmap R279.
+# A struct's associated compile-time value read as `Self.N` in its own method
+# and in an inherited trait default holding a `comptime if`.
 trait Sized2:
     comptime N: Int
 

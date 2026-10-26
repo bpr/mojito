@@ -3960,6 +3960,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a construction through a non-generic struct's member alias,
     `S.V(1)` over `comptime V = SIMD[DType.int64, Self.w]`, fails with
     "Undefined variable 'S'", where the pin prints `[1, 1, 1, 1]`.
+  - Probe: through `Self`, `Self.Next()` over a member `comptime Next =
+    Sized[3]` in a method of `struct Outer[n: Int]` reports "Undefined
+    variable 'Self'", where the pin prints `3`; the annotation `var x:
+    Self.Next` runs (found by R1400, 2026-10-26).
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
@@ -4606,41 +4610,6 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R1400 Eighteen `comptime` entries are fixed or name code that no
-  longer exists**
-
-  The track overstates what remains: six entries were fixed by later work,
-  and eleven cite functions or diagnostics that are gone from `crates/`, so
-  their causes cannot guide a session.
-  - Fixed, by probes run 10-25 on Mojito and the pin: R279 (its conformance
-    probe prints `3 30 1`), R337 (`g[fib(6)]` and `W[fib(6)]` run), R340,
-    R543, R98, and R278.
-  - Partly fixed: R72's call-bracket form `size[Self.n * 2]()` runs. Only
-    the alias body remains, and R1371 closes it.
-  - Cite `Elab::unroll_comptime_for` or `Elab::defer_constant`, both gone:
-    R319, R368 (`top_consts` still exists, so it is probably live), and
-    R509.
-  - Cite R7's fix and its gone diagnostics ("unspecialized type-keyed
-    method", "unknown compile-time function",
-    `is_specializable_declaration_in`): R131, R132, and R486.
-  - Cite other gone code: R82 (`resolves_top_template`), R464
-    (`check_frozen_structs`), R465 (`ctfe_struct_entry`, "is not a
-    compile-time-callable"), R450 (`inferred_param_arg_regs`), and R498
-    ("callable contract names parameter").
-  - For each entry, run its probe (or the program its first sentence names)
-    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
-    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
-  - Delete an entry whose probe now matches the pin, and record it in
-    `CHANGELOG.md`.
-  - Rewrite an entry that still fails so its cause names today's code, and
-    keep its ID.
-  - Merge a duplicate into the entry it restates, carrying its probes, and
-    delete it.
-  - Done when every entry listed here is deleted, rewritten against today's
-    code, or merged.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1115 `where <cond> else "<message>"` is the preferred constraint
   message**
 
@@ -4740,9 +4709,16 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Merging the four AST kinds into one node can follow in `mojo-shape`.
   - Probe: `var f = twice[4]` over `def twice[n: Int]() -> Int` prints `8`
     at the pin. Mojito says "cannot be indexed here".
-  - Closes R326 (`f[]()` read as a dereference), R72 (`Sized[Self.n + 1]` in
-    an alias body, which now parses and fails in the check), and the parse
-    half of R490. Shrinks R383 and R512, whose lowercase subscripts still
+  - Probe: an alias body over a binder-dependent application, `comptime
+    Next = Sized[n]` in `def next[n: Int]` or `comptime Next = Sized[Self.n
+    + 1]` in a method of `struct Sized[n: Int]`, then `Next()`, prints the
+    size at the pin. The body parses as `Index`, which
+    `comptime_type_operand` (`checker/comptime_validation.rs`) takes for a
+    type only over a type-name operand, so Mojito reports "Undefined
+    variable '__module$$$main$$$Sized'". The call-bracket form
+    `size[Self.n * 2]()` runs (carried from R72).
+  - Closes R326 (`f[]()` read as a dereference) and the parse half of
+    R490. Shrinks R383 and R512, whose lowercase subscripts still
     need compile-time `__getitem__` folding.
   - Depends on R1370, so operands are already expressions.
   - Model: Fable, Planned.
@@ -4924,16 +4900,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R509 An unread module constant constrained by an applied `where`
-  operand is rejected**
+- [ ] **R509 A constrained module constant is a plain value, where the pin
+  makes it a generator type**
 
   Problem: `comptime C: Int where (f(1) > 5, "big only") = f(1)` with
   nothing reading `C` runs at the pin and stops in Mojito with "unsupported
   generic constraint operand".
-  - At the pin a non-generic constrained constant is a generator type,
-    checked only where it is used.
-  - `Elab::defer_constant` keeps refusing a constrained constant, so it is
-    still evaluated where it is declared.
+  - At the pin a non-generic constrained constant has type
+    `__generator_type Int where (...)`. Its clauses are checked only where
+    a read instantiates it at `Int` (`var x: Int = C`).
+  - The checker's `StmtKind::Comptime` arm (`checker/statements.rs`)
+    compiles each clause (`compile_where_clause`) and validates it
+    (`validate_declaration_constraint`) at the declaration, and
+    `constraint_operand` (`checker/constraints.rs`) has no arm for a call.
+  - Probe: `comptime C: Int where (1 > 5, "big only") = 1`, unread, stops
+    with "constraint failed: big only", where the pin prints.
+  - Probe: `print(C)` over `comptime C: Int where (1 < 5, "small") = 1`
+    prints `1`, where the pin rejects it ("'__generator_type Int where
+    True' does not conform to trait 'Writable'"): a Mojito-only
+    acceptance.
   - Probe: `conformance/probes/constrained_module_constant_unread.mojo`.
   - Found while landing R488 (2026-10-08).
   - Depends on nothing.
@@ -5121,19 +5106,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R319 A local type alias applied as a constructor in an unrolled
-  `comptime for` body is an undefined variable**
-
-  Problem: `comptime T = Int` then `print(T(3))` inside `comptime for i in
-  range(2)` in a plain `main` fails with "Undefined variable 'T'", where the
-  pin prints `3` twice.
-  - The same alias used as an annotation works, and the same call outside a
-    loop works, so the AST unroller (`Elab::unroll_comptime_for`) loses the
-    alias's binding for a call position.
-  - Found while planning R246 (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R502 A parametric `comptime` alias in a function body is rejected**
 
   Problem: `comptime A[k: Int] = k + 1` inside a `def`, read as `A[10]`,
@@ -5156,6 +5128,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The elaborator's `Elab::type_from_name` (`comptime/elab.rs`) has no
     type for a parametric alias or `SIMD`, and the checker's
     `comptime_type_operand` does not bind one either.
+  - Probe: the call misses any binder-dependent alias, not only `SIMD`.
+    `comptime Next = Sized[Self.n]` in a method of `struct Sized[n: Int]`
+    binds as a type (`var x: Next = Sized[Self.n]()` runs), but `Next()`
+    reports "Undefined variable 'Next'", where the pin prints the size.
+    `Checker::infer_call` (`checker/call_inference.rs`) constructs through
+    a type parameter's binder but never through `local_type_aliases`, and
+    the elaborator substitutes only a closed alias (`comptime Next =
+    Sized[4]` runs).
   - Found while landing R261 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5250,9 +5230,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`ParamKind::Select`), and `Checker::opaque_element`
     (`checker/comptime_validation.rs`) gives the arm's proof only to a pack
     element or a reflection over a parameter.
-  - Past that, the AST unroller leaves `types[0]()` naming a dropped
-    `comptime` binding ("Undefined variable 'types'"), the call-position
-    loss R319 describes for an alias.
+  - Past that, the AST unroller left `types[0]()` naming a dropped
+    `comptime` binding ("Undefined variable 'types'"). R319's alias shape of
+    that loss now runs, so re-probe this once the proof passes.
   - The same loop in a generic `def` runs, served by its template.
   - Found while landing R364 (2026-10-07).
   - Depends on R319, which loses a local alias at a call in an unrolled
@@ -5270,19 +5250,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     the cycle the message names is a false one.
   - Probe: `conformance/probes/module_call_list_in_method_loop.mojo`.
   - Found while landing R310 (2026-10-08).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R368 A module `comptime` constant declared after the `def` that
-  iterates it is undefined**
-
-  Problem: `def f(): comptime for x in L: print(x)` followed by `comptime L
-  = [10, 20]` fails with "Undefined variable 'L'", where the pin prints
-  `10`, `20`.
-  - The elaborator evaluates module constants in source order
-    (`Elab::top_consts`), so the loop meets a name it has not bound yet.
-  - With the constant declared first the loop runs, in a generic `def` too.
-  - Found while landing R246 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6150,20 +6117,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R450 A `UInt` value parameter inferred from an argument type is missing at the call**
-
-  Problem: `name(S[UInt(3)]())` over `def name[v: UInt](s: S[v]) -> UInt`
-  fails with "required compile-time value parameter 'v' is missing", where
-  the pin prints `3`; the same holds for `v: T` solved to `UInt`.
-  - MIR's `inferred_param_arg_regs` passes an inferred `Int`, `Float64`,
-    `Bool`, string, or `DType` value as a constant register, but has no
-    constant for a `UInt`.
-  - Mono already reads a bound `UInt` as its 64 bits in a `UInt` slot, which
-    the register needs to match.
-  - Found while landing R446 (2026-10-07).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R451 The elaborator classifies a value parameter whose type it cannot read as a type parameter**
 
   Problem: `classify_ct_param` (`comptime/params.rs`) makes `v` in `def
@@ -6251,35 +6204,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The alias path evaluates the right-hand side as a type application.
   - With a type argument (`f[Int, 7]`) it fails with "unknown type 'f'".
   - Found while landing R446 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R464 A compile-time value of a struct without fieldwise
-  construction is rejected**
-
-  Problem: `comptime r = R(3)` over a `struct R` (`a: Int`, `s: String`)
-  whose only `__init__(out self, a: Int)` sets `self.s = String(a)` fails
-  with "a compile-time 'R' value needs fieldwise construction", where the
-  pin prints `r.s` as `3`.
-  - The VM freezes the result (`VmBackend::freeze`), but
-    `Elab::check_frozen_structs` (`comptime/ctfe.rs`) refuses it, since a
-    frozen `CtValue::Struct` comes back as a call to the fieldwise
-    constructor.
-  - Mojo materializes the parameter attribute directly, with no
-    constructor call.
-  - Found while landing R456 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R465 A compile-time construction of a generic struct is rejected**
-
-  Problem: `comptime g = G[Int](5, "gen")` over `@fieldwise_init struct
-  G[T: Copyable & Movable & Writable & Deinitable]` fails with "'G' is not
-  a compile-time-callable function", where the pin prints `5 gen`.
-  - The same happens without the `String` field.
-  - The elaborator routes a parameterized callee to CTFE of a function by
-    that name rather than to `Elab::ctfe_struct_entry`.
-  - Found while landing R456 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6423,23 +6347,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R337 A computed value argument in a bracket is rejected**
-
-  Problem: `W[fib(6)]()` for `struct W[n: Int]`, or `g[fib(6)]()` for `def
-  g[n: Int]()`, prints `8` at the pin, while Mojito reports "not a
-  compile-time Int constant: not an associated comptime expression".
-  - `eval_associated_ct` (`checker/constraints.rs`) has no arm for a call;
-    a module constant over the same call (`comptime N = fib(6)`) folds
-    before the check and works.
-  - The pin keeps such an application symbolic through the check
-    (`ParamKind::Apply`), so it is no frozen literal; a struct-typed
-    argument is frozen to its fieldwise construction
-    (`Elab::freeze_struct_value_arguments`), which a scalar one should not
-    copy.
-  - Found while landing R4's struct-valued half (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R338 A static call through a `comptime` alias of a generic struct is
   rejected**
 
@@ -6524,23 +6431,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     as_int`) is rejected at the pin too, so it is not part of this entry.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R72 A member-led arithmetic type argument does not parse in an alias
-  body or a call's brackets**
-
-  Problem: `comptime Next = Sized[Self.n + 1]` is a parse error (`Expected ']'
-  after a subscript`), where the pin accepts it.
-  - A call's brackets stop the same way: `size[Self.n * 2]()` and
-    `Counter[Self.length * 2 - 1](i)` in a method; `2 * Self.length - 1`
-    parses.
-  - The bracket is parsed as a runtime subscript, whose index grammar stops at
-    the member access. `Sized[(Self.n + 1)]` and `Sized[0 + Self.n]` parse.
-  - The same expression in annotation position (`var x: Sized[Self.n + 1]`)
-    parses, and the checker already types it symbolically.
-  - It is the standing Index-versus-TypeApply split; the plan decides whether
-    the alias body re-parses as a type or the subscript grammar widens.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R73 An arithmetic `where` operand compiles for `def`s and struct methods
   only**
@@ -6654,34 +6544,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R278 `reflect[Self]` in a generic struct's method is rejected**
-
-  Problem: `reflect[Self].field_count()` in a method of `struct Box[T]`,
-  written there or inherited from a trait default under `comptime if
-  reflect[Self].is_struct():`, prints the field count at the pin, while
-  Mojito reports "not a compile-time value: unsupported compile-time type
-  argument".
-  - The elaborator's `type_from_anno` has no binding for `Type::SelfType`,
-    so an instance clone cannot name its own type as a reflection subject.
-  - The upstream reflective defaults (`Hashable.__hash__`,
-    `Equatable.__eq__`) are written over `reflect[Self]`; inherited
-    defaults are now struct methods, so this and R269 are what they wait on.
-  - Probe: `conformance/probes/reflect_self_generic_struct_method.mojo`.
-  - Depends on R269.
-  - Model: Opus, Planned.
-
-- [ ] **R279 A struct's associated value read as `Self.N` is rejected**
-
-  Problem: `return Self.N` over `comptime N: Int = 3` in a struct's own
-  method, or in a trait default it inherits, prints the value at the pin,
-  while Mojito reports "'Self.N' is not a type parameter of the enclosing
-  struct".
-  - A bound parameter reads the member (`T.size` over `T: Fixed`), so only
-    the struct's own spelling is missing.
-  - Probe: `conformance/probes/associated_value_self_read.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R513 A `comptime for` over another struct's compile-time list is
   rejected**
 
@@ -6691,7 +6553,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - It fails the same way in a plain function and in a generic struct's
     method, so it is the loop header's reading of a type's member, not a
     template gap.
-  - `Self.L` over the struct's own list is R279's spelling.
+  - Probe: `comptime for v in Self.L` in a method of `struct K` over its
+    own `comptime L = [1, 2, 3]` reports "'Self.L' is not a type parameter
+    of the enclosing struct", where the pin prints `6`. A scalar member
+    reads (`assets/ok/associated_value_self_read.mojo`).
   - Probe: `conformance/probes/comptime_for_other_struct_list.mojo`.
   - Found while landing R8 (2026-10-08).
   - Depends on nothing.
@@ -6786,25 +6651,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R82 A struct keyed on a `DType` named like a bundled binder is
-  rejected**
-
-  Problem: `struct T[dt: DType]` constructed as `T[DType.int8]()` reports
-  "variadic struct 'T' requires explicit compile-time type arguments"; the
-  pin runs it.
-  - `K` and `V` fail the same way, and `H` reports "generic 'H' requires
-    compile-time parameter 'dt'".
-  - The same struct named `Keyed`, or keyed on an `Int`, runs, as does a
-    plain struct named `T`.
-  - The message comes from the bare-identifier arm of `mono.rs`
-    (`resolves_top_template` and `struct_template`), so a bundled body's
-    binder spelled `T`, `K`, or `V` presumably resolves to the user's
-    template, which only a struct specialized whole per value keeps in the
-    specialization registry.
-  - Found while writing `assets/ok/template_value_keyed_struct.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R83 A bare reference to a parametric `def` reports a closure
   escape**
 
@@ -6835,22 +6681,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R98 A `UInt`-annotated `comptime` literal reads as an `Int`**
-
-  Problem: `comptime U: UInt = 3` then `var u = U; u -= 4` prints `-1`
-  where the pin prints `18446744073709551615`.
-  - The elaborator inlines a module constant's value at every use, and an
-    integer value materializes as a bare literal, so each use types as
-    `Int` whatever the annotation says.
-  - Sized-scalar, vector, and `Float64` annotations already bind at their
-    declared type: their value folds to a typed SIMD constant
-    (`comptime/elab.rs`, `StmtKind::Comptime`).
-  - The fix is a `UInt` constant that materializes as `UInt(3)` at a value
-    use without changing how a `UInt` value parameter is spelled.
-  - Found while closing the annotated-constant task (2026-10-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R485 An `Int`-annotated local `comptime` accepts a `Bool` value**
 
   Problem: `comptime m: Int = 1 > 0` in a function prints `True`, where the
@@ -6860,7 +6690,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     value's own type.
   - A template body's binding over its binders checks its annotation
     (`bind_template_comptime`) and is rejected as at the pin.
-  - Same annotation-dropping family as R98.
   - Probe: `conformance/probes/comptime_int_annotation_bool_value.mojo`.
   - Found while landing R312 (2026-10-07).
   - Depends on nothing.
@@ -6880,17 +6709,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     caller's parameter.
   - Found while accepting requirement defaults over a method's parameters
     (2026-10-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R498 A nested `def` keyed on a type pack fails MIR verification**
-
-  Problem: `def inner[*Ts: Writable](*args: *Ts)` declared inside `def
-  outer()` and called there (`inner(1, "a")`) stops with "callable contract
-  names parameter `*Ts` of `inner` that no enclosing declaration binds",
-  where the pin runs it.
-  - The same `def` at module level is served by its template and runs.
-  - Found while landing R253 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6937,21 +6755,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `conformance/probes/nested_def_reads_local_comptime.mojo`.
   - Found while a local `comptime` float was made to read as `Float64`
     (2026-09-30).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R543 A local `comptime` application that returns a
-  reference-holding value fails CTFE even when nothing reads it**
-
-  Problem: `comptime ks = d.keys()` over a local `comptime d = {"a": 1}` in
-  `main` fails with "VM CTFE returned unsupported runtime value <ref 0:1>",
-  where the pin accepts the program.
-  - The result is a `_DictKeyIter`, which holds a reference into the
-    dictionary, and a CTFE result cannot carry a reference.
-  - The local binding is demanded although no read names it. The module
-    form (`comptime KS = D.keys()`) is demanded lazily and passes.
-  - `comptime for k in d.keys()` is R321's iterator gap, not this one.
-  - Found while R539 kept local displays for the check (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7011,55 +6814,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`checker/conformance.rs`) builds the oracle, before any check runs.
   - A method's own `where Self.Ts.length == 2` runs.
   - Found while landing R1168 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R131 A compile-time evaluation cannot call a generic struct's method
-  that holds a `comptime if`**
-
-  Problem: `comptime CAP = np(5)`, where `np` calls `Cell[Int](n).m()` and
-  `m` holds a `comptime if`, prints at the pin and stops in Mojito with
-  "Cell.m: unspecialized type-keyed method".
-  - The evaluation's subprogram carries `m` as its template stub and mints
-    no per-instantiation clone for it, as the production elaboration does.
-  - The same struct beside an evaluation that does not call `m` runs.
-  - Entry R7 moves the evaluation onto the elaborator's worklist by the
-    request path of `docs/notes/ctfe-request-path.md`, which serves the
-    instance and closes this.
-  - Probe: `conformance/probes/ctfe_calls_comptime_if_struct_method.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R486 A compile-time evaluation cannot write a `Tuple` or a `t"…"`
-  literal**
-
-  Problem: `comptime s = label(3)`, where `label` returns `String(t"n={n}")`
-  or `String((n, 2))`, prints at the pin and stops in Mojito with
-  "TString.write_to: unspecialized type-keyed method" (or `Tuple.write_to`).
-  - The evaluation's subprogram carries a variadic struct's `comptime for`
-    member as its template stub and runs it erased, as R131's does.
-  - A t-string there ran until 2026-10-07 only through MIR's eager
-    concatenation fallback, deleted when the checker began building the
-    `__make_tstring` call.
-  - Entry R7 serves the instance from the worklist and closes this.
-  - Probe: `conformance/probes/ctfe_writes_tuple_and_tstring.mojo`.
-  - Depends on R7.
-  - Model: Opus, Not Planned.
-
-- [ ] **R132 A compile-time evaluation cannot call a value-keyed generic
-  `def`**
-
-  Problem: `comptime R = rep[3]()`, where `rep[n: Int]` recurses under a
-  `comptime if n == 0`, prints `3` at the pin and stops in Mojito with
-  "unknown compile-time function 'rep'".
-  - The evaluation's subprogram excludes every compile-time-keyed `def`
-    (`is_specializable_declaration_in`), so the call finds no body.
-  - The same recursion under a runtime `if` runs in Mojito, on the erased
-    body, where the pin expands without end; that is divergence R162
-    (`ctfe-plain-keyed-recursion`).
-  - Entry R7 closes this: a demand serves `rep[3]`, `rep[2]`, `rep[1]`,
-    `rep[0]` from the worklist, each with its arm decided.
-  - Probe: `conformance/probes/ctfe_keyed_recursion.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7231,18 +6985,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R340 A `comptime for` header cannot call a static method on `Self`**
-
-  Problem: `comptime for i in range(Self.__len__())` in a variadic struct's
-  method reports `Undefined variable 'Self'`, where the pin accepts it and
-  upstream's `Tuple` spells every element loop that way.
-  - Mojito's `tuple.mojo` keeps `range(len(Self.Ts))`.
-  - The header is evaluated by the elaborator, which binds no `Self` for a
-    static call.
-  - Found while landing the `Tuple` default initializer (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R345 A list computed from packs still open answers only its length
   and its elements**
 
@@ -7333,7 +7075,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Problem: `print(E.k)` over `struct E: comptime k = 3` prints `3` at the
   pin, while Mojito reports "Undefined variable 'E'", and `G(E.k)` reports
   that no constructor overload matches.
-  - R279 is the same member read as `Self.k` inside the struct.
+  - The same member read as `Self.k` inside the struct runs
+    (`assets/ok/associated_value_self_read.mojo`).
   - Probe: a run-time construction's bracket list reading a member, `var t
     = TypeList[Trait=AnyType, E.types]()` over a raw-list member, fails
     with "Undefined variable 'E'", and `TypeList[Trait=AnyType,
@@ -9442,7 +9185,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `has_order_bound`, and `NegatedEquality` stand in for the defaults.
   - This entry bundles the two declarations with their non-reflective
     defaults and deletes `compiler_trait_declaration`; upstream's
-    reflective `__eq__` default stays out, waiting on R278 and R269.
+    reflective `__eq__` default stays out, waiting on R269.
   - Found while landing R702 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9506,7 +9249,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   a call through the bound keeps R1281's composed name.
   - Declare both with today's requirement sets. R25 then changes the bundled
     `Hasher` declaration, not checker code.
-  - The checker-synthesized reflective default stays until R278 and R269 let
+  - The checker-synthesized reflective default stays until R269 lets
     the body read `reflect[Self]`, as R705 stages `__eq__`.
   - Every fixture spelling `Hasher` bare needs the pin's import.
   - Done when both leave `COMPILER_TRAITS` and `T: Hashable` at a struct

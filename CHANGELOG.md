@@ -687,6 +687,26 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A triage of eighteen `comptime` entries (R1400) re-ran each probe against
+  the pin. Sixteen already match it on both backends and are closed: R279
+  (`Self.N` over an associated value), R278 (`reflect[Self]` in a generic
+  struct's method), R337 (`g[fib(6)]()` and `W[fib(6)]()`), R340
+  (`range(Self.__len__())` in a `comptime for` header), R543 (an unread
+  local `comptime ks = d.keys()`), R98 (`comptime U: UInt = 3` reads as a
+  `UInt`), R319 (a local type alias constructing in an unrolled body),
+  R368 (a module list declared after the `def` that iterates it), R131,
+  R132, and R486 (compile-time calls of per-instance code: a `comptime if`
+  method, `rep[3]()`, and the t-string and `Tuple` writers), R82 (a
+  `DType`-keyed struct named `T`, `K`, `V`, or `H`), R464 and R465
+  (compile-time values of a non-fieldwise and of a generic struct), R450
+  (a `UInt` value parameter inferred from an argument type), and R498 (a
+  nested `def` keyed on a type pack). Their probes are now six `assets/ok`
+  fixtures. R72's remaining alias-body shape merged into R1371, and the
+  local and member alias calls it exposed into R475 and R60. R509 is
+  rewritten: a constrained module constant is a plain value where the pin
+  makes it a generator type, so Mojito also accepts `print(C)`, which the
+  pin rejects.
+
 - A struct's value parameter now reads as its declared type wherever
   `Self.x` names it, as upstream's parameter constant does: `Self.b` over
   `Flag[b: Bool]`, `Self.f * 2` over `Scale[f: Float64]` (also in a static

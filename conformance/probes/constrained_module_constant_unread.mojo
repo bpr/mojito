@@ -5,7 +5,8 @@
 # checked only where it is used. Mojito stops with "unsupported generic
 # constraint operand" though nothing reads it.
 #
-# Observed 2026-10-08 against `Mojo 1.2.0.dev2026092105 (e9569894)`.
+# Observed 2026-10-08 against `Mojo 1.2.0.dev2026092105 (e9569894)`;
+# re-observed 2026-10-26 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
 #
 # Run:    mojo run constrained_module_constant_unread.mojo
 #         cargo run -- run conformance/probes/constrained_module_constant_unread.mojo

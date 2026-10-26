@@ -39,6 +39,7 @@ assets/ok/assign_plain_view_temporary_over_source.mojo	main	exe-differential	san
 assets/ok/assign_register_passable_element_over_list.mojo	main	exe-differential	sanitized
 assets/ok/associated_trait_self_element.mojo	main	exe-differential	sanitized
 assets/ok/associated_type_return.mojo	main	exe-differential	sanitized
+assets/ok/associated_value_self_read.mojo	main	exe-differential	sanitized
 assets/ok/augmented_bitwise_assignment.mojo	main	exe-differential	sanitized
 assets/ok/augmented_store_copies_nothing.mojo	main	exe-differential	sanitized
 assets/ok/bitwise_shift_precedence.mojo	main	exe-differential	sanitized
@@ -133,6 +134,7 @@ assets/ok/comptime_for_value_pack_iterator.mojo	main	exe-differential	sanitized
 assets/ok/comptime_for_value_struct_method.mojo	main	exe-differential	sanitized
 assets/ok/comptime_frozen_struct.mojo	main	exe-differential	sanitized
 assets/ok/comptime_hash.mojo	main	exe-differential	sanitized
+assets/ok/comptime_headers_and_local_aliases.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_abstract_body_call.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_arm_destroy_joins.mojo	main	exe-differential	sanitized
@@ -170,8 +172,10 @@ assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_sized_scalar_constant.mojo	main	exe-differential	sanitized
 assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized
 assets/ok/comptime_struct_string_field.mojo	main	exe-differential	sanitized
+assets/ok/comptime_struct_values.mojo	main	exe-differential	sanitized
 assets/ok/comptime_template_body_bindings.mojo	main	exe-differential	sanitized
 assets/ok/comptime_tuple.mojo	main	exe-differential	sanitized
+assets/ok/comptime_value_bracket_arguments.mojo	main	exe-differential	sanitized
 assets/ok/comptime_value_materialized_without_constructor.mojo	main	exe-differential	sanitized
 assets/ok/condition_truthiness_reads_in_place.mojo	main	exe-differential	sanitized
 assets/ok/conditional_expression_parameter_condition.mojo	main	exe-differential	sanitized
@@ -211,6 +215,7 @@ assets/ok/ctfe_module_optional_constant.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_optional_result.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_pointer_struct_result.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_projection_of_temporary_in_body.mojo	main	exe-differential	sanitized
+assets/ok/ctfe_serves_keyed_instances.mojo	main	exe-differential	sanitized
 assets/ok/ctfe_type_generic_def_in_body.mojo	main	exe-differential	sanitized
 assets/ok/dead_code_after_terminators.mojo	main	exe-differential	sanitized
 assets/ok/decorator_unavailable_function.mojo	main	exe-differential	sanitized
@@ -786,6 +791,7 @@ assets/ok/reference_element_chained_read.mojo	main	exe-differential	sanitized
 assets/ok/reference_iteration_temporary_list.mojo	main	exe-differential	sanitized
 assets/ok/reference_result_view_conversion.mojo	main	exe-differential	sanitized
 assets/ok/reference_return_forwarded_accessor.mojo	main	exe-differential	sanitized
+assets/ok/reflect_self_generic_struct_method.mojo	main	exe-differential	sanitized
 assets/ok/reflected_operators.mojo	main	exe-differential	sanitized
 assets/ok/reflection_comptime_for_served.mojo	main	exe-differential	sanitized
 assets/ok/reflection_field_name_materialize.mojo	main	exe-differential	sanitized

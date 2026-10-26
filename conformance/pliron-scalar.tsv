@@ -39,6 +39,7 @@ assets/ok/assign_plain_view_temporary_over_source.mojo	-	ineligible	no-scalar-en
 assets/ok/assign_register_passable_element_over_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/associated_trait_self_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/associated_type_return.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/associated_value_self_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/augmented_bitwise_assignment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/augmented_store_copies_nothing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bitwise_shift_precedence.mojo	-	ineligible	no-scalar-entry-shape
@@ -133,6 +134,7 @@ assets/ok/comptime_for_value_pack_iterator.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/comptime_for_value_struct_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_frozen_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_hash.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_headers_and_local_aliases.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_abstract_body_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_arm_destroy_joins.mojo	-	ineligible	no-scalar-entry-shape
@@ -170,8 +172,10 @@ assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_sized_scalar_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_struct_string_field.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_struct_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_template_body_bindings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_tuple.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_value_bracket_arguments.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_value_materialized_without_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/condition_truthiness_reads_in_place.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/conditional_expression_parameter_condition.mojo	-	ineligible	no-scalar-entry-shape
@@ -211,6 +215,7 @@ assets/ok/ctfe_module_optional_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_optional_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_pointer_struct_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_projection_of_temporary_in_body.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ctfe_serves_keyed_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ctfe_type_generic_def_in_body.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dead_code_after_terminators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/decorator_unavailable_function.mojo	-	ineligible	no-scalar-entry-shape
@@ -786,6 +791,7 @@ assets/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_iteration_temporary_list.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_result_view_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_return_forwarded_accessor.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reflect_self_generic_struct_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflected_operators.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_comptime_for_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reflection_field_name_materialize.mojo	-	ineligible	no-scalar-entry-shape
