@@ -6561,9 +6561,8 @@ point where a slot declared in a loop is uninitialized again.
   as upstream walks `self`'s lowered structural type, and where it reads
   nominally, all of them; the lifecycle member a copy, move, or drop of
   `Self` runs reads what it reads of `S[own parameters]`
-  (`Walker::member_reads`), and `Self.n`, lowered as the projection
-  `self.n` of the receiver's reified parameter, reads `n`
-  (`receiver_parameter_reads`). So `get(self)`, `take(var self)`, and
+  (`Walker::member_reads`), and `Self.n`, lowered as the binder's
+  parameter constant, reads `n`. So `get(self)`, `take(var self)`, and
   `bump(mut self)` over `Box[n]{v: Int}` remove `n`. A method that removed
   one is keyed and named off the struct template with its kept struct
   arguments leading its own (`S.st$mono`, `Specializer::enqueue`), so it

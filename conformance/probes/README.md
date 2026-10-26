@@ -30,8 +30,8 @@ seventeen probes; their answers live in `cases.tsv` claims
 Every probe in this directory ran against `Mojo 1.2.0.dev2026101705
 (46f49943)`. Every row below holds, after three probes were respelled to
 the window's vocabulary: `mut_self_hash_witness.mojo` and
-`imported_alias_in_generic_method.mojo` import from `std.hash` (upstream
-renamed `std.hashlib`), and the `pack_*` probes build their storage with
+`imported_alias_in_generic_method.mojo` (since promoted to `assets/ok`)
+import from `std.hash` (upstream renamed `std.hashlib`), and the `pack_*` probes build their storage with
 the inferred `Tuple(*args^)`, because the explicit `Tuple[*Ts](*args^)`
 application regressed upstream. The window's two upstream regressions are
 probes of their own:
@@ -130,7 +130,6 @@ template; a field type under a symbolic index is opaque until a
 | `comptime_for_other_struct_list.mojo` | Does a `comptime for` iterate another struct's compile-time list member (`K.L`), in a function and in a generic struct's method? | **differs**: the pin prints `6` `7 7`, Mojito rejects ("Undefined variable 'K'"); roadmap R513 |
 | `conforms_to_condition_generic_def.mojo` | Does `comptime if conforms_to(T, Copyable):` decide over a plain `def`'s parameter? | **differs**: the pin prints `copyable`, Mojito fails ("register r0 has no checked type"); roadmap R280 |
 | `mut_self_hash_witness.mojo` | Does a `mut self` `__hash__` witness a read-`self` requirement? | **differs**: the pin prints `True`, Mojito rejects the conformance ("missing required operation") — `docs/roadmap.md` R67 |
-| `imported_alias_in_generic_method.mojo` | Does an imported alias of a struct application resolve in the signature of a generic struct's method that still clones per instance? | **differs**: the pin prints `True`, Mojito reports "unknown type '__module$hasher$default_hasher'" for the clone — `docs/roadmap.md` R68 |
 | `setter_without_getter.mojo` | Is a subscript store accepted on a struct that declares `__setitem__` but no `__getitem__`? | **differs**: the pin rejects the store ("'Sink' has '__setitem__' but no '__getitem__' method"), Mojito prints `3` — `docs/roadmap.md` R35 |
 | `bound_call_result_converted_at_binding.mojo` | Does a generic body bind a bound method's call result through an `@implicit` conversion at an annotated `var`? | **differs**: the pin prints `2 a`, Mojito rejects the generic body ("register r1 has no checked type") — `docs/roadmap.md` R44 |
 | `indexed_copyable_element_transfer.mojo` | May an implicitly copyable, non-trivial indexed element be transferred (`x[0]^`)? | **differs**: the pin rejects ("expression does not designate a value with an origin"), Mojito prints `1` — `docs/roadmap.md` R31 |

@@ -25,9 +25,6 @@ pub(super) struct FunctionLowering<'a> {
     /// The enclosing struct's non-callable value parameters (a method), for
     /// `Self.n` bracket-slot reads; empty for a free function.
     pub(super) receiver_value_parameters: Vec<(String, Ty)>,
-    /// The enclosing struct at its own binders (a static method of a
-    /// value-parameterized struct), typing its receiver-less `self` slot.
-    pub(super) static_receiver: Option<Ty>,
     /// The enclosing struct's binders, then the function's own.
     pub(super) enclosing_binders: EnclosingBinders,
     pub(super) owned_parameters: Vec<bool>,
@@ -61,7 +58,6 @@ pub(super) fn lower_fn_nested(
         parameter_types: param_types,
         value_parameter_locals,
         receiver_value_parameters,
-        static_receiver,
         enclosing_binders,
         owned_parameters: owned_params,
         deinit_parameters: deinit_params,
@@ -127,7 +123,6 @@ pub(super) fn lower_fn_nested(
         &ref_params,
         &CaptureSlots::default(),
         &receiver_value_parameters,
-        static_receiver.as_ref(),
         &enclosing_binders,
         &mut thunks,
         raises.then(|| error_ty.clone().unwrap_or_else(Ty::error)),
@@ -1684,7 +1679,6 @@ fn lower_nested_node(
         &refp2,
         &capture_slots,
         &[],
-        None,
         enclosing_binders,
         &mut thunks,
         signature

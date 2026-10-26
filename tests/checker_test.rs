@@ -1942,6 +1942,19 @@ fn accepts_value_parameter_struct_and_self_read() {
 }
 
 #[test]
+fn self_value_parameter_reads_at_its_declared_type() {
+    const TAGGED: &str =
+        "struct Tagged[s: String, f: Float64]:\n    def __init__(out self):\n        pass\n\n";
+    ok_std(&format!(
+        "{TAGGED}    def name(self) -> String:\n        return Self.s\n\n    @staticmethod\n    def scale() -> Float64:\n        return Self.f * 2\n"
+    ));
+    let e = err_std(&format!(
+        "{TAGGED}    def name(self) -> Int:\n        return Self.s\n"
+    ));
+    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
+}
+
+#[test]
 fn accepts_comptime_arithmetic_argument() {
     ok(&format!(
         "{FIXEDBUF}var b: FixedBuffer[2 + 3 * 2] = FixedBuffer[8](0)\n"

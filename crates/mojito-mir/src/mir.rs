@@ -132,7 +132,6 @@ pub fn lower_cfg(cfg: &Cfg) -> MirFunction {
         &[],
         &CaptureSlots::default(),
         &[],
-        None,
         &EnclosingBinders::default(),
         &mut ComptimeThunks::default(),
         None,
@@ -1193,7 +1192,6 @@ fn lower_program(
             &[],
             &CaptureSlots::default(),
             &[],
-            None,
             &EnclosingBinders::default(),
             &mut thunks,
             None,
@@ -2033,7 +2031,6 @@ fn lower_function(
             parameter_types: ptys,
             value_parameter_locals,
             receiver_value_parameters: Vec::new(),
-            static_receiver: None,
             enclosing_binders,
             owned_parameters: owned,
             deinit_parameters: deinit,
@@ -2128,7 +2125,7 @@ fn lower_struct_member<P: DeclaredParam>(
     );
     let receiver_value_parameters: Vec<(String, Ty)> = checked
         .generic_parameters_at(&GenericSite::Struct {
-            module: module.clone(),
+            module,
             declaration: name.to_string(),
         })
         .unwrap_or(&[])
@@ -2145,18 +2142,6 @@ fn lower_struct_member<P: DeclaredParam>(
             _ => None,
         })
         .collect();
-    let static_receiver = (!m.has_self && !receiver_value_parameters.is_empty()).then(|| {
-        let decls = checked
-            .generic_parameters_at(&GenericSite::Struct {
-                module: module.clone(),
-                declaration: name.to_string(),
-            })
-            .unwrap_or(&[]);
-        Ty::new(TyKind::Struct(
-            name.to_string(),
-            decls.iter().map(ParamDecl::own_argument).collect(),
-        ))
-    });
     let defaults = regular
         .iter()
         .map(|param| {
@@ -2293,7 +2278,6 @@ fn lower_struct_member<P: DeclaredParam>(
             parameter_types: ptys,
             value_parameter_locals,
             receiver_value_parameters,
-            static_receiver,
             enclosing_binders,
             owned_parameters: owned,
             deinit_parameters: deinit,
@@ -2477,7 +2461,6 @@ fn lower_expression_thunk(
             parameter_types: Vec::new(),
             value_parameter_locals: parameter_locals,
             receiver_value_parameters: Vec::new(),
-            static_receiver: None,
             enclosing_binders: binders.clone(),
             owned_parameters: Vec::new(),
             deinit_parameters: Vec::new(),
@@ -3199,13 +3182,9 @@ struct Flatten<'a> {
     /// sibling domains keep independent generations.
     transfer_domain_loans: HashMap<(VarId, Vec<mojito_types::origin::OriginSeg>), Vec<MirLoan>>,
     /// The enclosing struct's non-callable value parameters when lowering a
-    /// method: `Self.n` in a bracket slot reads the receiver's reified
-    /// parameter (`self.n`) instead of reifying a binder spelling.
+    /// method: `Self.n` reads the binder's parameter constant, never a local
+    /// of its name.
     receiver_value_parameters: Vec<(String, Ty)>,
-    /// The enclosing struct at its own binders when lowering a static method
-    /// of a value-parameterized struct: the type of the receiver-less `self`
-    /// slot a `Self.n` read projects from, as the expression `Self.n` does.
-    static_receiver: Option<Ty>,
     /// The enclosing struct's binders, then the function's own: a bracket
     /// argument forwarding a type binder (`hash[Self.H](key)`) records the
     /// binder it names, and one built from value binders (`f[1 + n]()`) the
@@ -3974,8 +3953,8 @@ impl<'a> Flatten<'a> {
     /// Intern a variable name to a stable `VarId` (matches `hir::Lower::var`).
     /// HIR interns every local at its declaring op, so a name first interned
     /// here that names a value binder in scope is that binder's slot, typed by
-    /// the binder's declared type. A struct's own binder is read through the
-    /// receiver, never by a bare name.
+    /// the binder's declared type. A struct's own binder is its parameter
+    /// constant, never a local of its name.
     fn var(&mut self, name: &str) -> VarId {
         if let Some(i) = self.vars.iter().position(|n| n == name) {
             return i as VarId;
@@ -4277,34 +4256,6 @@ impl<'a> Flatten<'a> {
                 attribute_has_no_runtime_form(value.as_ref())
             }
         }
-    }
-
-    /// The place `Self.n` names: the projection `self.n` of the receiver,
-    /// or of a static method's receiver-less `self` slot. `None` when `n` is
-    /// not one of the enclosing struct's value parameters.
-    fn receiver_value_parameter_place(&mut self, name: &str) -> Option<MirPlace> {
-        let ty = self
-            .receiver_value_parameters
-            .iter()
-            .find(|(candidate, _)| candidate == name)
-            .map(|(_, ty)| ty.clone())?;
-        if !self.vars.iter().any(|var| var == "self") {
-            self.intern_static_self()?;
-        }
-        let mut place = self.resolved_place("self");
-        place.project(Proj::Field(name.to_string()), ty);
-        Some(place)
-    }
-
-    /// The receiver-less `self` slot of a static method of a
-    /// value-parameterized struct, typed as the struct at its own binders: a
-    /// `Self.n` read projects from it, and the VM binds it from the static
-    /// call's spelled receiver. `None` outside such a method.
-    fn intern_static_self(&mut self) -> Option<VarId> {
-        let receiver = self.static_receiver.clone()?;
-        let var = self.var("self");
-        self.var_types.entry(var).or_insert(receiver);
-        Some(var)
     }
 
     /// The expression a bracket argument built from the enclosing value
@@ -4796,7 +4747,6 @@ fn lower_cfg_nested(
     reference_parameters: &[bool],
     captures: &CaptureSlots,
     receiver_value_parameters: &[(String, Ty)],
-    static_receiver: Option<&Ty>,
     enclosing_binders: &EnclosingBinders,
     comptime_thunks: &mut ComptimeThunks,
     error: Option<Ty>,
@@ -4847,7 +4797,6 @@ fn lower_cfg_nested(
                 .collect(),
             nested: nested.clone(),
             receiver_value_parameters: receiver_value_parameters.to_vec(),
-            static_receiver: static_receiver.cloned(),
             enclosing_binders: enclosing_binders.clone(),
             comptime_thunks: std::mem::take(comptime_thunks),
             parameter_reads: enclosing_binders.loop_bindings.iter().cloned().collect(),

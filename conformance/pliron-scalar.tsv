@@ -355,6 +355,7 @@ assets/ok/implicit_conversion_bound_on_declaration.mojo	-	ineligible	no-scalar-e
 assets/ok/implicit_conversion_exact_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_conversion_raising.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/implicit_copy_last_use_forwards.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/imported_alias_in_generic_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/indexer_normalization.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/infer_only_parameter_by_keyword.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/init_out_self.mojo	-	ineligible	no-scalar-entry-shape
@@ -920,6 +921,7 @@ assets/ok/struct_type_param_construction_clone.mojo	-	ineligible	no-scalar-entry
 assets/ok/struct_value_member_runtime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_pack_method_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_value_parameter_declared_type_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/symbolic_instance_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/telemetry.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/tempfile_mkdtemp.mojo	-	ineligible	no-scalar-entry-shape
@@ -1181,6 +1183,7 @@ assets/ok/value_pack_parameter_list_writable.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/value_pack_runtime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_typed_by_type_param.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/value_param_forwarded_to_keyed_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_param_typed_by_type_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_parameter_field_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_parameter_inferred_from_argument_type.mojo	-	ineligible	no-scalar-entry-shape

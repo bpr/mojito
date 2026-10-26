@@ -355,6 +355,7 @@ assets/ok/implicit_conversion_bound_on_declaration.mojo	main	exe-differential	sa
 assets/ok/implicit_conversion_exact_source.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_raising.mojo	main	exe-differential	sanitized
 assets/ok/implicit_copy_last_use_forwards.mojo	main	exe-differential	sanitized
+assets/ok/imported_alias_in_generic_method.mojo	main	exe-differential	sanitized
 assets/ok/indexer_normalization.mojo	main	exe-differential	sanitized
 assets/ok/infer_only_parameter_by_keyword.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized
@@ -920,6 +921,7 @@ assets/ok/struct_type_param_construction_clone.mojo	main	exe-differential	saniti
 assets/ok/struct_value_member_runtime_read.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_pack_method_read.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
+assets/ok/struct_value_parameter_declared_type_reads.mojo	main	exe-differential	sanitized
 assets/ok/symbolic_instance_construction.mojo	main	exe-differential	sanitized
 assets/ok/telemetry.mojo	main	exe-differential	sanitized
 assets/ok/tempfile_mkdtemp.mojo	main	exe-differential	sanitized
@@ -1181,6 +1183,7 @@ assets/ok/value_pack_parameter_list_writable.mojo	main	exe-differential	sanitize
 assets/ok/value_pack_runtime_read.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_template_served.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_typed_by_type_param.mojo	main	exe-differential	sanitized
+assets/ok/value_param_forwarded_to_keyed_def.mojo	main	exe-differential	sanitized
 assets/ok/value_param_typed_by_type_param.mojo	main	exe-differential	sanitized
 assets/ok/value_parameter_field_read.mojo	main	exe-differential	sanitized
 assets/ok/value_parameter_inferred_from_argument_type.mojo	main	exe-differential	sanitized

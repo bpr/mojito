@@ -2031,8 +2031,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`checker/constraints.rs`) for `compile_dependent_ct_expr`,
   `eval_associated_ct`, and a `SIMD` width spelled `Self.e.rows`
   (`simd_width`, `type_resolution.rs`); `infer_member` (`indexing.rs`)
-  types `Self.e` at its declared struct, and a method receiver's place for
-  it is `Flatten::receiver_value_parameter_place` (`mir.rs`).
+  types every `Self.x` value-parameter read at its declared type and records
+  it as the binder's parameter constant, never a projection of `self`.
 - `eval_associated_ct` freezes a fieldwise construction of a non-generic
   struct from compile-time values (`Extent(2, 3)`) to `CtValue::Struct`;
   `Elab::freeze_struct_value_arguments` (`comptime/elab.rs`) rewrites any

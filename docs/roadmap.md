@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1447**.
+Next free ID: **R1448**.
 
 ## Ordered Work
 
@@ -4606,41 +4606,7 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
-- [ ] **R1401 Fourteen `comptime` entries wait on landed work, restate each
-  other, or disagree about the pin**
-
-  These entries were filed before the work they wait on landed, or restate
-  another entry, so the track counts them twice or schedules work that may
-  be done.
-  - Wait on landed entries: R1303 (R1073), R77 (R74, R51), and R78 (R40).
-  - Overtaken: R1071 by R743 and R1103 (the caller's own pack is passed
-    whole), though its diagnostic remains in `checker/inference.rs`.
-  - Overtaken by P5, which deleted erased value-keyed `def`s, AST method
-    clones, and `$`-mangled template stubs: R70 ("compile-time call arity"
-    still exists), R68, R90, and R71.
-  - Duplicates: R848 restates R979 (`Float64`) and R790 (`String`). One edit
-    to `infer_member`'s fallback closes all three, and R979 notes it deletes
-    `intern_static_self`.
-  - R528 and R1015 contradict each other: R528 says `side` prints once
-    before `main`, R1015 says it prints when `fd2()` runs. Probe, keep the
-    one the pin agrees with, and delete the other.
-  - Add `Depends on R533` to R303: a legacy `@parameter` closure follows
-    R533's environment path, not R1376's storage struct.
-  - For each entry, run its probe (or the program its first sentence names)
-    on `target/debug/mojito` and on the pinned Mojo, through the Pixi
-    project `docs/usage.md` names (`MOJO_PIXI_MANIFEST`).
-  - Delete an entry whose probe now matches the pin, and record it in
-    `CHANGELOG.md`.
-  - Rewrite an entry that still fails so its cause names today's code, and
-    keep its ID.
-  - Merge a duplicate into the entry it restates, carrying its probes, and
-    delete it.
-  - Done when every entry listed here is deleted, rewritten against today's
-    code, or merged.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1400 Nineteen `comptime` entries are fixed or name code that no
+- [ ] **R1400 Eighteen `comptime` entries are fixed or name code that no
   longer exists**
 
   The track overstates what remains: six entries were fixed by later work,
@@ -4651,8 +4617,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     R543, R98, and R278.
   - Partly fixed: R72's call-bracket form `size[Self.n * 2]()` runs. Only
     the alias body remains, and R1371 closes it.
-  - R395's `Bool` half is fixed: `infer_member` reads `Bool` at its declared
-    type.
   - Cite `Elab::unroll_comptime_for` or `Elab::defer_constant`, both gone:
     R319, R368 (`top_consts` still exists, so it is probably live), and
     R509.
@@ -4849,22 +4813,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The default should stay a parameter expression over the caller's
     binders, as an explicit `default_only[x, x]()` does.
   - Add the probe as an `assets/ok` fixture once it runs.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R979 `Self.x` of a struct parameter typed `Float64` reads as
-  `Int`**
-
-  `struct F[x: Float64]` whose static `get() -> Float64` returns `Self.x`
-  is rejected with "type mismatch for return: expected Float64, found
-  Int", where the pin prints `1.5`.
-  - `infer_member` (`crates/mojito-checker/src/checker/indexing.rs`) reads
-    a value parameter at its declared type only for `UInt`, `Bool`, SIMD,
-    struct, and `DType` types, and every other one as `Int`.
-  - A read at the declared type is a parameter constant; the rest still
-    lower to a projection of a `self` slot, which a static method interns
-    for it (`intern_static_self`) and which reads every struct parameter.
-  - Reading every type as declared removes both.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5081,6 +5029,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     then `def g[n: MyInt]()`, fails with "unknown trait 'MyInt' in a
     type-parameter bound", where the pin prints `3` for `g[3]()`. Prepare
     folds only aliases of `!kgen.type` and `!kgen.string` this way.
+  - Probe: a struct's binder, `struct S[i8: Int8]` with `Self.i8` read in
+    a static method, fails the same way (pin: `3` for `S[3].num()`).
   - Found while landing R477 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5435,18 +5385,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R395 A struct's `Bool` parameter read as a value is typed `Int`**
-
-  Problem: `def on(self) -> Bool: return Self.b` in `struct Flag[b: Bool]`
-  is rejected with "type mismatch for return: expected Bool, found Int",
-  where the pin prints `True`.
-  - `self.x = 1 if Self.b else 0` passes the check and runs on the VM. The
-    native backend rejects it with "Op has different operand types".
-  - A `Bool` parameter of a `def` read the same way is a `Bool`.
-  - Found while landing a function applied in a signature (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R386 A parameter argument that computes a `String` or a float from
   a parameter is rejected**
 
@@ -5462,31 +5400,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     sized integers want the same.
   - Found while landing an application in a type or a parameter argument
     (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R848 A struct's `Bool` or `Float64` value parameter read as
-  `Self.b` is typed `Int`**
-
-  `struct Flag[b: Bool]` with `def get(self) -> Bool: return Self.b` is
-  rejected with "type mismatch for return: expected Bool, found Int", where
-  the pin prints `True`; `Scale[f: Float64]` with `Self.f * 2` fails the same
-  way.
-  - The checker's `infer_member` (`checker/indexing.rs`) reads a struct
-    value parameter at its declared type only for `UInt`, SIMD, struct, and
-    `DType` parameters, and at `Int` otherwise.
-  - R790 is the same fallback for a `String` parameter, so one fix may close
-    both.
-  - Found while landing R841 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R790 A struct's `String` value parameter read as `Self.s` is typed `Int`**
-
-  `struct Box[s: String]` with `def get(self) -> String: return Self.s` is rejected with "type mismatch for return: expected String, found Int", where the pin prints the string.
-  - A free function's `[s: String]` and `[q: Q]` reads (`q.s` a `String` field) both work; the struct member read is the one that mistypes.
-  - `native::mono` already answers such a read with a `String`-typed constant (`Specializer::value_param_constant`), so the fix is in the checker's member read.
-  - Found while landing R524 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6105,21 +6018,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1015 A runtime default that prints is rejected**
-
-  `fd2(x: Int = side())` returning `x`, where `side` prints, fails
-  elaboration with "is not safe for VM-backed compile-time execution: it
-  reaches `print`", where the pin prints `side` when `fd2()` runs.
-  - The default is lifted to `$default$fd2$x`, which the elaborator runs
-    at compile time (`effectful_callee`, `mono/specializer.rs`), while
-    upstream evaluates a runtime default at the call site when the call
-    runs.
-  - A call omitting a removed argument's default no longer evaluates it
-    (R997), so only a used argument fails.
-  - Found while landing R997 (2026-10-15).
-  - Depends on R1004.
-  - Model: Opus, Not Planned.
-
 - [ ] **R388 A type over a lifted application is spelled by its function's
   name in a diagnostic**
 
@@ -6417,13 +6315,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 - [ ] **R463 A struct's tuple-typed value parameter cannot be read in its
   methods**
 
-  Problem: in `struct T[p: Tuple[Int, Int]]`, `var t = Self.p` fails with
-  "no field 'p'" and `Self.p[1]` with "Undefined variable 'Self'", where
-  the pin prints both elements of `T[(1, 2)]`.
+  Problem: in `struct T[p: Tuple[Int, Int]]`, `Self.p[1]` fails with
+  "Undefined variable 'Self'", where the pin prints the element of
+  `T[(1, 2)]`.
+  - `var t = Self.p` then `t[1]` runs on both backends.
   - A `Tuple[Int, String]` parameter fails the same way.
   - A struct's scalar or struct-typed value parameter reads (`Self.n`,
     `Self.e.rows`).
   - Found while landing R455 (2026-10-07).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1447 A struct parameter read through an instance has no field**
+
+  Problem: `var t = T[3](); print(t.n)` over `struct T[n: Int]` reports
+  "type 'T[3]' has no field 'n'", where the pin prints `3`.
+  - `Checker::infer_member` (`checker/indexing.rs`) answers a member of an
+    instance only from the struct's fields. Upstream resolves the name
+    against the type's parameters too, so `t.n` is the instance's argument
+    and `self.n` the binder, as `Self.n` is.
+  - Probe: `self.f` in a method of `struct T[s: String, f: Float64]`, and
+    `t.s` on an instance (pin: `2.5` and `a` for `T["a", 2.5]`).
+  - Found while landing R1401 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6577,23 +6490,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R68 An imported alias in a cloned generic method's signature is an
-  unknown type**
-
-  Problem: `def feed(self, mut hasher: default_hasher)` on a generic struct
-  reports "unknown type '__module$hasher$default_hasher'" for an instance
-  that clones the method, while the pin runs it.
-  - A method clones where its body holds a compile-time construct, or its
-    instance's argument carries a loan. A method the template serves
-    resolves the alias.
-  - The same annotation resolves on a module-level `def`, on a plain
-    struct's method, and through a local `comptime` alias of the import.
-  - Workaround: spell the application (`AHasher[SIMD[DType.uint64, 4](0)]`),
-    as `assets/ok/template_method_bound_witness_shapes.mojo` does.
-  - Pinned by `conformance/probes/imported_alias_in_generic_method.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R459 A reached struct instance instantiates every constructor
   overload, called or not**
 
@@ -6611,38 +6507,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R70 A value-keyed `def` cannot forward its value to a keyed `def`**
+- [ ] **R71 A bracket application of a generic `def` is not a function
+  value**
 
-  Problem: `def forward[n: Int](x: Int) -> Int: return keyed[n]() + x`, over
-  a `keyed[n: Int]` holding a `comptime if`, fails elaboration with
-  "compile-time call arity: generic 'keyed' requires compile-time parameter
-  'n'"; the pin prints the sum.
-  - A value-keyed `def` with no compile-time control flow runs erased, its
-    value passed at run time, so no compile-time `n` reaches the call.
-  - A type parameter forwarded the same way (`show[T](x)`) works, because
-    the abstract body's call reaches each instance's clone.
-  - Pinned by `conformance/probes/value_param_forwarded_to_keyed_def.mojo`.
+  Problem: `var g = h[4]; g(1)` over `def h[k: Int](t: Int)` reports "type
+  'def[k: Int](Int) thin -> None' cannot be indexed here", where the pin
+  binds the instance and prints `5`.
+  - Called at once (`h[4](1)`), the application runs. Bound or passed, the
+    bracket reaches `Checker::infer_index` (`checker/indexing.rs`) as a
+    run-time subscript of the function value.
+  - Upstream's bracket on a generic function's name is a parameter
+    application whose result is the instance, a thin function value.
+  - Probe: `var f = inner[1]; f(x)` over a nested `def inner[m: Int]`
+    fails the same way, where the pin prints `3` for `x = 2`.
+  - A bare reference to a generic `def` (`apply(as_int, 3)`, `var g =
+    as_int`) is rejected at the pin too, so it is not part of this entry.
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R71 A compile-time-keyed `def` cannot be passed as a function value**
-
-  Problem: `apply(as_int, 3)`, where `as_int[T]` holds a `comptime if` or a
-  `rebind` and `apply` declares a callable bound, runs at the pin and reports
-  "Undefined variable 'as_int'" in Mojito.
-  - The template is dropped or stubbed, and only its `$`-mangled clones carry
-    a name; a bare reference resolves to neither.
-  - The rejection is safe (no wrong answer), but the message names nothing
-    the source wrote.
-  - The plan must say which clone a bare reference names, and what the rejection
-    says when none can be chosen.
-  - Probe: `var g = h[4]; g(1)` over `def h[k: Int](t: Int)` prints `5` on
-    the pin, where Mojito reports "type 'def[k: Int](Int) thin -> None'
-    cannot be indexed here" (found while landing R1094, 2026-10-17).
-  - Probe: `var f = inner[1]; f(x)` over a nested `def inner[m: Int]`
-    fails the same way, where the pin runs it.
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R72 A member-led arithmetic type argument does not parse in an alias
   body or a call's brackets**
@@ -6874,28 +6755,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 
 - [ ] **R77 A field's value cannot be read by reflection**
 
-  Problem: `reflect[T].field_ref[i](x)` — the value of field `i` of `x` — is
-  unsupported; the upstream hashing, equality, and writing defaults are
-  written with it.
-  - Mojito's defaults are Rust AST synthesis (`comptime/synth.rs`) and a
-    lowering (`mojito-pliron/src/lower/print.rs`), so no bundled body needs
-    it yet.
-  - Under validation the result's type is the opaque field type
-    (`types[i]`), which the arm-licensing rule already covers.
-  - Depends on R74 for the upstream spelling of the defaults, and on R51,
-    the body shape they are written in.
+  Problem: `reflect[P].field_ref[0](p)`, a reference to field `0` of `p`,
+  is rejected with "a parameterized type is not a value: expected a value,
+  found the type 'reflect[…]'", where the pin prints the field.
+  - `reflect` is a checker intrinsic. `Checker::reflection_query_of`
+    (`checker/reflection.rs`) answers only argument-free queries
+    (`field_count`, `field_names`, `field_types`, `field_index`).
+  - Upstream's `field_ref[idx](ref s)` is a library method returning
+    `ref[s]` the field (`lit.ref.struct.ger`), so in MIR it is a field
+    projection of the argument's place at the field's name.
+  - Upstream's `Equatable`, `Hashable`, and `Writable` defaults read fields
+    through it. Mojito's `Hashable` default is synthesized
+    (`comptime/synth.rs`), so no bundled body needs it yet.
+  - Probe: `print(reflect[P].field_ref[0](p), reflect[P].field_ref[1](p))`
+    over `P(3, 4)` (pin: `3 4`).
+  - Probe: a generic `total[T](x: T)` summing `rebind[Int](r.field_ref[i](x))`
+    under `comptime if types[i] == Int` in a `comptime for` reports
+    "Undefined variable 'r'" (pin: the sum).
+  - Probe: `reflect[P].field_ref[0](p) = 42` also needs R1233's call
+    assignment target.
+  - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R78 A local compile-time type list is unknown in an instance's annotation**
-
-  Problem: `var v: types[i] = ...` over `comptime types =
-  reflect[T].field_types()` validates, but the instance reports "unknown
-  type 'types'".
-  - The elaborator resolves `f.T` over a bound handle (`resolve_reflected_type`,
-    `comptime/eval.rs`) and nothing else in an annotation; `comptime FT =
-    types[i]` then `var v: FT` is the working spelling.
-  - Depends on R40 when the annotation sits in a `comptime for` body.
-  - Model: Opus, Not Planned.
 
 - [ ] **R79 A handle chain in a call's type argument is read as a value**
 
@@ -6925,21 +6805,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R83 A parametric nested `def` named as a value reports its marker**
+- [ ] **R83 A bare reference to a parametric `def` reports a closure
+  escape**
 
-  Problem: `apply(inner, 3)` and `var g = inner`, for a nested
-  `def inner[U: Copyable]`, report `Undefined variable
-  'main$110$198$nested$0$inner'`. The pin rejects both too, so the verdict is
-  right and only the message is wrong.
-  - The lexical pass renames the declaration to its marker and rewrites every
-    reference to it, then deletes the template it could not instantiate,
-    leaving the renamed value reference dangling.
-  - The pin's texts are "cannot use parametric function as a runtime closure"
-    for the binding and an `invalid call to '__call__'` for the argument.
-  - Pre-existing for a nested `def` the pass already registered; the nested
-    compile-time-keyed work widened the class it reaches.
-  - Depends on R71, which decides which clone a bare reference to a
-    parametric `def` names; the message follows from that.
+  Problem: `var g = inner`, for a nested `def inner[U: Copyable]`, reports
+  "closures cannot escape their defining scope (downward funargs only)".
+  The pin rejects it too, so the verdict is right and only the message is
+  wrong: the pin says "cannot use parametric function as a runtime
+  closure".
+  - A module-level parametric `def` bound the same way (`var g = as_int`
+    over `def as_int[T: Intable](x: T)`) reports the same escape message.
+  - The pin rejects `apply(as_int, 3)` with an `invalid call to 'apply'`
+    naming the conversion. Mojito's "cannot be converted from the generic
+    function …; specialize it explicitly" already says as much.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R85 A method forwarding its own `DType` parameter to a sibling
@@ -6953,20 +6832,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     caller's, so two same-spelled lanes compare unequal.
   - The same forward to a free keyed `def` (`helper[dt](x)`) runs
     (`assets/ok/dtype_keyed_method_forward.mojo`).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R90 A compile-time-keyed `def` applied to a loan-carrying type is
-  rejected**
-
-  Problem: `tag[Span[Int, origin_of(xs)]]()` on `def tag[T: AnyType]() ->
-  Int` whose body branches on `comptime if T == Int` stops with "type 'Span'
-  expects 1 compile-time argument(s), got 2".
-  - The same `def` without the `comptime if` runs, as does the keyed one at
-    `Int`.
-  - The elaborator re-resolves the keyed argument with its origin tail
-    spelled as a type argument.
-  - Not yet checked against the pin, which is expected to print the tag.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7315,7 +7180,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     conformance case `generic-anonymous-callables`) and
     `generic_callable_contract_defaults_override_implementation_defaults`
     (`tests/param_callable_value_test.rs`) pin it.
-  - Depends on nothing.
+  - A legacy `@parameter` closure follows R533's environment path, not
+    R1376's storage struct.
+  - Depends on R533.
   - Model: Fable, Planned.
 
 - [ ] **R327 An out-of-range value-pack index fails as an unsupported
@@ -7430,15 +7297,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Problem: `def outer(*xs: Int): return inner(*xs)` stops in the checker
   with "call spread outside a specialized type pack", where the pin passes
   the collector on and prints `3` for `outer(1, 2, 3)`.
-  - The checker accepts a spread only of a type pack
-    (`checker/inference.rs`).
-  - Upstream forwards the caller's `VariadicList` whole; since R1040 the
-    pack is one run-time value on both backends, so the forward can pass the
-    caller's pack, natively its descriptor, unchanged.
-  - The callee's collector is the bundled `VariadicList` since R743, and
-    `verify_pack_spread` and the elaborator already pass a
-    `VariadicList`-typed spread operand whole.
-  - Found while landing R1040 (2026-10-16).
+  - `Checker::forwarded_pack_operand` (`checker/comptime_validation.rs`)
+    takes a spread only of a type pack (`*args: *Ts`). A homogeneous
+    collector's spread falls to `infer`'s `ExprKind::Spread` arm
+    (`checker/inference.rs`), which rejects it.
+  - Upstream forwards the caller's `VariadicList` whole. Since R1103 a
+    type-pack spread passes the caller's pack itself, and
+    `verify_pack_spread` already accepts a `VariadicList`-typed spread
+    operand, so only the checker's binding is missing.
+  - Probe: the program above (pin: `3`).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7446,15 +7313,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 
   Problem: `def mutate(mut *xs: Int)` stops with "Expected a parameter
   name after the convention", where the pin types the collector
-  `VariadicList[True, ..., Int, False]` and `for ref x in xs: x += 1`
-  mutates the caller's values (`mutate(a, b)` prints `2 3`).
-  - `docs/grammar.md` spells `[convention] '*' NAME`, which the parser
-    does not take for `mut`.
-  - The collector would be a `read`-shaped `VariadicList` whose element
-    pointers address the caller's places, as a `read` collector's already
-    do (`mir/call_defaults.rs::borrowed_element`), but mutable.
-  - Found while planning R743 (2026-10-23).
-  - Depends on R1073.
+  `VariadicList[elt_is_mutable=True, ..., Int, False]` and `for ref x in
+  xs: x += 1` mutates the caller's values (`mutate(a, b)` prints `2 3`).
+  - `Parser::parse_param_list` (`crates/mojito-parser/src/parser/items.rs`)
+    takes `*` after a convention only for `var`. `mut`, `read`, and `ref`
+    go through `parse_convention_and_name`, which wants a name.
+    `docs/grammar.md` already spells `[convention] '*' NAME`.
+  - Past the parser, the call builds a `read` collector's element pointers
+    over the caller's places (`borrowed_element`,
+    `mir/call_defaults.rs`). A `mut` collector needs the same pointers as
+    mutable loans, and its `VariadicList` instance at `elt_is_mutable=True`.
+  - Probe: the program above (pin: `2 3`).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R436 A struct's `comptime` value member read through the type name
@@ -7808,8 +7678,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
     identity, or a prelude name takes the entry module's linked name
     (`module::entry_item_name`), and the checker prints a struct's linked
     name as it is.
-  - Library types leak the same way (`__module$list$List`, and R68's
-    `__module$hasher$default_hasher`).
+  - Library types leak the same way (`__module$list$List`).
   - Probe: the library `ContiguousSlice` and `StridedSlice` print as
     `__module$std$builtin$builtin$slice$ContiguousSlice` in every
     diagnostic (`assets/type_error/contiguous_slice_not_equatable.mojo`,

@@ -1872,11 +1872,6 @@ impl<'a> Flatten<'a> {
                 if e.is_dtype_constant() || e.recorded_value().is_some() {
                     return None;
                 }
-                if self.name_spelled(object).is_some_and(|name| name == "Self")
-                    && let Some(place) = self.receiver_value_parameter_place(field)
-                {
-                    return Some(place);
-                }
                 let mut p = self.try_place(object)?;
                 if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
                     p.project(Proj::Field(field.clone()), ty);

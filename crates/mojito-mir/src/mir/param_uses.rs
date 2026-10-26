@@ -47,10 +47,10 @@
 //! never reads it.
 
 use crate::mir::struct_reads::{LayoutReads, StructReads};
-use crate::mir::verify::{instruction_operand_regs, instruction_places, instruction_result_regs};
+use crate::mir::verify::{instruction_operand_regs, instruction_result_regs};
 use crate::mir::{
     MirBlock, MirDeclarations, MirFunction, MirFunctionDeclaration, MirInstr, MirParamArg,
-    MirPlace, MirSubscriptArg, Proj, Reg, TyArg, UseMode, count_register_reads, destroyed_structs,
+    MirPlace, MirSubscriptArg, Reg, TyArg, UseMode, count_register_reads, destroyed_structs,
     instruction_regions, instruction_regions_mut, instruction_slots, instruction_subscript_call,
     matched_parameter_arguments, supplied_parameter_arguments,
 };
@@ -167,9 +167,6 @@ pub fn unread_parameters_of<'a>(
         return UnreadParameters::default();
     }
     let read_by_slot = slot_reads(function, &candidates);
-    let read_from_receiver = structure
-        .map(|(spelled, decls)| receiver_parameter_reads(function, spelled, decls, declarations))
-        .unwrap_or_default();
     let read = |decl: &ParamDecl| {
         let id = decl.id();
         walker
@@ -178,7 +175,6 @@ pub fn unread_parameters_of<'a>(
             .position(|owner| **owner == *id.owner)
             .is_some_and(|owner| walker.slots.contains(&(owner, id.slot)))
             || read_by_slot.contains(decl.name().trim_start_matches('*'))
-            || read_from_receiver.contains(id)
             || walker
                 .nested_removals
                 .iter()
@@ -1122,54 +1118,6 @@ fn slot_reads(function: &MirFunction, candidates: &[&ParamDecl]) -> HashSet<Stri
             reads: &mut reads,
         };
         cx.blocks(&function.blocks);
-    }
-    reads
-}
-
-/// The parameters of the struct `spelled` (`decls`) that `function` reads
-/// through a projection of a value of it: `Self.n` is the receiver's
-/// reified parameter, `self.n`, which reads `n` as the binder does.
-fn receiver_parameter_reads<'d>(
-    function: &MirFunction,
-    spelled: &str,
-    decls: &'d [ParamDecl],
-    declarations: &MirDeclarations,
-) -> HashSet<&'d ParamId> {
-    fn walk<'f>(blocks: &'f [MirBlock], places: &mut Vec<&'f MirPlace>) {
-        for block in blocks {
-            for instruction in &block.instrs {
-                places.extend(instruction_places(instruction));
-                for region in instruction_regions(instruction) {
-                    walk(region, places);
-                }
-            }
-        }
-    }
-    let fields = declarations
-        .structure(spelled)
-        .map_or(&[][..], |structure| structure.fields.as_slice());
-    let mut places = Vec::new();
-    walk(&function.blocks, &mut places);
-    let mut reads = HashSet::new();
-    for place in places {
-        let bases = place.root_ty.iter().chain(&place.projection_tys);
-        for (projection, base) in place.proj.iter().zip(bases) {
-            if let Proj::Field(name) = projection
-                && let TyKind::Struct(base, _) = match base.kind() {
-                    TyKind::Ref(reference) => reference.referent.kind(),
-                    kind => kind,
-                }
-                && base == spelled
-                && !fields.iter().any(|(field, _)| field == name)
-            {
-                reads.extend(
-                    decls
-                        .iter()
-                        .filter(|decl| decl.name() == name)
-                        .map(ParamDecl::id),
-                );
-            }
-        }
     }
     reads
 }

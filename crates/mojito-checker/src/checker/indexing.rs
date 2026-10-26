@@ -1892,32 +1892,15 @@ impl Checker {
                 return Ok(TyKind::VariadicPack(ty.clone()).into());
             }
             return match self.self_decls.iter().find(|d| d.name() == field) {
-                // A `UInt`-, `Bool`-, vector-, struct-, or `DType`-typed value
-                // parameter (`AHasher[key: U256]`, `Tagged[e: Extent]`)
-                // reads as its declared type; the other scalar kinds read as
-                // `Int`. A read at its declared type is upstream's
+                // A value parameter reads as its declared type: upstream's
                 // `kgen.param.constant` of the binder, never a read of a
                 // `Self` value.
                 Some(decl @ ParamDecl::Value { ty, .. }) => {
-                    let read = if matches!(
-                        *ty.kind(),
-                        TyKind::UInt
-                            | TyKind::Bool
-                            | TyKind::Simd { .. }
-                            | TyKind::Struct(..)
-                            | TyKind::Dtype
-                    ) {
-                        (*ty).clone()
-                    } else {
-                        Ty::int()
-                    };
-                    if read == *ty {
-                        self.record_member_value(
-                            span,
-                            super::annotations::value_parameter_expr(decl, ty),
-                        );
-                    }
-                    Ok(read)
+                    self.record_member_value(
+                        span,
+                        super::annotations::value_parameter_expr(decl, ty),
+                    );
+                    Ok((*ty).clone())
                 }
                 _ => self
                     .read_type_member(span, object, field)

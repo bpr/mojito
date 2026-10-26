@@ -687,6 +687,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct's value parameter now reads as its declared type wherever
+  `Self.x` names it, as upstream's parameter constant does: `Self.b` over
+  `Flag[b: Bool]`, `Self.f * 2` over `Scale[f: Float64]` (also in a static
+  method), and `Self.s` over `Box[s: String]` type-check and run on both
+  backends, where each read as `Int` (closes R848, R979, R790, and R395).
+  The projection of a static method's interned `self` slot that the
+  mistyped reads lowered to is gone
+  (`assets/ok/struct_value_parameter_declared_type_reads.mojo`). A triage
+  of fourteen `comptime` entries (R1401) re-ran each probe against the pin.
+  R78 (a reflected field type in a local annotation), R70 (a value-keyed
+  `def` forwarding its value to a keyed `def`), R68 (an imported alias in
+  a generic method's signature), and R90 (a keyed `def` applied to a
+  loan-carrying type) already matched it and are closed; the R70 and R68
+  probes are now `assets/ok` fixtures. R1015 is deleted: the pin evaluates
+  `side()` once, before `main`, as R528 states. R1303, R77, R1071, and
+  R71 are rewritten against today's code, the last narrowed to a bracket
+  application bound as a value, since the pin rejects a bare generic
+  `def` reference too.
+
 - A triage of twelve `calls` entries (R1404) re-ran each probe against the
   pin. Five already matched it on both backends and are closed: R719 (a
   raising `__neg__` in a non-raising `main` is rejected), R112 (an
