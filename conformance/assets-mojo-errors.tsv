@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	759
+# swept-count	761
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -207,6 +207,7 @@ assets/type_error/bad_operator.mojo	compile-reject	agree	error: no matching meth
 assets/type_error/bare_move_initializer.mojo	compile-reject	agree	error: 'move' argument must be passed as 'deinit'
 assets/type_error/bare_reference_list_parameter.mojo	compile-reject	agree	error: cannot declare 'Int' without a contextual type from its initializer
 assets/type_error/boolable_required_for_bool.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/bool_conversion_undeclared_boolable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/bool_dtype_rejected.mojo	compile-reject	agree	error: 'Bool' value has no attribute 'dtype'
 assets/type_error/callable_struct_def_typed_argument.mojo	compile-reject	agree	error: invalid call to 'keep': value passed to 'callback' cannot be converted from 'Scale' to 'def(Int) -> Int'
 assets/type_error/call_result_pointer_field_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -725,6 +726,7 @@ assets/type_error/trait_requirement_pack_element_mismatch.mojo	compile-reject	ag
 assets/type_error/trait_result_origin_read_self.mojo	compile-reject	agree	error: cannot return 'self's origin, because it might expand to a RegisterPassable type
 assets/type_error/trait_value_member_not_required.mojo	compile-reject	agree	error: 'HasK' value has no attribute 'Z'
 assets/type_error/transfer_into_mut_parameter.mojo	compile-reject	agree	error: invalid call to 'poke': value passed to mutable argument 't' must be mutable
+assets/type_error/trivial_register_passable_bound_undeclared.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'S' to 'T', argument type 'S' does not conform to trait 'TrivialRegisterPassable'
 assets/type_error/tstring_annotation.mojo	compile-reject	agree	error: cannot implicitly convert 'TString[Int]' value to 'String'
 assets/type_error/tstring_concat.mojo	compile-reject	agree	error: 'TString[ImmUntrackedOrigin, origin_of(__call_result_tmp__)]' does not implement the '__add__' method
 assets/type_error/tstring.mojo	compile-reject	agree	error: no matching function in initialization

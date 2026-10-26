@@ -1836,7 +1836,7 @@ fn struct_prefix_operators_dispatch_through_dunders() {
 
 #[test]
 fn struct_conversions_and_rounding_dispatch_through_dunders() {
-    let src = "@fieldwise_init\nstruct Money:\n    var cents: Int\n    def __int__(self) -> Int:\n        return self.cents\n    def __bool__(self) -> Bool:\n        return self.cents != 0\n    def __abs__(self) -> Money:\n        return Money(-self.cents) if self.cents < 0 else Money(self.cents)\n\ndef main():\n    print(Int(Money(-250)))\n    print(abs(Money(-250)).cents)\n    print(Bool(Money(0)))\n";
+    let src = "@fieldwise_init\nstruct Money(Boolable, Intable):\n    var cents: Int\n    def __int__(self) -> Int:\n        return self.cents\n    def __bool__(self) -> Bool:\n        return self.cents != 0\n    def __abs__(self) -> Money:\n        return Money(-self.cents) if self.cents < 0 else Money(self.cents)\n\ndef main():\n    print(Int(Money(-250)))\n    print(abs(Money(-250)).cents)\n    print(Bool(Money(0)))\n";
     assert_eq!(vm(src), "-250\n250\nFalse\n");
 }
 

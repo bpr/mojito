@@ -126,6 +126,7 @@ struct _ListOwnedIter[T: AnyType](
     " non-`Deinitable` elements"
 )
 struct List[T: AnyType](
+    Boolable,
     Copyable where conforms_to(T, Copyable),
     Deinitable where conforms_to(T, Deinitable),
     Hashable where conforms_to(T, Hashable),

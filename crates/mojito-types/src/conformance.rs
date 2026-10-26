@@ -81,8 +81,8 @@ pub enum StructTraitRule {
     Declared,
     /// Never: an operation trait no struct conforms to.
     Never,
-    /// Always: a compiler-known trait that stays shallow.
-    Shallow,
+    /// Always: `AnyType`, which every type conforms to.
+    Always,
 }
 
 /// The rule deciding whether a struct conforms to `trait_name`, which the
@@ -95,22 +95,12 @@ pub fn struct_trait_rule(trait_name: &str, declared_by_program: bool) -> StructT
         return StructTraitRule::Declared;
     }
     match trait_name {
+        "AnyType" => StructTraitRule::Always,
         "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => StructTraitRule::Lifecycle,
-        "Writable"
-        | "Hasher"
-        | "Hashable"
-        | "Defaultable"
-        | "Indexer"
-        | "Equatable"
-        | "Comparable"
-        | "Intable"
-        | "Floatable"
-        | "RegisterPassable"
-        | "TrivialRegisterPassable" => StructTraitRule::Declared,
         "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
         | "Divisible" | "FloorDivisible" | "Modable" | "ShiftLeftable" | "ShiftRightable"
         | "Andable" | "Orable" | "Xorable" | "Negatable" => StructTraitRule::Never,
-        _ => StructTraitRule::Shallow,
+        _ => StructTraitRule::Declared,
     }
 }
 
@@ -236,6 +226,17 @@ pub fn leaf_conforms(
         }
         "Negatable" => is_signed_numeric_like(ty),
         "Intable" => is_numeric_like(ty) || *ty == TyKind::Bool,
+        // Upstream's `SIMD`, `Bool`, and literal structs declare `Boolable`;
+        // none declares `Identifiable`.
+        "Boolable" => {
+            is_numeric_like(ty)
+                || is_scalar_simd(ty)
+                || matches!(
+                    ty.kind(),
+                    TyKind::Bool | TyKind::StringLiteral | TyKind::Simd { .. }
+                )
+        }
+        "Identifiable" => false,
         // `AnyType`, and the layout and operation markers that stay shallow.
         _ => true,
     })

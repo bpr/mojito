@@ -7465,23 +7465,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R577 A struct conforms to a compiler-known trait it never
-  declares, such as `Boolable`**
-
-  Problem: `comptime if conforms_to(T, Boolable)` holds for a plain
-  `@fieldwise_init` struct in Mojito, where the pin answers no.
-  - Cause: the shared rule answers every compiler-known trait outside its
-    declared, lifecycle, and operation classes as always held
-    (`StructTraitRule::Shallow` in `mojito_types::conformance`, and the
-    checker's `conforms_to` `_ => true` arm).
-  - Upstream decides these from the type's declared conformances, as any
-    trait.
-  - The lever: turn `Shallow` into `Declared` once the bundled library
-    declares what upstream's does (R578).
-  - Pinned by `conformance/probes/conforms_to_undeclared_compiler_trait.mojo`.
-  - Found while landing R564 (2026-10-10).
-  - Depends on R578.
-  - Model: Opus, Not Planned.
 - [ ] **R860 A `TrivialRegisterPassable` struct may define a copy
   constructor or `__del__`, or hold a non-trivial field**
 
@@ -8995,18 +8978,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Upstream declares them in `std/builtin/bool.mojo`, `int.mojo`,
   `floatable.mojo`, and `identifiable.mojo` (with a defaulted `__isnot__`)
   and exports them from the prelude. Mojito knows them by name, so no
-  conformance records a witness table, and `StructTraitRule::Shallow`
-  answers `Boolable` and `Identifiable` as held.
+  conformance records a witness table.
   - Bundle the declarations and drop the names from `COMPILER_TRAITS`. Move
     the scalar answers from `leaf_conforms` to `modelled_declares`, as
     `Sized` is answered.
   - Delete their arms in `builtin_trait_operation` and
     `verify_builtin_conformance`.
-  - Probe: `conformance/probes/conforms_to_undeclared_compiler_trait.mojo`.
-    Also, `conforms_to(P, Identifiable)` for a plain struct is `False` at
-    the pin and `True` in Mojito.
-  - Closes R577 (an undeclared `Boolable` is held) and R191 (`Int` is
-    `Floatable`). Shrinks R1281 and R1109.
+  - Probe: `def f[T: Boolable](x: T) -> Bool: return x.__bool__()` fails
+    the check ("type 'T' has no method '__bool__'"), where the pin runs it
+    for a struct declaring `Boolable`.
+  - Closes R191 (`Int` is `Floatable`). Shrinks R1281 and R1109.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9016,10 +8997,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `struct A(Absable)` with `__abs__(self) -> Self` is rejected ("missing
   required operation '__abs__() -> Self'"), where the pin prints `3 True`
   for `abs(x)` through `T: Absable` and for `conforms_to(A, Absable)`.
-  - Cause: `struct_trait_rule` answers these three as `Never`, and answers
-    `Ceilable`, `Floorable`, `Truncable`, `CeilDivable`,
-    `CeilDivableRaising`, and `DivModable` as `Shallow`. No bundled module
-    declares them.
+  - Cause: `struct_trait_rule` answers these three as `Never`. No bundled
+    module declares any of the nine, and `leaf_conforms` holds `Ceilable`,
+    `Floorable`, `Truncable`, `CeilDivable`, `CeilDivableRaising`, and
+    `DivModable` for every leaf type, a tuple's included.
   - Upstream declares all nine in `std/math/math.mojo`. Only `Absable`,
     `Powable`, and `Roundable` are prelude names.
   - Declare them in `stdlib/std/math.mojo`, export the three from the
@@ -9033,7 +9014,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `numeric_operation_traits.mojo`, `boolable_and_divmod.mojo`). Only
     scalars instantiate today, so nothing observes it; library functions
     with `read` parameters remove it.
-  - Done when `Shallow` answers only `AnyType` and `Representable`.
+  - Done when `leaf_conforms`'s catch-all answers none of the nine.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9069,15 +9050,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `compiler_trait_declaration`.
   - Probe:
     `conformance/probes/copyable_struct_trivial_register_passable_field.mojo`,
-    `trivial_register_passable_copy_method.mojo`, and
-    `trivial_register_passable_bound_undeclared.mojo`.
+    and `trivial_register_passable_copy_method.mojo`.
   - Closes R861 and R863 (the missed refinement to `Copyable`). Shrinks
     R860 and R1119 (its default body goes in this declaration).
-  - A `T: TrivialRegisterPassable` bound accepts a `Movable` struct and
-    `List[Int]`, where the pin rejects the call ("argument type 'S' does
-    not conform to trait 'TrivialRegisterPassable'"); `conforms_to` already
-    answers from the declaration
-    (`assets/ok/conforms_to_trivial_register_passable_undeclared.mojo`).
   - Probe: once the bound holds, `MirDeclarations::copy_is_identity`
     answers yes for a type parameter whose bound is or refines
     `TrivialRegisterPassable`. Until then `cse` keeps two `var.use` copies
@@ -10389,6 +10364,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     delete the scalar arms of all three sites. R857's cast becomes their
     `pop.cast`.
   - Probe: R430's `Int(StringSpan("12"))` and R339's `__int__`.
+  - Probe: a struct whose `__int__` or `__float__` raises converts through
+    `Int(x)` or `Float64(x)` without declaring `IntableRaising` or
+    `FloatableRaising`, which Mojito does not model; the checker's
+    conversion exempts a raising dunder from the declared-bound test.
   - Closes R339 (`__int__` on a scalar) and R430 (`Int` of a `StringSpan`).
   - Depends on R1397.
   - Model: Fable, Not Planned.

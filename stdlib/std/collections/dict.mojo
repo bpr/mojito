@@ -185,6 +185,7 @@ struct Dict[
     V: Movable,
     H: Hasher = default_hasher,
 ](
+    Boolable,
     Copyable where conforms_to(K, Copyable) and conforms_to(V, Copyable),
     Deinitable where conforms_to(K, Deinitable) and conforms_to(V, Deinitable),
     Equatable where conforms_to(K, Copyable) and conforms_to(V, Equatable),

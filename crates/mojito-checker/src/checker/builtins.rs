@@ -1015,10 +1015,24 @@ impl Checker {
         // (`Int(x)` → `x.__int__() -> Int`, `Float64`/`Bool` likewise); the
         // same protocol an opaque `T: Intable/Floatable/Boolable` uses.
         let conversion = conversion_protocol(&target);
-        if let Some((dunder, _)) = conversion
+        if let Some((dunder, bound)) = conversion
             && let Some(result) = self.struct_dunder(&arg_ty, dunder, &[])
         {
             require_dunder_ret(result?, &target, dunder)?;
+            // Upstream's overload is `__init__[T: Boolable]` (or `Intable`,
+            // `Floatable`), so the struct must declare the trait; a raising
+            // dunder answers to the `*Raising` sibling, not modelled here.
+            let raises = self
+                .struct_dunder_signature_for(&arg_ty, dunder, &[])
+                .is_some_and(|(_, sig, _)| sig.raises);
+            if !raises && !self.conforms_to(&arg_ty, bound) {
+                return Err(TypeError::TraitNotSatisfied {
+                    param: "T".to_string(),
+                    ty: arg_ty.to_string(),
+                    trait_name: bound.to_string(),
+                    reason: None,
+                });
+            }
             self.borrow_nominal_place_argument(&args[0], &arg_ty);
             self.record_read_temporary_argument(&args[0]);
             // A raising conversion dunder (`String.__int__() raises`) makes

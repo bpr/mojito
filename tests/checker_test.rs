@@ -6222,8 +6222,16 @@ fn user_struct_prefix_operators_type_check() {
 fn concrete_conversions_and_abs_route_through_dunders() {
     // A concrete struct with the conversion/abs dunders type-checks the builtins.
     ok(
-        "@fieldwise_init\nstruct M:\n    var n: Int\n    def __int__(self) -> Int:\n        return self.n\n    def __abs__(self) -> M:\n        return M(self.n)\n\ndef main():\n    print(Int(M(1)))\n    print(abs(M(2)).n)\n",
+        "@fieldwise_init\nstruct M(Intable):\n    var n: Int\n    def __int__(self) -> Int:\n        return self.n\n    def __abs__(self) -> M:\n        return M(self.n)\n\ndef main():\n    print(Int(M(1)))\n    print(abs(M(2)).n)\n",
     );
+    // `Int(x)` is upstream's `__init__[T: Intable]`: a `__int__` alone is no
+    // declaration.
+    assert!(matches!(
+        err(
+            "@fieldwise_init\nstruct M:\n    var n: Int\n    def __int__(self) -> Int:\n        return self.n\n\ndef main():\n    print(Int(M(1)))\n"
+        ),
+        TypeError::TraitNotSatisfied { .. }
+    ));
     // A struct lacking the dunder is still rejected.
     assert!(matches!(
         err("@fieldwise_init\nstruct P:\n    var n: Int\n\ndef main():\n    print(Int(P(1)))\n"),

@@ -47,6 +47,7 @@ struct _SetIter[
 struct Set[
     T: Hashable & Equatable & Movable, H: Hasher = default_hasher
 ](
+    Boolable,
     Copyable where conforms_to(T, Copyable),
     Deinitable where conforms_to(T, Deinitable),
     Equatable where conforms_to(T, Copyable),

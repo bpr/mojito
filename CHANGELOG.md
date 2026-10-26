@@ -687,6 +687,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A struct no longer conforms to a compiler-known trait it never declares
+  (R577): `conforms_to(T, Boolable)` and a `T: Boolable` bound are false for
+  a struct with a `__bool__` and no `Boolable` in its list, as at the pin,
+  and likewise `Identifiable`, the `std.math` traits, and
+  `TrivialRegisterPassable` as a bound (R1363's undeclared-bound half).
+  Only `AnyType` still holds for every struct. `Bool(x)`, `Int(x)`, and
+  `Float64(x)` require the declared trait, the bundled `List`, `Dict`, and
+  `Set` declare `Boolable` as upstream's do, and a scalar is no longer
+  `Identifiable`.
+
 - A local `comptime` struct binding in a plain `def` is a parameter with no
   storage, as at the pin (R471 closed): `comptime c = N(8)` read as `c.a`
   is a compile-time constant and never destroys an `N`, and each run-time

@@ -1984,11 +1984,11 @@ impl Checker {
     }
 
     /// Whether `ty` conforms to trait `tr`. Lifecycle marker built-ins are tied
-    /// to observable ownership behavior; other built-ins remain recognized but
-    /// shallow unless their feature has a dedicated checker path. A user trait is
-    /// satisfied nominally: a struct must *declare* conformance, and a type
-    /// parameter must carry `tr` among its bounds (so a bounded `T` can be
-    /// forwarded to another `[U: tr]` parameter).
+    /// to observable ownership behavior; a leaf type answers any other
+    /// built-in by its shape. Every other trait is satisfied nominally: a
+    /// struct must *declare* conformance, and a type parameter must carry `tr`
+    /// among its bounds (so a bounded `T` can be forwarded to another
+    /// `[U: tr]` parameter).
     pub(super) fn conforms_to(&self, ty: &Ty, tr: &str) -> bool {
         if let Some(element) = self.opaque_element(ty) {
             return self.conforms_to(&element, tr);
@@ -2093,8 +2093,15 @@ impl Checker {
                             if self.struct_conformance_applies(name, args, tr))
                 }
                 "RegisterPassable" => self.register_passability(ty) == RegisterPassability::Proven,
-                // Layout/backend markers and future operation traits stay shallow.
-                _ => true,
+                // A struct answers by its declared conformances, as upstream
+                // decides any trait; a leaf's shape alone holds the rest.
+                _ => match ty.kind() {
+                    TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
+                    TyKind::Param { bounds, .. } => bounds
+                        .iter()
+                        .any(|bound| bound == tr || self.trait_refines(bound, tr)),
+                    _ => true,
+                },
             };
         }
         match ty.kind() {
@@ -2432,7 +2439,7 @@ impl Checker {
             StructTraitRule::Lifecycle => required,
             StructTraitRule::Declared => return Some(declared(&refining)),
             StructTraitRule::Never => return Some(Vec::new()),
-            StructTraitRule::Shallow => return Some(always()),
+            StructTraitRule::Always => return Some(always()),
         };
         Some(match lifecycle {
             "Copyable" => {
@@ -2974,8 +2981,8 @@ impl Checker {
 
     /// Whether `ty` conforms to `TrivialRegisterPassable`: a numeric, `Bool`,
     /// `DType`, or SIMD-valued builtin, a struct declaring the conformance, or a
-    /// parameter bounded or assumed by it. The general `conforms_to` answers
-    /// marker traits shallowly, so it cannot be asked.
+    /// parameter bounded or assumed by it. The general `conforms_to` holds
+    /// the trait for every other leaf type, so it cannot be asked.
     pub(super) fn is_trivial_register_passable(&self, ty: &Ty) -> bool {
         if let Some(element) = self.opaque_element(ty) {
             return self.is_trivial_register_passable(&element);
@@ -3092,9 +3099,9 @@ impl Checker {
             return true;
         }
         // The first upstream disjunct: `conforms_to(T, TrivialRegisterPassable)`.
-        // The general `conforms_to` treats marker traits shallowly (everything
-        // conforms), so consult only a declared conformance or a parameter
-        // bound; primitives already prove triviality structurally below.
+        // The general `conforms_to` holds the trait for every leaf type, so
+        // consult only a declared conformance or a parameter bound;
+        // primitives already prove triviality structurally below.
         let trp_conforms = match ty.kind() {
             TyKind::Struct(name, args) => {
                 self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
