@@ -600,7 +600,7 @@ fn raising_next_is_called_in_a_try_whose_handler_breaks() {
         .find_map(|instruction| match instruction {
             MirInstr::Try {
                 body,
-                handler: Some((None, handler)),
+                handler: Some(handler),
                 ..
             } => Some((body, handler)),
             _ => None,
@@ -5288,7 +5288,7 @@ fn bare_element_call_lowers_subscript_then_indirect_call() {
                 } = instruction
                 {
                     collect_instructions(body, out);
-                    if let Some((_, handler)) = handler {
+                    if let Some(handler) = handler {
                         collect_instructions(handler, out);
                     }
                     if let Some(orelse) = orelse {

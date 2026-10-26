@@ -76,11 +76,11 @@
           bb0 {
             instructions: [
               call { dest: %r0, func: fail, raises: present(raises { type: Error, flag: %r1, error: %r2 }), args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              if { results: [], condition: %r1, then: [bb0 { instructions: [], terminator: raise { src: %r2, label: absent, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r1, then: [bb0 { instructions: [], terminator: error_return { src: %r2 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               call { dest: %r3, func: print, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
               drop.reg { reg: %r0 },
               call { dest: %r4, func: fail, raises: present(raises { type: Error, flag: %r5, error: %r6 }), args: [], kwargs: [], arg_places: [], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
-              if { results: [], condition: %r5, then: [bb0 { instructions: [], terminator: raise { src: %r6, label: absent, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r5, then: [bb0 { instructions: [], terminator: error_return { src: %r6 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               drop.reg { reg: %r4 }
             ],
             terminator: return { value: absent }

@@ -83,7 +83,7 @@ pub fn instruction_regions(instruction: &MirInstr) -> Vec<&Vec<MirBlock>> {
             orelse,
             ..
         } => std::iter::once(body)
-            .chain(handler.iter().map(|(_, blocks)| blocks))
+            .chain(handler.iter())
             .chain(orelse.iter())
             .collect(),
         _ => Vec::new(),
@@ -122,7 +122,7 @@ pub fn instruction_regions_mut(instruction: &mut MirInstr) -> Vec<&mut Vec<MirBl
             orelse,
             ..
         } => std::iter::once(body)
-            .chain(handler.iter_mut().map(|(_, blocks)| blocks))
+            .chain(handler.iter_mut())
             .chain(orelse.iter_mut())
             .collect(),
         _ => Vec::new(),
@@ -159,8 +159,9 @@ pub fn terminator_regs_mut(term: &mut MirTerm) -> Vec<&mut Reg> {
     match term {
         MirTerm::ElifCond { cond, values } => std::iter::once(cond).chain(values).collect(),
         MirTerm::Return(Some(reg)) => vec![reg],
-        MirTerm::Raise { src, values, .. } => std::iter::once(src).chain(values).collect(),
+        MirTerm::ErrorReturn { src } => vec![src],
         MirTerm::Yield(values)
+        | MirTerm::TryRaise { values, .. }
         | MirTerm::TryYield(values)
         | MirTerm::ComptimeYield(values)
         | MirTerm::MatchNext(values)
@@ -180,10 +181,9 @@ pub fn terminator_regs(term: &MirTerm) -> Vec<Reg> {
             .chain(values.iter().copied())
             .collect(),
         MirTerm::Return(Some(reg)) => vec![*reg],
-        MirTerm::Raise { src, values, .. } => std::iter::once(*src)
-            .chain(values.iter().copied())
-            .collect(),
+        MirTerm::ErrorReturn { src } => vec![*src],
         MirTerm::Yield(values)
+        | MirTerm::TryRaise { values, .. }
         | MirTerm::TryYield(values)
         | MirTerm::ComptimeYield(values)
         | MirTerm::MatchNext(values)
@@ -331,7 +331,7 @@ pub fn try_raises_mut(
                     orelse,
                     ..
                 } if *inner == label => {
-                    for region in handler.iter_mut().map(|(_, blocks)| blocks).chain(orelse) {
+                    for region in handler.iter_mut().chain(orelse) {
                         try_raises_mut(region, label, visit);
                     }
                 }
@@ -342,10 +342,9 @@ pub fn try_raises_mut(
                 }
             }
         }
-        if let MirTerm::Raise {
-            label: Some(found),
+        if let MirTerm::TryRaise {
+            label: found,
             values,
-            ..
         } = &mut block.term
             && *found == label
         {
@@ -907,12 +906,12 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
     out
 }
 
-/// Every slot an instruction names: its place roots and `through` slots,
-/// its capture-access roots, loan and interior roots, and the slot operands
-/// of the variable and iterator instructions.
+/// Every slot an instruction names, none of its regions' among them.
 ///
-/// None of a region op's blocks, nor a `try`'s handler binding, are
-/// included; the caller walks those itself. [`for_each_instruction_slot_mut`]
+/// Those are its place roots and `through` slots, its capture-access
+/// roots, loan and interior roots, the slot operands of the variable and
+/// iterator instructions, and a `try`'s error slot; the caller walks a
+/// region op's blocks itself. [`for_each_instruction_slot_mut`]
 /// visits the same slots in the same order.
 pub fn instruction_slots(instruction: &MirInstr) -> Vec<VarId> {
     let mut out = Vec::new();
@@ -953,6 +952,7 @@ pub fn instruction_slots(instruction: &MirInstr) -> Vec<VarId> {
         | MirInstr::ConsumeVar { var } => out.push(*var),
         MirInstr::GetIter { source, dest, .. } => out.extend([*source, *dest]),
         MirInstr::HasNext { iter, .. } | MirInstr::Next { iter, .. } => out.push(*iter),
+        MirInstr::Try { error, .. } => out.extend(*error),
         _ => {}
     }
     out
@@ -1007,24 +1007,19 @@ pub fn for_each_instruction_slot_mut(
             visit(dest);
         }
         MirInstr::HasNext { iter, .. } | MirInstr::Next { iter, .. } => visit(iter),
+        MirInstr::Try {
+            error: Some(error), ..
+        } => visit(error),
         _ => {}
     }
 }
 
 /// Renumber every slot `blocks` name: each instruction's
-/// ([`for_each_instruction_slot_mut`]), a `try`'s handler binding, and
-/// every region's.
+/// ([`for_each_instruction_slot_mut`]) and every region's.
 pub fn renumber_block_slots(blocks: &mut [MirBlock], renumber: &dyn Fn(VarId) -> VarId) {
     for block in blocks {
         for instruction in &mut block.instrs {
             for_each_instruction_slot_mut(instruction, &mut |var| *var = renumber(*var));
-            if let MirInstr::Try {
-                handler: Some((Some(slot), _)),
-                ..
-            } = instruction
-            {
-                *slot = renumber(*slot);
-            }
             for region in instruction_regions_mut(instruction) {
                 renumber_block_slots(region, renumber);
             }
@@ -1130,14 +1125,10 @@ fn retire(function: &mut MirFunction, retired: &BTreeSet<VarId>) {
     function.n_vars -= retired.len();
 }
 
-/// Every slot one block names: its instructions', and its regions' and
-/// their handler bindings.
+/// Every slot one block names: its instructions', and its regions'.
 fn collect_block_slots(block: &MirBlock, addressed: &mut BTreeSet<VarId>) {
     for instruction in &block.instrs {
         addressed.extend(instruction_slots(instruction));
-        if let MirInstr::Try { handler, .. } = instruction {
-            addressed.extend(handler.iter().filter_map(|(slot, _)| *slot));
-        }
         for inner in instruction_regions(instruction).into_iter().flatten() {
             collect_block_slots(inner, addressed);
         }
@@ -2388,12 +2379,15 @@ pub enum MirInstr {
     /// `try`/`except`/`else` whose `finally` MIR lowering copied before
     /// each terminator leaving it. Each part is a region of one block that
     /// **shares this function's registers and slots**, its block ids local.
-    /// `handler` is `Some((error_var, body))` when the `try` has an
-    /// `except` clause, or MIR lowering synthesized the re-raising one a
-    /// raising `try`/`finally` needs (the optional slot binds the caught
-    /// error); a [`MirTerm::Raise`] in `body` naming `label` enters it.
-    /// `label` is upstream's `try<N>`, numbered per function; labels need
-    /// not be unique, as a raise names the nearest `try` carrying its label.
+    /// `handler` is `Some` when the `try` has an `except` clause, or MIR
+    /// lowering synthesized the re-raising one a raising `try`/`finally`
+    /// needs; a [`MirTerm::TryRaise`] in `body` naming `label` enters it.
+    /// `error` is `lit.try`'s `$err`, the slot upstream's `parseTryStmt`
+    /// declares as `__try_error__` (the `except` binding's own, when the
+    /// clause binds one): each raise naming the `try` initializes it, and
+    /// the handler reads it. `label` is upstream's `try<N>`, numbered per
+    /// function; labels need not be unique, as a raise names the nearest
+    /// `try` carrying its label.
     ///
     /// The values are `lit.try`'s, which only `mem-2-reg` gives it, as
     /// upstream's `Mem2Reg` does: `body` takes no arguments
@@ -2404,10 +2398,11 @@ pub enum MirInstr {
     /// the body's when there is no `orelse`.
     Try {
         label: TryLabel,
+        error: Option<VarId>,
         results: Vec<Reg>,
         body: Vec<MirBlock>,
         handler_args: Vec<Reg>,
-        handler: Option<(Option<VarId>, Vec<MirBlock>)>,
+        handler: Option<Vec<MirBlock>>,
         else_args: Vec<Reg>,
         orelse: Option<Vec<MirBlock>>,
     },
@@ -3141,18 +3136,22 @@ pub enum MirTerm {
     /// `hlcf.match.complete`: the nearest enclosing [`MirInstr::Match`]
     /// case ran; leave the op, its values defining the op's results.
     MatchComplete(Vec<Reg>),
-    /// A raise of the error value `src`, as `LowerSemanticCF`'s
-    /// `emitRaise` lowers one: `lit.try.raise` to the handler of the
-    /// nearest enclosing [`MirInstr::Try`] carrying `label`, whose body
-    /// holds the raise, leaving every region in between; `lit.error_return`
-    /// out of the function when `label` is `None`. A `raise` statement and
-    /// a raising instruction's error region both end in one. `values`
-    /// define the handler's arguments, as `lit.try.raise`'s operands do;
-    /// a `lit.error_return` carries none.
-    Raise {
-        src: Reg,
-        label: Option<TryLabel>,
+    /// `lit.try.raise`, as `LowerSemanticCF`'s `emitRaise` lowers a raise
+    /// inside a `try` body: enter the handler of the nearest enclosing
+    /// [`MirInstr::Try`] carrying `label`, whose body holds the raise,
+    /// leaving every region in between. The error is already in that
+    /// `try`'s `error` slot, which the raise initialized first; `values`
+    /// define the handler's arguments, as `lit.try.raise`'s operands do.
+    /// A `raise` statement and a raising instruction's error region both
+    /// end in one inside a `try` body.
+    TryRaise {
+        label: TryLabel,
         values: Vec<Reg>,
+    },
+    /// `lit.error_return`: raise the error value `src` out of the
+    /// function, as `emitRaise` lowers a raise outside every `try` body.
+    ErrorReturn {
+        src: Reg,
     },
     /// `hlcf.unreachable`: control never reaches here.
     Unreachable,

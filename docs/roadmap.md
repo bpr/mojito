@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1437**.
+Next free ID: **R1438**.
 
 ## Ordered Work
 
@@ -9490,7 +9490,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The remaining placements are copies and moves into a register, each
     with its own entry: `List`→`Span` copies (R117), read arguments by value (R677), `List.resize`'s double copy
     (R1353),
-    and a pending `Error` (R1293).
+    and a pending `Error` a raise out of the function holds (R1437).
   - `owns_droppable_storage` (`mir/calls.rs`) omits `TyKind::Dependent`.
     Widening it double-frees in `assets/ok/container_hashable.mojo`,
     `variant_hash_dict_key.mojo`, and `variant_generic_def_operations.mojo`
@@ -9504,7 +9504,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     answers no for any conditional row.
   - Re-run the `emit-mir` census over `assets/ok` and
     `assets/ownership_ok` before landing it.
-  - Depends on R1249, R117, R677, R1353, R1354, R1426, R1334, R1378, R1293.
+  - Depends on R1249, R117, R677, R1353, R1354, R1426, R1334, R1378, R1293,
+    R1437.
   - Model: Opus, Not Planned.
 
 - [ ] **R607 The bundled publics keep bare linked names the compiler
@@ -10060,27 +10061,35 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1293 A `raise` carries its error as an operand, where
-  `lit.try.raise` leaves it in the `try`'s error slot**
+- [ ] **R1437 A raise out of a function carries its error as an
+  operand, where `lit.error_return` leaves it in the function's error
+  argument**
 
-  `MirTerm::Raise { src, .. }` hands the error to the handler as a
-  register, where upstream writes it to the `__try_error__` declaration
-  `parseTryStmt` makes, which `lit.try` takes as its `$err` operand.
-  - Upstream's `lit.try.raise` carries only `Mem2Reg`'s variants, and its
-    handler reads the error from `$err`.
-  - The VM passes the error value through `Transfer::Raise`; Pliron
-    already stages it through an `err_slot`.
-  - Fix: a `Try` names its error slot, each raise naming it stores the
-    error there first, and the handler's `error_var` reads it.
-  - Probe: a handler with no binder (`except:`) has its caught error freed
-    by Pliron at the handler's entry (`emit_release_storage` of the
-    `err_slot` in `lower/try_flow.rs`), since MIR names no value for it;
-    with the slot declared, drop elaboration destroys it.
-  - Found while landing R1264 (2026-10-23).
-  - Probe: `assets/ok/pliron_finally_overrides.mojo`'s `g`, whose
-    `finally` returns over a pending `Error`, destroys the raised register
-    with a `drop.reg`, where upstream's error lives in the slot and dies as
-    a variable.
+  `MirTerm::ErrorReturn { src }` hands the error out as a register, where
+  upstream stores it into the raising function's error argument, the slot
+  `findNearestErrorSlot` returns outside every `try` (the function's
+  second-to-last argument), and `lit.error_return` carries only a flag.
+  - A `try`'s raises already store into its error slot (R1293); the
+    function-level raise is the one left.
+  - The VM passes the error through `Transfer::ErrorReturn` and
+    `raise_into_caller`; Pliron stages it through `err_slot` into the
+    outcome's error area; `inline-parametric` routes it out of an inlined
+    body as a break value.
+  - Fix: a raising function declares its error argument as a slot, each
+    `lit.error_return` stores into it first, and a raising call writes its
+    callee's error into its nearest error slot, so `Raises::error` stops
+    being a register.
+  - Probe: in a raising function, `try: raise Error("first")`, `except:
+    raise Error("second")`, `finally: return 7`: the handler's `Error`
+    dies by a `drop.reg` once the `finally`'s return replaces the raise,
+    and `--backend pliron` fails on that `drop.reg` ("read of undefined
+    register"), where upstream's error lives in the function's error
+    argument and dies as a variable.
+  - Probe: the re-raising handler a `try`/`finally` without `except` gets
+    moves the caught error out of the `try`'s slot into a register
+    (`Flatten::reraising_handler`), where upstream moves it into the
+    function's error argument.
+  - Found while landing R1293 (2026-10-25).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

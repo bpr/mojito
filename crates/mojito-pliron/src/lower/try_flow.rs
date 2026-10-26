@@ -1,5 +1,5 @@
 //! `Try` region lowering: the body under its raise target, the landing
-//! block that binds a raised error for the handler, and the `else`.
+//! block that enters the handler, and the `else`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -9,8 +9,8 @@ impl FnLowering<'_> {
     /// `lit.try`, a control-flow node like `hlcf`'s: each part is a block of
     /// its own, entered and left by explicit edges. The body lowers with a
     /// landing block taking the handler's arguments as the target of the
-    /// raises naming `label`; the landing block binds the staged error and
-    /// enters the handler. The body's `lit.try.yield` enters `orelse` with
+    /// raises naming `label`, which stored the error into the `try`'s slot
+    /// first; the landing block enters the handler. The body's `lit.try.yield` enters `orelse` with
     /// its arguments, or the exit with the results without one, and the
     /// handler's and `orelse`'s enter the exit with the results. MIR
     /// lowering copied the `finally` before each exit, so none remains
@@ -19,7 +19,7 @@ impl FnLowering<'_> {
         &mut self,
         ctx: &mut Context,
         (label, results, body): (TryLabel, &[Reg], &[MirBlock]),
-        (handler_args, handler): (&[Reg], Option<&Handler>),
+        (handler_args, handler): (&[Reg], Option<&[MirBlock]>),
         (else_args, orelse): (&[Reg], Option<&[MirBlock]>),
     ) -> Result<(), PlironError> {
         let exit = self.carrier(ctx, results)?;
@@ -35,26 +35,10 @@ impl FnLowering<'_> {
         let enter = BrOp::new(ctx, body_entry, vec![]);
         self.append(ctx, enter.get_operation(), None);
 
-        // Landing: the handler's arguments, then the staged error bound. A
-        // `try` no raise names has no handler, and its landing block no
-        // predecessor.
+        // Landing: the handler's arguments. A `try` no raise names has no
+        // handler, and its landing block no predecessor.
         self.enter_exit(ctx, landing);
-        if let Some((error_var, handler_blocks)) = handler {
-            // The VM logs a catch of an `Error` value only, never of a
-            // typed error such as a `for` loop's `StopIteration`.
-            if self.trace_lifecycle && raises_error(body, label, &self.func.reg_types) {
-                self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_CATCH);
-            }
-            let err_slot = self.ensure_err_slot(ctx);
-            if let Some(var) = error_var {
-                // The staged error moves into the bound slot; its ordinary
-                // drop frees the message.
-                let slot = self.var_slots[*var as usize];
-                self.mem_copy(ctx, slot, err_slot, 24, Reg(u32::MAX));
-            } else {
-                // No binder: the caught error is dropped on entry.
-                self.emit_release_storage(ctx, err_slot, &Ty::error())?;
-            }
+        if let Some(handler_blocks) = handler {
             let handler_entry = self.lower_part(ctx, handler_blocks, exit)?;
             let jump = BrOp::new(ctx, handler_entry, vec![]);
             self.append(ctx, jump.get_operation(), None);
@@ -121,22 +105,4 @@ impl FnLowering<'_> {
             _ => Err(self.unsupported_reg(format!("string value in register %r{}", reg.0), dest)),
         }
     }
-}
-
-/// A `try`'s handler: the slot it binds the caught error to, and its region.
-type Handler = (Option<u32>, Vec<MirBlock>);
-
-/// Whether some `raise` in `blocks`, at any depth, naming the `try`
-/// labelled `label` raises an `Error`.
-fn raises_error(blocks: &[MirBlock], label: TryLabel, reg_types: &HashMap<u32, Ty>) -> bool {
-    blocks.iter().any(|block| {
-        matches!(&block.term, MirTerm::Raise { src, label: Some(named), .. }
-            if *named == label
-                && matches!(reg_types.get(&src.0).map(Ty::kind), Some(TyKind::Error)))
-            || block.instrs.iter().any(|instr| {
-                mojito_mir::mir::instruction_regions(instr)
-                    .into_iter()
-                    .any(|region| raises_error(region, label, reg_types))
-            })
-    })
 }

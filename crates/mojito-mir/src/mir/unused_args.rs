@@ -546,10 +546,6 @@ fn collect_used(blocks: &[MirBlock], trivial: &dyn Fn(VarId) -> bool, used: &mut
         for instruction in &block.instrs {
             match instruction {
                 MirInstr::DropVar { var, .. } if trivial(*var) => {}
-                MirInstr::Try { handler, .. } => {
-                    used.extend(instruction_slots(instruction));
-                    used.extend(handler.iter().filter_map(|(slot, _)| *slot));
-                }
                 _ => used.extend(instruction_slots(instruction)),
             }
             for region in instruction_regions(instruction) {

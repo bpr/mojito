@@ -90,7 +90,8 @@ const fn exits_early(term: &MirTerm) -> bool {
     matches!(
         term,
         MirTerm::Return(_)
-            | MirTerm::Raise { .. }
+            | MirTerm::TryRaise { .. }
+            | MirTerm::ErrorReturn { .. }
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::Unreachable
@@ -146,7 +147,7 @@ impl Census {
                         self.tries.push((*label, id));
                         self.walk(body);
                         self.tries.pop();
-                        for part in handler.iter().map(|(_, blocks)| blocks).chain(orelse) {
+                        for part in handler.iter().chain(orelse) {
                             self.walk(part);
                         }
                     }
@@ -157,9 +158,7 @@ impl Census {
                     }
                 }
             }
-            if let MirTerm::Raise {
-                label: Some(label), ..
-            } = block.term
+            if let MirTerm::TryRaise { label, .. } = block.term
                 && let Some(&(_, id)) = self.tries.iter().rev().find(|(found, _)| *found == label)
             {
                 self.elidable[id] = false;
@@ -316,7 +315,7 @@ impl Removal {
             return;
         };
         self.erased.extend(handler_args.iter().map(|arg| arg.0));
-        for handled in handler.iter().flat_map(|(_, blocks)| blocks) {
+        for handled in handler.iter().flatten() {
             for instruction in &handled.instrs {
                 erased_results(instruction, &mut self.erased);
             }

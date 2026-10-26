@@ -1656,12 +1656,16 @@ impl<'a> Flatten<'a> {
     /// the whole chain is a place.
     /// Lower a `try`'s parts and emit the [`MirInstr::Try`], labelled
     /// with the function's next `try` number as `LowerSemanticCF` labels
-    /// it. The body lowers under that label, so a raise in it names this
-    /// `try`; the handler, `else`, and `finally` lower in the enclosing
-    /// context. The handler's slot is typed by the error the body raises.
-    /// A `finally` is copied before each exit of the parts
-    /// ([`Self::lower_try_finally`]), after a raising body without an
-    /// `except` gets the handler that re-raises its error.
+    /// it, after the declaration of its error slot, as `parseTryStmt`
+    /// declares `__try_error__` before the `lit.try` taking it: the
+    /// `except` binding's slot when the clause binds one, which upstream
+    /// renames the declaration to. The body lowers under that label, so a
+    /// raise in it stores into the slot and names this `try`; the handler,
+    /// `else`, and `finally` lower in the enclosing context. The first
+    /// raise types the slot, or it is an `Error`. A `finally` is copied
+    /// before each exit of the parts ([`Self::lower_try_finally`]), after
+    /// a raising body without an `except` gets the handler that re-raises
+    /// its error.
     fn emit_try(
         &mut self,
         body: &'a hir::HirRegion,
@@ -1671,31 +1675,20 @@ impl<'a> Flatten<'a> {
     ) {
         let label = TryLabel(self.next_try);
         self.next_try += 1;
-        let enclosing = self.raise_target.replace(label);
+        let error = self.try_error_slot(label, except.and_then(|except| except.slot));
+        if let Some((binding, slot)) = except.and_then(|except| except.binding.zip(except.slot)) {
+            self.owner_vars.insert(binding, slot);
+        }
+        let enclosing = self.raise_target.replace((label, error));
         let mut body = self.try_part(body);
         self.raise_target = enclosing;
-        let mut handler = except.map(|except| {
-            if let Some(slot) = except.slot {
-                // The checker rejects a try whose body can raise more than
-                // one error type, so the first raise naming this `try` types
-                // the handler binding without re-inference.
-                let error = first_raised_error(&body, label)
-                    .and_then(|error| self.f.reg_types.get(&error.0).cloned())
-                    .unwrap_or_else(Ty::error);
-                self.var_types.entry(slot).or_insert(error);
-                if let Some(binding) = except.binding {
-                    self.owner_vars.insert(binding, slot);
-                }
-            }
-            (except.slot, self.try_part(&except.body))
-        });
+        self.var_types.entry(error).or_insert_with(Ty::error);
+        let mut handler = except.map(|except| self.try_part(&except.body));
         let mut orelse = orelse.map(|part| self.try_part(part));
         if let Some(finalbody) = finalbody {
             let finalbody = self.try_part(finalbody);
-            if handler.is_none()
-                && let Some(error) = first_raised_error(&body, label)
-            {
-                handler = Some(self.reraising_handler(error));
+            if handler.is_none() && raises_to(&body, label) {
+                handler = Some(self.reraising_handler(error, &body));
             }
             let orelse = orelse.get_or_insert_with(|| {
                 vec![MirBlock {
@@ -1708,13 +1701,14 @@ impl<'a> Flatten<'a> {
                 &finalbody,
                 TryParts {
                     body: &mut body,
-                    handler: handler.as_mut().map(|(_, blocks)| blocks),
+                    handler: handler.as_mut(),
                     orelse,
                 },
             );
         }
         self.emit(MirInstr::Try {
             label,
+            error: Some(error),
             results: Vec::new(),
             body,
             handler_args: Vec::new(),
@@ -3712,11 +3706,11 @@ impl<'a> Flatten<'a> {
                         src
                     };
                 self.flush_argument_anchors();
-                MirTerm::Raise {
-                    src,
-                    label: self.raise_target,
-                    values: Vec::new(),
+                let (store, term) = self.raise_exit(src);
+                if let Some(store) = store {
+                    self.emit(store);
                 }
+                term
             }
             Terminator::Unreachable => MirTerm::Unreachable,
         }

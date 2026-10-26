@@ -1,4 +1,4 @@
-mojito-mir 1.93
+mojito-mir 1.107
 artifact {
   features: [],
   files: [
@@ -31,7 +31,7 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              try { label: try0, results: [%r16], body: [bb0 { instructions: [const { dest: %r2, value: int_literal(1) }, literal.materialize { dest: %r3, value: %r2, target: Int }, value.copy { dest: %r1, value: %r0 }, binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }], terminator: try.yield { values: [%r4] } }], handler_arguments: [], handler: present(handler { error_var: absent, blocks: [bb0 { instructions: [const { dest: %r6, value: int_literal(0) }, literal.materialize { dest: %r7, value: %r6, target: Int }], terminator: try.yield { values: [%r7] } }] }), else_arguments: [%r15], orelse: present([bb0 { instructions: [const { dest: %r10, value: int_literal(3) }, literal.materialize { dest: %r11, value: %r10, target: Int }, value.copy { dest: %r9, value: %r15 }, binary { op: mul, dest: %r12, a: %r9, b: %r11, resolved: absent, raises: absent }], terminator: try.yield { values: [%r12] } }]) },
+              try { label: try0, error: absent, results: [%r16], body: [bb0 { instructions: [const { dest: %r2, value: int_literal(1) }, literal.materialize { dest: %r3, value: %r2, target: Int }, value.copy { dest: %r1, value: %r0 }, binary { op: add, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent }], terminator: try.yield { values: [%r4] } }], handler_arguments: [], handler: present([bb0 { instructions: [const { dest: %r6, value: int_literal(0) }, literal.materialize { dest: %r7, value: %r6, target: Int }], terminator: try.yield { values: [%r7] } }]), else_arguments: [%r15], orelse: present([bb0 { instructions: [const { dest: %r10, value: int_literal(3) }, literal.materialize { dest: %r11, value: %r10, target: Int }, value.copy { dest: %r9, value: %r15 }, binary { op: mul, dest: %r12, a: %r9, b: %r11, resolved: absent, raises: absent }], terminator: try.yield { values: [%r12] } }]) },
               value.copy { dest: %r14, value: %r16 }
             ],
             terminator: return { value: present(%r14) }

@@ -1268,19 +1268,12 @@ fn instruction_families_reprint_byte_identically() {
 }
 
 #[test]
-fn raise_terminator_reprints() {
+fn error_return_terminator_reprints() {
     let mut function = function_with(vec![Ty::int()], Vec::new());
-    function.blocks[0].term = MirTerm::Raise {
-        src: Reg(0),
-        label: None,
-        values: Vec::new(),
-    };
+    function.blocks[0].term = MirTerm::ErrorReturn { src: Reg(0) };
     let program = program_with(vec![("raising".into(), function)]);
     assert_reprints(&program);
-    assert!(
-        write::program(&program)
-            .contains("terminator: raise { src: %r0, label: absent, values: [] }")
-    );
+    assert!(write::program(&program).contains("terminator: error_return { src: %r0 }"));
 }
 
 #[test]
@@ -1291,10 +1284,10 @@ fn nested_try_regions_reprint_without_region_source_marks() {
     };
     let inner_try = MirInstr::Try {
         label: TryLabel(1),
+        error: None,
         results: Vec::new(),
-        body: vec![region_block(MirTerm::Raise {
-            src: Reg(0),
-            label: Some(TryLabel(0)),
+        body: vec![region_block(MirTerm::TryRaise {
+            label: TryLabel(0),
             values: Vec::new(),
         })],
         handler_args: Vec::new(),
@@ -1304,13 +1297,14 @@ fn nested_try_regions_reprint_without_region_source_marks() {
     };
     let outer_try = MirInstr::Try {
         label: TryLabel(0),
+        error: Some(3),
         results: Vec::new(),
         body: vec![MirBlock {
             instrs: vec![inner_try],
             term: MirTerm::TryYield(Vec::new()),
         }],
         handler_args: Vec::new(),
-        handler: Some((Some(3), vec![region_block(MirTerm::TryYield(Vec::new()))])),
+        handler: Some(vec![region_block(MirTerm::TryYield(Vec::new()))]),
         else_args: Vec::new(),
         orelse: Some(vec![region_block(MirTerm::TryYield(Vec::new()))]),
     };
@@ -1390,16 +1384,23 @@ fn tries_older_than_1_92_take_the_labels_their_raises_meant() {
          terminator: raise { src: %r0 } }] }), orelse: absent, finalbody: absent, cleanup: [] }",
     );
     let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("older text reads");
-    let MirInstr::Try {
-        label,
-        body,
-        handler: Some((_, handler)),
-        ..
-    } = &parsed.program.functions[0].1.blocks[0].instrs[0]
+    // The raise into the outer `try` stores its error into the slot the
+    // upgrade declares before it.
+    let [
+        MirInstr::DeclareVar { var: declared },
+        MirInstr::Try {
+            label,
+            error: Some(slot),
+            body,
+            handler: Some(handler),
+            ..
+        },
+    ] = &parsed.program.functions[0].1.blocks[0].instrs[..]
     else {
         panic!("the outer try reads");
     };
     assert_eq!(*label, TryLabel(0));
+    assert_eq!(declared, slot);
     let MirInstr::Try {
         label: inner,
         body: inner_body,
@@ -1411,14 +1412,18 @@ fn tries_older_than_1_92_take_the_labels_their_raises_meant() {
     assert_eq!(*inner, TryLabel(1));
     assert!(matches!(
         inner_body[0].term,
-        MirTerm::Raise {
-            label: Some(TryLabel(0)),
+        MirTerm::TryRaise {
+            label: TryLabel(0),
             ..
         }
     ));
     assert!(matches!(
+        inner_body[0].instrs[..],
+        [MirInstr::DefVar { var, src: Reg(0), .. }] if var == *slot
+    ));
+    assert!(matches!(
         handler[0].term,
-        MirTerm::Raise { label: None, .. }
+        MirTerm::ErrorReturn { src: Reg(0) }
     ));
 }
 

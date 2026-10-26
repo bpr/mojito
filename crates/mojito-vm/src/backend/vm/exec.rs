@@ -394,6 +394,9 @@ impl VmBackend {
                 }
                 regs[dest.0 as usize] = value;
             }
+            MirInstr::DefVar { var, src, .. } if prog.error_slots[function].contains(var) => {
+                vars[*var as usize] = self.stage_error(prog, function, regs, *src)?;
+            }
             MirInstr::DefVar {
                 var,
                 src,
@@ -1856,6 +1859,26 @@ impl VmBackend {
             }
         }
         Ok(())
+    }
+
+    /// The error a raise naming a `try` stores into its slot from register
+    /// `src` of `function`: the error [`Self::raise_register`] makes, which
+    /// the `try` catches.
+    fn stage_error(
+        &mut self,
+        prog: &Prog,
+        function: usize,
+        registers: &[Value],
+        src: Reg,
+    ) -> Result<Value, RuntimeError> {
+        let error = match self.raise_register(prog, function, registers, src) {
+            RuntimeError::Raised(error) => error,
+            raised => return Err(raised),
+        };
+        if let Value::Error(message) = &error {
+            self.record_lifecycle(format!("catch {message}"));
+        }
+        Ok(error)
     }
 
     /// The error a `raise` of register `src` of `function` propagates as:

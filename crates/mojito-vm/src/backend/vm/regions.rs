@@ -112,13 +112,13 @@ impl RegionCursor {
                 self.try_yield(root, values, regs)?;
             }
             MirTerm::Return(value) => return Ok(Transfer::Return(*value)),
-            MirTerm::Raise { src, label, values } => {
-                return Ok(Transfer::Raise {
-                    src: *src,
+            MirTerm::TryRaise { label, values } => {
+                return Ok(Transfer::TryRaise {
                     label: *label,
                     values: read(regs, values),
                 });
             }
+            MirTerm::ErrorReturn { src } => return Ok(Transfer::ErrorReturn(*src)),
             MirTerm::Unreachable => {
                 return Err(RuntimeError::Unsupported(
                     "vm: control reached `hlcf.unreachable`".to_string(),
@@ -138,15 +138,14 @@ impl RegionCursor {
 
     /// `lit.try.raise`: unwind to the body of the `try` labelled `label`
     /// around the cursor and enter its `except` region, `values` defining
-    /// its arguments, returning the variable that region binds the error
-    /// to.
+    /// its arguments. The raise stored the error into the `try`'s slot.
     pub(super) fn catch(
         &mut self,
         root: &[MirBlock],
         label: TryLabel,
         values: Vec<Value>,
         regs: &mut [Value],
-    ) -> Result<Option<VarId>, RuntimeError> {
+    ) -> Result<(), RuntimeError> {
         let depth = (1..self.levels.len())
             .rev()
             .find(|&depth| matches!(self.levels[depth].region, RegionRef::TryBody(found) if found == label))
@@ -164,16 +163,16 @@ impl RegionCursor {
         else {
             return Err(lost_position());
         };
-        let (slot, _) = handler.as_ref().ok_or_else(|| {
-            RuntimeError::Unsupported(format!(
+        if handler.is_none() {
+            return Err(RuntimeError::Unsupported(format!(
                 "vm: a raise named try{}, which has no handler",
                 label.0
-            ))
-        })?;
+            )));
+        }
         self.levels.truncate(depth + 1);
         self.levels[depth] = RegionLevel::entry(RegionRef::TryHandler);
         store(regs, handler_args, values);
-        Ok(*slot)
+        Ok(())
     }
 
     /// Resolve a region exit leaving to `frame` to the innermost op the
@@ -335,14 +334,11 @@ pub(super) enum Transfer {
     Moved,
     /// A `return` of the register it names: the driver's to run.
     Return(Option<Reg>),
-    /// A `raise` of `src`, naming the `try` it reaches or none when it
-    /// leaves the function, with the values it carries into that `try`'s
-    /// handler: the driver's to run.
-    Raise {
-        src: Reg,
-        label: Option<TryLabel>,
-        values: Vec<Value>,
-    },
+    /// A `try.raise` to the `try` labelled `label`, with the values it
+    /// carries into that `try`'s handler: the driver's to run.
+    TryRaise { label: TryLabel, values: Vec<Value> },
+    /// A `lit.error_return` of the register it names: the driver's to run.
+    ErrorReturn(Reg),
 }
 
 /// One list's position: a block and an instruction in it, and which region
@@ -447,9 +443,7 @@ fn region(op: &MirInstr, region: RegionRef) -> Option<&[MirBlock]> {
             cases.get(index).map(|case| case.body.as_slice())
         }
         (MirInstr::Try { body, .. }, RegionRef::TryBody(_)) => Some(body),
-        (MirInstr::Try { handler, .. }, RegionRef::TryHandler) => {
-            handler.as_ref().map(|(_, blocks)| blocks.as_slice())
-        }
+        (MirInstr::Try { handler, .. }, RegionRef::TryHandler) => handler.as_deref(),
         (MirInstr::Try { orelse, .. }, RegionRef::TryElse) => orelse.as_deref(),
         _ => None,
     }

@@ -150,6 +150,14 @@ struct Decoder {
     /// MIR 1.92, which carries no label: [`infer_try_labels`] gives them
     /// the labels their old meaning implies.
     unlabelled_tries: bool,
+    /// The error operand of the `raise` older than MIR 1.107 just read,
+    /// which names a `try`: the block reading it stores the error into
+    /// that `try`'s slot before its `try.raise`
+    /// ([`instrs::upgrade_error_slots`] names the slot).
+    legacy_raise: Option<crate::mir::Reg>,
+    /// Whether the function being read holds a `raise` older than MIR
+    /// 1.107, whose error the `try` it names takes in no slot yet.
+    legacy_raises: bool,
 }
 
 fn parse_int_literal(value: &str) -> Option<IntLiteral> {

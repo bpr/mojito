@@ -30,12 +30,13 @@ pub(super) fn verify_terminator(
                 ));
             }
         }
-        MirTerm::Raise { label: None, .. } if !function.raises => {
+        MirTerm::ErrorReturn { .. } if !function.raises => {
             errors.push(format!(
                 "{prefix}: unprotected raise in nonraising function"
             ));
         }
-        MirTerm::Raise { .. }
+        MirTerm::ErrorReturn { .. }
+        | MirTerm::TryRaise { .. }
         | MirTerm::TryYield(_)
         | MirTerm::Yield(_)
         | MirTerm::ElifCond { .. }

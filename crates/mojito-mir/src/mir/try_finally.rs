@@ -52,40 +52,52 @@ impl Flatten<'_> {
         }
     }
 
+    /// The slot a `try` labelled `label` takes its error in: `binding`,
+    /// the `except` clause's, or a fresh `$try_error<N>`, declared here,
+    /// before the `try`, as `parseTryStmt` emits `__try_error__`'s
+    /// declaration before the `lit.try`.
+    pub(super) fn try_error_slot(&mut self, label: TryLabel, binding: Option<VarId>) -> VarId {
+        let slot = binding.unwrap_or_else(|| self.var(&format!("$try_error{}", label.0)));
+        self.error_slots.insert(slot);
+        self.emit(MirInstr::DeclareVar { var: slot });
+        slot
+    }
+
     /// The handler a raising `try`/`finally` without an `except` gets, as
-    /// upstream's parser synthesizes it in a raising context: it binds the
-    /// caught error, typed as `error`, the first raise naming the `try`,
-    /// and raises it to the `try` enclosing this one (or out of the
-    /// function), so the `finally` can be copied before that raise.
-    pub(super) fn reraising_handler(&mut self, error: Reg) -> (Option<VarId>, Vec<MirBlock>) {
+    /// upstream's parser synthesizes it in a raising context: it moves the
+    /// caught error out of the `try`'s slot `error`, which `body` stores
+    /// into, and raises it to the `try` enclosing this one (or out of the
+    /// function), so the `finally` can be copied before that raise. The
+    /// raised register is located at the first store.
+    pub(super) fn reraising_handler(&mut self, error: VarId, body: &[MirBlock]) -> Vec<MirBlock> {
         let ty = self
-            .f
-            .reg_types
-            .get(&error.0)
+            .var_types
+            .get(&error)
             .cloned()
             .unwrap_or_else(Ty::error);
-        let slot = self.var(&format!("$try_error{}", error.0));
-        self.var_types.insert(slot, ty.clone());
         let caught = Reg(self.next_reg);
         self.next_reg += 1;
         self.f.reg_types.insert(caught.0, ty);
-        if let Some((span, _)) = self.f.spans.0.get(&error.0).cloned() {
-            self.f.spans.0.insert(caught.0, (span, Some(slot)));
+        let stored =
+            nested_instructions(body)
+                .into_iter()
+                .find_map(|instruction| match instruction {
+                    MirInstr::DefVar { var, src, .. } if *var == error => Some(*src),
+                    _ => None,
+                });
+        if let Some((span, _)) = stored.and_then(|src| self.f.spans.0.get(&src.0).cloned()) {
+            self.f.spans.0.insert(caught.0, (span, Some(error)));
         }
-        let blocks = vec![MirBlock {
-            instrs: vec![MirInstr::UseVar {
-                dest: caught,
-                var: slot,
-                mode: UseMode::Move,
-                constructor: None,
-            }],
-            term: MirTerm::Raise {
-                src: caught,
-                label: self.raise_target,
-                values: Vec::new(),
-            },
-        }];
-        (Some(slot), blocks)
+        let (store, term) = self.raise_exit(caught);
+        let instrs = std::iter::once(MirInstr::UseVar {
+            dest: caught,
+            var: error,
+            mode: UseMode::Move,
+            constructor: None,
+        })
+        .chain(store)
+        .collect();
+        vec![MirBlock { instrs, term }]
     }
 
     /// Paste `finally` before every terminator of `blocks`, at any depth,
@@ -121,13 +133,27 @@ impl Flatten<'_> {
     /// `finally` ends in an exit of its own, that exit replaces the
     /// block's, whose owned return value nothing reads any more and is
     /// discarded first, dying at its definition as upstream's
-    /// `CheckLifetimes` destroys it.
+    /// `CheckLifetimes` destroys it, and an error a re-raise would move
+    /// out of a `try`'s slot stays there, dying as the slot does.
     fn paste_finally(&mut self, paste: &mut Paste<'_>, block: &mut MirBlock) {
         let mut copy = paste.finally.clone();
         if paste.count > 0 {
             self.renumber_definitions(&mut copy);
         }
         paste.count += 1;
+        if !matches!(copy.term, MirTerm::TryYield(_))
+            && let MirTerm::ErrorReturn { src } = block.term
+            && let Some(MirInstr::UseVar {
+                dest,
+                var,
+                mode: UseMode::Move,
+                ..
+            }) = block.instrs.last()
+            && *dest == src
+            && self.error_slots.contains(var)
+        {
+            block.instrs.pop();
+        }
         let at = if matches!(block.term, MirTerm::Return(_)) {
             block
                 .instrs
@@ -192,10 +218,8 @@ struct Paste<'f> {
 fn leaves(term: &MirTerm, entered: &[RegionFrame]) -> bool {
     let names = |target: RegionFrame| entered.iter().any(|&frame| target.names(frame));
     match term {
-        MirTerm::Return(_) | MirTerm::Raise { label: None, .. } => true,
-        MirTerm::Raise {
-            label: Some(label), ..
-        } => !names(RegionFrame::Try(*label)),
+        MirTerm::Return(_) | MirTerm::ErrorReturn { .. } => true,
+        MirTerm::TryRaise { label, .. } => !names(RegionFrame::Try(*label)),
         term => region_exit(term).is_some_and(|(target, _)| !names(target)),
     }
 }
@@ -225,7 +249,7 @@ fn framed_regions_mut(
             orelse,
             ..
         } => std::iter::once((Some(RegionFrame::Try(*label)), body))
-            .chain(handler.iter_mut().map(|(_, blocks)| (None, blocks)))
+            .chain(handler.iter_mut().map(|blocks| (None, blocks)))
             .chain(orelse.iter_mut().map(|blocks| (None, blocks)))
             .collect(),
         instruction => instruction_regions_mut(instruction)

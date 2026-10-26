@@ -521,10 +521,6 @@ fn erase_store_only_slots(function: &mut MirFunction, declarations: &MirDeclarat
                 | MirInstr::DropVar { .. }
                 | MirInstr::ConsumeVar { .. } => {}
                 MirInstr::DropPlace { place, .. } if place.through.is_none() => {}
-                MirInstr::Try { handler, .. } => {
-                    read.extend(instruction_slots(instruction));
-                    read.extend(handler.iter().filter_map(|(slot, _)| *slot));
-                }
                 _ => read.extend(instruction_slots(instruction)),
             }
             for region in instruction_regions(instruction) {
@@ -578,14 +574,11 @@ fn for_each_slot_marker(blocks: &[MirBlock], visit: &mut dyn FnMut(VarId)) {
     }
 }
 
-/// The slots `blocks` and their regions name, a `try`'s handler binding
+/// The slots `blocks` and their regions name, a `try`'s error slot
 /// included.
 fn named_slots(blocks: &[MirBlock], named: &mut HashSet<VarId>) {
     for instruction in blocks.iter().flat_map(|block| &block.instrs) {
         named.extend(instruction_slots(instruction));
-        if let MirInstr::Try { handler, .. } = instruction {
-            named.extend(handler.iter().filter_map(|(slot, _)| *slot));
-        }
         for region in instruction_regions(instruction) {
             named_slots(region, named);
         }
@@ -1261,10 +1254,6 @@ impl SlotReads<'_> {
             MirInstr::DropVar { var, .. }
             | MirInstr::ConsumeVar { var }
             | MirInstr::DeclareVar { var } => self.drops([*var]),
-            MirInstr::Try {
-                handler: Some((Some(binding), _)),
-                ..
-            } => self.read(*binding),
             _ => {
                 for slot in instruction_slots(instruction) {
                     self.read(slot);

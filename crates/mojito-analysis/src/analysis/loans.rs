@@ -803,10 +803,6 @@ impl BackwardScan for ReferenceLiveness<'_> {
     fn enters(&self, _instr: &MirInstr) -> bool {
         true
     }
-
-    fn define(&self, live: &mut HashSet<VarId>, var: VarId) {
-        live.remove(&var);
-    }
 }
 
 /// The loan generations reaching each instruction, which no instruction

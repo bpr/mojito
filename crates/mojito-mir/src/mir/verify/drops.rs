@@ -278,13 +278,8 @@ impl<'a> Walk<'a> {
                 normal,
             ) => meet(&mut flow.normal, normal),
             (MirTerm::Return(_), exits) => meet(&mut flow.exits, exits),
-            (MirTerm::Raise { label: None, .. }, raises) => meet(&mut flow.raises, raises),
-            (
-                MirTerm::Raise {
-                    label: Some(label), ..
-                },
-                Some(state),
-            ) => {
+            (MirTerm::ErrorReturn { .. }, raises) => meet(&mut flow.raises, raises),
+            (MirTerm::TryRaise { label, .. }, Some(state)) => {
                 if let Some(depth) = self
                     .frames
                     .iter()
@@ -497,8 +492,8 @@ impl<'a> Walk<'a> {
     }
 
     /// A `try` from `entry`, as `checkTryOp` walks it: the body under its
-    /// own frame, the handler from the raises naming it, its binding
-    /// refilled, and `orelse` from the body's fall-off; the `try`
+    /// own frame, the handler from the raises naming it, which stored the
+    /// error into its slot, and `orelse` from the body's fall-off; the `try`
     /// completes as the handler's and `orelse`'s (or the body's) fall-offs
     /// join.
     fn try_regions(&mut self, entry: Held, instruction: &'a MirInstr, report: bool) -> Flow {
@@ -534,10 +529,7 @@ impl<'a> Walk<'a> {
             }
             None => meet(&mut flow.normal, body_normal.as_ref()),
         }
-        if let (Some((binding, handler)), Some(mut start)) = (handler, body_raises) {
-            if let Some(binding) = binding {
-                start.fill(*binding, &[]);
-            }
+        if let (Some(handler), Some(mut start)) = (handler, body_raises) {
             start.define(handler_args);
             let arm = self.enter(&mut flow, &start, handler, report);
             meet(&mut flow.normal, arm.as_ref());

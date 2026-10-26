@@ -1103,6 +1103,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A raise into a `try` now stores its error into the `try`'s error slot
+  and enters the handler with no error operand, as upstream's
+  `lit.try.raise` does after the raise writes `__try_error__`, the slot
+  `parseTryStmt` declares and `lit.try` takes as its `$err` (R1293). The
+  slot is the `except` binding's own when the clause binds one, else a
+  `$try_error<N>` declared before the `try`; the handler reads it, and it
+  dies as a variable, so drop elaboration destroys an unread error right
+  after its raise, and a pending error a returning `finally` overrides
+  (`pliron_finally_overrides`'s `g`) with its slot, where it died by a
+  `drop.reg`. MIR text 1.107 gives `try` an `error` slot and splits
+  `raise` into `try.raise` and `error_return`; the reader upgrades older
+  artifacts, and the package format moves to `mojito-package 99`.
+  Natively, six fixtures that catch an error under an `except` binding
+  (`optional_raising_subscript`, `template_raise_forms`, …) no longer leak
+  it, and a caught typed error is no longer copied as a 24-byte `MjError`
+  into its zero-sized binding.
+
 - A capturing closure's lifted body is now its storage struct's method,
   `<lifted>$__storage.<name>`, as upstream's `liftClosureIntoMethod` nests
   it, where it was a generator nested in its enclosing declaration taking

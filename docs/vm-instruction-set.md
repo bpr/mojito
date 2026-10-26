@@ -189,7 +189,8 @@ stored handle and operating on its referent.
 |---|---|---|
 | `return` | `Return` | Return from a function or structured region |
 | `try.yield` | `TryYield` | Complete a try sub-region normally |
-| `raise` | `Raise` | Raise an error value to the handler of the `try` its label names, or out of the function |
+| `try.raise` | `TryRaise` | Enter the handler of the `try` its label names, the error already in that `try`'s slot |
+| `error_return` | `ErrorReturn` | Raise an error value out of the function |
 
 The structured region terminators — `yield`, `if.elifcond.yield`, `break`,
 `continue`, `match.next`, `match.complete`, `comptime.yield`,
@@ -809,9 +810,9 @@ tests `iter.has_next` first.
 ### `try` — Structured Exception Region
 
 ```text
-try try0 {
+try try0 $error {
     body      { ... }
-    except $error { ... }
+    except    { ... }
     else      { ... }
 }
 ```
@@ -824,9 +825,11 @@ does, so it runs as ordinary instructions on each way out.
 Semantics:
 
 1. Execute `body`.
-2. If a raise in `body` names this `try`'s label, optionally bind the error
-   and execute the handler. A raise naming another `try`, or none, leaves
-   the `try` untouched, as a `return` or a region exit does.
+2. If a raise in `body` names this `try`'s label, execute the handler,
+   which reads the caught error from the error slot `$error`, where the
+   raise stored it, as upstream's `lit.try` takes its `$err`. A raise
+   naming another `try`, or an `error_return`, leaves the `try` untouched,
+   as a `return` or a region exit does.
 3. Execute `else` only if the body completed normally.
 
 The body, handler, and else components are each one block, `bb0`.
@@ -909,20 +912,31 @@ terminator. The region runner translates it to normal flow and allows the
 surrounding `try` instruction to continue with `else` or complete, binding
 its values to the `else`'s arguments or the `try`'s results.
 
-### `raise` — Raise Error
+### `try.raise` — Raise to a Handler
 
 ```text
-raise %source [try0] [%values...]
+try.raise try0 [%values...]
 ```
 
-Raises the value in `%source`. An `Error` or `String` supplies its message;
-another value reports its runtime type. It ends any region, as upstream's
-`raise` ends its block: the exceptional outcome leaves every enclosing
-region for the handler of the nearest `try` carrying its label whose body
-holds it (`lit.try.raise`), binding its values to that handler's
-arguments, or, with no label, out of the current function
-(`lit.error_return`). Drop elaboration has already destroyed, before it,
-what that handler does not read.
+Leaves every enclosing region for the handler of the nearest `try`
+carrying its label whose body holds it (`lit.try.raise`), binding its
+values to that handler's arguments. It carries no error: the raise stored
+it into that `try`'s error slot first, a store both backends stage as the
+raise's (an `Error` or `String` supplying the message, a raise edge's
+error passing whole). Drop elaboration has already destroyed, before it,
+what that handler does not read, the slot itself when the handler never
+reads the error.
+
+### `error_return` — Raise Out of the Function
+
+```text
+error_return %source
+```
+
+Raises the value in `%source` out of the current function
+(`lit.error_return`). An `Error` or `String` supplies its message; another
+value reports its runtime type. It ends any region, as upstream's `raise`
+ends its block.
 
 ## Call ABI and Function Metadata
 

@@ -1071,23 +1071,28 @@ fn verify_error_region(
         ));
         return;
     };
-    // The `then` region hands the error on, by its raise or, once inlining
-    // and its folds have run, by the values its terminator carries; a
-    // `finally` copied before the raise that ends in an exit of its own
-    // replaces the raise, as `lowerTryFinally` erases the terminator it
-    // pastes over.
-    let hands_on = |term: &MirTerm| {
-        crate::mir::terminator_regs(term).contains(&raises.error)
+    // The `then` region hands the error on, by its `lit.error_return`, by
+    // storing it into the slot of the `try` its `try.raise` names, or,
+    // once inlining and its folds have run, by the values its terminator
+    // carries; a `finally` copied before the raise that ends in an exit of
+    // its own replaces the raise, as `lowerTryFinally` erases the
+    // terminator it pastes over.
+    let hands_on = |block: &MirBlock| {
+        crate::mir::terminator_regs(&block.term).contains(&raises.error)
             || matches!(
-                term,
+                block.term,
                 MirTerm::Return(_)
                     | MirTerm::Break { .. }
                     | MirTerm::Continue { .. }
                     | MirTerm::Unreachable
             )
+            || matches!(block.term, MirTerm::TryRaise { .. })
+                && block.instrs.iter().any(|instruction| {
+                    matches!(instruction, MirInstr::DefVar { src, .. } if *src == raises.error)
+                })
     };
     if let MirInstr::If { then, elifs, .. } = &instrs[index + 1 + offset]
-        && (!elifs.is_empty() || !then.first().is_some_and(|block| hands_on(&block.term)))
+        && (!elifs.is_empty() || !then.first().is_some_and(hands_on))
     {
         errors.push(format!(
             "{prefix}: error region on %r{} does not hand on %r{}",

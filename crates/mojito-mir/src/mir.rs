@@ -3190,10 +3190,13 @@ struct Flatten<'a> {
     /// The number of the next `try` this function lowers, its label:
     /// `LowerSemanticCF`'s `tryCounter`.
     next_try: u32,
-    /// The `try` a raise lowered here names: the nearest whose body
-    /// encloses it, as `emitRaise` builds `lit.try.raise` to it; `None`
-    /// outside every `try` body, where a raise leaves the function.
-    raise_target: Option<TryLabel>,
+    /// The `try` a raise lowered here names, and its error slot: the
+    /// nearest whose body encloses it, as `emitRaise` builds
+    /// `lit.try.raise` to it and `findNearestErrorSlot` finds its `$err`;
+    /// `None` outside every `try` body, where a raise leaves the function.
+    raise_target: Option<(TryLabel, VarId)>,
+    /// The error slots of this function's `try`s.
+    error_slots: HashSet<VarId>,
 }
 
 /// A `comptime for` index in scope: the binder the checker recorded on the
@@ -3854,16 +3857,13 @@ impl<'a> Flatten<'a> {
         let Some(raises) = raises else {
             return;
         };
+        let (instrs, term) = self.raise_exit(raises.error);
         self.emit(MirInstr::If {
             results: Vec::new(),
             cond: raises.flag,
             then: vec![MirBlock {
-                instrs: Vec::new(),
-                term: MirTerm::Raise {
-                    src: raises.error,
-                    label: self.raise_target,
-                    values: Vec::new(),
-                },
+                instrs: instrs.into_iter().collect(),
+                term,
             }],
             elifs: Vec::new(),
             else_args: Vec::new(),
@@ -3872,6 +3872,38 @@ impl<'a> Flatten<'a> {
                 term: MirTerm::Yield(Vec::new()),
             }],
         });
+    }
+
+    /// The exit raising the error `src` from where lowering stands, as
+    /// `emitRaise` lowers a raise after the error is in the nearest error
+    /// slot: inside a `try` body, the store of `src` into that `try`'s
+    /// slot, then `lit.try.raise` to its handler; outside every body,
+    /// `lit.error_return` of `src`. The first raise naming a `try` types
+    /// its slot, as upstream's first raise resolves `__try_error__`'s type.
+    fn raise_exit(&mut self, src: Reg) -> (Option<MirInstr>, MirTerm) {
+        let Some((label, slot)) = self.raise_target else {
+            return (None, MirTerm::ErrorReturn { src });
+        };
+        let raised = self.f.reg_types.get(&src.0).cloned();
+        let ty = match self.var_types.get(&slot) {
+            Some(ty) => Some(ty.clone()),
+            None => raised.inspect(|ty| {
+                self.var_types.insert(slot, ty.clone());
+            }),
+        };
+        let store = MirInstr::DefVar {
+            var: slot,
+            src,
+            binding_ty: ty,
+            in_place: false,
+        };
+        (
+            Some(store),
+            MirTerm::TryRaise {
+                label,
+                values: Vec::new(),
+            },
+        )
     }
 
     /// The callee for a free call the checker recorded no exact target for: the
@@ -4789,6 +4821,7 @@ fn lower_cfg_nested(
             returns_reference,
             next_try: 0,
             raise_target: None,
+            error_slots: HashSet::new(),
         };
         fl.comptime_thunks.enter_scope(&fl.enclosing_binders);
         let prologue = captures
@@ -4910,25 +4943,16 @@ fn name_spelling(
     }
 }
 
-/// The error the first raise naming the `try` labelled `label` raises in
-/// its lowered body `blocks`, at any depth: its type is the error type the
-/// `try` catches, as each raising instruction's error region raises its
-/// checked error type.
-fn first_raised_error(blocks: &[MirBlock], label: TryLabel) -> Option<Reg> {
-    blocks.iter().find_map(|block| {
-        block
-            .instrs
-            .iter()
-            .flat_map(instruction_regions)
-            .find_map(|region| first_raised_error(region, label))
-            .or_else(|| match block.term {
-                MirTerm::Raise {
-                    src,
-                    label: Some(found),
-                    ..
-                } if found == label => Some(src),
-                _ => None,
-            })
+/// Whether some raise in the lowered body `blocks`, at any depth, names the
+/// `try` labelled `label`.
+fn raises_to(blocks: &[MirBlock], label: TryLabel) -> bool {
+    blocks.iter().any(|block| {
+        matches!(block.term, MirTerm::TryRaise { label: found, .. } if found == label)
+            || block
+                .instrs
+                .iter()
+                .flat_map(instruction_regions)
+                .any(|region| raises_to(region, label))
     })
 }
 

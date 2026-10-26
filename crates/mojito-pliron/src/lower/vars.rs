@@ -76,6 +76,9 @@ impl FnLowering<'_> {
         var: u32,
         src: Reg,
     ) -> Result<(), PlironError> {
+        if self.error_slots.contains(&var) {
+            return self.stage_error(ctx, var, src);
+        }
         if matches!(
             self.func.var_tys.get(&var).map(Ty::kind),
             Some(TyKind::Ref(_))

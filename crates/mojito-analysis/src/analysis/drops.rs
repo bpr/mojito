@@ -214,7 +214,6 @@ struct DropPlan {
     /// The live-in of each region op.
     ops: HashMap<*const MirInstr, DenseSet>,
     blocks: HashMap<*const MirBlock, BlockPlan>,
-    tries: HashMap<*const MirInstr, TryChannels<DenseSet>>,
 }
 
 /// The liveness around one block.
@@ -238,10 +237,6 @@ impl BackwardRecorder<DenseSet> for DropPlan {
                 live_out: live.live_out.clone(),
             },
         );
-    }
-
-    fn try_op(&mut self, op: &MirInstr, channels: &TryChannels<DenseSet>) {
-        self.tries.insert(std::ptr::from_ref(op), channels.clone());
     }
 }
 
@@ -277,10 +272,6 @@ impl BackwardScan for DropLiveness<'_> {
 
     fn enters(&self, _instr: &MirInstr) -> bool {
         true
-    }
-
-    fn define(&self, live: &mut DenseSet, var: VarId) {
-        self.values.clear_all(live, var);
     }
 
     fn terminate(&self, live: &mut DenseSet, block: &MirBlock) {
@@ -380,10 +371,7 @@ impl ExitDemands {
 
 /// Whether `term` leaves the function: a `return`, or a raise out of it.
 const fn leaves(term: &MirTerm) -> bool {
-    matches!(
-        term,
-        MirTerm::Return(_) | MirTerm::Raise { label: None, .. }
-    )
+    matches!(term, MirTerm::Return(_) | MirTerm::ErrorReturn { .. })
 }
 
 /// What one instruction does to the live bits, walked backward.
@@ -735,13 +723,14 @@ impl Splice<'_> {
         deaths
     }
 
-    /// Place the drops of a `try`'s parts. The caught error arrives as the
-    /// handler entry's block argument, so the binding's pre-raise content
-    /// is never observable, and an unread binding dies on arrival.
+    /// Place the drops of a `try`'s parts: each region destroys on arrival
+    /// the owned arguments it never reads. The caught error is the `try`'s
+    /// error slot, which the raises naming it store into, so it dies as a
+    /// variable.
     fn try_op(&self, instr: &mut MirInstr) {
-        let Some(channels) = self.plan.tries.get(&std::ptr::from_ref(&*instr)) else {
+        if !self.plan.ops.contains_key(&std::ptr::from_ref(&*instr)) {
             return;
-        };
+        }
         let MirInstr::Try {
             body,
             handler_args,
@@ -753,25 +742,13 @@ impl Splice<'_> {
         else {
             return;
         };
-        if let Some((binding, h)) = handler {
+        if let Some(h) = handler {
             self.region(h);
             let unread = self.unread_arguments(h, handler_args);
             if let Some(entry) = h.first_mut() {
                 entry
                     .instrs
                     .splice(0..0, unread.into_iter().map(Death::into_drop));
-            }
-            if let Some(bound) = binding
-                && self.droppable(*bound)
-                && !channels
-                    .handler
-                    .as_ref()
-                    .is_some_and(|live| self.values.any_live(live, *bound))
-                && let Some(entry) = h.first_mut()
-            {
-                entry
-                    .instrs
-                    .insert(0, Death::var(*bound, self.values.range(*bound)).into_drop());
             }
         }
         if let Some(e) = orelse {

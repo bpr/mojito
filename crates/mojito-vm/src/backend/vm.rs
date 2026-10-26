@@ -689,6 +689,10 @@ struct Prog {
     /// `lit.try.raise` carries no new error, so the trace records no second
     /// raise.
     edge_errors: Vec<HashSet<u32>>,
+    /// Per function, the error slots of its `try`s: a store into one is a
+    /// raise's, staging the error as the raise stages it
+    /// ([`VmBackend::stage_error`]).
+    error_slots: Vec<HashSet<VarId>>,
 }
 
 /// A static type with its reference layers removed: a place or parameter
@@ -712,11 +716,25 @@ impl Prog {
                 errors
             })
             .collect();
+        let error_slots = mir
+            .functions
+            .iter()
+            .map(|(_, function)| {
+                mojito_mir::mir::nested_instructions(&function.blocks)
+                    .into_iter()
+                    .filter_map(|instruction| match instruction {
+                        MirInstr::Try { error, .. } => *error,
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect();
         Self {
             structs: build_structs(&mir.declarations),
             sigs: build_sigs(&mir.declarations),
             mir,
             edge_errors,
+            error_slots,
         }
     }
 
@@ -1618,6 +1636,7 @@ mod pointer_storage_tests {
             structs: HashMap::new(),
             sigs: HashMap::new(),
             edge_errors: Vec::new(),
+            error_slots: Vec::new(),
         }
     }
 

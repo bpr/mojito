@@ -2,15 +2,15 @@
       fn {
         name: raise_in_nested_handler_keeps_outer,
         registers: 5,
-        vars: 1,
-        var_names: [c],
+        vars: 2,
+        var_names: [c, "$try_error0"],
         params: 1,
         param_types: [Bool],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Bool }],
+        var_types: [var_type { var: $v0, type: Bool }, var_type { var: $v1, type: Int }],
         return_type: present(Int),
         raises: true,
         error_type: present(Int),
@@ -21,7 +21,8 @@
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
               const { dest: %r4, value: int(4) },
-              try { label: try0, results: [], body: [bb0 { instructions: [const { dest: %r1, value: int(1) }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present(handler { error_var: absent, blocks: [bb0 { instructions: [const { dest: %r3, value: int(3) }], terminator: return { value: present(%r3) } }] }), else_arguments: [], orelse: absent }
+              var.declare { var: $v1 },
+              try { label: try0, error: present($v1), results: [], body: [bb0 { instructions: [const { dest: %r1, value: int(1) }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [const { dest: %r3, value: int(3) }], terminator: return { value: present(%r3) } }]), else_arguments: [], orelse: absent }
             ],
             terminator: return { value: present(%r4) }
           }

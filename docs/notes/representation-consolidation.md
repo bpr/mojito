@@ -225,8 +225,11 @@ are conformance only.
 - **R136** landed 10-25: an implicit copy at its source's last use
   forwards or moves, and R827 closed with it. R473 stays open: its
   discard still copies, and a move into storage that dies unread runs.
+- **R1293** landed 10-25: a `try`'s raises store their error into its
+  error slot, which dies as a variable. The function-level raise still
+  carries its error as a register (R1437).
 - **R1356 then rejects the class.** It waits on R1157, R1158, R1249, R117,
-  R677, R1353, R1334, and R1293.
+  R677, R1353, R1334, and R1437.
 
 ### F. Members reached by name, not called as the requirement
 

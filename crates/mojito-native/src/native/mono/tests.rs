@@ -33,7 +33,7 @@ fn instructions(blocks: &[MirBlock]) -> Vec<&MirInstr> {
             } = instruction
             {
                 result.extend(instructions(body));
-                if let Some((_, blocks)) = handler {
+                if let Some(blocks) = handler {
                     result.extend(instructions(blocks));
                 }
                 if let Some(blocks) = orelse {

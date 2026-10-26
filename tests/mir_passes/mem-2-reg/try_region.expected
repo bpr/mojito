@@ -23,7 +23,7 @@
               literal.materialize { dest: %r2, value: %r1, target: Int },
               var.use { dest: %r0, var: $v0, mode: copy },
               binary { op: lt, dest: %r3, a: %r0, b: %r2, resolved: absent, raises: absent },
-              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: string("negative") }, call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: raise { src: %r5, label: absent, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r3, then: [bb0 { instructions: [const { dest: %r4, value: string("negative") }, call { dest: %r5, func: Error, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: error_return { src: %r5 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               var.use { dest: %r6, var: $v0, mode: copy }
             ],
             terminator: return { value: present(%r6) }
@@ -33,15 +33,15 @@
       fn {
         name: try_region,
         registers: 10,
-        vars: 1,
-        var_names: [a],
+        vars: 2,
+        var_names: [a, "$try_error0"],
         params: 1,
         param_types: [Int],
         owned_params: [false],
         deinit_params: [false],
         ref_params: [false],
         returns_reference: false,
-        var_types: [var_type { var: $v0, type: Int }],
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Error }],
         return_type: present(Int),
         raises: false,
         error_type: absent,
@@ -51,7 +51,8 @@
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              try { label: try0, results: [], body: [bb0 { instructions: [var.use { dest: %r1, var: $v0, mode: copy }, call { dest: %r2, func: risky, raises: present(raises { type: Error, flag: %r8, error: %r9 }), args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, if { results: [], condition: %r8, then: [bb0 { instructions: [], terminator: raise { src: %r9, label: present(try0), values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, value.copy { dest: %r3, value: %r2 }, value.copy { dest: %r4, value: %r0 }, binary { op: add, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }], terminator: return { value: present(%r5) } }], handler_arguments: [], handler: present(handler { error_var: absent, blocks: [bb0 { instructions: [const { dest: %r6, value: int_literal(0) }, literal.materialize { dest: %r7, value: %r6, target: Int }], terminator: return { value: present(%r7) } }] }), else_arguments: [], orelse: absent }
+              var.declare { var: $v1 },
+              try { label: try0, error: present($v1), results: [], body: [bb0 { instructions: [var.use { dest: %r1, var: $v0, mode: copy }, call { dest: %r2, func: risky, raises: present(raises { type: Error, flag: %r8, error: %r9 }), args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }, if { results: [], condition: %r8, then: [bb0 { instructions: [var.store { var: $v1, src: %r9, binding_type: present(Error), in_place: false }], terminator: try.raise { label: try0, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }, value.copy { dest: %r3, value: %r2 }, value.copy { dest: %r4, value: %r0 }, binary { op: add, dest: %r5, a: %r3, b: %r4, resolved: absent, raises: absent }], terminator: return { value: present(%r5) } }], handler_arguments: [], handler: present([bb0 { instructions: [const { dest: %r6, value: int_literal(0) }, literal.materialize { dest: %r7, value: %r6, target: Int }], terminator: return { value: present(%r7) } }]), else_arguments: [], orelse: absent }
             ],
             terminator: return { value: absent }
           }

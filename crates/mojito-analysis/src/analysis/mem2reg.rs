@@ -675,6 +675,7 @@ impl Promoter<'_> {
                 handler,
                 else_args,
                 orelse,
+                ..
             } => {
                 let carried = !variant.is_empty();
                 let raised = carried && {
@@ -685,7 +686,7 @@ impl Promoter<'_> {
                 let completes = carried
                     && matches!(&body[..], [.., last] if matches!(last.term, MirTerm::TryYield(_)));
                 self.walk_region(body, Some(RegionFrame::Try(*label)), &variant, &[]);
-                if let Some((_, blocks)) = handler {
+                if let Some(blocks) = handler {
                     let args = self.arguments(&variant, raised, handler_args);
                     self.walk_region(blocks, None, &variant, &args);
                 }
@@ -790,12 +791,10 @@ impl Promoter<'_> {
 
     /// Append the current value of each variant slot of the op a region
     /// terminator enters or leaves to its values (`insertVariants`): a
-    /// labelled `raise` enters the handler of the `try` it names.
+    /// `try.raise` enters the handler of the `try` it names.
     fn carry(&mut self, term: &mut MirTerm, out: &mut Vec<MirInstr>) {
         let target = match term {
-            MirTerm::Raise {
-                label: Some(label), ..
-            } => Some(RegionFrame::Try(*label)),
+            MirTerm::TryRaise { label, .. } => Some(RegionFrame::Try(*label)),
             _ => region_exit(term).map(|(target, _)| target),
         };
         let frame = match target {
@@ -874,7 +873,7 @@ const fn edge_values_mut(term: &mut MirTerm) -> Option<&mut Vec<Reg>> {
     match term {
         MirTerm::Yield(values)
         | MirTerm::TryYield(values)
-        | MirTerm::Raise { values, .. }
+        | MirTerm::TryRaise { values, .. }
         | MirTerm::ComptimeYield(values)
         | MirTerm::MatchNext(values)
         | MirTerm::MatchComplete(values)
@@ -924,9 +923,6 @@ fn take_census(
                         .push((list, mention));
                 }
                 _ => keep(census, slots),
-            }
-            if let MirInstr::Try { handler, .. } = instruction {
-                keep(census, handler.iter().filter_map(|(slot, _)| *slot));
             }
         }
     }

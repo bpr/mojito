@@ -52,10 +52,13 @@ impl Decoder {
             .collect();
         let spans = self.locations(self.field(fields, "locations").ok()?);
         self.unlabelled_tries = false;
+        self.legacy_raises = false;
         let mut blocks = self.blocks(self.field(fields, "blocks").ok()?, &name);
-        if std::mem::take(&mut self.unlabelled_tries) {
+        let unlabelled = std::mem::take(&mut self.unlabelled_tries);
+        if unlabelled {
             infer_try_labels(&mut blocks, &mut 0, None);
         }
+        let legacy_raises = std::mem::take(&mut self.legacy_raises) || unlabelled;
         let removed_params = self
             .field(fields, "removed_params")
             .ok()
@@ -122,35 +125,36 @@ impl Decoder {
                 "callee_removed_args",
             ],
         );
-        Some((
-            name,
-            MirFunction {
-                blocks,
-                n_regs,
-                n_vars,
-                var_names,
-                n_params,
-                param_types,
-                owned_params,
-                deinit_params,
-                ref_params,
-                returns_reference,
-                var_tys: var_tys
-                    .into_iter()
-                    .map(|(id, ty)| (id as u32, ty))
-                    .collect(),
-                ret_ty,
-                raises,
-                error_ty,
-                spans,
-                reg_types,
-                removed_params,
-                callee_removed_params,
-                removed_args,
-                callee_removed_args,
-                lowered_calls: Vec::new(),
-            },
-        ))
+        let mut function = MirFunction {
+            blocks,
+            n_regs,
+            n_vars,
+            var_names,
+            n_params,
+            param_types,
+            owned_params,
+            deinit_params,
+            ref_params,
+            returns_reference,
+            var_tys: var_tys
+                .into_iter()
+                .map(|(id, ty)| (id as u32, ty))
+                .collect(),
+            ret_ty,
+            raises,
+            error_ty,
+            spans,
+            reg_types,
+            removed_params,
+            callee_removed_params,
+            removed_args,
+            callee_removed_args,
+            lowered_calls: Vec::new(),
+        };
+        if legacy_raises {
+            upgrade_error_slots(&mut function);
+        }
+        Some((name, function))
     }
 
     /// A function's `removed_params` (schema 1.60): its own binders the
@@ -244,7 +248,7 @@ impl Decoder {
                     term_value.span,
                 );
                 let term = self.term(term_value)?;
-                Some(MirBlock { instrs, term })
+                Some(self.block_of(instrs, term))
             })
             .collect()
     }
@@ -785,22 +789,28 @@ impl Decoder {
             }),
             "try" => {
                 let body = self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?;
+                let mut error = self
+                    .field(fields, "error")
+                    .ok()
+                    .and_then(|error| self.option_var(error));
                 let handler = {
                     let field = self.required(value, fields, "handler")?;
                     match self.option_value(Some(field)) {
                         None => None,
-                        Some(inner) => {
+                        // MIR older than 1.107 binds the caught error in
+                        // the handler, the slot the `try` now names.
+                        Some(inner) if matches!(&inner.kind, ValueKind::Record(..)) => {
                             let handler_fields = self.record(inner, "handler").ok()?;
-                            let error_var =
-                                self.req(inner, handler_fields, "error_var", |d, v| {
-                                    Some(d.option_var(v))
-                                })?;
+                            error = self.req(inner, handler_fields, "error_var", |d, v| {
+                                Some(d.option_var(v))
+                            })?;
                             let blocks = self.req(inner, handler_fields, "blocks", |d, v| {
                                 Some(d.region_blocks(v))
                             })?;
                             self.unknown(handler_fields, &["error_var", "blocks"]);
-                            Some((error_var, blocks))
+                            Some(blocks)
                         }
+                        Some(inner) => Some(self.region_blocks(inner)),
                     }
                 };
                 let orelse = {
@@ -817,6 +827,7 @@ impl Decoder {
                 };
                 Some(MirInstr::Try {
                     label,
+                    error,
                     results: self.added_regs(fields, "results"),
                     body,
                     handler_args: self.added_regs(fields, "handler_arguments"),
@@ -975,6 +986,15 @@ impl Decoder {
             }
             "match.next" => Some(MirTerm::MatchNext(self.added_regs(fields, "values"))),
             "match.complete" => Some(MirTerm::MatchComplete(self.added_regs(fields, "values"))),
+            "try.raise" => Some(MirTerm::TryRaise {
+                label: self.req(value, fields, "label", Self::try_label)?,
+                values: self.added_regs(fields, "values"),
+            }),
+            "error_return" => Some(MirTerm::ErrorReturn {
+                src: self.req(value, fields, "src", Self::reg)?,
+            }),
+            // MIR older than 1.107 raises its operand: to the `try` it
+            // names, through that `try`'s slot, or out of the function.
             "raise" => {
                 let src = self.req(value, fields, "src", Self::reg)?;
                 let label = if let Ok(label) = self.field(fields, "label") {
@@ -985,11 +1005,17 @@ impl Decoder {
                     self.unlabelled_tries = true;
                     None
                 };
-                Some(MirTerm::Raise {
-                    src,
-                    label,
-                    values: self.added_regs(fields, "values"),
-                })
+                match label {
+                    Some(label) => {
+                        self.legacy_raise = Some(src);
+                        self.legacy_raises = true;
+                        Some(MirTerm::TryRaise {
+                            label,
+                            values: self.added_regs(fields, "values"),
+                        })
+                    }
+                    None => Some(MirTerm::ErrorReturn { src }),
+                }
             }
             "unreachable" => Some(MirTerm::Unreachable),
             other => {
@@ -1090,6 +1116,16 @@ impl Decoder {
         })
     }
 
+    /// The block `instrs` ended by `term`, a `try.raise` read from a
+    /// `raise` older than MIR 1.107 first storing its error into the slot
+    /// [`upgrade_error_slots`] names.
+    fn block_of(&mut self, mut instrs: Vec<MirInstr>, term: MirTerm) -> MirBlock {
+        if let Some(src) = self.legacy_raise.take() {
+            instrs.push(legacy_error_store(src));
+        }
+        MirBlock { instrs, term }
+    }
+
     fn try_label(&mut self, value: &Value) -> Option<TryLabel> {
         let id = self.identity(Some(value), "try")?;
         u32::try_from(id).ok().map(TryLabel)
@@ -1156,7 +1192,7 @@ impl Decoder {
                 };
                 let term = self.req(value, fields, "terminator", Self::term)?;
                 self.unknown(fields, &["instructions", "terminator"]);
-                Some(MirBlock { instrs, term })
+                Some(self.block_of(instrs, term))
             })
             .collect()
     }
@@ -1186,7 +1222,7 @@ fn infer_try_labels(blocks: &mut [MirBlock], next: &mut u32, target: Option<TryL
                     target
                 };
                 infer_try_labels(body, next, inner);
-                for region in handler.iter_mut().map(|(_, blocks)| blocks).chain(orelse) {
+                for region in handler.iter_mut().chain(orelse) {
                     infer_try_labels(region, next, target);
                 }
                 continue;
@@ -1195,8 +1231,123 @@ fn infer_try_labels(blocks: &mut [MirBlock], next: &mut u32, target: Option<TryL
                 infer_try_labels(region, next, target);
             }
         }
-        if let MirTerm::Raise { label, .. } = &mut block.term {
-            *label = target;
+        if let (MirTerm::ErrorReturn { src }, Some(label)) = (&block.term, target) {
+            block.instrs.push(legacy_error_store(*src));
+            block.term = MirTerm::TryRaise {
+                label,
+                values: Vec::new(),
+            };
+        }
+    }
+}
+
+/// The slot a store [`legacy_error_store`] makes names until
+/// [`upgrade_error_slots`] names the `try`'s.
+const LEGACY_ERROR_SLOT: VarId = VarId::MAX;
+
+/// The store of a `raise` older than MIR 1.107's error `src` into the slot
+/// of the `try` it names, which [`upgrade_error_slots`] fills in.
+const fn legacy_error_store(src: crate::mir::Reg) -> MirInstr {
+    MirInstr::DefVar {
+        var: LEGACY_ERROR_SLOT,
+        src,
+        binding_ty: None,
+        in_place: false,
+    }
+}
+
+/// Name each `try`'s error slot in `function`, read from text older than
+/// MIR 1.107, where a raise carried its error to the handler as an
+/// operand: the stores [`legacy_error_store`] made before each raise
+/// naming a `try` store into that `try`'s slot, its handler's old binding
+/// or a fresh `$try_error<N>` typed as the first raise's error, declared
+/// before the `try`.
+pub(super) fn upgrade_error_slots(function: &mut MirFunction) {
+    let mut blocks = std::mem::take(&mut function.blocks);
+    upgrade_blocks(&mut blocks, function);
+    function.blocks = blocks;
+}
+
+fn upgrade_blocks(blocks: &mut [MirBlock], function: &mut MirFunction) {
+    for block in blocks {
+        let mut index = 0;
+        while index < block.instrs.len() {
+            let mut declare = None;
+            if let MirInstr::Try {
+                label, error, body, ..
+            } = &mut block.instrs[index]
+            {
+                let mut slot = *error;
+                let mut fresh = false;
+                legacy_stores(body, *label, &mut |var, binding_ty, src| {
+                    let slot = *slot.get_or_insert_with(|| {
+                        fresh = true;
+                        let var = VarId::try_from(function.n_vars).unwrap_or(VarId::MAX);
+                        function.n_vars += 1;
+                        function.var_names.push(format!("$try_error{}", label.0));
+                        if let Some(ty) = function.reg_types.get(&src.0).cloned() {
+                            function.var_tys.insert(var, ty);
+                        }
+                        var
+                    });
+                    *var = slot;
+                    *binding_ty = function.var_tys.get(&slot).cloned();
+                });
+                if fresh {
+                    *error = slot;
+                    declare = slot;
+                }
+            }
+            for region in crate::mir::instruction_regions_mut(&mut block.instrs[index]) {
+                upgrade_blocks(region, function);
+            }
+            if let Some(var) = declare {
+                block.instrs.insert(index, MirInstr::DeclareVar { var });
+                index += 1;
+            }
+            index += 1;
+        }
+    }
+}
+
+/// Visit each store [`legacy_error_store`] made before a raise in `body`
+/// naming the `try` labelled `label`, resolved as
+/// [`crate::mir::try_raises_mut`] resolves the raise.
+fn legacy_stores(
+    body: &mut [MirBlock],
+    label: TryLabel,
+    visit: &mut impl FnMut(&mut VarId, &mut Option<Ty>, crate::mir::Reg),
+) {
+    for block in body {
+        for instruction in &mut block.instrs {
+            match instruction {
+                MirInstr::Try {
+                    label: inner,
+                    handler,
+                    orelse,
+                    ..
+                } if *inner == label => {
+                    for region in handler.iter_mut().chain(orelse) {
+                        legacy_stores(region, label, visit);
+                    }
+                }
+                instruction => {
+                    for region in crate::mir::instruction_regions_mut(instruction) {
+                        legacy_stores(region, label, visit);
+                    }
+                }
+            }
+        }
+        if matches!(block.term, MirTerm::TryRaise { label: found, .. } if found == label)
+            && let Some(MirInstr::DefVar {
+                var,
+                src,
+                binding_ty,
+                ..
+            }) = block.instrs.last_mut()
+            && *var == LEGACY_ERROR_SLOT
+        {
+            visit(var, binding_ty, *src);
         }
     }
 }

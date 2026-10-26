@@ -950,7 +950,8 @@ impl Walk<'_> {
             term @ (MirTerm::Unreachable
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
-            | MirTerm::Raise { .. })
+            | MirTerm::TryRaise { .. }
+            | MirTerm::ErrorReturn { .. })
                 if bare =>
             {
                 let tail = block.instrs.split_off(index);

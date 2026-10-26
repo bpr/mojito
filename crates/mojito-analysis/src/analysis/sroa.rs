@@ -434,17 +434,7 @@ fn take_census(
                         .map(String::from),
                 );
             }
-            if let MirInstr::Try { handler, .. } = instruction {
-                keep(census, handler.iter().filter_map(|(slot, _)| *slot));
-            }
         }
-    }
-}
-
-/// Mark each of `slots` kept.
-fn keep(census: &mut HashMap<VarId, Census>, slots: impl IntoIterator<Item = VarId>) {
-    for var in slots {
-        census.entry(var).or_default().kept = true;
     }
 }
 

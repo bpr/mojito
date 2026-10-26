@@ -844,10 +844,11 @@ impl FnLowering<'_> {
                 handler,
                 else_args,
                 orelse,
+                ..
             } => self.lower_try(
                 ctx,
                 (*label, results, body),
-                (handler_args, handler.as_ref()),
+                (handler_args, handler.as_deref()),
                 (else_args, orelse.as_deref()),
             ),
             MirInstr::GetIter {

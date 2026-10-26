@@ -96,9 +96,6 @@ pub(super) trait BackwardScan {
     /// Whether the walk enters `instr`'s regions. A region op it does not
     /// enter is transferred as one instruction.
     fn enters(&self, instr: &MirInstr) -> bool;
-    /// Kill `var`, which the entry of a region defines: a handler's error
-    /// binding, which the caught error arrives in.
-    fn define(&self, state: &mut Self::State, var: VarId);
     /// Add to `live`, the state live after `block`'s terminator, what the
     /// terminator itself reads.
     fn terminate(&self, _live: &mut Self::State, _block: &MirBlock) {}
@@ -130,8 +127,6 @@ pub(super) trait BackwardRecorder<T> {
     fn instr(&mut self, _instr: &MirInstr, _live: &T) {}
     /// A block with the states live entering it and after its terminator.
     fn block(&mut self, _block: &MirBlock, _live: BlockLiveness<'_, T>) {}
-    /// A `try` with the states its parts were walked from.
-    fn try_op(&mut self, _op: &MirInstr, _channels: &TryChannels<T>) {}
 }
 
 impl<T, F: FnMut(&MirInstr, &T)> BackwardRecorder<T> for F {
@@ -145,15 +140,6 @@ impl<T, F: FnMut(&MirInstr, &T)> BackwardRecorder<T> for F {
 pub(super) struct BlockLiveness<'a, T> {
     pub(super) live_in: &'a T,
     pub(super) live_out: &'a T,
-}
-
-/// The states one `try`'s parts were walked from, as `checkTryOp` walks
-/// them: the handler and `else` from the `try`'s live-out, and the body
-/// from the `else`'s (or the live-out).
-#[derive(Clone)]
-pub(super) struct TryChannels<T> {
-    /// The handler's live-in, its error binding included.
-    pub(super) handler: Option<T>,
 }
 
 /// Walk a function body backward from its exits, handing `recorder` each
@@ -287,13 +273,11 @@ where
         | MirTerm::ComptimeYield(_)
         | MirTerm::ElifCond { .. } => add_state(scan, &mut flow.normal, Some(&state)),
         MirTerm::Return(_) => add_state(scan, &mut flow.exits, Some(&state)),
-        MirTerm::Raise { label: None, .. } => {
+        MirTerm::ErrorReturn { .. } => {
             let seed = scan.raise_seed(&state);
             add_state(scan, &mut flow.raises, Some(&seed));
         }
-        MirTerm::Raise {
-            label: Some(label), ..
-        } => {
+        MirTerm::TryRaise { label, .. } => {
             let seed = scan.raise_seed(&state);
             leave_to(scan, frames, RegionFrame::Try(label), false, &seed);
         }
@@ -646,7 +630,7 @@ where
         }
         None => add_state(scan, &mut flow.normal, body_flow.normal.as_ref()),
     }
-    if let Some((_, handler)) = handler {
+    if let Some(handler) = handler {
         let handler_flow = walk_region(scan, caught.leave, handler, observer, frames)?;
         flow.absorb(scan, &handler_flow);
     }
@@ -734,10 +718,10 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             | MirTerm::Yield(_)
             | MirTerm::ComptimeYield(_)
             | MirTerm::ElifCond { .. } => exit.clone(),
-            MirTerm::Return(_) | MirTerm::Raise { label: None, .. } | MirTerm::Unreachable => {
+            MirTerm::Return(_) | MirTerm::ErrorReturn { .. } | MirTerm::Unreachable => {
                 S::State::default()
             }
-            MirTerm::Raise { .. }
+            MirTerm::TryRaise { .. }
             | MirTerm::Break { .. }
             | MirTerm::Continue { .. }
             | MirTerm::ComptimeBreak(_)
@@ -745,9 +729,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             | MirTerm::MatchComplete(_)
             | MirTerm::MatchNext(_) => {
                 let target = match term {
-                    MirTerm::Raise {
-                        label: Some(label), ..
-                    } => Some((RegionFrame::Try(*label), false)),
+                    MirTerm::TryRaise { label, .. } => Some((RegionFrame::Try(*label), false)),
                     term => region_exit(term),
                 };
                 let Some((target, resume)) = target else {
@@ -900,8 +882,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
     /// The live-in of a `try` whose live-out is `exit`, as `checkTryOp`
     /// walks it: the handler and `else` from `exit`, then the body from the
     /// `else`'s live-in (or `exit`) under a frame whose leave set is the
-    /// handler's live-in, its error binding defined, which a raise naming
-    /// the `try` keeps live.
+    /// handler's live-in, which a raise naming the `try` keeps live.
     fn tried<R: BackwardRecorder<S::State>>(
         &mut self,
         instr: &MirInstr,
@@ -920,7 +901,7 @@ impl<S: BackwardScan> BackWalk<'_, S> {
         else {
             return exit.clone();
         };
-        let handler_in = handler.as_ref().map(|(_, h)| {
+        let handler_in = handler.as_ref().map(|h| {
             let mut live = self.region(h, exit, recorder.as_deref_mut());
             self.scan.region_args(&mut live, handler_args);
             self.scan.enter(&mut live, h);
@@ -932,30 +913,14 @@ impl<S: BackwardScan> BackWalk<'_, S> {
             self.scan.enter(&mut live, e);
             live
         });
-        let mut caught = handler_in.clone().unwrap_or_default();
-        if let Some((Some(binding), _)) = handler {
-            self.scan.define(&mut caught, *binding);
-        }
         self.frames.push(BackFrame {
             kind: RegionFrame::Try(*label),
-            leave: caught,
+            leave: handler_in.unwrap_or_default(),
             resume: S::State::default(),
         });
-        let mut live = self.region(
-            body,
-            else_in.as_ref().unwrap_or(exit),
-            recorder.as_deref_mut(),
-        );
+        let mut live = self.region(body, else_in.as_ref().unwrap_or(exit), recorder);
         self.frames.pop();
         self.scan.enter(&mut live, body);
-        if let Some(recorder) = recorder {
-            recorder.try_op(
-                instr,
-                &TryChannels {
-                    handler: handler_in,
-                },
-            );
-        }
         live
     }
 }

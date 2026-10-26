@@ -1,4 +1,4 @@
-mojito-mir 1.93
+mojito-mir 1.107
 artifact {
   features: [],
   files: [
@@ -49,7 +49,7 @@ artifact {
               literal.materialize { dest: %r9, value: %r8, target: Int },
               var.use { dest: %r7, var: $v1, mode: copy },
               binary { op: eq, dest: %r10, a: %r7, b: %r9, resolved: absent, raises: absent },
-              if { results: [], condition: %r10, then: [bb0 { instructions: [const { dest: %r11, value: string("x") }, call { dest: %r12, func: Error, raises: absent, args: [%r11], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: raise { src: %r12, label: absent, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
+              if { results: [], condition: %r10, then: [bb0 { instructions: [const { dest: %r11, value: string("x") }, call { dest: %r12, func: Error, raises: absent, args: [%r11], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: error_return { src: %r12 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] },
               const { dest: %r13, value: int_literal(3) },
               literal.materialize { dest: %r14, value: %r13, target: Int },
               call { dest: %r15, func: "D.__init__", raises: absent, args: [%r14], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
@@ -58,7 +58,7 @@ artifact {
               literal.materialize { dest: %r19, value: %r18, target: Int },
               var.use { dest: %r17, var: $v1, mode: copy },
               binary { op: eq, dest: %r20, a: %r17, b: %r19, resolved: absent, raises: absent },
-              if { results: [], condition: %r20, then: [bb0 { instructions: [const { dest: %r21, value: string("x") }, call { dest: %r22, func: Error, raises: absent, args: [%r21], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: raise { src: %r22, label: absent, values: [] } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }
+              if { results: [], condition: %r20, then: [bb0 { instructions: [const { dest: %r21, value: string("x") }, call { dest: %r22, func: Error, raises: absent, args: [%r21], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }], terminator: error_return { src: %r22 } }], elifs: [], else_arguments: [], else: [bb0 { instructions: [], terminator: yield { values: [] } }] }
             ],
             terminator: return { value: absent }
           }

@@ -29,8 +29,8 @@ fn function(blocks: Vec<MirBlock>, n_regs: u32, reg_types: &[(u32, Ty)]) -> MirF
     MirFunction {
         blocks,
         n_regs,
-        n_vars: 1,
-        var_names: vec!["x".to_string()],
+        n_vars: 2,
+        var_names: vec!["x".to_string(), "$try_error0".to_string()],
         n_params: 0,
         param_types: Vec::new(),
         owned_params: Vec::new(),
@@ -1181,11 +1181,7 @@ fn verifier_rejects_unprotected_raises_in_nonraising_functions() {
                 dest: Reg(0),
                 k: Const::Str("boom".to_string()),
             }],
-            MirTerm::Raise {
-                src: Reg(0),
-                label: None,
-                values: Vec::new(),
-            },
+            MirTerm::ErrorReturn { src: Reg(0) },
         )],
         1,
         &[(0, Ty::string_literal())],
@@ -1974,7 +1970,8 @@ const DROP_X: MirInstr = MirInstr::DropVar {
 };
 
 /// A raise point: a raising call and its error region, whose `then`
-/// region raises the call's error.
+/// region stores the call's error into [`try_region`]'s error slot, `$v1`,
+/// and raises to it.
 fn raising_call() -> Vec<MirInstr> {
     vec![
         MirInstr::Call {
@@ -1999,10 +1996,14 @@ fn raising_call() -> Vec<MirInstr> {
             results: Vec::new(),
             cond: Reg(3),
             then: vec![block(
-                Vec::new(),
-                MirTerm::Raise {
+                vec![MirInstr::DefVar {
+                    var: 1,
                     src: Reg(4),
-                    label: Some(TRY),
+                    binding_ty: Some(Ty::int()),
+                    in_place: false,
+                }],
+                MirTerm::TryRaise {
+                    label: TRY,
                     values: Vec::new(),
                 },
             )],
@@ -2020,10 +2021,11 @@ const TRY: TryLabel = TryLabel(0);
 fn try_region(body: Vec<MirBlock>, handler: Option<Vec<MirBlock>>) -> MirInstr {
     MirInstr::Try {
         label: TRY,
+        error: Some(1),
         results: Vec::new(),
         body,
         handler_args: Vec::new(),
-        handler: handler.map(|blocks| (None, blocks)),
+        handler,
         else_args: Vec::new(),
         orelse: None,
     }

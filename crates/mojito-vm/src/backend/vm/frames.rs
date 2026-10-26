@@ -171,31 +171,14 @@ impl VmBackend {
                 Transfer::Return(reg) => {
                     reg.map_or(Value::None, |reg| frame.registers[reg.0 as usize].clone())
                 }
-                Transfer::Raise {
-                    src,
-                    label: Some(label),
-                    values,
-                } => {
-                    let error =
-                        match self.raise_register(prog, frame.function, &frame.registers, src) {
-                            RuntimeError::Raised(error) => error,
-                            raised => return Err(raised),
-                        };
-                    let slot = frame
+                Transfer::TryRaise { label, values } => {
+                    frame
                         .cursor
                         .catch(blocks, label, values, &mut frame.registers)?;
-                    if let Value::Error(message) = &error {
-                        self.record_lifecycle(format!("catch {message}"));
-                    }
-                    if let Some(slot) = slot {
-                        frame.variables[slot as usize] = error;
-                    }
                     self.frames.push(frame);
                     continue;
                 }
-                Transfer::Raise {
-                    src, label: None, ..
-                } => {
+                Transfer::ErrorReturn(src) => {
                     let raised = self.raise_register(prog, frame.function, &frame.registers, src);
                     match raised {
                         RuntimeError::Raised(error)

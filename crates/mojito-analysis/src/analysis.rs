@@ -641,6 +641,7 @@ mod interior_origin_tests {
     fn invalidation_before_a_break_from_a_try_reaches_the_loop_exit() {
         let body = MirInstr::Try {
             label: TryLabel(0),
+            error: None,
             results: Vec::new(),
             body: region(vec![invalidate(1)], BREAK),
             handler_args: Vec::new(),
@@ -844,6 +845,7 @@ mod interior_origin_tests {
         };
         let guarded = MirInstr::Try {
             label: TryLabel(0),
+            error: None,
             results: Vec::new(),
             body: region(vec![write], MirTerm::TryYield(Vec::new())),
             handler_args: Vec::new(),
@@ -865,23 +867,20 @@ mod interior_origin_tests {
     fn stale_uses_inside_try_handlers_are_checked() {
         let try_instr = MirInstr::Try {
             label: TryLabel(0),
+            error: None,
             results: Vec::new(),
             body: vec![block(
                 vec![invalidate(1)],
-                MirTerm::Raise {
-                    src: Reg(2),
-                    label: Some(TryLabel(0)),
+                MirTerm::TryRaise {
+                    label: TryLabel(0),
                     values: Vec::new(),
                 },
             )],
             handler_args: Vec::new(),
-            handler: Some((
-                None,
-                vec![block(
-                    vec![use_reference(1, 3)],
-                    MirTerm::TryYield(Vec::new()),
-                )],
-            )),
+            handler: Some(vec![block(
+                vec![use_reference(1, 3)],
+                MirTerm::TryYield(Vec::new()),
+            )]),
             else_args: Vec::new(),
             orelse: None,
         };
@@ -1035,6 +1034,7 @@ mod structured_move_tests {
     fn try_part(body: Vec<MirBlock>) -> MirInstr {
         MirInstr::Try {
             label: TryLabel(0),
+            error: None,
             results: Vec::new(),
             body,
             handler_args: Vec::new(),

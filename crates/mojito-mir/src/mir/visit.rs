@@ -611,6 +611,7 @@ mod tests {
                     },
                     MirInstr::Try {
                         label: TryLabel(0),
+                        error: None,
                         results: Vec::new(),
                         body: region,
                         handler_args: Vec::new(),

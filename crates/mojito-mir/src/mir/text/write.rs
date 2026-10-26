@@ -1501,6 +1501,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
         ),
         MirInstr::Try {
             label,
+            error,
             results,
             body,
             handler_args,
@@ -1511,20 +1512,13 @@ fn instruction_value(instruction: &MirInstr) -> String {
             tag,
             &[
                 ("label", try_label(*label)),
+                ("error", option(error.map(var_value))),
                 ("results", regs(results)),
                 ("body", blocks_value(body)),
                 ("handler_arguments", regs(handler_args)),
                 (
                     "handler",
-                    option(handler.as_ref().map(|(var, blocks)| {
-                        record(
-                            "handler",
-                            &[
-                                ("error_var", option(var.map(var_value))),
-                                ("blocks", blocks_value(blocks)),
-                            ],
-                        )
-                    })),
+                    option(handler.as_ref().map(|blocks| blocks_value(blocks))),
                 ),
                 ("else_arguments", regs(else_args)),
                 ("orelse", option(orelse.as_ref().map(|v| blocks_value(v)))),
@@ -1700,14 +1694,11 @@ fn term_value(term: &MirTerm) -> String {
     match term {
         MirTerm::Return(value) => record(tag, &[("value", option(value.map(reg_value)))]),
         MirTerm::Unreachable => record(tag, &[]),
-        MirTerm::Raise { src, label, values } => record(
+        MirTerm::TryRaise { label, values } => record(
             tag,
-            &[
-                ("src", reg_value(*src)),
-                ("label", option(label.map(try_label))),
-                ("values", regs(values)),
-            ],
+            &[("label", try_label(*label)), ("values", regs(values))],
         ),
+        MirTerm::ErrorReturn { src } => record(tag, &[("src", reg_value(*src))]),
         MirTerm::Yield(values)
         | MirTerm::TryYield(values)
         | MirTerm::ComptimeYield(values)

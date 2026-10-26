@@ -1296,14 +1296,7 @@ fn lower_storage_call_witness(
         instrs.push(MirInstr::If {
             results: Vec::new(),
             cond: raises.flag,
-            then: region(
-                Vec::new(),
-                MirTerm::Raise {
-                    src: raises.error,
-                    label: None,
-                    values: Vec::new(),
-                },
-            ),
+            then: region(Vec::new(), MirTerm::ErrorReturn { src: raises.error }),
             elifs: Vec::new(),
             else_args: Vec::new(),
             orelse: region(Vec::new(), MirTerm::Yield(Vec::new())),

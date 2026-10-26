@@ -2010,7 +2010,7 @@ impl ReturnExit {
             block.instrs.push(MirInstr::Const { dest, k });
             dest
         };
-        let raised = matches!(block.term, MirTerm::Raise { label: None, .. });
+        let raised = matches!(block.term, MirTerm::ErrorReturn { .. });
         let mut values = match &block.term {
             MirTerm::Return(Some(value)) if self.result == Returned::Value => vec![*value],
             MirTerm::Return(_) if matches!(self.result, Returned::None | Returned::Out) => {
@@ -2020,7 +2020,7 @@ impl ReturnExit {
                 block.term = MirTerm::Unreachable;
                 return;
             }
-            MirTerm::Raise { label: None, .. } if self.raises.is_some() => {
+            MirTerm::ErrorReturn { .. } if self.raises.is_some() => {
                 if self.result == Returned::Value {
                     let ty = function
                         .reg_types
@@ -2037,24 +2037,17 @@ impl ReturnExit {
         if let Some(raises) = &self.raises {
             values.push(constant(function, block, Ty::bool(), Const::Bool(raised)));
             let error = match block.term {
-                MirTerm::Raise {
-                    src: error,
-                    label: None,
-                    ..
-                } if function
-                    .reg_types
-                    .get(&error.0)
-                    .is_some_and(|ty| *ty != raises.ty) =>
+                MirTerm::ErrorReturn { src: error }
+                    if function
+                        .reg_types
+                        .get(&error.0)
+                        .is_some_and(|ty| *ty != raises.ty) =>
                 {
                     let converted = fresh_register(function, raises.ty.clone(), span.as_ref());
                     block.instrs.push(error_conversion(converted, error));
                     converted
                 }
-                MirTerm::Raise {
-                    src: error,
-                    label: None,
-                    ..
-                } => error,
+                MirTerm::ErrorReturn { src: error } => error,
                 _ => constant(function, block, raises.ty.clone(), Const::UninitMem),
             };
             values.push(error);
@@ -2090,11 +2083,7 @@ fn routes_raises(
 ) -> bool {
     blocks.iter().all(|block| {
         let routed = match block.term {
-            MirTerm::Raise {
-                src: error,
-                label: None,
-                ..
-            } => error
+            MirTerm::ErrorReturn { src: error } => error
                 .0
                 .checked_sub(base)
                 .and_then(|callee| reg_types.get(&callee))
@@ -4429,14 +4418,7 @@ mod tests {
                 operands: Vec::new(),
                 args: Vec::new(),
                 results: Vec::new(),
-                body: one(
-                    Vec::new(),
-                    MirTerm::Raise {
-                        src: Reg(0),
-                        label: None,
-                        values: Vec::new(),
-                    },
-                ),
+                body: one(Vec::new(), MirTerm::ErrorReturn { src: Reg(0) }),
             }],
             MirTerm::Unreachable,
         );

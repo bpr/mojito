@@ -746,12 +746,14 @@ impl<'a> Flatten<'a> {
     ) {
         let try_label = TryLabel(self.next_try);
         self.next_try += 1;
-        let enclosing = self.raise_target.replace(try_label);
+        let slot = self.try_error_slot(try_label, None);
+        let enclosing = self.raise_target.replace((try_label, slot));
         let body = self.region(|this| {
             this.call_raising_next(iter, raw, call, error);
             MirTerm::TryYield(Vec::new())
         });
         self.raise_target = enclosing;
+        self.var_types.entry(slot).or_insert_with(|| error.clone());
         let handler = vec![MirBlock {
             instrs: Vec::new(),
             term: MirTerm::Break {
@@ -761,10 +763,11 @@ impl<'a> Flatten<'a> {
         }];
         self.emit(MirInstr::Try {
             label: try_label,
+            error: Some(slot),
             results: Vec::new(),
             body,
             handler_args: Vec::new(),
-            handler: Some((None, handler)),
+            handler: Some(handler),
             else_args: Vec::new(),
             orelse: None,
         });

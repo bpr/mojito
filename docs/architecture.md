@@ -2885,7 +2885,9 @@ pub enum Terminator {
 ```
 
 A `raise` statement seals its block with `Terminator::Raise`, as upstream's
-`raise` ends its block; MIR lowers it to `MirTerm::Raise`.
+`raise` ends its block; MIR lowers it to `MirTerm::TryRaise` inside a
+`try` body, after storing the error into the `try`'s error slot, and to
+`MirTerm::ErrorReturn` outside every body.
 
 Iterator-driven loops use `ReturnWithCleanup` when a source `return` bypasses
 their common exit. The return expression is materialized first, then MIR keeps
@@ -3366,7 +3368,8 @@ Besides the `hlcf` region terminators (below), the terminators are:
 pub enum MirTerm {
     Return(Option<Reg>),
     TryYield,
-    Raise { src: Reg, label: Option<TryLabel> },
+    TryRaise { label: TryLabel },
+    ErrorReturn { src: Reg },
     // Yield, ElifCond, Break, Continue, ComptimeYield, ComptimeBreak,
     // ComptimeContinue, MatchNext, MatchComplete, Unreachable
 }
@@ -3374,19 +3377,33 @@ pub enum MirTerm {
 
 `TryYield` (`lit.try.yield`) completes a `try` part and never ends a function
 body; its values (MIR text 1.93) define the `else`'s arguments or the
-`try`'s results. `Raise` (MIR text 1.90) raises its register and may end any region:
-with a label (MIR text 1.92), it leaves every enclosing region for the
-handler of the nearest `try` carrying that label whose body holds it, and
-without one it leaves the function, as upstream's `LowerSemanticCF` lowers
-a `raise` to `lit.try.raise "<label>"` or `lit.error_return`. MIR lowering
-labels each `try` with the function's next `try` number
-(`Flatten::next_try`, upstream's `tryCounter`) and lowers a raise in its
-body naming it (`Flatten::raise_target`), and one in its handler, `else`,
-or `finally` naming the enclosing `try`, or none. The ownership walks
-treat a labelled raise as an exit to its `try`'s body frame
+`try`'s results. `TryRaise` (`lit.try.raise`, MIR text 1.107) leaves every
+enclosing region for the handler of the nearest `try` carrying its label
+whose body holds it, and `ErrorReturn` (`lit.error_return`) raises its
+register out of the function, as upstream's `LowerSemanticCF` lowers a
+`raise`; both may end any region. A `TryRaise` carries no error: as
+upstream's `parseTryStmt` declares `__try_error__` before each `lit.try`,
+which takes it as its `$err` operand, each `MirInstr::Try` names its error
+slot (`error`; the `except` binding's own slot when the clause binds one,
+else a `$try_error<N>` MIR lowering declares with a `var.declare` before
+the `try`, `Flatten::try_error_slot`), and a raise naming the `try` first
+stores its error there with a `var.store` (`Flatten::raise_exit`), the
+first raise typing the slot as upstream's first raise resolves its type.
+The handler reads the error from the slot, which dies as a variable: drop
+elaboration destroys it where it dies, right after the store when the
+handler never reads it. Both backends stage a store into an error slot as
+the raise's: the VM converts a string to an `Error` and logs the raise and
+its catch there (`VmBackend::stage_error`), and Pliron stores an owned
+`MjError` into an `Error`-typed slot (`FnLowering::stage_error`), a typed
+error being the value itself. MIR lowering labels each `try` with the
+function's next `try` number (`Flatten::next_try`, upstream's
+`tryCounter`) and lowers a raise in its body naming it and its slot
+(`Flatten::raise_target`), and one in its handler, `else`, or `finally`
+naming the enclosing `try`, or none. The ownership walks
+treat a `try.raise` as an exit to its `try`'s body frame
 (`RegionFrame::Try`, `region_walk.rs`: a forward walk joins its state into
 the frame's leave set, the handler's entry; a backward walk's live-out is
-the handler's live-in), and an unlabelled one as the function's exit, so
+the handler's live-in), and an `error_return` as the function's exit, so
 drop elaboration destroys before it, or at the entry of the arm holding
 it, what the handler does not read, as upstream's `DestructorInsertion`
 does at each raise exit. A raising
@@ -3428,9 +3445,10 @@ ending in its own exit replaces the exit it is copied before, the replaced
 (`Flatten::discard_binding`) so it dies at its definition, as upstream's
 `CheckLifetimes` destroys it. A raising body without an `except` gets the
 handler upstream's parser synthesizes in a raising context
-(`Flatten::reraising_handler`): it binds the error to a `$try_error` slot
-and raises it on to the enclosing `try`, the `finally` copied before that
-raise; an absent `else` becomes one holding only `try.yield`, as the
+(`Flatten::reraising_handler`): it moves the error out of the `try`'s
+slot and raises it on to the enclosing `try`, the `finally` copied before
+that raise, and a `finally` ending in its own exit leaves the error in the
+slot, where it dies as a variable; an absent `else` becomes one holding only `try.yield`, as the
 parser stubs it. So every exit is an ordinary terminator preceded by real
 instructions, and drop elaboration needs no side channel: each death has
 an instruction to follow or a region entry to lead. HIR keeps the

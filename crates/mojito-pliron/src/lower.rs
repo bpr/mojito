@@ -286,6 +286,7 @@ pub fn lower_body(
         err_slot: None,
         propagate_block: None,
         edge_errors: edge_errors(&func.blocks),
+        error_slots: error_slots(&func.blocks),
         open_edge: None,
         current: None,
     };
@@ -472,6 +473,10 @@ struct FnLowering<'a> {
     /// hands on, whole, the error its instruction raised, and traces no new
     /// raise.
     edge_errors: HashSet<u32>,
+    /// The error slots of the function's `try`s: a store into one is a
+    /// raise's, staging the error as an `MjError` when the slot holds an
+    /// `Error` ([`FnLowering::stage_error`]).
+    error_slots: HashSet<u32>,
     /// The raise edge of the instruction being lowered ([`OpenEdge`]).
     open_edge: Option<OpenEdge>,
     current: Option<Ptr<BasicBlock>>,
@@ -485,6 +490,17 @@ struct OpenEdge {
     raises: Raises,
     storage: Value,
     error_block: Option<Ptr<BasicBlock>>,
+}
+
+/// The error slot of every `try` in `blocks`, at any depth.
+fn error_slots(blocks: &[MirBlock]) -> HashSet<u32> {
+    mojito_mir::mir::nested_instructions(blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::Try { error, .. } => *error,
+            _ => None,
+        })
+        .collect()
 }
 
 /// The error register of every raise edge in `blocks`, at any depth.

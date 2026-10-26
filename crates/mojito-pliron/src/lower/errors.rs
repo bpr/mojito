@@ -33,10 +33,9 @@ impl FnLowering<'_> {
         self.emit_trace(ctx, kind, data, len);
     }
 
-    /// A lifecycle event carrying the staged error's message.
-    pub(super) fn emit_trace_err_slot(&mut self, ctx: &mut Context, kind: u32) {
-        let err_slot = self.ensure_err_slot(ctx);
-        let (data, size) = self.string_parts(ctx, err_slot, Reg(u32::MAX));
+    /// A lifecycle event carrying the message of the `MjError` at `storage`.
+    pub(super) fn emit_trace_error(&mut self, ctx: &mut Context, kind: u32, storage: Value) {
+        let (data, size) = self.string_parts(ctx, storage, Reg(u32::MAX));
         self.emit_trace(ctx, kind, data, size);
     }
 
@@ -219,44 +218,109 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// A `raise` terminator: materialize the raised value as an owned error
-    /// in the staging slot and jump to the landing block of the `try`
-    /// it names, carrying `values` into the handler's arguments, or, naming
-    /// none, to the raising function's propagate block. A raise edge's
-    /// error is the error its call raised, staged whole and traced once,
-    /// where it was raised.
-    pub(super) fn lower_raise(
+    /// A `lit.error_return`: materialize the raised value as an owned
+    /// error in the staging slot and jump to the raising function's
+    /// propagate block.
+    pub(super) fn lower_error_return(
         &mut self,
         ctx: &mut Context,
         src: Reg,
-        label: Option<TryLabel>,
+    ) -> Result<(), PlironError> {
+        let err_slot = self.ensure_err_slot(ctx);
+        self.store_raised(ctx, err_slot, src)?;
+        let target = self.ensure_propagate_block(ctx)?;
+        let jump = BrOp::new(ctx, target, Vec::new());
+        self.append(ctx, jump.get_operation(), Some(src));
+        Ok(())
+    }
+
+    /// A `try.raise`: jump to the landing block of the `try` labelled
+    /// `label`, carrying `values` into the handler's arguments. The raise
+    /// stored its error into the `try`'s slot first ([`Self::stage_error`]).
+    pub(super) fn lower_try_raise(
+        &mut self,
+        ctx: &mut Context,
+        label: TryLabel,
         values: &[Reg],
     ) -> Result<(), PlironError> {
-        let frame = label.map(|label| self.raise_target(label)).transpose()?;
-        let err_slot = self.ensure_err_slot(ctx);
+        let landing = self.raise_target(label)?;
+        let operands = self.carry(ctx, landing, values)?;
+        let jump = BrOp::new(ctx, self.carrier_block(landing), operands);
+        self.append(ctx, jump.get_operation(), None);
+        Ok(())
+    }
+
+    /// The store of the raised register `src` into the slot `var` of the
+    /// `try` it raises to, which catches it. A slot holding an `Error` (or
+    /// a String, which a raise converts to one) holds the raised error as
+    /// an owned `MjError`, as the staging slot does, and logs the catch;
+    /// a typed error is the value itself, a raise edge's `MjError`, whose
+    /// message names only the type, released on arrival.
+    pub(super) fn stage_error(
+        &mut self,
+        ctx: &mut Context,
+        var: u32,
+        src: Reg,
+    ) -> Result<(), PlironError> {
+        let slot = self.var_slots[var as usize];
+        let message = match self.func.var_tys.get(&var).map(Ty::kind) {
+            Some(TyKind::Error) => true,
+            Some(TyKind::Struct(name, _)) => mojito_symbol::symbol::is_stdlib_string_struct(name),
+            _ => false,
+        };
+        if message {
+            self.store_raised(ctx, slot, src)?;
+            if self.trace_lifecycle {
+                self.emit_trace_error(ctx, mojito_native::native::rt_abi::TRACE_CATCH, slot);
+            }
+            return Ok(());
+        }
+        let ty = self
+            .func
+            .var_tys
+            .get(&var)
+            .cloned()
+            .unwrap_or_else(Ty::error);
+        if !self
+            .layout
+            .layout_of(&ty)
+            .is_ok_and(|layout| layout.size == 0)
+        {
+            return Err(
+                self.unsupported_reg(format!("a caught error of type `{ty}` with fields"), src)
+            );
+        }
         if self.edge_errors.contains(&src.0) {
             let storage = self.reg_ptr(ctx, src)?;
-            self.mem_copy(ctx, err_slot, storage, 24, src);
-        } else {
-            self.store_error_into(ctx, err_slot, src)?;
-            // The VM's lifecycle log records only `Value::Error` raises; a
-            // raised error struct (`raise StopIteration()`) stays silent
-            // there.
-            let struct_raise = matches!(self.func.reg_types.get(&src.0).map(Ty::kind), Some(TyKind::Struct(name, _))
-                if !mojito_symbol::symbol::is_stdlib_string_struct(name));
-            if self.trace_lifecycle && !struct_raise {
-                self.emit_trace_err_slot(ctx, mojito_native::native::rt_abi::TRACE_RAISE);
-            }
+            self.emit_release_storage(ctx, storage, &Ty::error())?;
         }
-        let (target, operands) = match frame {
-            Some(landing) => {
-                let operands = self.carry(ctx, landing, values)?;
-                (self.carrier_block(landing), operands)
-            }
-            None => (self.ensure_propagate_block(ctx)?, Vec::new()),
-        };
-        let jump = BrOp::new(ctx, target, operands);
-        self.append(ctx, jump.get_operation(), Some(src));
+        Ok(())
+    }
+
+    /// Materialize the raised register `src` as an owned `MjError` in
+    /// `storage`: a raise edge's error is the error its call raised,
+    /// copied whole and traced once, where it was raised; any other value
+    /// converts as [`Self::store_error_into`] converts it, logging the
+    /// raise.
+    fn store_raised(
+        &mut self,
+        ctx: &mut Context,
+        storage: Value,
+        src: Reg,
+    ) -> Result<(), PlironError> {
+        if self.edge_errors.contains(&src.0) {
+            let error = self.reg_ptr(ctx, src)?;
+            self.mem_copy(ctx, storage, error, 24, src);
+            return Ok(());
+        }
+        self.store_error_into(ctx, storage, src)?;
+        // The VM's lifecycle log records only `Value::Error` raises; a
+        // raised error struct (`raise StopIteration()`) stays silent there.
+        let struct_raise = matches!(self.func.reg_types.get(&src.0).map(Ty::kind), Some(TyKind::Struct(name, _))
+            if !mojito_symbol::symbol::is_stdlib_string_struct(name));
+        if self.trace_lifecycle && !struct_raise {
+            self.emit_trace_error(ctx, mojito_native::native::rt_abi::TRACE_RAISE, storage);
+        }
         Ok(())
     }
 

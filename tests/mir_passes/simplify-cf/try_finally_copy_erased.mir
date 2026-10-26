@@ -1,4 +1,4 @@
-mojito-mir 1.93
+mojito-mir 1.107
 artifact {
   features: [],
   files: [
@@ -31,7 +31,7 @@ artifact {
           bb0 {
             instructions: [
               var.use { dest: %r0, var: $v0, mode: copy },
-              try { label: try0, results: [], body: [bb0 { instructions: [const { dest: %r1, value: int(1) }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present(handler { error_var: absent, blocks: [bb0 { instructions: [const { dest: %r2, value: int(2) }, const { dest: %r3, value: int(3) }], terminator: return { value: present(%r2) } }] }), else_arguments: [], orelse: present([bb0 { instructions: [const { dest: %r4, value: int(3) }], terminator: try.yield { values: [] } }]) }
+              try { label: try0, error: absent, results: [], body: [bb0 { instructions: [const { dest: %r1, value: int(1) }], terminator: try.yield { values: [] } }], handler_arguments: [], handler: present([bb0 { instructions: [const { dest: %r2, value: int(2) }, const { dest: %r3, value: int(3) }], terminator: return { value: present(%r2) } }]), else_arguments: [], orelse: present([bb0 { instructions: [const { dest: %r4, value: int(3) }], terminator: try.yield { values: [] } }]) }
             ],
             terminator: return { value: present(%r1) }
           }
