@@ -2,6 +2,7 @@
 //! including the `lower_stmt`/`lower_instr` dispatchers.
 //! Extracted from `mir.rs`; see `docs/symbol-map.md`.
 
+use super::call_results::CValue;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{
@@ -19,6 +20,25 @@ struct DestructureFrame<'a, 'p> {
     loans: Vec<MirLoan>,
     root_place: Option<MirPlace>,
     value: Node<'a>,
+}
+
+/// One `receiver[arguments] OP= rhs` store's checked facts: the subscript
+/// `target`, its accessor `plan`, whether the setter takes its value by
+/// keyword, the operator, and the right-hand side.
+struct AugmentedStore<'a> {
+    target: Node<'a>,
+    plan: mojito_checked::checked::CheckedAugmentedSubscript,
+    value_keyword: bool,
+    op: InfixOp,
+    rhs: Node<'a>,
+}
+
+/// An augmented store's right-hand side as its operator step consumes it:
+/// the lowered `expression`'s argument registers and retained places.
+struct AugmentedOperand<'a> {
+    expression: Node<'a>,
+    args: Vec<Reg>,
+    places: Vec<Option<MirPlace>>,
 }
 
 impl<'a> Flatten<'a> {
@@ -524,21 +544,6 @@ impl<'a> Flatten<'a> {
     /// [`MirPlace`] — a root variable plus a projection chain — flattening any
     /// subscript index into a register **once**. The checker guarantees the root
     /// is a variable (or `self`), so a non-variable root is unreachable.
-    /// Lower the right-hand side of an augmented subscript. An in-place dunder
-    /// takes it as a call argument, so a view temporary (`xs[0] +=
-    /// t.rstrip()`) anchors its borrowed source through the call.
-    fn lower_augmented_operand(&mut self, rhs_expression: Node<'a>, inplace: bool) -> Reg {
-        let rhs = self.expr(rhs_expression);
-        if !inplace {
-            return rhs;
-        }
-        let adjustments = rhs_expression.adjustments();
-        let saved_anchor_permission = std::mem::replace(&mut self.allow_argument_anchors, true);
-        let anchored = self.anchor_temporary_argument(rhs_expression, rhs, adjustments, false);
-        self.allow_argument_anchors = saved_anchor_permission;
-        anchored.unwrap_or(rhs)
-    }
-
     pub(super) fn place(&mut self, e: Node<'a>) -> MirPlace {
         let place = self.place_unrebound(e);
         e.rebound_place(place)
@@ -667,81 +672,6 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    /// Lower `receiver[arguments] OP= rhs` from the complete checked accessor
-    /// contracts. A value getter evaluates raw receiver/index sources, then the
-    /// RHS, then getter-specific adaptations and the getter; the result is sent
-    /// through independently adapted setter arguments. A mutable-reference
-    /// getter instead establishes the lvalue before the RHS and finishes with a
-    /// direct `WriteRef`, exactly as current Mojo does. In both paths each source
-    /// expression and slice bound is evaluated once.
-    /// Apply a nominal-subscript element's in-place dunder (`c[i] += v` →
-    /// `element.__iadd__(v)`). `current` is the element value read from the getter
-    /// (value getter) or through the reference handle (`ReadRef`, ref getter). It
-    /// is bound to a fresh mutable temporary so the `mut self` call commits through
-    /// `recv_place`, then the mutated element is read back and returned for the
-    /// setter or `WriteRef` step. This reuses the variable in-place mechanism, so
-    /// the VM is unchanged.
-    pub(super) fn emit_augmented_inplace(
-        &mut self,
-        current: Reg,
-        contract: &mojito_checked::checked::CheckedCallContract,
-        rhs: Reg,
-        operand_ty: &Ty,
-        op: InfixOp,
-        span: SourceSpan,
-    ) -> Reg {
-        let tmp = self.fresh_var();
-        self.var_types.insert(tmp, operand_ty.clone());
-        self.emit(MirInstr::DefVar {
-            var: tmp,
-            src: current,
-            binding_ty: Some(operand_ty.clone()),
-            in_place: false,
-        });
-        let recv = self.fresh_typed(span.clone(), Some(tmp), operand_ty.clone());
-        self.emit(MirInstr::UseVar {
-            dest: recv,
-            var: tmp,
-            mode: UseMode::BorrowMut,
-            constructor: None,
-        });
-        self.emit_checked_call_boundary(contract, &span);
-        let dest = self.fresh_typed(span.clone(), None, contract.result_ty.clone());
-        let raises = self.raises(contract.raises.clone(), span.clone());
-        self.emit(MirInstr::MethodCall {
-            dest,
-            recv,
-            method: op
-                .inplace_dunder()
-                .expect("augmented in-place operator has an in-place dunder")
-                .to_string(),
-            resolved: Some(contract.target.clone()),
-            raises,
-            reference_result: contract.reference_result.clone().map(Box::new),
-            result_adapter: contract.result_adapter.map(MirResultAdapter::new),
-            args: vec![rhs],
-            kwargs: Vec::new(),
-            recv_place: Some(Box::new(MirPlace::root(tmp, Some(operand_ty.clone())))),
-            recv_writes: true,
-            receiver_convention: contract.receiver_convention,
-            arg_places: vec![None],
-            kwarg_places: Vec::new(),
-            capture_accesses: Vec::new(),
-            param_arg_regs: Vec::new(),
-            param_decls: contract.param_decls.clone(),
-            instantiated_args: Vec::new(),
-            spread: None,
-        });
-        let updated = self.fresh_typed(span, Some(tmp), operand_ty.clone());
-        self.emit(MirInstr::UseVar {
-            dest: updated,
-            var: tmp,
-            mode: UseMode::Move,
-            constructor: None,
-        });
-        updated
-    }
-
     /// Lower `place OP= rhs` on a user-defined value to its in-place dunder call
     /// (`counter += 2` → `counter.__iadd__(2)`), a `mut self` method that mutates
     /// the receiver in place. Returns `false` for native scalar targets, which
@@ -759,45 +689,10 @@ impl<'a> Flatten<'a> {
         let Some(contract) = place.augmented_in_place_contract() else {
             return false;
         };
-        let (recv, recv_place) = self.lower_call_receiver(place);
-        // A view temporary operand (`s += t.rstrip()`) anchors its borrowed
-        // source through the call, as an ordinary method argument does.
-        let saved_anchor_permission = std::mem::replace(&mut self.allow_argument_anchors, true);
-        let (args, arg_places) = self.lower_call_arguments(&[rhs_expression], false);
-        self.allow_argument_anchors = saved_anchor_permission;
-        // A dunder dispatched through a bound names no declaration to read
-        // the result from; the checker proved it returns `None`.
-        let dest = self.fresh_typed(place.location(), None, contract.result_ty.clone());
+        let receiver = self.lower_call_receiver(place);
+        let operand = self.lower_in_place_operand(rhs_expression);
         self.emit_interior_invalidations(place, None);
-        self.emit_checked_call_boundary(&contract, &place.location());
-        let method = op
-            .inplace_dunder()
-            .expect("augmented in-place operator has an in-place dunder")
-            .to_string();
-        let raises = self.raises(contract.raises.clone(), place.location());
-        self.emit_call(MirInstr::MethodCall {
-            dest,
-            recv,
-            method,
-            resolved: Some(contract.target.clone()),
-            raises: raises.clone(),
-            reference_result: contract.reference_result.clone().map(Box::new),
-            result_adapter: contract.result_adapter.map(MirResultAdapter::new),
-            args,
-            kwargs: Vec::new(),
-            recv_place: recv_place.map(Box::new),
-            recv_writes: true,
-            receiver_convention: contract.receiver_convention,
-            arg_places,
-            kwarg_places: Vec::new(),
-            capture_accesses: Vec::new(),
-            param_arg_regs: Vec::new(),
-            param_decls: contract.param_decls.clone(),
-            instantiated_args: Vec::new(),
-            spread: None,
-        });
-        self.emit_nested_closure_argument_keepalives(&[rhs_expression], &[]);
-        self.error_region(raises);
+        self.emit_in_place_dunder(place, receiver, &contract, op, operand);
         true
     }
 
@@ -862,7 +757,16 @@ impl<'a> Flatten<'a> {
         true
     }
 
-    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
+    /// Lower `receiver[arguments] OP= rhs` from the complete checked accessor
+    /// contracts. A value getter evaluates raw receiver/index sources, then the
+    /// RHS, then getter-specific adaptations and the getter; the in-place
+    /// dunder updates the getter's result in its call-result slot, which the
+    /// independently adapted setter takes (an owned value parameter) or reads
+    /// (a `read` one). A mutable-reference getter instead establishes the
+    /// lvalue before the RHS and calls the dunder on the referent through the
+    /// getter's handle, as current Mojo does; a native scalar element reads the
+    /// handle and finishes with `WriteRef`. In both paths each source
+    /// expression and slice bound is evaluated once.
     pub(super) fn lower_augmented_subscript(
         &mut self,
         target: Node<'a>,
@@ -884,613 +788,661 @@ impl<'a> Flatten<'a> {
             })
             .expect("checked augmented subscript has descriptor metadata");
 
+        let store = AugmentedStore {
+            target,
+            plan,
+            value_keyword,
+            op,
+            rhs: rhs_expression,
+        };
         match target.op() {
             CheckedOp::Index { .. }
                 if let Some((object, index)) = target.object().zip(target.index()) =>
             {
                 debug_assert_eq!(descriptors, vec![None]);
-                let (receiver, receiver_place) = self.lower_call_receiver(object);
-                let index_source =
-                    mojito_checked::checked::CheckedCallArgumentSource::Positional(0);
-                let retain_index =
-                    Self::checked_call_source_requires_place(&plan.getter, index_source)
-                        || plan.setter.as_ref().is_some_and(|setter| {
-                            Self::checked_call_source_requires_place(setter, index_source)
-                        });
-                let (raw_index, index_place) =
-                    self.lower_augmented_argument_source(index, retain_index);
-
-                if plan.setter.is_none() {
-                    let getter_index = self.apply_checked_call_value_adjustments(
-                        &plan.getter,
-                        index_source,
-                        raw_index,
-                        index.location(),
-                    );
-                    let getter_call = self.mir_subscript_call_contract(
-                        plan.getter.clone(),
-                        &[MirSubscriptArg::Index(getter_index)],
-                        target.location(),
-                    );
-                    self.emit_checked_call_boundary(&plan.getter, &target.location());
-                    let handle =
-                        self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-                    self.record_call(handle, Some(getter_call.target.clone()), 0);
-                    self.emit(MirInstr::Index {
-                        dest: handle,
-                        base: receiver,
-                        index: getter_index,
-                        base_place: receiver_place.map(Box::new),
-                        index_place: (Self::checked_call_source_place(
-                            &plan.getter,
-                            index_source,
-                            &index_place,
-                        ))
-                        .map(Box::new),
-                        call: Some(Box::new(getter_call)),
-                        intrinsic: None,
-                    });
-                    let handle =
-                        self.peel_reference_handle_to(handle, &plan.operand_ty, &target.location());
-                    let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
-                    let current =
-                        self.fresh_typed(target.location(), None, plan.operand_ty.clone());
-                    self.emit(MirInstr::ReadRef {
-                        dest: current,
-                        reference: handle,
-                    });
-                    let result = if let Some(inplace) = &plan.inplace {
-                        self.emit_augmented_inplace(
-                            current,
-                            inplace,
-                            rhs,
-                            &plan.operand_ty,
-                            op,
-                            target.location(),
-                        )
-                    } else {
-                        let result =
-                            self.fresh_typed(target.location(), None, plan.result_ty.clone());
-                        self.emit(MirInstr::BinOp {
-                            op,
-                            dest: result,
-                            a: current,
-                            b: rhs,
-                            resolved: None,
-                            raises: None,
-                        });
-                        result
-                    };
-                    self.emit_interior_invalidations(target, None);
-                    self.emit(MirInstr::WriteRef {
-                        reference: handle,
-                        value: result,
-                    });
-                    return true;
-                }
-
-                // Value-getter ordering is raw receiver/index, RHS, accessor
-                // adaptation/getter, operator, setter adaptation/setter.
-                let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
-                let getter_index = self.apply_checked_call_value_adjustments(
-                    &plan.getter,
-                    index_source,
-                    raw_index,
-                    index.location(),
-                );
-                let getter_call = self.mir_subscript_call_contract(
-                    plan.getter.clone(),
-                    &[MirSubscriptArg::Index(getter_index)],
-                    target.location(),
-                );
-                self.emit_checked_call_boundary(&plan.getter, &target.location());
-                let current =
-                    self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-                self.record_call(current, Some(getter_call.target.clone()), 0);
-                self.emit(MirInstr::Index {
-                    dest: current,
-                    base: receiver,
-                    index: getter_index,
-                    base_place: receiver_place.clone().map(Box::new),
-                    index_place: (Self::checked_call_source_place(
-                        &plan.getter,
-                        index_source,
-                        &index_place,
-                    ))
-                    .map(Box::new),
-                    call: Some(Box::new(getter_call)),
-                    intrinsic: None,
-                });
-                let result = if let Some(inplace) = &plan.inplace {
-                    self.emit_augmented_inplace(
-                        current,
-                        inplace,
-                        rhs,
-                        &plan.operand_ty,
-                        op,
-                        target.location(),
-                    )
-                } else {
-                    let result = self.fresh_typed(target.location(), None, plan.result_ty.clone());
-                    self.emit(MirInstr::BinOp {
-                        op,
-                        dest: result,
-                        a: current,
-                        b: rhs,
-                        resolved: None,
-                        raises: None,
-                    });
-                    result
-                };
-
-                let setter = plan
-                    .setter
-                    .as_ref()
-                    .expect("value-returning augmented getter has a setter");
-                let setter_receiver = self.reload_augmented_source(
-                    receiver,
-                    &receiver_place,
-                    matches!(
-                        plan.getter.receiver_convention,
-                        Some(
-                            mojito_ast::ast::ArgConvention::Mut
-                                | mojito_ast::ast::ArgConvention::Ref
-                        )
-                    ),
-                    object.location(),
-                );
-                let setter_raw_index = self.reload_augmented_source(
-                    raw_index,
-                    &index_place,
-                    Self::checked_call_source_mutates(&plan.getter, index_source),
-                    index.location(),
-                );
-                let setter_index = self.apply_checked_call_value_adjustments(
-                    setter,
-                    index_source,
-                    setter_raw_index,
-                    index.location(),
-                );
-                let value_argument = if value_keyword {
-                    mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
-                } else {
-                    mojito_checked::checked::CheckedCallArgumentSource::Positional(1)
-                };
-                let value = self.apply_checked_call_value_adjustments(
-                    setter,
-                    value_argument,
-                    result,
-                    target.location(),
-                );
-                let setter_call = self.mir_subscript_call_contract(
-                    setter.clone(),
-                    &[MirSubscriptArg::Index(setter_index)],
-                    target.location(),
-                );
-                self.emit_checked_call_boundary(setter, &target.location());
-                self.emit(MirInstr::MultiSet {
-                    receiver: setter_receiver,
-                    receiver_place: receiver_place.map(Box::new),
-                    args: vec![MirSubscriptArg::Index(setter_index)],
-                    arg_places: vec![Self::checked_call_source_place(
-                        setter,
-                        index_source,
-                        &index_place,
-                    )],
-                    value,
-                    value_place: None,
-                    value_keyword,
-                    call: Box::new(setter_call),
-                });
-                true
+                self.lower_augmented_index(&store, object, index);
             }
             CheckedOp::Slice {
                 lower, upper, step, ..
             } if let Some(object) = target.object() => {
-                let (receiver, receiver_place) = self.lower_call_receiver(object);
-                let argument = self.slice_set_argument(
-                    target,
-                    descriptors.first().cloned().flatten(),
-                    [*lower, *upper, *step],
-                );
-                let getter_call =
-                    self.mir_subscript_call_contract(plan.getter.clone(), &[], target.location());
-                if plan.setter.is_none() {
-                    self.emit_checked_call_boundary(&plan.getter, &target.location());
-                    let handle =
-                        self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-                    self.emit_slice_read(
-                        handle,
-                        receiver,
-                        argument,
-                        receiver_place,
-                        Some(getter_call),
-                    );
-                    let handle =
-                        self.peel_reference_handle_to(handle, &plan.operand_ty, &target.location());
-                    let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
-                    let current =
-                        self.fresh_typed(target.location(), None, plan.operand_ty.clone());
-                    self.emit(MirInstr::ReadRef {
-                        dest: current,
-                        reference: handle,
-                    });
-                    let result = if let Some(inplace) = &plan.inplace {
-                        self.emit_augmented_inplace(
-                            current,
-                            inplace,
-                            rhs,
-                            &plan.operand_ty,
-                            op,
-                            target.location(),
-                        )
-                    } else {
-                        let result =
-                            self.fresh_typed(target.location(), None, plan.result_ty.clone());
-                        self.emit(MirInstr::BinOp {
-                            op,
-                            dest: result,
-                            a: current,
-                            b: rhs,
-                            resolved: None,
-                            raises: None,
-                        });
-                        result
-                    };
-                    self.emit_interior_invalidations(target, None);
-                    self.emit(MirInstr::WriteRef {
-                        reference: handle,
-                        value: result,
-                    });
-                    return true;
-                }
-
-                let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
-                self.emit_checked_call_boundary(&plan.getter, &target.location());
-                let current =
-                    self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-                self.emit_slice_read(
-                    current,
-                    receiver,
-                    argument.clone(),
-                    receiver_place.clone(),
-                    Some(getter_call),
-                );
-                let result = if let Some(inplace) = &plan.inplace {
-                    self.emit_augmented_inplace(
-                        current,
-                        inplace,
-                        rhs,
-                        &plan.operand_ty,
-                        op,
-                        target.location(),
-                    )
-                } else {
-                    let result = self.fresh_typed(target.location(), None, plan.result_ty.clone());
-                    self.emit(MirInstr::BinOp {
-                        op,
-                        dest: result,
-                        a: current,
-                        b: rhs,
-                        resolved: None,
-                        raises: None,
-                    });
-                    result
-                };
-                let setter = plan
-                    .setter
-                    .as_ref()
-                    .expect("value-returning augmented getter has a setter");
-                let setter_receiver = self.reload_augmented_source(
-                    receiver,
-                    &receiver_place,
-                    matches!(
-                        plan.getter.receiver_convention,
-                        Some(
-                            mojito_ast::ast::ArgConvention::Mut
-                                | mojito_ast::ast::ArgConvention::Ref
-                        )
-                    ),
-                    object.location(),
-                );
-                let value_argument = if value_keyword {
-                    mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
-                } else {
-                    mojito_checked::checked::CheckedCallArgumentSource::Positional(1)
-                };
-                let value = self.apply_checked_call_value_adjustments(
-                    setter,
-                    value_argument,
-                    result,
-                    target.location(),
-                );
-                let setter_call =
-                    self.mir_subscript_call_contract(setter.clone(), &[], target.location());
-                self.emit_checked_call_boundary(setter, &target.location());
-                self.emit(MirInstr::MultiSet {
-                    receiver: setter_receiver,
-                    receiver_place: receiver_place.map(Box::new),
-                    args: vec![argument],
-                    arg_places: vec![None],
-                    value,
-                    value_place: None,
-                    value_keyword,
-                    call: Box::new(setter_call),
-                });
-                true
+                let descriptor = descriptors.first().cloned().flatten();
+                self.lower_augmented_slice(&store, object, [*lower, *upper, *step], descriptor);
             }
             CheckedOp::MultiIndex { args: source, .. } if let Some(object) = target.object() => {
-                let (receiver, receiver_place) = self.lower_call_receiver(object);
-                let mut source_places = Vec::with_capacity(source.len());
-                let mut source_spans = Vec::with_capacity(source.len());
-                let raw_args = source
-                    .iter()
-                    .zip(&descriptors)
-                    .enumerate()
-                    .map(|(position, (argument, descriptor))| match argument {
-                        mojito_checked::checked::CheckedSubscriptArg::Index(index) => {
-                            debug_assert!(descriptor.is_none());
-                            let index = Self::subscript_operand(target, *index);
-                            let argument_source =
-                                mojito_checked::checked::CheckedCallArgumentSource::Positional(
-                                    position,
-                                );
-                            let retain_place = Self::checked_call_source_requires_place(
-                                &plan.getter,
-                                argument_source,
-                            ) || plan.setter.as_ref().is_some_and(|setter| {
+                self.lower_augmented_multi_index(&store, object, source, &descriptors);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// [`Self::lower_augmented_subscript`] for one index, `object[index]`.
+    fn lower_augmented_index(
+        &mut self,
+        store: &AugmentedStore<'a>,
+        object: Node<'a>,
+        index: Node<'a>,
+    ) {
+        let AugmentedStore {
+            target,
+            ref plan,
+            value_keyword,
+            op,
+            rhs: rhs_expression,
+        } = *store;
+        let (receiver, receiver_place) = self.lower_call_receiver(object);
+        let index_source = mojito_checked::checked::CheckedCallArgumentSource::Positional(0);
+        let retain_index = Self::checked_call_source_requires_place(&plan.getter, index_source)
+            || plan.setter.as_ref().is_some_and(|setter| {
+                Self::checked_call_source_requires_place(setter, index_source)
+            });
+        let (raw_index, index_place) = self.lower_augmented_argument_source(index, retain_index);
+
+        if plan.setter.is_none() {
+            let getter_index = self.apply_checked_call_value_adjustments(
+                &plan.getter,
+                index_source,
+                raw_index,
+                index.location(),
+            );
+            let getter_call = self.mir_subscript_call_contract(
+                plan.getter.clone(),
+                &[MirSubscriptArg::Index(getter_index)],
+                target.location(),
+            );
+            self.emit_checked_call_boundary(&plan.getter, &target.location());
+            let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+            self.record_call(handle, Some(getter_call.target.clone()), 0);
+            self.emit(MirInstr::Index {
+                dest: handle,
+                base: receiver,
+                index: getter_index,
+                base_place: receiver_place.map(Box::new),
+                index_place: (Self::checked_call_source_place(
+                    &plan.getter,
+                    index_source,
+                    &index_place,
+                ))
+                .map(Box::new),
+                call: Some(Box::new(getter_call)),
+                intrinsic: None,
+            });
+            self.finish_reference_augmented_store(target, handle, plan, op, rhs_expression);
+            return;
+        }
+
+        // Value-getter ordering is raw receiver/index, RHS, accessor
+        // adaptation/getter, operator, setter adaptation/setter.
+        let rhs = self.lower_augmented_rhs(rhs_expression, plan.inplace.is_some());
+        let getter_index = self.apply_checked_call_value_adjustments(
+            &plan.getter,
+            index_source,
+            raw_index,
+            index.location(),
+        );
+        let getter_call = self.mir_subscript_call_contract(
+            plan.getter.clone(),
+            &[MirSubscriptArg::Index(getter_index)],
+            target.location(),
+        );
+        self.emit_checked_call_boundary(&plan.getter, &target.location());
+        let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+        self.record_call(current, Some(getter_call.target.clone()), 0);
+        self.emit(MirInstr::Index {
+            dest: current,
+            base: receiver,
+            index: getter_index,
+            base_place: receiver_place.clone().map(Box::new),
+            index_place: (Self::checked_call_source_place(
+                &plan.getter,
+                index_source,
+                &index_place,
+            ))
+            .map(Box::new),
+            call: Some(Box::new(getter_call)),
+            intrinsic: None,
+        });
+        let result = self.apply_augmented_operator(target, current, plan, op, rhs);
+
+        let setter = plan
+            .setter
+            .as_ref()
+            .expect("value-returning augmented getter has a setter");
+        let setter_receiver =
+            self.reload_augmented_receiver(receiver, receiver_place.as_ref(), plan, object);
+        let setter_raw_index = self.reload_augmented_source(
+            raw_index,
+            &index_place,
+            Self::checked_call_source_mutates(&plan.getter, index_source),
+            index.location(),
+        );
+        let setter_index = self.apply_checked_call_value_adjustments(
+            setter,
+            index_source,
+            setter_raw_index,
+            index.location(),
+        );
+        let value_argument = if value_keyword {
+            mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
+        } else {
+            mojito_checked::checked::CheckedCallArgumentSource::Positional(1)
+        };
+        let (value, value_place) =
+            self.augmented_setter_value(target, setter, value_argument, result);
+        let setter_call = self.mir_subscript_call_contract(
+            setter.clone(),
+            &[MirSubscriptArg::Index(setter_index)],
+            target.location(),
+        );
+        self.emit_checked_call_boundary(setter, &target.location());
+        self.emit(MirInstr::MultiSet {
+            receiver: setter_receiver,
+            receiver_place: receiver_place.map(Box::new),
+            args: vec![MirSubscriptArg::Index(setter_index)],
+            arg_places: vec![Self::checked_call_source_place(
+                setter,
+                index_source,
+                &index_place,
+            )],
+            value,
+            value_place: value_place.map(Box::new),
+            value_keyword,
+            call: Box::new(setter_call),
+        });
+    }
+
+    /// [`Self::lower_augmented_subscript`] for one slice, `object[a:b:c]`.
+    fn lower_augmented_slice(
+        &mut self,
+        store: &AugmentedStore<'a>,
+        object: Node<'a>,
+        bounds: [Option<mojito_checked::checked::CheckedNodeId>; 3],
+        descriptor: Option<mojito_checked::checked::CheckedSliceLiteral>,
+    ) {
+        let AugmentedStore {
+            target,
+            ref plan,
+            value_keyword,
+            op,
+            rhs: rhs_expression,
+        } = *store;
+        let (receiver, receiver_place) = self.lower_call_receiver(object);
+        let argument = self.slice_set_argument(target, descriptor, bounds);
+        let getter_call =
+            self.mir_subscript_call_contract(plan.getter.clone(), &[], target.location());
+        if plan.setter.is_none() {
+            self.emit_checked_call_boundary(&plan.getter, &target.location());
+            let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+            self.emit_slice_read(
+                handle,
+                receiver,
+                argument,
+                receiver_place,
+                Some(getter_call),
+            );
+            self.finish_reference_augmented_store(target, handle, plan, op, rhs_expression);
+            return;
+        }
+
+        let rhs = self.lower_augmented_rhs(rhs_expression, plan.inplace.is_some());
+        self.emit_checked_call_boundary(&plan.getter, &target.location());
+        let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+        self.emit_slice_read(
+            current,
+            receiver,
+            argument.clone(),
+            receiver_place.clone(),
+            Some(getter_call),
+        );
+        let result = self.apply_augmented_operator(target, current, plan, op, rhs);
+        let setter = plan
+            .setter
+            .as_ref()
+            .expect("value-returning augmented getter has a setter");
+        let setter_receiver =
+            self.reload_augmented_receiver(receiver, receiver_place.as_ref(), plan, object);
+        let value_argument = if value_keyword {
+            mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
+        } else {
+            mojito_checked::checked::CheckedCallArgumentSource::Positional(1)
+        };
+        let (value, value_place) =
+            self.augmented_setter_value(target, setter, value_argument, result);
+        let setter_call = self.mir_subscript_call_contract(setter.clone(), &[], target.location());
+        self.emit_checked_call_boundary(setter, &target.location());
+        self.emit(MirInstr::MultiSet {
+            receiver: setter_receiver,
+            receiver_place: receiver_place.map(Box::new),
+            args: vec![argument],
+            arg_places: vec![None],
+            value,
+            value_place: value_place.map(Box::new),
+            value_keyword,
+            call: Box::new(setter_call),
+        });
+    }
+
+    /// [`Self::lower_augmented_subscript`] for a multi-argument bracket,
+    /// `object[i, j]` or `object[i, a:b]`.
+    fn lower_augmented_multi_index(
+        &mut self,
+        store: &AugmentedStore<'a>,
+        object: Node<'a>,
+        source: &[mojito_checked::checked::CheckedSubscriptArg],
+        descriptors: &[Option<mojito_checked::checked::CheckedSliceLiteral>],
+    ) {
+        let AugmentedStore {
+            target,
+            ref plan,
+            value_keyword,
+            op,
+            rhs: rhs_expression,
+        } = *store;
+        let (receiver, receiver_place) = self.lower_call_receiver(object);
+        let mut source_places = Vec::with_capacity(source.len());
+        let mut source_spans = Vec::with_capacity(source.len());
+        let raw_args = source
+            .iter()
+            .zip(descriptors)
+            .enumerate()
+            .map(|(position, (argument, descriptor))| match argument {
+                mojito_checked::checked::CheckedSubscriptArg::Index(index) => {
+                    debug_assert!(descriptor.is_none());
+                    let index = Self::subscript_operand(target, *index);
+                    let argument_source =
+                        mojito_checked::checked::CheckedCallArgumentSource::Positional(position);
+                    let retain_place =
+                        Self::checked_call_source_requires_place(&plan.getter, argument_source)
+                            || plan.setter.as_ref().is_some_and(|setter| {
                                 Self::checked_call_source_requires_place(setter, argument_source)
                             });
-                            let (register, place) =
-                                self.lower_augmented_argument_source(index, retain_place);
-                            source_places.push(place);
-                            source_spans.push(Some(index.location()));
-                            MirSubscriptArg::Index(register)
-                        }
-                        mojito_checked::checked::CheckedSubscriptArg::Slice {
-                            lower,
-                            upper,
-                            step,
-                            ..
-                        } => {
-                            source_places.push(None);
-                            source_spans.push(None);
-                            self.slice_set_argument(
-                                target,
-                                descriptor.clone(),
-                                [*lower, *upper, *step],
-                            )
-                        }
-                        _ => {
-                            unreachable!("keyword subscript assignment is rejected at checking")
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                // Value getters defer every call-local argument adaptation
-                // until after the RHS. Building the raw descriptor/index list
-                // above has already performed each source evaluation once.
-                let inplace = plan.inplace.is_some();
-                let value_rhs = plan
-                    .setter
-                    .as_ref()
-                    .map(|_| self.lower_augmented_operand(rhs_expression, inplace));
-                let getter_args = raw_args
-                    .iter()
-                    .enumerate()
-                    .map(|(position, argument)| match argument {
-                        MirSubscriptArg::Index(register) => MirSubscriptArg::Index(
-                            self.apply_checked_call_value_adjustments(
-                                &plan.getter,
-                                mojito_checked::checked::CheckedCallArgumentSource::Positional(
-                                    position,
-                                ),
-                                *register,
-                                source_spans[position]
-                                    .clone()
-                                    .unwrap_or_else(|| target.location()),
-                            ),
-                        ),
-                    })
-                    .collect::<Vec<_>>();
-                let getter_places = source_places
-                    .iter()
-                    .enumerate()
-                    .map(|(position, place)| {
-                        Self::checked_call_source_place(
-                            &plan.getter,
-                            mojito_checked::checked::CheckedCallArgumentSource::Positional(
-                                position,
-                            ),
-                            place,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let getter_call = self.mir_subscript_call_contract(
-                    plan.getter.clone(),
-                    &getter_args,
-                    target.location(),
-                );
-
-                if plan.setter.is_none() {
-                    self.emit_checked_call_boundary(&plan.getter, &target.location());
-                    let handle =
-                        self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-                    self.record_call(handle, Some(getter_call.target.clone()), 0);
-                    self.emit(MirInstr::MultiIndex {
-                        dest: handle,
-                        object: receiver,
-                        args: getter_args,
-                        object_place: receiver_place.map(Box::new),
-                        arg_places: getter_places,
-                        kwargs: Vec::new(),
-                        kwarg_places: Vec::new(),
-                        call: Some(Box::new(getter_call)),
-                    });
-                    let handle =
-                        self.peel_reference_handle_to(handle, &plan.operand_ty, &target.location());
-                    let rhs = self.lower_augmented_operand(rhs_expression, plan.inplace.is_some());
-                    let current =
-                        self.fresh_typed(target.location(), None, plan.operand_ty.clone());
-                    self.emit(MirInstr::ReadRef {
-                        dest: current,
-                        reference: handle,
-                    });
-                    let result = if let Some(inplace) = &plan.inplace {
-                        self.emit_augmented_inplace(
-                            current,
-                            inplace,
-                            rhs,
-                            &plan.operand_ty,
-                            op,
-                            target.location(),
-                        )
-                    } else {
-                        let result =
-                            self.fresh_typed(target.location(), None, plan.result_ty.clone());
-                        self.emit(MirInstr::BinOp {
-                            op,
-                            dest: result,
-                            a: current,
-                            b: rhs,
-                            resolved: None,
-                            raises: None,
-                        });
-                        result
-                    };
-                    self.emit_interior_invalidations(target, None);
-                    self.emit(MirInstr::WriteRef {
-                        reference: handle,
-                        value: result,
-                    });
-                    return true;
+                    let (register, place) =
+                        self.lower_augmented_argument_source(index, retain_place);
+                    source_places.push(place);
+                    source_spans.push(Some(index.location()));
+                    MirSubscriptArg::Index(register)
                 }
-
-                let rhs = value_rhs.expect("value-returning augmented getter has an RHS");
-                self.emit_checked_call_boundary(&plan.getter, &target.location());
-                let current =
-                    self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
-                self.record_call(current, Some(getter_call.target.clone()), 0);
-                self.emit(MirInstr::MultiIndex {
-                    dest: current,
-                    object: receiver,
-                    args: getter_args,
-                    object_place: receiver_place.clone().map(Box::new),
-                    arg_places: getter_places,
-                    kwargs: Vec::new(),
-                    kwarg_places: Vec::new(),
-                    call: Some(Box::new(getter_call)),
-                });
-                let result = if let Some(inplace) = &plan.inplace {
-                    self.emit_augmented_inplace(
-                        current,
-                        inplace,
-                        rhs,
-                        &plan.operand_ty,
-                        op,
-                        target.location(),
-                    )
-                } else {
-                    let result = self.fresh_typed(target.location(), None, plan.result_ty.clone());
-                    self.emit(MirInstr::BinOp {
-                        op,
-                        dest: result,
-                        a: current,
-                        b: rhs,
-                        resolved: None,
-                        raises: None,
-                    });
-                    result
-                };
-                let setter = plan
-                    .setter
-                    .as_ref()
-                    .expect("value-returning augmented getter has a setter");
-                let setter_receiver = self.reload_augmented_source(
-                    receiver,
-                    &receiver_place,
-                    matches!(
-                        plan.getter.receiver_convention,
-                        Some(
-                            mojito_ast::ast::ArgConvention::Mut
-                                | mojito_ast::ast::ArgConvention::Ref
-                        )
+                mojito_checked::checked::CheckedSubscriptArg::Slice {
+                    lower, upper, step, ..
+                } => {
+                    source_places.push(None);
+                    source_spans.push(None);
+                    self.slice_set_argument(target, descriptor.clone(), [*lower, *upper, *step])
+                }
+                _ => {
+                    unreachable!("keyword subscript assignment is rejected at checking")
+                }
+            })
+            .collect::<Vec<_>>();
+        // Value getters defer every call-local argument adaptation
+        // until after the RHS. Building the raw descriptor/index list
+        // above has already performed each source evaluation once.
+        let inplace = plan.inplace.is_some();
+        let value_rhs = plan
+            .setter
+            .as_ref()
+            .map(|_| self.lower_augmented_rhs(rhs_expression, inplace));
+        let getter_args = raw_args
+            .iter()
+            .enumerate()
+            .map(|(position, argument)| match argument {
+                MirSubscriptArg::Index(register) => MirSubscriptArg::Index(
+                    self.apply_checked_call_value_adjustments(
+                        &plan.getter,
+                        mojito_checked::checked::CheckedCallArgumentSource::Positional(position),
+                        *register,
+                        source_spans[position]
+                            .clone()
+                            .unwrap_or_else(|| target.location()),
                     ),
-                    object.location(),
-                );
-                let setter_args = raw_args
-                    .iter()
-                    .enumerate()
-                    .map(|(position, argument)| match argument {
-                        MirSubscriptArg::Index(register) => {
-                            let source_kind =
-                                mojito_checked::checked::CheckedCallArgumentSource::Positional(
-                                    position,
-                                );
-                            let raw = self.reload_augmented_source(
-                                *register,
-                                &source_places[position],
-                                Self::checked_call_source_mutates(&plan.getter, source_kind),
-                                source_spans[position]
-                                    .clone()
-                                    .unwrap_or_else(|| target.location()),
-                            );
-                            MirSubscriptArg::Index(
-                                self.apply_checked_call_value_adjustments(
-                                    setter,
-                                    source_kind,
-                                    raw,
-                                    source_spans[position]
-                                        .clone()
-                                        .unwrap_or_else(|| target.location()),
-                                ),
-                            )
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let setter_places = source_places
-                    .iter()
-                    .enumerate()
-                    .map(|(position, place)| {
-                        Self::checked_call_source_place(
+                ),
+            })
+            .collect::<Vec<_>>();
+        let getter_places = source_places
+            .iter()
+            .enumerate()
+            .map(|(position, place)| {
+                Self::checked_call_source_place(
+                    &plan.getter,
+                    mojito_checked::checked::CheckedCallArgumentSource::Positional(position),
+                    place,
+                )
+            })
+            .collect::<Vec<_>>();
+        let getter_call =
+            self.mir_subscript_call_contract(plan.getter.clone(), &getter_args, target.location());
+
+        let Some(rhs) = value_rhs else {
+            self.emit_checked_call_boundary(&plan.getter, &target.location());
+            let handle = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+            self.record_call(handle, Some(getter_call.target.clone()), 0);
+            self.emit(MirInstr::MultiIndex {
+                dest: handle,
+                object: receiver,
+                args: getter_args,
+                object_place: receiver_place.map(Box::new),
+                arg_places: getter_places,
+                kwargs: Vec::new(),
+                kwarg_places: Vec::new(),
+                call: Some(Box::new(getter_call)),
+            });
+            self.finish_reference_augmented_store(target, handle, plan, op, rhs_expression);
+            return;
+        };
+
+        self.emit_checked_call_boundary(&plan.getter, &target.location());
+        let current = self.fresh_typed(target.location(), None, plan.getter.result_ty.clone());
+        self.record_call(current, Some(getter_call.target.clone()), 0);
+        self.emit(MirInstr::MultiIndex {
+            dest: current,
+            object: receiver,
+            args: getter_args,
+            object_place: receiver_place.clone().map(Box::new),
+            arg_places: getter_places,
+            kwargs: Vec::new(),
+            kwarg_places: Vec::new(),
+            call: Some(Box::new(getter_call)),
+        });
+        let result = self.apply_augmented_operator(target, current, plan, op, rhs);
+        let setter = plan
+            .setter
+            .as_ref()
+            .expect("value-returning augmented getter has a setter");
+        let setter_receiver =
+            self.reload_augmented_receiver(receiver, receiver_place.as_ref(), plan, object);
+        let setter_args = raw_args
+            .iter()
+            .enumerate()
+            .map(|(position, argument)| match argument {
+                MirSubscriptArg::Index(register) => {
+                    let source_kind =
+                        mojito_checked::checked::CheckedCallArgumentSource::Positional(position);
+                    let raw = self.reload_augmented_source(
+                        *register,
+                        &source_places[position],
+                        Self::checked_call_source_mutates(&plan.getter, source_kind),
+                        source_spans[position]
+                            .clone()
+                            .unwrap_or_else(|| target.location()),
+                    );
+                    MirSubscriptArg::Index(
+                        self.apply_checked_call_value_adjustments(
                             setter,
-                            mojito_checked::checked::CheckedCallArgumentSource::Positional(
-                                position,
-                            ),
-                            place,
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                let value_argument = if value_keyword {
-                    mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
-                } else {
-                    mojito_checked::checked::CheckedCallArgumentSource::Positional(source.len())
-                };
-                let value = self.apply_checked_call_value_adjustments(
+                            source_kind,
+                            raw,
+                            source_spans[position]
+                                .clone()
+                                .unwrap_or_else(|| target.location()),
+                        ),
+                    )
+                }
+            })
+            .collect::<Vec<_>>();
+        let setter_places = source_places
+            .iter()
+            .enumerate()
+            .map(|(position, place)| {
+                Self::checked_call_source_place(
                     setter,
-                    value_argument,
-                    result,
-                    target.location(),
-                );
-                let setter_call = self.mir_subscript_call_contract(
-                    setter.clone(),
-                    &setter_args,
-                    target.location(),
-                );
-                self.emit_checked_call_boundary(setter, &target.location());
-                self.emit(MirInstr::MultiSet {
-                    receiver: setter_receiver,
-                    receiver_place: receiver_place.map(Box::new),
-                    args: setter_args,
-                    arg_places: setter_places,
-                    value,
-                    value_place: None,
-                    value_keyword,
-                    call: Box::new(setter_call),
-                });
-                true
-            }
-            _ => false,
+                    mojito_checked::checked::CheckedCallArgumentSource::Positional(position),
+                    place,
+                )
+            })
+            .collect::<Vec<_>>();
+        let value_argument = if value_keyword {
+            mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
+        } else {
+            mojito_checked::checked::CheckedCallArgumentSource::Positional(source.len())
+        };
+        let (value, value_place) =
+            self.augmented_setter_value(target, setter, value_argument, result);
+        let setter_call =
+            self.mir_subscript_call_contract(setter.clone(), &setter_args, target.location());
+        self.emit_checked_call_boundary(setter, &target.location());
+        self.emit(MirInstr::MultiSet {
+            receiver: setter_receiver,
+            receiver_place: receiver_place.map(Box::new),
+            args: setter_args,
+            arg_places: setter_places,
+            value,
+            value_place: value_place.map(Box::new),
+            value_keyword,
+            call: Box::new(setter_call),
+        });
+    }
+
+    /// An augmented store's right-hand side: read by its in-place dunder's
+    /// convention, its place retained, when `inplace`; otherwise the native
+    /// operator's value operand.
+    fn lower_augmented_rhs(
+        &mut self,
+        rhs_expression: Node<'a>,
+        inplace: bool,
+    ) -> AugmentedOperand<'a> {
+        if inplace {
+            return self.lower_in_place_operand(rhs_expression);
         }
+        AugmentedOperand {
+            expression: rhs_expression,
+            args: vec![self.expr(rhs_expression)],
+            places: vec![None],
+        }
+    }
+
+    /// The right-hand side of `place OP= rhs` lowered as its in-place dunder's
+    /// argument. A view temporary operand (`s += t.rstrip()`) anchors its
+    /// borrowed source through the call, as an ordinary method argument does.
+    fn lower_in_place_operand(&mut self, rhs_expression: Node<'a>) -> AugmentedOperand<'a> {
+        let saved_anchor_permission = std::mem::replace(&mut self.allow_argument_anchors, true);
+        let (args, places) = self.lower_call_arguments(&[rhs_expression], false);
+        self.allow_argument_anchors = saved_anchor_permission;
+        AugmentedOperand {
+            expression: rhs_expression,
+            args,
+            places,
+        }
+    }
+
+    /// Call the in-place dunder `contract` selected for `op` at `site` on
+    /// `receiver`, whose place the `mut self` call writes through.
+    fn emit_in_place_dunder(
+        &mut self,
+        site: Node<'a>,
+        (recv, recv_place): (Reg, Option<MirPlace>),
+        contract: &mojito_checked::checked::CheckedCallContract,
+        op: InfixOp,
+        operand: AugmentedOperand<'a>,
+    ) {
+        // A dunder dispatched through a bound names no declaration to read
+        // the result from; the checker proved it returns `None`.
+        let dest = self.fresh_typed(site.location(), None, contract.result_ty.clone());
+        self.emit_checked_call_boundary(contract, &site.location());
+        let method = op
+            .inplace_dunder()
+            .expect("augmented in-place operator has an in-place dunder")
+            .to_string();
+        let raises = self.raises(contract.raises.clone(), site.location());
+        self.emit_call(MirInstr::MethodCall {
+            dest,
+            recv,
+            method,
+            resolved: Some(contract.target.clone()),
+            raises: raises.clone(),
+            reference_result: contract.reference_result.clone().map(Box::new),
+            result_adapter: contract.result_adapter.map(MirResultAdapter::new),
+            args: operand.args,
+            kwargs: Vec::new(),
+            recv_place: recv_place.map(Box::new),
+            recv_writes: true,
+            receiver_convention: contract.receiver_convention,
+            arg_places: operand.places,
+            kwarg_places: Vec::new(),
+            capture_accesses: Vec::new(),
+            param_arg_regs: Vec::new(),
+            param_decls: contract.param_decls.clone(),
+            instantiated_args: Vec::new(),
+            spread: None,
+        });
+        self.emit_nested_closure_argument_keepalives(&[operand.expression], &[]);
+        self.error_region(raises);
+    }
+
+    /// Finish an augmented store through a mutable-reference getter's
+    /// `handle`: an element's in-place dunder runs on the referent through
+    /// the handle, with the RHS lowered after the lvalue; a native scalar
+    /// element is read through the handle, combined, and written back.
+    fn finish_reference_augmented_store(
+        &mut self,
+        target: Node<'a>,
+        handle: Reg,
+        plan: &mojito_checked::checked::CheckedAugmentedSubscript,
+        op: InfixOp,
+        rhs_expression: Node<'a>,
+    ) {
+        let handle = self.peel_reference_handle_to(handle, &plan.operand_ty, &target.location());
+        let reference = match self.f.reg_types.get(&handle.0).map(Ty::kind) {
+            Some(TyKind::Ref(reference)) => Some(reference.clone()),
+            _ => plan.getter.reference_result.clone(),
+        };
+        if let Some(inplace) = &plan.inplace
+            && let Some(reference) = reference
+        {
+            let place =
+                self.materialize_call_reference_place(target, handle, &reference, None, false);
+            let recv = self.fresh_typed(
+                target.location(),
+                Some(place.root),
+                place.ty.clone().unwrap_or_else(Ty::error),
+            );
+            self.emit(MirInstr::LoadPlace {
+                dest: recv,
+                place: place.clone(),
+            });
+            let operand = self.lower_in_place_operand(rhs_expression);
+            self.emit_interior_invalidations(target, None);
+            self.emit_in_place_dunder(target, (recv, Some(place)), inplace, op, operand);
+            return;
+        }
+        let rhs = self.expr(rhs_expression);
+        let current = self.fresh_typed(target.location(), None, plan.operand_ty.clone());
+        self.emit(MirInstr::ReadRef {
+            dest: current,
+            reference: handle,
+        });
+        let result = self.fresh_typed(target.location(), None, plan.result_ty.clone());
+        self.emit(MirInstr::BinOp {
+            op,
+            dest: result,
+            a: current,
+            b: rhs,
+            resolved: None,
+            raises: None,
+        });
+        self.emit_interior_invalidations(target, None);
+        self.emit(MirInstr::WriteRef {
+            reference: handle,
+            value: result,
+        });
+    }
+
+    /// Apply `op` to a value getter's result `current`. An element's in-place
+    /// dunder updates it in its call-result slot, which the setter then takes
+    /// or reads ([`Self::augmented_setter_value`]); a native scalar element's
+    /// operator yields a fresh value.
+    fn apply_augmented_operator(
+        &mut self,
+        target: Node<'a>,
+        current: Reg,
+        plan: &mojito_checked::checked::CheckedAugmentedSubscript,
+        op: InfixOp,
+        rhs: AugmentedOperand<'a>,
+    ) -> CValue {
+        let Some(inplace) = &plan.inplace else {
+            let result = self.fresh_typed(target.location(), None, plan.result_ty.clone());
+            self.emit(MirInstr::BinOp {
+                op,
+                dest: result,
+                a: current,
+                b: rhs.args[0],
+                resolved: None,
+                raises: None,
+            });
+            return CValue::Value(result);
+        };
+        let slot = self.var(&format!("{}{}", crate::mir::CALL_RESULT_SLOT, current.0));
+        self.var_types.insert(slot, plan.operand_ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: slot,
+            src: current,
+            binding_ty: Some(plan.operand_ty.clone()),
+            in_place: false,
+        });
+        let place = MirPlace::root(slot, Some(plan.operand_ty.clone()));
+        let recv = self.fresh_typed(target.location(), Some(slot), plan.operand_ty.clone());
+        self.emit(MirInstr::LoadPlace {
+            dest: recv,
+            place: place.clone(),
+        });
+        self.emit_in_place_dunder(target, (recv, Some(place)), inplace, op, rhs);
+        CValue::Slot(slot)
+    }
+
+    /// The augmented store's updated `result` passed to `setter`'s value
+    /// parameter by its convention: taken by an owned (`var`/`deinit`)
+    /// parameter or one the checker adapts, and read in place, with its
+    /// place, by a `read` one.
+    fn augmented_setter_value(
+        &mut self,
+        target: Node<'a>,
+        setter: &mojito_checked::checked::CheckedCallContract,
+        value_argument: mojito_checked::checked::CheckedCallArgumentSource,
+        result: CValue,
+    ) -> (Reg, Option<MirPlace>) {
+        let adapted =
+            setter.boundary.arguments.iter().any(|argument| {
+                argument.source == value_argument && !argument.adjustments.is_empty()
+            });
+        let owned = setter.arguments.iter().any(|argument| {
+            argument.source == value_argument
+                && matches!(
+                    argument.convention,
+                    Some(
+                        mojito_ast::ast::ArgConvention::Var
+                            | mojito_ast::ast::ArgConvention::Deinit
+                    )
+                )
+        });
+        if !adapted && !owned {
+            return self.read_c(target, result);
+        }
+        let value = self.take_c(target, result);
+        let value = self.apply_checked_call_value_adjustments(
+            setter,
+            value_argument,
+            value,
+            target.location(),
+        );
+        (value, None)
+    }
+
+    /// The augmented store's receiver as its setter sees it: reloaded from
+    /// its place when the getter's `mut`/`ref` receiver may have rebound it.
+    fn reload_augmented_receiver(
+        &mut self,
+        receiver: Reg,
+        receiver_place: Option<&MirPlace>,
+        plan: &mojito_checked::checked::CheckedAugmentedSubscript,
+        object: Node<'a>,
+    ) -> Reg {
+        self.reload_augmented_source(
+            receiver,
+            &receiver_place.cloned(),
+            matches!(
+                plan.getter.receiver_convention,
+                Some(mojito_ast::ast::ArgConvention::Mut | mojito_ast::ast::ArgConvention::Ref)
+            ),
+            object.location(),
+        )
     }
 
     /// Lower a slice or multidimensional assignment through the checker-selected

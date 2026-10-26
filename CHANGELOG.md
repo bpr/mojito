@@ -646,6 +646,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An augmented element store (`l[0] += x`) through a mutable-reference
+  getter calls the element's in-place dunder where the element lies and
+  reads `x` by the dunder's convention, as at the pin, instead of copying
+  `x` and moving the element out and back (R1426). This covers `List`,
+  generic `List[T]`, and multi-index and slice `ref` getters, and a raising
+  dunder no longer destroys the element twice. Through a value getter the
+  getter's result is updated in place and the setter takes it (a `var`
+  value), reads it (a `read` value), or converts it, with no move
+  initializer.
+
 - A generic body that only reads a pack element `Ts[i]` now reads it where
   it lies, as upstream passes a memory-only value by address, instead of
   copying it or running its move initializer: `print`, the `Bool`/`String`/

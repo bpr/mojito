@@ -2455,10 +2455,12 @@ whose bounds do not require it keeps the operator path. The call's result
 register takes the contract's `None` result, since a dispatched target names no
 declaration. Native scalar targets keep the primitive `BinOp` path. A user-struct
 nominal-subscript element dispatches the same way, recorded on the
-`CheckedAugmentedSubscript`: lowering materializes the element into a mutable
-temporary and sends the mutated result through `__setitem__` (value getter) or
-reads it through the reference handle (mutable-reference getter), applies the
-in-place dunder to that temporary, and commits the result.
+`CheckedAugmentedSubscript`. Through a mutable-reference getter the dunder is
+called on the referent through the getter's handle, as `l[0].__iadd__(x)` is,
+so nothing is read out or written back. Through a value getter it is called on
+the getter's result in its call-result slot, which `__setitem__` then takes (an
+owned value parameter) or reads in place (a `read` one). Either way the RHS is
+the dunder's argument, passed by its convention.
 
 Printing and `String()` require `Writable`. A custom `write_to` or
 `write_repr_to` receives `Some[Writer]`; `Writer` is the bundled trait
@@ -3769,8 +3771,11 @@ evaluates the receiver and raw subscript operands once, evaluates the RHS,
 applies getter-specific conversions and calls the getter, performs the operator,
 then independently reloads any getter-mutated caller place and applies the
 setter conversions before `MultiSet`. A mutable-reference getter instead is the
-complete operation: MIR invokes it before the RHS, reads and updates its handle,
-and emits `WriteRef` without selecting or calling a setter. The getter uses
+complete operation: MIR invokes it before the RHS and calls the element's
+in-place dunder through its handle, or, for a native scalar element, reads the
+handle and emits `WriteRef`, without selecting or calling a setter. The value
+path passes the computed result to the setter by the setter's convention:
+taken by an owned or converting value parameter, lent to a `read` one. The getter uses
 `Index`/`Slice`/`MultiIndex` in either path, so neither source expressions nor
 overloads are reconstructed. On a struct with no `__setitem__`, the element
 such a getter reaches is itself an assignment place (`xs[0].v += 7` over a

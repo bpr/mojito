@@ -792,8 +792,9 @@ impl Checker {
     /// selection reuses `select_inplace_operator` without re-inferring the
     /// subscript `place` — which would disturb the getter/setter adjustment state
     /// this branch carefully snapshots. The RHS conversion is recorded on the real
-    /// `value` span and survives the scope pop; lowering materializes the element
-    /// into its own temporary and applies the returned contract.
+    /// `value` span and survives the scope pop; lowering applies the returned
+    /// contract to the element through a reference getter's handle, or to a
+    /// value getter's result before the setter receives it.
     ///
     /// The temporary is no binding of the body: what the selection recorded
     /// at it, which is no expression, is dropped with it, as are the

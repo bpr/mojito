@@ -5434,3 +5434,54 @@ def main() raises:
         .collect();
     assert_eq!(seek_arities, [2]);
 }
+
+#[test]
+fn augmented_reference_getter_store_calls_the_dunder_in_place() {
+    // `l[0] += x` through `List`'s reference getter calls `__iadd__` on the
+    // element through the getter's handle and reads `x` where it lies; a
+    // value getter's result goes to a `read` setter value in place.
+    let source = "struct C(Copyable):\n    var v: Int\n    def __init__(out self, v: Int):\n        self.v = v\n    def __iadd__(mut self, rhs: Self):\n        self.v += rhs.v\n\nstruct Lent(Movable):\n    var first: C\n    def __init__(out self, var first: C):\n        self.first = first^\n    def __getitem__(self, i: Int) -> C:\n        return self.first.copy()\n    def __setitem__(mut self, i: Int, value: C):\n        self.first = value.copy()\n\ndef bump(mut l: List[C], x: C):\n    l[0] += x\n\ndef store(mut r: Lent, x: C):\n    r[0] += x\n\ndef main():\n    var l = List[C]()\n    l.append(C(3))\n    var x = C(4)\n    bump(l, x)\n    var r = Lent(C(2))\n    store(r, x)\n";
+    let compiled = Compiler::default()
+        .compile_source(source, Path::new("mir_test.mojo"))
+        .expect("compile");
+    let instrs = |name| {
+        mir_function(compiled.elaborated_mir(), name)
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instrs)
+            .collect::<Vec<_>>()
+    };
+    let bump = instrs("bump");
+    assert!(
+        !bump.iter().any(|instr| match instr {
+            MirInstr::ReadRef { .. } | MirInstr::WriteRef { .. } => true,
+            MirInstr::UseVar { mode, .. } => *mode == UseMode::Move,
+            MirInstr::Call { kwargs, .. } => kwargs
+                .iter()
+                .any(|(name, _)| name == "copy" || name == "move"),
+            _ => false,
+        }),
+        "{bump:#?}"
+    );
+    assert!(
+        bump.iter().any(|instr| matches!(
+            instr,
+            MirInstr::MethodCall { method, recv_place: Some(place), arg_places, .. }
+                if method == "__iadd__"
+                    && place.through.is_some()
+                    && arg_places.first().is_some_and(Option::is_some)
+        )),
+        "{bump:#?}"
+    );
+    let store = instrs("store");
+    assert!(
+        store.iter().any(|instr| matches!(
+            instr,
+            MirInstr::MultiSet {
+                value_place: Some(_),
+                ..
+            }
+        )),
+        "{store:#?}"
+    );
+}

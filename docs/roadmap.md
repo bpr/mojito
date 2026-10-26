@@ -1495,29 +1495,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1426 An augmented store through a reference getter copies its
-  value and moves the element out and back**
-
-  `l[0] += x` over a `List[C]` copies `x` and moves the element through a
-  temporary, where the pin calls `__iadd__` on the element in place and
-  copies nothing.
-  - Mojito prints `copy 4`, `del 4`, `move 7`, and the pin prints nothing.
-  - Probe: generic `items[i] += x` over `List[T]` is the same
-    (`Rack.accumulate` in
-    `assets/ok/template_method_parameter_built_store.mojo`).
-  - Cause: `lower_augmented_subscript` (`mir/lower_stmt.rs`), with no
-    setter, reads the referent (`ReadRef`), runs the dunder on that copy,
-    and writes it back (`WriteRef`) through `__moveinit__`.
-  - Cause: `lower_augmented_operand` lowers the value with `self.expr`, a
-    copy, where `lower_augmented_in_place` passes it as a read argument.
-  - Probe: the value-getter arm (`Rack.fold` over `Duo`) is upstream's
-    get-operate-set, but its setter argument is a `var.use move` that a
-    `drop.reg` destroys, where upstream lends the temporary to
-    `__setitem__`.
-  - Found while planning R1354 (2026-10-25).
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
 - [ ] **R731 A transferred call temporary skips the move initializer the
   pin runs**
 
@@ -9549,7 +9526,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `MirDeclarations::register_passable` answers no for.
   - The remaining placements are copies and moves into a register, each
     with its own entry: `List`→`Span` copies (R117), read arguments by value (R677), `List.resize`'s double copy
-    (R1353), an augmented store's operand (R1426), closure values (R1334),
+    (R1353), closure values (R1334),
     and a pending `Error` (R1293).
   - `owns_droppable_storage` (`mir/calls.rs`) omits `TyKind::Dependent`.
     Widening it double-frees in `assets/ok/container_hashable.mojo`,

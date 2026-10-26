@@ -190,13 +190,16 @@ pub struct CheckedCallContract {
 pub struct CheckedAugmentedSubscript {
     pub getter: CheckedCallContract,
     /// Absent exactly when `getter.reference_result` is mutable and lowering
-    /// must finish with `WriteRef` instead of invoking `__setitem__`.
+    /// finishes through the getter's handle instead of invoking `__setitem__`.
+    /// Present, it receives the getter's updated result by its value
+    /// parameter's convention: taken when owned, read in place when `read`.
     pub setter: Option<CheckedCallContract>,
     /// In-place dunder selected on the element type when it is a user-defined
-    /// value (`c[i] += v` → `element.__iadd__(v)`). Lowering materializes the
-    /// element into a mutable temporary, applies this `mut self` call, and sends
-    /// the result through the setter or reference handle. `None` for a native
-    /// scalar element, whose operator step stays a `BinOp` read-modify-write.
+    /// value (`c[i] += v` → `element.__iadd__(v)`). Lowering applies this
+    /// `mut self` call to the referent through a reference getter's handle, or
+    /// to a value getter's result in its call-result slot before the setter.
+    /// `None` for a native scalar element, whose operator step stays a `BinOp`
+    /// read-modify-write.
     pub inplace: Option<CheckedCallContract>,
     /// Ordinary value type read from the getter (the referent for `ref` results).
     pub operand_ty: Ty,
