@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1429**.
+Next free ID: **R1430**.
 
 ## Ordered Work
 
@@ -385,6 +385,28 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1429 An erased (`_REMOVED_ARG`) instance spells a capturing
+  callable type argument without its environment, so `automatic-inline`
+  splices a slot type its caller's disagrees with**
+
+  A display of a capturing lambda, `[lambda {var c^} -> Int: c.bump()]`,
+  stops at the post-elaboration verifier: the caller declares its slot
+  `Array[def() capturing[] -> Int, 1]`, and the inlined `Array`
+  constructor, an instance with its size argument removed, types it
+  `Array[def() -> Int, _REMOVED_ARG]`.
+  - Both print the pin's output with `AUTOMATIC_INLINE` removed from
+    `post_elaboration.rs`, on both backends; bisected to `dce3b374`
+    (R1271).
+  - Lever: keep the callable type argument's `capturing` environment in
+    the erased instance's types (`mono/substitute.rs`), so the splice
+    types the slot as its caller does.
+  - Probe: `assets/ok/capturing_lambda_array_display.mojo` (`1 6 3 4 13`).
+  - Probe: `conformance/probes/capturing_lambda_display_inlined.mojo`
+    (`5 5`, `3 4`).
+  - Found while landing R1427 (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1276 A region is a `Vec<MirBlock>` the verifier holds to one
   block, where upstream's `hlcf` regions are `SizedRegion<1>`**
 
@@ -497,8 +519,9 @@ which names the upstream pass each one follows. Each is measured by the
     `fold_known_callees` (`analysis/canonicalize.rs`): a load of each
     reference capture's place and its access. A first-class use of a
     capture-list `def` captures its storage by reference since R1377, so
-    it folds the same way; a copy or move capture (`{var x}`, `{s^}`),
-    which only a lambda makes now (R1427), needs its holding slot first.
+    it folds the same way; a lambda used as a value moves its storage into
+    its closure since R1427, so the fold passes the closure's storage as
+    the body's `self`.
   - Probe: `outer` in
     `tests/mir_passes/canonicalize/indirect_known_callee.mir` keeps its
     `call.indirect` through `closure.make "outer$plus"`.
@@ -3081,6 +3104,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     statement-root registration that checks a lambda's hidden `def`
     (`Checker::check_lambda`) has run over it.
   - Probe: `conformance/probes/augmented_lambda_value.mojo`.
+  - Probe: `conformance/probes/capturing_lambda_type_parameter.mojo`. A
+    capturing lambda as a compile-time callable argument
+    (`observe[lambda (x: Int) -> Int: x * factor](5)`) trips the same
+    invariant, where the pin rejects it ("cannot use a capturing lambda in
+    type parameter"): a parameter list is also inferred before
+    `check_lambda` registers the lambda.
   - Found while planning R1138 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9066,13 +9095,32 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: a first-class use of a capture-list `def` (`apply(inc)`) makes
     a one-capture `closure.make` over its storage, kept live to the end of
     the statement (`load_nested_closure`, `mir/lower_expr/calls.rs`), and
-    every lambda with a `var` or moved capture makes an owned
-    `closure.make` where it stands. Once the value is the struct,
+    every capturing lambda used as a value moves its storage into a
+    one-capture `closure.make` (`lambda_closure`). Once the value is the struct,
     the VM's `RefProjection::Capture` and owned-environment
-    `callee_place`, and Pliron's `c`/`m` capture-record slots and
+    `callee_place`, and Pliron's `m` capture-record slots and
     `mjdrop_<n>` thunks (`lower/closures.rs`), lose their last producer.
   - The storage's `ref` fields carry an untracked origin; upstream promotes
     the captures' origins to struct parameters (`outlineAndPromoteOrigins`).
+  - The storage then needs upstream's `__copyinit__` and
+    `Copyable`/`ImplicitlyCopyable` when it is copyable, and its
+    `__moveinit__` (`liftClosure`'s `ClosureMethod::MOVE`), because a
+    `var.use` of the value names them. Today it declares neither, and the
+    move into its closure relocates it.
+  - Probe: `conformance/probes/closure_value_copies_its_storage.mojo`.
+    Passed to `twice[F: def() -> Int]` and called twice, a `{var u}`
+    lambda over an `ImplicitlyCopyable` struct prints `copy 4` twice at
+    the pin (the copy of the copyable storage), three times on the VM
+    (`var.use copy` before each call), and once natively.
+  - Probe: `assets/extensions/ok/pliron_closure_drop_order.mojo` prints
+    `token drop 7` twice on the VM, once natively: the `var.use copy` of
+    `peek` and the slot are each destroyed (bisected to `e77576f1`,
+    R1329).
+  - Probe: `twice(lambda {var s^} -> Int: (s.__iadd__("!"),
+    s.byte_length())[1])` over a `String` prints the pin's `34`, but with
+    `AUTOMATIC_INLINE` removed from `post_elaboration.rs` the VM stops on
+    "double free of Pointer allocation" (before R1427 too): each copy of
+    the closure value is destroyed.
   - Closes R534 (broadened: the pin rejects every capturing capture-list
     closure there). Shrinks R176 (capture-list locals run at the pin).
   - Depends on R1427 and R1428: a lambda's value is its storage only
@@ -11340,34 +11388,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R526 (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1427 A capturing lambda passes its captures to its lifted body as
-  leading reference arguments, where the pin builds the lambda's
-  `__storage` struct and calls its method**
-
-  A lambda with captures makes a `closure.make` of its lifted body, which
-  takes each capture as a leading reference parameter, where upstream's
-  `resolveAnonymousClosure` sends every capturing lambda through
-  `emitClosureInstance`, as a capture-list `def` has been since R1377: the
-  pin calls `` `lambda_0::__storage::`lambda_0(i64, i64) `` directly.
-  - Lever: the lambda builds its storage where it stands
-    (`lower_closure_storage_value`, `mir/lower_stmt.rs`, into a hidden
-    slot) and its `closure.make` moves it in, so a display or a loop still
-    snapshots per evaluation.
-  - The storage then needs `__copyinit__`/`__moveinit__` members where a
-    field's run code, as upstream's `synthesizeValueMethodBody` adds them.
-  - Afterwards only a `@parameter` closure, upstream's legacy capturing
-    closure, keeps the leading-captures ABI: the `None` arm of
-    `capture_slots` (`mir/nested.rs`), `emit_nested_closure`'s copy and
-    move modes, and owned captures in the verifier's `MakeClosure` rule.
-  - Probe: `conformance/probes/reference_binding_value_capture.mojo`. Its
-    `lambda {var r}` over `ref r = xs[0]` captures the `ref` itself, so it
-    crashes natively, where the pin prints 331; its two `def`s copy the
-    referent since R1377.
-  - Probe: `assets/ok/capturing_lambda_array_display.mojo` and
-    `assets/ok/lambda_in_control_flow.mojo` keep their output.
-  - Depends on nothing.
-  - Model: Opus, Planned.
 
 - [ ] **R1428 A capture-list closure's lifted body is a nested generator
   taking its storage first, where the pin nests it in the `__storage`

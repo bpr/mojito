@@ -458,7 +458,6 @@ impl Decoder {
     pub(super) fn capture_mode(&mut self, value: &Value) -> Option<MirCaptureMode> {
         match self.atom(value)? {
             "reference" => Some(MirCaptureMode::Reference),
-            "copy" => Some(MirCaptureMode::Copy),
             "move" => Some(MirCaptureMode::Move),
             other => {
                 self.error(value.span, format!("unknown capture mode `{other}`"));

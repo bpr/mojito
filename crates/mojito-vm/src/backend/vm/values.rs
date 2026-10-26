@@ -579,15 +579,19 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         let (function, captures) = match &callable {
             Value::Function(function) => (function.clone(), Vec::new()),
+            // A lambda's moved storage reaches its body's `read self` as a
+            // value, which only a body that never writes it allows: the
+            // handler is called once, from no stable storage.
             Value::Closure {
                 function, captures, ..
             } => {
+                let writes = prog.param_writes(function);
                 let mut materialized = Vec::with_capacity(captures.len());
-                for capture in captures {
-                    if capture.owned {
+                for (index, capture) in captures.iter().enumerate() {
+                    if capture.owned && writes.get(index).copied().unwrap_or(true) {
                         return Err(RuntimeError::Unsupported(
-                            "vm: an owned-capture closure is not supported as a Variant \
-                             owning-operation handler"
+                            "vm: a closure whose body writes its owned storage is not \
+                             supported as a Variant owning-operation handler"
                                 .to_string(),
                         ));
                     }

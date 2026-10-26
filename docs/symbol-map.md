@@ -1163,8 +1163,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`MirFunctionDeclaration::enclosing`, set by `lower_nested_node`), and the
   nested frame declares its enclosing callable and type binders' locals
   (`Enclosing`). `scope_registry` gives every direct declaration with a
-  non-empty capture list (`CheckedDef::capture_list`, `NestedNode::capture_list`)
-  its storage struct (`NestedInfo::storage`, a `ClosureStorage` that
+  non-empty capture list (`CheckedDef::capture_list`, `NestedNode::capture_list`),
+  and every capturing lambda (`NestedNode::lambda`), its storage struct (`NestedInfo::storage`, a `ClosureStorage` that
   `closure_storage` derives, with its register passability and triviality
   as the meet over the captures, named by `symbol::closure_storage_name`),
   and slots one without storage a sibling captures (`NestedInfo::slotted`,
@@ -1173,12 +1173,19 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   rows, and synthesized `__init__`/`__deinit__` (`lower_closure_storage`,
   over `mir.rs`'s `lower_fieldwise_members` and `lower_synthesized_member`),
   and the declaration statement calls the `__init__` with the captures
-  (`Flatten::lower_closure_storage_value`). The lifted body takes the
+  (`Flatten::lower_closure_storage_value` over
+  `Flatten::build_closure_storage`, `mir/lower_stmt.rs`); a lambda builds
+  it where it stands into a hidden slot (`Flatten::lambda_storage_slot`),
+  which an immediately invoked lambda passes to a direct call
+  (`lower_direct_nested_call`, from `mir/lower_expr/expr_call.rs`) and a
+  lambda used as a value moves into its closure
+  (`Flatten::lambda_closure`, `mir/lower_expr/calls.rs`). The lifted body takes the
   storage as its one leading `read` parameter (`storage_parameter`), and its
   captures are frame locals (`capture_slots`, `mir.rs`'s `CaptureSlots` and
   `CaptureStorage`) that `lower_cfg_nested` binds to references to their
   fields at the head of the body (`Flatten::capture_storage_prologue`); a
-  lambda's, or a `@parameter` closure's, are leading reference parameters.
+  `@parameter` closure's are leading reference parameters, whose closure
+  `Flatten::emit_nested_closure` makes of reference captures.
   `Flatten::lower_nested_call` (`mir/lower_expr/calls.rs`) lowers a call by
   name to a direct `call` of the lifted body passing the storage
   (`storage_place`, by address when it is memory-only) or the captured

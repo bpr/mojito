@@ -2713,8 +2713,8 @@ impl MirInstr {
     /// - a move, forward, or place move: each ends a slot;
     /// - an operator: a generic operand's becomes a dunder call per instance,
     ///   and built-in division traps;
-    /// - a tuple or variant construction, or a closure of a copied or moved
-    ///   capture: it takes or copies owned operands; a type construction
+    /// - a tuple or variant construction, or a closure of a moved capture:
+    ///   it takes or copies owned operands; a type construction
     ///   runs an initializer;
     /// - `rebind`, a place read through an index, variant, uninit-payload, or
     ///   rebind projection: each calls `__getitem__`, traps, or is an
@@ -2747,7 +2747,7 @@ impl MirInstr {
             | Self::SimdShuffle { .. } => true,
             // A closure of reference captures is a struct of pointers to
             // the captured places, as upstream's trivially register-passable
-            // closure is; a copied or moved capture runs its constructor.
+            // closure is; a moved capture runs its constructor.
             Self::MakeClosure { captures, .. } => captures
                 .iter()
                 .all(|capture| capture.mode == MirCaptureMode::Reference),
@@ -3008,10 +3008,14 @@ impl MirInstr {
     }
 }
 
+/// How a [`MirClosureCapture`] holds its place.
+///
+/// A reference to it (a `@parameter` closure's capture, or a `def`'s
+/// storage), or its value moved into the closure (a lambda's storage,
+/// built where it stands).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum MirCaptureMode {
     Reference,
-    Copy,
     Move,
 }
 
@@ -3040,10 +3044,10 @@ impl MirResultAdapter {
 
 /// One captured place of a [`MirInstr::MakeClosure`].
 ///
-/// A reference to the place, or a copy or move of its value naming the
-/// `__copyinit__` or `__moveinit__` it runs, as a [`MirInstr::UseVar`]
-/// does, and the `__deinit__` the owned value runs when the closure value
-/// dies, as a [`MirInstr::DropVar`] names its slot's.
+/// A reference to the place, or a move of its value naming the
+/// `__moveinit__` it runs, as a [`MirInstr::UseVar`] does, and the
+/// `__deinit__` the owned value runs when the closure value dies, as a
+/// [`MirInstr::DropVar`] names its slot's.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MirClosureCapture {
     pub place: MirPlace,
@@ -3055,11 +3059,10 @@ pub struct MirClosureCapture {
 }
 
 impl MirClosureCapture {
-    /// The lifecycle member the capture runs: `__copyinit__` for a copy,
-    /// `__moveinit__` for a move, none for a reference.
+    /// The lifecycle member the capture runs: `__moveinit__` for a move,
+    /// none for a reference.
     pub const fn constructor_member(&self) -> Option<&'static str> {
         match self.mode {
-            MirCaptureMode::Copy => Some("__copyinit__"),
             MirCaptureMode::Move => Some("__moveinit__"),
             MirCaptureMode::Reference => None,
         }
@@ -3069,7 +3072,7 @@ impl MirClosureCapture {
     /// dies: `__deinit__` for an owned capture, none for a reference.
     pub const fn destructor_member(&self) -> Option<&'static str> {
         match self.mode {
-            MirCaptureMode::Copy | MirCaptureMode::Move => Some("__deinit__"),
+            MirCaptureMode::Move => Some("__deinit__"),
             MirCaptureMode::Reference => None,
         }
     }

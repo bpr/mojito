@@ -186,12 +186,12 @@ impl Walk<'_> {
                     // capture the other way, finding the member by type.
                     match (&capture.constructor, capture.mode) {
                         (_, MirCaptureMode::Reference) => {}
-                        (Some(constructor), mode) => {
+                        (Some(constructor), MirCaptureMode::Move) => {
                             self.named(
                                 capture.place.storage_ty(&self.function.var_tys),
                                 constructor,
                             );
-                            self.place(&capture.place, mode == MirCaptureMode::Copy);
+                            self.place(&capture.place, false);
                         }
                         (None, _) => {
                             self.place(&capture.place, false);

@@ -736,11 +736,11 @@ impl<'a> Flatten<'a> {
             // Tuple's private backing field. Other indexed transfers have
             // already been restricted by checking to copyable value reads.
             CheckedOp::Transfer(inner) => self.transfer(node, operand(inner)?),
-            // A lambda expression materializes its hidden definition's
-            // closure at the expression's evaluation point — copy/move
-            // captures snapshot here, once per evaluation.
+            // A lambda expression builds its closure's storage at the
+            // expression's evaluation point, once per evaluation, and moves
+            // it into the closure.
             CheckedOp::Lambda { .. } => match self.nested_info(node) {
-                Some(info) => self.emit_nested_closure(&info, node.location(), false),
+                Some(info) => self.lambda_closure(&info, node.location()),
                 None => self.unsupported_value(
                     node.location(),
                     "lambda expression lost its checked nested declaration",

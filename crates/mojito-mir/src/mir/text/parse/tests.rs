@@ -845,7 +845,7 @@ fn instruction_families_reprint_byte_identically() {
                 },
                 MirClosureCapture {
                     place: place(1),
-                    mode: MirCaptureMode::Copy,
+                    mode: MirCaptureMode::Move,
                     constructor: None,
                     destructor: None,
                 },

@@ -15,7 +15,7 @@ instruction	ref.read	partial	typed referent registers
 instruction	value.copy	partial	compiled `__copyinit__` only; raising or uncompiled copy constructors reject
 instruction	value.rebind	unsupported	the elaborator judges and erases every rebind; one that survives rejects
 instruction	ref.write	partial	typed referent registers
-instruction	closure.make	partial	two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and owned captures with a user copy/move constructor reject
+instruction	closure.make	partial	two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and moved captures whose own type's user `__moveinit__` goes unnamed reject
 instruction	lifetime.keep_alive	unsupported	`lower-lit` erases every lifetime marker; one that survives rejects
 instruction	const	partial	Int/Float/Bool/Str/DType/None (literals stay pending until materialization) and function references as two-word callable values
 instruction	layout.size_of	unsupported	the elaborator answers every layout query under the target; one that survives rejects

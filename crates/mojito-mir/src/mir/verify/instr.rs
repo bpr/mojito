@@ -753,20 +753,13 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                             declaration.param_types.len()
                         ));
                     }
-                    // A capture binds a leading reference parameter, or by
-                    // reference a leading `read` one: a closure's storage,
-                    // its lifted method's `self`.
-                    let binds = |(index, capture): (usize, &MirClosureCapture)| {
-                        declaration.ref_params.get(index).copied().unwrap_or(false)
-                            || (capture.mode == MirCaptureMode::Reference
-                                && matches!(
-                                    declaration.param_conventions.get(index),
-                                    Some(None | Some(ArgConvention::Imm))
-                                ))
-                    };
-                    if !captures.iter().enumerate().all(binds) {
+                    if !captures
+                        .iter()
+                        .enumerate()
+                        .all(|(index, capture)| capture_binds(declaration, index, capture))
+                    {
                         errors.push(format!(
-                            "{prefix}: closure environment for '{target}' binds neither a leading reference parameter nor, by reference, a leading `read` one"
+                            "{prefix}: closure environment for '{target}' binds neither, by reference, a leading reference parameter nor, by reference or moved in, a leading `read` one of its type"
                         ));
                     }
                 }
@@ -1014,5 +1007,32 @@ fn verify_struct_creation(cx: &InstrCx<'_>, dest: Reg, fields: &[Reg], errors: &
                 "{prefix}: struct creation's field {field} is {found}, declared {expected}"
             ));
         }
+    }
+}
+
+/// Whether the closure capture `capture` binds the leading parameter
+/// `index` of its lifted body `declaration`: a reference parameter by
+/// reference (a `@parameter` closure's), or a `read` one, a closure's
+/// storage, its lifted method's `self`, by reference (a `def` used as a
+/// value) or moved in (a lambda's) as a value of its type.
+fn capture_binds(
+    declaration: &MirFunctionDeclaration,
+    index: usize,
+    capture: &MirClosureCapture,
+) -> bool {
+    if declaration.ref_params.get(index).copied().unwrap_or(false) {
+        return capture.mode == MirCaptureMode::Reference;
+    }
+    matches!(
+        declaration.param_conventions.get(index),
+        Some(None | Some(ArgConvention::Imm))
+    ) && match capture.mode {
+        MirCaptureMode::Reference => true,
+        MirCaptureMode::Move => capture.place.ty.as_ref().is_none_or(|ty| {
+            declaration
+                .param_types
+                .get(index)
+                .is_some_and(|param| types_compatible(ty, param))
+        }),
     }
 }

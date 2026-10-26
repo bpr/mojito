@@ -902,8 +902,8 @@ impl<'a> Flatten<'a> {
 
     /// One loan per reference capture (transitively through captured closure
     /// slots), rooted at the captured owner's variable. `imm` loans
-    /// immutably; `mut`/`ref` loan mutably; copy/move environments are
-    /// self-contained and stop the walk.
+    /// immutably; `mut`/`ref` loan mutably; copy/move captures live in the
+    /// closure's storage and stop the walk.
     fn collect_capture_loans(
         &self,
         capture: &crate::mir::NestedCapture,
@@ -1133,8 +1133,8 @@ impl<'a> Flatten<'a> {
         // stored value retains their frame slots, so the owners must stay
         // alive (and, for `imm`, unmutated) while the storage lives. Direct
         // nested calls never consult this path, so the loan-free
-        // declaration-to-call capture model is preserved; owned copy/move
-        // captures are self-contained.
+        // declaration-to-call capture model is preserved; copy/move captures
+        // live in the closure's storage.
         if matches!(
             node.op(),
             CheckedOp::Identifier(_) | CheckedOp::Lambda { .. }

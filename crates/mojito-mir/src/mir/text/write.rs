@@ -825,7 +825,6 @@ fn instruction_value(instruction: &MirInstr) -> String {
                                             "mode",
                                             match capture.mode {
                                                 MirCaptureMode::Reference => "reference",
-                                                MirCaptureMode::Copy => "copy",
                                                 MirCaptureMode::Move => "move",
                                             }
                                             .into(),

@@ -374,7 +374,6 @@ struct FunctionFrame {
     callable_targets: HashMap<u32, (String, bool)>,
     closure_captures: HashMap<String, Vec<MirClosureCapture>>,
     enclosing: Bindings,
-    folded_slots: HashSet<u32>,
 }
 
 /// The elaborator thread's stack: enough for the type walks at the nesting
@@ -648,10 +647,6 @@ struct Specializer<'a> {
     /// (`hash[Self.H](key)`), or building a value argument from its own
     /// value binders (`successor[n, 1 + n]()`), resolves them here.
     enclosing: Bindings,
-    /// The slots of the function being specialized that hold a folded value
-    /// parameter. A snapshot of one never differs from the slot, so a
-    /// direct call to a generic nested `def` may pass the slot itself.
-    folded_slots: HashSet<u32>,
     /// The parameter constants an unrolled iteration of the function being
     /// specialized could not compute, by destination register: each fails
     /// the instantiation once the instance is found to reach it.

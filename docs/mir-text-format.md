@@ -1,4 +1,4 @@
-# Mojito Textual MIR Format, Version 1.105
+# Mojito Textual MIR Format, Version 1.106
 
 This document is the normative specification of Mojito's textual verified-MIR
 artifact. The Rust data model in `crates/mojito-mir/src/mir.rs` and
@@ -7,7 +7,7 @@ is its stable inspection and interchange boundary. `docs/vm-instruction-set.md`
 explains execution semantics, while this document defines syntax and
 serialized data.
 
-Version 1.105 is implemented end to end for inspection and loading: canonical
+Version 1.106 is implemented end to end for inspection and loading: canonical
 in-memory disassembly, full-grammar assembly parsing, and artifact-loading
 verification (`mir::text::load_artifact`, which reports canonical-verifier
 findings at artifact source spans). Lossless print → parse → print round trips
@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.105
+mojito-mir 1.106
 ```
 
-The writer emits 1.105. The reader accepts 1.0 through 1.105; *Schema 1.0*
+The writer emits 1.106. The reader accepts 1.0 through 1.106; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -545,6 +545,13 @@ The package format moves to `mojito-package 98` when a checked `def`
 records whether it declares a capture list (`capture_list`), for which
 MIR lowering builds the closure's storage struct, as upstream's
 `constructClosure` does. The MIR text is unchanged.
+
+Schema 1.106 withdraws the `copy` closure-capture mode: every capturing
+lambda builds its storage struct where it stands, as upstream's
+`resolveAnonymousClosure` does, and a lambda used as a value moves the
+storage into its closure, so a capture is a `reference` or the `move` of
+a lambda's storage. An older artifact holding a `copy` capture no longer
+loads.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1234,7 +1241,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `InvalidateInteriors` | `interiors.invalidate` (pre-drop and drop-elaborated only: `lower-lit` erases it before the pre-elaboration pipeline, and concrete verification refuses one) |
 | `MakeRef` / `ReadRef` / `WriteRef` | `ref.make` / `ref.read` / `ref.write` |
 | `CopyValue` / `Rebind` | `value.copy` / `value.rebind` — a `value.copy` carries `constructor: "<symbol>"` after its operands when it names the `__copyinit__` it runs, as `var.use` does (schema 1.68) |
-| `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `copy` or `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__copyinit__` or `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does) |
+| `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`: a capture is a `reference` or a lambda's storage moved in) |
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |

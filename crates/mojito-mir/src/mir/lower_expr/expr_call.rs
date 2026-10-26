@@ -53,8 +53,8 @@ impl<'a> Flatten<'a> {
             );
         }
         // A call of a nested `def` by name: a direct call of its lifted
-        // body passing the captured places as leading arguments, or, for
-        // a body with a copied or moved capture, a call through its
+        // body passing its storage or the captured places as leading
+        // arguments, or, where the frame holds neither, a call through its
         // closure value (`lower_nested_call`).
         if let Some(info) = node
             .binding
@@ -361,13 +361,14 @@ impl<'a> Flatten<'a> {
             .cloned()
         {
             // Invoke the zero-parameter factory, then wrap its result:
-            // the payload temporary is consumed by the construction.
-            let factory = self.expr(
-                kwargs
-                    .first()
-                    .expect("checked Variant(init_with=) has one factory")
-                    .1,
-            );
+            // the payload temporary is consumed by the construction. A
+            // factory in storage is called from it, as any closure is.
+            let factory_node = kwargs
+                .first()
+                .expect("checked Variant(init_with=) has one factory")
+                .1;
+            let callee_place = self.callable_receiver_place(factory_node);
+            let factory = self.expr(factory_node);
             let payload = self.fresh_typed(call.location(), None, payload);
             self.emit(MirInstr::CallIndirect {
                 dest: payload,
@@ -376,7 +377,7 @@ impl<'a> Flatten<'a> {
                 raises: None,
                 args: Vec::new(),
                 kwargs: Vec::new(),
-                callee_place: None,
+                callee_place: callee_place.map(Box::new),
                 arg_places: Vec::new(),
                 kwarg_places: Vec::new(),
                 capture_accesses: Vec::new(),
@@ -527,14 +528,25 @@ impl<'a> Flatten<'a> {
         if parameterized_method_decls(node).is_some() {
             return self.parameterized_method_call(call, callee, args, kwargs);
         }
+        let lambda_callee = matches!(callee.op(), CheckedOp::Lambda { .. });
+        // An immediately invoked capturing lambda builds its storage where
+        // it stands and calls its lifted body directly, passing it, as
+        // upstream calls the storage's method.
+        if lambda_callee
+            && let Some(info) = self.nested_info(callee)
+            && let Some(storage) = &info.storage
+        {
+            let slot = self.lambda_storage_slot(&info, storage, &callee.location());
+            self.owner_vars.insert(info.binding, slot);
+            return self.lower_direct_nested_call(call, &info, args, kwargs);
+        }
         let mut callee_place = self.callable_receiver_place(callee);
         let callable_ty = callee.ty();
-        let lambda_callee = matches!(callee.op(), CheckedOp::Lambda { .. });
         let mut callee = self.expr(callee);
         let callable_ty = callable_ty.or_else(|| self.f.reg_types.get(&callee.0).cloned());
         if lambda_callee && callee_place.is_none() {
-            // An immediately invoked lambda's closure is a temporary;
-            // bind it to a synthetic slot so owned capture slots are
+            // An immediately invoked lambda without storage makes a
+            // temporary closure; bind it to a synthetic slot so it is
             // called from stable storage like a declaration-owned
             // closure.
             let slot = self.fresh_var();

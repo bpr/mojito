@@ -1087,6 +1087,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- Every capturing lambda, with a capture list or without one, now builds
+  upstream's `__storage` struct where it stands, as upstream's
+  `resolveAnonymousClosure` does, and its lifted body takes the struct as
+  `self`, where the body took each capture as a leading reference argument
+  (R1427). An immediately invoked lambda is a direct call passing the
+  storage, so a capturing generic lambda
+  (`(lambda [N: Int](x: Int) {var k} -> Int: x + N + k)[5](3)`), which
+  failed to elaborate, runs; a lambda used as a value moves the storage
+  into its closure, so a `{var c^}` register-passable capture the body
+  writes prints the pin's `55` through `twice`, where Mojito printed `56`.
+  A `{var r}` lambda over `ref r = xs[0]` copies the referent, so it runs
+  natively, where it crashed. A moved capture of a `def` or lambda now
+  moves once, into the storage, where its `__moveinit__` ran twice. MIR
+  text 1.106 withdraws the `copy` closure-capture mode.
+
 - Every capture-list nested `def` now builds upstream's `__storage` struct
   at its declaration, and its lifted body takes that struct as its one
   leading `read` parameter, `self`, as upstream's lifted method does,

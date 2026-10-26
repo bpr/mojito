@@ -307,6 +307,7 @@ impl VmBackend {
                         &caller.variables,
                         callee_place.as_deref(),
                         captures,
+                        prog.param_writes(function),
                     )?,
                 ),
                 Value::Struct { name, .. } => {

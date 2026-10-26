@@ -418,13 +418,13 @@ impl<'a> Flatten<'a> {
         })
     }
 
-    /// The direct call of the lifted body of `info`: the storage this
-    /// frame holds, as upstream passes a closure's `self`, retained as the
-    /// call's place when it is memory-only (by address), else its captured
-    /// places, loaded in capture order and retained as the call's places
-    /// for the body's leading reference parameters, lead the explicit
-    /// arguments.
-    fn lower_direct_nested_call(
+    /// The direct call of the lifted body of `info`, called by name or
+    /// invoked where its lambda stands: the storage this frame holds, as
+    /// upstream passes a closure's `self`, retained as the call's place
+    /// when it is memory-only (by address), else its captured places,
+    /// loaded in capture order and retained as the call's places for the
+    /// body's leading reference parameters, lead the explicit arguments.
+    pub(in crate::mir) fn lower_direct_nested_call(
         &mut self,
         call: Node<'a>,
         info: &NestedInfo,
@@ -547,8 +547,8 @@ impl<'a> Flatten<'a> {
             owners.push(var);
         }
         // A captured closure slot can itself retain reference captures. Keep
-        // those owners alive transitively; owned copy/move environment entries
-        // are self-contained and deliberately stop the walk.
+        // those owners alive transitively; copy/move captures live in the
+        // closure's storage and deliberately stop the walk.
         if let Some(callable) = self.nested.get(&capture.binding) {
             for nested in &callable.captures {
                 if matches!(
@@ -617,32 +617,43 @@ impl<'a> Flatten<'a> {
         }
     }
 
-    pub(in crate::mir) fn emit_nested_closure(
-        &mut self,
-        info: &NestedInfo,
-        at: SourceSpan,
-        forward_existing_environment: bool,
-    ) -> Reg {
+    /// The closure value of the lambda `info` at `at`: a capturing
+    /// lambda builds its storage here, once per evaluation, and moves it
+    /// into a closure of its lifted body, whose `self` it is; a lambda
+    /// without storage makes the closure of its captured places.
+    pub(in crate::mir) fn lambda_closure(&mut self, info: &NestedInfo, at: SourceSpan) -> Reg {
+        let Some(storage) = &info.storage else {
+            return self.emit_nested_closure(info, at);
+        };
+        let slot = self.lambda_storage_slot(info, storage, &at);
+        let dest = match &info.callable_ty {
+            Some(ty) => self.fresh_typed(at, None, ty.clone()),
+            None => self.fresh(at, None),
+        };
+        self.emit(MirInstr::MakeClosure {
+            dest,
+            function: info.mangled.clone(),
+            captures: vec![MirClosureCapture {
+                place: MirPlace::root(slot, Some(storage.ty.clone())),
+                mode: MirCaptureMode::Move,
+                constructor: None,
+                destructor: None,
+            }],
+        });
+        dest
+    }
+
+    /// The closure of the body `info` without storage at `at` (a thin
+    /// lambda, or a `@parameter` closure or capture-free `def` used as a
+    /// value): each capture is a reference to its place, which a
+    /// `@parameter` closure's body takes as a leading reference parameter.
+    pub(in crate::mir) fn emit_nested_closure(&mut self, info: &NestedInfo, at: SourceSpan) -> Reg {
         let captures = info
             .captures
             .iter()
             .map(|capture| MirClosureCapture {
                 place: self.capture_place(capture),
-                mode: if forward_existing_environment {
-                    // In a lifted body these names are already references into
-                    // the declaration-created environment. Recursion and calls
-                    // to inherited siblings forward those handles; they must
-                    // never repeat a copy/move capture operation.
-                    MirCaptureMode::Reference
-                } else {
-                    match capture.kind {
-                        mojito_ast::ast::CaptureKind::Copy => MirCaptureMode::Copy,
-                        mojito_ast::ast::CaptureKind::Move => MirCaptureMode::Move,
-                        mojito_ast::ast::CaptureKind::Imm
-                        | mojito_ast::ast::CaptureKind::Mut
-                        | mojito_ast::ast::CaptureKind::Ref => MirCaptureMode::Reference,
-                    }
-                },
+                mode: MirCaptureMode::Reference,
                 constructor: None,
                 destructor: None,
             })
@@ -695,7 +706,7 @@ impl<'a> Flatten<'a> {
             // outer frame's closure slot: its inherited callable is
             // reconstructed from the environment parameters forwarded into
             // this frame.
-            return self.emit_nested_closure(info, at, !info.materialized_here);
+            return self.emit_nested_closure(info, at);
         }
         let var = self.binding_var(info.binding, name);
         if let Some(ty) = &info.callable_ty {

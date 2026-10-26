@@ -9,8 +9,8 @@ use mojito_types::types::TyKind;
 /// Lower a function body (`name` its registered/mangled name) plus every nested
 /// `def` it defines, pushing the function and each lifted nested function into
 /// `out`. A liftable nested `def` becomes `name$inner`, taking its closure's
-/// storage struct as its leading parameter, or, for a lambda or a
-/// `@parameter` closure, its captured enclosing locals as leading reference
+/// storage struct as its leading parameter, or, for a `@parameter`
+/// closure, its captured enclosing locals as leading reference
 /// parameters; a nested `def` we can't lift stays a clean `Unsupported` at
 /// execution.
 pub(super) struct FunctionLowering<'a> {
@@ -394,13 +394,13 @@ fn analyze_node(
 /// direct nested declarations are `children`. Direct declarations and inherited
 /// callables are keyed by checked identity, so same-spelled bindings
 /// coexist without shadow-removal heuristics. Every direct declaration
-/// with a non-empty capture list builds its storage struct
-/// ([`NestedInfo::storage`]), as upstream's `constructClosure` emits a
+/// with a non-empty capture list, and every capturing lambda with or
+/// without one, builds its storage struct ([`NestedInfo::storage`]), as
+/// upstream's `constructClosure` and `resolveAnonymousClosure` emit a
 /// closure instance for every one; one without storage a sibling
-/// captures keeps its closure in a slot ([`NestedInfo::slotted`]). A lambda
-/// makes its closure where it stands, and a `@parameter` closure, which
-/// captures without a list, takes its captures as leading reference
-/// parameters. A declaration whose storage names a
+/// captures keeps its closure in a slot ([`NestedInfo::slotted`]). A
+/// `@parameter` closure, which captures without a list, takes its
+/// captures as leading reference parameters. A declaration whose storage names a
 /// binder no enclosing declaration binds is an invariant failure,
 /// recorded in `invariant_errors`.
 fn scope_registry(
@@ -424,7 +424,7 @@ fn scope_registry(
                     .iter()
                     .any(|capture| capture.binding == child.binding)
         });
-        let storage_backed = !child.lambda && child.capture_list && !child.captures.is_empty();
+        let storage_backed = (child.lambda || child.capture_list) && !child.captures.is_empty();
         let storage = storage_backed
             .then(|| closure_storage(child, &registry, binders, declarations))
             .flatten();
@@ -451,7 +451,7 @@ fn scope_registry(
     registry
 }
 
-/// The storage struct of the capture-list `def` `child`, whose
+/// The storage struct of the capture-list `def` or capturing lambda `child`, whose
 /// captured siblings `registry` registers, declared where `binders` are in
 /// scope: its parameters are the binders its fields name, as upstream
 /// promotes the captures' parameters to the storage's own. `None` for a
@@ -811,8 +811,8 @@ fn lower_nested_node(
         .collect();
     // A body with storage takes it as its one leading `read` parameter,
     // as upstream's lifted method takes `self`, and holds its captures in
-    // frame locals; a lambda's body takes each capture as a leading
-    // reference parameter.
+    // frame locals; a `@parameter` closure's body takes each capture as a
+    // leading reference parameter.
     let capture_names: Vec<String> = captures
         .iter()
         .map(|capture| capture.name.clone())
@@ -847,10 +847,9 @@ fn lower_nested_node(
         });
         body_parameter_ty(p, ty)
     }));
-    // The closure object owns declaration-time copy/move captures. A lifted
-    // invocation only borrows its storage or those environment slots, just
-    // as it borrows explicit read/mut/ref captures; it must neither destroy
-    // nor duplicate them on each call.
+    // A lifted invocation only borrows its storage, as a `@parameter`
+    // closure's borrows its captures; it must neither destroy nor
+    // duplicate it on each call.
     let mut owned2: Vec<bool> = vec![false; leading];
     owned2.extend(
         caller_params
@@ -864,9 +863,9 @@ fn lower_nested_node(
             .iter()
             .map(|(_, parameter)| is_deinit(&parameter.convention)),
     );
-    // A lambda's captures are `mut` (their final value is written back to
-    // the enclosing variable — reference-capture semantics); a storage is
-    // read.
+    // A `@parameter` closure's captures are `mut` (their final value is
+    // written back to the enclosing variable — reference-capture
+    // semantics); a storage is read.
     let mut refp2: Vec<bool> = vec![storage.is_none(); leading];
     refp2.extend(
         caller_params
@@ -1095,7 +1094,8 @@ fn storage_parameter(
 
 /// The slots `captures` bind in a lifted body, from slot `first` on: each
 /// a local holding a reference to its field of `storage` when the body
-/// takes it, at `location`, else each a leading reference parameter.
+/// takes it, at `location`, else, for a `@parameter` closure, each a
+/// leading reference parameter.
 fn capture_slots(
     captures: &[NestedCapture],
     storage: Option<&ClosureStorage>,

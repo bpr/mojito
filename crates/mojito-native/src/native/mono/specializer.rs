@@ -67,7 +67,6 @@ impl<'a> Specializer<'a> {
             callable_targets: HashMap::new(),
             closure_captures: HashMap::new(),
             enclosing: Bindings::default(),
-            folded_slots: HashSet::new(),
             unreached_failures: HashMap::new(),
             region_generators: HashMap::new(),
         }
@@ -996,10 +995,6 @@ impl<'a> Specializer<'a> {
                 error
             })?;
         self.close_lane_masks(&key.template, &mut function)?;
-        self.folded_slots = self
-            .folded_parameter_values(&key.template, &function, bindings)
-            .into_keys()
-            .collect();
         // A callable parameter the call site could not fold into this body
         // becomes its last runtime parameter, carrying the closure — and its
         // environment — that the body then calls indirectly.
@@ -1740,7 +1735,6 @@ impl<'a> Specializer<'a> {
             callable_targets: std::mem::take(&mut self.callable_targets),
             closure_captures: std::mem::take(&mut self.closure_captures),
             enclosing: std::mem::take(&mut self.enclosing),
-            folded_slots: std::mem::take(&mut self.folded_slots),
         }
     }
 
@@ -1749,7 +1743,6 @@ impl<'a> Specializer<'a> {
         self.callable_targets = frame.callable_targets;
         self.closure_captures = frame.closure_captures;
         self.enclosing = frame.enclosing;
-        self.folded_slots = frame.folded_slots;
     }
 
     /// Whether the `comptime if` condition `cond` holds under the bindings.
@@ -3683,32 +3676,8 @@ impl<'a> Specializer<'a> {
     /// The captured places a direct call to the lifted body `target` passes
     /// ahead of its source arguments, each paired with a fresh register the
     /// call loads it into. Only by-reference environments are the caller's
-    /// storage; a copied or moved capture is the closure's own snapshot,
+    /// storage; a moved capture, a lambda's storage, is the closure's own,
     /// which a direct call cannot recover.
-    /// The value each of `function`'s slots holds when it names one of
-    /// `owner`'s value parameters (or a capture its instance folded) bound
-    /// to a compile-time constant here, keyed by slot.
-    fn folded_parameter_values(
-        &self,
-        owner: &str,
-        function: &MirFunction,
-        bindings: &Bindings,
-    ) -> HashMap<u32, CtValue> {
-        let scope = self.binder_scope(owner);
-        let locals = bound_parameter_locals(&scope, bindings);
-        (0u32..)
-            .zip(&function.var_names)
-            .filter_map(|(slot, name)| {
-                let value = bindings
-                    .callables
-                    .get(name)
-                    .map(|callable| CtValue::Str(callable.clone()))
-                    .or_else(|| locals.get(name.as_str()).map(|value| (*value).clone()))?;
-                Some((slot, value))
-            })
-            .collect()
-    }
-
     fn capture_arguments(
         &self,
         owner: &str,
@@ -3720,11 +3689,9 @@ impl<'a> Specializer<'a> {
             .get(target)
             .map_or(&[][..], Vec::as_slice);
         if captures.is_empty()
-            || captures.iter().any(|capture| match capture.mode {
-                MirCaptureMode::Reference => false,
-                MirCaptureMode::Copy => !self.folded_slots.contains(&capture.place.root),
-                MirCaptureMode::Move => true,
-            })
+            || captures
+                .iter()
+                .any(|capture| capture.mode == MirCaptureMode::Move)
         {
             return Err(self.error(
                 Some(owner),

@@ -5,8 +5,8 @@
 use super::*;
 use mojito_types::types::TyKind;
 
-/// One slot of a capture record: its mode (`r` a reference, `c` a copy,
-/// `m` a move), the captured type, its byte offset in the record, and the
+/// One slot of a capture record: its mode (`r` a reference, `m` a move),
+/// the captured type, its byte offset in the record, and the
 /// `__deinit__` the owned value runs when the closure dies, as the
 /// `closure.make` capture names it.
 pub(super) struct CaptureSlot {
@@ -46,11 +46,10 @@ impl FnLowering<'_> {
         };
         self.check_contract_target(&abi, target, captures.len(), function, dest)?;
         // The environment record: `{ drop: ptr, slots... }`. A `Reference`
-        // slot stores the captured place's address; an owned (`copy`/`move`)
-        // slot stores the value inline — the record is the stable storage
-        // whose address the invoke thunk passes as the capture's reference
-        // parameter (in-place mutation across repeated invocations, the
-        // VM's owned-capture re-referencing).
+        // slot stores the captured place's address; a moved slot, a
+        // lambda's storage, stores the value inline — the record is the
+        // closure's storage, whose address the invoke thunk passes as the
+        // body's `self`.
         let pointer_slot = Ty::new(TyKind::Pointer {
             element: Ty::none(),
             origin: mojito_types::origin::PointerOrigin::Untracked { mutable: true },
@@ -61,7 +60,7 @@ impl FnLowering<'_> {
         for capture in captures {
             let (mode, slot_ty) = match capture.mode {
                 MirCaptureMode::Reference => ('r', pointer_slot.clone()),
-                MirCaptureMode::Copy | MirCaptureMode::Move => {
+                MirCaptureMode::Move => {
                     let Some(ty) = capture
                         .place
                         .ty
@@ -70,25 +69,24 @@ impl FnLowering<'_> {
                     else {
                         return Err(self.unsupported_reg("untyped closure capture".into(), dest));
                     };
-                    // An owned capture naming its constructor runs it, as
-                    // the VM does. One naming none relocates or forks bytes,
-                    // so a user-observable constructor reached that way
-                    // rejects; the nominal String's bridged constructors are
-                    // exactly the native fork/relocation semantics.
-                    let ctor = if capture.mode == MirCaptureMode::Copy {
-                        "__copyinit__"
-                    } else {
-                        "__moveinit__"
-                    };
+                    // A moved capture naming its constructor runs it, as the
+                    // VM does. One naming none relocates its bytes, as the
+                    // VM relocates a struct declaring no `__moveinit__`
+                    // without running its fields', so only a type's own
+                    // user `__moveinit__` reached that way rejects; the
+                    // nominal String's bridged constructor is exactly the
+                    // native relocation.
                     if named_capture_constructor(capture, &ty).is_none()
-                        && self.chain_runs_user_lifecycle(&ty, ctor)
+                        && matches!(ty.kind(), TyKind::Struct(name, _)
+                            if self.lifecycle_symbol(name, "__moveinit__").is_some())
+                        && self.chain_runs_user_lifecycle(&ty, "__moveinit__")
                     {
                         return Err(self.unsupported_reg(
-                            format!("owned closure capture of `{ty}` with a user `{ctor}`"),
+                            format!("moved closure capture of `{ty}` with a user `__moveinit__`"),
                             dest,
                         ));
                     }
-                    if capture.mode == MirCaptureMode::Move && !capture.place.proj.is_empty() {
+                    if !capture.place.proj.is_empty() {
                         // A projected move capture leaves a residual
                         // aggregate whose partial-drop bookkeeping the
                         // leaf-flag pre-scan does not cover here.
@@ -96,14 +94,7 @@ impl FnLowering<'_> {
                             self.unsupported_reg("projected move closure capture".into(), dest)
                         );
                     }
-                    (
-                        if capture.mode == MirCaptureMode::Copy {
-                            'c'
-                        } else {
-                            'm'
-                        },
-                        ty,
-                    )
+                    ('m', ty)
                 }
             };
             modes.push(mode);
@@ -171,31 +162,21 @@ impl FnLowering<'_> {
                     // The capture runs the constructor it names, `(out
                     // self, source)`, into its slot.
                     self.emit_constructor_call(ctx, constructor, slot, source, dest)?;
-                } else if *mode == 'c' && self.owns_heap(ty) {
-                    // A copy capture of a borrowed heap owner forks; a byte
-                    // copy would alias buffers both owners release.
-                    self.fork_value_into(ctx, slot, ty, layout, source, dest)?;
                 } else {
                     self.mem_copy(ctx, slot, source, layout.size, dest);
                 }
-                if *mode == 'm' {
-                    // The VM's move capture runs the compiled stdlib
-                    // `__moveinit__` (`move_value`), whose `deinit other`
-                    // teardown reports one consume event; the byte
-                    // relocation above is that constructor's exact
-                    // semantics, so mirror the event.
-                    if named.is_none()
-                        && self.trace_lifecycle
-                        && let TyKind::Struct(name, _) = ty.kind()
-                        && self.lifecycle_symbol(name, "__moveinit__").is_some()
-                    {
-                        let name = name.clone();
-                        self.emit_trace_text(
-                            ctx,
-                            mojito_native::native::rt_abi::TRACE_CONSUME,
-                            &name,
-                        );
-                    }
+                // The VM's move capture runs the compiled stdlib
+                // `__moveinit__` (`move_value`), whose `deinit other`
+                // teardown reports one consume event; the byte relocation
+                // above is that constructor's exact semantics, so mirror
+                // the event.
+                if named.is_none()
+                    && self.trace_lifecycle
+                    && let TyKind::Struct(name, _) = ty.kind()
+                    && self.lifecycle_symbol(name, "__moveinit__").is_some()
+                {
+                    let name = name.clone();
+                    self.emit_trace_text(ctx, mojito_native::native::rt_abi::TRACE_CONSUME, &name);
                 }
             }
             (record, composed.offsets[1..].to_vec())

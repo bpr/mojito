@@ -67,6 +67,7 @@ assets/ok/callable_struct_transfer_after_last_use.mojo	main	exe-differential	san
 assets/ok/capturing_callable_parameter_with_locals.mojo	main	exe-differential	sanitized
 assets/ok/capturing_generic_callable_parameter_environment.mojo	main	exe-differential	sanitized
 assets/ok/capturing_lambda_array_display.mojo	main	exe-differential	sanitized
+assets/ok/capturing_lambda_storage.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison_link_drop_order.mojo	main	exe-differential	sanitized
 assets/ok/chained_comparison_operand_copy.mojo	main	exe-differential	sanitized
@@ -772,6 +773,7 @@ assets/ok/ref_result_through_read_param.mojo	main	exe-differential	sanitized
 assets/ok/ref_return_call_result_field.mojo	main	exe-differential	sanitized
 assets/ok/ref_return_pointer_dereference.mojo	main	exe-differential	sanitized
 assets/ok/reference_argument_read_at_call_setup.mojo	main	exe-differential	sanitized
+assets/ok/reference_binding_value_capture.mojo	main	exe-differential	sanitized
 assets/ok/reference_call_assignment_target.mojo	main	exe-differential	sanitized
 assets/ok/reference_carrier_collection.mojo	main	exe-differential	sanitized
 assets/ok/reference_element_chained_read.mojo	main	exe-differential	sanitized

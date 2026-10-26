@@ -1957,8 +1957,8 @@ impl<'a> Flatten<'a> {
     }
 
     /// Retain storage for any callable place. Nominal callable receivers use it
-    /// for `mut self`; declaration-owned closure environments use it so their
-    /// copy/move capture slots are borrowed in place across repeated calls.
+    /// for `mut self`; closure values use it so a lambda's moved storage is
+    /// borrowed in place across repeated calls.
     pub(super) fn callable_receiver_place(&mut self, expression: Node<'a>) -> Option<MirPlace> {
         let place = self.simple_place(expression)?;
         place.is_typed().then_some(place)

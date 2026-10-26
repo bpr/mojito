@@ -40,11 +40,11 @@ pub fn emit_thunk_body(
             gep.get_operation().insert_at_back(entry, ctx);
             gep.get_result(ctx)
         };
-        // Every capture parameter is a reference parameter (the lifted
-        // environment prefix): a `Reference` slot stores the captured
-        // place's address, an owned (`c`/`m`) slot stores the value inline
-        // and passes its own address — the record is the stable storage the
-        // VM's owned-capture re-referencing requires.
+        // A `Reference` slot stores the captured place's address, which a
+        // `@parameter` closure's body takes as a reference parameter and a
+        // `def`'s as its storage `self`; a moved (`m`) slot, a lambda's
+        // storage, holds the value inline and passes its own address to the
+        // body's `self`, as the VM's owned-capture re-referencing does.
         if mode == 'r' {
             let load = LoadOp::new(ctx, slot, ptr_ty);
             load.get_operation().insert_at_back(entry, ctx);

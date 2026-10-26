@@ -724,6 +724,15 @@ impl Prog {
         self.mir.functions.iter().position(|(n, _)| n == name)
     }
 
+    /// Per parameter of the function `name`, whether its body may write
+    /// it: a lifted body's storage `self` when it owns a moved capture.
+    fn param_writes(&self, name: &str) -> &[bool] {
+        self.mir
+            .declarations
+            .function(name)
+            .map_or(&[], |declaration| &declaration.param_writes)
+    }
+
     /// Whether the function `name` is one the compiler synthesized, whose
     /// lifecycle events the trace leaves out.
     fn synthesized(&self, name: &str) -> bool {

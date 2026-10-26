@@ -67,6 +67,7 @@ assets/ok/callable_struct_transfer_after_last_use.mojo	-	ineligible	no-scalar-en
 assets/ok/capturing_callable_parameter_with_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/capturing_generic_callable_parameter_environment.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/capturing_lambda_array_display.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/capturing_lambda_storage.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison_link_drop_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/chained_comparison_operand_copy.mojo	-	ineligible	no-scalar-entry-shape
@@ -772,6 +773,7 @@ assets/ok/ref_result_through_read_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_return_call_result_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_return_pointer_dereference.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_argument_read_at_call_setup.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/reference_binding_value_capture.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_call_assignment_target.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_carrier_collection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/reference_element_chained_read.mojo	-	ineligible	no-scalar-entry-shape

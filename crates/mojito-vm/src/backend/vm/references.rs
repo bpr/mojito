@@ -295,16 +295,20 @@ impl VmBackend {
         (frame, slot, projection)
     }
 
-    /// Turn a closure environment into the leading reference arguments of its
-    /// lifted function. Reference captures already are handles. Owned copy/move
-    /// captures instead borrow the stable slot inside the closure value itself,
-    /// which preserves mutations across repeated invocations.
+    /// Turn a closure environment into the leading arguments of its lifted
+    /// function, whose parameters `writes` says it may write. Reference
+    /// captures already are handles. A moved capture, a lambda's storage,
+    /// instead borrows the stable slot inside the closure value itself,
+    /// which preserves the body's writes across repeated invocations; a
+    /// closure called from no stable storage passes the storage itself to
+    /// a body that never writes it.
     pub(super) fn closure_capture_arguments(
         frame_id: FrameId,
         registers: &[Value],
         variables: &[Value],
         callee_place: Option<&MirPlace>,
         captures: &[ClosureCapture],
+        writes: &[bool],
     ) -> Result<Vec<Value>, RuntimeError> {
         captures
             .iter()
@@ -313,12 +317,16 @@ impl VmBackend {
                 if !capture.owned {
                     return Ok(capture.value.clone());
                 }
-                let place = callee_place.ok_or_else(|| {
-                    RuntimeError::TypeError(
-                        "vm: an owned closure environment must be called from stable storage"
-                            .to_string(),
-                    )
-                })?;
+                let Some(place) = callee_place else {
+                    return if writes.get(index).copied().unwrap_or(true) {
+                        Err(RuntimeError::TypeError(
+                            "vm: a closure whose body writes its owned storage must be called from stable storage"
+                                .to_string(),
+                        ))
+                    } else {
+                        Ok(capture.value.clone())
+                    };
+                };
                 let mut reference =
                     Self::reference_to_place_parts(frame_id, registers, variables, place)?;
                 let Value::Ref { projection, .. } = &mut reference else {

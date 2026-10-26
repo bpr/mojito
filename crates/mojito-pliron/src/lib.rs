@@ -1220,9 +1220,8 @@ impl<'p> CallEdges<'p, '_> {
             // instruction; the per-target thunk calls it, so the body
             // must be declared and compiled even when every invocation
             // is indirect.
-            // Its owned captures run the constructors they name, a
-            // String's copy excepted, and the destructors they name at
-            // the closure's death.
+            // Its moved captures run the constructors and, at the
+            // closure's death, the destructors they name.
             MirInstr::MakeClosure {
                 function: target,
                 captures,
@@ -1230,13 +1229,7 @@ impl<'p> CallEdges<'p, '_> {
             } => {
                 self.push_named(target);
                 for capture in captures {
-                    if let Some(constructor) = &capture.constructor
-                        && !(capture.mode == mojito_mir::mir::MirCaptureMode::Copy
-                            && capture
-                                .place
-                                .storage_ty(&self.function.var_tys)
-                                .is_some_and(is_stdlib_string_type))
-                    {
+                    if let Some(constructor) = &capture.constructor {
                         self.push_named(constructor);
                     }
                     if let Some(destructor) = &capture.destructor {

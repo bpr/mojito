@@ -1953,7 +1953,7 @@ impl<'a> Flatten<'a> {
     /// sibling captures ([`NestedInfo::slotted`]), declared `name` at `at`,
     /// and store it in the declaration's slot.
     fn lower_slotted_nested_def(&mut self, info: &NestedInfo, name: &str, at: SourceSpan) {
-        let src = self.emit_nested_closure(info, at, false);
+        let src = self.emit_nested_closure(info, at);
         let var = self.declare_binding_var(info.binding, name);
         if let Some(ty) = &info.callable_ty {
             self.var_types.entry(var).or_insert_with(|| ty.clone());
@@ -1966,12 +1966,30 @@ impl<'a> Flatten<'a> {
         });
     }
 
+    /// Build the storage struct `storage` of the capturing lambda `info`
+    /// at `at` in a hidden slot, once per evaluation, as upstream's
+    /// `resolveAnonymousClosure` emits a closure instance where the lambda
+    /// stands.
+    pub(in crate::mir) fn lambda_storage_slot(
+        &mut self,
+        info: &NestedInfo,
+        storage: &ClosureStorage,
+        at: &SourceSpan,
+    ) -> VarId {
+        let src = self.build_closure_storage(info, storage, at);
+        let slot = self.fresh_var();
+        self.var_types.insert(slot, storage.ty.clone());
+        self.emit(MirInstr::DefVar {
+            var: slot,
+            src,
+            binding_ty: Some(storage.ty.clone()),
+            in_place: false,
+        });
+        slot
+    }
+
     /// Build the storage struct `storage` of the capture-list `def`
-    /// `info`, declared `name` at `at`, in the declaration's slot, as
-    /// upstream's `ClosureEmitter::emitClosure` calls the storage's
-    /// `__init__` with the captures: a `var` capture's place is read, a
-    /// moved capture's value moves in, and a reference capture's place,
-    /// a captured sibling's storage slot included, is lent.
+    /// `info`, declared `name` at `at`, in the declaration's slot.
     fn lower_closure_storage_value(
         &mut self,
         info: &NestedInfo,
@@ -1979,6 +1997,29 @@ impl<'a> Flatten<'a> {
         name: &str,
         at: &SourceSpan,
     ) {
+        let dest = self.build_closure_storage(info, storage, at);
+        let var = self.declare_binding_var(info.binding, name);
+        self.var_types.insert(var, storage.ty.clone());
+        self.emit(MirInstr::DefVar {
+            var,
+            src: dest,
+            binding_ty: Some(storage.ty.clone()),
+            in_place: false,
+        });
+    }
+
+    /// The storage struct `storage` of the closure `info` at `at`, as
+    /// upstream's `ClosureEmitter::emitClosure` calls the storage's
+    /// `__init__` with the captures: a `var` capture's place is read, a
+    /// moved capture's storage is handed to its `var` parameter, as an
+    /// owned argument's is, and a reference capture's place, a captured
+    /// sibling's storage slot included, is lent.
+    fn build_closure_storage(
+        &mut self,
+        info: &NestedInfo,
+        storage: &ClosureStorage,
+        at: &SourceSpan,
+    ) -> Reg {
         let mut args = Vec::new();
         let mut arg_places = Vec::new();
         for (capture, (_, field)) in info.captures.iter().zip(&storage.fields) {
@@ -1992,7 +2033,7 @@ impl<'a> Flatten<'a> {
                 self.emit(MirInstr::UseVar {
                     dest,
                     var: place.root,
-                    mode: UseMode::Move,
+                    mode: UseMode::Forward,
                     constructor: None,
                 });
                 arg_places.push(None);
@@ -2025,14 +2066,7 @@ impl<'a> Flatten<'a> {
             instantiated_args: Vec::new(),
             spread: None,
         });
-        let var = self.declare_binding_var(info.binding, name);
-        self.var_types.insert(var, storage.ty.clone());
-        self.emit(MirInstr::DefVar {
-            var,
-            src: dest,
-            binding_ty: Some(storage.ty.clone()),
-            in_place: false,
-        });
+        dest
     }
 
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]

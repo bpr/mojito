@@ -115,8 +115,8 @@ pub enum RefProjection {
 
 /// One slot in a lifted closure's environment.
 ///
-/// Reference captures retain their original frame handle; copy/move captures
-/// own the declaration-time value and are subsequently borrowed in place on
+/// Reference captures retain their original frame handle; a moved capture,
+/// a lambda's storage, is owned by the closure and borrowed in place on
 /// every invocation.
 #[derive(Debug, Clone)]
 pub struct ClosureCapture {

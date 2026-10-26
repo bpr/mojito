@@ -757,11 +757,25 @@ policy or data-model responsibilities to focused children:
   register-passable, so a moved capture the body writes is written in
   that call's copy, and by address otherwise. A first-class use makes a
   closure capturing the storage by reference, kept live to the end of
-  its statement (`Flatten::load_nested_closure`). A lambda, and a
-  `@parameter` closure, which captures without a list, still take their
-  captures as leading reference parameters, and a call by name passes the
-  captured places (`Flatten::lower_nested_call`); one without storage a
-  sibling captures keeps its closure in a slot (`NestedInfo::slotted`).
+  its statement (`Flatten::load_nested_closure`). Every capturing lambda,
+  with a capture list or without one (its free names then captured
+  `imm`), builds its storage the same way where it stands, once per
+  evaluation, as upstream's `resolveAnonymousClosure` sends every
+  non-thin lambda through `emitClosureInstance`
+  (`Flatten::build_closure_storage`, into a hidden slot,
+  `Flatten::lambda_storage_slot`): an immediately invoked lambda is a
+  direct `call` of its lifted body passing the storage
+  (`lower_direct_nested_call`), and a lambda used as a value moves the
+  storage into a one-capture `closure.make` (`Flatten::lambda_closure`),
+  which relocates it, running no `__moveinit__`, since upstream's value
+  is the storage itself. The storage's `__init__` takes a moved capture
+  by forwarding its storage to the `var` parameter, as an owned argument
+  binds it, so the capture moves once, into the field. Only a
+  `@parameter` closure, upstream's legacy capturing closure, which
+  captures without a list, takes its captures as leading reference
+  parameters, and a call by name passes the captured places
+  (`Flatten::lower_nested_call`); one without storage a sibling captures
+  keeps its closure in a slot (`NestedInfo::slotted`).
 - `backend/vm.rs` drives execution; `backend/vm/calls.rs` owns runtime argument
   binding and construction, while `backend/vm/places.rs` owns projected storage
   navigation and access; further `impl VmBackend` clusters live in

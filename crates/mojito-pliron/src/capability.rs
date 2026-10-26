@@ -117,7 +117,7 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
     (
         "closure.make",
         CapabilityStatus::Partial,
-        "two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and owned captures with a user copy/move constructor reject",
+        "two-word `{invoke, env}` values over per-target thunks with frame-local capture records; owned droppable captures drop through the tombstoning record header; projected move captures and moved captures whose own type's user `__moveinit__` goes unnamed reject",
     ),
     (
         "lifetime.keep_alive",

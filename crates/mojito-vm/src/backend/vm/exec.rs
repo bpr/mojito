@@ -221,22 +221,14 @@ impl VmBackend {
                 for capture in captures {
                     let reference =
                         Self::reference_to_place_parts(frame_id, regs, vars, &capture.place)?;
-                    // An owned capture copies or moves by the constructor it
-                    // names, as a `var.use` does.
+                    // A moved capture moves by the constructor it names, as
+                    // a `var.use` does.
                     let ty = capture
                         .place
                         .storage_ty(&prog.mir.functions[function].1.var_tys);
                     let constructor = capture.constructor.as_deref();
                     let value = match capture.mode {
                         MirCaptureMode::Reference => reference,
-                        MirCaptureMode::Copy => {
-                            let value = self.read_reference(&reference, frame_id, vars)?;
-                            if self.has_copyinit {
-                                self.copy_named(prog, &value, ty, constructor)?
-                            } else {
-                                value
-                            }
-                        }
                         MirCaptureMode::Move => {
                             let value = self.read_reference(&reference, frame_id, vars)?;
                             self.write_reference(&reference, frame_id, vars, Value::Moved)?;
@@ -640,6 +632,7 @@ impl VmBackend {
                             vars,
                             callee_place.as_deref(),
                             captures,
+                            prog.param_writes(function),
                         )?,
                     ),
                     Value::Struct { name, .. } => {
