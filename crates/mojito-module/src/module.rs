@@ -673,8 +673,8 @@ fn remove_bound_names(body: &[Stmt], names: &mut HashMap<String, String>) {
 /// homes. These traits and origin spellings are compiler builtins with no
 /// source declaration, so the module files export them through this table
 /// (mirroring the audited upstream export surface). The table is additive, so
-/// a module with real declarations — `std.math` — keeps them. Matched by
-/// canonical-path suffix, wherever the library is installed.
+/// a module with real declarations keeps them. Matched by canonical-path
+/// suffix, wherever the library is installed.
 fn builtin_module_exports(canon: &Path) -> Option<&'static [&'static str]> {
     let normalized = canon.to_string_lossy().replace('\\', "/");
     BUILTIN_MODULE_EXPORTS
@@ -1763,7 +1763,6 @@ const BUILTIN_MODULE_EXPORTS: &[(&str, &[&str])] = &[
     ("std/reflection/type_info.mojo", &["_unqualified_type_name"]),
     ("std/ffi/__init__.mojo", &["external_call"]),
     ("std/sys/__init__.mojo", &["size_of"]),
-    ("std/math.mojo", &["DivModable"]),
 ];
 
 /// The module name the entry file's colliding declarations are qualified by.
@@ -1800,6 +1799,9 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "Indexer",
     "Intable",
     "IntableRaising",
+    "Absable",
+    "Powable",
+    "Roundable",
     "EnumLike",
     "range",
     "Slice",
@@ -2262,6 +2264,9 @@ fn implicit_public_identity(module: &str, declaration: &str) -> Option<&'static 
         ("std.builtin.int", "Intable") => Some("Intable"),
         ("std.builtin.floatable", "Floatable") => Some("Floatable"),
         ("std.builtin.identifiable", "Identifiable") => Some("Identifiable"),
+        ("std.math", "Absable") => Some("Absable"),
+        ("std.math", "Powable") => Some("Powable"),
+        ("std.math", "Roundable") => Some("Roundable"),
         ("std.builtin.tuple", "Tuple") => Some("Tuple"),
         ("std.builtin.variadics", "ParameterList") => Some("ParameterList"),
         ("std.builtin.variadics", "TypeList") => Some("TypeList"),

@@ -217,9 +217,8 @@ impl FnLowering<'_> {
         self.define(ctx, dest, select.get_operation(), select.get_result(ctx))
     }
 
-    /// `round(x)` — the VM's `builtin_round`: nearest `Float64`, ties away
-    /// from zero (`llvm.round.f64` == `f64::round`); integers convert first
-    /// and the result is always `Float64`.
+    /// `round(x)` — the VM's `builtin_round`: nearest `Float64`, ties to
+    /// even (`llvm.roundeven.f64`); an integer is returned unchanged.
     pub(super) fn lower_round_builtin(
         &mut self,
         ctx: &mut Context,
@@ -237,11 +236,13 @@ impl FnLowering<'_> {
         {
             Some(TyKind::Int) => {
                 let value = self.reg_value(ctx, arg, ScalarTy::Int)?;
-                self.int_to_f64(ctx, value, dest)
+                self.reg_values.insert(dest.0, value);
+                return Ok(());
             }
             Some(TyKind::UInt) => {
                 let value = self.reg_value(ctx, arg, ScalarTy::UInt)?;
-                self.uint_to_f64(ctx, value, dest)
+                self.reg_values.insert(dest.0, value);
+                return Ok(());
             }
             Some(TyKind::Float64 | TyKind::FloatLiteral | TyKind::IntLiteral) => {
                 self.reg_value(ctx, arg, ScalarTy::Float64)?

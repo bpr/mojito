@@ -2055,10 +2055,8 @@ impl Checker {
                         .any(|bound| bound == tr || self.trait_refines(bound, tr)),
                     _ => false,
                 },
-                "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable"
-                | "Multipliable" | "Divisible" | "FloorDivisible" | "Modable" => {
-                    is_numeric_like(ty)
-                }
+                "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
+                | "Modable" => is_numeric_like(ty),
                 "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {
                     is_integer_like(ty)
                 }
@@ -3460,19 +3458,6 @@ impl Checker {
                 .any(|b| matches!(b.as_str(), "Copyable" | "ImplicitlyCopyable"))
         {
             methods.push(MethodSig::intrinsic(vec![], Ty::self_type()));
-        }
-        // The built-in numeric-rounding traits contribute a `-> Self` dunder
-        // (roadmap milestone 7), used by the self-hosted `math` module: `Floorable`/
-        // `Ceilable`/`Truncable` a nullary `__floor__`/`__ceil__`/`__trunc__`,
-        // and `CeilDivable`/`CeilDivableRaising` a unary `__ceildiv__(Self)`.
-        let accepts = math_dunder_bound(method, argc);
-        if !accepts.is_empty() && bounds.iter().any(|b| accepts.contains(&b.as_str())) {
-            let params = if argc == 1 {
-                vec![Ty::self_type()]
-            } else {
-                vec![]
-            };
-            methods.push(MethodSig::intrinsic(params, Ty::self_type()));
         }
         for bound in bounds {
             let Some(signatures) = self

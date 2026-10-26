@@ -107,10 +107,6 @@ pub(super) fn conversion_protocol(target: &Ty) -> Option<(&'static str, &'static
 pub(super) fn builtin_trait_operation(trait_name: &str) -> Option<&'static str> {
     match trait_name {
         "Hashable" => Some("__hash__(self, mut hasher: Some[Hasher]) -> None"),
-        "Absable" => Some("__abs__() -> Self"),
-        "Roundable" => Some("__round__() -> Self"),
-        "Powable" => Some("__pow__(Self) -> Self"),
-        "DivModable" => Some("__divmod__(Self) -> Tuple[Self, Self]"),
         // Binary-operator traits: each names the dunder its operator dispatches
         // through. `__truediv__` returns `Float64` (mojito's `/` is always
         // floating); the rest return `Self`.
@@ -165,22 +161,6 @@ pub(super) const fn prefix_operation_trait(op: mojito_ast::ast::PrefixOp) -> &'s
         mojito_ast::ast::PrefixOp::Neg => "Negatable",
         mojito_ast::ast::PrefixOp::Not => "Boolable",
         mojito_ast::ast::PrefixOp::Invert => "Invertable",
-    }
-}
-
-/// The trait bounds that supply a numeric-rounding dunder (`method`/`argc`),
-/// used by the self-hosted `math` module (roadmap milestone 7). `__floor__`/`__ceil__`/
-/// `__trunc__` are nullary (`Floorable`/`Ceilable`/`Truncable`); `__ceildiv__`
-/// is unary and granted by `CeilDivable` or its raising sibling
-/// `CeilDivableRaising` (mojito's deferred effect model does not distinguish
-/// them). A bound satisfies the dunder if it is any of the returned names.
-pub(super) fn math_dunder_bound(method: &str, argc: usize) -> &'static [&'static str] {
-    match (method, argc) {
-        ("__floor__", 0) => &["Floorable"],
-        ("__ceil__", 0) => &["Ceilable"],
-        ("__trunc__", 0) => &["Truncable"],
-        ("__ceildiv__", 1) => &["CeilDivable", "CeilDivableRaising"],
-        _ => &[],
     }
 }
 
@@ -680,7 +660,7 @@ impl Checker {
         // (`__abs__(self) -> Self`); the concrete impl runs after type erasure.
         if is_numeric(&tys[0]) || self.param_has_bound(&tys[0], "Absable") {
             Ok(tys[0].clone())
-        } else if let Some(result) = self.struct_dunder(&tys[0], "__abs__", &[]) {
+        } else if let Some(result) = self.struct_operation(&tys[0], "Absable", "__abs__", &[]) {
             // A concrete struct routes through `__abs__(self) -> Self`.
             result
         } else {
@@ -711,7 +691,7 @@ impl Checker {
             Ok(Ty::float64())
         } else if self.param_has_bound(&tys[0], "Roundable") {
             Ok(tys[0].clone())
-        } else if let Some(result) = self.struct_dunder(&tys[0], "__round__", &[]) {
+        } else if let Some(result) = self.struct_operation(&tys[0], "Roundable", "__round__", &[]) {
             // A concrete struct routes through `__round__(self) -> Self`.
             result
         } else {
@@ -1070,16 +1050,49 @@ impl Checker {
                 common,
             ]));
         }
-        if tys[0] == tys[1] && self.param_has_bound(&tys[0], "DivModable") {
+        if tys[0] == tys[1] && self.param_has_bound(&tys[0], &super::math_trait("DivModable")) {
             return Ok(mojito_types::types::tuple_type(vec![
                 tys[0].clone(),
                 tys[0].clone(),
             ]));
         }
+        // A concrete struct routes through `__divmod__(self, Self)`.
+        if let Some(result) = self.struct_operation(
+            &tys[0],
+            &super::math_trait("DivModable"),
+            "__divmod__",
+            &[&tys[1]],
+        ) {
+            return result;
+        }
         Err(TypeError::BadOperator {
             op: "divmod".to_string(),
             operands: format!("{} and {}", tys[0], tys[1]),
         })
+    }
+
+    /// The result of the `std.math` operation `method` on a concrete struct
+    /// `ty`, which upstream's library function reaches only through its
+    /// `trait_name` bound. `None` for a type that is no struct.
+    fn struct_operation(
+        &self,
+        ty: &Ty,
+        trait_name: &str,
+        method: &str,
+        args: &[&Ty],
+    ) -> Option<Result<Ty, TypeError>> {
+        if !matches!(ty.kind(), TyKind::Struct(..)) {
+            return None;
+        }
+        if !self.conforms_to(ty, trait_name) {
+            return Some(Err(TypeError::TraitNotSatisfied {
+                param: "T".to_string(),
+                ty: ty.to_string(),
+                trait_name: trait_name.to_string(),
+                reason: self.trait_failure_reason(ty, trait_name),
+            }));
+        }
+        self.struct_dunder(ty, method, args)
     }
 
     fn tuple_elements_comparable(&self, elements: &[Ty]) -> bool {

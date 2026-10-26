@@ -26,8 +26,9 @@ fn compiler_driver_runs_the_authoritative_pipeline() {
 fn compiler_materializes_only_closed_public_tuple_signatures() {
     let compiler = Compiler::default();
     let program = compiler
-        .compile_unlinked(
-            "def quotient_rem[T: DivModable](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n\ndef main():\n    var first: Tuple[Int, Int] = quotient_rem(7, 2)\n    var second: Tuple[Int, Int] = quotient_rem(-7, 2)\n    print(first[0], first[1])\n    print(second[0], second[1])\n",
+        .compile_source(
+            "from std.math import DivModable\n\ndef quotient_rem[T: DivModable](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n\ndef main():\n    var first: Tuple[Int, Int] = quotient_rem(7, 2)\n    var second: Tuple[Int, Int] = quotient_rem(-7, 2)\n    print(first[0], first[1])\n    print(second[0], second[1])\n",
+            std::path::Path::new("/tmp/mojito_divmod_tuples.mojo"),
         )
         .expect("a generic Tuple signature waits for concrete call-site substitution");
     let execution = compiler.execute(&program).expect("execute divmod tuples");

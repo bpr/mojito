@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1457**.
+Next free ID: **R1461**.
 
 ## Ordered Work
 
@@ -3311,6 +3311,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1459 A declared trait cannot refine a compiler-known trait**
+
+  `trait Foo(ImplicitlyCopyable)` is rejected ("user trait 'Foo' cannot
+  refine builtin trait 'ImplicitlyCopyable' yet"), where the pin accepts it
+  and a `T: Foo` copies.
+  - Cause: `Checker::check_trait` refuses a parent on `COMPILER_TRAITS`
+    that no declaration answers, since nothing inherits from one.
+  - A bound already reads through `trait_refines`, but a struct's
+    lifecycle answer (`is_copyable`, `is_implicitly_copyable`,
+    `is_movable`) counts only a declared trait of the lifecycle name, and
+    the elaborator's `Lifecycle` rows likewise.
+  - Probe: the bundled `DivModable` (`stdlib/std/math.mojo`) omits
+    upstream's `ImplicitlyCopyable` parent, so a `T: DivModable` is not
+    copyable through its bound.
+  - Probe: `trait Foo(ImplicitlyCopyable)` with `def two[T: Foo](x: T)`
+    copying `x`, conformed by a `@fieldwise_init struct S(Foo)` holding an
+    `Int`.
+  - Found while landing R1361 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1358 An operator over a bound type parameter is not a call of the
   bound's requirement**
 
@@ -6531,6 +6552,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
+- [ ] **R1460 `conforms_to` over an undeclared trait name answers `False`**
+
+  `comptime c = conforms_to(Int, Nope)` prints `False`, where the pin
+  reports "use of unknown declaration 'Nope'".
+  - Cause: the compile-time evaluator's `conforms_to` arm
+    (`mojito-comptime`'s `eval.rs`) asks the conformance oracle with the
+    bare name and never resolves it, so an unknown name conforms nowhere.
+  - Probe: `comptime if conforms_to(T, Ceilable)` in a generic `def`
+    without `from std.math import Ceilable` reports "Undefined variable
+    'conforms_to'", where the pin asks for the import.
+  - Found while landing R1361 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1147 A type proposition over a type parameter is not a runtime
   value**
 
@@ -7560,12 +7595,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R579 `Representable` and `Ceilable` resolve with no import, where
-  the pin needs one**
+- [ ] **R579 `Representable` resolves as a trait, where the pin does not
+  declare it**
 
-  Problem: `conforms_to(T, Representable)` and `conforms_to(T, Ceilable)`
-  compile in Mojito with no import. The pin rejects the first as an unknown
-  declaration and asks for `from std.math import Ceilable` for the second.
+  Problem: `conforms_to(T, Representable)` compiles in Mojito with no
+  import. The pin rejects it as an unknown declaration.
   - Cause: the checker resolves any name on its compiler-known trait list
     (`mojito_types::conformance::COMPILER_TRAITS`) whether or not the
     program imports it.
@@ -8793,7 +8827,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `list_unsafe_uninit_length.mojo`).
   - Probe: `divmod(a, b)`, `round(x)`, and `abs(x)` over a generic `T` copy
     their operands (`boolable_and_divmod.mojo`,
-    `numeric_operation_traits.mojo`).
+    `numeric_operation_traits.mojo`), a struct's too since R1361
+    (`math_operation_traits_library.mojo`); R1458 closes it.
   - Found while landing R1356 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -8948,30 +8983,49 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1361 The `std.math` operation traits are compiler-known, and a
-  struct cannot conform to `Absable`, `Powable`, or `Roundable`**
+- [ ] **R1457 A `SIMD` value other than `Int`, `UInt`, or `Float64`
+  conforms to none of the `std.math` operation traits**
 
-  `struct A(Absable)` with `__abs__(self) -> Self` is rejected ("missing
-  required operation '__abs__() -> Self'"), where the pin prints `3 True`
-  for `abs(x)` through `T: Absable` and for `conforms_to(A, Absable)`.
-  - Cause: `struct_trait_rule` answers these three as `Never`. No bundled
-    module declares any of the nine, and `leaf_conforms` holds `Ceilable`,
-    `Floorable`, `Truncable`, `CeilDivable`, `CeilDivableRaising`, and
-    `DivModable` for every leaf type, a tuple's included.
-  - Upstream declares all nine in `std/math/math.mojo`. Only `Absable`,
-    `Powable`, and `Roundable` are prelude names.
-  - Declare them in `stdlib/std/math.mojo`, export the three from the
-    prelude, and delete `math_dunder_bound` and their
-    `builtin_trait_operation` rows.
-  - Probe: `from std.math import Ceilable` fails in Mojito ("has no
-    declaration named 'Ceilable'").
-  - Closes R579's `Ceilable` half (resolves with no import).
-  - Probe: `abs(x)`, `round(x)`, and `divmod(a, b)` over `x: T` lower as a
-    `var.use copy` that a `drop.reg` destroys (census:
-    `numeric_operation_traits.mojo`, `boolable_and_divmod.mojo`). Only
-    scalars instantiate today, so nothing observes it; library functions
-    with `read` parameters remove it.
-  - Done when `leaf_conforms`'s catch-all answers none of the nine.
+  `abs(Float32(-1.5))` through `T: Absable`, `round(v)` over a
+  `SIMD[DType.float32, 4]`, and `floor(Int32(3))` are rejected ("does not
+  conform to trait"), where the pin prints `1.5`, the rounded lanes, and
+  `3`.
+  - Upstream's `SIMD` declares `Absable`, `Powable`, `Roundable`,
+    `DivModable`, `Ceilable`, `Floorable`, `Truncable`, and `CeilDivable`
+    at every dtype and width, each a lanewise method.
+  - Cause: the backends compute these only over `Int`, `UInt`, and
+    `Float64`, and floor/ceil/trunc over a float scalar (the VM's
+    `builtin_abs`, `builtin_round`, `builtin_round_dir`, `builtin_ceildiv`,
+    and Pliron's `lower_abs_builtin`, `lower_round_builtin`,
+    `lower_round_dir`, `lower_ceildiv`), so `modelled_declares` holds the
+    eight back from every other `SIMD`.
+  - Probe: `conforms_to(SIMD[DType.int32, 4], Absable)` is `False`, where
+    the pin answers `True`.
+  - Shrinks R66 (`abs` over a scalar alias).
+  - Done when `modelled_declares` answers the eight for every `SIMD`.
+  - Found while landing R1361 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1458 `abs`, `round`, and `divmod` are compiler builtins, and
+  `pow` is missing, where upstream's `std/math` declares library functions**
+
+  `round(2.567, 2)` is rejected ("'round' expects 1 argument(s), got 2")
+  and `pow(2, 10)` is an undefined variable, where the pin prints `2.57`
+  and `1024`.
+  - Upstream declares `abs[T: Absable](value: T)`, `round[T:
+    Roundable](number: T)` and its `ndigits` overload, `divmod[T:
+    DivModable]`, and `pow[T: Powable]` beside the traits, each returning
+    the requirement's result.
+  - Mojito checks the first three by name (`Checker::infer_abs`,
+    `infer_round`, `infer_divmod`), the backends run them as builtins, and
+    the elaborator rewrites a struct operand into the dunder call.
+  - Declare the four in `stdlib/std/math.mojo`, exported from the prelude,
+    and delete the builtins. The scalars already answer each requirement
+    as a method.
+  - Closes R1441's `divmod`/`round`/`abs` probe: a `read` parameter binds
+    the argument in place.
+  - Found while landing R1361 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

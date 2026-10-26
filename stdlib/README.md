@@ -173,11 +173,17 @@ point, as upstream's toolchain does.
   upstream's bodies. Values match the audited head on both backends.
 - `std/bit.mojo` — `rotate_bits_left[shift: Int](x: UInt64)`, the `std.bit`
   subset (a `UInt64` instance of upstream's SIMD-generic helper).
-- `std/math.mojo` — self-hosted numeric rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`,
-  each generic over its Mojo trait bound (`Floorable`/`Ceilable`/`Truncable`/`CeilDivable`).
-  Unlike `abs`/`round`/`divmod` (Mojo prelude builtins, available bare), these mirror
-  Mojo's `math` module and must be imported: `from std.math import floor`. Built-in `Int`/`Float64`
-  supply the underlying dunders intrinsically.
+- `std/math.mojo` — upstream's nine operation traits (`Absable`, `Powable`,
+  `Roundable`, `DivModable`, `Ceilable`, `Floorable`, `Truncable`,
+  `CeilDivable`, `CeilDivableRaising`) and the rounding helpers
+  `floor`/`ceil`/`trunc`/`ceildiv`, each generic over its trait. The prelude
+  exports `Absable`, `Powable`, and `Roundable`, as upstream's does; the rest
+  must be imported (`from std.math import floor`). `abs`/`round`/`divmod` are
+  still compiler builtins (R1458), and `DivModable` omits upstream's
+  `ImplicitlyCopyable` parent (R1459). `Int`, `UInt`, and `Float64` conform
+  as upstream's `SIMD` declares and answer each requirement intrinsically;
+  other `SIMD` values conform only to the rounding traits, and only as float
+  scalars (R1457).
 - `std/span.mojo` — the prelude-exported borrowed view `Span[mut: Bool, //,
   T: AnyType, origin: Origin[mut=mut]]` (upstream's bound): a multi-element origin-bearing
   pointer (`Pointer[T, origin._get_owned_interior["element"]]`) plus a

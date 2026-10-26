@@ -567,6 +567,10 @@ impl VmBackend {
             "UInt" => builtin_convert(name, arg1(name, args)?),
             "divmod" => {
                 let (a, b) = arg2(name, args)?;
+                if let Value::Struct { name: sname, .. } = &a {
+                    let sname = sname.clone();
+                    return self.call_dunder(prog, &sname, "__divmod__", vec![a, b]);
+                }
                 builtin_divmod(a, b)
             }
             "Error" => {

@@ -468,15 +468,16 @@ pub fn shed_subscript_operands(
 /// The members a backend runs from a value's type with every argument its
 /// protocol passes, beside the member table's ([`table_member`]): an
 /// iteration's `__iter__` and `__next__`, and the conversions and
-/// arithmetic the builtins `len`, `abs`, `round`, `Bool`, `Float64`, and
-/// `math` dispatch. No call the elaborator rewrites names one, so none
-/// loses an argument.
-const PROTOCOL_MEMBERS: [&str; 14] = [
+/// arithmetic the builtins `len`, `abs`, `round`, `divmod`, `Bool`,
+/// `Float64`, and `math` dispatch. No call the elaborator rewrites names
+/// one, so none loses an argument.
+const PROTOCOL_MEMBERS: [&str; 15] = [
     "__iter__",
     "__next__",
     "__len__",
     "__abs__",
     "__round__",
+    "__divmod__",
     "__bool__",
     "__float__",
     "__trunc__",

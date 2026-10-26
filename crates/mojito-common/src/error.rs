@@ -929,6 +929,11 @@ impl fmt::Display for TypeError {
                 trait_name,
                 reason,
             } => {
+                // A bundled trait's linked name spells as its declaration.
+                let trait_name = trait_name
+                    .strip_prefix("__module$")
+                    .and_then(|rest| rest.rsplit('$').next())
+                    .unwrap_or(trait_name);
                 write!(
                     f,
                     "type '{ty}' for parameter '{param}' does not conform to trait '{trait_name}'"

@@ -687,6 +687,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- The nine `std.math` operation traits (`Absable`, `Powable`, `Roundable`,
+  `DivModable`, `Ceilable`, `Floorable`, `Truncable`, `CeilDivable`,
+  `CeilDivableRaising`) are now upstream's library traits, declared in the
+  bundled `std/math.mojo` (R1361), where the compiler knew them by name.
+  A struct can now conform to `Absable`, `Powable`, or `Roundable`, and
+  `abs`, `round`, `divmod`, and `**` reach a conforming struct's
+  requirement directly and through a bound, where `divmod` over a struct
+  failed. Only the first three are prelude names, so `Ceilable` and the
+  rest need `from std.math import ...`, as at the pin, and a tuple no longer
+  conforms to the rounding traits. `abs`, `round`, and
+  `divmod` now reject a struct that does not declare the trait, and a
+  `Roundable` struct must declare both `__round__` overloads. `Int`,
+  `UInt`, and `Float64` answer each requirement as a method
+  (`x.__abs__()`, `x.__pow__(2)`), and `round` over an integer type
+  parameter now returns the integer, where it returned a `Float64`. A
+  rounding helper over an integer `SIMD` or a vector (`floor(Int32(3))`)
+  is now rejected at the check, where the VM failed at run time (R1457).
+
 - `Boolable`, `Intable`, `Floatable`, `Indexer`, and `Identifiable` are now
   upstream's library traits, declared in the bundled
   `std/builtin/bool.mojo`, `int.mojo`, `floatable.mojo`, and the new

@@ -750,9 +750,13 @@ pub fn builtin_min_max(is_min: bool, a: Value, b: Value) -> Result<Value, Runtim
 }
 
 /// `round(x)`: nearest `Float64`, ties to even, as upstream's `round` and
-/// `llvm.roundeven.f64` do.
+/// `llvm.roundeven.f64` do. An integer is already whole, so it is returned
+/// unchanged (`__round__(self) -> Self`).
 pub fn builtin_round(v: &Value) -> Result<Value, RuntimeError> {
-    Ok(Value::Float64(value_to_float(v)?.round_ties_even()))
+    match v {
+        Value::Int(_) | Value::UInt(_) => Ok(v.clone()),
+        _ => Ok(Value::Float64(value_to_float(v)?.round_ties_even())),
+    }
 }
 
 /// `input(prompt)`: write the prompt immediately, read one line from standard

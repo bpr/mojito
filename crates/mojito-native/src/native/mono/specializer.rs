@@ -2266,12 +2266,13 @@ impl<'a> Specializer<'a> {
                     }
                     continue;
                 }
-                // `abs`/`round` on a nominal receiver are checker-typed
-                // dunder dispatches the VM performs by name (`call_dunder`);
-                // rewrite them into ordinary method calls so the shared
-                // resolver and the `MethodCall` arm below monomorphize the
-                // dunder instance like any other method. Non-struct operands
-                // pass through for the backend's scalar interception.
+                // `abs`/`round`/`divmod` on a nominal receiver are
+                // checker-typed dunder dispatches the VM performs by name
+                // (`call_dunder`); rewrite them into ordinary method calls so
+                // the shared resolver and the `MethodCall` arm below
+                // monomorphize the dunder instance like any other method.
+                // Non-struct operands pass through for the backend's scalar
+                // interception.
                 if let MirInstr::Call {
                     dest,
                     func,
@@ -2284,6 +2285,7 @@ impl<'a> Specializer<'a> {
                     let dunder = match func.0.as_str() {
                         "abs" => Some("__abs__"),
                         "round" => Some("__round__"),
+                        "divmod" => Some("__divmod__"),
                         // Conversion builtins over a nominal receiver are the
                         // same VM dunder dispatch (`builtin_convert`'s struct
                         // arm).
@@ -2295,7 +2297,7 @@ impl<'a> Specializer<'a> {
                     if let Some(method) = dunder
                         && !self.functions.contains_key(func.0.as_str())
                         && kwargs.is_empty()
-                        && args.len() == 1
+                        && args.len() == 1 + usize::from(method == "__divmod__")
                         && matches!(
                             (function.reg_types.get(&args[0].0).map(peel_refs)).map(Ty::kind),
                             Some(TyKind::Struct(..))
@@ -2307,9 +2309,37 @@ impl<'a> Specializer<'a> {
                             method,
                             None,
                             raises.take(),
-                            Vec::new(),
+                            args[1..].to_vec(),
                         );
                     }
+                }
+                // `x.__pow__(y)` on a scalar is its `**`, which an integer
+                // runs through the bundled `_pow_int` body.
+                if let MirInstr::MethodCall {
+                    dest,
+                    recv,
+                    method,
+                    args,
+                    kwargs,
+                    raises,
+                    ..
+                } = instruction
+                    && method == "__pow__"
+                    && kwargs.is_empty()
+                    && let [exponent] = args.as_slice()
+                    && matches!(
+                        (function.reg_types.get(&recv.0).map(peel_refs)).map(Ty::kind),
+                        Some(TyKind::Int | TyKind::UInt | TyKind::Float64)
+                    )
+                {
+                    *instruction = MirInstr::BinOp {
+                        op: mojito_ast::ast::InfixOp::Pow,
+                        dest: *dest,
+                        a: *recv,
+                        b: *exponent,
+                        resolved: None,
+                        raises: raises.take(),
+                    };
                 }
                 // A prefix `-`/`~` on a nominal operand is the VM's dunder
                 // dispatch (`apply_prefix` → `__neg__`/`__invert__`); `not`

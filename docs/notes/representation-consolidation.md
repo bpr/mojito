@@ -70,17 +70,19 @@ the entries named. A single command cannot use both.
    lever left, about 30 entries). It lands in three stages.
 
    First, the bundled library declares the compiler-known traits, so every
-   conformance has a witness table. The entries are R1361 (the
-   `std.math` traits), R1362 (`Hashable`, `Hasher`), R1363
-   (`Defaultable`, `RegisterPassable`, `TrivialRegisterPassable`), and
-   R424 (`Writable`). R578 (the bundled types declare what upstream's do),
-   R705 (`Equatable`, `Comparable`, with R706, R708, and R419), and R1360
-   (`Boolable`, `Intable`, `Floatable`, `Indexer`, `Identifiable`, with
-   R191) landed on 2026-10-26. The rest:
+   conformance has a witness table. The entries are R1362 (`Hashable`,
+   `Hasher`), R1363 (`Defaultable`, `RegisterPassable`,
+   `TrivialRegisterPassable`), and R424 (`Writable`). R578 (the bundled
+   types declare what upstream's do), R705 (`Equatable`, `Comparable`, with
+   R706, R708, and R419), R1360 (`Boolable`, `Intable`, `Floatable`,
+   `Indexer`, `Identifiable`, with R191), and R1361 (the `std.math`
+   traits) landed on 2026-10-26. R1361 left R1457 (the other `SIMD`
+   values), R1458 (`abs`, `round`, `divmod`, `pow` as library functions),
+   and R1459 (a trait refining a compiler-known one). The rest:
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1361 --only R1362 \
-     --only R1363 --only R424 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1362 --only R1363 \
+     --only R424 -n 0
    ```
 
    Second, operators become calls of the requirement. R1357 has the checker
@@ -199,7 +201,7 @@ are conformance only.
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1440–R1444, then R1445 | about 25 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662, R663 (landed), R1449, R1451 | R788, R378, R472, R508, R602, R1194 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1361–R1363, R424, R705, R578, and R1360 (landed); R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1362, R1363, R424; R705, R578, R1360, and R1361 (landed); R1357 → R1358, R1359; R1348; R1281 | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 for the other closure forms | R1104, R100, R1230, R1333 (closed), R534, R176 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R603; R1379–R1388 | about 45 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 | about 20 (below) | slight |

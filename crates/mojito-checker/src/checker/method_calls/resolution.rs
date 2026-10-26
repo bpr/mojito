@@ -632,30 +632,41 @@ impl Checker {
                 vec![obj_ty.clone(); args.len()],
             ))));
         }
-        // `x.__floor__()` / `x.__ceildiv__(y)` on a concrete type
-        // conforming to the granting rounding trait is the same VM
-        // intrinsic the abstract Floorable/Ceilable/Truncable/CeilDivable
-        // dispatch uses; a monomorphized clone of the self-hosted `math`
-        // generics resolves it directly (roadmap milestone 7).
-        if math_dunder_bound(method, args.len())
-            .iter()
-            .any(|bound| self.conforms_to(obj_ty, bound))
+        // A scalar's `std.math` operation dunders are the methods upstream's
+        // `SIMD` and `IntLiteral` declare for the trait owning each; the
+        // backends answer them intrinsically.
+        if kwargs.is_empty()
+            && param_args.is_empty()
+            && let Some(trait_name) = math_operation_requirement(method, args.len())
+            && scalar_declares_math_trait(obj_ty, trait_name)
         {
-            let param_types = if args.is_empty() {
-                vec![]
-            } else {
-                let tys = self.builtin_args(method, 1, args)?;
-                if tys[0] != *obj_ty {
+            let param_types: Vec<Ty> = args
+                .iter()
+                .map(|_| {
+                    if method == "__round__" {
+                        Ty::int()
+                    } else {
+                        obj_ty.clone()
+                    }
+                })
+                .collect();
+            for (arg, expected) in args.iter().zip(&param_types) {
+                let found = self.builtin_args(method, 1, std::slice::from_ref(arg))?;
+                if !mojito_types::types::coerces(&found[0], expected) {
                     return Err(TypeError::TypeMismatch {
-                        expected: obj_ty.to_string(),
-                        found: tys[0].to_string(),
+                        expected: expected.to_string(),
+                        found: found[0].to_string(),
                         context: format!("argument to '{method}'"),
                     });
                 }
-                vec![obj_ty.clone()]
+            }
+            let return_type = if method == "__divmod__" {
+                mojito_types::types::tuple_type(vec![obj_ty.clone(), obj_ty.clone()])
+            } else {
+                obj_ty.clone()
             };
             return Ok(Ok(Some(intrinsic_resolution(
-                obj_ty.clone(),
+                return_type,
                 vec![None; param_types.len()],
                 param_types,
             ))));
@@ -705,6 +716,33 @@ fn intrinsic_resolution(
         declared_params: Vec::new(),
         nested_origins: NestedOrigins::AsDeclared,
         bracket_attributes: Vec::new(),
+    }
+}
+
+/// The `std.math` trait whose requirement `method` with `argc` arguments
+/// is. Every parameter is `Self` but `__round__`'s `ndigits: Int`.
+fn math_operation_requirement(method: &str, argc: usize) -> Option<&'static str> {
+    Some(match (method, argc) {
+        ("__abs__", 0) => "Absable",
+        ("__ceil__", 0) => "Ceilable",
+        ("__floor__", 0) => "Floorable",
+        ("__trunc__", 0) => "Truncable",
+        ("__round__", 0 | 1) => "Roundable",
+        ("__pow__", 1) => "Powable",
+        ("__ceildiv__", 1) => "CeilDivable",
+        ("__divmod__", 1) => "DivModable",
+        _ => return None,
+    })
+}
+
+/// Whether the compiler-modelled scalar `ty` declares the `std.math` trait
+/// `trait_name`: `SIMD` all of them, `IntLiteral` only `Ceilable`,
+/// `Floorable`, and `Truncable`, and `FloatLiteral` none.
+fn scalar_declares_math_trait(ty: &Ty, trait_name: &str) -> bool {
+    match ty.kind() {
+        TyKind::IntLiteral => matches!(trait_name, "Ceilable" | "Floorable" | "Truncable"),
+        TyKind::FloatLiteral => false,
+        _ => mojito_types::conformance::modelled_declares(ty, trait_name),
     }
 }
 

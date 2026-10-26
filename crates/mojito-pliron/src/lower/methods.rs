@@ -190,8 +190,9 @@ impl FnLowering<'_> {
             return self.lower_len_builtin(ctx, dest, &[recv], &[]);
         }
         // Unresolved scalar-receiver dunders are the VM's non-struct
-        // intrinsic dispatch (`builtin_round_dir`/`builtin_ceildiv`); a
-        // struct receiver with its own method arrives resolved instead.
+        // intrinsic dispatch (`builtin_round_dir`, `builtin_ceildiv`, and
+        // the `abs`/`round`/`divmod` builtins); a struct receiver with
+        // its own method arrives resolved instead.
         if resolved.is_none()
             && let Some(recv_ty) = self.func.reg_types.get(&recv.0).cloned()
             && matches!(recv_ty.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
@@ -202,6 +203,11 @@ impl FnLowering<'_> {
                 }
                 ("__ceildiv__", 1) => {
                     return self.lower_ceildiv(ctx, dest, recv, args[0], &recv_ty);
+                }
+                ("__abs__", 0) => return self.lower_abs_builtin(ctx, dest, &[recv], &[]),
+                ("__round__", 0) => return self.lower_round_builtin(ctx, dest, &[recv], &[]),
+                ("__divmod__", 1) => {
+                    return self.lower_divmod_builtin(ctx, dest, &[recv, args[0]], &[]);
                 }
                 ("__fma__", 2) => {
                     return self.lower_fma(ctx, dest, [recv, args[0], args[1]], &recv_ty);

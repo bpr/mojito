@@ -5042,7 +5042,7 @@ fn trait_bound_diagnostics_name_the_blocking_field_or_operation() {
     assert!(
         numeric
             .to_string()
-            .contains("missing required operation '__abs__() -> Self'"),
+            .contains("does not conform to trait 'Absable'"),
         "got {numeric}"
     );
 }
@@ -6116,21 +6116,33 @@ fn any_type_bound_does_not_permit_hash() {
 fn numeric_operation_traits_permit_their_operation() {
     // Phase 7: a numeric-operation bound enables the matching builtin/operator on
     // an opaque `T`, returning the operation's result type.
-    ok("def absolute[T: Absable](x: T) -> T:\n    return abs(x)\n");
-    ok("def rounded[T: Roundable](x: T) -> T:\n    return round(x)\n");
-    ok("def powit[T: Powable](x: T, y: T) -> T:\n    return x ** y\n");
+    ok_std("def absolute[T: Absable](x: T) -> T:\n    return abs(x)\n");
+    ok_std("def rounded[T: Roundable](x: T) -> T:\n    return round(x)\n");
+    ok_std("def powit[T: Powable](x: T, y: T) -> T:\n    return x ** y\n");
     ok_std("def to_int[T: Intable](x: T) -> Int:\n    return Int(x)\n");
     ok_std("def to_flt[T: Floatable](x: T) -> Float64:\n    return Float64(x)\n");
     // `Boolable` -> `Bool(x)`, and `DivModable` -> `divmod(a, b)` (prelude
-    // builtins), plus the `math`-module rounding dunders on their bounds.
+    // builtins), plus the `std.math` rounding requirements on their bounds.
     ok_std("def to_bool[T: Boolable](x: T) -> Bool:\n    return Bool(x)\n");
-    ok("def dm[T: DivModable](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n");
-    ok("def flr[T: Floorable](x: T) -> T:\n    return x.__floor__()\n");
-    ok("def cl[T: Ceilable](x: T) -> T:\n    return x.__ceil__()\n");
-    ok("def tr[T: Truncable](x: T) -> T:\n    return x.__trunc__()\n");
-    ok("def cd[T: CeilDivable](a: T, b: T) -> T:\n    return a.__ceildiv__(b)\n");
-    // The raising sibling grants `__ceildiv__` too (effect model is deferred).
-    ok("def cdr[T: CeilDivableRaising](a: T, b: T) -> T:\n    return a.__ceildiv__(b)\n");
+    ok_std(
+        "from std.math import DivModable\n\ndef dm[T: DivModable](a: T, b: T) -> Tuple[T, T]:\n    return divmod(a, b)\n",
+    );
+    ok_std(
+        "from std.math import Floorable\n\ndef flr[T: Floorable](x: T) -> T:\n    return x.__floor__()\n",
+    );
+    ok_std(
+        "from std.math import Ceilable\n\ndef cl[T: Ceilable](x: T) -> T:\n    return x.__ceil__()\n",
+    );
+    ok_std(
+        "from std.math import Truncable\n\ndef tr[T: Truncable](x: T) -> T:\n    return x.__trunc__()\n",
+    );
+    ok_std(
+        "from std.math import CeilDivable\n\ndef cd[T: CeilDivable](a: T, b: T) -> T:\n    return a.__ceildiv__(b)\n",
+    );
+    // The raising sibling's requirement raises.
+    ok_std(
+        "from std.math import CeilDivableRaising\n\ndef cdr[T: CeilDivableRaising](a: T, b: T) raises -> T:\n    return a.__ceildiv__(b)\n",
+    );
     // Concrete numerics also convert/divmod directly.
     ok("def main():\n    print(Bool(0), divmod(7, 2)[0])\n");
 }
@@ -6157,7 +6169,7 @@ fn any_type_bound_does_not_permit_numeric_operations() {
     // A bound also does not grant an *unrelated* operation: `Absable` gives `abs`
     // but not `**`.
     assert!(matches!(
-        err("def powit[T: Absable](x: T, y: T) -> T:\n    return x ** y\n"),
+        err_std("def powit[T: Absable](x: T, y: T) -> T:\n    return x ** y\n"),
         TypeError::BadOperator { .. }
     ));
     // `Bool(x)`/`divmod` and the rounding dunders are likewise gated.
@@ -6175,7 +6187,9 @@ fn any_type_bound_does_not_permit_numeric_operations() {
     ));
     // `Floorable` grants `__floor__` but not `__ceildiv__`.
     assert!(matches!(
-        err("def cd[T: Floorable](a: T, b: T) -> T:\n    return a.__ceildiv__(b)\n"),
+        err_std(
+            "from std.math import Floorable\n\ndef cd[T: Floorable](a: T, b: T) -> T:\n    return a.__ceildiv__(b)\n"
+        ),
         TypeError::NoSuchMethod { .. }
     ));
 }
@@ -6225,10 +6239,19 @@ fn user_struct_prefix_operators_type_check() {
 
 #[test]
 fn concrete_conversions_and_abs_route_through_dunders() {
-    // A concrete struct with the conversion/abs dunders type-checks the builtins.
+    // A concrete struct declaring the conversion/abs traits type-checks the
+    // builtins.
     ok_std(
-        "@fieldwise_init\nstruct M(Intable):\n    var n: Int\n    def __int__(self) -> Int:\n        return self.n\n    def __abs__(self) -> M:\n        return M(self.n)\n\ndef main():\n    print(Int(M(1)))\n    print(abs(M(2)).n)\n",
+        "@fieldwise_init\nstruct M(Absable, Intable):\n    var n: Int\n    def __int__(self) -> Int:\n        return self.n\n    def __abs__(self) -> M:\n        return M(self.n)\n\ndef main():\n    print(Int(M(1)))\n    print(abs(M(2)).n)\n",
     );
+    // `abs(x)` is upstream's `abs[T: Absable]`: an `__abs__` alone is no
+    // declaration.
+    assert!(matches!(
+        err_std(
+            "@fieldwise_init\nstruct M(Copyable):\n    var n: Int\n    def __abs__(self) -> M:\n        return M(self.n)\n\ndef main():\n    print(abs(M(2)).n)\n"
+        ),
+        TypeError::TraitNotSatisfied { .. }
+    ));
     // `Int(x)` is upstream's `__init__[T: Intable]`: a `__int__` alone is no
     // declaration.
     assert!(matches!(

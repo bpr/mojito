@@ -19,6 +19,7 @@ from std.builtin.bool import Boolable
 from std.builtin.floatable import Floatable, FloatableRaising
 from std.builtin.identifiable import Identifiable
 from std.builtin.int import Indexer, Intable, IntableRaising
+from std.math import Absable, Powable, Roundable
 from std.builtin.enum_like import EnumLike
 from std.builtin.tuple import Tuple
 from std.builtin.variadics import ParameterList, TypeList, VariadicList

@@ -29,15 +29,6 @@ pub const COMPILER_TRAITS: &[&str] = &[
     "Iterable",
     "IterableOwned",
     "Iterator",
-    "Absable",
-    "Powable",
-    "Roundable",
-    "Ceilable",
-    "Floorable",
-    "Truncable",
-    "CeilDivable",
-    "CeilDivableRaising",
-    "DivModable",
     "Addable",
     "Subtractable",
     "Multipliable",
@@ -92,9 +83,9 @@ pub fn struct_trait_rule(trait_name: &str, declared_by_program: bool) -> StructT
     match trait_name {
         "AnyType" => StructTraitRule::Always,
         "Copyable" | "ImplicitlyCopyable" | "Movable" | "Deinitable" => StructTraitRule::Lifecycle,
-        "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
-        | "Divisible" | "FloorDivisible" | "Modable" | "ShiftLeftable" | "ShiftRightable"
-        | "Andable" | "Orable" | "Xorable" | "Negatable" => StructTraitRule::Never,
+        "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
+        | "Modable" | "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable"
+        | "Negatable" => StructTraitRule::Never,
         _ => StructTraitRule::Declared,
     }
 }
@@ -211,8 +202,8 @@ pub fn leaf_conforms(
             }
             _ => false,
         },
-        "Absable" | "Roundable" | "Powable" | "Addable" | "Subtractable" | "Multipliable"
-        | "Divisible" | "FloorDivisible" | "Modable" => is_numeric_like(ty),
+        "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
+        | "Modable" => is_numeric_like(ty),
         "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {
             is_integer_like(ty)
         }
@@ -237,10 +228,20 @@ pub fn leaf_conforms(
 /// `Floatable`; `SIMD` and `IntLiteral` `Indexer`; none lists
 /// `Identifiable`. Only a scalar `SIMD` is `Intable` here, and only an
 /// integral one `Indexer`, since upstream's methods assert as much where
-/// an instance calls them. A struct or a type parameter answers by its own
-/// declaration or bounds instead.
+/// an instance calls them.
+///
+/// `SIMD` lists every `std.math` operation trait but `CeilDivableRaising`;
+/// a numeric literal answers as the scalar it materializes to. Only `Int`,
+/// `UInt`, and `Float64` conform here, and a float scalar `SIMD` to
+/// `Ceilable`, `Floorable`, and `Truncable`, since the backends compute
+/// the operations over no other `SIMD` (R1457). A struct or a type
+/// parameter answers by its own declaration or bounds instead.
 pub fn modelled_declares(ty: &Ty, trait_name: &str) -> bool {
-    match trait_name {
+    // The `std.math` traits outside the prelude answer by their linked name.
+    match trait_name
+        .strip_prefix("__module$std$math$")
+        .unwrap_or(trait_name)
+    {
         "Boolable" => {
             is_numeric_like(ty)
                 || matches!(
@@ -260,6 +261,11 @@ pub fn modelled_declares(ty: &Ty, trait_name: &str) -> bool {
                 || matches!(ty.kind(), TyKind::Bool | TyKind::Dtype)
         }
         "Comparable" => is_numeric_like(ty) || is_scalar_simd(ty) || *ty == TyKind::Bool,
+        "Ceilable" | "Floorable" | "Truncable" => {
+            is_numeric_like(ty)
+                || scalar_simd_dtype(ty).is_some_and(mojito_ast::ast::Dtype::is_float)
+        }
+        "Absable" | "Powable" | "Roundable" | "DivModable" | "CeilDivable" => is_numeric_like(ty),
         "Sized" => matches!(
             ty.kind(),
             TyKind::Int

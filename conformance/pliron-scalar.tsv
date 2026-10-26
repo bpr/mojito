@@ -462,6 +462,7 @@ assets/ok/match_sequence_fixed_length.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_struct_and_initializer_patterns.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/match_tuple_patterns.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/math_module_rounding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/math_operation_traits_library.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_predicates.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_write.mojo	-	ineligible	no-scalar-entry-shape

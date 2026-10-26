@@ -335,6 +335,13 @@ impl VmBackend {
                 }
                 // `CeilDivable` — `x.__ceildiv__(y)`.
                 ("__ceildiv__", 1) => return crate::runtime::builtin_ceildiv(&recv, &args[0]),
+                // `Absable`, `Roundable`, and `DivModable` on a scalar: its
+                // builtin (the elaborator makes `__pow__` its `**`).
+                ("__abs__", 0) => return crate::runtime::builtin_abs(recv),
+                ("__round__", 0) => return crate::runtime::builtin_round(&recv),
+                ("__divmod__", 1) => {
+                    return crate::runtime::builtin_divmod(recv, args[0].clone());
+                }
                 // A float range element's fused `self * b + c`.
                 ("__fma__", 2) => {
                     return crate::runtime::builtin_fma(&recv, &args[0], &args[1]);
