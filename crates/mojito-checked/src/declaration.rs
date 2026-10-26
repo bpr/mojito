@@ -83,11 +83,14 @@ pub struct StructDeclaration {
     /// merged member became.
     pub members: Vec<StructMember>,
     /// The witness table of each conformance the struct declares to a
-    /// trait with method requirements, sorted by trait.
+    /// trait with method requirements, sorted by trait. `Copyable`'s
+    /// records its `copy` default alone: `__copyinit__` stays lifecycle
+    /// synthesis.
     ///
     /// Upstream's struct conformance carries its witness table: a call
-    /// through a bound whose receiver a substitution made this struct names
-    /// the member the table records for its requirement. A template carries
+    /// through a bound whose receiver a substitution or the elaborator made
+    /// this struct names the member the table records for its requirement.
+    /// A template carries
     /// them; an elaborated instance carries none, its [`Self::members`]
     /// naming the instances.
     pub witness_tables: Vec<WitnessTable>,

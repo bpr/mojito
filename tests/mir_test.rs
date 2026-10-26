@@ -1762,8 +1762,7 @@ fn abstract_next_calls_retain_the_copyable_reference_adapter() {
     );
 
     let loop_source = include_str!("../assets/ok/generic_copyable_iterator_refinement.mojo");
-    let loop_program =
-        lower_program(&parse(loop_source).expect("parse")).expect("checked lowering");
+    let loop_program = compiled_mir(loop_source);
     let first = &loop_program
         .functions
         .iter()
@@ -1777,7 +1776,7 @@ fn abstract_next_calls_retain_the_copyable_reference_adapter() {
                 resolved: Some(target),
                 result_adapter,
                 ..
-            } if target == "__iterator_dispatch.__next__" => Some(result_adapter),
+            } if target == "__trait_dispatch.__next__$ov$" => Some(result_adapter),
             _ => None,
         })
         .expect("abstract iterator next call");
@@ -5248,7 +5247,7 @@ fn conflicting_unrolled_occurrences_stay_on_the_abstract_path() {
 fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
     // The `comptime for` unrolling records conflicting closed instantiations
     // at one source occurrence; the one check keeps the template, whose body
-    // carries the `__iterator_dispatch` protocol and its
+    // carries the `Iterator.__next__` requirement's dispatch and its
     // `CopyIteratorReference` adapter for the elaborator to resolve per
     // instance.
     let mir = compiled_mir(
@@ -5267,7 +5266,7 @@ fn conflict_retained_template_keeps_dispatch_and_adapter_under_the_compiler() {
         .expect("retained template")
         .1;
     let rendered = format!("{template:?}");
-    assert!(rendered.contains("__iterator_dispatch"), "{rendered}");
+    assert!(rendered.contains("__trait_dispatch.__next__"), "{rendered}");
     assert!(rendered.contains("CopyIteratorReference"), "{rendered}");
 }
 

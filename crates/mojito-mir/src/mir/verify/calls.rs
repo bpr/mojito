@@ -124,8 +124,7 @@ pub(super) fn verify_call_instruction(
                     errors,
                 );
             }
-            let abstract_value_next = (callee.starts_with("__trait_dispatch.")
-                || callee == "__iterator_dispatch.__next__")
+            let abstract_value_next = mojito_symbol::symbol::is_trait_dispatch_symbol(callee)
                 && method == "__next__"
                 && reference_result.is_none();
             if let Some(reference) = reference_result {

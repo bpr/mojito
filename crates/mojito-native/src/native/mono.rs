@@ -36,7 +36,7 @@ use mojito_mir::mir::{
 };
 use mojito_native_core::layout::StructFieldIndex;
 use mojito_native_core::target::NativeTarget;
-use mojito_symbol::symbol::{CallableLookup, InstanceArg};
+use mojito_symbol::symbol::InstanceArg;
 use mojito_types::ct::CtValue;
 use mojito_types::param_expr::{
     LIST_LENGTH_FUNCTION, PackQuery, ParamBindings, ParamContext, ParamExpr, ParamKind, ParamRef,

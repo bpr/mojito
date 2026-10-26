@@ -856,12 +856,13 @@ declaration, and a package unit may be a struct's synthesized destructor
 (package format 67), copy constructor, or move constructor (package format
 68).
 
-Abstract dispatch requirements (`__trait_dispatch.*`, `__iterator_dispatch.*`) have no concrete declaration record;
+Abstract dispatch requirements (`__trait_dispatch.*`) have no concrete declaration record;
 a `__trait_dispatch.*` method's parameter contract is its trait requirement's (minor version 48).
-Their complete `subscript_call`, `call.method` (a `for` loop's call of
-`__iterator_dispatch.__next__`), or stored `func`/`generic_func` callable
+Their complete `subscript_call`, `call.method` (a generic `for` loop's call of
+`__trait_dispatch.__next__$ov$`), or stored `func`/`generic_func` callable
 contract at the instruction is the declaration of record and must be
-verified before runtime retargeting.
+verified before the elaborator resolves the call through the receiver's
+witness table.
 
 ## Functions and Blocks
 

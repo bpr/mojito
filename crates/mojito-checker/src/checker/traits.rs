@@ -985,6 +985,7 @@ impl Checker {
         for tr in declaration.conforms {
             witness_tables.extend(self.verify_conformance(name, tr, self_ty)?);
         }
+        witness_tables.extend(self.copyable_witness_table(name, declaration.conforms));
         witness_tables.sort_by(|left: &WitnessTable, right| left.trait_name.cmp(&right.trait_name));
         witness_tables.dedup_by(|left, right| left.trait_name == right.trait_name);
         if let Some(info) = self.structs.get_mut(name) {
@@ -3244,7 +3245,7 @@ impl Checker {
         // the same contract here.
         if method == "copy" && argc == 0 && bounds.iter().any(|b| self.trait_implies(b, "Copyable"))
         {
-            methods.push(MethodSig::intrinsic(vec![], Ty::self_type()));
+            methods.push(copyable_copy_requirement());
         }
         for bound in bounds {
             let Some(signatures) = self
@@ -3446,6 +3447,31 @@ impl Checker {
             _ => literal_default(default),
         }
     }
+
+    /// The `Copyable` table of a struct whose declared conformances reach
+    /// it: the `copy` default the trait declares, as the struct's own or
+    /// synthesized `copy` satisfies it. `Copyable` declares no requirement
+    /// here, so `verify_conformance` records no table of its own for it.
+    fn copyable_witness_table(&self, name: &str, conforms: &[String]) -> Option<WitnessTable> {
+        if !conforms.iter().any(|tr| self.trait_implies(tr, "Copyable")) {
+            return None;
+        }
+        let requirement = copyable_copy_requirement();
+        let got = self
+            .structs
+            .get(name)?
+            .methods
+            .get("copy")?
+            .iter()
+            .find(|got| got.has_self && got.params.is_empty())?;
+        Some(WitnessTable {
+            trait_name: "Copyable".to_string(),
+            witnesses: vec![Witness {
+                requirement: method_lowered_name(TRAIT_DISPATCH, "copy", &requirement, None),
+                member: qualified_method_symbol(name, "copy", got.overload.as_deref()),
+            }],
+        })
+    }
 }
 
 /// Whether the declared trait `candidate` refines `required`, directly or
@@ -3641,6 +3667,12 @@ fn concrete_sig_origin(origin: &Origin) -> SigOrigin {
             SigOrigin::Infer
         }
     }
+}
+
+/// `Copyable`'s non-overridable `copy(self) -> Self` default: the
+/// requirement a call through the bound dispatches and its table records.
+fn copyable_copy_requirement() -> MethodSig {
+    MethodSig::intrinsic(vec![], Ty::self_type())
 }
 
 fn unfoldable_requirement_default() -> TypeError {

@@ -1813,11 +1813,12 @@ associated type the signature does not spell (`C.Element` as a loop
 variable's type) is solved from `MirStructDeclaration.associated_types` once
 `C` is bound, and a parameterized one (`C.IteratorType[origin_of(xs)]`, a
 split loop iterator's type) from `parameterized_associated_types`. `native::mono` finds the closed instances a template body
-reaches (`Box[List[Self.T]]`) from its MIR, transitively, and selects the
-receiver's own overload where a
-bound dispatch spells the requirement's parameter otherwise than the
-witness does (`Some[Hasher]` against `[H: Hasher]`;
-`dispatched_overload_target`). The checker still records every closed
+reaches (`Box[List[Self.T]]`) from its MIR, transitively, and resolves a
+call or subscript through a bound at a struct instance to the member its
+template's witness table records for the requirement
+(`Specializer::witness`), as upstream's specialization folds
+`#kgen.get_witness`; a struct recording none is an elaboration error, and
+no dispatch name is composed. The checker still records every closed
 application it reaches as a constructor target or method-call receiver
 (`StructInstantiation`), a checked fact nothing above the waist turns into a
 request. Copying, moving, destruction, and the by-name dispatches the
@@ -1827,8 +1828,8 @@ backends perform on a runtime struct name (`print`/`String(x)`/`repr(x)`/
 the instance struct `native::mono` built on concrete MIR.
 
 Under the production compiler, the erased-dispatch machinery
-(`__trait_dispatch.*`/`__iterator_dispatch.*` symbols, VM retargeting, and
-the `CopyIteratorReference` result adapter) is therefore reachable only
+(`__trait_dispatch.*` requirement symbols, which the elaborator resolves
+through witness tables, and the `CopyIteratorReference` result adapter) is therefore reachable only
 through retained-template residue: function values/indirect calls,
 overloaded generic names, generic methods, comptime-class inferred calls,
 open instantiations, conflicting unrolled occurrences, and abstract-body
@@ -2522,7 +2523,8 @@ conforms_to` clause; neither the checker nor the VM orders tuples
 structurally. A comparison over a type parameter bounded by
 `Equatable` or `Comparable` names the bound's requirement
 (`__trait_dispatch.__lt__$ov$Self`), so it too is a call; the elaborator
-retargets it at a struct instance and clears it at a builtin one. Any other
+reads a struct instance's witness table for it and clears it at a builtin
+one. Any other
 operator over a type parameter names no dunder; the elaborator retargets it at
 each instance. A chained comparison has no occurrence per link, so its own
 record holds one `CheckedCompareLink` per link (the selected dunder and,
@@ -3267,11 +3269,14 @@ referent. Compiler-private iterator carriers alone omit the nominal operation
 contract.
 
 Abstract iteration instead retains the value type promised by the trait. Its
-`__next__` call names `__iterator_dispatch.__next__`, raises the `StopIteration`
-that the bundled `Iterator.__next__` requirement declares, and carries the same
-explicit copy-reference adapter as an ordinary bounded `iterator.__next__()`
-call. Runtime retargeting
-leaves a concrete value return unchanged, or materializes and lifecycle-copies a
+`__iter__` call names the `__iter__` requirement the loop's bound declares
+(`__trait_dispatch.__iter__$ov$SelfRef` under `Iterable`), and its `__next__`
+call the iterator bound's `__next__` requirement
+(`__trait_dispatch.__next__$ov$`), each the key the conformer's witness table
+records. The `__next__` call raises the `StopIteration` that the
+requirement declares, and carries the same explicit copy-reference adapter
+as an ordinary bounded `iterator.__next__()` call. The elaborator's witness
+read leaves a concrete value return unchanged, or materializes and lifecycle-copies a
 concrete reference return before writing the value-typed destination. A
 reference into the iterator receiver is read from the identified just-completed
 callee frame before that temporary frame storage is discarded.
@@ -4916,7 +4921,7 @@ is currently List-specific. For a current typed-raising iterator, the loop
 calls `__next__(mut self)` as a raising `MethodCall` on the iterator slot,
 which writes the mutated iterator back, inside a `try` whose handler leaves
 the loop once it raises `StopIteration`; a generic `Iterable` bound takes the same path through the
-abstract `__iterator_dispatch.__next__`, and a named source of a parameter
+`Iterator.__next__` requirement, and a named source of a parameter
 type is borrowed in place as a nominal one is, not copied into the loop. Bundled Range/list/set/dict iterators
 and concrete user iterators use that nominal path. `HasNext`/`Next` serve only
 the method-free fallbacks: the CTFE-only `ComptimeList` carrier and the

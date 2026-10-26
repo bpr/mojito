@@ -1884,8 +1884,8 @@ fn inferred_polymorphic_recursion_is_rejected() {
 
 #[test]
 fn iterable_bound_generic_runs_under_the_compiler() {
-    // A bound generic over `Iterable` elaborates its `__iterator_dispatch`
-    // protocol and copy adapter per instance and runs end to end.
+    // A bound generic over `Iterable` elaborates its `__iter__`/`__next__`
+    // requirement dispatches and copy adapter per instance and runs end to end.
     let src = "from std.iter import Iterable\n\ndef first[C: Iterable](items: C, default: C.Element) -> C.Element:\n    for item in items:\n        return item.copy()\n    return default.copy()\n\ndef main():\n    print(first([1, 1], 1))\n    print(first([\"s\", \"s\"], \"s\"))\n";
     assert_eq!(run_compiled(src).expect("instances run"), "1\ns\n");
 }

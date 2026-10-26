@@ -2763,7 +2763,7 @@ impl<'a> Specializer<'a> {
                         }
                         if resolved
                             .as_deref()
-                            .is_some_and(|target| target.starts_with("__trait_dispatch."))
+                            .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
                             && !matches!(peel_refs(receiver).kind(), TyKind::Struct(..))
                         {
                             // The builtin answers the call itself and takes
@@ -2800,25 +2800,18 @@ impl<'a> Specializer<'a> {
                         // an instance-named receiver (`List$mono$TInt`) still
                         // resolves against `List.*` and gets its instance
                         // identity from `infer_call`'s receiver binding.
-                        let mut target = mojito_symbol::symbol::resolve_method_symbol(
-                            &self.functions,
-                            nominal_template(receiver_name),
-                            method,
-                            resolved.as_deref(),
-                            args.len() + kwargs.len(),
-                        );
-                        if !self.functions.contains_key(target.as_str())
-                            && let Some(dispatch) = resolved
-                                .as_deref()
-                                .filter(|symbol| symbol.starts_with("__trait_dispatch."))
-                            && let Some(overload) = self.dispatched_overload_target(
+                        let target = match resolved.as_deref().filter(|symbol| {
+                            mojito_symbol::symbol::is_trait_dispatch_symbol(symbol)
+                        }) {
+                            Some(dispatch) => self.witness(owner, receiver_name, dispatch)?,
+                            None => mojito_symbol::symbol::resolve_method_symbol(
+                                &self.functions,
                                 nominal_template(receiver_name),
                                 method,
-                                dispatch,
-                            )
-                        {
-                            target = overload;
-                        }
+                                resolved.as_deref(),
+                                args.len() + kwargs.len(),
+                            ),
+                        };
                         if !self.functions.contains_key(target.as_str()) {
                             // The VM-synthesized `Writer.write` dispatch calls
                             // the receiver's `write_string`; enqueue its
@@ -3060,11 +3053,21 @@ impl<'a> Specializer<'a> {
                         let TyKind::Struct(receiver_name, _) = peel_refs(receiver).kind() else {
                             continue;
                         };
+                        // A `def(...)` contract is no trait, so no witness
+                        // table answers it: the struct's `__call__` is
+                        // composed until R1466 checks the call as that
+                        // method's call.
+                        let selected = resolved.as_deref().and_then(|contract| {
+                            mojito_symbol::symbol::retarget_method_symbol(
+                                contract,
+                                nominal_template(receiver_name),
+                            )
+                        });
                         let target = mojito_symbol::symbol::resolve_method_symbol(
                             &self.functions,
                             nominal_template(receiver_name),
                             "__call__",
-                            resolved.as_deref(),
+                            selected.as_deref(),
                             args.len() + kwargs.len(),
                         );
                         if !self.functions.contains_key(target.as_str()) {

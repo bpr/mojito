@@ -143,8 +143,12 @@ pub fn resolve_callable_symbol(table: &impl CallableLookup, name: &str, argc: us
     name.to_string()
 }
 
-/// Resolve a checker-selected method against a concrete receiver declaration
-/// view, including the borrowed-iterator alternate used by VM protocol calls.
+/// Resolve a checker-selected own method against a concrete receiver's
+/// template.
+///
+/// The selected symbol answers when the table holds it, else the
+/// receiver's `{receiver}.{method}` by arity. A call through a bound is no
+/// own selection: its member is the receiver's witness.
 pub fn resolve_method_symbol(
     table: &impl CallableLookup,
     receiver_type: &str,
@@ -152,21 +156,8 @@ pub fn resolve_method_symbol(
     resolved: Option<&str>,
     argc: usize,
 ) -> String {
-    if let Some(selected) = resolved {
-        let mut selected_symbols = vec![selected.to_string()];
-        if let Some(alternate) = borrowed_iterator_dispatch_alternate(selected) {
-            selected_symbols.push(alternate);
-        }
-        for selected in selected_symbols {
-            if let Some(retargeted) = retarget_method_symbol(&selected, receiver_type)
-                && table.contains(&retargeted)
-            {
-                return retargeted;
-            }
-            if table.contains(&selected) {
-                return selected;
-            }
-        }
+    if let Some(selected) = resolved.filter(|selected| table.contains(selected)) {
+        return selected.to_string();
     }
     resolve_callable_symbol(table, &format!("{receiver_type}.{method}"), argc)
 }
@@ -695,55 +686,19 @@ pub fn iterator_method_symbol(
     receiver_method_symbol(type_name, "__iter__", convention, sig)
 }
 
-/// Convention-qualified abstract `__iter__` symbol for a bounded generic
-/// receiver.
-///
-/// The checker records this exact symbol in the iteration protocol; the VM
-/// only retargets its receiver prefix once the erased generic value's nominal
-/// runtime type is known.
-pub fn iterator_dispatch_symbol(convention: ArgConvention) -> String {
-    iterator_method_symbol(
-        TRAIT_DISPATCH,
-        Some(convention),
-        &SignatureKey {
-            types: Vec::new(),
-            kw_variadic: None,
-            keywords: Vec::new(),
-            owned: Vec::new(),
-        },
-    )
-}
-
-/// The sibling borrowed-receiver spelling of an abstract `__iter__` dispatch
-/// symbol.
-///
-/// A borrowed conformer may declare `self` (Read) or `ref self` (Ref), while
-/// the checker pins one spelling in the iteration protocol; the
-/// elaborator's resolution probes the sibling before giving up. Owned
-/// (`var self`) dispatch has no sibling.
-pub fn borrowed_iterator_dispatch_alternate(symbol: &str) -> Option<String> {
-    let read = iterator_dispatch_symbol(ArgConvention::Imm);
-    let reference = iterator_dispatch_symbol(ArgConvention::Ref);
-    if symbol == read {
-        Some(reference)
-    } else if symbol == reference {
-        Some(read)
-    } else {
-        None
-    }
-}
-
 /// Whether a selected method symbol dispatches through a trait bound: its
-/// receiver is the abstract `__trait_dispatch`, which a concrete type
-/// replaces ([`retarget_method_symbol`]).
+/// receiver is the abstract `__trait_dispatch`, and a concrete receiver's
+/// witness table records the member answering it.
 pub fn is_trait_dispatch_symbol(symbol: &str) -> bool {
     split_method_symbol(symbol).is_some_and(|(receiver, _)| receiver == TRAIT_DISPATCH)
 }
 
-/// Retarget a checker-selected method symbol to a concrete runtime type.
+/// Respell a method symbol under another receiver, preserving the method
+/// and signature suffix.
 ///
-/// The abstract receiver (for example `__trait_dispatch.pick$ov$Int`) is
-/// replaced while the exact selected method/signature suffix is preserved.
+/// It spells an instance's member names (`List.grow` as
+/// `List$mono$TInt.grow`), and a `def(...)` contract's `__call__` on a
+/// struct callee (R1466).
 ///
 /// Keeping this parsing here preserves this module's ownership of the overload
 /// encoding.

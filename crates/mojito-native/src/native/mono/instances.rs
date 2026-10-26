@@ -213,77 +213,29 @@ impl Specializer<'_> {
         self.enqueue(&target, bindings, arguments).map(Some)
     }
 
-    /// The receiver's own overload a bound dispatch `dispatch` selects
-    /// (`__trait_dispatch.__hash__$ov$Some$u5B$Hasher$u5D$$Hasher` on
-    /// `Twin`), when no lowered symbol spells its qualifier: the requirement
-    /// spells its parameter as the trait declares it, and the witness may
-    /// bind it under a name of its own (`Twin.__hash__$ov$H$Hasher`). The
-    /// declaration whose parameter types key as the requirement's is the
-    /// one.
-    pub(super) fn dispatched_overload_target(
+    /// The member the receiver's template records in its witness table for
+    /// the requirement a call through a bound selects (`dispatch`), as
+    /// upstream's specialization folds `#kgen.get_witness`. A struct
+    /// recording none fails as upstream's materialization does.
+    pub(super) fn witness(
         &self,
-        template: &str,
-        method: &str,
+        owner: &str,
+        receiver_name: &str,
         dispatch: &str,
-    ) -> Option<String> {
-        let qualifier = mojito_symbol::symbol::overload_qualifier(dispatch)?;
-        let base = format!("{template}.{method}");
-        self.functions
-            .overloads(&base)
-            .map(|candidate| candidate.name)
-            .find(|name| {
-                let Some(declaration) = self.declarations.get(name) else {
-                    return false;
-                };
-                // The declaration lists no receiver; the function's first
-                // parameter is the struct type its `Self`-typed parameters
-                // canonicalize to.
-                let self_ty = declaration
-                    .has_receiver
-                    .then(|| self.functions.get(name)?.param_types.first())
-                    .flatten()
-                    .map(peel_refs);
-                let keywords = declaration
-                    .keyword_only
-                    .map(|index| declaration.param_names[index..].to_vec())
-                    .unwrap_or_default();
-                // A builtin trait's requirement spells its one-bound
-                // parameter existentially (`hasher: Some[Hasher]`), which a
-                // witness binding it by name (`[H: Hasher](hasher: H)`)
-                // satisfies alike.
-                let existential = declaration
-                    .param_types
-                    .iter()
-                    .map(existential_spelling)
-                    .collect::<Vec<_>>();
-                [declaration.param_types.as_slice(), existential.as_slice()]
-                    .into_iter()
-                    .any(|params| {
-                        let signature = mojito_symbol::symbol::SignatureKey::from_tys_with_self(
-                            params, self_ty,
-                        )
-                        .with_kw_variadic(declaration.kw_variadic.as_ref())
-                        .with_keyword_names(keywords.clone());
-                        let spelled = if mojito_symbol::symbol::receiver_overloaded_method(method) {
-                            if declaration.has_receiver {
-                                mojito_symbol::symbol::receiver_method_symbol(
-                                    template,
-                                    method,
-                                    declaration.receiver_convention,
-                                    &signature,
-                                )
-                            } else {
-                                mojito_symbol::symbol::static_method_symbol(
-                                    template, method, &signature,
-                                )
-                            }
-                        } else {
-                            mojito_symbol::symbol::method_symbol(template, method, &signature)
-                        };
-                        mojito_symbol::symbol::overload_qualifier(&spelled) == Some(qualifier)
-                    })
+    ) -> Result<String, MonoError> {
+        let template = nominal_template(receiver_name);
+        self.structs
+            .get(template)
+            .and_then(|declaration| declaration.witness(dispatch))
+            .map(str::to_string)
+            .ok_or_else(|| {
+                self.error(
+                    Some(owner),
+                    format!(
+                        "struct `{template}` records no witness for the requirement `{dispatch}`"
+                    ),
+                )
             })
-            .map(|name| (*name).to_string())
     }
 
     pub(super) fn enqueue_display_instance(
@@ -442,26 +394,5 @@ impl Specializer<'_> {
                 .first()
                 .is_some_and(mojito_types::types::is_writer_parameter)
         })
-    }
-}
-
-/// `ty` with a one-bound binder renamed to the existential spelling of its
-/// bound (`H: Hasher` as `Some[Hasher]`).
-fn existential_spelling(ty: &Ty) -> Ty {
-    match ty.kind() {
-        TyKind::Param {
-            binder,
-            bounds,
-            callable_bound: None,
-        } if bounds.len() == 1 => TyKind::Param {
-            binder: mojito_types::param_expr::ParamRef {
-                name: format!("Some[{}]", bounds[0]).into(),
-                ..binder.clone()
-            },
-            bounds: bounds.clone(),
-            callable_bound: None,
-        }
-        .into(),
-        _ => ty.clone(),
     }
 }

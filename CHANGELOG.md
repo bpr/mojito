@@ -1355,6 +1355,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A call, operator, or subscript through a bound now resolves at a struct
+  instance to the member its witness table records, as upstream's
+  specialization folds `#kgen.get_witness` (R1281), where the elaborator
+  respelled the dispatch under the struct's name. `Copyable`'s table now
+  records its `copy` default, and a generic `for` calls the `__iter__` and
+  `__next__` requirements its bounds declare, where it named a
+  Mojito-only `__iterator_dispatch` protocol.
+
 - A protocol member and a subscript accessor or setter that never use an
   argument now lose it, as upstream's `RemoveUnusedParams` rewrites each
   call in library code (R1109): `E[n].__eq__` returning `True`,

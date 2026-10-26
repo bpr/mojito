@@ -4,6 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_symbol::symbol::TRAIT_DISPATCH;
 use mojito_types::types::TyKind;
 
 /// The implicit `__iter__` calls a protocol selection found raising: each
@@ -219,8 +220,8 @@ impl Checker {
         }
     }
 
-    /// Whether a protocol advances through the abstract `__iterator_dispatch`
-    /// contract of a generic `Iterable`/`IterableOwned` bound. The abstract
+    /// Whether a protocol advances through the `Iterator.__next__`
+    /// requirement of a generic `Iterable`/`IterableOwned` bound. The abstract
     /// `Iterator.__next__` yields `Element` values (a concrete reference
     /// result is adapted to a lifecycle copy), so a reference-binding loop
     /// target has no handle to retain.
@@ -230,7 +231,7 @@ impl Checker {
         protocol
             .next
             .as_ref()
-            .is_some_and(|next| next.target.starts_with("__iterator_dispatch."))
+            .is_some_and(|next| mojito_symbol::symbol::is_trait_dispatch_symbol(&next.target))
     }
 
     /// Resolve a borrowed protocol's parametric yielded-reference facts at the
@@ -395,7 +396,9 @@ impl Checker {
                     args: Vec::new(),
                 });
                 let exhaustion = self.generic_iterator_exhaustion(bounds, required)?;
-                let iterator_ty = self.generic_iterator_ty(ty, bounds, mode);
+                let iter = self.generic_iter_requirement(ty, bounds, mode)?;
+                let iterator_ty = self.generic_iterator_ty(ty, &iter);
+                let next = self.generic_next_requirement(&iterator_ty)?;
                 Ok((
                     element.clone(),
                     IterationProtocol {
@@ -404,16 +407,11 @@ impl Checker {
                         borrowed_origin: None,
                         yield_interior: Vec::new(),
                         source_retained: true,
-                        prepare: Some(mojito_symbol::symbol::iterator_dispatch_symbol(
-                            match mode {
-                                IterationMode::Borrowed => mojito_ast::ast::ArgConvention::Imm,
-                                IterationMode::Owned => mojito_ast::ast::ArgConvention::Var,
-                            },
-                        )),
+                        prepare: Some(method_lowered_name(TRAIT_DISPATCH, "__iter__", &iter, None)),
                         prepare_raises: None,
                         iterator_ty,
                         next: Some(Box::new(mojito_checked::checked::CheckedIteratorCall {
-                            target: "__iterator_dispatch.__next__".to_string(),
+                            target: method_lowered_name(TRAIT_DISPATCH, "__next__", &next, None),
                             result_ty: element,
                             reference_result: None,
                             raises: Some(exhaustion.clone()),
@@ -761,8 +759,8 @@ impl Checker {
         ))
     }
 
-    /// The typed error a loop over a generic bound catches through the abstract
-    /// `__iterator_dispatch.__next__`: what a `__next__` requirement raises,
+    /// The typed error a loop over a generic bound catches through the
+    /// `Iterator.__next__` requirement: what a `__next__` requirement raises,
     /// read from the first of the bound's own traits (or a trait they refine,
     /// or the bounds of an associated iterator type they declare) that
     /// declares one, else from the `Iterator` homed beside the loop's
@@ -861,55 +859,85 @@ impl Checker {
         protocol.iterator_ty = Ty::new(resolved);
     }
 
-    /// The iterator a generic iterable's loop holds: its bound's own
-    /// `__iter__` result read at `ty` (`C.IteratorType[origin_of(self)]` under
-    /// `Iterable`, `C.IteratorOwnedType` under `IterableOwned`). A bound that
-    /// declares no `__iter__` of the loop's receiver convention (Mojito's
-    /// `Element`-only iteration, R178) names the standard trait's member.
-    fn generic_iterator_ty(
+    /// The iterator a generic iterable's loop holds: the `__iter__`
+    /// requirement's result read at `ty` (`C.IteratorType[origin_of(self)]`
+    /// under `Iterable`, `C.IteratorOwnedType` under `IterableOwned`).
+    fn generic_iterator_ty(&self, ty: &Ty, iter: &MethodSig) -> Ty {
+        self.resolve_assoc_ty(&substitute_self(&iter.ret, ty))
+    }
+
+    /// The `__iter__` requirement a loop over a generic iterable calls: the
+    /// one its bounds declare at the loop's receiver convention, else the
+    /// standard trait's (Mojito's `Element`-only iteration, R178).
+    fn generic_iter_requirement(
         &self,
         ty: &Ty,
         bounds: &[String],
         mode: mojito_checked::checked::IterationMode,
-    ) -> Ty {
+    ) -> Result<MethodSig, TypeError> {
         use mojito_ast::ast::ArgConvention;
         use mojito_checked::checked::IterationMode;
 
-        let declared = self
-            .lookup_trait_methods(bounds, "__iter__", 0)
-            .into_iter()
-            .filter(|sig| match mode {
-                IterationMode::Owned => sig.self_convention == Some(ArgConvention::Var),
-                IterationMode::Borrowed => matches!(
-                    sig.self_convention,
-                    None | Some(ArgConvention::Imm | ArgConvention::Ref)
-                ),
-            })
-            .map(|sig| self.resolve_assoc_ty(&substitute_self(&sig.ret, ty)))
-            .collect::<Vec<_>>();
-        if let [declared] = declared.as_slice() {
-            return declared.clone();
-        }
-        let owned = mode == IterationMode::Owned;
-        Ty::new(TyKind::Assoc {
-            base: ty.clone(),
-            name: if owned {
-                "IteratorOwnedType"
-            } else {
-                "IteratorType"
-            }
-            .to_string(),
-            args: if owned {
-                Vec::new()
-            } else {
-                vec![TyArg::Origin(mojito_types::origin::Origin::SelfParam)]
-            },
+        let standard = match mode {
+            IterationMode::Owned => STD_ITERABLE_OWNED_TRAIT,
+            IterationMode::Borrowed => STD_ITERABLE_TRAIT,
+        };
+        self.unique_requirement(bounds, standard, "__iter__", |sig| match mode {
+            IterationMode::Owned => sig.self_convention == Some(ArgConvention::Var),
+            IterationMode::Borrowed => matches!(
+                sig.self_convention,
+                None | Some(ArgConvention::Imm | ArgConvention::Ref)
+            ),
         })
+        .ok_or_else(|| TypeError::TypeMismatch {
+            expected: "a type whose bound declares __iter__".to_string(),
+            found: ty.to_string(),
+            context: "for-loop iterable".to_string(),
+        })
+    }
+
+    /// The `__next__` requirement a loop over a generic iterable advances
+    /// its iterator through: the one the iterator type's bounds declare,
+    /// else the standard `Iterator`'s.
+    fn generic_next_requirement(&self, iterator_ty: &Ty) -> Result<MethodSig, TypeError> {
+        let bounds = self.projection_bounds(iterator_ty).unwrap_or_default();
+        self.unique_requirement(&bounds, STD_ITERATOR_TRAIT, "__next__", |_| true)
+            .ok_or_else(|| TypeError::TypeMismatch {
+                expected: "an iterator whose bound declares __next__".to_string(),
+                found: iterator_ty.to_string(),
+                context: "for-loop iterator".to_string(),
+            })
+    }
+
+    /// The one nullary `method` requirement `bounds` declare that `accept`
+    /// takes, else the `standard` trait's.
+    fn unique_requirement(
+        &self,
+        bounds: &[String],
+        standard: &str,
+        method: &str,
+        accept: impl Fn(&MethodSig) -> bool,
+    ) -> Option<MethodSig> {
+        let unique = |bounds: &[String]| {
+            let mut found = self
+                .lookup_trait_methods(bounds, method, 0)
+                .into_iter()
+                .filter(|sig| accept(sig));
+            let first = found.next()?;
+            found.next().is_none().then_some(first)
+        };
+        unique(bounds).or_else(|| unique(&[standard.to_string()]))
     }
 }
 
 /// The linked identity of the bundled `std.iter.Iterator` trait.
 const STD_ITERATOR_TRAIT: &str = "__module$std$iter$Iterator";
+
+/// The linked identity of the bundled `std.iter.Iterable` trait.
+const STD_ITERABLE_TRAIT: &str = "__module$std$iter$Iterable";
+
+/// The linked identity of the bundled `std.iter.IterableOwned` trait.
+const STD_ITERABLE_OWNED_TRAIT: &str = "__module$std$iter$IterableOwned";
 
 /// Whether a bound names an iteration trait, spelled either as the builtin
 /// name or through its linked `std.iter` identity.

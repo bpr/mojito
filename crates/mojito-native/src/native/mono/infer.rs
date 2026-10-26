@@ -77,13 +77,17 @@ impl Specializer<'_> {
         } else {
             "__setitem__"
         };
-        let target = mojito_symbol::symbol::resolve_method_symbol(
-            &self.functions,
-            nominal_template(receiver_name),
-            method,
-            Some(&call.target),
-            call.arguments.len(),
-        );
+        let target = if mojito_symbol::symbol::is_trait_dispatch_symbol(&call.target) {
+            self.witness(owner, receiver_name, &call.target)?
+        } else {
+            mojito_symbol::symbol::resolve_method_symbol(
+                &self.functions,
+                nominal_template(receiver_name),
+                method,
+                Some(&call.target),
+                call.arguments.len(),
+            )
+        };
         if !self.functions.contains_key(target.as_str()) {
             return Ok(None);
         }

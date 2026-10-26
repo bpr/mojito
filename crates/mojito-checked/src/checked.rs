@@ -389,7 +389,7 @@ pub struct IterationProtocol {
     /// HIR/MIR use it both to avoid an accidental value copy and to keep the
     /// owner live while rejecting a use of an iterator after structural
     /// invalidation.  Generic `Iterable` remains `None`: its abstract
-    /// `__iterator_dispatch` contract yields `Element` values, so a `ref`
+    /// `Iterator.__next__` requirement yields `Element` values, so a `ref`
     /// loop target over a generic bound is rejected outright.
     pub borrowed_origin: Option<mojito_types::origin::OriginPlace>,
     /// The declared interior projection of the yielded reference relative to

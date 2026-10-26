@@ -86,18 +86,17 @@ the entries named. A single command cannot use both.
    same for an operator over a bound, and R1359 (landed) for tuple
    comparison. R1348 (landed) made a struct operator a call in MIR.
 
-   Third, R1281 reads the witness table instead of composing a name.
-   R1109 landed without it: every protocol member a call reaches (`len`,
+   Third, R1281 (landed) has the elaborator read the witness table instead
+   of composing a name: `Copyable`'s table records its `copy` default, and
+   a generic `for` names the requirements its bound declares. Only a
+   struct callee's `def(...)` contract still composes its `__call__`
+   (R1466). Under R1109 (landed), every protocol member a call reaches (`len`,
    `in`, `for`, `==`, a subscript read or store) now names its member's
    generator without the unused arguments. Only the members a backend
    still reaches from a value's type (`mir::TYPE_REACHED_MEMBERS`) keep
    theirs, each until its entry makes the reach a library call: display
    (R1287, R422), the hash leaf (R1397), a scalar construction's
-   `__int__` (R1399), and a `Variant` handler's `__call__` (R1444, R1466):
-
-   ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1281 -n 0
-   ```
+   `__int__` (R1399), and a `Variant` handler's `__call__` (R1444, R1466).
 
    The lifecycle traits (`Copyable`, `Movable`, `Deinitable`, …) are not
    filed. The checker's copy and move synthesis is tied to them, and
@@ -199,7 +198,7 @@ are conformance only.
 |---|---|---|---|---|
 | D′. Memory-only values live in registers | `__call_result_tmp__` storage, register-passable SSA only | R1355, then R1440–R1444, then R1445 | about 25 (below) | yes |
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662, R663 (landed), R1449, R1451 | R788, R378, R472, R508, R602, R1194 | yes |
-| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1363, R424, R705, R578, R1360, R1361, and R1362 (landed); R1461; R1357 and R1358 (landed); R1359; R1348 (landed); R1281 | about 30 (below) | yes, the largest |
+| F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1363, R424, R705, R578, R1360, R1361, and R1362 (landed); R1461; R1357 and R1358 (landed); R1359; R1348 and R1281 (landed) | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 for the other closure forms | R1104, R100, R1230, R1333 (closed), R534, R176 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R603; R1379–R1388 | about 45 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 | about 20 (below) | slight |

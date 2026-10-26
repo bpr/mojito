@@ -1160,8 +1160,8 @@ fn abstract_element_copyability_derives_from_member_bounds() {
 
 #[test]
 fn abstract_bound_for_ref_is_rejected() {
-    // A generic bound advances through the abstract `__iterator_dispatch`
-    // contract, whose `__next__` yields `Element` values — mutating the
+    // A generic bound advances through its iterator's `__next__`
+    // requirement, which yields `Element` values — mutating the
     // per-iteration copy would silently lose writes, so a `ref` target is
     // rejected in both statement and comprehension form.
     let header = "@fieldwise_init\nstruct StopIteration:\n    pass\n\ntrait ItemIterator:\n    comptime Element: Movable\n    def __next__(mut self) raises StopIteration -> Self.Element: ...\n\ntrait Items:\n    comptime Element: Movable\n    comptime Iter: ItemIterator\n    def __iter__(ref self) -> Self.Iter: ...\n\n";

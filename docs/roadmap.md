@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1467**.
+Next free ID: **R1468**.
 
 ## Ordered Work
 
@@ -799,15 +799,13 @@ which names the upstream pass each one follows. Each is measured by the
 
   When `inline-parametric` substitutes `List[Int]` for a callee's `T:
   Iterable`, the inlined `for x in a` keeps its `call.method`s naming
-  `__trait_dispatch.__iter__$ov$SelfRead` and
-  `__iterator_dispatch.__next__`, where upstream's substitution folds both
+  `__trait_dispatch.__iter__$ov$SelfRef` and
+  `__trait_dispatch.__next__$ov$`, where upstream's substitution folds both
   witnesses.
   - The inliner's witness fold (`inline_parametric::fold_witnesses`) skips
     both calls: the iterator slot is typed by an associated
     projection (`T.IteratorType[o]`) only the elaborator solves.
-  - The `__iter__` call names the borrowed alternate
-    (`symbol::borrowed_iterator_dispatch_alternate`) of `Iterable`'s
-    `__iter__$ov$SelfRef` requirement, which no witness table records.
+  - Both calls already name the requirements the witness tables record.
   - Fold both at once, through `StructDeclaration::witness_tables`, once
     the substitution closes `T.IteratorType[o]` at a concrete struct; the
     `abstract_value_next` rules in `mir/verify/calls.rs` then meet only
@@ -820,29 +818,6 @@ which names the upstream pass each one follows. Each is measured by the
     `fc`, so the probe shows the two unfolded calls.
   - Found while landing R1052 (2026-10-22).
   - Depends on R1288.
-  - Model: Fable, Not Planned.
-
-- [ ] **R1281 The elaborator resolves a call through a bound by composing
-  `{struct}.{method}`**
-
-  A trait dispatch the elaborator meets at a concrete receiver is resolved
-  by respelling the dispatch symbol under the receiver's struct name, where
-  upstream's elaborator specializes the conformance's witness lookup.
-  - The sites: `Specializer`'s call arm (`mono/specializer.rs`) through
-    `symbol::resolve_method_symbol`/`retarget_method_symbol`, then
-    `Instances::dispatched_overload_target`.
-  - Read `StructDeclaration::witness` (the template's table) instead, and
-    delete `dispatched_overload_target`; never compose the name (R1027).
-  - A compiler-known trait (`Copyable.copy`) has no declaration, so its
-    conformances record no table; its dispatches keep the composed name
-    until the bundled library declares it.
-  - No abstract dispatch survives into concrete MIR, so the VM keeps no
-    retargeting of its own; this site is the last one.
-  - Probe: `assets/ok/trait_bound_comparison_drop_order.mojo` and
-    `comparable_ordered_algorithms.mojo` print the same on both backends
-    with `retarget_method_symbol` gone from `native::mono`.
-  - Found while landing R1052 (2026-10-22).
-  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R983 With the pre-elaboration pipeline off, a capturing callable
@@ -3650,11 +3625,38 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     operator, as its `__call__` method call, and lower it as a
     `call.method`; the specializer's `CallIndirect`-over-struct
     devirtualization (`native/mono/specializer.rs`) then goes.
+  - That devirtualization is the last place `native::mono` composes a
+    callee's name (`symbol::retarget_method_symbol` on the contract's
+    `__trait_dispatch.__call__…`), as is its `call.indirect` check in
+    `mir/verify/calls.rs`; both go with it.
   - The devirtualization names a reduced `__call__` without dropping its
     operands ("'Add$mono$V1.__call__$REMOVED$ARG' expects 0 argument(s),
     got 1" once `__call__` leaves `mir::TYPE_REACHED_MEMBERS`); a
     `call.method` reduces through `Specializer::reduce_method_call`.
   - Found while landing R1031 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1467 A call selecting `String`'s `Self`-typed `__eq__`/`__ne__`
+  names an overload that was never lowered**
+
+  The check records `String.__eq__$ov$String` for `a == b` (and
+  `a.__eq__(b)`) over two `String`s, where the lowered declaration is
+  `String.__eq__$ov$Self`; `__ne__` is the same.
+  - The elaborator finds the declaration only through
+    `symbol::resolve_callable_symbol`'s `Self`-shaped arity fallback,
+    reached from `symbol::resolve_method_symbol`.
+  - A struct of the program's own spells the selection right: `P == P` over
+    `def __eq__(self, other: Self)` beside `def __eq__(self, other: Int)`
+    records `P.__eq__$ov$Self`.
+  - Probe: `print(a == b, a != b)` over two `String` values; done when
+    `cargo run -- emit-mir` on it names no `String.__eq__$ov$String` or
+    `String.__ne__$ov$String`.
+  - Lever: spell the selection with the qualifier the selected signature
+    carries (`MethodSig::overload`), as its declaration is lowered. The
+    `Self`-shaped fallback then goes, and `resolve_method_symbol` becomes an
+    exact lookup.
+  - Found while landing R1281 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
