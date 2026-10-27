@@ -2903,12 +2903,11 @@ fn callable_parameter_locals(decls: &[ParamDecl]) -> Vec<(String, Ty)> {
         .filter_map(|decl| match decl {
             ParamDecl::Value {
                 name, ty, variadic, ..
-            } if matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => Some((
+            } if decl.binds_callables() => Some((
                 name.trim_start_matches('*').to_string(),
-                if *variadic {
-                    TyKind::VariadicPack(ty.clone()).into()
-                } else {
-                    ty.clone()
+                match decl.value_element_ty() {
+                    Some(element) if *variadic => TyKind::VariadicPack(element.clone()).into(),
+                    _ => ty.clone(),
                 },
             )),
             ParamDecl::Type { .. } | ParamDecl::Value { .. } => None,
@@ -5429,17 +5428,16 @@ impl EnclosingBinders {
                     variadic: false,
                     callable_default: None,
                     ..
-                } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {
+                } if !declaration.binds_callables() => {
                     binders.values.push((declaration.binder(), (*ty).clone()));
                 }
                 // A value pack has no frame local; a thunk reads it through
                 // the parameter constants it binds.
                 ParamDecl::Value {
-                    ty,
                     variadic: true,
                     callable_default: None,
                     ..
-                } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {}
+                } if !declaration.binds_callables() => {}
                 ParamDecl::Value { .. } => {
                     binders.callables.push(declaration.clone());
                     continue;

@@ -142,8 +142,10 @@ pub(super) fn bind_explicit_value_arguments(
             // A binder typed by a type binder (`v: T`) keeps the checker's
             // solution, materialized at `T`'s: the register holds the
             // literal as spelled (`2` where `T` is `Float64`).
-            ParamDecl::Value { ty, .. }
-                if matches!(ty.kind(), TyKind::Param { .. })
+            ParamDecl::Value { .. }
+                if declaration
+                    .value_element_ty()
+                    .is_some_and(|ty| matches!(ty.kind(), TyKind::Param { .. }))
                     && bindings
                         .values
                         .get(&declaration.binder())

@@ -210,7 +210,7 @@ fn type_families_reprint_byte_identically() {
             ParamDecl::Value {
                 id: test_id("width"),
                 name: "width".into(),
-                ty: Ty::int(),
+                ty: TyKind::ParamList(Ty::int()).into(),
                 default: Some(
                     ParamContext::detached()
                         .infix(
@@ -2813,6 +2813,66 @@ fn static_call_receivers_round_trip_and_read_from_older_artifacts() {
         .replace(", receiver: absent", "");
     assert!(!older.contains("receiver:"));
     assert_eq!(recorded(&older), None);
+}
+
+/// Schema 1.113 declares a value pack with the raw list it binds; an older
+/// artifact wrote its element, which reads back as that list.
+#[test]
+fn value_pack_declarations_read_their_list_from_older_artifacts() {
+    let pack: Ty = TyKind::ParamList(Ty::int()).into();
+    let generic = TyKind::GenericFunc(Box::new(GenericFuncTy {
+        decls: vec![ParamDecl::Value {
+            id: test_id("vs"),
+            name: "*vs".into(),
+            ty: pack.clone(),
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: true,
+            constraints: Vec::new(),
+        }],
+        func: FuncTy {
+            environment: CallableEnvironment::Thin,
+            params: Vec::new(),
+            names: Vec::new(),
+            ret: Ty::none(),
+            required: Vec::new(),
+            variadic: None,
+            kw_variadic: None,
+            positional_only: None,
+            keyword_only: None,
+            raises: false,
+            error: None,
+            conventions: Vec::new(),
+            ref_params: Vec::new(),
+            ref_return: None,
+            transfers: TransferSet(Vec::new()),
+        },
+    }));
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(vec![generic.into()], Vec::new()),
+    )]);
+    assert_reprints(&program);
+    let read_ty = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        match (parsed.program.functions[0].1.reg_types[&0]).kind() {
+            TyKind::GenericFunc(generic) => match &generic.decls[0] {
+                ParamDecl::Value { ty, .. } => ty.clone(),
+                other => panic!("expected a value pack, read {other:?}"),
+            },
+            other => panic!("expected a generic function type, read {other}"),
+        }
+    };
+    let text = write::program(&program);
+    assert!(text.contains("type: param_list(Int)"), "{text}");
+    assert_eq!(read_ty(&text), pack);
+
+    let current = format!("mojito-mir 1.{}", crate::mir::text::VERSION_MINOR);
+    let older = text
+        .replacen(&current, "mojito-mir 1.112", 1)
+        .replace("type: param_list(Int)", "type: Int");
+    assert_eq!(read_ty(&older), pack);
 }
 
 /// Schema 1.4 carries a binder's identity on a `where` operand and on a

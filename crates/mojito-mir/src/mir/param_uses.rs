@@ -728,9 +728,8 @@ fn callable_parameter_slots<'d>(
         .filter(|decl| {
             matches!(
                 decl,
-                ParamDecl::Value { ty, callable_default, .. }
-                    if callable_default.is_some()
-                        || matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+                ParamDecl::Value { callable_default, .. }
+                    if callable_default.is_some() || decl.binds_callables()
             )
         })
         .map(ParamDecl::name)

@@ -190,7 +190,8 @@ impl Checker {
                         if !overloaded
                             && matches!(method, "__getitem__" | "__getitem_param__")
                             && matches!(sig.decls.as_slice(),
-                            [ParamDecl::Value { ty, .. }] if **ty == TyKind::Int) =>
+                            [decl @ ParamDecl::Value { .. }]
+                                if decl.value_element_ty().is_some_and(|ty| **ty == TyKind::Int)) =>
                     {
                         availability_failure.get_or_insert_with(|| {
                             "expected a compile-time Int index, found a runtime value".to_string()

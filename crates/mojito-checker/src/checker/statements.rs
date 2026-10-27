@@ -3129,13 +3129,17 @@ impl Checker {
         } else {
             // Value parameters are ordinary `Int` locals in the body.
             for d in &decls {
-                if let ParamDecl::Value { name, ty, .. } = d {
+                if let ParamDecl::Value {
+                    name, ty, variadic, ..
+                } = d
+                {
                     result = self.declare_value_parameter(
                         name.trim_start_matches('*'),
-                        if matches!(d, ParamDecl::Value { variadic: true, .. }) {
-                            TyKind::VariadicPack(ty.clone()).into()
-                        } else {
-                            (*ty).clone()
+                        match d.value_element_ty() {
+                            Some(element) if *variadic => {
+                                TyKind::VariadicPack(element.clone()).into()
+                            }
+                            _ => (*ty).clone(),
                         },
                     );
                     if result.is_err() {
@@ -3270,12 +3274,7 @@ impl Checker {
                     value_callables: decls
                         .iter()
                         .filter_map(|decl| match decl {
-                            ParamDecl::Value { name, ty, .. }
-                                if matches!(
-                                    *ty.kind(),
-                                    TyKind::Func(_) | TyKind::GenericFunc(_)
-                                ) =>
-                            {
+                            ParamDecl::Value { name, .. } if decl.binds_callables() => {
                                 Some(name.trim_start_matches('*').to_string())
                             }
                             _ => None,

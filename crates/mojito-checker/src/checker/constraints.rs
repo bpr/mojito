@@ -1194,9 +1194,6 @@ impl Checker {
         self.pack_params.truncate(depth);
         self.pack_params.resize_with(depth, HashMap::new);
         self.pack_params.push(pack_scope(decls));
-        self.value_packs.truncate(depth);
-        self.value_packs.resize_with(depth, HashSet::new);
-        self.value_packs.push(value_pack_scope(decls));
         self.tparams.push(scope);
     }
 
@@ -1238,24 +1235,25 @@ impl Checker {
                 .get(*level)
                 .is_some_and(|scope| scope.contains_key(name))
         })?;
-        if !self.value_packs.get(level)?.contains(name) {
+        let pack = self.pack_params.get(level)?.get(name)?;
+        if *pack.meta() == MetaTy::type_list() {
             return None;
         }
-        let pack = self
-            .param_context
-            .intern(self.vparams.get(level)?.get(name)?);
+        let pack = self.param_context.intern(pack);
         self.value_parameter_in_scope(name)
             .filter(|found| *found == pack)
     }
 
     /// The parameter-list reference a bare name denotes when it is a variadic
-    /// type pack of an enclosing declaration, innermost first.
+    /// type pack of an enclosing declaration, innermost first: a pack whose
+    /// elements are types, upstream's `TypeList`.
     pub(super) fn pack_parameter_in_scope(&self, name: &str) -> Option<ParamExpr> {
         self.pack_params
             .iter()
             .take(self.tparams.len())
             .rev()
             .find_map(|scope| scope.get(name.trim_start_matches('*')))
+            .filter(|reference| *reference.meta() == MetaTy::type_list())
             .map(|reference| self.param_context.intern(reference))
     }
 

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.112
+mojito-mir 1.113
 ```
 
-The writer emits 1.112. The reader accepts 1.0 through 1.112; *Schema 1.0*
+The writer emits 1.113. The reader accepts 1.0 through 1.113; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -636,6 +636,13 @@ type: meta }` (`#kgen.bind_params`), a generator that is still a parameter
 applied, `absent` leaving a slot unbound. The package format moves to
 `mojito-package 108`.
 
+Schema 1.113 declares a value pack (`*vs: T`, `variadic: true`) with the raw
+list it binds: its `value_param`'s `type` is `param_list(T)`, as upstream's
+implicit `vs.values: !kgen.param_list<T>` binder is typed, where an older
+record wrote the element `T` (R1151). A `value_param` with `variadic: true`
+in an artifact of schema 1.112 or older reads its `type` as the element and
+wraps it. The package format moves to `mojito-package 109`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1211,6 +1218,8 @@ is `!kgen.param_list<AnyType>`, a list of types) and is compile-time only, as
 `type_param { owner, slot, name, bounds, trait_param, callable_bound, default, infer_only, variadic, constraints }`
 or
 `value_param { owner, slot, name, type, default, callable_default, infer_only, variadic, constraints }`.
+A variadic `value_param`'s `type` is the raw list `param_list(T)` the pack
+binds (schema 1.113), and each value it binds has the element type `T`.
 Callable defaults use `default_symbol`, `default_parameter`, or
 `default_if { condition, then_value, else_value }`. A type parameter's
 `trait_param` (schema 1.78; `absent` when an older record omits it) is

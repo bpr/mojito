@@ -856,7 +856,7 @@ impl<'a> Specializer<'a> {
         for (decl, reg, _) in
             mojito_mir::mir::matched_parameter_arguments(&declaration.param_decls, param_args)
         {
-            let ParamDecl::Value { ty, .. } = decl else {
+            let Some(ty) = decl.value_element_ty() else {
                 continue;
             };
             if removed.contains(decl.id()) {

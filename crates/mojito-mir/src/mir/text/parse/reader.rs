@@ -11,6 +11,7 @@ impl<'a> Parser<'a> {
             pos: 0,
             diagnostics: Vec::new(),
             legacy: false,
+            minor: crate::mir::text::VERSION_MINOR,
         }
     }
 
@@ -27,6 +28,12 @@ impl<'a> Parser<'a> {
         self.space();
         let version_start = self.pos;
         let version = self.take_while(|byte| byte.is_ascii_digit() || byte == b'.');
+        if let Some(minor) = version
+            .strip_prefix("1.")
+            .and_then(|minor| minor.parse().ok())
+        {
+            self.minor = minor;
+        }
         match version {
             "1.0" => self.legacy = true,
             "1.1" | "1.2" | "1.3" | "1.4" | "1.5" | "1.6" | "1.7" | "1.8" | "1.9" | "1.10"
@@ -41,7 +48,7 @@ impl<'a> Parser<'a> {
             | "1.83" | "1.84" | "1.85" | "1.86" | "1.87" | "1.88" | "1.89" | "1.90" | "1.91"
             | "1.92" | "1.93" | "1.94" | "1.95" | "1.96" | "1.97" | "1.98" | "1.99" | "1.100"
             | "1.101" | "1.102" | "1.103" | "1.104" | "1.105" | "1.106" | "1.107" | "1.108"
-            | "1.109" | "1.110" | "1.111" => {}
+            | "1.109" | "1.110" | "1.111" | "1.112" | "1.113" => {}
             value if value.starts_with("1.") => self.error(
                 (version_start, self.pos),
                 "unsupported MIR 1.x minor version",

@@ -3908,26 +3908,22 @@ impl Instantiation {
             // register names, as upstream substitutes the parameter value.
             (
                 ParamDecl::Value {
-                    ty,
                     callable_default: None,
                     ..
                 },
                 TyArg::Val(CtValue::Deferred(_)),
-            ) if matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {
-                callable.map(|callable| match callable {
-                    CallableArgument::Function(function) => Bound::Callable(function.clone()),
-                    CallableArgument::Closure(closure) => Bound::Closure(*closure),
-                })
-            }
+            ) if decl.binds_callables() => callable.map(|callable| match callable {
+                CallableArgument::Function(function) => Bound::Callable(function.clone()),
+                CallableArgument::Closure(closure) => Bound::Closure(*closure),
+            }),
             (
                 ParamDecl::Value {
                     id,
-                    ty,
                     callable_default: None,
                     ..
                 },
                 TyArg::Val(value),
-            ) if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+            ) if !decl.binds_callables()
                 && !matches!(value, CtValue::Deferred(_) | CtValue::Marker(_)) =>
             {
                 let value = self.context.constant(value.clone()).ok()?;

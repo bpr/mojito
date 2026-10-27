@@ -314,7 +314,7 @@ impl Checker {
                 decls.push(ParamDecl::Value {
                     id,
                     name,
-                    ty,
+                    ty: ParamDecl::value_list_ty(ty, variadic),
                     default: None,
                     callable_default: None,
                     infer_only,

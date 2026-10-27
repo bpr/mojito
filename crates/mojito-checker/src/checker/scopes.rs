@@ -83,10 +83,9 @@ impl Checker {
                 name, ty, variadic, ..
             } => self.declare_value_parameter(
                 name.trim_start_matches('*'),
-                if *variadic {
-                    TyKind::VariadicPack(ty.clone()).into()
-                } else {
-                    (*ty).clone()
+                match decl.value_element_ty() {
+                    Some(element) if *variadic => TyKind::VariadicPack(element.clone()).into(),
+                    _ => (*ty).clone(),
                 },
             ),
             ParamDecl::Type { .. } => Ok(()),

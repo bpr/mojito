@@ -1879,12 +1879,13 @@ impl Checker {
                 self.record_at(object.source_span()).ty = Some(self_ty.clone());
             }
             if self.self_value_pack(field).is_some()
-                && let Some(ParamDecl::Value { ty, .. }) = self
+                && let Some(element) = self
                     .self_decls
                     .iter()
                     .find(|d| d.name().trim_start_matches('*') == field)
+                    .and_then(ParamDecl::value_element_ty)
             {
-                return Ok(TyKind::VariadicPack(ty.clone()).into());
+                return Ok(TyKind::VariadicPack(element.clone()).into());
             }
             return match self.self_decls.iter().find(|d| d.name() == field) {
                 // A value parameter reads as its declared type: upstream's

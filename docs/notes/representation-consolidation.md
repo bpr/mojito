@@ -141,7 +141,7 @@ the entries named. A single command cannot use both.
 8. **Gap I: packs are binder kinds** (slight size, about 20 entries):
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1169 --only R1151 --only R1485 --only R1486 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1491 --only R1492 --only R1485 --only R1486 -n 0
    ```
 
 9. **The conformance blocks**. These do not shrink generic code. Each is
@@ -199,7 +199,7 @@ are conformance only.
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1363, R424, R705, R578, R1360, R1361, and R1362 (landed); R1461; R1357 and R1358 (landed); R1359; R1348 and R1281 (landed) | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 (landed) for the other closure forms | R1104, R100, R1230, R1333, R172, R980, R983 (closed), R534, R176 | yes |
 | H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R1379, R1380, R1381, R1382, R1383, R1385–R1387, and R603 (landed); R1384, R1388 | about 45 (below) | partial |
-| I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 (landed), R1485, R1486 | about 20 (below) | slight |
+| I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 (landed), R1491, R1492, R1485, R1486 | about 20 (below) | slight |
 
 ### D′. Memory-only values live in registers
 
@@ -372,8 +372,11 @@ missing.
 - **Upstream**: a pack is a `TypeList` / `ParameterList` value, and its
   library members run by CTFE.
 - **Cores**: R1169 (a type pack is a `TypeList` value, landed), R1151 (a value
-  pack is typed as the raw list), R808 (generator parameters, landed),
-  R1485 (unbound applications), and R1486 (type-valued generators).
+  pack is declared with the raw list it binds, landed), R1491 and R1492 (a
+  value pack, then a type pack, declares upstream's two binders: the
+  hidden `vs.values` list and the visible `ParameterList` / `TypeList`),
+  R808 (generator parameters, landed), R1485 (unbound applications), and
+  R1486 (type-valued generators).
 - **Members**:
   - Queries: R1284, R800, R904, R1182, R1302, R445, R803, R345, R804,
     R348, R1071.

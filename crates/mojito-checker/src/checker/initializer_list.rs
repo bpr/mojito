@@ -331,7 +331,8 @@ impl Checker {
         };
         let decls = &self.structs.get(target)?.decls;
         let raw = decls.iter().any(|decl| {
-            matches!(decl, ParamDecl::Value { ty, .. } if matches!(ty.kind(), TyKind::ParamList(_)))
+            matches!(decl, ParamDecl::Value { ty, variadic: false, .. }
+                if matches!(ty.kind(), TyKind::ParamList(_)))
         });
         if !raw || decls.len() != arguments.len() {
             return None;

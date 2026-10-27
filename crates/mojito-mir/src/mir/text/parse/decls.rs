@@ -4,7 +4,7 @@
 use super::*;
 
 impl Decoder {
-    pub(super) fn new(legacy: bool) -> Self {
+    pub(super) fn new(legacy: bool, minor: u16) -> Self {
         Self {
             diagnostics: Vec::new(),
             source_map: ArtifactSourceMap::default(),
@@ -15,6 +15,7 @@ impl Decoder {
             unlabelled_tries: false,
             legacy_raise: None,
             legacy_raises: false,
+            minor,
         }
     }
 

@@ -2028,7 +2028,7 @@ impl Checker {
                     ty,
                     callable_default: None,
                     ..
-                } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => {
+                } if !decl.binds_callables() => {
                     Some(super::annotations::value_parameter_expr(decl, ty))
                 }
                 ParamDecl::Value { .. } => None,

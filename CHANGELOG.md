@@ -1541,6 +1541,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- A variadic value parameter (`*vs: T`) is now declared with the raw list
+  it binds, `KGENParamList[T]`, as upstream's implicit `vs.values` binder
+  is typed, where it was declared with its element (R1151). Each bracket
+  argument is still checked against the element, and the checker's
+  separate value-pack scope is folded into its one pack scope. A
+  variadic `value_param`'s `type` is now `param_list(T)` (MIR text 1.113,
+  package 109), and a 1.112 artifact, which the reader had rejected
+  since R808 bumped the schema, reads again. Declaring upstream's
+  visible `ParameterList` / `TypeList` binder beside the list is R1491
+  and R1492.
+
 - The elaborator above the check no longer carries a struct-value freeze
   (`Elab::freeze_struct_value_arguments`), which could no longer evaluate
   any call: a struct-valued bracket argument that calls a function

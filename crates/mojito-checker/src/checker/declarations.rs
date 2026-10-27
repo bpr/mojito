@@ -743,8 +743,8 @@ impl Checker {
             if let Some(scope) = self.vparams.last_mut() {
                 *scope = value_scope(&decls);
             }
-            if let Some(scope) = self.value_packs.last_mut() {
-                *scope = value_pack_scope(&decls);
+            if let Some(scope) = self.pack_params.last_mut() {
+                *scope = pack_scope(&decls);
             }
             if let Some(scope) = self.tparams.last_mut() {
                 *scope = type_scope(&decls);
@@ -939,7 +939,7 @@ impl Checker {
                     decls[index] = ParamDecl::Value {
                         id: binder_id(index),
                         name: source.name.clone(),
-                        ty: checked,
+                        ty: ParamDecl::value_list_ty(checked, variadic),
                         default: None,
                         callable_default,
                         infer_only,
@@ -989,14 +989,15 @@ impl Checker {
                 .map(|expr| self.compile_dependent_ct_expr(expr))
                 .transpose()?,
         };
+        let variadic = tp.name.starts_with('*');
         Ok(ParamDecl::Value {
             id,
             name: tp.name.clone(),
-            ty,
+            ty: ParamDecl::value_list_ty(ty, variadic),
             default,
             callable_default: None,
             infer_only: tp.infer_only,
-            variadic: tp.name.starts_with('*'),
+            variadic,
             constraints: tp
                 .constraints
                 .iter()
@@ -1827,9 +1828,7 @@ impl Checker {
             value_callables: method_decls
                 .iter()
                 .filter_map(|decl| match decl {
-                    ParamDecl::Value { name, ty, .. }
-                        if matches!(*ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) =>
-                    {
+                    ParamDecl::Value { name, .. } if decl.binds_callables() => {
                         Some(name.trim_start_matches('*').to_string())
                     }
                     _ => None,
@@ -3510,6 +3509,13 @@ impl Checker {
                         tyargs.push(value);
                         continue;
                     }
+                    // Each argument binds one value of the pack's element,
+                    // as upstream checks a variadic argument against its
+                    // list's `getParameterListInfo().elementType`.
+                    let element = decl
+                        .value_element_ty()
+                        .map(|element| decl.with_value_type(element.clone()));
+                    let element = element.as_ref().unwrap_or(decl);
                     let mut values = Vec::with_capacity(arguments.len());
                     for (position, argument) in arguments {
                         // A spread of a computed list binds its elements,
@@ -3522,7 +3528,7 @@ impl Checker {
                             values.extend(self.spread_pack_values(operand)?);
                             continue;
                         }
-                        let resolved = self.resolve_param_arg(decl, argument)?;
+                        let resolved = self.resolve_param_arg(element, argument)?;
                         attributes[position] = bracket_attribute(argument, &resolved);
                         values.push(resolved.ct_value().ok_or_else(|| {
                             TypeError::Unsupported(
@@ -3871,12 +3877,14 @@ impl Checker {
         value_ty: impl Fn(usize, &Ty) -> Option<Ty>,
     ) -> Result<(), TypeError> {
         for (index, decl) in decls.iter().enumerate() {
-            let ParamDecl::Value {
-                ty,
-                default,
-                callable_default: None,
-                ..
-            } = decl
+            let (
+                ParamDecl::Value {
+                    default,
+                    callable_default: None,
+                    ..
+                },
+                Some(ty),
+            ) = (decl, decl.value_element_ty())
             else {
                 continue;
             };
@@ -3946,7 +3954,13 @@ impl Checker {
     ) -> Result<HashMap<ParamId, CtValue>, TypeError> {
         let mut solutions = HashMap::new();
         for (index, decl) in decls.iter().enumerate() {
-            let ParamDecl::Value { name, ty, .. } = decl else {
+            let ParamDecl::Value {
+                name,
+                ty,
+                variadic: false,
+                ..
+            } = decl
+            else {
                 continue;
             };
             let TyKind::ParamList(element) = ty.kind() else {

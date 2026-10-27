@@ -90,7 +90,7 @@ pub(super) fn artifact(
             vec![diagnostic((0, input.len()), "missing artifact record")],
         ));
     };
-    match Decoder::new(parser.legacy).program(&value) {
+    match Decoder::new(parser.legacy, parser.minor).program(&value) {
         Ok((program, source_map)) => Ok(ParsedArtifact {
             program,
             source_map,
@@ -121,6 +121,8 @@ struct Parser<'a> {
     /// The header named schema 1.0, whose compile-time expressions reference
     /// parameters by name alone.
     legacy: bool,
+    /// The schema minor the header names; the current one until it is read.
+    minor: u16,
 }
 
 mod decls;
@@ -159,6 +161,9 @@ struct Decoder {
     /// 1.108, whose error the `try` it names, or the function, takes in no
     /// slot yet.
     legacy_raises: bool,
+    /// The schema minor the header names: a `value_param` of a pack older
+    /// than MIR 1.113 carries its element, not the list it binds.
+    minor: u16,
 }
 
 fn parse_int_literal(value: &str) -> Option<IntLiteral> {

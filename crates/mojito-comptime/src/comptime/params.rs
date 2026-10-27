@@ -45,7 +45,7 @@ pub(super) fn classify_ct_param(
     let value = |ty: Ty| ParamDecl::Value {
         id: elaborated_binder(tp, siblings, owner),
         name: tp.name.clone(),
-        ty,
+        ty: ParamDecl::value_list_ty(ty, tp.name.starts_with('*')),
         default: tp
             .default
             .as_ref()

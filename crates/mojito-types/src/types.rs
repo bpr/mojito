@@ -1734,6 +1734,10 @@ pub enum ParamDecl {
         /// The binder's identity; a `DeclRef` to this parameter carries it.
         id: ParamId,
         name: String,
+        /// The declared type. A pack (`*values: T`, `variadic`) is declared
+        /// with the raw list it binds, `TyKind::ParamList(T)`, as upstream's
+        /// `values.values` binder is; [`ParamDecl::value_element_ty`] reads
+        /// the element each bound value has.
         ty: Ty,
         default: Option<ParamExpr>,
         /// A callable default is deliberately not a `CtValue`: captured
@@ -2116,18 +2120,51 @@ impl ParamDecl {
     }
 
     /// The meta-type a reference to this binder has: a value binder's
-    /// domain, which is a parameter list for a pack (`*values: T`) or a raw
-    /// list (`values: KGENParamList[T]`); a type binder's `Type`, or a type
-    /// list for a type pack.
+    /// declared type's, which for a pack (`*values: T`) is the raw list it
+    /// binds, as for a raw-list binder (`values: KGENParamList[T]`); a type
+    /// binder's `Type`, or a type list for a type pack.
     pub fn binder_meta(&self) -> MetaTy {
         match self {
-            Self::Value {
-                ty, variadic: true, ..
-            } => MetaTy::ParamList(Box::new(MetaTy::value(ty.clone()))),
             Self::Value { ty, .. } => MetaTy::value(ty.clone()),
             Self::Type { variadic: true, .. } => MetaTy::type_list(),
             Self::Type { .. } => MetaTy::Type,
         }
+    }
+
+    /// The type a value binder whose values have type `element` is
+    /// declared with: a pack (`*vs: T`, `variadic`) binds the raw list
+    /// `TyKind::ParamList(T)`, as upstream's implicit `vs.values:
+    /// !kgen.param_list<T>` binder does; any other value binder `element`.
+    pub fn value_list_ty(element: Ty, variadic: bool) -> Ty {
+        if variadic {
+            TyKind::ParamList(element).into()
+        } else {
+            element
+        }
+    }
+
+    /// The type each value this binder binds has: a pack's element (the
+    /// element type upstream's `ASTType::getParameterListInfo` reads off
+    /// the declared list), any other value binder's declared type. `None`
+    /// for a type binder.
+    pub fn value_element_ty(&self) -> Option<&Ty> {
+        match self {
+            Self::Value {
+                ty, variadic: true, ..
+            } => Some(match ty.kind() {
+                TyKind::ParamList(element) => element,
+                _ => ty,
+            }),
+            Self::Value { ty, .. } => Some(ty),
+            Self::Type { .. } => None,
+        }
+    }
+
+    /// Whether this is a value binder whose values are callables (`f: def()
+    /// -> None`, or a pack `*fs` of them).
+    pub fn binds_callables(&self) -> bool {
+        self.value_element_ty()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)))
     }
 
     /// The reference a use of this binder carries: its identity with its
@@ -2595,7 +2632,9 @@ pub fn write_param_decls(f: &mut fmt::Formatter<'_>, decls: &[ParamDecl]) -> fmt
                     write!(f, ": {}", bounds.join(" & "))?;
                 }
             }
-            ParamDecl::Value { name, ty, .. } => write!(f, "{name}: {ty}")?,
+            ParamDecl::Value { name, ty, .. } => {
+                write!(f, "{name}: {}", decl.value_element_ty().unwrap_or(ty))?;
+            }
         }
     }
     write!(f, "]")
@@ -5946,5 +5985,49 @@ mod struct_field_types_tests {
             struct_field_types(&[], &[], &concrete),
             Some(Cow::Borrowed(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod value_pack_decl_tests {
+    use super::*;
+
+    fn value_pack() -> ParamDecl {
+        ParamDecl::Value {
+            id: ParamId::new("f", 0),
+            name: "*vs".to_string(),
+            ty: TyKind::ParamList(Ty::int()).into(),
+            default: None,
+            callable_default: None,
+            infer_only: false,
+            variadic: true,
+            constraints: Vec::new(),
+        }
+    }
+
+    struct Decls(Vec<ParamDecl>);
+
+    impl fmt::Display for Decls {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write_param_decls(f, &self.0)
+        }
+    }
+
+    #[test]
+    fn a_value_pack_binds_the_raw_list_it_is_declared_with() {
+        assert_eq!(
+            value_pack().binder_meta(),
+            MetaTy::ParamList(Box::new(MetaTy::value(Ty::int())))
+        );
+    }
+
+    #[test]
+    fn a_value_pack_binds_values_of_its_element_type() {
+        assert_eq!(value_pack().value_element_ty(), Some(&Ty::int()));
+    }
+
+    #[test]
+    fn a_value_pack_displays_its_element_type() {
+        assert_eq!(Decls(vec![value_pack()]).to_string(), "[*vs: Int]");
     }
 }

@@ -331,8 +331,9 @@ pub(super) fn param_error(error: mojito_types::param_expr::ParamError) -> TypeEr
     })
 }
 
-/// The variadic type packs a declaration's own binders open, as the
-/// parameter-list references an element of the pack indexes.
+/// The variadic packs a declaration's own binders open, type and value
+/// packs alike, as the parameter-list references an element of the pack
+/// indexes: what upstream types a `TypeList` or a `ParameterList`.
 pub(super) fn pack_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()
@@ -341,12 +342,17 @@ pub(super) fn pack_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
                 name,
                 variadic: true,
                 ..
+            }
+            | ParamDecl::Value {
+                name,
+                variadic: true,
+                ..
             } => Some((
                 name.trim_start_matches('*').to_string(),
                 ParamContext::detached().decl_ref(
                     decl.id().clone(),
                     name.trim_start_matches('*'),
-                    mojito_types::param_expr::MetaTy::type_list(),
+                    decl.binder_meta(),
                 ),
             )),
             _ => None,
@@ -355,15 +361,6 @@ pub(super) fn pack_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
 }
 
 /// The value-parameter scope a declaration's own binders open.
-/// The variadic value packs `decls` declares, by bare name.
-pub(super) fn value_pack_scope(decls: &[ParamDecl]) -> HashSet<String> {
-    decls
-        .iter()
-        .filter(|decl| matches!(decl, ParamDecl::Value { variadic: true, .. }))
-        .map(|decl| decl.name().trim_start_matches('*').to_string())
-        .collect()
-}
-
 pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
     decls
         .iter()
@@ -373,7 +370,7 @@ pub(super) fn value_scope(decls: &[ParamDecl]) -> HashMap<String, ParamExpr> {
                 ty,
                 callable_default: None,
                 ..
-            } if !matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_)) => Some((
+            } if !decl.binds_callables() => Some((
                 name.trim_start_matches('*').to_string(),
                 value_parameter_expr(decl, ty),
             )),

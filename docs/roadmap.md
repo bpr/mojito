@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1491**.
+Next free ID: **R1493**.
 
 ## Ordered Work
 
@@ -8743,6 +8743,15 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `assets/ok/unread_callable_parameter_instances.mojo`.
   - Probe: `callback` in
     `assets/ok/capturing_generic_callable_parameter_environment.mojo`.
+  - A pack of callables (`*fs: def() thin -> None`) is the same slot, a
+    `VariadicPack` nothing stores, kept out of the value scope, so it is
+    no `ParameterList` the check reads.
+  - Probe: `fs[i]()` in a `comptime for i in range(len(fs))` of `def
+    run[*fs: def() thin -> None]` reports "'fs' has type
+    $variadic[def() thin -> None] and is not callable"; the pin prints
+    `a` and `b` over `run[a, b]()`.
+  - Probe: `print(len(fs))` there reports "vm backend does not support
+    methods on None yet"; the pin prints `2`.
   - Found while landing R662 (2026-10-26).
   - Depends on R533: a capturing closure must leave the runtime-parameter
     path first.
@@ -10473,24 +10482,45 @@ follow-ups the landed producer stages filed come last.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1151 A variadic value parameter is typed by its element, not by
-  upstream's raw list**
+- [ ] **R1491 A variadic value parameter is one binder where upstream
+  declares two**
 
-  Problem: upstream's `*values: T` binder is a `!kgen.param_list<T>` with
-  variadic binding sugar, where Mojito declares it `ParamDecl::Value { ty:
-  T, variadic: true }` and re-derives the list in
-  `ParamDecl::binder_meta`.
-  - A raw-list binder (`values: KGENParamList[T]`) and a pack therefore
-    share a meta-type but not a declared type, so the checker keeps a
-    second scope to tell them apart (`Checker::value_packs`,
-    `value_pack_in_scope`).
-  - Every reader of a variadic declaration's `ty` moves with the change:
-    `value_pack_scope`, `self_value_pack`, the variadic arm of
-    `resolve_use_params`, `bound_value_ty`, and the MIR verifier's pack
-    checks.
+  Upstream's `*vs: T` declares an implicit infer-only `vs.values:
+  !kgen.param_list<T>` binder and the visible `vs: ParameterList[T,
+  vs.values]` (`typeCheckVariadicParams`, `Signatures.cpp`), where
+  Mojito declares the one `ParamDecl::Value { ty: ParamList(T), variadic:
+  true }` and re-spells `ParameterList[vs.values]()` at each run-time
+  read (`infer_value_pack_read`).
+  - The hidden binder goes after the existing infer-only parameters, as
+    `addImplicitTypeParams(append=false)` inserts it, so slot numbering,
+    mangling, and a struct's identity gain the list slot.
+  - Bracket arguments bind the hidden list through the visible binder's
+    element type (`getParameterListInfo`, `ParamInf.cpp`).
+  - Then a pack and a raw-list binder differ by declared type, as
+    upstream's do, and `value_pack_in_scope`'s pack-scope test goes.
+  - Probe: `var x: String = vs` in `def f[*vs: Int]` reports "found
+    ParameterList[Int, vs]"; the pin says 'ParameterList[vs.values]'
+    (R1489's value half).
   - A session should plan this first and split it if it does not fit.
-  - Found while landing R807 (2026-10-19).
+  - Found while landing R1151 (2026-10-27).
   - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1492 A variadic type parameter is one binder where upstream
+  declares two**
+
+  Upstream's `*Ts: Tr` declares an implicit infer-only `Ts.values:
+  !kgen.param_list<Tr>` binder and the visible `Ts: TypeList[Tr,
+  Ts.values]`, where Mojito declares the one `ParamDecl::Type { variadic:
+  true }` and re-spells `TypeList[Ts.values]()` at each run-time read.
+  - The same split as R1491, for type packs: the `TypeList` half of the
+    spelled pack read goes, and so does `pack_parameter_in_scope`.
+  - Probe: `var y: Int = Ts` in `def go[*Ts: Movable]` reports "found
+    TypeList[Movable, Ts]"; the pin says 'TypeList[Ts.values]' (R1489's
+    type half).
+  - A session should plan this first and split it if it does not fit.
+  - Found while landing R1151 (2026-10-27).
+  - Depends on R1491.
   - Model: Fable, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*

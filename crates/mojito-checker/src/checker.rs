@@ -571,13 +571,12 @@ pub struct Checker {
     /// Value parameters in scope by bare name, innermost last: the typed
     /// references a dependent parameter expression resolves its names to.
     vparams: Vec<HashMap<String, ParamExpr>>,
-    /// Variadic type packs in scope by bare name, level for level beside
-    /// `tparams`: the parameter-list references a pack element indexes.
+    /// Variadic packs in scope by bare name, type packs (`*Ts`) and value
+    /// packs (`*values: T`) alike, level for level beside `tparams`: the
+    /// parameter-list references a pack element indexes. A value pack is
+    /// here and a raw parameter list (`values: KGENParamList[T]`), whose
+    /// references share its meta-type, is not.
     pack_params: Vec<HashMap<String, ParamExpr>>,
-    /// Variadic value packs (`*values: T`) in scope by bare name, level for
-    /// level beside `vparams`: what tells a pack from a raw parameter list
-    /// (`values: KGENParamList[T]`), whose references share its meta-type.
-    value_packs: Vec<HashSet<String>>,
     /// The dependent pack element each bounded view of one stands for, by the
     /// view's parameter name (see `opaque_element`).
     pack_element_views: RefCell<HashMap<String, Ty>>,
@@ -1033,7 +1032,6 @@ impl Checker {
             tparams: Vec::new(),
             vparams: Vec::new(),
             pack_params: Vec::new(),
-            value_packs: Vec::new(),
             pack_element_views: RefCell::new(HashMap::new()),
             param_context: ParamContext::detached(),
             self_decls: Vec::new(),

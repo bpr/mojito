@@ -756,14 +756,19 @@ pub(super) fn verify_param_arguments(
                     ));
                 }
             }
-            (mojito_types::types::ParamDecl::Value { name, ty, .. }, Some(register)) => {
-                // A value pack spread whole binds the pack of its element.
+            (
+                declaration @ mojito_types::types::ParamDecl::Value { name, ty, .. },
+                Some(register),
+            ) => {
+                // Each argument to a pack binds one value of its element; a
+                // value pack spread whole binds the pack of its element.
+                let ty = declaration.value_element_ty().unwrap_or(ty);
                 let spread = pack(index)
                     && matches!(function.reg_types.get(&register.0).map(Ty::kind),
                         Some(TyKind::VariadicPack(element)) if types_compatible(element, ty));
                 if let Some(found) = function.reg_types.get(&register.0)
                     && !spread
-                    && !(matches!(ty.kind(), TyKind::Func(_) | TyKind::GenericFunc(_))
+                    && !(declaration.binds_callables()
                         && mojito_types::types::callable_bound_accepts(found, ty))
                     && !types_compatible(found, ty)
                 {

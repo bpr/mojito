@@ -403,6 +403,13 @@ impl Decoder {
                         "constraints",
                     ],
                 );
+                // Schema 1.112 and older wrote a pack's element, not the
+                // list it binds.
+                let ty = if self.minor <= 112 {
+                    ParamDecl::value_list_ty(ty, variadic)
+                } else {
+                    ty
+                };
                 Some(ParamDecl::Value {
                     id: self.binder_id(value, fields, &name)?,
                     name,
@@ -1145,7 +1152,8 @@ impl Decoder {
         let mut out = HashMap::new();
         // The scratch decoder reads no 1.0 reference itself: a parameter's
         // declared type never names another parameter by a bare `ct_param`.
-        let mut scratch = Self::new(false);
+        // It reads at schema 1.0, whose packs carry their element.
+        let mut scratch = Self::new(false, 0);
         walk(artifact, &mut scratch, &mut out);
         out
     }

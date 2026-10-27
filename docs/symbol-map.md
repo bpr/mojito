@@ -2090,15 +2090,21 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   and `typelist_proposition_query` (`checker/comptime_validation.rs`), from
   `infer_member` (`Ts.length`, `indexing.rs`) and the `Invoke` arm of `infer` (`Ts.contains[X]()`,
   `Ts.all_conforms_to[T]()`, `inference.rs`). A value pack that is still a
-  parameter (`*values: Int`) is a `ParamList` of its element, as is a
-  raw-list binder (`values: KGENParamList[T]`, `TyKind::ParamList`, which
-  `MetaTy::value` canonicalizes and `MetaTy::value_ty` inverts): every
-  binder's meta-type is `ParamDecl::binder_meta` (`mojito-types`,
-  `types.rs`), read by `annotations::value_parameter_expr` and the MIR
-  scope verifier. `Checker::value_pack_named` resolves a pack — the bare
-  name through `value_pack_in_scope` (the `value_packs` scope beside
-  `vparams` tells a pack from a raw list), a struct's own `Self.values`
-  through `self_value_pack`, which `infer_member` types as the pack. Only a
+  parameter (`*values: Int`) is declared with the raw list it binds,
+  `TyKind::ParamList(Int)`, as upstream's implicit `values.values` binder
+  is and as a raw-list binder (`values: KGENParamList[T]`) is; `MetaTy::value`
+  canonicalizes that type and `MetaTy::value_ty` inverts it, so every
+  binder's meta-type is its declared type's (`ParamDecl::binder_meta`,
+  `mojito-types`, `types.rs`), read by `annotations::value_parameter_expr`
+  and the MIR scope verifier. `ParamDecl::value_element_ty` reads the type
+  each bound value has (a bracket argument is checked against it), and
+  `ParamDecl::value_list_ty` builds the declared type from it.
+  `Checker::value_pack_named` resolves a pack — the bare name through
+  `value_pack_in_scope` (the one pack scope `pack_params`, from
+  `annotations::pack_scope`, holds type and value packs and no raw list;
+  `pack_parameter_in_scope` answers only its lists of types), a struct's
+  own `Self.values` through `self_value_pack`, which `infer_member` types
+  as the pack. Only a
   parameter position reads the pack itself: `compile_dependent_ct_expr`'s
   `Index` arm makes `values[i]` a `ListGet` (upstream's
   `__getitem_param__`, roadmap R800), while a `comptime for` over it steps
