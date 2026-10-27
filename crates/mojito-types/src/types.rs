@@ -2887,10 +2887,10 @@ pub const fn is_scalar_simd(ty: &TyKind) -> bool {
 /// Whether `ty` is `Int`, `UInt`, or `Float64`: a width-one `int`, `uint`,
 /// or `float64` vector, whose value both backends hold as a host scalar.
 ///
-/// It exists only because those three keep a scalar path of their own above
-/// the waist where upstream's are ordinary `SIMD` instances: the backends
-/// serve no lane method on them (R1390), and a width-one comparison types as
-/// a lane mask where upstream's is a `Bool` (R185).
+/// It exists only because those three keep an infix operator path of their
+/// own above the waist where upstream's are ordinary `SIMD` instances: a
+/// width-one comparison types as a lane mask where upstream's is a `Bool`
+/// (R185).
 pub const fn has_host_scalar_value(ty: &TyKind) -> bool {
     matches!(ty, TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
 }

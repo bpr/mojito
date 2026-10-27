@@ -528,7 +528,7 @@ impl Checker {
     }
 
     /// The methods a built-in value answers with no callee: `copy`,
-    /// `__hash__`, and the float and rounding intrinsics.
+    /// `__hash__`, and the `std.math` operation dunders.
     fn resolve_builtin_method(
         &self,
         site: MethodCallSite<'_>,
@@ -593,30 +593,6 @@ impl Checker {
                 Ty::none(),
                 vec![Some(ArgConvention::Mut)],
                 vec![hasher],
-            ))));
-        }
-        // A `Float64`'s fused multiply-add (`k.__fma__(step, start)`, a
-        // float range element) is an intrinsic over the scalar itself;
-        // sized float scalars resolve through the SIMD method table.
-        if kwargs.is_empty()
-            && param_args.is_empty()
-            && *obj_ty == *TyKind::FLOAT64
-            && method == "__fma__"
-            && args.len() == 2
-        {
-            for found in self.builtin_args(method, args.len(), args)? {
-                if found != *obj_ty {
-                    return Err(TypeError::TypeMismatch {
-                        expected: obj_ty.to_string(),
-                        found: found.to_string(),
-                        context: format!("argument to '{method}'"),
-                    });
-                }
-            }
-            return Ok(Ok(Some(intrinsic_resolution(
-                obj_ty.clone(),
-                vec![None; args.len()],
-                vec![obj_ty.clone(); args.len()],
             ))));
         }
         // A scalar's `std.math` operation dunders are the methods upstream's

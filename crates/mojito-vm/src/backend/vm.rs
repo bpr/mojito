@@ -9,8 +9,8 @@
 use crate::runtime::RuntimeError;
 use crate::runtime::{
     ClosureCapture, RefProjection, Value, apply_infix, apply_prefix, builtin_abs, builtin_convert,
-    builtin_divmod, builtin_error, builtin_input, builtin_min_max, builtin_round, read_simd_lane,
-    simd_from_values, value_as_index,
+    builtin_divmod, builtin_error, builtin_input, builtin_min_max, builtin_round, simd_from_values,
+    value_as_index,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use calls::*;
@@ -1510,11 +1510,9 @@ fn write_simd_reference_lane(
         return Ok(false);
     };
     let parent = navigate_reference_mut(root, prefix)?;
-    let Value::Simd { dtype, lanes } = parent else {
-        return Ok(false);
-    };
-    crate::runtime::set_simd_lane(*dtype, lanes, *index as i64, &value)?;
-    Ok(true)
+    crate::runtime::set_value_lane(parent, *index as i64, &value)
+        .transpose()
+        .map(|written| written.is_some())
 }
 
 /// Store through a flattened reference whose final projection is the payload
@@ -1548,11 +1546,12 @@ fn index_value(base: &Value, idx: i64) -> Result<Value, RuntimeError> {
         }
         // A SIMD lane read returns the width-1 scalar (a width-1 `float64` lane is
         // a `Float64`, per the SIMD/Float64 unification).
-        Value::Simd { dtype, lanes } => read_simd_lane(*dtype, lanes, idx),
-        other => Err(RuntimeError::TypeError(format!(
-            "cannot index {}",
-            crate::runtime::type_name(other)
-        ))),
+        other => crate::runtime::read_value_lane(other, idx).unwrap_or_else(|| {
+            Err(RuntimeError::TypeError(format!(
+                "cannot index {}",
+                crate::runtime::type_name(other)
+            )))
+        }),
     }
 }
 

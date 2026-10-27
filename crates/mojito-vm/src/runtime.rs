@@ -496,17 +496,13 @@ pub fn hash_leaf_value(value: Value) -> Value {
 /// source lane.
 pub fn simd_to_bits(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
     let (dtype, lanes) = match value {
-        Value::Simd { dtype, lanes } => (*dtype, lanes.clone()),
-        Value::Int(n) => (Dtype::Int, SimdLanes::Int(vec![i128::from(*n)])),
-        Value::UInt(n) => (Dtype::UInt, SimdLanes::Int(vec![i128::from(*n)])),
         Value::Bool(b) => (Dtype::Bool, SimdLanes::Bool(vec![*b])),
-        Value::Float64(x) => (Dtype::Float64, SimdLanes::Float(vec![*x])),
-        other => {
-            return Err(RuntimeError::TypeError(format!(
+        other => simd_parts(other).ok_or_else(|| {
+            RuntimeError::TypeError(format!(
                 "cannot reinterpret {} as SIMD bits",
                 type_name(other)
-            )));
-        }
+            ))
+        })?,
     };
     let bits = match &lanes {
         SimdLanes::Int(values) => {
@@ -1071,6 +1067,37 @@ pub fn set_simd_lane(
     Ok(())
 }
 
+/// A SIMD value's dtype and lanes, whether it is held as lanes or as the host
+/// scalar of a width-one `Int`, `UInt`, or `Float64`.
+pub fn simd_parts(value: &Value) -> Option<(Dtype, SimdLanes)> {
+    match value {
+        Value::Simd { dtype, lanes } => Some((*dtype, lanes.clone())),
+        other => host_scalar_parts(other),
+    }
+}
+
+/// Read lane `i` of a SIMD value, or `None` when `value` is no SIMD value.
+pub fn read_value_lane(value: &Value, i: i64) -> Option<Result<Value, RuntimeError>> {
+    match value {
+        Value::Simd { dtype, lanes } => Some(read_simd_lane(*dtype, lanes, i)),
+        other => host_scalar_parts(other).map(|(dtype, lanes)| read_simd_lane(dtype, &lanes, i)),
+    }
+}
+
+/// Write lane `i` of the SIMD value `target` in place, or `None` when
+/// `target` is no SIMD value. A width-one host scalar is replaced whole.
+pub fn set_value_lane(
+    target: &mut Value,
+    i: i64,
+    value: &Value,
+) -> Option<Result<(), RuntimeError>> {
+    if let Value::Simd { dtype, lanes } = target {
+        return Some(set_simd_lane(*dtype, lanes, i, value));
+    }
+    let (dtype, mut lanes) = host_scalar_parts(target)?;
+    Some(set_simd_lane(dtype, &mut lanes, i, value).map(|()| *target = simd_value(dtype, lanes)))
+}
+
 /// Apply an elementwise SIMD operator.
 ///
 /// One operand may be a scalar that splats to the other's dtype and width.
@@ -1457,6 +1484,16 @@ fn materialize_like_numeric(literal: Value, concrete: &Value) -> Result<Value, R
 /// Build a SIMD `Value` from `dtype`+`lanes`, representing a width-one
 /// `float64`, `int`, or `uint` as the host scalar `Value::Float64`,
 /// `Value::Int`, or `Value::UInt`.
+/// The one lane of a width-one `Int`, `UInt`, or `Float64` host scalar.
+fn host_scalar_parts(value: &Value) -> Option<(Dtype, SimdLanes)> {
+    match value {
+        Value::Int(n) => Some((Dtype::Int, SimdLanes::Int(vec![i128::from(*n)]))),
+        Value::UInt(n) => Some((Dtype::UInt, SimdLanes::Int(vec![i128::from(*n)]))),
+        Value::Float64(x) => Some((Dtype::Float64, SimdLanes::Float(vec![*x]))),
+        _ => None,
+    }
+}
+
 fn simd_value(dtype: Dtype, lanes: SimdLanes) -> Value {
     if dtype == Dtype::Float64
         && let SimdLanes::Float(v) = &lanes
@@ -1679,18 +1716,9 @@ const fn simd_shape(v: &Value) -> Option<(Dtype, usize)> {
 ///
 /// Bool casts are rejected at checking.
 pub fn simd_cast(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
-    // A canonicalized width-1 receiver arrives as a native scalar.
-    let lanes = match value {
-        Value::Simd { lanes, .. } => lanes.clone(),
-        Value::Int(n) => SimdLanes::Int(vec![*n as i128]),
-        Value::Float64(x) => SimdLanes::Float(vec![*x]),
-        other => {
-            return Err(RuntimeError::TypeError(format!(
-                "cannot cast {} as a SIMD value",
-                type_name(other)
-            )));
-        }
-    };
+    let (_, lanes) = simd_parts(value).ok_or_else(|| {
+        RuntimeError::TypeError(format!("cannot cast {} as a SIMD value", type_name(value)))
+    })?;
     let cast = match (&lanes, target.is_float()) {
         (SimdLanes::Int(v), false) => {
             SimdLanes::Int(v.iter().map(|x| wrap_lane(target, *x)).collect())
@@ -1725,12 +1753,13 @@ pub fn simd_shuffle(
     other: Option<&Value>,
     mask: &[usize],
 ) -> Result<Value, RuntimeError> {
-    let lanes_of = |value: &Value| match value {
-        Value::Simd { dtype, lanes } => Ok((*dtype, lanes.clone())),
-        _ => Err(RuntimeError::TypeError(format!(
-            "cannot shuffle {} as a SIMD value",
-            type_name(value)
-        ))),
+    let lanes_of = |value: &Value| {
+        simd_parts(value).ok_or_else(|| {
+            RuntimeError::TypeError(format!(
+                "cannot shuffle {} as a SIMD value",
+                type_name(value)
+            ))
+        })
     };
     let (dtype, mut lanes) = lanes_of(value)?;
     if let Some(other) = other {
@@ -1805,7 +1834,13 @@ pub fn simd_method(
                 "eq" => InfixOp::Eq,
                 _ => InfixOp::Ne,
             };
-            simd_binop(op, &simd_value(dtype, lanes.clone()), &args[0])
+            // The receiver stays lanes even at width one, so a host-scalar
+            // argument splats against it.
+            let receiver = Value::Simd {
+                dtype,
+                lanes: lanes.clone(),
+            };
+            simd_binop(op, &receiver, &args[0])
         }
         "select" if args.len() == 2 => simd_select(lanes, &args[0], &args[1]),
         "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" if args.is_empty() => {

@@ -434,18 +434,11 @@ impl FnLowering<'_> {
             "select" if dtype == Dtype::Bool && args.len() == 2 => {
                 self.lower_simd_select(ctx, dest, recv, args[0], args[1], width)
             }
-            // `ne` is upstream's ordered predicate (`runtime::simd_method`):
-            // a NaN lane compares unequal to nothing.
-            "ne" if args.len() == 1 && dtype.is_float() => {
-                let lhs = self.simd_operand_vector(ctx, recv, dtype, width, dest)?;
-                let rhs = self.simd_operand_vector(ctx, args[0], dtype, width, dest)?;
-                let cmp = self.fcmp(ctx, FCmpPredicateAttr::ONE, lhs, rhs);
-                self.append(ctx, cmp.get_operation(), Some(dest));
-                self.simd_store_vector(ctx, dest, Dtype::Bool, width, cmp.get_result(ctx));
-                Ok(())
-            }
-            // The other elementwise comparisons share the infix operator's
-            // lowering; only the spelling differs (`runtime::simd_method`).
+            // The elementwise comparisons share the infix operator's
+            // lowering, a width-one receiver its scalar one; only the
+            // spelling differs (`runtime::simd_method`), save that a float
+            // `ne` is upstream's ordered predicate: a NaN lane compares
+            // unequal to nothing.
             "lt" | "le" | "gt" | "ge" | "eq" | "ne" if args.len() == 1 => {
                 let op = match method {
                     "lt" => InfixOp::Lt,
@@ -455,7 +448,26 @@ impl FnLowering<'_> {
                     "eq" => InfixOp::Eq,
                     _ => InfixOp::Ne,
                 };
-                self.lower_simd_binop(ctx, op, dest, recv, args[0], dtype, width)
+                let ordered_ne = method == "ne" && dtype.is_float();
+                match (width, ordered_ne) {
+                    (1, false) => self.lower_binop(ctx, op, dest, recv, args[0], None),
+                    (1, true) => {
+                        let operand_ty = self.binop_operand_ty(recv, args[0])?;
+                        let lhs = self.operand_value(ctx, recv, operand_ty)?;
+                        let rhs = self.operand_value(ctx, args[0], operand_ty)?;
+                        let cmp = self.fcmp(ctx, FCmpPredicateAttr::ONE, lhs, rhs);
+                        self.define(ctx, dest, cmp.get_operation(), cmp.get_result(ctx))
+                    }
+                    (_, false) => self.lower_simd_binop(ctx, op, dest, recv, args[0], dtype, width),
+                    (_, true) => {
+                        let lhs = self.simd_operand_vector(ctx, recv, dtype, width, dest)?;
+                        let rhs = self.simd_operand_vector(ctx, args[0], dtype, width, dest)?;
+                        let cmp = self.fcmp(ctx, FCmpPredicateAttr::ONE, lhs, rhs);
+                        self.append(ctx, cmp.get_operation(), Some(dest));
+                        self.simd_store_vector(ctx, dest, Dtype::Bool, width, cmp.get_result(ctx));
+                        Ok(())
+                    }
+                }
             }
             // A float scalar's rounding dunders and fused
             // multiply-add (`runtime::builtin_round_dir`/`builtin_fma`).

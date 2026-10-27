@@ -1555,9 +1555,11 @@ pointer to storage its context uniques (`mojito_types::types`):
   width-one `int`, `uint`, or `float64` value keeps its host scalar form
   (the VM's `Value::Int`, `UInt`, and `Float64`, `CtValue::Int`, `UInt`,
   and `Float`, MIR's `Const::Int` and `Float`, Pliron's `ScalarTy`); that is
-  a value encoding, not a type. Above it the three keep a scalar operator
-  path, and no lane method or lane subscript, behind one predicate
-  (`types::has_host_scalar_value`) until the backends serve them (R1390).
+  a value encoding, not a type: both backends serve a lane method or lane
+  subscript on it as on any one-lane vector (`runtime::simd_parts`).
+  Above the waist the three keep a scalar operator path behind one
+  predicate (`types::has_host_scalar_value`) until a width-one comparison
+  is a `Bool` (R185).
 - A write is explicit: `Ty::update` unshares the node and refreshes its
   facts, and a rewriting walk rebuilds through `Ty::reusing`, which keeps
   the handle it read when the rebuilt variant is equal.

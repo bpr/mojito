@@ -436,8 +436,11 @@ impl VmBackend {
             Value::Tuple(_) => Err(RuntimeError::Unsupported(format!(
                 "vm: internal tuple-pack storage has no runtime method '{method}'; public Tuple methods require nominal lowering"
             ))),
-            Value::Simd { dtype, lanes } => {
-                crate::runtime::simd_method(*dtype, lanes, method, &args)
+            Value::Simd { .. } | Value::Int(_) | Value::UInt(_) | Value::Float64(_) => {
+                let (dtype, lanes) = crate::runtime::simd_parts(&recv).ok_or_else(|| {
+                    RuntimeError::TypeError("vm: a SIMD method needs a SIMD receiver".to_string())
+                })?;
+                crate::runtime::simd_method(dtype, &lanes, method, &args)
             }
             Value::Dtype(dtype) => dtype
                 .predicate(method)

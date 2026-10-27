@@ -8238,6 +8238,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     eight back from every other `SIMD`.
   - Probe: `conforms_to(SIMD[DType.int32, 4], Absable)` is `False`, where
     the pin answers `True`.
+  - Probe: the method spelling `Int32(-3).__abs__()` is rejected ("has no
+    method '__abs__'"), where the pin prints `3`; `Int(-3).__abs__()`
+    runs.
   - Shrinks R66 (`abs` over a scalar alias).
   - Done when `modelled_declares` answers the eight for every `SIMD`.
   - Found while landing R1361 (2026-10-26).
@@ -9414,28 +9417,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The planning session splits it into chained one-session entries if
     one session cannot land it.
   - Found while landing R1183 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1390 The VM and Pliron serve no lane method or lane subscript on an
-  `Int`, `UInt`, or `Float64` value**
-
-  `Int`, `UInt`, and `Float64` are width-one `TyKind::Simd`s, but
-  `runtime::simd_method`, the VM's lane reads and writes (`index_value`,
-  `write_simd_reference_lane`), and Pliron's SIMD method lowering skip
-  `Value::Int`, `UInt`, and `Float64`, where upstream's are ordinary `SIMD`
-  methods and lanes.
-  - The checker keeps the three out of the SIMD method arm
-    (`intrinsic_receivers.rs`) and the lane-subscript arms
-    (`checker/indexing.rs`) behind `types::has_host_scalar_value`.
-  - The lever: serve the width-one host values in both backends, then
-    delete those gates. For a NaN, `ne` stays ordered (`s.ne(s)` is
-    `False`).
-  - Probe: R335's `total(Float64(2.5))`, R143's `x.ne(y)`,
-    `Int(5).cast[DType.int32]()`, and `Int(5)[0]` and `Float64(1.5)[0]`,
-    which the pin prints as `5` and `1.5`.
-  - Closes R335 (lane reductions on native scalars) and R143 (scalar
-    comparison methods).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11067,40 +11048,6 @@ residue found inside a task moves to the task that owns its fix.
   - No lever is named.
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R143 Scalars have no comparison methods**
-
-  Problem: `x.ne(y)` on a `Float64` (or any width-1 scalar) is rejected with
-  `type 'Float64' has no method 'ne'`, though the pin accepts it.
-  - Upstream's scalars are width-1 `SIMD`, so `lt`/`le`/`gt`/`ge`/`eq`/`ne`
-    exist on them too. Mojito resolves those methods only on a multi-lane
-    `Ty::Simd` receiver (`crates/mojito-checker/src/checker/method_calls/simd_receivers.rs`).
-  - The methods must keep the multi-lane semantics: the pin's scalar
-    `s.ne(s)` is `False` for a NaN (ordered), while infix `s != s` is `True`.
-  - Not a wrong answer, only a missing spelling. Until then, `x < y or x > y`
-    is the ordered `ne`; infix `!=` answers `True` for a NaN.
-  - The `simd-infix-comparison` divergence waits on it: withdrawing the
-    infix spelling leaves `x.ne(y)` as the only ordered comparison on a
-    scalar.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R335 The native `Int` and `Float64` have no lane reductions, even as a
-  `Scalar[dt]` instance**
-
-  Problem: `v.reduce_add()` in `def total[dt: DType](v: Scalar[dt])` fails at
-  run time with "vm backend does not support methods on Float64 yet" for
-  `total(Float64(2.5))` (and on `Int` for `total(Int(3))`), and
-  `Float64(2.5).reduce_add()` is rejected outright; the pin runs both.
-  - Upstream's `Float64` is `Scalar[DType.float64]`, a width-one `SIMD`
-    with every lane method, and its `Int` converts to `Scalar[DType.int]`.
-    Mojito's are width-one vectors too (R1389), but the backends hold them
-    as host scalars that `runtime::simd_method` skips, so the checker's SIMD
-    receiver arm skips them as well (R1390).
-  - A sized scalar (`Float32(1.5)`) at the same binder runs.
-  - Found while landing R259 (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R144 Time, random, and testing slices**
 

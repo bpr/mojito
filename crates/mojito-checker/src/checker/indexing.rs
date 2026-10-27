@@ -4,7 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::{TyKind, has_host_scalar_value};
+use mojito_types::types::TyKind;
 
 /// A nominal subscript as an assignment target, as upstream's
 /// `emitGetterSetterAccess` forms it.
@@ -97,9 +97,7 @@ impl Checker {
                 elements.get(index).cloned()
             }
             TyKind::Pointer { element, .. } => Some((*element).clone()),
-            TyKind::Simd { dtype, .. } if !has_host_scalar_value(object_ty.kind()) => {
-                Some(simd_lane(dtype))
-            }
+            TyKind::Simd { dtype, .. } => Some(simd_lane(dtype)),
             _ => None,
         }
     }
@@ -284,9 +282,7 @@ impl Checker {
                         (*element).clone()
                     }
                     // A SIMD lane write `v[i] = e`: the target is the width-1 scalar.
-                    TyKind::Simd { dtype, .. } if !has_host_scalar_value(obj_ty.kind()) => {
-                        simd_lane(dtype)
-                    }
+                    TyKind::Simd { dtype, .. } => simd_lane(dtype),
                     _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
                 };
                 let idx_ty = self.infer(index)?;
@@ -1318,7 +1314,7 @@ impl Checker {
         }
         // The result of indexing: a SIMD lane, a List element, or a pointer pointee.
         let result = match obj_ty.kind() {
-            TyKind::Simd { dtype, .. } if !has_host_scalar_value(obj_ty.kind()) => simd_lane(dtype),
+            TyKind::Simd { dtype, .. } => simd_lane(dtype),
             TyKind::Pointer { element, origin } => {
                 self.check_pointer_offset(origin, index)?;
                 self.materialize_temporary_holder(object, false);

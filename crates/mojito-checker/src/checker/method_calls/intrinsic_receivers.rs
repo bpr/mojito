@@ -52,13 +52,14 @@ impl Checker {
         if *obj_ty == TyKind::Dtype && mojito_ast::ast::DTYPE_PREDICATES.contains(&method) {
             return self.infer_dtype_predicate(site).map(Some);
         }
-        // `__hash__` is the builtin hashable-leaf arm's, shared with the
-        // other builtin scalars.
-        if let TyKind::Simd { dtype, width } = obj_ty.kind()
-            && method != "__hash__"
-            && !mojito_types::types::has_host_scalar_value(obj_ty.kind())
-        {
-            return self.infer_simd_method(site, dtype, width).map(Some);
+        // A name the compiler-known SIMD methods lack falls through to the
+        // members every builtin scalar shares (`__hash__`, `write_to`,
+        // `__abs__`, …).
+        if let TyKind::Simd { dtype, width } = obj_ty.kind() {
+            match self.infer_simd_method(site, dtype, width) {
+                Err(TypeError::NoSuchMethod { .. }) => {}
+                result => return result.map(Some),
+            }
         }
         // Raw-seam compatibility only: with the linked stdlib present the
         // nominal prelude `Optional` owns its full method surface below.

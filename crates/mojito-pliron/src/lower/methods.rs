@@ -106,9 +106,6 @@ impl FnLowering<'_> {
         {
             return self.lower_convert(ctx, dest, target, &[recv], &[]);
         }
-        if let Some((dtype, width)) = self.func.reg_types.get(&recv.0).and_then(simd_dims) {
-            return self.lower_simd_method(ctx, dest, recv, dtype, width as usize, method, args);
-        }
         if matches!(
             self.func.reg_types.get(&recv.0).map(Ty::kind),
             Some(TyKind::Dtype)
@@ -236,6 +233,11 @@ impl FnLowering<'_> {
             .find(|op| op.dunder() == Some(method))
         {
             return self.lower_binop(ctx, op, dest, recv, args[0], None);
+        }
+        // The compiler-known `SIMD` methods, after the scalar dunders the
+        // width-one host scalars answer above.
+        if let Some((dtype, width)) = self.func.reg_types.get(&recv.0).and_then(simd_dims) {
+            return self.lower_simd_method(ctx, dest, recv, dtype, width as usize, method, args);
         }
         let Some(resolved) = resolved else {
             let receiver = self.func.reg_types.get(&recv.0).map_or_else(

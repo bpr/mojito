@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Int`, `UInt`, and `Float64` take every compiler-known `SIMD` method and
+  lane subscript, as upstream's width-one `SIMD` does (R1390, R143, R335):
+  `x.ne(y)` and the other lane comparisons, `reduce_add` and the other
+  reductions (`total(Float64(2.5))` over a `Scalar[dt]` binder),
+  `Int(5).cast[DType.int32]()`, `Int(5).join(Int(6))`, and `Int(5)[0]`
+  reads and `x[0] = 7` writes run on the VM and natively where they were
+  rejected. A float `ne` stays ordered, so a NaN's `n.ne(n)` is `False`,
+  as the pin's run-time `ne` is. Width-one comparison methods on any scalar
+  (`Float32(1.5).lt(...)`) no longer fail native IR verification, and
+  native `Int(-3).__abs__()` and the other math dunders on `Int`, `UInt`,
+  and `Float64` reach their scalar lowering again.
 - `Int`, `UInt`, and `Float64` are the width-one `SIMD` of `DType.int`,
   `DType.uint`, and `DType.float64`, as upstream's `Scalar` aliases are
   (R1389): the type lattice has no variants of their own, and

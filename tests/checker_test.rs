@@ -2319,8 +2319,15 @@ fn rejects_division_on_integer_simd() {
 
 #[test]
 fn rejects_indexing_a_non_simd() {
-    let e = err("var x: Int = 5\nvar y: Int = x[0]\n");
+    let e = err("var x: Bool = True\nvar y: Bool = x[0]\n");
     assert!(matches!(e, TypeError::NotIndexable(_)), "got {e:?}");
+}
+
+#[test]
+fn accepts_lanes_and_simd_methods_on_host_scalars() {
+    ok(
+        "def main():\n    var x = Int(5)\n    var lane: Int = x[0]\n    x[0] = 7\n    var f: Float64 = Float64(1.5)[0]\n    var m: SIMD[DType.bool, 1] = Float64(1.5).ne(2.5)\n    var total: UInt = UInt(4).reduce_add()\n    var narrow: Int32 = x.cast[DType.int32]()\n",
+    );
 }
 
 #[test]

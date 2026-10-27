@@ -41,10 +41,13 @@ pub(super) fn store_place(
                 slot = nav_step(slot, proj, regs)?;
             }
             if let Proj::Index(ireg) = last
-                && let Value::Simd { dtype, lanes } = slot
+                && let Some(written) = crate::runtime::set_value_lane(
+                    slot,
+                    value_as_index(&regs[ireg.0 as usize])?,
+                    &value,
+                )
             {
-                let idx = value_as_index(&regs[ireg.0 as usize])?;
-                return crate::runtime::set_simd_lane(*dtype, lanes, idx, &value);
+                return written;
             }
             // A final payload write initializes-or-overwrites inline uninit
             // storage without running any destructor: `unsafe_write` leaks a
@@ -72,9 +75,10 @@ pub(super) fn load_place(
         for proj in prefix {
             slot = nav_step(slot, proj, regs)?;
         }
-        if let Value::Simd { dtype, lanes } = slot {
-            let idx = value_as_index(&regs[ireg.0 as usize])?;
-            return read_simd_lane(*dtype, lanes, idx);
+        if let Some(lane) =
+            crate::runtime::read_value_lane(slot, value_as_index(&regs[ireg.0 as usize])?)
+        {
+            return lane;
         }
         // Not a SIMD parent — fall through to the final index step below.
         return Ok(nav_step(slot, &Proj::Index(*ireg), regs)?.clone());

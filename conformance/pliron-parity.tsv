@@ -856,6 +856,7 @@ assets/ok/scalar_range_sequential.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_strided.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_zero_starting.mojo	main	exe-differential	sanitized
 assets/ok/scalar_runtime_conversions.mojo	main	exe-differential	sanitized
+assets/ok/scalar_simd_lane_methods.mojo	main	exe-differential	sanitized
 assets/ok/scalar_uint_dtype.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_dict.mojo	main	exe-differential	sanitized
 assets/ok/self_hosted_vec.mojo	main	exe-differential	sanitized

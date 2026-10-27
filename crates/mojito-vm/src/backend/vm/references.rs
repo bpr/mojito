@@ -496,9 +496,15 @@ impl VmBackend {
                         RuntimeError::TypeError("reference index out of bounds".to_string())
                     })?
                 }
-                (RefProjection::Index(index), Value::Simd { dtype, lanes }) => {
-                    read_simd_lane(dtype, &lanes, *index as i64)?
-                }
+                (
+                    RefProjection::Index(index),
+                    simd
+                    @ (Value::Simd { .. } | Value::Int(_) | Value::UInt(_) | Value::Float64(_)),
+                ) => crate::runtime::read_value_lane(&simd, *index as i64)
+                    .transpose()?
+                    .ok_or_else(|| {
+                        RuntimeError::TypeError("reference lane of no SIMD value".to_string())
+                    })?,
                 (RefProjection::Index(index), Value::Pointer { allocation, offset }) => {
                     self.heap_read(allocation, offset, *index as i64)?
                 }
