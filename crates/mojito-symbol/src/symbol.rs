@@ -2833,7 +2833,7 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         CtValue::Variant { payload, .. } => payload
             .as_deref()
             .is_none_or(specialization_value_is_closed),
-        CtValue::Type(ty) | CtValue::Reflected(ty) => {
+        CtValue::Type(ty) => {
             let mut open = std::collections::HashSet::new();
             mojito_types::types::referenced_parameters(ty, &mut open);
             open.is_empty() && !mojito_types::types::mentions_deferred_value(ty)
@@ -2954,10 +2954,6 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         CtValue::Type(ty) => {
             let rendered = canonical_specialization_type(ty).to_string();
             out.push_str(&format!("y{}:{rendered}", rendered.len()));
-        }
-        CtValue::Reflected(ty) => {
-            let rendered = ty.to_string();
-            out.push_str(&format!("r{}:{rendered}", rendered.len()));
         }
         CtValue::Trait(traits) => {
             let rendered = traits.join("&");

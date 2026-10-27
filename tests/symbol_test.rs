@@ -179,7 +179,7 @@ fn overloaded_trait_requirements_get_qualified_names() {
                     self_convention: m.self_convention,
                 },
                 &sets,
-                &|_| None,
+                &mojito::symbol::NoModuleNames,
             )
         })
         .collect();
@@ -206,7 +206,11 @@ fn overloaded_struct_methods_own_distinct_binders_numbered_past_origins() {
          \x20       return a.copy()\n",
     )
     .expect("parse error");
-    let owners = MethodBinderOwners::scan(&program, &OverloadSets::scan(&program), &|_| None);
+    let owners = MethodBinderOwners::scan(
+        &program,
+        &OverloadSets::scan(&program),
+        &mojito::symbol::NoModuleNames,
+    );
     let methods = program
         .iter()
         .find_map(|stmt| match &stmt.kind {
@@ -580,9 +584,8 @@ fn param_expr_closed_specialization_keys() {
             "S6:Extent{i2;i3;}".to_string(),
         ),
         (CtValue::Type(Ty::int()), "y3:Int".to_string()),
-        (CtValue::Reflected(Ty::bool()), "r4:Bool".to_string()),
     ];
-    assert_eq!(concrete.len(), 16);
+    assert_eq!(concrete.len(), 15);
     for (value, encoding) in &concrete {
         assert_eq!(
             mangle("f", std::slice::from_ref(value)),

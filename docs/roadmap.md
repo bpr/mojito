@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1481**.
+Next free ID: **R1483**.
 
 ## Ordered Work
 
@@ -175,23 +175,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Done when `rg ElaboratedConstant crates` is empty.
   - Depends on R1388.
   - Model: Opus, Not Planned.
-
-- [ ] **R1383 A reflection query is answered by the elaborator above the
-  check**
-
-  `Elab::eval_reflection_method`, `eval_reflected_field_handle`,
-  `resolve_reflected_type`, and the crossing pass's `reflection_query` fold
-  `reflect[...]` before the check, where the check (`checker/reflection.rs`)
-  and `ParamKind::Reflect` already answer the same queries through
-  `ReflectQuery::answer`.
-  - The lever: a reflection handle in any position is the check's, and only
-    the check and mono answer it.
-  - Probe: `comptime r = reflect[Self]` in a plain struct's method fails
-    with "unsupported compile-time type argument". The pin prints the field
-    count.
-  - Closes R269 (`reflect[Self]` in a plain struct). Unblocks R324.
-  - Depends on R1379.
-  - Model: Opus, Planned.
 
 - [ ] **R1384 A struct-valued bracket argument is frozen to its fieldwise
   construction above the check**
@@ -4933,6 +4916,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The parser reads `L[1]` in a parameter argument as the type `L` applied
     to `1`, since the name is capitalized.
   - A lower-case name (`vals[1]`) is parsed as a subscript and runs.
+  - Probe: `comptime NAMES = reflect[P].field_names()` then
+    `print(materialize[NAMES[0]]())` in `main` is rejected the same way,
+    where the pin prints the first field's name.
   - Found while landing reads of a local display binding (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5995,69 +5981,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R75 `reflect[T]` over a function's type parameter is rejected**
-
-  Problem: `def f[T: AnyType]()` holding `comptime r = reflect[T]` and
-  `comptime count = r.field_count()`, called as `f[Point]()`, prints the
-  field count at the pin, while Mojito reports "not a compile-time value:
-  'T' is not a compile-time type".
-  - The error fires even when `f` is never called, so the unspecialized
-    template body is evaluated with `T` unbound.
-  - The failing evaluation is `reflect[...]` in `comptime/eval.rs`, through
-    `param_arg_type`. A template body should defer it the way a `comptime
-    if` on `T` becomes a per-instantiation stub.
-  - `reflect[Point]` over a concrete type in a value-parameterized
-    `def f[n: Int]()` already works.
-  - Found in the 2026-09-17 gate triage; no fixture pins it yet.
-  - The plan names every elaborator path that evaluates a retained template
-    body.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R76 `reflect[T]` of a non-struct type is rejected**
 
-  Problem: the pinned Mojo answers `reflect[Int].field_count()` with 0, and
+  Problem: the pinned Mojo answers `reflect[Int].field_count()` with 1, and
   Mojito rejects it with "requires a struct type".
-  - `comptime/eval.rs` raises it for every reflection method over a type that
-    is not a struct.
+  - `ReflectQuery::answer` (`param_expr.rs`) raises it for every query but
+    `is_struct()` when the check passes no field table (`fields: None`),
+    which it does for every type outside the program's struct table, the
+    builtin scalars among them.
+  - Probe: `show[R.field["x"].T]()` over `def show[T: AnyType]() -> Int:
+    return reflect[T].field_count()` and an `Int` field fails the instance
+    the same way, where the pin prints `1`.
   - `conformance/probes/template_fallback_reflection.mojo` records the
     observation, made 2026-09-20.
   - Which handle methods answer for a scalar, and with what, needs a probe per
     method before the lever is chosen.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **R569 A reflected field type over a pointer field is rejected**
-
-  Problem: `reflect[Box].field_types()` or `reflect[Box].field_at[0]` on a
-  struct holding `var data: UnsafePointer[Int, MutUntrackedOrigin]` runs at
-  the pin, while Mojito reports "not a compile-time value: 'UnsafePointer'
-  is not a compile-time type".
-  - The elaborator types an own struct's field annotations itself
-    (`Elab::reflected_field_type`, through `type_from_anno`), which cannot
-    resolve `UnsafePointer`.
-  - A package struct's field types are read as its check resolved them, so
-    `reflect[List[Int]].field_types()` works when the bundled library is
-    imported and fails from source (`MOJITO_STD_PACKAGE=0`).
-  - The lever: read every reflected field type from the conformance
-    oracle's checked struct table, as the package path does.
-  - Found while landing R559 (2026-10-10); no fixture pins it yet.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R269 `reflect[Self]` in a non-generic struct's method is rejected**
-
-  Problem: `comptime r = reflect[Self]` then `r.field_count()` in a method of
-  a plain struct prints the field count at the pin, while Mojito reports
-  "not a compile-time value: unsupported compile-time type argument".
-  - The elaborator walks a plain struct's method bodies with no binding for
-    `Self`, so `reflect[Self]` has no subject.
-  - Both the bound form and `comptime n = reflect[Self].field_count()` fail.
-  - Once it runs, upstream's reflective `Equatable.__eq__` default moves
-    into the bundled `std/builtin/comparable.mojo`, and the comptime
-    stand-in `synthesize_equatable_eq` (`comptime/synth.rs`) goes. So do
-    upstream's `Hashable.__hash__` default in the bundled
-    `std/hash/hash.mojo` and its stand-in `synthesize_hashable_hash`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -6128,22 +6066,14 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R270 A module-scope reflection handle is rejected**
-
-  Problem: `comptime R = reflect[Point]` at module scope, read in `main` as
-  `R.field_count()` or through `comptime n = R.field_count()`, prints 2 at
-  the pin, while Mojito reports "unknown type 'reflect'".
-  - The same binding inside a function works.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
 - [ ] **R271 A `field_types()` result in a runtime position is rejected**
 
   Problem: `var t = reflect[Point].field_types()` compiles at the pin, while
-  Mojito reports "type-valued or symbolic comptime values cannot materialize
-  at runtime".
-  - The crossing pass folds a runtime reflection query to its value's
-    literal form, and a list of types has none.
+  Mojito reports "'reflect[Point].field_types()' is a compile-time list;
+  bind it with 'comptime' and index it".
+  - The check's `reflection_value_ty` (`checker/reflection.rs`) types a
+    runtime query's answer as an `Int` or a `Bool` alone, and a list of
+    types has no runtime value.
   - Upstream's result is a `TypeList` value, which Mojito's checker types
     only in compile-time positions.
   - Depends on nothing.
@@ -6172,15 +6102,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     assignment target.
   - Depends on nothing.
   - Model: Fable, Planned.
-
-- [ ] **R79 A handle chain in a call's type argument is read as a value**
-
-  Problem: `_unqualified_type_name[reflect[T].field_at[i].T]()` reports
-  "expected a type, found a value" at the instance.
-  - The elaborator's `resolve_reflected_param_arg` rewrites a `ParamArg::Type`
-    only; the chain arrives as a value argument.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R83 A bare reference to a parametric `def` reports a closure
   escape**
@@ -8076,6 +7997,22 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1482 The bundled `List` stores three fields where upstream's
+  stores two**
+
+  `reflect[List[Int]].field_count()` prints `3`, where the pin prints `2`:
+  the bundled `List` holds `data: UnsafePointer[T]`, `size`, and `cap`,
+  where upstream's holds `_storage: Allocation[T]` (the buffer and its
+  capacity) and `_len`, so every reflected read of a `List` (field names,
+  types, indexes) answers another struct.
+  - Porting it needs upstream's `Allocation` and a rewrite of every
+    bundled `List` member over the two fields.
+  - The VM reads a `List`-shaped value's `data`, `size`, and `cap` by name
+    (`backend/vm/values.rs`), which moves with it.
+  - Found while landing R1383 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -9925,8 +9862,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   stdlib struct over parameter attributes**
 
   Problem: Mojito answers `reflect[T]` queries by built-in rules in the
-  checker (`checker/reflection.rs`), the crossing pass, `comptime/eval.rs`,
-  and the elaborator (`mono/symbolic.rs`), where upstream's `Reflected[T]`
+  checker (`checker/reflection.rs`) and the elaborator
+  (`mono/symbolic.rs`), where upstream's `Reflected[T]`
   (`std/reflection/reflect.mojo`) is a stdlib struct whose methods return
   parameter attributes its elaborator folds.
   - `field_count()` is `_field_types_of[T]().length` over
@@ -10141,6 +10078,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     next.
   - Found while landing R424 (2026-10-26).
   - Depends on R134, R77, and R1210.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1481 `Equatable`'s and `Hashable`'s reflective defaults are
+  synthesized per conformer, where upstream's are the traits' own bodies**
+
+  `synthesize_equatable_eq` and `synthesize_hashable_hash`
+  (`comptime/synth.rs`) give each conformer without its own `__eq__` or
+  hasher-fed `__hash__` a body comparing or hashing each field, where
+  upstream's `Equatable.__eq__` and `Hashable.__hash__` are default bodies
+  over `reflect[Self]` (`std/builtin/comparable.mojo`,
+  `std/hash/hash.mojo`).
+  - `reflect[Self]` in a plain struct's method already reads the fields.
+  - The bodies read each field through `r.field_ref[i](self)` (R77), and
+    assert its conformance with `_field_conforms_to_error`, whose message
+    must be a literal (R1210).
+  - The bundled traits' requirements stay `...` until both check.
+  - Done when both traits declare upstream's bodies and the two synthesis
+    passes are gone.
+  - Found while landing R1383 (2026-10-26), refiled from R269.
+  - Depends on R77 and R1210.
   - Model: Fable, Not Planned.
 
 - [ ] **R1287 `print` is a compiler builtin where upstream's is an

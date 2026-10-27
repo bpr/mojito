@@ -874,7 +874,6 @@ struct CtStruct<'a> {
     /// Its own `comptime` members, then the defaults of the conformed
     /// traits' requirements it omits.
     associated: std::borrow::Cow<'a, [StructComptime]>,
-    fields: &'a [mojito_ast::ast::Param],
 }
 
 /// A struct the elaborator reads: one of the program's own, from its
@@ -898,17 +897,6 @@ impl<'e> StructView<'e> {
         match self {
             Self::Own(info) => info.source_params,
             Self::Package(info) => info.source_params(),
-        }
-    }
-
-    fn field_names(self) -> Vec<&'e str> {
-        match self {
-            Self::Own(info) => info
-                .fields
-                .iter()
-                .map(|field| field.name.as_str())
-                .collect(),
-            Self::Package(info) => info.field_names().iter().map(String::as_str).collect(),
         }
     }
 }
@@ -1115,7 +1103,6 @@ fn collect_structs<'a>(
             type_params,
             conforms,
             associated,
-            fields,
             ..
         } = &s.kind
         {
@@ -1132,7 +1119,6 @@ fn collect_structs<'a>(
                     decls: classify_ct_params(type_params, name),
                     source_params: type_params,
                     associated,
-                    fields,
                 },
             );
         }

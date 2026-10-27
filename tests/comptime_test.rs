@@ -895,17 +895,27 @@ fn reflection_rejects_removed_field_type_spelling() {
 
 #[test]
 fn reflection_rejects_invalid_named_and_indexed_field_selection() {
-    let missing = run("struct Point:\n    var x: Int\n\ndef main():\n    comptime reflected = reflect[Point].field[\"missing\"]\n")
+    // An unread binding of a bad selection runs, as at the pin; its read
+    // reports the selection. The pin also accepts the out-of-range read
+    // (it prints `0`), so rejecting it is the permitted direction.
+    for selection in ["field[\"missing\"]", "field_at[1]"] {
+        let unread = format!(
+            "struct Point:\n    var x: Int\n\ndef main():\n    comptime reflected = reflect[Point].{selection}\n"
+        );
+        run(&unread).unwrap_or_else(|error| panic!("{selection}: {error}"));
+    }
+
+    let missing = run("struct Point:\n    var x: Int\n\ndef main():\n    comptime reflected = reflect[Point].field[\"missing\"]\n    var v: reflected.T = 0\n    print(v)\n")
         .unwrap_err();
     assert!(
         missing.contains("has no field named 'missing'"),
         "got {missing}"
     );
 
-    let out_of_range = run("struct Point:\n    var x: Int\n\ndef main():\n    comptime reflected = reflect[Point].field_at[1]\n")
+    let out_of_range = run("struct Point:\n    var x: Int\n\ndef main():\n    comptime reflected = reflect[Point].field_at[1]\n    var v: reflected.T = 0\n    print(v)\n")
         .unwrap_err();
     assert!(
-        out_of_range.contains("field index 1 is out of range"),
+        out_of_range.contains("index 1 is out of range"),
         "got {out_of_range}"
     );
 }

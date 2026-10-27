@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.109
+mojito-mir 1.110
 ```
 
-The writer emits 1.109. The reader accepts 1.0 through 1.109; *Schema 1.0*
+The writer emits 1.110. The reader accepts 1.0 through 1.110; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -609,6 +609,13 @@ compile-time arguments a generic dunder's call solved
 (`CheckedCompareLink::{call, instantiated_args}`), since a struct operator
 is checked as that method call (R1357). The MIR text is unchanged.
 
+Schema 1.110 withdraws `ct_reflected` and `meta_reflected`: a
+`reflect[T]` handle is no compile-time value of its own, since only the
+check and `native::mono` answer a reflection query, each answer a
+parameter attribute (R1383). An older artifact spelling either no longer
+loads. The package format moves to `mojito-package 106`, whose `CtValue`
+records lose the handle's variant.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -996,7 +1003,7 @@ only the positional form.
 `CtValue` uses `ct_int`, `ct_uint`, `ct_float_bits`, `ct_int_literal`,
 `ct_float_literal`, `ct_bool`, `ct_string`, `ct_tuple`, `ct_list`, `ct_dict`,
 `ct_set`, `ct_dtype`, `ct_simd`, `ct_struct { name, fields }`, `ct_type`,
-`ct_reflected`, `ct_trait([trait, ...])` for a trait or a `&` composition of
+`ct_trait([trait, ...])` for a trait or a `&` composition of
 traits used as a value (schema 1.76), `ct_kgen_string("text")` for a
 string literal's KGEN string, its `value` parameter (schema 1.79),
 `ct_expr(param-expr)` for a residual
@@ -1084,7 +1091,7 @@ dropped (schema 1.38).
 `op` is one of `add`, `mul`, `neg`, `sub`, `div`, `floordiv`, `mod`, `pow`,
 `shl`, `shr`, `and`, `or`, `xor`, `eq`, `lt`, `le`, `bool_and`, `bool_or`,
 `bool_xor`, `cond`. `meta` is `meta_value(type)`, `meta_type`,
-`meta_reflected`, `meta_tuple([meta...])`, `meta_list([meta...])`,
+`meta_tuple([meta...])`, `meta_list([meta...])`,
 `meta_set([meta...])`, `meta_dict([meta_entry { key, value }...])`, or
 `meta_param_list(meta)`. A pack query's `pack` is the
 `binder { owner, slot, name }` record of the pack binder it queries, and its

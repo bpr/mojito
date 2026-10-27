@@ -267,7 +267,6 @@ fn type_families_reprint_byte_identically() {
                 CtValue::Dtype(Dtype::Float32),
                 CtValue::Dtype(Dtype::Float16),
                 CtValue::Type(Ty::int()),
-                CtValue::Reflected(Ty::bool()),
                 CtValue::Expr(int_parameter("Holder", 1, "N")),
                 CtValue::Deferred(test_binder("callback")),
                 CtValue::Marker(CtMarker::RuntimeLocal),
@@ -2030,9 +2029,8 @@ fn param_expr_mir_round_trip() {
             fields: vec![("w".into(), CtValue::Int(2)), ("h".into(), CtValue::Int(3))],
         },
         CtValue::Type(Ty::bool()),
-        CtValue::Reflected(Ty::int()),
     ];
-    assert_eq!(constants.len(), 16);
+    assert_eq!(constants.len(), 15);
     let mut register_types: Vec<Ty> = constants
         .into_iter()
         .map(|value| Ty::new(TyKind::Struct("Holder".into(), vec![TyArg::Val(value)])))

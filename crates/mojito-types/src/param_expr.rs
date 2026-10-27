@@ -1972,7 +1972,7 @@ impl ParamExpr {
         match self.kind() {
             ParamKind::TypeShape(ty) => vec![ty],
             ParamKind::Select { elements, .. } => elements.iter().collect(),
-            ParamKind::Constant(CtValue::Type(ty) | CtValue::Reflected(ty)) => vec![ty],
+            ParamKind::Constant(CtValue::Type(ty)) => vec![ty],
             _ => Vec::new(),
         }
     }
@@ -2486,14 +2486,13 @@ impl Hash for ParamRef {
     }
 }
 
-/// The meta-type of an expression: a runtime value domain, a type, a
-/// reflection handle, or a compile-time aggregate. `Type` is not a runtime
+/// The meta-type of an expression: a runtime value domain, a type, or a
+/// compile-time aggregate. `Type` is not a runtime
 /// [`Ty`], so it has no place in that lattice.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MetaTy {
     Value(Ty),
     Type,
-    ReflectedType,
     Tuple(Vec<Self>),
     List(Vec<Self>),
     Dict(Vec<(Self, Self)>),
@@ -2600,7 +2599,6 @@ impl MetaTy {
             }
             CtValue::Pointer { .. } | CtValue::StoreToMem(_) => Self::value(Ty::infer()),
             CtValue::Type(_) => Self::Type,
-            CtValue::Reflected(_) => Self::ReflectedType,
             CtValue::Trait(traits) => Self::value(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::KgenString(_) => Self::value(TyKind::KgenString.into()),
             CtValue::Expr(expr) => expr.meta().clone(),
@@ -2664,7 +2662,7 @@ impl MetaTy {
                     .map(|(key, value)| (key.substitute(subst), value.substitute(subst)))
                     .collect(),
             ),
-            Self::Type | Self::ReflectedType => self.clone(),
+            Self::Type => self.clone(),
         }
     }
 
@@ -2679,7 +2677,7 @@ impl MetaTy {
             Self::Dict(entries) => entries
                 .iter()
                 .any(|(key, value)| key.has_free_parameters() || value.has_free_parameters()),
-            Self::Type | Self::ReflectedType => false,
+            Self::Type => false,
         }
     }
 
@@ -2709,7 +2707,6 @@ impl fmt::Display for MetaTy {
         match self {
             Self::Value(ty) => write!(f, "{ty}"),
             Self::Type => write!(f, "Type"),
-            Self::ReflectedType => write!(f, "ReflectedType"),
             Self::Tuple(metas) => list(f, "ComptimeTuple", metas),
             Self::List(metas) => list(f, "ComptimeList", metas),
             Self::Set(metas) => list(f, "ComptimeSet", metas),

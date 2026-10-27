@@ -742,7 +742,7 @@ impl ScopeCx<'_> {
                 Some(expected) => self.expr(role, "value argument", expr, expected, nested),
                 None => self.expr_nodes(role, "value argument", expr, nested),
             },
-            CtValue::Type(ty) | CtValue::Reflected(ty) => self.walk_in(role, ty, nested),
+            CtValue::Type(ty) => self.walk_in(role, ty, nested),
             CtValue::Tuple(values)
             | CtValue::List(values)
             | CtValue::Set {

@@ -356,7 +356,7 @@ import (every compilation that links the bundled library):
   function indexes hold the own declarations; a package struct or `def`
   is read from the oracle as the package's check resolved it
   (`ConformanceOracle::{package_struct, package_associated_value,
-  package_field_types, package_function_params}`), as upstream's emitters
+  package_function_params}`), as upstream's emitters
   read a package declaration resolved, never its syntax.
   The check is given the program's own statements alone: each transfer
   pass attaches the declaration records of the modules the link reached
@@ -1485,6 +1485,13 @@ folds; `native::mono` answers it per instance from the source struct's
 fields (`eval_ct` through `ParamContext::answer_reflections`), by the one
 policy the checker applies to a closed subject (`ReflectQuery::answer`), and
 a query with no answer fails the instantiation. A field type never crosses.
+No reflection is evaluated above the check: the elaborator keeps every
+binding that spells `reflect` for the check, and only the check and
+`native::mono` answer a query. The check answers a closed subject once the
+struct's fields have resolved; a struct's own member over `reflect[Self]`,
+read while they resolve, is the `Reflect` node mono folds, as upstream's
+member is lazy. A reflected field type in a bracket argument is an
+`AnyType` value, which binds only a binder asking nothing more of it.
 
 **Module constants are parameter expressions.** The elaborator folds no
 module value constant into a statement. A closed scalar or string constant
@@ -2065,8 +2072,8 @@ handle. Mojito implements `is_struct`, `field_count`, `field_names`,
 nested structs and the terminal handle's `.T` supplies the concrete dependent
 type. A reflected type list can likewise be indexed in type position, so a
 specialization may use `types[i]` as a concrete dependent type. The removed
-`field_type` alias is diagnosed during elaboration rather than leaking into
-ordinary member or call checking.
+`field_type` alias is diagnosed by the check (`checker/reflection.rs`)
+rather than leaking into ordinary member or call checking.
 
 ## Stage 3: Semantic Checking
 

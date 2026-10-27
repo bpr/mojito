@@ -985,7 +985,6 @@ impl Decoder {
     fn meta_ty(&mut self, value: &Value) -> Option<MetaTy> {
         match &value.kind {
             ValueKind::Atom(atom) if atom == "meta_type" => Some(MetaTy::Type),
-            ValueKind::Atom(atom) if atom == "meta_reflected" => Some(MetaTy::ReflectedType),
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "meta_value" => self.ty(inner).map(MetaTy::value),
                 "meta_tuple" => self.meta_tys(inner).map(MetaTy::Tuple),
@@ -1188,7 +1187,6 @@ impl Decoder {
                     .map(|referent| CtValue::StoreToMem(Box::new(referent))),
                 "ct_dtype" => self.dtype(inner).map(CtValue::Dtype),
                 "ct_type" => self.ty(inner).map(CtValue::Type),
-                "ct_reflected" => self.ty(inner).map(CtValue::Reflected),
                 "ct_trait" => Some(CtValue::Trait(self.strings(inner))),
                 "ct_kgen_string" => self.string(inner).map(CtValue::KgenString),
                 "ct_expr" => self.param_expr(inner).map(ParamExpr::into_value),

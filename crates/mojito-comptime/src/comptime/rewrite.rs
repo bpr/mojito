@@ -185,11 +185,7 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                 && let Some(value) = subs(field)
                 && !matches!(
                     value,
-                    CtValue::Type(_)
-                        | CtValue::Reflected(_)
-                        | CtValue::Expr(_)
-                        | CtValue::Deferred(_)
-                        | CtValue::Marker(_)
+                    CtValue::Type(_) | CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_)
                 )
                 && let Some(mut materialized) = value.materialize(e.span)
             {
@@ -806,7 +802,6 @@ fn rewrite_param_args(args: &mut [mojito_ast::ast::ParamArg], subs: Subs) {
                     && !matches!(
                         value,
                         CtValue::Type(_)
-                            | CtValue::Reflected(_)
                             | CtValue::Expr(_)
                             | CtValue::Deferred(_)
                             | CtValue::Marker(_)

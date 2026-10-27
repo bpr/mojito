@@ -4,8 +4,8 @@
 # exports both, as upstream's does.
 #
 # Upstream's `__eq__` has a reflective default comparing every field; it
-# stays a requirement here until `reflect[Self]` reads a plain struct's
-# fields in a method (R269).
+# stays a requirement here until its body can read each field through
+# `field_ref` (R1481).
 
 
 trait Equatable:

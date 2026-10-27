@@ -1454,6 +1454,18 @@ impl Checker {
             ExprKind::Index { object, index } if let Some(pack) = self.type_pack_named(object) => {
                 Ok(context.type_shape(self.type_pack_element(&pack, &build(index)?)?))
             }
+            // An element of a reflected list (`NAMES[1]` over `comptime
+            // NAMES = reflect[P].field_names()`): `param_list.get` over the
+            // query's answer.
+            ExprKind::Index { object, index }
+                if let Ok(Some((_, list))) = self.reflection_list(object) =>
+            {
+                let list = match list {
+                    CtValue::Expr(symbolic) => symbolic,
+                    closed => context.constant(closed).map_err(param_error)?,
+                };
+                context.list_get(&list, &build(index)?).map_err(param_error)
+            }
             // An element of a list a constant or a member denotes (`XS[0]`
             // of a module display constant, `l[i]` of a requested local,
             // `Self.values[0]`): `param_list.get` over the list's expression.
@@ -4478,6 +4490,9 @@ fn simd_construction(
 /// written as a type (`Int`, `SIMD[DType.uint64, 4]`, `AHasher[U256(0)]`, a
 /// KGEN type): the spelling a declaration symbol reads the alias as.
 fn module_alias_spelling(value: &Expr) -> Option<SourceType> {
+    if super::reflection::spells_reflection_handle(value) {
+        return None;
+    }
     match assoc_body_source_type(value).ok()? {
         SourceType::SelfType | SourceType::SelfParam(_) | SourceType::IndexedProjection { .. } => {
             None

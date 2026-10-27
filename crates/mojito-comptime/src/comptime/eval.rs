@@ -1,5 +1,5 @@
-//! Compile-time expression evaluation: the `eval` dispatcher, reflection-method
-//! evaluation, reflected-type resolution, and infix/iteration folding.
+//! Compile-time expression evaluation: the `eval` dispatcher and
+//! infix/iteration folding.
 //! Extracted from `comptime.rs`; see `docs/symbol-map.md`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -42,13 +42,11 @@ impl Elab<'_> {
                 let ty = self.param_arg_type(&args[0], scope)?;
                 Ok(CtValue::Bool(self.conformance.trivially(kind, &ty)))
             }
-            ExprKind::TypeApply { name, args } if name == "reflect" => {
-                if args.len() != 1 {
-                    return Err(ComptimeError::Arity(
-                        "reflect[T] takes exactly one type parameter".to_string(),
-                    ));
-                }
-                Ok(CtValue::Reflected(self.param_arg_type(&args[0], scope)?))
+            // A reflection query is the check's: its answers are parameter
+            // attributes the parameter evaluator folds, as upstream's
+            // `Reflected[T]` methods return.
+            ExprKind::TypeApply { name, .. } if name == "reflect" => {
+                Err(not_evaluated_here("a reflection query"))
             }
             ExprKind::TypeApply { name, args } => self.type_value(name, args, scope),
             ExprKind::TupleLit(elems) => Ok(CtValue::Tuple(self.eval_all(elems, scope)?)),
@@ -105,7 +103,6 @@ impl Elab<'_> {
                 }
                 match self.eval(object, scope)? {
                     CtValue::Type(ty) => self.member_of(&ty, field),
-                    CtValue::Reflected(ty) if field == "T" => Ok(CtValue::Type(ty)),
                     // A compile-time `StringLiteral`'s `value` parameter.
                     value
                         if field == mojito_types::ct::LITERAL_VALUE_MEMBER
@@ -157,25 +154,6 @@ impl Elab<'_> {
                         _ => vec![ParamArg::Value((**index).clone())],
                     };
                     return self.type_value(name, &args, scope);
-                }
-                if let ExprKind::Member {
-                    object: reflected,
-                    field,
-                } = &object.kind
-                    && matches!(field.as_str(), "field" | "field_at" | "field_type")
-                {
-                    if field == "field_type" {
-                        return Err(ComptimeError::NotComptime(
-                            "Reflected.field_type was removed; use Reflected.field[name]"
-                                .to_string(),
-                        ));
-                    }
-                    let CtValue::Reflected(ty) = self.eval(reflected, scope)? else {
-                        return Err(ComptimeError::NotComptime(format!(
-                            "compile-time reflection selector '{field}' needs a reflect[T] handle"
-                        )));
-                    };
-                    return self.eval_reflected_field_handle(&ty, field, index, scope);
                 }
                 // A type member applied through its struct's generator
                 // (`ParameterList.empty_of[Int]`), bound by the check's rule.
@@ -261,7 +239,6 @@ impl Elab<'_> {
                     if self.declares_struct(name)) =>
             {
                 match self.eval(object, scope)? {
-                    CtValue::Reflected(ty) => self.eval_reflection_method(&ty, method, scope),
                     // `tl.reverse()`: the list's elements, last first.
                     receiver if method == "reverse" && receiver.typelist_elements().is_some() => {
                         let elements = receiver.typelist_elements().expect("guarded");
@@ -390,12 +367,9 @@ impl Elab<'_> {
                 if receiver.typelist_elements().is_some() {
                     return self.eval_typelist_method(&receiver, field, param_args, scope);
                 }
-                let CtValue::Reflected(ty) = receiver else {
-                    return Err(ComptimeError::NotComptime(format!(
-                        "compile-time reflection method '{field}' needs a reflect[T] handle"
-                    )));
-                };
-                self.eval_parameterized_reflection_method(&ty, field, param_args, scope)
+                Err(not_evaluated_here(&format!(
+                    "a compile-time call of the method '{field}'"
+                )))
             }
             ExprKind::Prefix(PrefixOp::Invert, inner) => match self.eval(inner, scope)? {
                 value @ (CtValue::Int(_) | CtValue::IntLiteral(_)) => {
@@ -501,14 +475,7 @@ impl Elab<'_> {
                 args,
                 kwargs,
             } if name == "reflect" && args.is_empty() && kwargs.is_empty() => {
-                if param_args.len() != 1 {
-                    return Err(ComptimeError::Arity(
-                        "reflect[T]() takes exactly one type parameter".to_string(),
-                    ));
-                }
-                Ok(CtValue::Reflected(
-                    self.param_arg_type(&param_args[0], scope)?,
-                ))
+                Err(not_evaluated_here("a reflection query"))
             }
             // `SIMD[DType.d, w](lanes...)`, or an alias application of a
             // vector type (`U256(0)`), builds a compile-time vector: one lane
@@ -754,11 +721,7 @@ impl Elab<'_> {
                 Ok(CtValue::Bool(comptime_contains(receiver, &item)?))
             }
             (
-                CtValue::Type(_)
-                | CtValue::Reflected(_)
-                | CtValue::Expr(_)
-                | CtValue::Deferred(_)
-                | CtValue::Marker(_),
+                CtValue::Type(_) | CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_),
                 _,
                 _,
             ) => Err(ComptimeError::NotComptime(format!(
@@ -972,321 +935,6 @@ impl Elab<'_> {
         scope: &ConstEnv<'_>,
     ) -> Result<Vec<CtValue>, ComptimeError> {
         exprs.iter().map(|e| self.eval(e, scope)).collect()
-    }
-
-    pub(super) fn eval_reflection_method(
-        &self,
-        ty: &Ty,
-        method: &str,
-        outer_scope: &ConstEnv<'_>,
-    ) -> Result<CtValue, ComptimeError> {
-        // Every type Mojito names is a Mojo struct; only an MLIR primitive,
-        // which no Mojito program spells, answers `False` at the pin.
-        if method == "is_struct" {
-            return Ok(CtValue::Bool(true));
-        }
-        let TyKind::Struct(name, arguments) = ty.kind() else {
-            return Err(ComptimeError::NotComptime(format!(
-                "reflect[{ty}].{method}() requires a struct type"
-            )));
-        };
-        let info = self.ct_struct(name).ok_or_else(|| {
-            ComptimeError::NotComptime(format!("cannot reflect unknown struct '{name}'"))
-        })?;
-        match method {
-            "field_count" => Ok(CtValue::Int(info.field_names().len() as i64)),
-            "field_names" => Ok(CtValue::List(
-                info.field_names()
-                    .into_iter()
-                    .map(|field| CtValue::Str(field.to_string()))
-                    .collect(),
-            )),
-            "field_types" => (0..info.field_names().len())
-                .map(|index| {
-                    self.reflected_field_type(info, ty, arguments, outer_scope, index)
-                        .map(CtValue::Type)
-                })
-                .collect::<Result<Vec<_>, _>>()
-                .map(CtValue::Tuple),
-            _ => Err(ComptimeError::NotComptime(format!(
-                "unsupported reflect[T] method '{method}'"
-            ))),
-        }
-    }
-
-    pub(super) fn eval_parameterized_reflection_method(
-        &self,
-        ty: &Ty,
-        method: &str,
-        parameters: &[ParamArg],
-        scope: &ConstEnv<'_>,
-    ) -> Result<CtValue, ComptimeError> {
-        if method == "field_type" {
-            return Err(ComptimeError::NotComptime(
-                "Reflected.field_type was removed; use Reflected.field[name]".to_string(),
-            ));
-        }
-        let TyKind::Struct(name, _) = ty.kind() else {
-            return Err(ComptimeError::NotComptime(format!(
-                "reflect[{ty}].{method} requires a struct type"
-            )));
-        };
-        let info = self.ct_struct(name).ok_or_else(|| {
-            ComptimeError::NotComptime(format!("cannot reflect unknown struct '{name}'"))
-        })?;
-        let field_name = match parameters {
-            [ParamArg::Value(expr)] => match self.eval(expr, scope)? {
-                CtValue::Str(name) => name,
-                other => {
-                    return Err(ComptimeError::NotComptime(format!(
-                        "reflection field name must be String, got {other}"
-                    )));
-                }
-            },
-            [
-                ParamArg::Named {
-                    name: parameter,
-                    value,
-                },
-            ] if parameter == "name" => match self.resolve_ct_arg(
-                &ParamDecl::Value {
-                    id: mojito_types::param_expr::ParamId::new("$builtin:struct_field", 0),
-                    name: "name".to_string(),
-                    ty: Ty::string_literal(),
-                    default: None,
-                    callable_default: None,
-                    infer_only: false,
-                    variadic: false,
-                    constraints: Vec::new(),
-                },
-                value,
-                scope,
-            )? {
-                CtValue::Str(name) => name,
-                _ => unreachable!(),
-            },
-            _ => {
-                return Err(ComptimeError::Arity(format!(
-                    "reflect[T].{method}[name]() takes one String parameter"
-                )));
-            }
-        };
-        let index = info
-            .field_names()
-            .into_iter()
-            .position(|field| field == field_name)
-            .ok_or_else(|| {
-                ComptimeError::NotComptime(format!(
-                    "struct '{name}' has no field named '{field_name}'"
-                ))
-            })?;
-        match method {
-            "field_index" => Ok(CtValue::Int(index as i64)),
-            _ => Err(ComptimeError::NotComptime(format!(
-                "unsupported parameterized reflect[T] method '{method}'"
-            ))),
-        }
-    }
-
-    /// Resolve the current type-valued reflected-field aliases.  Both selectors
-    /// return another `Reflected` value, rather than the bare type, which makes
-    /// nested selection (`reflect[Outer].field["inner"].field_at[0]`) and the
-    /// terminal `.T` member use the same representation as the root handle.
-    pub(super) fn eval_reflected_field_handle(
-        &self,
-        ty: &Ty,
-        selector: &str,
-        argument: &Expr,
-        scope: &ConstEnv<'_>,
-    ) -> Result<CtValue, ComptimeError> {
-        let TyKind::Struct(name, arguments) = ty.kind() else {
-            return Err(ComptimeError::NotComptime(format!(
-                "reflect[{ty}].{selector}[...] requires a struct type"
-            )));
-        };
-        let info = self.ct_struct(name).ok_or_else(|| {
-            ComptimeError::NotComptime(format!("cannot reflect unknown struct '{name}'"))
-        })?;
-        let selected = self.eval(argument, scope)?;
-        let index = match (selector, &selected) {
-            ("field", CtValue::Str(field_name)) => info
-                .field_names()
-                .into_iter()
-                .position(|field| field == field_name)
-                .ok_or_else(|| {
-                    ComptimeError::NotComptime(format!(
-                        "struct '{name}' has no field named '{field_name}'"
-                    ))
-                })?,
-            ("field", other) => {
-                return Err(ComptimeError::NotComptime(format!(
-                    "Reflected.field expects a String field name, got {other}"
-                )));
-            }
-            ("field_at", CtValue::Int(_) | CtValue::IntLiteral(_)) => {
-                let raw_index = selected.as_int("reflection field index")?;
-                if raw_index < 0 {
-                    return Err(ComptimeError::NotComptime(format!(
-                        "reflection field index {raw_index} is out of range for struct '{name}'"
-                    )));
-                }
-                let index = usize::try_from(raw_index).map_err(|_| {
-                    ComptimeError::NotComptime(format!(
-                        "reflection field index {raw_index} is out of range for struct '{name}'"
-                    ))
-                })?;
-                let count = info.field_names().len();
-                if index >= count {
-                    return Err(ComptimeError::NotComptime(format!(
-                        "reflection field index {index} is out of range for struct '{name}' with {count} field(s)"
-                    )));
-                }
-                index
-            }
-            ("field_at", other) => {
-                return Err(ComptimeError::NotComptime(format!(
-                    "Reflected.field_at expects an Int field index, got {other}"
-                )));
-            }
-            _ => unreachable!("reflection selector filtered by the caller"),
-        };
-
-        let field_ty = self.reflected_field_type(info, ty, arguments, scope, index)?;
-        Ok(CtValue::Reflected(field_ty))
-    }
-
-    /// The type of field `index` of `ty`, an instance of struct `info`
-    /// with `arguments`: an own struct's annotation typed with its
-    /// parameters bound over `scope`, a package struct's as its check
-    /// resolved it.
-    fn reflected_field_type(
-        &self,
-        info: StructView<'_>,
-        ty: &Ty,
-        arguments: &[TyArg],
-        scope: &ConstEnv<'_>,
-        index: usize,
-    ) -> Result<Ty, ComptimeError> {
-        let StructView::Own(info) = info else {
-            return self
-                .conformance
-                .package_field_types(ty)
-                .and_then(|mut fields| (index < fields.len()).then(|| fields.swap_remove(index)))
-                .ok_or_else(|| {
-                    ComptimeError::NotComptime(format!("cannot reflect the fields of '{ty}'"))
-                });
-        };
-        let mut type_scope = scope.clone();
-        for (decl, argument) in info.decls.iter().zip(arguments) {
-            // Origins erase from runtime state; they bind no CTFE value.
-            let Some(value) = argument.ct_value() else {
-                continue;
-            };
-            type_scope.insert(decl.name().trim_start_matches('*').to_string(), value);
-        }
-        self.type_from_anno(&info.fields[index].ty, &type_scope)
-    }
-
-    /// Replace a reflected handle's terminal `.T` with an ordinary source type
-    /// before the handle-only comptime binding is erased. This is the handoff
-    /// that makes the nightly pattern `comptime f = reflect[S].field["x"]`
-    /// followed by `var value: f.T` visible to the regular checker.
-    pub(super) fn resolve_reflected_type(
-        &self,
-        source: &Type,
-        scope: &ConstEnv<'_>,
-    ) -> Result<Type, ComptimeError> {
-        if let Type::Assoc { base, name, .. } = source
-            && name == "T"
-            && let Type::Named(binding, arguments) = &**base
-            && arguments.is_empty()
-            && let Some(CtValue::Reflected(ty)) = scope.get(binding)
-        {
-            return source_type_from_ty(ty).ok_or_else(|| {
-                ComptimeError::NotComptime(format!(
-                    "reflected type '{ty}' cannot be represented in a source annotation"
-                ))
-            });
-        }
-
-        Ok(match source {
-            Type::Named(name, arguments) => Type::Named(
-                name.clone(),
-                arguments
-                    .iter()
-                    .map(|argument| self.resolve_reflected_param_arg(argument, scope))
-                    .collect::<Result<Vec<_>, _>>()?,
-            ),
-            Type::Assoc { base, name, args } => Type::Assoc {
-                base: Box::new(self.resolve_reflected_type(base, scope)?),
-                name: name.clone(),
-                args: args
-                    .iter()
-                    .map(|argument| self.resolve_reflected_param_arg(argument, scope))
-                    .collect::<Result<Vec<_>, _>>()?,
-            },
-            Type::Func {
-                type_params,
-                params,
-                ret,
-                thin,
-                capturing,
-                raises,
-                raises_type,
-                where_clauses,
-            } => Type::Func {
-                type_params: type_params
-                    .iter()
-                    .map(|parameter| {
-                        let mut parameter = parameter.clone();
-                        if let Some(value_type) = &mut parameter.value_type {
-                            *value_type = self.resolve_reflected_type(value_type, scope)?;
-                        }
-                        if let Some(callable) = &mut parameter.callable_bound {
-                            *callable = self.resolve_reflected_type(callable, scope)?;
-                        }
-                        Ok(parameter)
-                    })
-                    .collect::<Result<Vec<_>, ComptimeError>>()?,
-                params: params
-                    .iter()
-                    .map(|param| {
-                        let mut param = param.clone();
-                        param.ty = self.resolve_reflected_type(&param.ty, scope)?;
-                        Ok::<_, ComptimeError>(param)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-                ret: Box::new(self.resolve_reflected_type(ret, scope)?),
-                thin: *thin,
-                capturing: capturing.clone(),
-                raises: *raises,
-                raises_type: raises_type
-                    .as_deref()
-                    .map(|ty| self.resolve_reflected_type(ty, scope).map(Box::new))
-                    .transpose()?,
-                where_clauses: where_clauses.clone(),
-            },
-            Type::Ref { referent, origin } => Type::Ref {
-                referent: Box::new(self.resolve_reflected_type(referent, scope)?),
-                origin: origin.clone(),
-            },
-            scalar_or_symbolic => scalar_or_symbolic.clone(),
-        })
-    }
-
-    pub(super) fn resolve_reflected_param_arg(
-        &self,
-        argument: &ParamArg,
-        scope: &ConstEnv<'_>,
-    ) -> Result<ParamArg, ComptimeError> {
-        Ok(match argument {
-            ParamArg::Type(ty) => ParamArg::Type(self.resolve_reflected_type(ty, scope)?),
-            ParamArg::Value(value) => ParamArg::Value(value.clone()),
-            ParamArg::Named { name, value } => ParamArg::Named {
-                name: name.clone(),
-                value: Box::new(self.resolve_reflected_param_arg(value, scope)?),
-            },
-        })
     }
 
     pub(super) fn eval_infix(

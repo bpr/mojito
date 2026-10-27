@@ -198,7 +198,7 @@ are conformance only.
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662, R663 (landed), R1449, R1451 | R788, R378, R472, R508, R602, R1194 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1363, R424, R705, R578, R1360, R1361, and R1362 (landed); R1461; R1357 and R1358 (landed); R1359; R1348 and R1281 (landed) | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 (landed) for the other closure forms | R1104, R100, R1230, R1333, R172, R980, R983 (closed), R534, R176 | yes |
-| H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R1379, R1380, R1381, R1382, R1385–R1387, and R603 (landed); R1383, R1384, R1388 | about 45 (below) | partial |
+| H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, R1379, R1380, R1381, R1382, R1383, R1385–R1387, and R603 (landed); R1384, R1388 | about 45 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 | about 20 (below) | slight |
 
 ### D′. Memory-only values live in registers
@@ -325,7 +325,9 @@ missing.
     constant tables (R1479).
   - R1382 (landed): module and generic aliases. Its residue: a package's
     module value constants exported as the elaborator folded them (R1480).
-  - R1383: reflection.
+  - R1383 (landed): reflection, which only the check and mono answer.
+    Its residues: the reflective `Equatable`/`Hashable` defaults (R1481)
+    and the bundled `List`'s field layout (R1482).
   - R1384: struct-valued bracket arguments.
   - R1385: associated members that apply a callable.
   - R1386 (landed): the checker's second per-shape folder. Its residue,
@@ -347,7 +349,7 @@ missing.
 - **Members**:
   - `Elab` arms: R475, R1170, R1206, R1171, R489, R802,
     R1178, R1208.
-  - `Self` and associated reads: R269, R513, R338 (landed with R1382), R436, R415.
+  - `Self` and associated reads: R513, R338 (landed with R1382), R436, R415.
   - Checker arms: R1194, R1199, R332, R462,
     R1220, R1210, R448, R512.
   - Domain: R480, R893, R396, R397, R901, R481, R1197.
@@ -384,7 +386,7 @@ may raise instance counts: a library `SIMD` is real generic code.
 |---|---|---|
 | Scalars, `SIMD`, `Bool`, `DType`, `StringLiteral`, and enum storage are compiler types | R1389–R1399 (`Int`, `UInt`, and `Float64` become width-one `SIMD`, then the library `SIMD` port, R1397), R160, R1188, R276, R1192 | R1408 (after R1392), R143, R335, R331, R430, R850, R212, R1019, R423, R1352, R186, R185, R851, R187, R171, R330, R336, R857, R1189, R427, R432 |
 | `Writable`, `repr`, and `print` are builtins each backend re-implements | R422 → R1287 (R424 landed: `Writable` is declared, its defaults synthesized) | R1461, R1462, R1463, R1409, R275, R18, R159, R937 |
-| Reflection is a builtin, not `Reflected[T]` | R324 (after gap H) | R271, R497, R272, R76, R569, R270, R77, R78, R79, R75, R443, R444, R273, R900, R904 |
+| Reflection is a builtin, not `Reflected[T]` | R324 (after gap H) | R271, R497, R272, R76, R77, R78, R443, R444, R273, R900, R904, R1481 |
 | A trait requirement has no checked signature | R758, R594 | R1407 (after R942, R549, R571), R595, R769, R640, R760, R549, R942, R1165, R67, R571, R284, R550, R570 |
 | The checked handoff is rebuilt from span-keyed facts | R764 → R765 → R766 → R767 | R756, R757, R755, R626, R627, R754, R768, R521 |
 | The parser decides type versus value | R1369 → R1370 → R1371, R1372 | R377, R381, R512, R383, R482, R1203, R72, R326, R490, R134 |

@@ -588,7 +588,10 @@ impl Checker {
                     if matches!(&object.kind, ExprKind::Identifier(base)
                         if self.declared_structs.contains(base)
                             || self.structs.contains_key(base))));
-        if type_params.is_empty() && self.names_module_value_constant(value) {
+        if type_params.is_empty()
+            && (self.names_module_value_constant(value)
+                || super::reflection::spells_reflection_handle(value))
+        {
             return Ok(());
         }
         if type_params.is_empty()

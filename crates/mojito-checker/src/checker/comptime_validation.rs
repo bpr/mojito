@@ -1420,6 +1420,21 @@ impl Checker {
         if self.reads_literal_value(value) {
             return self.bind_compile_time_only_value(name, value);
         }
+        // A reflected field type (`comptime F = r.field_at[1].T`) is a type
+        // alias where a type is read, and the `AnyType` value it spells
+        // where a binder takes it.
+        if !self.function_bases.is_empty()
+            && let Some(ty) = self.reflected_type_operand(value)?
+        {
+            self.bind_local_type_alias(name, ty, value)?;
+            self.local_comptime_values
+                .last_mut()
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
+                })?
+                .insert(name.to_string(), value.clone());
+            return Ok(true);
+        }
         let Some(level) = self.tparams.len().checked_sub(1) else {
             if self.bind_compile_time_only_value(name, value)? {
                 return Ok(true);
@@ -1578,7 +1593,11 @@ impl Checker {
         name: &str,
         value: &Expr,
     ) -> Result<bool, TypeError> {
-        if !(matches!(self.reflection_handle(value), Ok(Some(_)))
+        // A handle binds as written: a bad selection
+        // (`reflect[P].field["missing"]`) is reported where it is read, as
+        // the pin runs an unread binding.
+        if !(super::reflection::spells_reflection_handle(value)
+            || matches!(self.reflection_handle(value), Ok(Some(_)))
             || matches!(self.reflection_list(value), Ok(Some(_)))
             || matches!(self.type_list_operand(value), Ok(Some(_)))
             || self.reads_literal_value(value)
@@ -2058,6 +2077,9 @@ impl Checker {
             {
                 Ok(None)
             }
+            _ if let Some(reflected) = self.reflected_type_operand(expr).transpose() => {
+                reflected.map(Some)
+            }
             _ => match self.type_operand_expression(expr) {
                 Ok(Some(ty)) => Ok(Some(ty)),
                 Err(error)
@@ -2069,7 +2091,7 @@ impl Checker {
                 {
                     Err(error)
                 }
-                Ok(None) | Err(_) => self.reflected_type_operand(expr),
+                Ok(None) | Err(_) => Ok(None),
             },
         }
     }
@@ -3691,7 +3713,7 @@ fn meta_names_binder(
     use mojito_types::param_expr::MetaTy;
     match meta {
         MetaTy::Value(ty) => mojito_types::types::names_binder(ty, binder),
-        MetaTy::Type | MetaTy::ReflectedType => false,
+        MetaTy::Type => false,
         MetaTy::ParamList(element) => meta_names_binder(element, binder),
         MetaTy::Tuple(elements) | MetaTy::List(elements) | MetaTy::Set(elements) => elements
             .iter()

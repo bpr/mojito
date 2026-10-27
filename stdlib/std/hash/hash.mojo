@@ -4,7 +4,7 @@
 # A conformer that omits `__hash__` receives the reflective default: every
 # field is fed to `hasher.update` in declaration order, and every field must
 # be Hashable. The compiler synthesizes that body until the trait's own can
-# read `reflect[Self]` (R269).
+# read each field through `field_ref` (R1481).
 
 from .hasher import Hasher, default_hasher
 

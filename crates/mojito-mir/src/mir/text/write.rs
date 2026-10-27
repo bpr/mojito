@@ -2642,7 +2642,6 @@ fn meta_ty(meta: &MetaTy) -> String {
     match meta {
         MetaTy::Value(ty) => positional("meta_value", &ty_value(ty)),
         MetaTy::Type => "meta_type".into(),
-        MetaTy::ReflectedType => "meta_reflected".into(),
         MetaTy::Tuple(elements) => positional("meta_tuple", &metas(elements)),
         MetaTy::List(elements) => positional("meta_list", &metas(elements)),
         MetaTy::Set(elements) => positional("meta_set", &metas(elements)),
@@ -2761,7 +2760,6 @@ fn ct_value(value: &CtValue) -> String {
             record("ct_set", &fields)
         }
         CtValue::Type(v) => positional("ct_type", &ty_value(v)),
-        CtValue::Reflected(v) => positional("ct_reflected", &ty_value(v)),
         CtValue::Trait(traits) => positional("ct_trait", &list(traits.iter().map(|v| symbol(v)))),
         CtValue::KgenString(v) => positional("ct_kgen_string", &quote(v)),
         CtValue::Expr(v) => positional("ct_expr", &param_expr(v)),

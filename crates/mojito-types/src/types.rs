@@ -4022,7 +4022,6 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         }
         CtValue::Expr(expr) => rewrite.expr(expr)?.into_value(),
         CtValue::Type(ty) => CtValue::Type(rewrite_ty(ty, rewrite)?),
-        CtValue::Reflected(ty) => CtValue::Reflected(rewrite_ty(ty, rewrite)?),
         CtValue::Tuple(values) => CtValue::Tuple(all(values, rewrite)?),
         CtValue::List(values) => CtValue::List(all(values, rewrite)?),
         CtValue::Set { spelling, elements } => CtValue::Set {
@@ -4574,7 +4573,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         CtValue::Dict { entries, .. } => entries
             .iter()
             .any(|(key, value)| ct_value_is_symbolic(key) || ct_value_is_symbolic(value)),
-        CtValue::Type(ty) | CtValue::Reflected(ty) => is_symbolic(ty),
+        CtValue::Type(ty) => is_symbolic(ty),
         CtValue::Struct { fields, .. } => {
             fields.iter().any(|(_, value)| ct_value_is_symbolic(value))
         }
@@ -4803,7 +4802,7 @@ fn value_decorated(value: &CtValue) -> bool {
         }
         CtValue::Tuple(values) | CtValue::List(values) => values.iter().any(value_decorated),
         CtValue::Struct { fields, .. } => fields.iter().any(|(_, field)| value_decorated(field)),
-        CtValue::Type(ty) | CtValue::Reflected(ty) => ty.carries_decorations(),
+        CtValue::Type(ty) => ty.carries_decorations(),
         CtValue::Expr(expr) => expr.carries_decorations(),
         _ => false,
     }

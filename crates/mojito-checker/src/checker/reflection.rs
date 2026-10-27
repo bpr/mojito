@@ -1,11 +1,12 @@
-//! Reflection under the checker: a `reflect[T]` query is answered from the
-//! struct table when its subject is a registered struct and as a
-//! `ParamKind::Reflect` node when the subject is still a parameter, so a body
-//! reading a reflection handle validates with its parameters symbolic. The
-//! elaborator evaluates the same queries per instance: on a clone in
-//! `comptime/eval.rs`, and in a template-served body through the parameter
-//! constant `record_reflection_value` records, which `native::mono` answers.
-//! See `docs/symbol-map.md`.
+//! Reflection under the checker, the one answerer above `native::mono`: a
+//! `reflect[T]` query is answered from the struct table when its subject is
+//! a registered struct whose fields have resolved, and as a
+//! `ParamKind::Reflect` node when the subject is still a parameter or is a
+//! struct whose own member reads it while its fields resolve, so a body
+//! reading a reflection handle validates with its parameters symbolic. MIR
+//! carries a node as the parameter constant `record_reflection_value`
+//! records, which `native::mono` answers per instance. No reflection is
+//! evaluated above the check. See `docs/symbol-map.md`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -222,13 +223,33 @@ impl Checker {
     /// arguments, symbolic or not, bind the field types), `True` for
     /// `is_struct()` of any other closed type (only an MLIR primitive, which
     /// Mojito never spells, answers `False` at the pin), and a `ParamKind::Reflect`
-    /// node for a subject that is still a parameter.
+    /// node for a subject that is still a parameter. A struct whose fields
+    /// have yet to resolve has no table to answer from: a struct member's
+    /// query is the node too, which mono folds, as upstream's member is
+    /// lazy, and any other read fails so the module constant holding it
+    /// binds in the declaration pass instead.
     pub(super) fn eval_reflection(
         &self,
         subject: &Ty,
         query: ReflectQuery,
     ) -> Result<CtValue, TypeError> {
         let fields = match subject.kind() {
+            TyKind::Struct(name, _)
+                if self
+                    .structs
+                    .get(name)
+                    .is_some_and(|info| !info.fields_resolved()) =>
+            {
+                if self.self_ty.is_none() {
+                    return Err(TypeError::NotComptime(format!(
+                        "the fields of '{subject}' are not resolved yet"
+                    )));
+                }
+                let shape = self.param_context.type_shape(subject.clone());
+                return Ok(CtValue::Expr(
+                    self.param_context.reflect_query(&shape, query),
+                ));
+            }
             TyKind::Struct(name, arguments) if let Some(info) = self.structs.get(name) => Some(
                 info.fields
                     .iter()
@@ -603,6 +624,20 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::ConstructType { ty: ty.clone() },
         ));
         Ok(ty)
+    }
+}
+
+/// Whether `expr` spells a reflection handle: `reflect[X]`, or a
+/// `field[name]` / `field_at[i]` selection on one. A `comptime` binding of
+/// one is the handle the check reads at each use, never a type alias.
+pub(super) fn spells_reflection_handle(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::TypeApply { name, .. } | ExprKind::Call { name, .. } => name == "reflect",
+        ExprKind::Index { object, .. } => matches!(&object.kind,
+            ExprKind::Member { object, field }
+                if matches!(field.as_str(), "field" | "field_at" | "field_type")
+                    && spells_reflection_handle(object)),
+        _ => false,
     }
 }
 

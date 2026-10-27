@@ -730,19 +730,29 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `reject_mixed_spread` refuses `Tuple[Int, *Self.Ts]`, and `symbolic_verdict`
   turns a `TypeError::SymbolicBoundary` into that one body's no-verdict.
   `types::pack_spread` owns the spread convention.
-- `checker/reflection.rs` owns `reflect[T]` under the checker.
+- `checker/reflection.rs` owns `reflect[T]` under the checker, the one
+  answerer above `native::mono`: no reflection is evaluated above the check.
   `eval_reflection` answers a query from the struct table for a registered
-  struct, through `ReflectQuery::answer` (`mojito-types`, `param_expr.rs`,
-  the one closed-subject policy the elaborator shares), and as a
+  struct whose fields have resolved (`StructInfo::fields_resolved`),
+  through `ReflectQuery::answer` (`mojito-types`, `param_expr.rs`, the one
+  closed-subject policy the elaborator shares), and as a
   `ParamKind::Reflect` node (`ParamContext::reflect_query`) for a subject
-  still a parameter; `infer_reflection` types a query read as a value
+  still a parameter or a struct whose own member reads it while its fields
+  resolve (any other read of such a struct fails, so a module constant
+  binds in the declaration pass); `spells_reflection_handle` keeps a module
+  handle (`comptime R = reflect[P]`) out of the type-alias path
+  (`register_module_alias`, `module_alias_spelling`) and binds a handle
+  with a bad selection lazily (`bind_compile_time_only_value`); `infer_reflection` types a query read as a value
   (hooked at the top of `inference.rs:infer_impl`) and records its answer
   as `SemanticAdjustment::ParamValue` (`record_reflection_value`), which MIR
   lowers as `Const::Param`; `eval_reflection_expr` serves
   `constraints.rs:eval_associated_ct` and `compile_dependent_ct_expr`, and
   `reflected_type_operand` / `reflected_type_annotation` resolve `types[i]`,
-  `r.field_at[i].T`, and `r.field["x"].T` behind `comptime_type_operand` and
-  `type_resolution.rs:ty_from_anno` to the dependent element (a `ListGet`
+  `r.field_at[i].T`, and `r.field["x"].T` behind `comptime_type_operand`,
+  `type_resolution.rs:ty_from_anno`, a type binder's bracket argument
+  (`resolve_param_arg`, where the operand is an `AnyType` value a bound
+  asking more rejects), `type_param_argument`, and a local alias of one
+  (`bind_template_comptime`) to the dependent element (a `ListGet`
   over the `field_types()` node, viewed through `opaque_element`).
   Type-level pack algebra lives beside it: `constraints.rs:typelist_receiver`
   reads the compiler-known `TypeList` vocabulary (roadmap R1182) over a
@@ -1433,7 +1443,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   struct or `def` read through `Elab::{ct_struct, declares_struct,
   declares_function}` from the oracle's
   `ConformanceOracle::{package_struct, package_associated_value,
-  package_field_types, package_function_params}`, `checker::PackageStruct`)
+  package_function_params}`, `checker::PackageStruct`)
   are the
   route the driver enters once per compilation, `elaborate_exporting` the
   package build's, which also returns the module value constants it folded;
@@ -1460,8 +1470,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   traversal with a scope hook for shadowing binders.
 - `comptime/eval.rs` owns compile-time expression evaluation (the `eval`
   dispatcher, set/dictionary displays and the explicit literal constructors,
-  the structural collection folds `len`/`in`/`keys`/`values`, reflection
-  methods, infix/iteration folding, and a typed scalar construction,
+  the structural collection folds `len`/`in`/`keys`/`values`,
+  infix/iteration folding, and a typed scalar construction,
   which materializes a literal or converts by `CtValue::folded_conversion`).
 - `checker/comptime_requests.rs` owns the line every compile-time request
   is drawn by: `applies_callable`, over a phase's `CalleeOracle` (the
@@ -1478,7 +1488,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Checker::local_comptime_application`). The
   elaborator keeps every collection-valued `comptime` binding for the
   check — a display or constructor (`Elab::keep_template_comptime_binding`),
-  a closed field-name list (`crossing::lists_field_names`), a method call of
+  a reflection query (the private `spells_reflection`), a method call of
   a value binding (`calls_value_method`) — and spells none of them into a
   read; a binding that still folds to a collection is an error
   (`Elab::stmt`). It keeps every closed local scalar or string binding
@@ -1490,9 +1500,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   above the check.
 - `comptime/crossing.rs` owns the compile-time → runtime crossing fold
   (`fold_runtime_crossings`: `materialize[X]()` and `comptime(e)` become
-  literals, and so does a reflection query over a closed handle
-  (`reflection_query`: `r.field_count()`, `reflect[T].field_index["x"]()`);
-  a `comptime(e)` operand that evaluates to a collection is rejected with
+  literals; a reflection query is the check's, which records its answer as
+  a parameter value; a `comptime(e)` operand that evaluates to a collection is rejected with
   upstream's `ImplicitlyCopyable` text; runtime locals shadow). A
   construction through a struct's parameterized type member
   (`ParameterList.of[4, 5]()`, `S[Int].Of[Bool](3, 4)`) is expanded there

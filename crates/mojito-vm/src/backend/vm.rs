@@ -1175,7 +1175,6 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         | CtValue::Dict { .. }
         | CtValue::Set { .. }
         | CtValue::Type(_)
-        | CtValue::Reflected(_)
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
         // No unresolved expression or deferred slot becomes a runtime value.

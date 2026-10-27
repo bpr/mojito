@@ -2490,6 +2490,13 @@ struct StructInfo {
 }
 
 impl StructInfo {
+    /// Whether the typed `fields` have arrived: a struct's members resolve
+    /// before its fields, so a reflection query read while they do has no
+    /// field table to answer from yet.
+    const fn fields_resolved(&self) -> bool {
+        self.fields.len() == self.declared_field_names.len()
+    }
+
     /// The struct's origin tail slots — every explicit (non-infer-only)
     /// `Origin`/`OriginSet` source parameter with its full-index binder id, in
     /// source order. A struct instance's `TyKind::Struct` arguments carry one

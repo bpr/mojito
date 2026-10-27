@@ -2444,6 +2444,25 @@ impl Checker {
                 // behind for the declaration that wins.
                 let (ty, value_span) = match arg {
                     ParamArg::Type(t) => (self.ty_from_anno(t)?, None),
+                    // A reflected field type (`reflect[Q].field_at[0].T`,
+                    // or a name bound to one) is an `AnyType` value, which
+                    // binds only a binder that asks nothing more of it.
+                    ParamArg::Value(expression)
+                        if let Some(reflected) =
+                            self.reflected_type_operand(expression).transpose() =>
+                    {
+                        if let Some(bound) = bounds.iter().find(|bound| *bound != "AnyType") {
+                            let owner = decl.binder().id.owner;
+                            return Err(TypeError::BadCall {
+                                func: owner.to_string(),
+                                reason: format!(
+                                    "'{owner}' parameter '{name}' has '{bound}' type, but value \
+                                     has type 'AnyType'"
+                                ),
+                            });
+                        }
+                        (reflected?, Some(expression.source_span()))
+                    }
                     ParamArg::Value(
                         expression @ Expr {
                             kind: ExprKind::Identifier(id),
@@ -3852,6 +3871,11 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         match arg {
             mojito_ast::ast::ParamArg::Type(ty) => self.ty_from_anno(ty),
+            mojito_ast::ast::ParamArg::Value(expression)
+                if let Some(reflected) = self.reflected_type_operand(expression).transpose() =>
+            {
+                reflected
+            }
             mojito_ast::ast::ParamArg::Value(Expr {
                 kind: ExprKind::Identifier(name),
                 ..

@@ -1880,7 +1880,6 @@ impl Checker {
             CtValue::Pointer { .. }
             | CtValue::StoreToMem(_)
             | CtValue::Type(_)
-            | CtValue::Reflected(_)
             | CtValue::RemovedArg => {
                 let _ = self_ty;
                 None

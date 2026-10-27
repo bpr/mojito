@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `reflect[T]` query is now answered by the check alone (and, over a
+  parameter, by the elaborator below MIR), never above the check, as
+  upstream's `Reflected[T]` methods return parameter attributes (R1383).
+  A module-scope handle (`comptime R = reflect[P]`) runs, in its module and
+  from an importer (R270); a module constant or a struct's own member over
+  `reflect[Self]` now answers `field_count()` with the field count where it
+  answered `0`; a reflected field type (`reflect[Q].field_at[0].T`) binds an
+  `AnyType` type parameter (R79), names a type argument, aliases a local
+  type, and is itself a reflection subject, while a bound asking more
+  rejects it as the pin does; and an unread binding of a bad selection runs.
+  `CtValue::Reflected` is gone, so the MIR text is 1.110 and the package
+  format 106.
+
 - A module `comptime` type alias and a generic alias are now held only by
   the check's alias table, as the pin holds an alias only as its
   declaration (R1382), where the elaborator substituted a module type

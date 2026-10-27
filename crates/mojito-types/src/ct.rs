@@ -10,7 +10,7 @@
 //! type-valued compile-time members.
 //!
 //! Scalar values and recursively materializable tuples/lists/dicts/sets have a
-//! runtime literal form; `Type`, `Reflected`, `Trait`, `Expr`, `Deferred`,
+//! runtime literal form; `Type`, `Trait`, `Expr`, `Deferred`,
 //! `Marker`, and `RemovedArg` are compile-time-only.
 
 use crate::origin::{Mutability, OriginParamId};
@@ -414,10 +414,6 @@ pub enum CtValue {
     /// [`Self::Pointer`]'s memory does.
     StoreToMem(Box<Self>),
     Type(Ty),
-    /// The zero-sized compile-time handle produced by current Mojo's
-    /// `reflect[T]` API. Field selection returns another handle, allowing
-    /// `.field[name]` / `.field_at[index]` chains to terminate in `.T`.
-    Reflected(Ty),
     /// A trait, or a `&` composition of traits, used as a value — upstream's
     /// `!lit.trait<…>`, whose type is the trait metatype
     /// ([`TyKind::AnyTrait`]). The list is the canonical trait set
@@ -821,7 +817,6 @@ impl CtValue {
             Self::Pointer { .. }
             | Self::StoreToMem(_)
             | Self::Type(_)
-            | Self::Reflected(_)
             | Self::Trait(_)
             | Self::KgenString(_)
             | Self::Expr(_)
@@ -1172,7 +1167,6 @@ impl CtValue {
             | Self::Variant { .. }
             | Self::StoreToMem(_)
             | Self::Type(_)
-            | Self::Reflected(_)
             | Self::Trait(_)
             | Self::Expr(_)
             | Self::Deferred(_)
@@ -1397,7 +1391,6 @@ impl fmt::Display for CtValue {
                 None => write!(f, "variant[{index}]"),
             },
             Self::Type(ty) => write!(f, "{ty}"),
-            Self::Reflected(ty) => write!(f, "reflect[{ty}]"),
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::KgenString(text) => write!(f, "{text:?}"),
             Self::Expr(expr) => write!(f, "{expr}"),

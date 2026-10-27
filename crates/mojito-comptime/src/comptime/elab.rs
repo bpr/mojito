@@ -115,20 +115,6 @@ impl Elab<'_> {
                     out.push(stmt.clone());
                 }
             }
-            StmtKind::VarDecl { name, ty, value } => {
-                let ty = ty
-                    .as_ref()
-                    .map(|ty| self.resolve_reflected_type(ty, env))
-                    .transpose()?;
-                out.push(rebuilt(
-                    stmt,
-                    StmtKind::VarDecl {
-                        name: name.clone(),
-                        ty,
-                        value: value.clone(),
-                    },
-                ));
-            }
             StmtKind::If { branches, orelse } => {
                 let branches = branches
                     .iter()
@@ -317,8 +303,8 @@ impl Elab<'_> {
     }
 
     /// Elaborate a `comptime` declaration: a generic alias, a type alias,
-    /// and a binding the check binds are kept as written, and a body's
-    /// reflection handle stays in the environment alone.
+    /// a reflection query, and a binding the check binds are kept as
+    /// written.
     fn comptime_stmt(
         &self,
         stmt: &Stmt,
@@ -345,10 +331,11 @@ impl Elab<'_> {
         if self.keep_template_comptime_binding(stmt, value, env, in_fn, out) {
             return Ok(());
         }
-        // A closed field-name list (`reflect[P].field_names()`) is a
-        // static method's result the check binds, module or local.
-        let field_names = super::crossing::lists_field_names(value, env);
-        if field_names && in_fn {
+        // A reflection query (`reflect[P]`, `reflect[P].field_names()`) is
+        // the check's, module or local: its answers are parameter
+        // attributes, as upstream's `Reflected[T]` methods return.
+        let reflection = spells_reflection(value);
+        if reflection && in_fn {
             if let Some(binders) = self.template_binders.borrow_mut().last_mut() {
                 binders.insert(name.clone());
             }
@@ -361,9 +348,9 @@ impl Elab<'_> {
         // here, and the elaborator below MIR evaluates it on first
         // demand. So is a collection display or constructor
         // ([`mojito_checker::checker::lifts_comptime_value`]) and a
-        // field-name list.
+        // reflection query.
         if !in_fn
-            && (field_names
+            && (reflection
                 || mojito_checker::checker::lifts_comptime_value(value, self)
                 || self.applied_initializer(value, env))
         {
@@ -433,20 +420,17 @@ impl Elab<'_> {
         }
         // A type alias, module or body, is the check's to bind, as
         // upstream resolves the alias by name lookup to its parameter
-        // value; so is a body's reflection handle, and a body's
-        // `TypeList` value, whose proposition a kept condition reads
+        // value; so is a body's `TypeList` value, whose proposition a kept condition reads
         // (`tl.contains[Int]()`).
         let kept = |value: &CtValue| match value {
             CtValue::Type(_) => true,
-            CtValue::Reflected(_) => in_fn,
             value => in_fn && value.typelist_elements().is_some(),
         };
         if env.get(name).is_some_and(kept) {
             out.push(stmt.clone());
             return Ok(());
         }
-        // Type and reflection handles have no runtime representation.
-        // Keep those only in the elaboration environment; subsequent
+        // A type has no runtime representation. Keep one only in the elaboration environment; subsequent
         // comptime expressions consume them before checking/lowering.
         if let Some(value) = env.get(name).and_then(|value| value.materialize(span)) {
             out.push(rebuilt(
@@ -660,13 +644,6 @@ impl Elab<'_> {
                 ))),
             },
             Type::Assoc { base, name, args } => {
-                if let Type::Named(binding, base_args) = &**base
-                    && base_args.is_empty()
-                    && name == "T"
-                    && let Some(CtValue::Reflected(ty)) = scope.get(binding)
-                {
-                    return Ok(ty.clone());
-                }
                 let generator = match &**base {
                     Type::Named(base, base_args)
                         if base_args.is_empty() && self.unbound_generator(base, scope) =>
@@ -802,9 +779,8 @@ impl Elab<'_> {
             .into());
         }
         // In type-argument grammar, `types[i]` is represented as a named type
-        // application. A reflected `field_types()` result is a compile-time
-        // sequence of type values, so interpret that spelling as dependent
-        // type-list indexing.
+        // application. Over a compile-time sequence of type values that
+        // spelling is type-list indexing.
         if let Some(CtValue::Tuple(values) | CtValue::List(values)) = scope.get(name)
             && let [ParamArg::Value(index)] = args
         {
@@ -1702,7 +1678,6 @@ fn calls_value_method(expression: &Expr, env: &ConstEnv<'_>) -> bool {
                 self.found |= !matches!(
                     value,
                     CtValue::Type(_)
-                        | CtValue::Reflected(_)
                         | CtValue::Expr(_)
                         | CtValue::Deferred(_)
                         | CtValue::Marker(_)
@@ -1713,6 +1688,24 @@ fn calls_value_method(expression: &Expr, env: &ConstEnv<'_>) -> bool {
     }
 
     let mut finder = Finder { env, found: false };
+    mojito_ast::visit::walk_expr(&mut finder, expression);
+    finder.found
+}
+
+/// Whether `expression` spells a reflection query, `reflect[T]` or
+/// `reflect[T]()` anywhere in it: the check answers every one.
+fn spells_reflection(expression: &Expr) -> bool {
+    struct Finder {
+        found: bool,
+    }
+    impl mojito_ast::visit::Visitor for Finder {
+        fn visit_expr(&mut self, expr: &Expr) {
+            if let ExprKind::TypeApply { name, .. } | ExprKind::Call { name, .. } = &expr.kind {
+                self.found |= name == "reflect";
+            }
+        }
+    }
+    let mut finder = Finder { found: false };
     mojito_ast::visit::walk_expr(&mut finder, expression);
     finder.found
 }

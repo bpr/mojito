@@ -20,11 +20,6 @@ impl<'a> PackageStruct<'a> {
     pub fn source_params(self) -> &'a [mojito_ast::ast::TypeParam] {
         &self.0.source_params
     }
-
-    /// Its declared field names, in order.
-    pub fn field_names(self) -> &'a [String] {
-        &self.0.declared_field_names
-    }
 }
 
 impl ConformanceOracle {
@@ -557,21 +552,6 @@ impl ConformanceOracle {
                 .collect_comptime_defaults(trait_name, &mut defaults);
         }
         defaults
-    }
-
-    /// The field types of `base`, an instance of a package struct, in
-    /// declaration order, each at the instance's arguments.
-    pub fn package_field_types(&self, base: &Ty) -> Option<Vec<Ty>> {
-        let TyKind::Struct(name, arguments) = base.kind() else {
-            return None;
-        };
-        let info = self.package_struct(name)?.0;
-        Some(
-            info.fields
-                .iter()
-                .map(|(_, ty)| substitute_at(ty, info, arguments))
-                .collect(),
-        )
     }
 
     fn installed(&self) -> Option<&InstalledInterfaces> {
