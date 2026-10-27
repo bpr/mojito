@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1470**.
+Next free ID: **R1472**.
 
 ## Ordered Work
 
@@ -6204,19 +6204,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1211 A compile-time condition that is not a `Bool` is not
-  converted**
+- [ ] **R1470 A bare name of a non-integer parameter is rejected as a
+  compile-time condition**
 
-  Problem: `comptime if 3:` and `comptime assert 3, "int"` run at the pin,
-  which converts the `Int` through `Bool(x)`; Mojito fails with "invalid
-  checked program: MIR function '$comptime$main$0' block 0: return of Int
-  from a function returning Bool".
-  - The checker accepts the condition and records its truthiness
-    conversion (`truthiness_condition`), but the compile-time thunk the
-    condition lowers to (`comptime_condition_of`) returns the operand
-    unconverted.
-  - Probe: `comptime if 3:` in `main`.
-  - Probe: `comptime assert 3, "int"` in `main`.
+  `comptime if y:` over `y: Float64` in `def g[y: Float64]()` prints `y` at
+  the pin, while Mojito rejects it with "a comptime if condition that
+  compiles to no parameter expression".
+  - Cause: the checked handoff holds one operation record per expression
+    (`NodeFacts::adjustment`).
+  - A name read as a parameter value keeps its `ParamValue` record there,
+    and the condition's `ComptimeCondition` takes the same slot.
+  - So the function lifted for the leaf's `Bool(x)` conversion could not
+    read the name, and `Checker::converted_condition` lifts none for a bare
+    name.
+  - An integer leaf needs no function: it is `x != 0`, as `Int.__bool__`
+    spells it.
+  - Lever: give the condition record its own field beside the read's, as
+    upstream's condition is the `__bool__` call's parameter expression over
+    the read.
+  - Probe: `comptime if Self.y:` over a struct's `y: Float64` parameter
+    (the pin prints `S y`).
+  - Probe: `comptime if x:` over `x: Scalar[DType.uint8]` (the pin prints
+    `x` at 3 and `not x` at 0).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9775,26 +9784,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R389 One compile-time expression is lifted as more than one
-  function**
+- [ ] **R1471 MIR builds a bracket argument's register from its node
+  beside the expression the check compiled**
 
-  Problem: `comptime if h(n) > 4:` and `flag[h(n) > 4]()` in `def f[n:
-  Int]()` evaluate two functions for the one expression, where the pin holds
-  one parameter expression and every read names it.
-  - The check names the function of an expression in a type or a parameter
-    argument, or bound by a local `comptime` (`Checker::lifted_application`,
+  `flag[n + 1]()` in `def f[n: Int]()` carries the check's parameter
+  expression as its instantiated argument, but MIR builds the argument's
+  register again from the argument's checked node, where upstream reads
+  sema's one `kgen.param.constant`.
+  - The check records what it compiled only for an expression that applies
+    a function (`Checker::record_compiled_expression`,
     `checker/comptime_validation.rs`).
-  - MIR names its own for a condition, a `range` bound, and a runtime read
-    of a display (`ComptimeThunks::request_value`, `mir.rs`).
-  - An operand the check lifted before the whole expression failed to
-    compile keeps its function too: `flag[h(vals[0]) > 2]()` lifts
-    `h(vals[0])` and the comparison.
-  - The values agree, and an unread function is never instantiated. Only
-    the source MIR and the elaborator's work grow.
-  - Let the check name every lifted expression, and drop a function nothing
-    applies.
+  - Arithmetic over binders, and a `comptime for` variable's read, are
+    rebuilt by `Flatten::value_binder_node` (`mir.rs`) through the same
+    `ParamContext` builder, so the two agree today.
+  - Lever: record every compiled bracket argument, local `comptime` value,
+    and crossing operand, and let `value_binder_node` read records only.
+  - Probe: `flag[n + 1]()` and `comptime k = n * 2` read by `print(k)` keep
+    their output once `value_binder_node` builds nothing.
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R159 `Float64` and `Float32` print different text from the pin
   because Mojito formats floats in Rust rather than in Mojo**

@@ -23,8 +23,9 @@ struct construction, a static method, a method or subscript of a
 dictionary or set display, or an operator over a tuple display (`Tuple`'s
 dunder call), anywhere under a value root. The check binds
 the request as a parameter expression (`ParamKind::Apply`, or the
-application of a thunk MIR lifts for an expression that is not a bare
-call), and `native::mono` evaluates it on first demand
+application of a function the check names, `$comptime$<owner>$c<k>`, and
+MIR lifts for an expression that is not a bare call; MIR names none of its
+own), and `native::mono` evaluates it on first demand
 (`Specializer::demand_application`), running the instance's reference
 closure as concrete MIR on the VM under one fuel budget per compilation
 (`Specializer.fuel`).
@@ -107,9 +108,10 @@ evaluates by demanding a concrete instance and running it on the VM.**
   compile-time arguments, the binders in scope that the body reads.
 - The checker lowers a compile-time expression that applies anything — a
   call, a constructor, a static method, a method chain on a compile-time
-  value — as a zero-parameter thunk whose compile-time parameters are the
-  enclosing binders (an enclosing `comptime for` index among them, which
-  the thunk reads as a parameter reference), the way `CheckedConst::Evaluate { function }` already
+  value — as a zero-parameter function it names, whose compile-time
+  parameters are the binders the expression reads (an enclosing `comptime
+  for` iterator among them, which the function reads as a parameter
+  reference), the way `CheckedConst::Evaluate { function }` already
   lowers a non-literal default argument. The expression's symbolic value is
   `Apply(thunk, binders)`, typed by the thunk's declared result. Runtime
   arguments (`f(7)`) live in the thunk's body; a generic callee's solved

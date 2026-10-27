@@ -97,6 +97,7 @@ assets/ok/comptime_assert_proves_proposition.mojo	main	exe-differential	sanitize
 assets/ok/comptime_call_callee_shapes.mojo	main	exe-differential	sanitized
 assets/ok/comptime_call_signature.mojo	main	exe-differential	sanitized
 assets/ok/comptime_collections.mojo	main	exe-differential	sanitized
+assets/ok/comptime_condition_bool_conversion.mojo	main	exe-differential	sanitized
 assets/ok/comptime_conditions_short_circuit.mojo	main	exe-differential	sanitized
 assets/ok/comptime_ctfe.mojo	main	exe-differential	sanitized
 assets/ok/comptime_display_binding_alias.mojo	main	exe-differential	sanitized

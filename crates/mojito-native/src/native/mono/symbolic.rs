@@ -369,6 +369,9 @@ pub(super) fn nominal_template(name: &str) -> &str {
 
 fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<CtValue, MonoError> {
     let context = ParamContext::detached();
+    // A layout query the instance's oracle answers under its target, and
+    // the first one it cannot.
+    let mut layout_failure = None;
     let replaced = context
         .replace(expr, &ct_bindings(bindings))
         .and_then(|replaced| {
@@ -400,6 +403,21 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
             }),
             None => Ok(answered),
         })
+        .and_then(|answered| match &bindings.layout {
+            Some(oracle) => context.answer_applications(&answered, &mut |function, args| {
+                if function != SIZE_OF_FUNCTION || layout_failure.is_some() {
+                    return Ok(None);
+                }
+                match layout_answer(oracle, args, bindings) {
+                    Ok(size) => Ok(size.map(CtValue::Int)),
+                    Err(error) => {
+                        layout_failure = Some(error);
+                        Ok(None)
+                    }
+                }
+            }),
+            None => Ok(answered),
+        })
         .and_then(|answered| context.answer_builtin_applications(&answered))
         .map_err(|error| MonoError {
             kind: if matches!(error, ParamError::Reflect(_) | ParamError::Constraint(_))
@@ -412,22 +430,8 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
             function: None,
             construct: error.to_string(),
         })?;
-    // A layout application the instance's oracle answers under its target.
-    if let ParamKind::Apply { function, args } = replaced.kind()
-        && function == SIZE_OF_FUNCTION
-        && let Some(oracle) = &bindings.layout
-        && let [subject] = args.as_slice()
-    {
-        let ty = match subject.kind() {
-            ParamKind::TypeShape(ty) => Some(substitute_ty(ty, bindings)?),
-            ParamKind::Constant(CtValue::Type(ty)) => Some(ty.clone()),
-            _ => None,
-        };
-        if let Some(ty) = ty
-            && !is_symbolic(&ty)
-        {
-            return oracle.size_of(&ty).map(CtValue::Int);
-        }
+    if let Some(error) = layout_failure {
+        return Err(error);
     }
     replaced.require_constant().map_err(|error| {
         let free = replaced.free_parameters();
@@ -452,4 +456,25 @@ fn eval_ct_at(expr: &ParamExpr, bindings: &Bindings, reached: bool) -> Result<Ct
             ),
         }
     })
+}
+
+/// The size `oracle` gives the one type the layout query's `args` name,
+/// once `bindings` close it; `None` while it is still symbolic.
+fn layout_answer(
+    oracle: &LayoutOracle,
+    args: &[ParamExpr],
+    bindings: &Bindings,
+) -> Result<Option<i64>, MonoError> {
+    let [subject] = args else {
+        return Ok(None);
+    };
+    let ty = match subject.kind() {
+        ParamKind::TypeShape(ty) => substitute_ty(ty, bindings)?,
+        ParamKind::Constant(CtValue::Type(ty)) => ty.clone(),
+        _ => return Ok(None),
+    };
+    if is_symbolic(&ty) {
+        return Ok(None);
+    }
+    oracle.size_of(&ty).map(Some)
 }

@@ -1267,9 +1267,8 @@ pub enum LiftedOwner<'a> {
     Constant(&'a str),
     /// An evaluated parameter default: `$default$<owner>$<parameter>`.
     Default { owner: &'a str, parameter: &'a str },
-    /// A function lifted from the body of the function `owner`, numbered
-    /// within it, the same in every compilation: one MIR lifts
-    /// (`$comptime$<function>$<k>`) or one the check lifts
+    /// A function the check lifts from the body of the function `owner`,
+    /// numbered within it, the same in every compilation
     /// (`$comptime$<function>$c<k>`).
     Numbered(&'a str),
 }
@@ -1277,11 +1276,6 @@ pub enum LiftedOwner<'a> {
 /// The lifted function of the module constant `constant`'s initializer.
 pub fn lifted_constant_name(constant: &str) -> String {
     format!("$comptime${constant}$module")
-}
-
-/// The `index`th application MIR lifts from the body of `function`.
-pub fn lifted_body_name(function: &str, index: usize) -> String {
-    format!("$comptime${function}${index}")
 }
 
 /// The `index`th function the check lifts from the body of `function`: a
@@ -3021,6 +3015,9 @@ mod tests {
             "Box.__init__",
             "scale"
         )));
-        assert!(!is_initializer_symbol(&lifted_body_name("Box.__init__", 0)));
+        assert!(!is_initializer_symbol(&lifted_check_name(
+            "Box.__init__",
+            0
+        )));
     }
 }

@@ -50,11 +50,16 @@ impl Checker {
             "paramfor_next_value",
             mojito_types::param_expr::MetaTy::value(element_ty.clone()),
         );
+        let initial = self
+            .named_application(iter, &names_read(iter), iterator_ty.clone())
+            .ok_or_else(|| {
+                TypeError::InvariantViolation("a comptime for iterator names no function".into())
+            })?;
         self.record_spelled_construction(source, call, &iterator_ty);
         self.record_at(source.source_span()).comptime_iteration =
             Some(Box::new(mojito_checked::checked::ComptimeIteration {
                 binder: reference,
-                iterator: mojito_types::param_expr::MetaTy::value(iterator_ty),
+                initial,
                 has_next,
                 next_iter,
                 next_value: element.clone(),

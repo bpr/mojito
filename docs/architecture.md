@@ -971,12 +971,17 @@ region per arm, each condition a `GenericConstraint` over the function's
 binders (or, once inlined, the caller's types), not a register, and `native::mono` decides it under the
 instance's bindings after drop elaboration (`select_comptime_branches`),
 keeping the taken arm and erasing the others before any call in them is
-enqueued. A condition the constraint compiler does not close (an
-application) is lowered as a zero-parameter thunk over the binders in scope at
-the condition — the function's, then the enclosing `comptime for` indices,
-which it reads as parameter references (`Const::Param`) — (`ComptimeThunks`,
-`lower_expression_thunk`), and its branch carries the
-thunk's application, which the elaborator evaluates on the VM
+enqueued. Every leaf of a condition is the check's: a leaf the constraint
+compiler does not close (`h(n) > 4`, a `Bool` binder, `Self.flag`) is the
+one parameter expression a bracket argument spelling it is, compared with
+`True` — built structurally, a call it cannot express applying the function
+the check lifts for that call, else the application of a function lifted
+for the whole leaf — and a leaf that converts through `Bool(x)` is `x != 0`
+for an integer, else the application of the function lifted for its
+conversion, which returns the leaf's truthiness
+(`Checker::evaluated_condition`). MIR mints no function for a condition
+(`Flatten::comptime_condition_of` reads the recorded constraint); the
+elaborator evaluates an application on the VM
 ([`docs/notes/ctfe-request-path.md`](notes/ctfe-request-path.md)). A
 `comptime assert cond[, message]` (`StmtKind::ComptimeAssert`, parsed in a
 function body only) crosses the same way, as upstream's
@@ -1023,8 +1028,10 @@ a value pack, a reflected field-name list — is iterated by upstream's
 iterator protocol (`Checker::check_comptime_iterator_for`,
 `checker/comptime_iteration.rs`):
 the check spells the iterable as its `__iter__()` call, which the checked
-arena hands HIR in the iterable's place and MIR lifts as a thunk over the
-binders in scope, the header's binder is the iterator, and its
+arena hands HIR in the iterable's place, and names the function MIR lifts
+for it: `ComptimeIteration::initial`, its application to the binders the
+iterable reads (`range(3)`'s takes none), is the loop's initial iterator,
+upstream's `kgen.param.for` operand. The header's binder is the iterator, and its
 `ComptimeSequence` steps it by the applications of the bundled
 `std.builtin._stubs` functions `paramfor_has_next` and `paramfor_next_iter`
 over that binder, which `native::mono` runs on the VM per step, as
@@ -1089,14 +1096,15 @@ structure and none is the element the display spells, as at the pin, which
 keeps `L[0]` distinct from `n`. `native::mono` runs the function when a
 substitution meets its application at an instance's arguments
 (`Applications`, `Specializer::answer_pending`) and folds what stands above
-it. Every other compile-time read is lifted where it
-stands, as upstream runs it on its interpreter: a `comptime
-if` condition as any uncompiled condition is, a `range` iterable (the
-thunk of its spelled `__iter__()` call), and an `Int` or `Bool` a
-runtime position, another binding, or a crossing reads (`print(L[0])`,
-`comptime(len(L))`), which
-MIR carries as a parameter constant holding the application
-(`Flatten::display_read`). Each thunk begins with the statements of the
+it. Every other compile-time read is the parameter expression the check
+compiled for it, as upstream reads sema's `kgen.param.constant`: a
+`comptime if` condition, a loop's iterable (the function of its spelled
+`__iter__()` call), and an `Int` or `Bool` a bracket argument, another
+binding, or a crossing reads (`flag[h(L[0]) > 2]()`, `comptime(len(L))`),
+which the check records on the expression when it applies a function
+(`Checker::record_compiled_expression`) and MIR carries as a parameter
+constant (`Flatten::display_read`); MIR lifts no function of its own. Each
+lifted function begins with the statements of the
 local `comptime` bindings its expression reads that denote no parameter
 expression — the displays, and a value such as `comptime t = (L[0], L[1])`
 (`ComptimeThunks::bind_evaluated`, `thunk_prologue`) — and `native::mono` demands an
@@ -1489,8 +1497,7 @@ first body after which its initializer types (`Checker::check_module_block`);
 no read spells its initializer. A function the check lifts from a body (a
 local `comptime` application or display binding) is
 `$comptime$<declaration>$c<k>`, numbered within the declaration whose body
-holds it, beside MIR's own `$comptime$<declaration>$<k>`; both are the same in
-every compilation, so the bundled package may hold one. A collection display (`[1, 2]`, `{"a": 1}`)
+holds it, the same in every compilation (MIR names none of its own), so the bundled package may hold one. A collection display (`[1, 2]`, `{"a": 1}`)
 is such an application, closed or not
 (`mojito_checker::checker::lifts_comptime_value`), since the pin constructs
 one by running its initializer; so is a `Dict[...]`/`Set[...]` constructor
@@ -1855,7 +1862,8 @@ a callable — a local `comptime` binding, a `comptime if` condition, a
 operand, a module constant's initializer — is kept for the check
 (`applies_callable`, one predicate the elaborator and the checker share),
 bound there as a parameter expression (an `Apply` of the callee, or of a
-thunk MIR lifts for a general expression, `ComptimeThunks`), and served by
+function the check names for a general expression, which MIR lifts,
+`ComptimeThunks::request_applications`), and served by
 the elaborator below MIR, which runs the instance's reference closure as
 concrete MIR on the VM (`Specializer::demand_application`,
 `VmBackend::call_concrete`). The elaborator above the check
@@ -7428,7 +7436,11 @@ Runtime helpers implement:
 retains it in `SizeOf`, verification requires it to have a native layout, and
 both the VM and native lowering ask the shared `native::layout::LayoutCx` for
 the byte count. This keeps target layout below the checked-MIR waist without
-duplicating layout policy in either backend.
+duplicating layout policy in either backend. In a compile-time position the
+query is the parameter expression `size_of` applied to the type, which the
+elaborator answers under the target wherever it stands in an expression
+(`symbolic::eval_ct_at`, `layout_answer`): `comptime if size_of[Int]() ==
+8` and `flag[size_of[Int]() == 8]()` fold alike.
 
 `external_call["callee", ReturnType, num_fixed_args=n](args...)` is the one
 host boundary below the stdlib: a builtin over the closed libc callee table

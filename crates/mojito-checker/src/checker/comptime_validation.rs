@@ -271,12 +271,13 @@ impl Checker {
     /// `conforms_to(T, Copyable)`, a `TypeList` proposition, a predicate
     /// alias), or an ordinary `Bool` expression over compile-time bindings
     /// (a `comptime for` variable, a `Bool` parameter). It is typed, never
-    /// evaluated: selection is the elaborator's. A condition, or a leaf of
-    /// one under `not`/`and`/`or`, that the constraint compiler closes is
-    /// recorded on its span (`SemanticAdjustment::ComptimeCondition`) for the
-    /// MIR branch; a leaf it does not close — an application, a `Bool`
-    /// binding — MIR lowers as a thunk the elaborator runs. The recorded
-    /// constraint, its operands bound, when the whole condition closes.
+    /// evaluated: selection is the elaborator's. Every leaf under
+    /// `not`/`and`/`or`, and the whole condition, is recorded on its span
+    /// (`SemanticAdjustment::ComptimeCondition`) for the MIR branch: a leaf
+    /// the constraint compiler does not close — an application, a `Bool`
+    /// binding — is its parameter expression compared with `True`
+    /// ([`Self::evaluated_condition`]). The recorded constraint, its
+    /// operands bound, when the whole condition closes.
     pub(super) fn check_comptime_condition(
         &self,
         cond: &Expr,
@@ -503,21 +504,6 @@ impl Checker {
                 self.record_comptime_condition(cond, &constraint);
                 return Ok(Some(constraint));
             }
-            // A `comptime for` variable of `Bool` elements is the binder
-            // itself, compared with `True`: a thunk over the owner's binders
-            // could not take the loop's.
-            ExprKind::Identifier(name)
-                if let Some(binder) = self
-                    .value_parameter_in_scope(name)
-                    .filter(is_bool_loop_binder) =>
-            {
-                let constraint = GenericConstraint::Eq(
-                    ConstraintOperand::Expr(binder),
-                    ConstraintOperand::Value(mojito_types::ct::CtValue::Bool(true)),
-                );
-                self.record_comptime_condition(cond, &constraint);
-                return Ok(Some(constraint));
-            }
             // An application of an undeclared name (`TriviallyCopyable[Int]`)
             // is neither a predicate nor a type.
             ExprKind::TypeApply { name, .. }
@@ -536,17 +522,14 @@ impl Checker {
             });
         match constraint {
             // A local `comptime` binding the elaborator evaluates (`comptime
-            // e = L[1]`) is no parameter: the condition runs with it.
-            Ok(constraint) if self.names_evaluated_binding(&constraint) => {
+            // e = L[1]`) is no parameter: the condition runs with it. A
+            // runtime local compiles to a parameter no binder declares.
+            Ok(constraint)
+                if self.names_evaluated_binding(&constraint)
+                    || self.names_unbound_parameter(&constraint) =>
+            {
                 self.expect_evaluated_bool(cond, test)?;
-                self.reject_dynamic_condition(cond, test)?;
-                Ok(None)
-            }
-            // A runtime local compiles to a parameter no binder declares.
-            Ok(constraint) if self.names_unbound_parameter(&constraint) => {
-                self.expect_evaluated_bool(cond, test)?;
-                self.reject_dynamic_condition(cond, test)?;
-                Ok(None)
+                self.evaluated_condition(cond, test).map(Some)
             }
             Ok(constraint) => {
                 let constraint = self.fold_closed_constraint(constraint);
@@ -554,10 +537,7 @@ impl Checker {
                 Ok(Some(constraint))
             }
             Err(constraint_error) => match self.expect_evaluated_bool(cond, test) {
-                Ok(()) => {
-                    self.reject_dynamic_condition(cond, test)?;
-                    Ok(None)
-                }
+                Ok(()) => self.evaluated_condition(cond, test).map(Some),
                 // A condition over types or a `TypeList` has no value
                 // reading; its constraint diagnosis is the one that names
                 // the problem.
@@ -565,6 +545,86 @@ impl Checker {
                 Err(error) => Err(error),
             },
         }
+    }
+
+    /// A leaf of a compile-time test that compiles to no constraint:
+    /// `h(n) > 4`, `b`, `Self.flag`, `t[0] > 1`, or `n` over an `Int`. A
+    /// `Bool` leaf is the one parameter expression a bracket argument
+    /// spelling it is, compared with `True`: built structurally where the
+    /// parameter domain expresses it, a call it cannot express applying the
+    /// function the check lifts for that call (`lt(2, $c0(n))` for
+    /// `abs(n) > 2`), and otherwise the application of the function lifted
+    /// for the whole leaf. An integer leaf is its `Bool(x)`, which
+    /// `Int.__bool__` spells `x != 0`; any other leaf that converts is the
+    /// application of the function lifted for its conversion. The
+    /// elaborator decides it per instance.
+    fn evaluated_condition(
+        &self,
+        cond: &Expr,
+        test: ComptimeTest,
+    ) -> Result<GenericConstraint, TypeError> {
+        use mojito_types::ct::CtValue;
+        self.reject_dynamic_condition(cond, test)?;
+        let ty = self.infer(cond)?;
+        let structural = || {
+            let _lifting = self.lifting_position();
+            self.compile_dependent_ct_expr(cond).ok()
+        };
+        let operand = |expression: ParamExpr| match expression.as_constant() {
+            Some(value) => ConstraintOperand::Value(value.clone()),
+            None => expression.as_decl_ref().map_or_else(
+                || ConstraintOperand::Expr(expression.clone()),
+                |binder| ConstraintOperand::Param(binder.clone()),
+            ),
+        };
+        let integer = matches!(ty.kind(), TyKind::Int | TyKind::UInt | TyKind::IntLiteral);
+        let constraint = match ty.kind() {
+            TyKind::Bool => {
+                structural()
+                    .or_else(|| self.lifted_application(cond))
+                    .map(|expression| {
+                        GenericConstraint::Eq(
+                            operand(expression),
+                            ConstraintOperand::Value(CtValue::Bool(true)),
+                        )
+                    })
+            }
+            _ if integer && let Some(expression) = structural() => Some(GenericConstraint::Ne(
+                operand(expression),
+                ConstraintOperand::Value(CtValue::Int(0)),
+            )),
+            _ => self.converted_condition(cond).map(|expression| {
+                GenericConstraint::Eq(
+                    operand(expression),
+                    ConstraintOperand::Value(CtValue::Bool(true)),
+                )
+            }),
+        }
+        .ok_or_else(|| {
+            TypeError::Unsupported(format!(
+                "a {} that compiles to no parameter expression",
+                test.context()
+            ))
+        })?;
+        let constraint = self.fold_closed_constraint(constraint);
+        self.record_comptime_condition(cond, &constraint);
+        Ok(constraint)
+    }
+
+    /// The application of the function lifted for the `Bool(x)` conversion
+    /// of the condition leaf `cond`, which MIR lowers as the leaf's
+    /// truthiness (`comptime if y >= 1.5:` over a `Float32`). A bare name
+    /// lifts nothing: the condition's record takes the span its read's
+    /// parameter value holds.
+    fn converted_condition(&self, cond: &Expr) -> Option<ParamExpr> {
+        if matches!(cond.kind, ExprKind::Identifier(_) | ExprKind::Member { .. }) {
+            return None;
+        }
+        let application = self.named_application(cond, &names_read(cond), Ty::bool())?;
+        self.lifted_expressions
+            .borrow_mut()
+            .insert(cond.source_span(), application.clone());
+        Some(application)
     }
 
     /// A condition over no parameter is a fact: the closed verdict of
@@ -784,6 +844,43 @@ impl Checker {
             .borrow_mut()
             .insert(expr.source_span(), application.clone());
         Some(application)
+    }
+
+    /// Record on `expr`, a compile-time `Int` or `Bool` expression of a body,
+    /// the parameter expression the check compiled it to when that applies
+    /// a function (`add(list_length(L), 1)` for `len(L) + 1`, `lt(4, h(n))`
+    /// for `h(n) > 4`): MIR reads it wherever the expression's value is needed, as
+    /// upstream reads sema's `kgen.param.constant`, and lifts nothing of its
+    /// own. Arithmetic over binders alone (`n + 1`, a `comptime for`
+    /// variable's `paramfor_next_value` among them) MIR builds from the
+    /// expression's node. A lifted function's application is recorded only
+    /// where the function is lifted ([`Self::lifted_application`]): MIR
+    /// lifts it from the node that carries it.
+    pub(super) fn record_compiled_expression(&self, expr: &Expr, expression: &ParamExpr) {
+        if let mojito_types::param_expr::ParamKind::Apply { function, .. } = expression.kind()
+            && mojito_symbol::symbol::lifted_owner(function).is_some()
+        {
+            return;
+        }
+        let stub = super::builtin_stub("");
+        let mut applies = false;
+        expression.visit(&mut |node| {
+            applies |= matches!(
+                node.kind(),
+                mojito_types::param_expr::ParamKind::Apply { function, .. }
+                    if !function.starts_with(&stub)
+            );
+        });
+        let scalar = expression
+            .meta()
+            .as_value()
+            .is_some_and(|ty| matches!(ty.kind(), TyKind::Int | TyKind::Bool));
+        if self.scopes.len() < 2 || !applies || !scalar || expression.as_constant().is_some() {
+            return;
+        }
+        self.lifted_expressions
+            .borrow_mut()
+            .insert(expr.source_span(), expression.clone());
     }
 
     /// The application a call of a module function or a static method
@@ -1029,11 +1126,37 @@ impl Checker {
     /// The application of the function MIR lifts for `expr`, an expression
     /// of a body of type `ty` that reads `names`: one function per
     /// expression over the same binders and bindings.
-    fn named_application(&self, expr: &Expr, names: &[String], ty: Ty) -> Option<ParamExpr> {
+    pub(super) fn named_application(
+        &self,
+        expr: &Expr,
+        names: &[String],
+        ty: Ty,
+    ) -> Option<ParamExpr> {
         // The function is over the binders the expression reads, so that it
         // is one function under a `comptime for` and outside it.
         let mut binders = self.binders_in_scope();
-        if let Some(read) = self.binders_read(expr, names) {
+        if let Some(mut read) = self.binders_read(expr, names) {
+            // A binder typed over another (a loop's iterator over `T`)
+            // brings that one too.
+            loop {
+                let typed_over: Vec<_> = binders
+                    .iter()
+                    .filter_map(ParamExpr::as_decl_ref)
+                    .filter(|candidate| {
+                        !read.contains(&candidate.id)
+                            && binders.iter().any(|kept| {
+                                kept.as_decl_ref()
+                                    .is_some_and(|kept| read.contains(&kept.id))
+                                    && meta_names_binder(kept.meta(), candidate)
+                            })
+                    })
+                    .map(|candidate| candidate.id.clone())
+                    .collect();
+                if typed_over.is_empty() {
+                    break;
+                }
+                read.extend(typed_over);
+            }
             binders.retain(|binder| {
                 binder
                     .as_decl_ref()
@@ -1051,6 +1174,7 @@ impl Checker {
                     && known.expression == *expr
                     && known.binders == binders
                     && known.bindings == bindings
+                    && known.application.meta().as_value() == Some(&ty)
             })
             .map(|known| known.application.clone());
         known.or_else(|| {
@@ -1132,15 +1256,20 @@ impl Checker {
             }
             let denoted = match self.display_named(name) {
                 Some(display) => Some(display.sequence.clone()),
-                None => self.value_parameter_in_scope(name),
+                None => self
+                    .value_parameter_in_scope(name)
+                    .or_else(|| self.pack_parameter_in_scope(name)),
             };
             match denoted {
-                Some(denoted) => read.extend(
-                    denoted
-                        .free_parameters()
-                        .into_iter()
-                        .map(|reference| reference.id),
-                ),
+                Some(denoted) => denoted.visit(&mut |node| match node.kind() {
+                    mojito_types::param_expr::ParamKind::DeclRef(reference)
+                    | mojito_types::param_expr::ParamKind::PackQuery {
+                        pack: reference, ..
+                    } => {
+                        read.insert(reference.id.clone());
+                    }
+                    _ => {}
+                }),
                 None if self.binding_scope(name).is_none_or(|scope| scope == 0) => {}
                 None => return None,
             }
@@ -1578,10 +1707,13 @@ impl Checker {
     /// `None` for a constant, or a value that denotes nothing.
     fn comptime_value_expression(&self, value: &Expr) -> Option<ParamExpr> {
         let _lifting = self.lifting_position();
-        self.compile_dependent_ct_expr(value)
+        let expression = self
+            .compile_dependent_ct_expr(value)
             .ok()
             .or_else(|| self.lifted_application(value))
-            .filter(|expression| expression.as_constant().is_none())
+            .filter(|expression| expression.as_constant().is_none())?;
+        self.record_compiled_expression(value, &expression);
+        Some(expression)
     }
 
     /// Type the display a local `comptime` binding of a template body holds
@@ -2035,8 +2167,27 @@ impl Checker {
         if let Some(ty) = self.materialized_reflection_list(span, operand)? {
             return Ok(ty);
         }
+        self.record_crossing_operand(operand);
         let _position = self.comptime_position();
         self.infer(operand)
+    }
+
+    /// Record the parameter expression a crossing's compile-time operand
+    /// compiles to (`list_get(L, 0)` for `comptime(L[0])`,
+    /// [`Self::record_compiled_expression`]), which the elaborator
+    /// evaluates; a display crossing whole is built where it crosses.
+    /// Whether the operand compiled.
+    fn record_crossing_operand(&self, operand: &Expr) -> bool {
+        if self.bound_display(operand).is_some() {
+            return false;
+        }
+        let compiled = {
+            let _lifting = self.lifting_position();
+            self.compile_dependent_ct_expr(operand).ok()
+        };
+        compiled
+            .map(|expression| self.record_compiled_expression(operand, &expression))
+            .is_some()
     }
 
     /// `comptime(e)` in the executable check: one the crossing pass left is
@@ -2049,9 +2200,13 @@ impl Checker {
                 "a 'comptime(...)' operand that reads a runtime value".to_string(),
             ));
         }
-        // An operand that applies a callable is the application MIR lifts,
-        // which the elaborator below MIR evaluates.
-        if self.applies_callable(operand) && self.lifted_application(operand).is_none() {
+        // An operand that applies a callable and compiles to no parameter
+        // expression is the application MIR lifts, which the elaborator
+        // below MIR evaluates.
+        if !self.record_crossing_operand(operand)
+            && self.applies_callable(operand)
+            && self.lifted_application(operand).is_none()
+        {
             self.requested_binding(operand, ConstantScope::Local)?;
         }
         let ty = {
@@ -3497,12 +3652,24 @@ pub(super) fn string_element_binder(element: Ty) -> Ty {
     }
 }
 
-/// Whether `binder` is a `comptime for` variable of `Bool` elements.
-fn is_bool_loop_binder(binder: &ParamExpr) -> bool {
-    binder
-        .as_decl_ref()
-        .is_some_and(|reference| reference.id.is_comptime_for_binder())
-        && binder.meta().as_value() == Some(&Ty::bool())
+/// Whether a type `meta` holds names the declared parameter `binder` (a
+/// `*vs: T` pack's element type naming `T`).
+fn meta_names_binder(
+    meta: &mojito_types::param_expr::MetaTy,
+    binder: &mojito_types::param_expr::ParamRef,
+) -> bool {
+    use mojito_types::param_expr::MetaTy;
+    match meta {
+        MetaTy::Value(ty) => mojito_types::types::names_binder(ty, binder),
+        MetaTy::Type | MetaTy::ReflectedType => false,
+        MetaTy::ParamList(element) => meta_names_binder(element, binder),
+        MetaTy::Tuple(elements) | MetaTy::List(elements) | MetaTy::Set(elements) => elements
+            .iter()
+            .any(|element| meta_names_binder(element, binder)),
+        MetaTy::Dict(entries) => entries
+            .iter()
+            .any(|(key, value)| meta_names_binder(key, binder) || meta_names_binder(value, binder)),
+    }
 }
 
 /// Record `value` for `name` unless a different value is already recorded,

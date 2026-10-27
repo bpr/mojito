@@ -2429,24 +2429,21 @@ fn lower_expression_thunk(
     });
 }
 
-/// The compile-time expressions one function's lowering lifts as thunks: a
-/// `comptime if` condition the checker compiled to no constraint (it applies
-/// a function, or reads a `Bool` binding), a `comptime for` display the
-/// checker did not close (`[n, n + 1]`), an iterator loop's spelled
-/// `__iter__()` call, or a scalar that reads a local display binding
-/// (`len(L)`, `L[0]`) becomes the
-/// zero-parameter function `$comptime$<owner>$<k>` over the binders in scope
-/// at the expression — the owner's, then the enclosing `comptime for`
-/// indices — and its branch, loop header, or parameter constant carries the
-/// application of that thunk, which the elaborator demands and runs. A local
-/// `comptime` binding of such a display has no runtime form: it is lifted
-/// once, under the name the check gave its sequence, for the loop headers
-/// over its name and the types and parameter arguments that read an element
-/// or the length, and a thunk that reads the name begins by binding the
-/// display. An `Int` or a `Bool` the check lifted from a type or a parameter
-/// argument, or from a local `comptime` value (`h(L[0])`, `n > 2`), is
-/// lifted under the name the check gave it too, once the owner's body is
-/// lowered ([`Self::request_applications`]).
+/// The functions one function's lowering lifts for its compile-time
+/// expressions, each under the name the check gave it
+/// (`$comptime$<owner>$c<k>`), over the binders its application names: an
+/// expression the check lifted from a `comptime if` leaf, a type or a
+/// parameter argument, or a local `comptime` value (`h(L[0])`, `y >= 1.5`),
+/// a `comptime for`'s spelled `__iter__()` call
+/// (`ComptimeIteration::initial`), each lifted once the owner's body is
+/// lowered ([`Self::request_applications`]), and a local `comptime` binding
+/// of a display (`comptime L = [n, n + 1]`), which has no runtime form and
+/// is lifted once, under the name the check gave its sequence, for the loop
+/// headers over its name and the reads of an element or the length. A
+/// function that reads the display's name begins by binding the display.
+/// MIR names no function of its own: every branch, loop header, and
+/// parameter constant carries the check's expression, whose applications
+/// the elaborator demands and runs.
 #[derive(Default)]
 struct ComptimeThunks {
     owner: String,
@@ -2512,29 +2509,6 @@ impl ComptimeThunks {
             owner: owner.to_string(),
             ..Self::default()
         }
-    }
-
-    /// Register the condition of node `node` and give back the constraint its branch carries:
-    /// the thunk applied to every binder in scope, equal to `True`.
-    fn request(&mut self, node: CheckedNodeId, binders: &EnclosingBinders) -> GenericConstraint {
-        GenericConstraint::Eq(
-            ConstraintOperand::Expr(self.request_value(node, binders, Ty::bool())),
-            ConstraintOperand::Value(CtValue::Bool(true)),
-        )
-    }
-
-    /// Register a scalar expression of type `ty`, of node `node`, and give
-    /// back the parameter expression that denotes its value: the thunk
-    /// applied to every binder in scope.
-    fn request_value(
-        &mut self,
-        node: CheckedNodeId,
-        binders: &EnclosingBinders,
-        ty: Ty,
-    ) -> mojito_types::param_expr::ParamExpr {
-        let meta = mojito_types::param_expr::MetaTy::value(ty.clone());
-        let visible = self.evaluated.len();
-        self.application(node, binders, ty, meta, visible)
     }
 
     /// Record a local `comptime` binding of a display, declared by
@@ -2654,7 +2628,12 @@ impl ComptimeThunks {
                 _ => WalkResult::Advance,
             },
             Walked::Expression(node) => {
-                found.extend(lifted_application(&node.adjustments).map(|found| (node.id, found)));
+                found.extend(
+                    lifted_application(&node.adjustments)
+                        .into_iter()
+                        .chain(iteration_initial(&node.adjustments))
+                        .map(|found| (node.id, found)),
+                );
                 WalkResult::Advance
             }
         });
@@ -2718,47 +2697,6 @@ impl ComptimeThunks {
                 evaluated: self.evaluated.clone(),
             });
         }
-    }
-
-    /// Register the expression of node `node`, returned at `ty`, and give back
-    /// its thunk applied to every binder in scope, a value of `meta`. The
-    /// first `visible` evaluated bindings are the ones declared before it.
-    fn application(
-        &mut self,
-        node: CheckedNodeId,
-        binders: &EnclosingBinders,
-        ty: Ty,
-        meta: mojito_types::param_expr::MetaTy,
-        visible: usize,
-    ) -> mojito_types::param_expr::ParamExpr {
-        let name = mojito_symbol::symbol::lifted_body_name(&self.owner, self.requests.len());
-        self.requests.push(ThunkRequest {
-            name: name.clone(),
-            node,
-            binders: EnclosingBinders {
-                comptime_bindings: self.bound_values.clone(),
-                lifted: true,
-                ..binders.clone()
-            },
-            ty,
-            evaluated: self.evaluated[..visible].to_vec(),
-        });
-        let context = mojito_types::param_expr::ParamContext::detached();
-        let args: Vec<_> = binders
-            .declarations
-            .iter()
-            .map(|declaration| {
-                // A pack binder is referenced by its bare spelling, as every
-                // other read of it is.
-                let binder = declaration.binder();
-                context.decl_ref(
-                    binder.id.clone(),
-                    binder.name.trim_start_matches('*'),
-                    declaration.binder_meta(),
-                )
-            })
-            .collect();
-        context.apply(&name, &args, meta)
     }
 
     /// Lower every requested thunk, each `return <expression>` at its type
@@ -2900,6 +2838,19 @@ fn lifted_application(
         mojito_checked::checked::SemanticAdjustment::ComptimeApplication {
             application, ..
         } => Some(application.clone()),
+        _ => None,
+    })
+}
+
+/// The application a `comptime for`'s iterable starts its iterator with,
+/// among the iterable's `adjustments`.
+fn iteration_initial(
+    adjustments: &[mojito_checked::checked::SemanticAdjustment],
+) -> Option<ParamExpr> {
+    adjustments.iter().find_map(|adjustment| match adjustment {
+        mojito_checked::checked::SemanticAdjustment::ComptimeIteration(iteration) => {
+            Some(iteration.initial.clone())
+        }
         _ => None,
     })
 }
@@ -3144,7 +3095,8 @@ impl LoopIndex {
     ) -> Self {
         let binder = &iteration.binder;
         let ty = iteration
-            .iterator
+            .initial
+            .meta()
             .as_value()
             .cloned()
             .unwrap_or_else(Ty::int);
@@ -4205,11 +4157,11 @@ impl<'a> Flatten<'a> {
     }
 
     /// Lower a compile-time `expression` of this function's body that reads
-    /// a local display binding, or that the check lifted by name
-    /// ([`Self::comptime_application`]), with the parameter expression it
-    /// denotes.
-    /// An `Int` or a `Bool` (`L[0]`, `len(L) + 1`) is the application of the
-    /// thunk lifted for it, which the elaborator runs per instance. Any
+    /// a local display binding, or that the check compiled to a parameter
+    /// expression that applies a function ([`Self::comptime_application`]),
+    /// with the parameter expression it denotes.
+    /// An `Int` or a `Bool` (`L[0]`, `len(L) + 1`) is the expression the
+    /// check compiled, which the elaborator evaluates per instance. Any
     /// other value (`(L[0], L[1])`) is computed here, where it crosses to
     /// runtime, from the displays built in place, and denotes no parameter
     /// expression. `None` for an expression that reads no display.
@@ -4225,26 +4177,24 @@ impl<'a> Flatten<'a> {
         if displays.is_empty() {
             return None;
         }
-        let ty = match expression.ty().as_ref().map(Ty::kind) {
-            Some(TyKind::Int | TyKind::IntLiteral) => Ty::int(),
-            Some(TyKind::Bool) => Ty::bool(),
-            _ => {
-                for display in &displays {
-                    self.build_display(display);
-                }
-                return Some((self.expr(expression), None));
+        if !matches!(
+            expression.ty().as_ref().map(Ty::kind),
+            Some(TyKind::Int | TyKind::IntLiteral | TyKind::Bool)
+        ) {
+            for display in &displays {
+                self.build_display(display);
             }
-        };
-        let binders = &self.enclosing_binders;
-        let denoted = self.comptime_thunks.request_value(node, binders, ty);
-        Some((
-            self.param_value_register(expression, denoted.clone()),
-            Some(denoted),
-        ))
+            return Some((self.expr(expression), None));
+        }
+        self.emit(MirInstr::Unsupported(
+            "a compile-time read of a display the check compiled no expression for".to_string(),
+        ));
+        Some((self.fresh(expression.location(), None), None))
     }
 
-    /// The application the check lifted `expression` as, by the name of the
-    /// function [`ComptimeThunks::request_applications`] lifts for it.
+    /// The parameter expression the check compiled `expression` to: the
+    /// application of the function [`ComptimeThunks::request_applications`]
+    /// lifts for it, or an expression that applies one (`lt(4, h(n))`).
     /// `None` inside that function, which computes the expression.
     fn comptime_application(&self, expression: Node<'a>) -> Option<ParamExpr> {
         self.node_application(expression.checked)

@@ -700,6 +700,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- One compile-time expression is now one parameter expression, as at the
+  pin (R389): the check names every function lifted for a `comptime if`
+  leaf, a `comptime for` iterable, or a bracket argument, local `comptime`
+  value, or crossing that applies a function, over the binders it reads,
+  and MIR mints none of its own. `comptime if abs(n) > 2:` and
+  `flag[abs(n) > 2]()` now share one expression, `comptime if b:` over a
+  `Bool` binder is the binder itself, `range(3)`'s iterator takes no
+  binder, and `flag[h(n) > 4]()`'s register is a parameter constant rather
+  than a runtime call of `h`. A condition that is not a `Bool` now
+  converts through `Bool(x)` (R1211): `comptime if n:` and `comptime
+  assert 3, "int"` run, where MIR verification failed. A layout query
+  under a comparison (`flag[size_of[Int]() == 8]()`) now folds under the
+  target. A bare name of a non-integer parameter as a condition is now an
+  explicit rejection (R1470).
+
 - A `comptime if` or `where` clause comparing a scalar `SIMD` value
   parameter now decides as at the pin (R849): `comptime if x < 10` and
   `comptime if x == 3` over `x: Scalar[DType.uint8]` take the then arm for

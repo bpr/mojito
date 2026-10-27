@@ -23,8 +23,8 @@ impl<'a> Flatten<'a> {
 
     /// A `comptime if` condition as the constraint its branch carries: the
     /// one the checker compiled and recorded on the expression, else its
-    /// connectives over the leaves, each a recorded constraint or the thunk
-    /// this function's lowering lifts for it.
+    /// connectives over the leaves, each a recorded constraint. A leaf with
+    /// no record is the explicit boundary: the check records every leaf.
     pub(in crate::mir) fn comptime_condition(
         &mut self,
         expression: &'a mojito_hir::hir::HirExpr,
@@ -105,8 +105,10 @@ impl<'a> Flatten<'a> {
                 Box::new(self.comptime_condition_of(*right)),
             ),
             _ => {
-                let binders = &self.enclosing_binders;
-                self.comptime_thunks.request(expression.id(), binders)
+                self.emit(MirInstr::Unsupported(
+                    "a comptime condition the check recorded no constraint for".to_string(),
+                ));
+                GenericConstraint::Bool(false)
             }
         }
     }

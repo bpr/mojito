@@ -437,9 +437,11 @@ pub struct InteriorInvalidation {
 /// A `comptime for` by upstream's iterator protocol, recorded on its
 /// iterable.
 ///
-/// The check spelled the iterable as its `__iter__()` call, which MIR lifts
-/// as a function over the binders in scope, and `binder` is the
-/// `iterator`-typed iterator. `has_next` and `next_iter` are the
+/// The check spelled the iterable as its `__iter__()` call and named the
+/// function MIR lifts for it: `initial` is that function applied to the
+/// binders the iterable reads, typed as the iterator, upstream's
+/// `kgen.param.for` initial operand. `binder` is the iterator each step
+/// binds. `has_next` and `next_iter` are the
 /// `paramfor_has_next`/`paramfor_next_iter` applications over the binder,
 /// which the elaborator runs to step it; the loop variable is an alias of
 /// `next_value`, the `paramfor_next_value` application over it. The body
@@ -448,7 +450,7 @@ pub struct InteriorInvalidation {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ComptimeIteration {
     pub binder: mojito_types::param_expr::ParamRef,
-    pub iterator: mojito_types::param_expr::MetaTy,
+    pub initial: mojito_types::param_expr::ParamExpr,
     pub has_next: mojito_types::param_expr::ParamExpr,
     pub next_iter: mojito_types::param_expr::ParamExpr,
     pub next_value: mojito_types::param_expr::ParamExpr,

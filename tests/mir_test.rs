@@ -943,6 +943,153 @@ def main():
     assert_eq!(ops, ["comptime.if 2"]);
 }
 
+/// The functions of `mir` MIR named on its own for a compile-time
+/// expression of `owner`'s body (`$comptime$<owner>$<k>`), where the check
+/// names every lifted one `$comptime$<owner>$c<k>`.
+fn mir_named_functions(mir: &MirProgram, owner: &str) -> Vec<String> {
+    let prefix = format!("$comptime${owner}$");
+    mir.functions
+        .iter()
+        .filter_map(|(name, _)| name.strip_prefix(&prefix))
+        .filter(|tail| tail.starts_with(|first: char| first.is_ascii_digit()))
+        .map(str::to_string)
+        .collect()
+}
+
+/// The conditions of every `comptime if` in `function`, in program order.
+fn comptime_conditions(function: &MirFunction) -> Vec<mojito::types::GenericConstraint> {
+    nested_instructions(&function.blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::ComptimeIf { conds, .. } => Some(conds.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+#[test]
+fn comptime_condition_and_bracket_argument_share_one_expression() {
+    let source = r#"
+def flag[b: Bool]():
+    print(b)
+
+def f[n: Int]():
+    comptime if abs(n) > 2:
+        print("big")
+    flag[abs(n) > 2]()
+
+def main():
+    f[3]()
+"#;
+    let mir = checked_program_mir(source);
+    let f = mir_function(&mir, "f");
+    let [condition] = comptime_conditions(f).try_into().expect("one condition");
+    let mojito::types::GenericConstraint::Eq(
+        mojito::types::ConstraintOperand::Expr(condition),
+        mojito::types::ConstraintOperand::Value(mojito::ct::CtValue::Bool(true)),
+    ) = condition
+    else {
+        panic!("the condition is its expression compared with `True`: {condition:?}");
+    };
+    let argument = nested_instructions(&f.blocks)
+        .into_iter()
+        .find_map(|instruction| match instruction {
+            MirInstr::Call { param_arg_regs, .. } => param_arg_regs
+                .first()
+                .and_then(|argument| argument.expr.clone()),
+            _ => None,
+        })
+        .expect("the bracket argument's expression");
+    assert_eq!(condition, argument);
+    assert!(
+        mir_named_functions(&mir, "f").is_empty(),
+        "{:?}",
+        mir_named_functions(&mir, "f")
+    );
+}
+
+#[test]
+fn bool_binder_condition_lifts_nothing() {
+    let source = r#"
+def f[b: Bool, n: Int]():
+    comptime if b:
+        print("b")
+    comptime c = n > 2
+    comptime if c:
+        print("c")
+    comptime if not c:
+        print("not c")
+
+def main():
+    f[True, 3]()
+"#;
+    let mir = checked_program_mir(source);
+    let f = mir_function(&mir, "f");
+    assert!(
+        mir_named_functions(&mir, "f").is_empty(),
+        "{:?}",
+        mir_named_functions(&mir, "f")
+    );
+    assert!(
+        !mir.functions
+            .iter()
+            .any(|(name, _)| name.starts_with("$comptime$f$")),
+        "no function is lifted for a condition over binders"
+    );
+    let conditions = comptime_conditions(f);
+    assert_eq!(conditions.len(), 3, "{conditions:?}");
+    assert!(
+        matches!(
+            &conditions[0],
+            mojito::types::GenericConstraint::Eq(
+                mojito::types::ConstraintOperand::Param(binder),
+                mojito::types::ConstraintOperand::Value(mojito::ct::CtValue::Bool(true)),
+            ) if &*binder.name == "b"
+        ),
+        "{conditions:?}"
+    );
+}
+
+#[test]
+fn closed_comptime_for_initial_takes_no_binder() {
+    let source = r"
+def f[n: Int]():
+    comptime for i in range(3):
+        print(i)
+    comptime for j in range(n):
+        print(j)
+
+def main():
+    f[2]()
+";
+    let mir = checked_program_mir(source);
+    let f = mir_function(&mir, "f");
+    let initials: Vec<_> = nested_instructions(&f.blocks)
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            MirInstr::ComptimeFor { source, .. } => Some(source.initial.clone()),
+            _ => None,
+        })
+        .collect();
+    let arguments: Vec<usize> = initials
+        .iter()
+        .map(|initial| match initial.kind() {
+            mojito::param_expr::ParamKind::Apply { function, args } => {
+                assert!(function.starts_with("$comptime$f$c"), "{initial}");
+                args.len()
+            }
+            _ => panic!("an initial applies the function the check names: {initial}"),
+        })
+        .collect();
+    assert_eq!(arguments, [0, 1]);
+    assert!(
+        mir_named_functions(&mir, "f").is_empty(),
+        "{:?}",
+        mir_named_functions(&mir, "f")
+    );
+}
+
 #[test]
 fn parameter_valued_conditional_builds_comptime_if() {
     let source = r#"
@@ -4672,7 +4819,7 @@ fn closure_storage_carries_the_binders_its_body_names() {
         method
             .param_decls
             .iter()
-            .map(|decl| decl.name())
+            .map(mojito::ParamDecl::name)
             .collect::<Vec<_>>(),
         ["m"]
     );

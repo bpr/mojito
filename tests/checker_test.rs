@@ -7870,6 +7870,23 @@ fn a_reflection_body_is_validated_without_instantiation() {
 }
 
 #[test]
+fn a_non_bool_comptime_condition_converts_or_is_rejected_explicitly() {
+    // An integer leaf is its `Bool(x)`, `x != 0`, and a float expression
+    // the function lifted for its conversion; a bare name of a float
+    // parameter is the explicit boundary R1470 lifts.
+    let converted = "def g[n: Int, y: Float64]():\n    comptime if n:\n        print(1)\n    comptime if y * 2.0:\n        print(2)\n    comptime assert n, \"n\"\n\ndef main():\n    g[1, 1.5]()\n";
+    check_once(converted, "converted_condition.mojo").expect("a converting leaf checks");
+    let bare =
+        "def g[y: Float64]():\n    comptime if y:\n        print(1)\n\ndef main():\n    g[1.5]()\n";
+    let error = check_once(bare, "bare_float_condition.mojo").expect_err("a bare float name");
+    assert!(
+        matches!(&error, TypeError::Unsupported(message)
+            if message.contains("compiles to no parameter expression")),
+        "{error:?}"
+    );
+}
+
+#[test]
 fn a_conforms_to_arm_licenses_its_trait_for_the_arm_alone() {
     // The pin licenses a `conforms_to` proof inside the arm it guards, for a
     // plain parameter, a pack element, and a reflected field type alike.

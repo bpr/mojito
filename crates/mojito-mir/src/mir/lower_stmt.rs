@@ -3500,7 +3500,12 @@ impl<'a> Flatten<'a> {
                 dest
             }
         } else {
-            let value = self.expr_hir(expression);
+            // A lifted condition leaf returns its `Bool(x)` conversion.
+            let value = if self.enclosing_binders.lifted {
+                self.condition_hir(expression)
+            } else {
+                self.expr_hir(expression)
+            };
             match self.f.ret_ty.clone() {
                 Some(target) => {
                     let location = self.hir_node(expression).location();
@@ -3525,8 +3530,7 @@ impl<'a> Flatten<'a> {
         orelse: &'a hir::HirRegion,
     ) {
         let iteration = comptime_iteration(self.checked, iter);
-        let sequence = iteration.clone().and_then(|iteration| {
-            let ty = iteration.iterator.as_value()?.clone();
+        let sequence = iteration.clone().map(|iteration| {
             // The variable is an alias of the element over the iterator,
             // which the body's parameter arguments and the thunks lifted in
             // it read.
@@ -3534,14 +3538,13 @@ impl<'a> Flatten<'a> {
                 self.comptime_thunks
                     .bind_value(owner, iteration.next_value.clone());
             }
-            let binders = &self.enclosing_binders;
             let source = mojito_checked::checked::ComptimeSequence {
-                initial: self.comptime_thunks.request_value(iter.node, binders, ty),
+                initial: iteration.initial,
                 has_next: iteration.has_next,
                 next_iter: iteration.next_iter,
                 next_value: iteration.next_value,
             };
-            Some((iteration.binder, source))
+            (iteration.binder, source)
         });
         if let Some((binder, source)) = sequence
             && let Some(iteration) = iteration

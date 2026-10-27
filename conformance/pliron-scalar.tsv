@@ -97,6 +97,7 @@ assets/ok/comptime_assert_proves_proposition.mojo	-	ineligible	no-scalar-entry-s
 assets/ok/comptime_call_callee_shapes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_call_signature.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_collections.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_condition_bool_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_conditions_short_circuit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_ctfe.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_display_binding_alias.mojo	-	ineligible	no-scalar-entry-shape

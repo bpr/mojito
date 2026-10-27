@@ -2585,6 +2585,9 @@ impl Checker {
                             None => return Err(error),
                         },
                     };
+                    if let CtValue::Expr(expression) = &value {
+                        self.record_compiled_expression(expr, expression);
+                    }
                     // A struct over an applied module constant is its own
                     // type at the pin (`Buf[f(7)]` is not `Buf[8]`), which no
                     // instance below the waist can be named by yet.
