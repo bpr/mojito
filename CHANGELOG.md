@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `where conforms_to(T, Tr)` clause or `comptime if conforms_to(T, Tr)`
+  refines the type parameter `T` for every member lookup in its scope, as
+  upstream's `maybeRefineParamType` does (R1365): `T.N`, `var e: T.E`,
+  `print(s.get())` for a projection the trait bounds `Writable`, and
+  `a += b` through `Tr.__iadd__` now check. A requirement call through the
+  refinement, or through an associated projection's declaring trait,
+  records the bound it was selected by (`refined_bound` on `call.method`,
+  `binary`, and `subscript_call`; MIR text 1.114, `mojito-package 110`),
+  so drop analysis binds the requirement's conventions and the argument's
+  owner ends before the call, as at the pin (R704). The method lookup's
+  separate `copy` and `__hash__` cases are gone. Carrying the refinement in
+  the receiver's type, as upstream does, is filed as R1495 and R1496.
+
 - A type pack read as a value is the zero-sized `TypeList[Ts.values]()`
   the pin types it as (R1169): `var x = Ts`, `Self.Ts` in a method, and
   `show(Ts)` over `def show[T: Sized]` run, and a run-time `len(Ts)` is

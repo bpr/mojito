@@ -3,7 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use crate::mir::{LoopLabel, MirCase, MirElif, MirResultAdapter, TryLabel};
+use crate::mir::{LoopLabel, MirCase, MirElif, MirRefinedBound, MirResultAdapter, TryLabel};
 use mojito_hir::hir::VarId;
 use mojito_types::types::TyKind;
 
@@ -426,6 +426,7 @@ impl Decoder {
                 b: self.req(value, fields, "b", Self::reg)?,
                 resolved: self.req(value, fields, "resolved", |d, v| Some(d.option_symbol(v)))?,
                 raises: self.req(value, fields, "raises", |d, v| Some(d.option_raises(v)))?,
+                refined_bound: self.refined_bound(fields).map(MirRefinedBound::boxed),
             }),
             "call" => Some(MirInstr::Call {
                 dest: self.req(value, fields, "dest", Self::reg)?,
@@ -573,6 +574,9 @@ impl Decoder {
                     .field(fields, "spread")
                     .ok()
                     .and_then(|found| self.option_uint(found)),
+                // Schema 1.114 records the refined bound a requirement call
+                // was selected through; a call recording none omits it.
+                refined_bound: self.refined_bound(fields).map(MirRefinedBound::boxed),
             }),
             "pointer.take" | "pointer.destroy" => {
                 let dest = self.req(value, fields, "dest", Self::reg)?;
@@ -1032,6 +1036,14 @@ impl Decoder {
 
     /// The lifecycle member a drop (`destructor`, schema 1.67) or a copy or
     /// move (`constructor`, schema 1.68) names, absent when it names none.
+    /// The `refined_bound` a call records (schema 1.114), absent when it
+    /// records none.
+    pub(super) fn refined_bound(&mut self, fields: &[Field]) -> Option<Vec<String>> {
+        self.field(fields, "refined_bound")
+            .ok()
+            .map(|value| self.strings(value))
+    }
+
     fn lifecycle_symbol(&mut self, fields: &[Field], key: &str) -> Option<String> {
         self.field(fields, key)
             .ok()

@@ -1274,6 +1274,8 @@ assets/ok/vm_backed_ctfe_ternary.mojo	main	exe-differential	sanitized
 assets/ok/waypoints.mojo	main	exe-differential	sanitized
 assets/ok/where_conformance_disjunction_assumed.mojo	main	exe-differential	sanitized
 assets/ok/where_message_satisfied.mojo	main	exe-differential	sanitized
+assets/ok/where_refined_bound_members.mojo	main	exe-differential	sanitized
+assets/ok/where_refined_bound_requirement_order.mojo	main	exe-differential	sanitized
 assets/ok/where_repeated_clauses.mojo	main	exe-differential	sanitized
 assets/ok/while.mojo	main	exe-differential	sanitized
 assets/ok/with_enter_only.mojo	main	exe-differential	sanitized

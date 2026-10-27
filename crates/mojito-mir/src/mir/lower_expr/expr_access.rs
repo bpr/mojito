@@ -292,6 +292,7 @@ impl<'a> Flatten<'a> {
                 param_decls: contract.param_decls,
                 instantiated_args: e.instantiated_args(),
                 spread: None,
+                refined_bound: contract.refined_bound.map(MirRefinedBound::boxed),
             });
             return dest;
         }

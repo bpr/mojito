@@ -985,6 +985,10 @@ impl<'a> Flatten<'a> {
             param_decls: param_decls.to_vec(),
             instantiated_args,
             spread: Self::spread_position(args),
+            refined_bound: call
+                .call_contract()
+                .and_then(|contract| contract.refined_bound)
+                .map(MirRefinedBound::boxed),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);

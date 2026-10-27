@@ -3798,6 +3798,21 @@ fn enforces_trailing_where_constraints_and_type_equality() {
 }
 
 #[test]
+fn refines_a_type_parameter_by_its_scope_where_facts_only() {
+    let prelude =
+        "trait Sh:\n    def sh(self, t: Int): ...\n\ntrait HasN:\n    comptime N: Int\n\n";
+    ok_std(&format!(
+        "{prelude}def run[T: Copyable](s: T) where conforms_to(T, Sh):\n    s.sh(1)\n\ndef guarded[T: Copyable](s: T):\n    comptime if conforms_to(T, Sh):\n        s.sh(1)\n\ndef member[T: Copyable](s: T) -> Int where conforms_to(T, HasN):\n    return T.N\n"
+    ));
+    assert!(matches!(
+        err_std(&format!(
+            "{prelude}def run[T: Copyable](s: T):\n    comptime if conforms_to(T, Sh):\n        pass\n    s.sh(1)\n"
+        )),
+        TypeError::NoSuchMethod { .. }
+    ));
+}
+
+#[test]
 fn gates_methods_with_parent_parameter_where_constraints() {
     ok_std(
         "@fieldwise_init\nstruct Wrapper[T: Copyable & Deinitable]:\n    var value: Self.T\n    def compare(self, other: Self.T) -> Bool where conforms_to(Self.T, Comparable):\n        return True\n\nvar wrapped = Wrapper[Int](1)\nvar same = wrapped.compare(1)\n",

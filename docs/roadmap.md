@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1495**.
+Next free ID: **R1497**.
 
 ## Ordered Work
 
@@ -1625,6 +1625,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     Self.Element`, runs in Mojito. The pin rejects it: "'(expression
     temporary)' abandoned without being explicitly destroyed". The
     projection is no longer `Deinitable` (R1364), but the walk never asks.
+  - Probe: `return a < b < c` in `def less[T: ImplicitlyCopyable](a: T,
+    b: T, c: T) -> Bool where conforms_to(T, Comparable)`. Both reject the
+    abandoned link temporary, but the pin names 'Comparable', the
+    refinement's trait, and Mojito 'ImplicitlyCopyable', the declared bound.
   - Probe: `x.first() > y.first()` in `def bigger[C: Holder](x: C, y: C)`,
     for `comptime Elem: Comparable & ImplicitlyCopyable` in `trait Holder`,
     runs in Mojito, where the pin rejects both operand temporaries as
@@ -3026,48 +3030,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1365 A type parameter's bound is not refined by its scope's `where`
-  facts**
-
-  Method lookup over a binder widens its bounds by the scope's assumed
-  `conforms_to` atoms alone (`resolve_bound_method` with
-  `Checker::assumed_bounds`, `method_calls/resolution.rs`), and nothing
-  else sees the widening, where upstream's `maybeRefineParamType`
-  (`ExprNodes.cpp`) merges the declared bound with
-  `getTraitBoundFromAssumptions` into one refined type every consumer sees.
-  - The lever: one effective bound per binder or projection, made of the
-    declared bounds plus every trait the scope's assumption store
-    (`Checker::assumptions`) proves.
-  - Method lookup asks for that bound, and its `copy` and `__hash__` cases
-    (a refining or member bound proving the trait) go.
-  - Record the refined bound on the selected call's requirement, so
-    `MirDeclarations::bound_requirement` finds it.
-  - `CheckLifetimes` refines the same way
-    (`refineWithContextualWhereClauses`), which R1368 reuses.
-  - Probe: R704's `def run[T: Copyable](s: T) where conforms_to(T, Sh)`
-    calling `s.sh(b.t)`. The pin prints `del 31`, `sh`, Mojito `sh`,
-    `del 31`.
-  - Closes R704 (a requirement under a `where conforms_to` clause keeps
-    its argument's owner alive). Shrinks R30.
-  - Depends on R1364, which supplies the evidence set.
-  - Model: Fable, Planned.
-
-- [ ] **R704 A requirement called under a `where conforms_to(T, Trait)`
-  clause keeps its argument's owner alive through the call**
-
-  Problem: `def run[T: Copyable](s: T) where conforms_to(T, Sh)` calling
-  `s.sh(b.t)` prints `del 31`, `sh` at the pin, but `sh`, `del 31` in
-  Mojito.
-  - The checker resolves the call through the clause's assumed trait
-    (`Checker::assumed_bounds`, since R1358), but the call's receiver type
-    still names only `Copyable`.
-  - So `ArgumentPassing` (`register_loans.rs`) finds no requirement through
-    `MirDeclarations::bound_requirement` and keeps `b` through the call.
-    The fix gives the drop analysis the assumed trait too.
-  - Found while landing R682 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1456 A `SIMD` vector is neither `Equatable` nor `Comparable`**
 
   Upstream's `SIMD` declares both at every width, and its `__eq__` and
@@ -3112,6 +3074,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     it when this lands.
   - The constraint compiler is `compile_generic_constraint`
     (`crates/mojito-checker/src/checker/constraints.rs`).
+  - Probe: `comptime if conforms_to(T.E, Writable):` over a projection is
+    rejected as "conforms_to takes a type as its first argument"; the pin
+    accepts it, as it does the `where` spelling.
+  - Once a projection subject enters the assumption store,
+    `Checker::refined_bound` must refine a projection by a fact stated of
+    it, not only by its base's refined bound (`binder_fact` matches a
+    binder or a pack today).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10502,6 +10471,52 @@ follow-ups the landed producer stages filed come last.
   - A session should plan this first and split it if it does not fit.
   - Found while landing R1151 (2026-10-27).
   - Depends on R1491.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1495 A refined type parameter is not a type**
+
+  Upstream rebinds a value of type `T`, in a scope whose `where` clauses
+  or `comptime if` conditions add traits, to `downcast(T, Traits)`
+  (`maybeEmitRefinementRebind`, `ExprNodes.cpp`), which converts back to
+  `T` at no cost (`CastRemover`, `ExprConversions.cpp`). Mojito answers
+  the refinement per query (`Checker::refined_bound`) and keeps `T`.
+  - The lever, checker half: a refined `TyKind::Param` carrying its
+    binder's merged bound, distinct from the binder yet coercing to it
+    for free. A declref, field read, call result, or subscript of type `T`
+    in a refined scope takes it, as upstream's rebinds do.
+  - Member lookups then read the receiver's type, and
+    `Checker::refined_bound` shrinks to building that type.
+  - Risk: `Ty` identity and digest, and conformance caches keyed on
+    scope-dependent answers.
+  - Probe: a diagnostic over a refined value. The pin's chained-comparison
+    rejection under `where conforms_to(T, Comparable)` on `T: Copyable`
+    spells the type 'T(Comparable & Copyable)', Mojito 'T'.
+  - The refined type stays inside the check: lowering spells the binder
+    until R1496.
+  - Found while landing R1365 (2026-10-27).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1496 A call through a refined bound records the bound beside its
+  receiver instead of in the receiver's type**
+
+  `call.method`, `binary`, and `subscript_call` carry `refined_bound` (MIR
+  schema 1.114) so `mir::Callee::resolve` finds a requirement only a
+  `where` refinement or a projection's declaring trait states. Upstream
+  reads it off the receiver's `downcast` type.
+  - The lever: lower R1495's refined type into MIR register and place
+    types, so `Callee::resolve` reads the receiver type alone, and the
+    `refined_bound` fields, `MirRefinedBound`, and
+    `CheckedCallContract::refined_bound` go.
+  - A projection receiver (`TyKind::Assoc`) resolves through its declaring
+    trait's bound the same way.
+  - `MirDeclarations::copy_is_identity` then sees a refined
+    `TrivialRegisterPassable` too.
+  - The pack-element assumption scan in `comptime_validation.rs` folds
+    into the refined type.
+  - Needs a MIR text and package format bump.
+  - Found while landing R1365 (2026-10-27).
+  - Depends on R1495.
   - Model: Fable, Not Planned.
 
 ### Grow The CPU Standard Library *(demand-first)*

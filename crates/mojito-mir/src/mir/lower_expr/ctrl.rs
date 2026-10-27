@@ -447,6 +447,7 @@ impl<'a> Flatten<'a> {
             param_decls: Vec::new(),
             instantiated_args: Vec::new(),
             spread: None,
+            refined_bound: None,
         });
     }
 
@@ -942,6 +943,7 @@ impl<'a> Flatten<'a> {
                     receiver_convention: call.receiver_convention,
                     param_decls: call.param_decls.clone(),
                     instantiated_args: link.instantiated_args.clone(),
+                    refined_bound: call.refined_bound.clone(),
                 })
             }),
         };

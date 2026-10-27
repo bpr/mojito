@@ -741,6 +741,7 @@ fn drop_removed_operands<'a>(
             b,
             resolved: Some(target),
             raises,
+            ..
         } = instruction
             && let Some(method) = operator_method(*op)
             && let Some((slots, declaration)) = callee(target)

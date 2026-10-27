@@ -48,10 +48,13 @@ impl Checker {
                     )
                     .map(Some);
             }
-            if !self.conforms_to(&ty, "Defaultable")
-                && !matches!(ty.kind(), TyKind::Param { bounds, .. }
-                    if bounds.iter().any(|bound| self.bound_default_constructs(bound)))
-            {
+            let bound_constructs = matches!(ty.kind(), TyKind::Param { .. })
+                && self.refined_bound(&ty).is_some_and(|bounds| {
+                    bounds
+                        .iter()
+                        .any(|bound| self.bound_default_constructs(bound))
+                });
+            if !bound_constructs && !self.conforms_to(&ty, "Defaultable") {
                 return Err(TypeError::TraitNotSatisfied {
                     param: method.to_string(),
                     ty: ty.to_string(),
@@ -343,6 +346,7 @@ impl Checker {
                     declared_params: Vec::new(),
                     nested_origins: NestedOrigins::AsDeclared,
                     bracket_attributes,
+                    refined_bound: None,
                 });
             }
         }

@@ -948,16 +948,22 @@ fn instruction_value(instruction: &MirInstr) -> String {
             b,
             resolved,
             raises,
+            refined_bound,
         } => record(
             tag,
-            &[
-                ("op", infix(*op).into()),
-                ("dest", reg_value(*dest)),
-                ("a", reg_value(*a)),
-                ("b", reg_value(*b)),
-                ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
-                ("raises", option(raises.as_ref().map(raises_value))),
-            ],
+            &with_refined_bound(
+                vec![
+                    ("op", infix(*op).into()),
+                    ("dest", reg_value(*dest)),
+                    ("a", reg_value(*a)),
+                    ("b", reg_value(*b)),
+                    ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
+                    ("raises", option(raises.as_ref().map(raises_value))),
+                ],
+                refined_bound
+                    .as_deref()
+                    .map(|bound| bound.traits.as_slice()),
+            ),
         ),
         MirInstr::Call {
             dest,
@@ -1069,56 +1075,62 @@ fn instruction_value(instruction: &MirInstr) -> String {
             param_decls,
             instantiated_args,
             spread,
+            refined_bound,
         } => record(
             tag,
-            &with_symbol(
-                vec![
-                    ("dest", reg_value(*dest)),
-                    ("recv", reg_value(*recv)),
-                    ("method", symbol(method)),
-                    ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
-                    ("raises", option(raises.as_ref().map(raises_value))),
-                    (
-                        "reference_result",
-                        option(reference_result.as_deref().map(ref_ty)),
-                    ),
-                    (
-                        "result_adapter",
-                        option(
-                            result_adapter
-                                .as_deref()
-                                .map(|adapter| result_adapter_value(adapter.kind)),
+            &with_refined_bound(
+                with_symbol(
+                    vec![
+                        ("dest", reg_value(*dest)),
+                        ("recv", reg_value(*recv)),
+                        ("method", symbol(method)),
+                        ("resolved", option(resolved.as_ref().map(|v| symbol(v)))),
+                        ("raises", option(raises.as_ref().map(raises_value))),
+                        (
+                            "reference_result",
+                            option(reference_result.as_deref().map(ref_ty)),
                         ),
-                    ),
-                    ("args", regs(args)),
-                    ("kwargs", kwargs_value(kwargs)),
-                    ("recv_place", option(recv_place.as_deref().map(place_value))),
-                    ("recv_writes", recv_writes.to_string()),
-                    (
-                        "receiver_convention",
-                        option(receiver_convention.map(convention)),
-                    ),
-                    ("arg_places", places_option(arg_places)),
-                    ("kwarg_places", places_option(kwarg_places)),
-                    (
-                        "capture_accesses",
-                        list(capture_accesses.iter().map(capture_access)),
-                    ),
-                    ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
-                    ("param_decls", list(param_decls.iter().map(param_decl))),
-                    (
-                        "instantiated_args",
-                        list(instantiated_args.iter().map(ty_arg)),
-                    ),
-                    (
-                        "spread",
-                        option(spread.map(|position| position.to_string())),
-                    ),
-                ],
-                "adapter_constructor",
-                result_adapter
+                        (
+                            "result_adapter",
+                            option(
+                                result_adapter
+                                    .as_deref()
+                                    .map(|adapter| result_adapter_value(adapter.kind)),
+                            ),
+                        ),
+                        ("args", regs(args)),
+                        ("kwargs", kwargs_value(kwargs)),
+                        ("recv_place", option(recv_place.as_deref().map(place_value))),
+                        ("recv_writes", recv_writes.to_string()),
+                        (
+                            "receiver_convention",
+                            option(receiver_convention.map(convention)),
+                        ),
+                        ("arg_places", places_option(arg_places)),
+                        ("kwarg_places", places_option(kwarg_places)),
+                        (
+                            "capture_accesses",
+                            list(capture_accesses.iter().map(capture_access)),
+                        ),
+                        ("param_arg_regs", list(param_arg_regs.iter().map(param_arg))),
+                        ("param_decls", list(param_decls.iter().map(param_decl))),
+                        (
+                            "instantiated_args",
+                            list(instantiated_args.iter().map(ty_arg)),
+                        ),
+                        (
+                            "spread",
+                            option(spread.map(|position| position.to_string())),
+                        ),
+                    ],
+                    "adapter_constructor",
+                    result_adapter
+                        .as_deref()
+                        .and_then(|adapter| adapter.constructor.as_deref()),
+                ),
+                refined_bound
                     .as_deref()
-                    .and_then(|adapter| adapter.constructor.as_deref()),
+                    .map(|bound| bound.traits.as_slice()),
             ),
         ),
         MirInstr::PointerStorageTake {
@@ -1731,6 +1743,17 @@ fn with_symbol<'a>(
     fields
 }
 
+/// A call's fields, then the `refined_bound` it was selected through,
+/// omitted while it records none.
+fn with_refined_bound<'a>(
+    mut fields: Vec<(&'a str, String)>,
+    bound: Option<&[String]>,
+) -> Vec<(&'a str, String)> {
+    fields
+        .extend(bound.map(|bound| ("refined_bound", list(bound.iter().map(|name| symbol(name))))));
+    fields
+}
+
 /// A variant store's fields, then the per-alternative `destructors` it
 /// names, each present or absent, omitted while it names none.
 fn with_symbols<'a>(
@@ -1906,36 +1929,39 @@ fn subscript_arg(value: &MirSubscriptArg) -> String {
 fn subscript_call(value: &MirSubscriptCall) -> String {
     record(
         "subscript_call",
-        &[
-            ("target", symbol(&value.target)),
-            ("raises", option(value.raises.as_ref().map(raises_value))),
-            ("result_type", ty_value(&value.result_ty)),
-            (
-                "receiver_requires_place",
-                value.receiver_requires_place.to_string(),
-            ),
-            (
-                "receiver_convention",
-                option(value.receiver_convention.map(convention)),
-            ),
-            ("arguments", list(value.arguments.iter().map(call_argument))),
-            (
-                "capture_accesses",
-                list(value.capture_accesses.iter().map(capture_access)),
-            ),
-            (
-                "reference_result",
-                option(value.reference_result.as_ref().map(ref_ty)),
-            ),
-            (
-                "param_arg_regs",
-                list(value.param_arg_regs.iter().map(param_arg)),
-            ),
-            (
-                "param_decls",
-                list(value.param_decls.iter().map(param_decl)),
-            ),
-        ],
+        &with_refined_bound(
+            vec![
+                ("target", symbol(&value.target)),
+                ("raises", option(value.raises.as_ref().map(raises_value))),
+                ("result_type", ty_value(&value.result_ty)),
+                (
+                    "receiver_requires_place",
+                    value.receiver_requires_place.to_string(),
+                ),
+                (
+                    "receiver_convention",
+                    option(value.receiver_convention.map(convention)),
+                ),
+                ("arguments", list(value.arguments.iter().map(call_argument))),
+                (
+                    "capture_accesses",
+                    list(value.capture_accesses.iter().map(capture_access)),
+                ),
+                (
+                    "reference_result",
+                    option(value.reference_result.as_ref().map(ref_ty)),
+                ),
+                (
+                    "param_arg_regs",
+                    list(value.param_arg_regs.iter().map(param_arg)),
+                ),
+                (
+                    "param_decls",
+                    list(value.param_decls.iter().map(param_decl)),
+                ),
+            ],
+            value.refined_bound.as_deref(),
+        ),
     )
 }
 fn call_argument(value: &CheckedCallArgument) -> String {

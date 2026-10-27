@@ -2461,6 +2461,7 @@ impl<'a> Specializer<'a> {
                         b: *exponent,
                         resolved: None,
                         raises: raises.take(),
+                        refined_bound: None,
                     };
                 }
                 // A prefix `-`/`~` on a nominal operand is the VM's dunder
@@ -2511,6 +2512,7 @@ impl<'a> Specializer<'a> {
                     b,
                     resolved,
                     raises,
+                    ..
                 } = instruction
                     && let Some(method) = mojito_mir::mir::operator_method(*op)
                     && matches!(
@@ -2553,6 +2555,7 @@ impl<'a> Specializer<'a> {
                         b: *other,
                         resolved: None,
                         raises: raises.take(),
+                        refined_bound: None,
                     };
                 }
                 // A comparison a template typed `Bool` through its bound
@@ -3163,6 +3166,7 @@ impl<'a> Specializer<'a> {
                             param_decls: Vec::new(),
                             instantiated_args: Vec::new(),
                             spread: spread.take(),
+                            refined_bound: None,
                         };
                     }
                     // A retained callable names its lifted body on the

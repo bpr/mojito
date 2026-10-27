@@ -314,6 +314,7 @@ impl Checker {
                     declared_params: sig.params.clone(),
                     nested_origins: sig.nested_origins,
                     bracket_attributes,
+                    refined_bound: None,
                     param_types: params,
                     param_decls: sig.decls.clone(),
                 });
@@ -347,35 +348,11 @@ impl Checker {
             kwargs,
             ..
         } = call;
-        let mut effective_bounds = self.projection_bounds(obj_ty).unwrap_or_default();
-        // A `where conforms_to(T, Trait)` clause the body is checked under
-        // declares `Trait`'s requirements on `T` as a bound does.
-        for assumed in self.assumed_bounds(obj_ty) {
-            if !effective_bounds.contains(&assumed) {
-                effective_bounds.push(assumed);
-            }
-        }
-        // `Copyable.copy` is proven by any route that proves
-        // copyability (a refining bound, a member bound, or a
-        // `conforms_to(T, Copyable)` availability assumption), not
-        // only by a literal `Copyable` bound.
-        if method == "copy"
-            && args.is_empty()
-            && self.is_copyable(obj_ty)
-            && !effective_bounds.iter().any(|bound| bound == "Copyable")
-        {
-            effective_bounds.push("Copyable".to_string());
-        }
-        // Likewise `Hashable.__hash__`: a `where conforms_to(Self.T,
-        // Hashable)` assumption proves `element.__hash__(hasher)` on
-        // an otherwise unbounded `T` (upstream's container bodies).
-        if method == "__hash__"
-            && args.len() == 1
-            && self.conforms_to(obj_ty, "Hashable")
-            && !effective_bounds.iter().any(|bound| bound == "Hashable")
-        {
-            effective_bounds.push("Hashable".to_string());
-        }
+        // A `where conforms_to(T, Trait)` clause or `comptime if` the body
+        // is checked under declares `Trait`'s requirements on `T` as a bound
+        // does.
+        let effective_bounds = self.refined_bound(obj_ty).unwrap_or_default();
+        let refined_bound = self.recorded_refined_bound(obj_ty);
         let signatures = self.lookup_trait_methods(&effective_bounds, method, args.len());
         if signatures.is_empty() {
             return Err(TypeError::NoSuchMethod {
@@ -520,6 +497,7 @@ impl Checker {
                 declared_params: Vec::new(),
                 nested_origins: NestedOrigins::AsDeclared,
                 bracket_attributes,
+                refined_bound: refined_bound.clone(),
             });
             requirements.push((sig, method_arguments));
         }
@@ -725,6 +703,7 @@ fn intrinsic_resolution(
         declared_params: Vec::new(),
         nested_origins: NestedOrigins::AsDeclared,
         bracket_attributes: Vec::new(),
+        refined_bound: None,
     }
 }
 

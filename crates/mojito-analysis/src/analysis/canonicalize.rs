@@ -676,6 +676,7 @@ fn direct_call(
             param_decls: Vec::new(),
             instantiated_args: Vec::new(),
             spread: None,
+            refined_bound: None,
         };
         return loads;
     }

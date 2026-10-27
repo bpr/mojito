@@ -5462,7 +5462,13 @@ current Mojo:
   its declaration's, or for a call through a trait bound in a generic body,
   the requirement the bound trait or a parent declares, found by the call's
   `__trait_dispatch.*` symbol (`MirDeclarations::bound_requirement`), as
-  upstream binds such a call to the trait's declared requirement. A
+  upstream binds such a call to the trait's declared requirement. The
+  bound is the one the call records it was selected through
+  (`refined_bound`) when that differs from the receiver type's: a type
+  parameter a `where` clause or `comptime if` refines, or an associated
+  projection. Upstream carries that refinement in the receiver's type
+  (`downcast(T, Traits)`); Mojito carries it on the call across the MIR
+  waist. A
   memory-only parameter takes the argument's address: a generic `T`, a
   variadic collector, or a callee with no declaration (`t.n` fed to `print`).
   Its owner then lives through the call, so the owner's `DropVar` follows the

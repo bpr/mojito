@@ -1294,6 +1294,7 @@ fn lower_storage_call_witness(
         param_decls: Vec::new(),
         instantiated_args: Vec::new(),
         spread: None,
+        refined_bound: None,
     });
     if let Some(raises) = &raises {
         let region = |instrs, term| vec![MirBlock { instrs, term }];

@@ -315,6 +315,7 @@ impl<'a> Flatten<'a> {
                 param_decls: Vec::new(),
                 instantiated_args: Vec::new(),
                 spread: None,
+                refined_bound: None,
             });
             return Some(d);
         }
@@ -373,6 +374,7 @@ impl<'a> Flatten<'a> {
                 param_decls: Vec::new(),
                 instantiated_args: Vec::new(),
                 spread: None,
+                refined_bound: None,
             });
             return Some(d);
         }
@@ -695,6 +697,7 @@ impl<'a> Flatten<'a> {
                 b: offset,
                 resolved: None,
                 raises: None,
+                refined_bound: None,
             });
             return Some(dest);
         }
@@ -935,6 +938,10 @@ impl<'a> Flatten<'a> {
             param_decls,
             instantiated_args,
             spread: Self::spread_position(args),
+            refined_bound: call
+                .call_contract()
+                .and_then(|contract| contract.refined_bound)
+                .map(MirRefinedBound::boxed),
         });
         self.emit_nested_closure_argument_keepalives(args, kwargs);
         self.install_call_transfers(call, transfer_recv_place.as_ref(), &transfer_arg_places);

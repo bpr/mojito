@@ -1774,8 +1774,9 @@ impl Checker {
                     )
                 })
             }
-            TyKind::Param { bounds, .. } => {
-                let methods = self.lookup_trait_methods(bounds, "__mlir_index__", 0);
+            TyKind::Param { .. } => {
+                let methods =
+                    self.lookup_trait_methods(&self.refined_bound(ty)?, "__mlir_index__", 0);
                 let selected = methods
                     .iter()
                     .find(|method| method.params.is_empty() && method.ret == TyKind::Int)?;

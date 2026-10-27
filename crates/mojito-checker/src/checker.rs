@@ -2955,6 +2955,8 @@ struct MethodCallResolution {
     nested_origins: NestedOrigins,
     /// What each of the call's bracket arguments bound to.
     bracket_attributes: BracketAttributes,
+    /// See [`mojito_checked::checked::CheckedCallContract::refined_bound`].
+    refined_bound: Option<Vec<String>>,
 }
 
 impl MethodCallResolution {

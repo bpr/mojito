@@ -499,6 +499,7 @@ pub fn dunder_method_call(
         param_decls: Vec::new(),
         instantiated_args: Vec::new(),
         spread: None,
+        refined_bound: None,
     }
 }
 
@@ -573,6 +574,7 @@ pub fn subscript_store_call(
         param_decls: Vec::new(),
         instantiated_args: Vec::new(),
         spread,
+        refined_bound: call.refined_bound.map(MirRefinedBound::boxed),
     };
     true
 }
@@ -1849,6 +1851,8 @@ pub struct MirSubscriptCall {
     pub reference_result: Option<mojito_types::origin::RefTy>,
     pub param_arg_regs: Vec<MirParamArg>,
     pub param_decls: Vec<mojito_types::types::ParamDecl>,
+    /// See [`mojito_checked::checked::CheckedCallContract::refined_bound`].
+    pub refined_bound: Option<Vec<String>>,
 }
 
 /// A raising instruction's error contract and its raise edge.
@@ -2129,6 +2133,9 @@ pub enum MirInstr {
         /// The error contract of the operator call, as a call's `raises`;
         /// `None` for a built-in or non-raising operator.
         raises: Option<Raises>,
+        /// As a `MethodCall`'s: the bound `resolved` was selected through
+        /// when it differs from what the left operand's type spells.
+        refined_bound: Option<Box<MirRefinedBound>>,
     },
     /// A free-function / constructor / builtin call. `args` are the flattened
     /// positional arguments; `kwargs` the keyword arguments (`name = value`). The
@@ -2300,6 +2307,9 @@ pub enum MirInstr {
         /// builtin its receiver is answers (`write` on the builtin-string
         /// writer) takes the pack's elements as its arguments instead.
         spread: Option<usize>,
+        /// The bound the checker selected `resolved` through when it
+        /// differs from what the receiver's type spells.
+        refined_bound: Option<Box<MirRefinedBound>>,
     },
     /// Move an initialized element from compiler-private `UnsafePointer`
     /// collection storage. The source slot becomes uninitialized, so subsequent
@@ -2813,7 +2823,7 @@ pub enum MirInstr {
 /// An instruction is sized for its common variants: the places and subscript
 /// calls only a few call variants carry sit behind boxes, and a type is one
 /// handle. The call variants' argument lists set this bound.
-const _: () = assert!(std::mem::size_of::<MirInstr>() <= 312);
+const _: () = assert!(std::mem::size_of::<MirInstr>() <= 320);
 
 impl MirInstr {
     /// The place a `deinit`-receiver call consumes in place, as upstream's
@@ -3096,6 +3106,7 @@ impl MirInstr {
                 b,
                 resolved: None,
                 raises: None,
+                ..
             } if a == b
                 && let Some(value) =
                     self_comparison(*op, reg_types.get(&a.0)?, reg_types.get(&dest.0)?) =>
@@ -3109,6 +3120,7 @@ impl MirInstr {
                 b,
                 resolved: None,
                 raises: None,
+                ..
             } => {
                 let (left, right) = (operand(*a)?, operand(*b)?);
                 let bool_operands = matches!(left, CtValue::Bool(_));
@@ -3203,6 +3215,25 @@ impl MirInstr {
 pub enum MirCaptureMode {
     Reference,
     Move,
+}
+
+/// The bound a call through an archetype receiver was selected by.
+///
+/// It is recorded where it differs from what the receiver's type spells: a
+/// call's record of upstream's downcast receiver (see
+/// [`mojito_checked::checked::CheckedCallContract::refined_bound`]), which
+/// [`crate::mir::register_ends::Callee::resolve`] finds the requirement
+/// through.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MirRefinedBound {
+    pub traits: Vec<String>,
+}
+
+impl MirRefinedBound {
+    /// The boxed record of a checked contract's `refined_bound`.
+    pub fn boxed(traits: Vec<String>) -> Box<Self> {
+        Box::new(Self { traits })
+    }
 }
 
 /// The adaptation a [`MirInstr::MethodCall`] applies to its concrete result.
@@ -4213,6 +4244,7 @@ mod tests {
             b: Reg(1),
             resolved: None,
             raises: None,
+            refined_bound: None,
         }
         .folded_constant(
             |reg| operands.get(reg.0 as usize).cloned(),
@@ -4309,6 +4341,7 @@ mod tests {
                 flag: Reg(3),
                 error: Reg(4),
             }),
+            refined_bound: None,
         };
         assert!(raising.folded_constant(ones, &reg_types, &none).is_none());
         let dunder = MirInstr::BinOp {
@@ -4318,6 +4351,7 @@ mod tests {
             b: Reg(1),
             resolved: Some("Int.__add__".into()),
             raises: None,
+            refined_bound: None,
         };
         assert!(dunder.folded_constant(ones, &reg_types, &none).is_none());
     }
@@ -4444,6 +4478,7 @@ mod tests {
                 b: Reg(1),
                 resolved: None,
                 raises: None,
+                refined_bound: None,
             }
             .folded_constant(
                 |reg| [a.clone(), b.clone()].get(reg.0 as usize).cloned(),
@@ -4556,6 +4591,7 @@ mod tests {
                 b: Reg(0),
                 resolved: None,
                 raises: None,
+                refined_bound: None,
             }
             .folded_constant(|_| None, &reg_types, &MirDeclarations::default())
         };
@@ -4657,6 +4693,7 @@ mod tests {
             b: Reg(1),
             resolved: None,
             raises: None,
+            refined_bound: None,
         }
         .folded_constant(
             |reg| [ones.clone(), literal(2)].get(reg.0 as usize).cloned(),

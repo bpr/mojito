@@ -28,6 +28,8 @@ pub(in crate::mir) struct OperatorContract {
     pub(in crate::mir) receiver_convention: Option<mojito_ast::ast::ArgConvention>,
     pub(in crate::mir) param_decls: Vec<ParamDecl>,
     pub(in crate::mir) instantiated_args: Vec<TyArg>,
+    /// See [`mojito_checked::checked::CheckedCallContract::refined_bound`].
+    pub(in crate::mir) refined_bound: Option<Vec<String>>,
 }
 
 /// The method struct value `receiver` answers a chained comparison's link
@@ -282,6 +284,7 @@ impl<'a> Flatten<'a> {
             param_decls,
             instantiated_args,
             spread: None,
+            refined_bound: None,
         });
         self.emit_nested_closure_argument_keepalives(&[value], &[]);
         self.error_region(raises);
@@ -360,6 +363,10 @@ impl<'a> Flatten<'a> {
         } = dispatch;
         let raises = self.raises(raises, location.clone());
         let d = self.fresh(location, None);
+        let (contract, refined_bound) = contract.map_or((None, None), |mut contract| {
+            let refined_bound = contract.refined_bound.take().map(MirRefinedBound::boxed);
+            (Some(contract), refined_bound)
+        });
         self.emit(match (resolved, method) {
             (Some(resolved), Some(method)) => {
                 let mut call =
@@ -385,6 +392,7 @@ impl<'a> Flatten<'a> {
                 b,
                 resolved,
                 raises,
+                refined_bound,
             },
         });
         d

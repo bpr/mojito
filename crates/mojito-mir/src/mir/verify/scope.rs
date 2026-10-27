@@ -1147,6 +1147,7 @@ mod tests {
                 .into(),
             )],
             spread: None,
+            refined_bound: None,
         });
         assert!(
             findings(&function, &declarations)

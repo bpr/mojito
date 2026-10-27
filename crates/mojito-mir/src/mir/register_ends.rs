@@ -193,6 +193,7 @@ impl<'f> RegisterEnds<'f> {
                         self.declarations,
                         name,
                         receiver_ty(callee_place.as_deref(), *callee, &self.function.reg_types),
+                        None,
                     )
                 }) {
                     if callee_place.is_none() && owned_convention(target.receiver_convention()) {
@@ -211,6 +212,7 @@ impl<'f> RegisterEnds<'f> {
                 arg_places,
                 kwarg_places,
                 spread,
+                refined_bound,
                 ..
             } => {
                 if recv_place.is_none() && owned_convention(*receiver_convention) {
@@ -221,6 +223,9 @@ impl<'f> RegisterEnds<'f> {
                         self.declarations,
                         name,
                         receiver_ty(recv_place.as_deref(), *recv, &self.function.reg_types),
+                        refined_bound
+                            .as_deref()
+                            .map(|bound| bound.traits.as_slice()),
                     )
                 }) {
                     CallArguments {
@@ -237,12 +242,16 @@ impl<'f> RegisterEnds<'f> {
                 a,
                 b,
                 resolved: Some(resolved),
+                refined_bound,
                 ..
             } => {
                 if let Some(callee) = Callee::resolve(
                     self.declarations,
                     resolved,
                     receiver_ty(None, *a, &self.function.reg_types),
+                    refined_bound
+                        .as_deref()
+                        .map(|bound| bound.traits.as_slice()),
                 ) {
                     if owned_convention(callee.receiver_convention()) {
                         out.push(*a);
@@ -377,6 +386,7 @@ impl<'f> RegisterEnds<'f> {
             self.declarations,
             &call.target,
             receiver_ty(place, receiver, &self.function.reg_types),
+            call.refined_bound.as_deref(),
         )
     }
 
@@ -418,19 +428,23 @@ impl<'a> Callee<'a> {
     /// The callee a method, operator, or subscript call of `target` binds
     /// over a receiver of type `receiver`: its declaration, or for a call
     /// through a bound, the requirement the bound trait or a parent
-    /// declares.
+    /// declares. The bound is the one the call records it was selected
+    /// through (`refined_bound`, upstream's downcast receiver), else the
+    /// receiver type parameter's own.
     pub fn resolve(
         declarations: &'a MirDeclarations,
         target: &str,
         receiver: Option<&Ty>,
+        refined_bound: Option<&[String]>,
     ) -> Option<Self> {
         declarations
             .function(target)
             .map(Self::Declared)
             .or_else(|| {
-                let Some(TyKind::Param { bounds, .. }) = receiver.map(Ty::kind) else {
-                    return None;
-                };
+                let bounds = refined_bound.or_else(|| match receiver.map(Ty::kind) {
+                    Some(TyKind::Param { bounds, .. }) => Some(bounds.as_slice()),
+                    _ => None,
+                })?;
                 is_trait_dispatch_symbol(target)
                     .then(|| declarations.bound_requirement(bounds, target))
                     .flatten()
@@ -945,6 +959,7 @@ mod tests {
             param_decls: Vec::new(),
             instantiated_args: Vec::new(),
             spread: None,
+            refined_bound: None,
         }
     }
 
@@ -1255,6 +1270,7 @@ mod tests {
             reference_result: None,
             param_arg_regs: Vec::new(),
             param_decls: Vec::new(),
+            refined_bound: None,
         };
         let set = MirInstr::MultiSet {
             receiver: Reg(0),

@@ -129,6 +129,7 @@ fn lowered(
         param_decls: Vec::new(),
         instantiated_args: Vec::new(),
         spread: None,
+        refined_bound: None,
     };
     Some(load.into_iter().chain([call]).collect())
 }

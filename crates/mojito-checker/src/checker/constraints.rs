@@ -710,8 +710,9 @@ impl Checker {
         args: &[mojito_ast::ast::ParamArg],
     ) -> Option<Result<ParamExpr, TypeError>> {
         let subject = self.member_subject(object)?;
-        if let TyKind::Param { bounds, .. } = subject.kind() {
-            let (params, result) = self.lookup_trait_generator(bounds, field)?;
+        if let TyKind::Param { .. } = subject.kind() {
+            let (params, result) =
+                self.lookup_trait_generator(&self.refined_bound(&subject)?, field)?;
             return Some(self.generator_application(&subject, field, params, result, args));
         }
         let TyKind::Struct(name, arguments) = subject.kind() else {
@@ -2111,8 +2112,9 @@ impl Checker {
         }
         let subject = self.member_subject(object)?;
         match subject.kind() {
-            TyKind::Param { bounds, .. } => {
-                if let Some(ty) = self.lookup_trait_assoc_value_ty(bounds, field) {
+            TyKind::Param { .. } => {
+                let bounds = self.refined_bound(&subject).unwrap_or_default();
+                if let Some(ty) = self.lookup_trait_assoc_value_ty(&bounds, field) {
                     let subject = self.param_context.type_shape(subject.clone());
                     return Some(Ok(self.param_context.type_member(
                         &subject,
@@ -2123,7 +2125,7 @@ impl Checker {
                 }
                 // A parameterized requirement read unapplied is the
                 // generator the instance's member is (`comptime g = T.get`).
-                if let Some((params, result)) = self.lookup_trait_generator(bounds, field) {
+                if let Some((params, result)) = self.lookup_trait_generator(&bounds, field) {
                     let subject = self.param_context.type_shape(subject.clone());
                     return Some(Ok(self.param_context.type_member(
                         &subject,
@@ -2242,7 +2244,9 @@ impl Checker {
         }
         let subject = self.member_subject(object)?;
         match subject.kind() {
-            TyKind::Param { bounds, .. } => self.lookup_trait_assoc_value_ty(bounds, field),
+            TyKind::Param { .. } => {
+                self.lookup_trait_assoc_value_ty(&self.refined_bound(&subject)?, field)
+            }
             TyKind::SelfType => self.trait_self_value_ty(field),
             TyKind::Struct(name, arguments) => {
                 let info = self.structs.get(name)?;
@@ -4053,8 +4057,8 @@ impl Checker {
             TyKind::Struct(name, arguments) => self
                 .struct_value_member(self.structs.get(name)?, arguments, field)?
                 .ok(),
-            TyKind::Param { bounds, .. } => {
-                let ty = self.lookup_trait_assoc_value_ty(bounds, field)?;
+            TyKind::Param { .. } => {
+                let ty = self.lookup_trait_assoc_value_ty(&self.refined_bound(subject)?, field)?;
                 Some(self.param_context.type_member(
                     &self.param_context.type_shape(subject.clone()),
                     field,

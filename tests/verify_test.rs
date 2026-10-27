@@ -1686,6 +1686,7 @@ fn verifier_distinguishes_method_result_abi_from_a_reference_shaped_value() {
                     param_decls: Vec::new(),
                     instantiated_args: Vec::new(),
                     spread: None,
+                    refined_bound: None,
                 }],
                 MirTerm::Return(None),
             )],
@@ -1867,6 +1868,7 @@ fn verifier_rejects_a_method_call_spread_of_a_non_pack_register() {
                     param_decls: Vec::new(),
                     instantiated_args: Vec::new(),
                     spread: Some(0),
+                    refined_bound: None,
                 }],
                 MirTerm::Return(None),
             )],
@@ -2327,6 +2329,7 @@ fn verifier_rejects_a_drop_of_an_argument_a_bound_call_took() {
         param_decls: Vec::new(),
         instantiated_args: Vec::new(),
         spread: None,
+        refined_bound: None,
     };
     let instrs = [copy_x_and_condition(), vec![absorb, DROP_R0]].concat();
     assert_eq!(

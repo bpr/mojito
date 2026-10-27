@@ -362,7 +362,8 @@ impl Checker {
         match ty.kind() {
             TyKind::VariadicPack(element) => Ok(builtin((*element).clone())),
             TyKind::Struct(..) => self.struct_iteration_protocol(ty, mode, raises),
-            TyKind::Param { bounds, .. } => {
+            TyKind::Param { .. } => {
+                let bounds = &self.refined_bound(ty).unwrap_or_default();
                 let owned = mode == IterationMode::Owned;
                 let required = if owned { "IterableOwned" } else { "Iterable" };
                 if !bounds
@@ -900,7 +901,7 @@ impl Checker {
     /// its iterator through: the one the iterator type's bounds declare,
     /// else the standard `Iterator`'s.
     fn generic_next_requirement(&self, iterator_ty: &Ty) -> Result<MethodSig, TypeError> {
-        let bounds = self.projection_bounds(iterator_ty).unwrap_or_default();
+        let bounds = self.refined_bound(iterator_ty).unwrap_or_default();
         self.unique_requirement(&bounds, STD_ITERATOR_TRAIT, "__next__", |_| true)
             .ok_or_else(|| TypeError::TypeMismatch {
                 expected: "an iterator whose bound declares __next__".to_string(),

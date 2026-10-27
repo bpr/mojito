@@ -2650,12 +2650,11 @@ impl Checker {
                 TyKind::Struct(name, args) => {
                     self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
                 }
-                TyKind::Param { bounds, .. } => {
+                TyKind::Param { .. } => self.refined_bound(ty).is_some_and(|bounds| {
                     bounds
                         .iter()
                         .any(|bound| self.trait_implies(bound, "TrivialRegisterPassable"))
-                        || self.has_assumed_conformance(ty, "TrivialRegisterPassable")
-                }
+                }),
                 _ => false,
             }
     }
@@ -2695,9 +2694,10 @@ impl Checker {
                 });
                 if conditional { Possible } else { Excluded }
             }
-            TyKind::Param { bounds, .. } => {
-                if bounds.iter().any(|bound| proves(bound))
-                    || self.has_assumed_conformance(ty, "RegisterPassable")
+            TyKind::Param { .. } => {
+                if self
+                    .refined_bound(ty)
+                    .is_some_and(|bounds| bounds.iter().any(|bound| proves(bound)))
                 {
                     Proven
                 } else {
@@ -2756,12 +2756,11 @@ impl Checker {
             TyKind::Struct(name, args) => {
                 self.struct_conformance_applies(name, args, "TrivialRegisterPassable")
             }
-            TyKind::Param { bounds, .. } => {
+            TyKind::Param { .. } => self.refined_bound(ty).is_some_and(|bounds| {
                 bounds
                     .iter()
                     .any(|bound| self.trait_implies(bound, "TrivialRegisterPassable"))
-                    || self.has_assumed_conformance(ty, "TrivialRegisterPassable")
-            }
+            }),
             _ => false,
         };
         if trp_conforms {
@@ -3089,16 +3088,42 @@ impl Checker {
             })
     }
 
-    /// The bounds an archetype conforms to: a type parameter's declared
-    /// bounds, or an associated projection's (`C.IteratorType[o]`, nested
-    /// `C.IteratorType[o].Element`) as its declaring trait requires them.
-    pub(super) fn projection_bounds(&self, ty: &Ty) -> Option<Vec<String>> {
+    /// The bound an archetype is refined to in this scope, upstream's
+    /// `maybeRefineParamType`: a type parameter's declared bounds merged
+    /// with every trait the scope's assumptions prove it conforms to
+    /// (`getTraitBoundFromAssumptions`, `mergeOriginalAndRefinedBounds`),
+    /// or an associated projection's (`C.IteratorType[o]`, nested
+    /// `C.IteratorType[o].Element`) as the trait declaring it in its base's
+    /// refined bound requires them. `None` for a type that is no archetype.
+    pub(super) fn refined_bound(&self, ty: &Ty) -> Option<Vec<String>> {
         match ty.kind() {
-            TyKind::Param { bounds, .. } => Some(bounds.clone()),
+            TyKind::Param { bounds, .. } => {
+                let mut refined = bounds.clone();
+                for assumed in self.assumed_bounds(ty) {
+                    if mojito_types::types::trivial_predicate_name(&assumed).is_none()
+                        && !refined.contains(&assumed)
+                    {
+                        refined.push(assumed);
+                    }
+                }
+                Some(refined)
+            }
             TyKind::Assoc { base, name, .. } => {
-                self.lookup_trait_assoc_type(&self.projection_bounds(base)?, name)
+                self.lookup_trait_assoc_type(&self.refined_bound(base)?, name)
             }
             _ => None,
+        }
+    }
+
+    /// The refined bound a call on the archetype `ty` records when it
+    /// differs from what `ty` spells, upstream's downcast receiver: a type
+    /// parameter a scope's assumptions refine, or any associated projection,
+    /// whose bound only its declaring trait states.
+    pub(super) fn recorded_refined_bound(&self, ty: &Ty) -> Option<Vec<String>> {
+        let refined = self.refined_bound(ty)?;
+        match ty.kind() {
+            TyKind::Param { bounds, .. } if *bounds == refined => None,
+            _ => Some(refined),
         }
     }
 
@@ -3262,7 +3287,7 @@ impl Checker {
             }
         }
         let provided = self
-            .projection_bounds(ty)
+            .refined_bound(ty)
             .is_some_and(|bounds| bounds.iter().any(|bound| self.trait_implies(bound, tr)));
         if provided {
             Conformance::Proven

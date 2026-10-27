@@ -516,6 +516,7 @@ impl<'a> Flatten<'a> {
                     .unwrap_or_default(),
                 instantiated_args,
                 spread: Self::spread_position(args),
+                refined_bound: None,
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
             self.install_call_transfers(call, None, &transfer_arg_places);

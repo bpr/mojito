@@ -2542,6 +2542,7 @@ impl Checker {
                             declared_params: sig.params.clone(),
                             nested_origins: sig.nested_origins,
                             bracket_attributes,
+                            refined_bound: None,
                         });
                     }
                 }

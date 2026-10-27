@@ -364,6 +364,7 @@ impl<'a> Flatten<'a> {
                 param_decls: Vec::new(),
                 instantiated_args: Vec::new(),
                 spread: None,
+                refined_bound: None,
             });
             return dest;
         }

@@ -331,8 +331,10 @@ impl Decoder {
                 "reference_result",
                 "param_arg_regs",
                 "param_decls",
+                "refined_bound",
             ],
         );
+        let refined_bound = self.refined_bound(fields);
         Some(MirSubscriptCall {
             target,
             raises,
@@ -344,6 +346,7 @@ impl Decoder {
             reference_result,
             param_arg_regs,
             param_decls,
+            refined_bound,
         })
     }
 

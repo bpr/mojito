@@ -177,6 +177,7 @@ impl<'a> ArgumentPassing<'a> {
                 arg_places,
                 kwarg_places,
                 spread,
+                refined_bound,
                 ..
             } => resolved
                 .as_deref()
@@ -185,6 +186,9 @@ impl<'a> ArgumentPassing<'a> {
                         self.declarations,
                         name,
                         receiver_ty(recv_place.as_deref(), *recv, register_types),
+                        refined_bound
+                            .as_deref()
+                            .map(|bound| bound.traits.as_slice()),
                     )
                 })
                 .map(|callee| {
@@ -207,11 +211,15 @@ impl<'a> ArgumentPassing<'a> {
                 a,
                 b,
                 resolved: Some(name),
+                refined_bound,
                 ..
             } => Callee::resolve(
                 self.declarations,
                 name,
                 receiver_ty(None, *a, register_types),
+                refined_bound
+                    .as_deref()
+                    .map(|bound| bound.traits.as_slice()),
             )
             .map(|callee| {
                 let mut loaded = Vec::new();
@@ -269,6 +277,7 @@ impl<'a> ArgumentPassing<'a> {
                 self.declarations,
                 &call.target,
                 receiver_ty(base_place.as_deref(), *base, register_types),
+                call.refined_bound.as_deref(),
             )
             .map(|callee| {
                 let mut loaded = Vec::new();
@@ -292,6 +301,7 @@ impl<'a> ArgumentPassing<'a> {
                 self.declarations,
                 &call.target,
                 receiver_ty(object_place.as_deref(), *object, register_types),
+                call.refined_bound.as_deref(),
             )
             .map(|callee| {
                 let mut loaded = Vec::new();
@@ -316,6 +326,7 @@ impl<'a> ArgumentPassing<'a> {
                 self.declarations,
                 &call.target,
                 receiver_ty(receiver_place.as_deref(), *receiver, register_types),
+                call.refined_bound.as_deref(),
             )
             .map(|callee| {
                 let mut loaded = Vec::new();

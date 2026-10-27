@@ -414,8 +414,10 @@ impl Checker {
         {
             return true;
         }
-        if matches!(ty.kind(), TyKind::Struct(..) | TyKind::Param { .. })
-            || self.opaque_element(ty).is_some()
+        if matches!(
+            ty.kind(),
+            TyKind::Struct(..) | TyKind::Param { .. } | TyKind::Assoc { .. }
+        ) || self.opaque_element(ty).is_some()
         {
             return self.conforms_to(ty, "Writable");
         }

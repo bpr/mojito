@@ -44,14 +44,15 @@ impl Checker {
                 args,
                 span,
             )?;
-        } else if let TyKind::Param { bounds, .. } = obj_ty.kind() {
+        } else if let TyKind::Param { .. } = obj_ty.kind() {
+            let bounds = self.refined_bound(obj_ty).unwrap_or_default();
             // Abstract trait dispatch has no concrete body: replay the union
             // of effects over every conforming implementation of the method
             // — the whole-program dispatch set. The method-name pre-filter is
             // syntactic (round-stable), and one observation per conformer
             // key keeps the two-phase pass exact even for conformers whose
             // effects commit in a later round.
-            for key in self.dispatch_conformers(bounds, method) {
+            for key in self.dispatch_conformers(&bounds, method) {
                 self.apply_transfer_effects(&key, Some(object), args, span, &bindings)?;
                 self.apply_call_through_effects(
                     &key,

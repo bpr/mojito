@@ -851,6 +851,7 @@ fn sample_subscript_call() -> MirSubscriptCall {
             variadic: false,
             constraints: Vec::new(),
         }],
+        refined_bound: Some(vec!["Copyable".into(), "Sh".into()]),
     }
 }
 
@@ -975,6 +976,7 @@ fn instruction_families_reprint_byte_identically() {
                 flag: Reg(66),
                 error: Reg(67),
             }),
+            refined_bound: None,
         },
         MirInstr::Call {
             dest: Reg(10),
@@ -1073,6 +1075,7 @@ fn instruction_families_reprint_byte_identically() {
             param_decls: Vec::new(),
             instantiated_args: vec![TyArg::Ty(Ty::int())],
             spread: Some(0),
+            refined_bound: Some(crate::mir::MirRefinedBound::boxed(vec!["Sh".into()])),
         },
         MirInstr::PointerStorageTake {
             dest: Reg(13),
@@ -2658,6 +2661,7 @@ fn method_instantiated_arguments_round_trip_and_read_from_older_artifacts() {
                     param_decls: Vec::new(),
                     instantiated_args,
                     spread: None,
+                    refined_bound: None,
                 }],
             ),
         )])

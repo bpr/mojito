@@ -1285,6 +1285,7 @@ impl<'a> Flatten<'a> {
             param_decls: contract.param_decls.clone(),
             instantiated_args: Vec::new(),
             spread: None,
+            refined_bound: contract.refined_bound.clone().map(MirRefinedBound::boxed),
         });
         self.emit_nested_closure_argument_keepalives(&[operand.expression], &[]);
         self.error_region(raises);
@@ -1340,6 +1341,7 @@ impl<'a> Flatten<'a> {
             b: rhs,
             resolved: None,
             raises: None,
+            refined_bound: None,
         });
         self.emit_interior_invalidations(target, None);
         self.emit(MirInstr::WriteRef {
@@ -1369,6 +1371,7 @@ impl<'a> Flatten<'a> {
                 b: rhs.args[0],
                 resolved: None,
                 raises: None,
+                refined_bound: None,
             });
             return CValue::Value(result);
         };
@@ -2491,6 +2494,7 @@ impl<'a> Flatten<'a> {
                         b: rhs,
                         resolved: None,
                         raises: None,
+                        refined_bound: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     if self.runtime_aliases.contains(&var) && !self.pointer_valued_slot(var) {
@@ -2542,6 +2546,7 @@ impl<'a> Flatten<'a> {
                         b: rhs,
                         resolved: None,
                         raises: None,
+                        refined_bound: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::Store {
@@ -2568,6 +2573,7 @@ impl<'a> Flatten<'a> {
                         b: rhs,
                         resolved: None,
                         raises: None,
+                        refined_bound: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::WriteRef {
@@ -2599,6 +2605,7 @@ impl<'a> Flatten<'a> {
                         b: rhs,
                         resolved: None,
                         raises: None,
+                        refined_bound: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::WriteRef {
@@ -2623,6 +2630,7 @@ impl<'a> Flatten<'a> {
                         b: rhs,
                         resolved: None,
                         raises: None,
+                        refined_bound: None,
                     });
                     self.emit_interior_invalidations(place, None);
                     self.emit(MirInstr::Store { place: p, src: res });
@@ -2908,6 +2916,7 @@ impl<'a> Flatten<'a> {
                     })
                     .collect(),
                 param_decls: extraction.param_decls.clone(),
+                refined_bound: None,
             });
             let intrinsic = call
                 .is_none()
@@ -3784,6 +3793,7 @@ impl<'a> Flatten<'a> {
             param_decls: Vec::new(),
             instantiated_args: Vec::new(),
             spread: None,
+            refined_bound: None,
         });
         self.error_region(raises);
         self.emit(MirInstr::DefVar {
@@ -3836,6 +3846,7 @@ impl<'a> Flatten<'a> {
             param_decls: Vec::new(),
             instantiated_args: Vec::new(),
             spread: None,
+            refined_bound: None,
         });
         self.error_region(raises);
         self.emit(MirInstr::DefVar {

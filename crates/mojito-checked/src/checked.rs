@@ -178,6 +178,14 @@ pub struct CheckedCallContract {
     pub parameter_arguments: Vec<CheckedCallParameterArgument>,
     pub param_decls: Vec<mojito_types::types::ParamDecl>,
     pub boundary: CheckedCallBoundary,
+    /// The bound a call through an archetype receiver was selected by when
+    /// it differs from what the receiver's type spells: a type parameter
+    /// refined by the scope's `where` clauses or `comptime if` conditions,
+    /// or an associated projection. Upstream rebinds such a receiver to
+    /// the downcast type `downcast(T, Traits)` (`maybeRefineParamType`);
+    /// later phases find the requirement the call names through it.
+    #[serde(default)]
+    pub refined_bound: Option<Vec<String>>,
 }
 
 /// The operation selected for `receiver[index] OP= rhs`.

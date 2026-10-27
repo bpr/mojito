@@ -1037,6 +1037,7 @@ impl<'a> Flatten<'a> {
             reference_result: contract.reference_result,
             param_arg_regs,
             param_decls: contract.param_decls,
+            refined_bound: contract.refined_bound,
         }
     }
 

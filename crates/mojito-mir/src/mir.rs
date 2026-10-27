@@ -4439,6 +4439,7 @@ impl<'a> Flatten<'a> {
                 b,
                 resolved: None,
                 raises: None,
+                refined_bound: None,
             });
             accumulated = dest;
         }

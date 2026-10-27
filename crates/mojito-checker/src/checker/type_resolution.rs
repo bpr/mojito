@@ -754,7 +754,9 @@ impl Checker {
                     CtMemberReq::Type { params, .. } if !params.is_empty() => Some(params.clone()),
                     _ => None,
                 }),
-            TyKind::Param { bounds, .. } => self.lookup_trait_assoc_params(bounds, name),
+            TyKind::Param { .. } => {
+                self.lookup_trait_assoc_params(&self.refined_bound(base_ty)?, name)
+            }
             // A concrete struct that instantiates the member: its parameter list
             // comes from the struct's own parameterized definition, so an
             // application such as a conformer's `Self.IteratorType[origin_of(self)]`
@@ -2182,8 +2184,9 @@ impl Checker {
                 // every kind; the instance binds them all at once.
                 Ok(self.resolve_assoc_ty(&substitute_at(ty, info, targs)))
             }
-            TyKind::Param { bounds, .. } => {
-                if self.lookup_trait_assoc_type(bounds, name).is_some() {
+            TyKind::Param { .. } => {
+                let bounds = self.refined_bound(base).unwrap_or_default();
+                if self.lookup_trait_assoc_type(&bounds, name).is_some() {
                     Ok(TyKind::Assoc {
                         base: base.clone(),
                         name: name.to_string(),

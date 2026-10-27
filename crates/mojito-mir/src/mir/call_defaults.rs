@@ -784,6 +784,7 @@ fn build_keyword_collector(
             param_decls: Vec::new(),
             instantiated_args: Vec::new(),
             spread: None,
+            refined_bound: None,
         });
     }
     let passed = fresh_register(function, ty, location);

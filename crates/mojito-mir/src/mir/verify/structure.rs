@@ -1423,6 +1423,7 @@ mod tests {
             b: Reg(2),
             resolved: None,
             raises: Some(raises),
+            refined_bound: None,
         }];
         instrs.extend(after);
         let mut function = function_with(instrs);

@@ -776,11 +776,14 @@ impl Checker {
     /// bound as the call `x.__iadd__(y)` would. A parameter whose bounds do
     /// not keeps the builtin operator path.
     pub(super) fn bound_inplace_operator(&self, ty: &Ty, op: InfixOp) -> bool {
-        let TyKind::Param { bounds, .. } = ty.kind() else {
+        let Some(bounds) = self
+            .refined_bound(ty)
+            .filter(|_| matches!(ty.kind(), TyKind::Param { .. }))
+        else {
             return false;
         };
         op.inplace_dunder()
-            .is_some_and(|dunder| !self.lookup_trait_methods(bounds, dunder, 1).is_empty())
+            .is_some_and(|dunder| !self.lookup_trait_methods(&bounds, dunder, 1).is_empty())
     }
 
     /// Select the in-place dunder (`__iadd__`, …) for `receiver OP= value` on a

@@ -114,6 +114,7 @@ impl Checker {
                 parameter_arguments,
                 param_decls: resolved.param_decls.clone(),
                 boundary,
+                refined_bound: resolved.refined_bound.clone(),
             }));
     }
 

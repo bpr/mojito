@@ -3441,12 +3441,13 @@ impl Checker {
         let mojito_types::param_expr::ParamKind::TypeShape(subject) = subject.kind() else {
             return None;
         };
-        let TyKind::Param { bounds, .. } = subject.kind() else {
+        if !matches!(subject.kind(), TyKind::Param { .. }) {
             return None;
-        };
+        }
+        let bounds = self.refined_bound(subject)?;
         let declared = args
             .is_empty()
-            .then(|| self.lookup_trait_assoc_value_ty(bounds, name))
+            .then(|| self.lookup_trait_assoc_value_ty(&bounds, name))
             .flatten()?;
         let TyKind::ParamList(element) = declared.kind() else {
             return None;
