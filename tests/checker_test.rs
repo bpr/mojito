@@ -8217,11 +8217,11 @@ fn augmented_assignment_dispatches_through_a_bounds_inplace_dunder() {
 
 #[test]
 fn mlir_op_outside_the_bundled_library_is_rejected() {
-    // The pin accepts `__mlir_op` in user code; Mojito admits only
-    // `lit.ownership.mark_initialized` and `lit.ownership.mark_destroyed` in
-    // the bundled modules that reach
-    // compiler-private storage, so a user initializer's spelling is a
-    // subset rejection, not a divergence fixture.
+    // The pin accepts `__mlir_op` in user code; Mojito admits
+    // `lit.ownership.mark_initialized` and `lit.ownership.mark_destroyed`
+    // only in the bundled modules that reach compiler-private storage, so a
+    // user initializer's spelling is a subset rejection, not a divergence
+    // fixture.
     let error = err(
         "struct Box(Movable):\n    var a: Int\n\n    def __init__(out self):\n        __mlir_op.`lit.ownership.mark_initialized`(__get_mvalue_as_litref(self.a))\n        Pointer(to=self.a).unsafe_write(1)\n\ndef main():\n    var x = Box()\n    print(x.a)\n",
     );
@@ -8233,6 +8233,78 @@ fn mlir_op_outside_the_bundled_library_is_rejected() {
         ),
         "{error}"
     );
+}
+
+#[test]
+fn pop_and_index_ops_type_as_their_verifiers_do() {
+    // `pop` arithmetic keeps its operands' `!kgen.simd` type, `pop.cmp`
+    // gives the mask, `pop.cast` and `pop.simd.splat` the `_type` they
+    // name, and an `index` op takes and gives `__mlir_type.index` values.
+    ok(
+        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var s: SIMD[DType.int32, 4] = __mlir_op.`pop.add`(a._mlir_value, a._mlir_value)\n    var m: SIMD[DType.bool, 4] = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<lt>`](a._mlir_value, s._mlir_value)\n    var f: SIMD[DType.float32, 4] = __mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type, fastmathFlags=__mlir_attr.`#pop.fmf<fast>`](a._mlir_value)\n    var t: SIMD[DType.float32, 4] = __mlir_op.`pop.simd.splat`[_type=SIMD[DType.float32, 4]._mlir_type](Float32(2.5)._mlir_value)\n    var x = Int(3).__mlir_index__()\n    var y: Int = __mlir_op.`index.add`(x, x)\n    var b: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<slt>`](x, y)\n    print(s, m, f, t, y, Bool(value=b))\n",
+    );
+}
+
+#[test]
+fn pop_and_index_ops_outside_the_subset_are_rejected() {
+    // Each of these the pin accepts: an op outside the admitted set, an
+    // unsigned `index` predicate, a cast to `bool` lanes (`trunc` to `i1`),
+    // and a bitwise op over float lanes.
+    for (source, message) in [
+        (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.max`(a._mlir_value, a._mlir_value)))\n",
+            "'__mlir_op.`pop.max`' is outside the subset",
+        ),
+        (
+            "def main():\n    var x = Int(3).__mlir_index__()\n    print(Bool(value=__mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<ult>`](x, x)))\n",
+            "is not a predicate Mojito admits here",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.bool, 2](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.bool, 2]._mlir_type](a._mlir_value)))\n",
+            "'pop.cast' to or from 'bool' lanes is outside the subset",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.float32, 2](1, 2)\n    print(SIMD[DType.float32, 2](mlir_value=__mlir_op.`pop.simd.and`(a._mlir_value, a._mlir_value)))\n",
+            "'pop.simd.and' over float lanes is outside the subset",
+        ),
+    ] {
+        let error = err(source);
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+
+#[test]
+fn pop_and_index_op_verifier_errors_are_rejected() {
+    // The pin's verifier rejects each of these.
+    for (source, message) in [
+        (
+            "def main():\n    var a = SIMD[DType.bool, 2](True, False)\n    print(SIMD[DType.bool, 2](mlir_value=__mlir_op.`pop.add`(a._mlir_value, a._mlir_value)))\n",
+            "element type is integer or float dtype",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.float32, 2](1, 2)\n    print(SIMD[DType.float32, 2](mlir_value=__mlir_op.`pop.shl`(a._mlir_value, a._mlir_value)))\n",
+            "element type is integral dtype",
+        ),
+        (
+            "def main():\n    var y = Int32(3)\n    print(Int(mlir_value=__mlir_op.`index.add`(y._mlir_value, y._mlir_value)))\n",
+            "op operand #0 must be index",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.add`[pred=__mlir_attr.`#kgen.cmp_pred<lt>`](a._mlir_value, a._mlir_value)))\n",
+            "attribute 'pred' is not an inherent attribute of 'pop.add'",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.add`[fastmathFlags=__mlir_attr.`#pop.fmf<bogus>`](a._mlir_value, a._mlir_value)))\n",
+            "attribute 'fastmathFlags' takes one '#pop.fmf<flag>' attribute",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.float32, 2](1, 2)\n    print(SIMD[DType.float32, 4](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type](a._mlir_value)))\n",
+            "are cast incompatible",
+        ),
+    ] {
+        let error = err(source);
+        assert!(error.to_string().contains(message), "{error}");
+    }
 }
 
 #[test]

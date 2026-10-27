@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `__mlir_op` now admits upstream's `pop` ops (`add`, `sub`, `mul`, `div`,
+  `floordiv`, `rem`, `neg`, `abs`, `shl`, `shr`, `cmp`, `cast`,
+  `simd.splat`, `simd.and`/`or`/`xor`, the rounding ops, and `fma`) over
+  `!kgen.simd` storage and its `index` ops (`add`, `sub`, `mul`, `divs`,
+  `and`, `shrs`, `cmp`) over `__mlir_type.index`, with their `pred`,
+  `fastmathFlags`, and `_type` attributes, typed as upstream's verifiers
+  type them and run on the VM and natively, so upstream's `SIMD` and
+  `SIMDLength` operator bodies can be written (R1392). `Bool(value=b)` reads
+  an `index.cmp` result, `SIMD[dt, n]._mlir_type` names the storage type,
+  and float `SIMD` lanes take `//`. MIR schema 1.119 adds the `pop`
+  instruction, and the package format moves to `mojito-package 117`.
 - ``__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value,
   `>`]``, upstream's `SIMD` storage type, now declares a field or parameter
   over a `SIMDLength` and a `DType` parameter, and `v._mlir_value` and

@@ -208,7 +208,16 @@ impl Checker {
                 && simd_slots(&ty).is_some() =>
             {
                 self.record_bracket_attributes(span.clone(), attributes);
-                self.infer_simd_storage_construction(span, name, &ty, &kwargs[0])
+                self.infer_storage_construction(span, name, &ty, &kwargs[0])
+            }
+            // `Bool(value=b)`: upstream's initializer from an `i1`, which
+            // Mojito holds as the `Bool` itself.
+            "Bool"
+                if args.is_empty()
+                    && param_args.is_empty()
+                    && matches!(kwargs, [keyword] if keyword.name == "value") =>
+            {
+                self.infer_storage_construction(span, name, &Ty::bool(), &kwargs[0])
             }
             // `SIMD[DType.bool, N](fill=b)`: a mask's splat takes its one
             // lane by keyword.
@@ -708,11 +717,11 @@ impl Checker {
         Ok(ty.clone())
     }
 
-    /// `Name(mlir_value=v)` on a SIMD type: upstream's initializer from the
-    /// `!kgen.simd` storage, which is the vector itself, so the argument
-    /// must already be a value of the type, never a literal or another
-    /// width or dtype converted to it.
-    fn infer_simd_storage_construction(
+    /// `Name(mlir_value=v)` on a SIMD type, or `Bool(value=b)`: upstream's
+    /// initializer from the `!kgen.simd` storage or the `i1`, which is the
+    /// value itself, so the argument must already be a value of the type,
+    /// never a literal or another width or dtype converted to it.
+    fn infer_storage_construction(
         &self,
         span: SourceSpan,
         name: &str,
@@ -728,7 +737,7 @@ impl Checker {
                 } else {
                     "a literal".to_string()
                 },
-                context: format!("argument 'mlir_value' of '{name}'"),
+                context: format!("argument '{}' of '{name}'", storage.name),
             });
         }
         self.record_at(span).adjustment = Some(Box::new(

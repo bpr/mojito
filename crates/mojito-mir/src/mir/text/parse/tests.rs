@@ -1253,6 +1253,16 @@ fn instruction_families_reprint_byte_identically() {
             width: mojito_types::types::SimdWidth::Known(4),
             elems: vec![Reg(1), Reg(2), Reg(3), Reg(4)],
         },
+        MirInstr::Pop {
+            dest: Reg(35),
+            op: mojito_types::mlir::PopOp::Rem,
+            operands: vec![Reg(1), Reg(2)],
+        },
+        MirInstr::Pop {
+            dest: Reg(35),
+            op: mojito_types::mlir::PopOp::Fma,
+            operands: vec![Reg(1), Reg(2), Reg(3)],
+        },
         MirInstr::SimdCast {
             dest: Reg(36),
             value: Reg(35),

@@ -904,6 +904,14 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("target", target.name().into()),
             ],
         ),
+        MirInstr::Pop { dest, op, operands } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("op", op.mnemonic().into()),
+                ("operands", regs(operands)),
+            ],
+        ),
         MirInstr::UseVar {
             dest,
             var,

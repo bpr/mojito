@@ -1113,6 +1113,10 @@ pub enum SemanticAdjustment {
     /// (`Tuple.consume_elements`). MIR carries it as `MarkDestroyed` over
     /// the place.
     MarkDestroyed,
+    /// An `__mlir_op` `pop` or `index` op over `!kgen.simd` storage or
+    /// `index` values (`__mlir_op.`pop.add`(a, b)`). MIR lowers it to the
+    /// instruction [`mojito_types::mlir::MlirOp::lowering`] names.
+    MlirOp(mojito_types::mlir::MlirOp),
     /// A sugar written as the construction it stands for: an initializer
     /// list `{}` / `{a, b}` at the type its context expects (upstream's
     /// set-initializer literal, emitted as the construction `T(a, b)` of that

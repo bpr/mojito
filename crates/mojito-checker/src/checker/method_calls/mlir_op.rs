@@ -1,7 +1,8 @@
 //! The `__mlir_op` forms Mojito admits: upstream's
 //! `lit.ownership.mark_initialized` and `lit.ownership.mark_destroyed` over a
 //! place, which the bundled standard library spells before writing a value's
-//! storage through pointers and after moving it out through them.
+//! storage through pointers and after moving it out through them, and the
+//! `pop` and `index` ops of `pop_ops.rs`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -13,8 +14,8 @@ impl Checker {
     /// storage through pointers (`Tuple.__init__`); the second ends its
     /// value without destroying it, after its storage was moved out through
     /// pointers (`Tuple.consume_elements`). Each is accepted only in the
-    /// bundled modules that reach compiler-private storage; every other
-    /// `__mlir_op` spelling, and these elsewhere, is rejected. The
+    /// bundled modules that reach compiler-private storage. Every other
+    /// spelling is a `pop` or `index` op ([`Self::infer_pop_op`]). The
     /// statement's checked record is `SemanticAdjustment::MarkInitialized`
     /// or `SemanticAdjustment::MarkDestroyed`.
     pub(super) fn infer_mlir_op(
@@ -25,6 +26,9 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         const INITIALIZED: &str = "lit.ownership.mark_initialized";
         const DESTROYED: &str = "lit.ownership.mark_destroyed";
+        if !matches!(method, INITIALIZED | DESTROYED) {
+            return self.infer_pop_op(span, method, call);
+        }
         let MethodCallArguments {
             param_args,
             args,
@@ -37,8 +41,7 @@ impl Checker {
                  '__get_mvalue_as_litref(place)' in the bundled standard library"
             ))
         };
-        if !matches!(method, INITIALIZED | DESTROYED)
-            || !param_args.is_empty()
+        if !param_args.is_empty()
             || !kwargs.is_empty()
             || !super::super::overload_support::is_bundled_private_storage_source(
                 span.source.as_deref(),

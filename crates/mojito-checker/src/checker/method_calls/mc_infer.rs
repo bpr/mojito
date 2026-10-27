@@ -69,8 +69,8 @@ impl Checker {
             param_args,
             ..
         } = call;
-        // `__mlir_op.`...`(...)` names no value: the one admitted operation
-        // is a statement over a place.
+        // `__mlir_op.`...`(...)` names no value: an ownership marker over a
+        // place, or a `pop` or `index` op.
         if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_op") {
             return self.infer_mlir_op(span, method, call);
         }

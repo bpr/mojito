@@ -293,6 +293,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::ConstructType { .. } => "ConstructType",
         MirInstr::MaterializeLiteral { .. } => "MaterializeLiteral",
         MirInstr::ScalarCast { .. } => "ScalarCast",
+        MirInstr::Pop { .. } => "Pop",
         MirInstr::UseVar { .. } => "UseVar",
         MirInstr::MovePlace { .. } => "MovePlace",
         MirInstr::DefVar { .. } => "DefVar",

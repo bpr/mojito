@@ -48,6 +48,9 @@ impl<'a> Flatten<'a> {
             });
             return self.static_method_call(call, &target, None, Some(object), args, kwargs);
         }
+        if let Some(op) = Self::checked_mlir_op(call) {
+            return self.lower_mlir_op(call, op, args);
+        }
         if let Some(dest) = self.method_call_value_form(call, object, method, args, kwargs) {
             return dest;
         }

@@ -400,6 +400,11 @@ impl Decoder {
                 value: self.req(value, fields, "value", Self::reg)?,
                 target: self.req(value, fields, "target", Self::scalar_conversion)?,
             }),
+            "pop" => Some(MirInstr::Pop {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                op: self.req(value, fields, "op", Self::pop_op)?,
+                operands: self.req(value, fields, "operands", |d, v| Some(d.regs(v)))?,
+            }),
             "var.use" => Some(MirInstr::UseVar {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 var: self.req(value, fields, "var", Self::var)?,

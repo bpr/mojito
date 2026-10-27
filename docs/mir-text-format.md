@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.118
+mojito-mir 1.119
 ```
 
-The writer emits 1.118. The reader accepts 1.0 through 1.118; *Schema 1.0*
+The writer emits 1.119. The reader accepts 1.0 through 1.119; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -689,6 +689,15 @@ backend; the elaborator still turns one over a type parameter into the cast
 or, at a struct, into the conversion dunder's `call.method`. The checked
 `ScalarCast` adjustment records the conversion, and the package format
 moves to `mojito-package 116`.
+
+Schema 1.119 adds `pop { dest, op, operands }`, an upstream `pop` lane op
+no built-in operator computes: `op` is `div` or `rem` (truncating; also
+`index.divs`), `abs` (wrapping), `round` (half to even), `floor`, `ceil`,
+`trunc` (the identity on integer lanes), or `fma`, over operands of the
+destination's SIMD type (R1392). The other admitted `__mlir_op` `pop` and
+`index` ops lower to `binary`, `unary`, `simd.make`, and `simd.cast`. The
+checked `MlirOp` adjustment records the op, and the package format moves to
+`mojito-package 117`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1414,6 +1423,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`: a capture is a `reference` or a lambda's storage moved in) |
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
+| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, or `fma`, taking 2, 2, 1, 1, 1, 1, 1, or 3 operands of the destination's SIMD type; an integer division by zero traps |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
 | `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |

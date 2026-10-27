@@ -446,6 +446,9 @@ impl<'a> Flatten<'a> {
         if let Some(dest) = self.pack_element_construction(call) {
             return dest;
         }
+        if let Some(op) = Self::checked_mlir_op(call) {
+            return self.lower_mlir_op(call, op, args);
+        }
         // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
         // runtime value is the receiver, unchanged, and the origin
         // parameter argument never lowers (origins erase).

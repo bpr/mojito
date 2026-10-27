@@ -2284,6 +2284,9 @@ impl Checker {
                 args: args.to_vec(),
             }
             .into()),
+            // A vector's `!kgen.simd` storage type, which is the vector
+            // itself, as its `_mlir_value` is.
+            TyKind::Simd { .. } if name == "_mlir_type" && args.is_empty() => Ok(base.clone()),
             _ => Err(TypeError::NoSuchAssociatedType {
                 object_type: base.to_string(),
                 member: name.to_string(),

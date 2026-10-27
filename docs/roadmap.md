@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1516**.
+Next free ID: **R1519**.
 
 ## Ordered Work
 
@@ -904,6 +904,28 @@ which names the upstream pass each one follows. Each is measured by the
     `Bindings` clone per step in `Specializer::trip_elements`.
   - Release numbers were not measured.
   - Found while landing R791 (2026-10-14).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1518 A method that constructs its own struct through an
+  overloaded initializer over a parameter-dependent type fails
+  elaboration**
+
+  `struct L[n: Int]` with `__init__(out self, value: String)` and
+  `__init__(out self, *, raw: SIMD[DType.int32, Self.n])`, whose method
+  `again` returns `L[Self.n](raw=SIMD[DType.int32, Self.n](self.v))`, fails
+  with "keeps compile-time argument slots in elaborated MIR after
+  monomorphization", where the pin runs it.
+  - One keyword-only initializer works, and so does an overload whose
+    parameter type names no struct parameter (`raw: Int`, `raw: List[Int]`).
+  - The same construction from `main` works, so only the template's call
+    keeps its slots.
+  - `drop_parameter_slots` (`native/mono/specializer.rs`) keeps every slot
+    of a call when one still holds a run-time register, and the concrete
+    verifier then reports them.
+  - Upstream's `SIMD` overloads `__init__` over `Self`-dependent types and
+    constructs itself in its methods, so R1397 needs this.
+  - Found while planning R1392 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9336,6 +9358,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `stdlib/`.
   - Port it as a library struct over its `i1` storage, the way R1157 and
     R1158 port the slices.
+  - Upstream's bodies need `__mlir_type.i1` as a type of its own,
+    `Bool(mlir_value=)`, `pop.cast_from_builtin` and `pop.cast_to_builtin`
+    between `i1` and `!kgen.scalar<bool>`, and typed attribute constants
+    (``__mlir_attr.`#kgen.simd<true> : !kgen.scalar<bool>` ``). Today `i1`
+    is the `Bool` itself, read by the stand-in `Bool(value=b)`.
   - The planning session splits it into chained one-session entries if
     one session cannot land it.
   - Found while planning R1132 (2026-10-20).
@@ -9389,23 +9416,51 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1392 `__mlir_op` admits no `pop` or `index` op, so no `SIMD`
-  operator body can be written**
+- [ ] **R1516 `index` and `!kgen.scalar<index>` are both `Int`, so the
+  builtin casts between them cannot be typed**
 
-  `checker/method_calls/mlir_op.rs` accepts only the two ownership markers,
-  where upstream's `SIMD`, `SIMDLength`, and `Bool` bodies are made of `pop`
-  and `index` ops.
-  - The ops: `pop.add`, `sub`, `mul`, `div`, `floordiv`, `rem`, `neg`,
-    `abs`, `shl`, `shr`, `pop.cmp`, `pop.cast`, `pop.simd.splat`,
-    `pop.simd.and`, `or`, `xor`, the rounding ops, `fma`, and `index.*`.
-  - Type each one over `!kgen.simd` operands, and lower them to the existing
-    `BinOp`, `UnOp`, and `MakeSimd` and to R857's cast instruction.
-  - Accept `__mlir_attr` for `#kgen.cmp_pred<...>` and `#pop.fmf<...>`.
-  - Keep the forms bundled-only, as the ownership markers are.
-  - Compute float `floordiv` and `rem` in the VM, R850's backend half.
-  - Depends on R1391 (the operand type) and R857 (the cast instruction
-    `pop.cast` lowers to).
+  Mojito types `__mlir_type.index`, an `Int`'s `_mlir_value`
+  (`!kgen.scalar<index>`), and the `Int` itself as one type, where upstream
+  converts between the builtin `index` and the `!kgen.scalar` storage with
+  `pop.cast_from_builtin` and `pop.cast_to_builtin`.
+  - Probe: upstream's `SIMD.__init__(Int)` and `SIMD.__int__`
+    (`std/simd.mojo`) and `SIMDLength.__init__`
+    (`std/builtin/simd_length.mojo`) spell the two casts, which are rejected
+    as outside the subset.
+  - Probe: ``__mlir_op.`index.add`(a._mlir_value, a._mlir_value)`` over an
+    `Int` `a = 7` prints `14`, where the pin rejects "'index.add' op operand
+    #0 must be index, but got '!kgen.scalar<index>'".
+  - Probe: ``__mlir_op.`pop.add`(x, x)`` over `x = Int(7).__mlir_index__()`
+    prints `14`, where the pin rejects "'pop.add' op operand #0 must be SIMD
+    type ... but got 'index'".
+  - Lever: give `index` a `TyKind` of its own, which both backends hold as
+    the `Int` they hold today. Type the two casts in
+    `checker/method_calls/pop_ops.rs` and lower them as copies.
+  - Found while landing R1392 (2026-10-27).
+  - Depends on R1392.
   - Model: Fable, Not Planned.
+
+- [ ] **R1517 `pop.max`, `pop.min`, `bool`-lane casts, unsigned `index`
+  compares, and float bit logic have no MIR instruction**
+
+  The admitted `__mlir_op` set stops where no MIR instruction computes the
+  op with the pin's semantics, so these are rejected as outside the subset.
+  - Probe: upstream's `std/math` SIMD `max` and `min` spell `pop.max` and
+    `pop.min`, rejected as outside the subset.
+  - Probe: `pop.cast` to `bool` lanes truncates to `i1` at the pin
+    (`SIMD[DType.int32, 2](0, 4)` casts to `[False, False]`), where
+    `simd.cast` tests for nonzero. The checker rejects a cast to or from
+    `bool` lanes.
+  - Probe: `index.cmp` with `#index.cmp_predicate<ult>` (upstream's
+    `_plugin/selector.mojo`) is rejected, since `binary` compares an `Int`
+    signed.
+  - Probe: `pop.simd.and` over `float32` lanes `[-3.0, 4.0]` prints them
+    unchanged at the pin, a bitwise op over the lane bits, and is rejected.
+  - Lever: add each to `PopOp` (`mojito_types::mlir`), with its lanes in
+    `pop_int_lane`/`pop_float_lane` and Pliron's `lower_pop`.
+  - Found while landing R1392 (2026-10-27).
+  - Depends on R1392.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1393 `SIMD`'s lane ops are host methods, where upstream's are
   `pop.simd` ops**
@@ -9512,13 +9567,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     SIMD[DType.int32, 2])` and `Int(mlir_value=n)` over an `Int` `n` run,
     where the pin rejects a `!kgen.simd` passed as `SIMD` and `SIMD` passed
     as storage. The port's distinct struct type closes both.
+  - Probe: ``__mlir_op.`pop.add`(a, a)`` over a `SIMD` value `a`, not its
+    `_mlir_value`, runs, where the pin rejects "'pop.add' op operand #0
+    must be SIMD type ... but got '!lit.struct<...SIMD...>'". The same
+    distinct struct type closes it.
+  - Every upstream body constructs through `Self(mlir_value=...)` (R58)
+    and overloads `__init__` over `Self`-dependent parameter types (R1518).
   - Probe (from R1109): the hash leaf reaches `__hash__` and a hasher's
     `_update_with_simd` from the value's type
     (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores;
     upstream's `SIMD.__hash__` calls `_update_with_simd` in library code.
   - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R336 (the length
-    type), and R185 and R186 (so the port is upstream's bodies with no
-    leniency).
+    type), R185 and R186 (so the port is upstream's bodies with no
+    leniency), R58, R1516, R1517, and R1518.
   - Model: Fable, Planned.
 
 - [ ] **R1398 The checker, VM, and Pliron keep `SIMD` member rules no
@@ -9793,8 +9854,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Upstream's `SIMDLength` is a struct over `index` ops whose arithmetic
     must fold in a parameter expression, so the `index` ops (R1392) and
     the builtin fold (R1395) land first.
+  - Its `__init__` casts an `index` to its storage with
+    `pop.cast_to_builtin` (R1516).
   - Found while landing R259 (2026-10-05).
-  - Depends on R1392 and R1395.
+  - Depends on R1392, R1395, and R1516.
   - Model: Fable, Not Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string
@@ -11117,13 +11180,16 @@ residue found inside a task moves to the task that owns its fix.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R850 Float SIMD `//` and `%` are rejected**
+- [ ] **R850 Float SIMD `%` is rejected**
 
-  Problem: `Float32(7.5) // Float32(2.0)` fails with "operator '//' is not
-  defined for Float32 and Float32", while the pin prints `3.0`, and `%`
-  prints `1.5`.
-  - Once the VM computes them, add them to `ct::float_lane_binop`, so
-    `sccp` folds them too.
+  Problem: `Float32(7.5) % Float32(2.0)` fails with "operator '%' is not
+  defined for Float32 and Float32", while the pin prints `1.5`.
+  - Float `//` runs, as upstream's `pop.floordiv` (R1392).
+  - Upstream's float `__mod__` is a library body in `std/simd.mojo`: the
+    quotient truncated, then `self - div * rhs`, plus `rhs` when the signs
+    differ. Each step rounds to the lane.
+  - Once the VM computes it, add it to `ct::float_lane_binop`, so `sccp`
+    folds it too.
   - Found while landing R846 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.

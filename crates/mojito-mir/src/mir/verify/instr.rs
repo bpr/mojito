@@ -82,6 +82,7 @@ pub(super) fn verify_instruction(
             value,
             target,
         } => verify_scalar_cast(&cx, *dest, *value, *target, errors),
+        MirInstr::Pop { dest, op, operands } => verify_pop(&cx, *dest, *op, operands, errors),
         MirInstr::MaterializeLiteral { .. }
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::ConstructType { .. }
@@ -1071,6 +1072,45 @@ fn parameter_binds(
 
 /// A `scalar.cast` reads a value its target `casts_from` and defines a
 /// register of the target type.
+/// A `pop` lane op takes its arity's operands, each of the destination's
+/// SIMD type when both are typed.
+fn verify_pop(
+    cx: &InstrCx<'_>,
+    dest: Reg,
+    op: mojito_types::mlir::PopOp,
+    operands: &[Reg],
+    errors: &mut Vec<String>,
+) {
+    let prefix = cx.prefix;
+    if operands.len() != op.arity() {
+        errors.push(format!(
+            "{prefix}: pop.{} takes {} operand(s), got {}",
+            op.mnemonic(),
+            op.arity(),
+            operands.len()
+        ));
+    }
+    let Some(result) = cx.reg_ty(dest) else {
+        return;
+    };
+    if mojito_types::types::simd_slots(result.kind()).is_none() {
+        errors.push(format!(
+            "{prefix}: pop.{} defines a register of the non-SIMD type {result}",
+            op.mnemonic()
+        ));
+    }
+    for operand in operands {
+        if let Some(found) = cx.reg_ty(*operand)
+            && found != result
+        {
+            errors.push(format!(
+                "{prefix}: pop.{} operand of type {found} where its result is {result}",
+                op.mnemonic()
+            ));
+        }
+    }
+}
+
 fn verify_scalar_cast(
     cx: &InstrCx<'_>,
     dest: Reg,

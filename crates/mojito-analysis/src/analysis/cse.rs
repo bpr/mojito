@@ -284,6 +284,7 @@ impl Table<'_> {
             MirInstr::Const { .. }
             | MirInstr::MaterializeLiteral { .. }
             | MirInstr::ScalarCast { .. }
+            | MirInstr::Pop { .. }
             | MirInstr::SizeOf { .. }
             | MirInstr::TypeName { .. }
             | MirInstr::ParamListAddress { .. }

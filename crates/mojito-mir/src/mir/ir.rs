@@ -990,6 +990,11 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         }
         MirInstr::MakeTuple { dest, elems, .. }
         | MirInstr::MakeSimd { dest, elems, .. }
+        | MirInstr::Pop {
+            dest,
+            operands: elems,
+            ..
+        }
         | MirInstr::MakeArray { dest, elems }
         | MirInstr::MakeStruct {
             dest,
@@ -2076,6 +2081,17 @@ pub enum MirInstr {
         value: Reg,
         target: ScalarConversion,
     },
+    /// An upstream `pop` lane op no built-in operator computes, over
+    /// `operands` of the destination's type: `pop.div` and `pop.rem`
+    /// (truncating; `index.divs`), `pop.abs` (wrapping), `pop.round` (half
+    /// to even), `pop.floor`, `pop.ceil`, `pop.trunc` (the identity on
+    /// integer lanes), and `pop.fma`. Each lane is `mlir::pop_int_lane` or
+    /// `mlir::pop_float_lane`; an integer division by zero traps.
+    Pop {
+        dest: Reg,
+        op: PopOp,
+        operands: Vec<Reg>,
+    },
     /// `x`, `x^`, `borrow x`, … — a use of a variable, tagged with how (`mode`).
     /// `constructor` names the `__copyinit__` a copy runs or the
     /// `__moveinit__` a move runs, as upstream's copy/move insertion names it
@@ -2957,6 +2973,8 @@ impl MirInstr {
             | Self::SimdCast { .. }
             | Self::SimdBitcast { .. }
             | Self::SimdShuffle { .. } => true,
+            // An integer division by zero traps.
+            Self::Pop { op, .. } => !matches!(op, PopOp::Div | PopOp::Rem),
             // A closure of reference captures is a struct of pointers to
             // the captured places, as upstream's trivially register-passable
             // closure is; a moved capture runs its constructor.

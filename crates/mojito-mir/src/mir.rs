@@ -38,6 +38,7 @@ use mojito_common::token::{DUMMY_SPAN, SourceSpan};
 use mojito_hir::hir::{self, Cfg, HirInstr, Terminator, VarId};
 use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::ct::{CtValue, ScalarConversion};
+use mojito_types::mlir::PopOp;
 use mojito_types::param_expr::fold::integer_value;
 use mojito_types::param_expr::{ParamContext, ParamExpr};
 use mojito_types::types::TyKind;

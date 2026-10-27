@@ -109,6 +109,15 @@ simple_stmt:
 # compiler-private storage (`Tuple.__init__`, `Tuple.consume_elements`).
 mlir_op_stmt: '__mlir_op' '.' mlir_ownership_op '(' '__get_mvalue_as_litref' '(' expression ')' ')'
 mlir_ownership_op: '`lit.ownership.mark_initialized`' | '`lit.ownership.mark_destroyed`'
+# Any other `__mlir_op` form is an expression, an ordinary call of a stropped
+# member of `__mlir_op` with named attributes in brackets. The checker admits
+# upstream's `pop` ops (`add sub mul div floordiv rem neg abs shl shr cmp cast
+# simd.splat simd.and simd.or simd.xor round floor ceil trunc fma`) and `index`
+# ops (`add sub mul divs and shrs cmp`), with the attributes `pred`,
+# `fastmathFlags`, and `_type`; every other name is rejected.
+mlir_op_expr: '__mlir_op' '.' NAME ['[' mlir_op_attr (',' mlir_op_attr)* ']'] '(' [expression (',' expression)*] ')'
+mlir_op_attr: NAME '=' (mlir_attr | type)
+mlir_attr: '__mlir_attr' '.' NAME
 
 compound_stmt:
     | function_def

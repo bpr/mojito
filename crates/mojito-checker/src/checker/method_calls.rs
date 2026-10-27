@@ -12,6 +12,7 @@ mod call_contract;
 mod intrinsic_receivers;
 mod mc_infer;
 mod mlir_op;
+mod pop_ops;
 mod receiver_effects;
 mod resolution;
 mod selection;

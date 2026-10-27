@@ -15,6 +15,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::mlir::PopOp;
 use mojito_types::types::TyKind;
 
 impl FnLowering<'_> {
@@ -705,6 +706,13 @@ impl FnLowering<'_> {
             return Ok(());
         }
         let result = match lane_ty {
+            // `pop.floordiv`: the floor of the lane-rounded quotient.
+            _ if op == InfixOp::FloorDiv && dtype.is_float() => {
+                let quotient = self.lower_simd_float_quotient(ctx, lhs, rhs, dtype, width, dest)?;
+                let floor = format!("llvm.floor.{}", simd_mangle(dtype, width));
+                let vector_ty = quotient.get_type(ctx);
+                self.float_intrinsic(ctx, &floor, vector_ty, vec![quotient], dest)
+            }
             // Half-precision lanes compute at f64 and round once, like the
             // scalar lowering (`lower_narrow_float_binop`).
             ScalarTy::Sized(Dtype::Float16) => {
@@ -728,6 +736,63 @@ impl FnLowering<'_> {
             }
         };
         self.simd_store_vector(ctx, dest, dtype, width, result);
+        Ok(())
+    }
+
+    /// The lane-rounded quotient of two float vectors: `fdiv` at the lane
+    /// type, or at f64 and rounded once for `Float16` lanes.
+    fn lower_simd_float_quotient(
+        &mut self,
+        ctx: &mut Context,
+        lhs: Value,
+        rhs: Value,
+        dtype: Dtype,
+        width: usize,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        if dtype == Dtype::Float16 {
+            let lane_ty = ScalarTy::Sized(dtype);
+            let wide_lhs = self.simd_lanes_to_f64(ctx, lhs, lane_ty, width, dest)?;
+            let wide_rhs = self.simd_lanes_to_f64(ctx, rhs, lane_ty, width, dest)?;
+            let wide =
+                self.simd_float_binop_vectors(ctx, InfixOp::Div, wide_lhs, wide_rhs, dest)?;
+            return Ok(self.simd_round_float_vector(ctx, dtype, wide, width, dest));
+        }
+        self.simd_float_binop_vectors(ctx, InfixOp::Div, lhs, rhs, dest)
+    }
+
+    /// Upstream's `pop` lane op over operands of `dest`'s SIMD type, each
+    /// lane as `mlir::pop_int_lane`/`pop_float_lane` computes it: a vector
+    /// computes `<N x lane>` at once, a width-one value its scalar lane.
+    pub(super) fn lower_pop(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        op: PopOp,
+        operands: &[Reg],
+    ) -> Result<(), PlironError> {
+        let Some((dtype, width)) = self.func.reg_types.get(&dest.0).and_then(simd_dims) else {
+            return Err(self.unsupported_reg("`pop` over a non-SIMD register".to_string(), dest));
+        };
+        let shape = usize::try_from(width).ok().filter(|width| *width > 1);
+        let mut values = Vec::with_capacity(operands.len());
+        for operand in operands {
+            values.push(match shape {
+                Some(width) => self.simd_load_vector(ctx, *operand, dtype, width, dest)?,
+                None => self.reg_value(ctx, *operand, ScalarTy::of_dtype(dtype))?,
+            });
+        }
+        let value = if dtype.is_float() {
+            self.pop_float_value(ctx, op, dtype, shape, values, dest)?
+        } else {
+            self.pop_int_value(ctx, op, dtype, shape, &values, dest)?
+        };
+        match shape {
+            Some(width) => self.simd_store_vector(ctx, dest, dtype, width, value),
+            None => {
+                self.reg_values.insert(dest.0, value);
+            }
+        }
         Ok(())
     }
 
@@ -1202,6 +1267,164 @@ impl FnLowering<'_> {
         call.get_result(ctx)
     }
 
+    /// A float `pop` op at the lane type; `Float16` lanes compute at f64
+    /// and round once, as the VM does.
+    fn pop_float_value(
+        &mut self,
+        ctx: &mut Context,
+        op: PopOp,
+        dtype: Dtype,
+        shape: Option<usize>,
+        values: Vec<Value>,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        if dtype == Dtype::Float16 {
+            let mut wide = Vec::with_capacity(values.len());
+            for value in values {
+                wide.push(match shape {
+                    Some(width) => {
+                        self.simd_lanes_to_f64(ctx, value, ScalarTy::Sized(dtype), width, dest)?
+                    }
+                    None => self.widen_float_lane(ctx, value, dest),
+                });
+            }
+            let result = self.pop_float_value(ctx, op, Dtype::Float64, shape, wide, dest)?;
+            return Ok(match shape {
+                Some(width) => self.simd_round_float_vector(ctx, dtype, result, width, dest),
+                None => self.round_float_lane(ctx, dtype, result, dest),
+            });
+        }
+        let flags = FastmathFlagsAttr::default;
+        Ok(match (op, values.as_slice()) {
+            (PopOp::Div, [lhs, rhs]) => {
+                let div = FDivOp::new_with_fast_math_flags(ctx, *lhs, *rhs, flags());
+                self.append(ctx, div.get_operation(), Some(dest));
+                div.get_result(ctx)
+            }
+            (PopOp::Rem, [lhs, rhs]) => {
+                let rem = FRemOp::new_with_fast_math_flags(ctx, *lhs, *rhs, flags());
+                self.append(ctx, rem.get_operation(), Some(dest));
+                rem.get_result(ctx)
+            }
+            _ => {
+                let intrinsic = match op {
+                    PopOp::Abs => "fabs",
+                    PopOp::Round => "roundeven",
+                    PopOp::Floor => "floor",
+                    PopOp::Ceil => "ceil",
+                    PopOp::Trunc => "trunc",
+                    PopOp::Fma => "fma",
+                    PopOp::Div | PopOp::Rem => {
+                        return Err(self.unsupported_reg(
+                            format!("`pop.{}` operand count", op.mnemonic()),
+                            dest,
+                        ));
+                    }
+                };
+                let name = format!("llvm.{intrinsic}.{}", lane_mangle(dtype, shape));
+                let float_ty = values[0].get_type(ctx);
+                self.float_intrinsic(ctx, &name, float_ty, values, dest)
+            }
+        })
+    }
+
+    /// An integer `pop` op: `div`/`rem` truncate (`sdiv`/`udiv`,
+    /// `srem`/`urem`) after trapping on a zero divisor lane, with the
+    /// overflowing `MIN / -1` lane divided by one so it wraps as the VM's
+    /// does; `abs` wraps (`llvm.abs` with `is_int_min_poison` false) and is
+    /// the identity on unsigned lanes, the rounding ops are the identity,
+    /// and `fma` wraps `a * b + c`.
+    fn pop_int_value(
+        &mut self,
+        ctx: &mut Context,
+        op: PopOp,
+        dtype: Dtype,
+        shape: Option<usize>,
+        values: &[Value],
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let Some((bits, signed)) = mojito_vm::runtime::integer_dtype_bits(dtype) else {
+            return Err(
+                self.unsupported_reg(format!("`pop.{}` over bool lanes", op.mnemonic()), dest)
+            );
+        };
+        Ok(match (op, values) {
+            (PopOp::Div | PopOp::Rem, [lhs, rhs]) => {
+                let zero = self.lane_constant(ctx, dtype, 0, shape, dest);
+                let is_zero = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, *rhs, zero);
+                self.append(ctx, is_zero.get_operation(), Some(dest));
+                let any_zero = match shape {
+                    Some(width) => self.simd_mask_any(ctx, is_zero.get_result(ctx), width, dest),
+                    None => is_zero.get_result(ctx),
+                };
+                self.emit_trap_guard(ctx, any_zero, TrapCategory::DivModZero, dest)?;
+                let divisor = if signed {
+                    let min = self.lane_constant(ctx, dtype, 1 << (bits - 1), shape, dest);
+                    let minus_one = self.lane_constant(ctx, dtype, u64::MAX, shape, dest);
+                    let lhs_is_min = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, *lhs, min);
+                    self.append(ctx, lhs_is_min.get_operation(), Some(dest));
+                    let rhs_is_minus_one = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, *rhs, minus_one);
+                    self.append(ctx, rhs_is_minus_one.get_operation(), Some(dest));
+                    let overflowing = AndOp::new(
+                        ctx,
+                        lhs_is_min.get_result(ctx),
+                        rhs_is_minus_one.get_result(ctx),
+                    );
+                    self.append(ctx, overflowing.get_operation(), Some(dest));
+                    let one = self.lane_constant(ctx, dtype, 1, shape, dest);
+                    let safe = SelectOp::new(ctx, overflowing.get_result(ctx), one, *rhs);
+                    self.append(ctx, safe.get_operation(), Some(dest));
+                    safe.get_result(ctx)
+                } else {
+                    *rhs
+                };
+                let operation = match (op, signed) {
+                    (PopOp::Div, true) => SDivOp::new(ctx, *lhs, divisor).get_operation(),
+                    (PopOp::Div, false) => UDivOp::new(ctx, *lhs, divisor).get_operation(),
+                    (_, true) => SRemOp::new(ctx, *lhs, divisor).get_operation(),
+                    (_, false) => URemOp::new(ctx, *lhs, divisor).get_operation(),
+                };
+                self.append(ctx, operation, Some(dest));
+                operation.deref(ctx).get_result(0)
+            }
+            (PopOp::Abs, [value]) if signed => {
+                let value_ty = value.get_type(ctx);
+                let flag_ty: TypeHandle = IntegerType::get(ctx, 1, Signedness::Signless).into();
+                let fn_ty = FuncType::get(ctx, value_ty, vec![value_ty, flag_ty], false);
+                let poison_on_min = self.bool_constant(ctx, false);
+                let name = format!("llvm.abs.{}", lane_mangle(dtype, shape));
+                let call = CallIntrinsicOp::new(
+                    ctx,
+                    StringAttr::new(name),
+                    fn_ty,
+                    vec![*value, poison_on_min],
+                );
+                self.append(ctx, call.get_operation(), Some(dest));
+                call.get_result(ctx)
+            }
+            (PopOp::Abs | PopOp::Round | PopOp::Floor | PopOp::Ceil | PopOp::Trunc, [value]) => {
+                *value
+            }
+            (PopOp::Fma, [a, b, c]) => {
+                let product = MulOp::new_with_overflow_flag(ctx, *a, *b, no_overflow_flags());
+                self.append(ctx, product.get_operation(), Some(dest));
+                let sum = AddOp::new_with_overflow_flag(
+                    ctx,
+                    product.get_result(ctx),
+                    *c,
+                    no_overflow_flags(),
+                );
+                self.append(ctx, sum.get_operation(), Some(dest));
+                sum.get_result(ctx)
+            }
+            _ => {
+                return Err(
+                    self.unsupported_reg(format!("`pop.{}` operand count", op.mnemonic()), dest)
+                );
+            }
+        })
+    }
+
     /// Whether any lane of an `<N x i1>` mask is set.
     fn simd_mask_any(&mut self, ctx: &mut Context, mask: Value, width: usize, dest: Reg) -> Value {
         let mask_ty = self.simd_vector_ty(ctx, Dtype::Bool, width);
@@ -1510,10 +1733,24 @@ impl FnLowering<'_> {
     }
 }
 
+/// LLVM's overloaded-intrinsic suffix for a lane of `dtype` (`f32`, `i64`),
+/// or for `<width x lane>` when `shape` is a width.
+fn lane_mangle(dtype: Dtype, shape: Option<usize>) -> String {
+    match shape {
+        Some(width) => simd_mangle(dtype, width),
+        None => lane_suffix(dtype),
+    }
+}
+
 /// LLVM's overloaded-intrinsic suffix for a `<width x lane>` vector
 /// (`v4i32`, `v8f32`, `v16i1`).
 fn simd_mangle(dtype: Dtype, width: usize) -> String {
-    let lane = match dtype {
+    format!("v{width}{}", lane_suffix(dtype))
+}
+
+/// LLVM's overloaded-intrinsic suffix for one lane of `dtype`.
+fn lane_suffix(dtype: Dtype) -> String {
+    match dtype {
         Dtype::Float16 => "f16".to_string(),
         Dtype::Float32 => "f32".to_string(),
         Dtype::Float64 => "f64".to_string(),
@@ -1523,6 +1760,5 @@ fn simd_mangle(dtype: Dtype, width: usize) -> String {
                 mojito_vm::runtime::integer_dtype_bits(integer).expect("integer SIMD dtype");
             format!("i{bits}")
         }
-    };
-    format!("v{width}{lane}")
+    }
 }

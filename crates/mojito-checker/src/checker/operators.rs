@@ -527,9 +527,11 @@ impl Checker {
         match op {
             // Elementwise arithmetic on numeric lanes preserves the type.
             Add | Sub | Mul if dtype.licenses(|d| d != Dtype::Bool) => same(),
-            // Floor division and remainder on integer lanes (upstream defines
-            // them on every numeric dtype; float lanes stay a recorded gap).
-            FloorDiv | Mod if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
+            // Floor division on numeric lanes (`pop.floordiv`); remainder on
+            // integer lanes (upstream defines it on float lanes too, a
+            // recorded gap).
+            FloorDiv if dtype.licenses(|d| d != Dtype::Bool) => same(),
+            Mod if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
             BitAnd | BitOr | BitXor if dtype.licenses(|d| !d.is_float()) => same(),
             Shl | Shr if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
             // True division is defined on float lanes only.

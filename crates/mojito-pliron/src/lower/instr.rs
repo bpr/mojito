@@ -272,6 +272,7 @@ impl FnLowering<'_> {
                 value,
                 target,
             } => self.lower_convert(ctx, *dest, *target, *value),
+            MirInstr::Pop { dest, op, operands } => self.lower_pop(ctx, *dest, *op, operands),
             MirInstr::UnOp { op, dest, a, .. } => self.lower_unop(ctx, *op, *dest, *a),
             MirInstr::BinOp {
                 op,

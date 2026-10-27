@@ -214,10 +214,11 @@ pub fn int_lane_binop(
 }
 
 /// One float lane of `op` over two lanes of `dtype`, or `None` for an
-/// operator other than `+ - * /`.
+/// operator other than `+ - * / //`.
 ///
 /// The lane is computed at double precision and rounded once to the lane,
-/// which is exact IEEE arithmetic at `float32` and `float16`.
+/// which is exact IEEE arithmetic at `float32` and `float16`. `//` is
+/// upstream's `pop.floordiv`: the floor of the lane-rounded quotient.
 pub fn float_lane_binop(
     op: mojito_ast::ast::InfixOp,
     dtype: mojito_ast::ast::Dtype,
@@ -230,6 +231,7 @@ pub fn float_lane_binop(
         InfixOp::Sub => a - b,
         InfixOp::Mul => a * b,
         InfixOp::Div => a / b,
+        InfixOp::FloorDiv => dtype.round_lane(a / b).floor(),
         _ => return None,
     };
     Some(dtype.round_lane(lane))

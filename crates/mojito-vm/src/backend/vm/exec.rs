@@ -335,6 +335,13 @@ impl VmBackend {
                 regs[dest.0 as usize] =
                     crate::runtime::builtin_convert(*target, regs[value.0 as usize].clone())?;
             }
+            MirInstr::Pop { dest, op, operands } => {
+                let operands: Vec<Value> = operands
+                    .iter()
+                    .map(|operand| regs[operand.0 as usize].clone())
+                    .collect();
+                regs[dest.0 as usize] = crate::runtime::pop_op(*op, &operands)?;
+            }
             MirInstr::UseVar {
                 dest,
                 var,

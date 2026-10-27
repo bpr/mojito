@@ -13,6 +13,7 @@ mod expr;
 mod expr_access;
 mod expr_call;
 mod expr_method;
+mod mlir_op;
 
 use ctrl::{CollectionPlan, array_literal_plan, collection_plan, dict_literal_plan};
 

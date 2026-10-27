@@ -375,6 +375,14 @@ impl FnLowering<'_> {
                 self.append(ctx, mul.get_operation(), Some(dest));
                 mul.get_result(ctx)
             }
+            // `pop.floordiv`: the floor of the lane-rounded quotient.
+            InfixOp::FloorDiv => {
+                let div = FDivOp::new_with_fast_math_flags(ctx, wide_lhs, wide_rhs, flags());
+                self.append(ctx, div.get_operation(), Some(dest));
+                let quotient = self.round_float_lane(ctx, dtype, div.get_result(ctx), dest);
+                let quotient = self.widen_float_lane(ctx, quotient, dest);
+                self.float_floor(ctx, quotient, dest)
+            }
             other => {
                 return Err(self.unsupported_reg(
                     format!(

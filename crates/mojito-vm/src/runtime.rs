@@ -1186,6 +1186,65 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
     }
 }
 
+/// Compute upstream's `pop` lane op `op` over `operands`, SIMD values of one
+/// type.
+///
+/// A width-one `Int`, `UInt`, or `Float64` held as its host scalar stays
+/// one. Each lane is `mlir::pop_int_lane` or `mlir::pop_float_lane`, and an
+/// integer division by zero is an error, as the scalar operator's is.
+pub fn pop_op(op: mojito_types::mlir::PopOp, operands: &[Value]) -> Result<Value, RuntimeError> {
+    let mismatch = || {
+        RuntimeError::TypeError(format!(
+            "'pop.{}' takes operands of one SIMD type",
+            op.mnemonic()
+        ))
+    };
+    let parts = operands
+        .iter()
+        .map(|operand| simd_parts(operand).ok_or_else(mismatch))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (dtype, width) = match parts.first() {
+        Some((dtype, lanes)) => (*dtype, lanes.width()),
+        None => return Err(mismatch()),
+    };
+    let lanes = if dtype.is_float() {
+        SimdLanes::Float(
+            (0..width)
+                .map(|index| {
+                    let lane = parts
+                        .iter()
+                        .map(|(_, lanes)| match lanes {
+                            SimdLanes::Float(values) => values.get(index).copied(),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<f64>>>()
+                        .ok_or_else(mismatch)?;
+                    mojito_types::mlir::pop_float_lane(op, dtype, &lane).ok_or_else(mismatch)
+                })
+                .collect::<Result<_, _>>()?,
+        )
+    } else {
+        SimdLanes::Int(
+            (0..width)
+                .map(|index| {
+                    let lane = parts
+                        .iter()
+                        .map(|(_, lanes)| match lanes {
+                            SimdLanes::Int(values) => values.get(index).copied(),
+                            _ => None,
+                        })
+                        .collect::<Option<Vec<i128>>>()
+                        .ok_or_else(mismatch)?;
+                    mojito_types::mlir::pop_int_lane(op, dtype, &lane).ok_or_else(|| {
+                        RuntimeError::TypeError("integer division or modulo by zero".to_string())
+                    })
+                })
+                .collect::<Result<_, _>>()?,
+        )
+    };
+    Ok(simd_value(dtype, lanes))
+}
+
 /// Coerce a value to a declared type at a binding site. Only materializes a
 /// numeric literal's default (`Int`/`Float64`) into another numeric type; all
 /// other values pass through unchanged.

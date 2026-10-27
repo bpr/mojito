@@ -29,6 +29,14 @@ impl Decoder {
         })
     }
 
+    pub(super) fn pop_op(&mut self, value: &Value) -> Option<mojito_types::mlir::PopOp> {
+        let atom = self.atom(value)?.to_string();
+        mojito_types::mlir::PopOp::from_mnemonic(&atom).or_else(|| {
+            self.error(value.span, format!("unknown pop op `{atom}`"));
+            None
+        })
+    }
+
     pub(super) fn prefix_op(&mut self, value: &Value) -> Option<PrefixOp> {
         match self.atom(value)? {
             "neg" => Some(PrefixOp::Neg),
