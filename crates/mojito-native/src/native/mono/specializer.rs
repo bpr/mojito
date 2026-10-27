@@ -1647,7 +1647,8 @@ impl<'a> Specializer<'a> {
                 )
             })?;
         self.fuel = remaining;
-        let value = self.vm.freeze(value).map_err(|error| {
+        let frozen = self.vm.freeze(&fragment, value, fragment.result_ty(&name));
+        let value = frozen.map_err(|error| {
             self.error(
                 Some(template),
                 format!("VM CTFE failed for '{name}': {error}"),

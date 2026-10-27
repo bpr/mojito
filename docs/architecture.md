@@ -7295,8 +7295,41 @@ is structured rather than byte-addressable:
   same pointer arena and struct fields available to user code
 - private heterogeneous packs, CTFE-only lists, strings, errors, variants,
   slices, and SIMD values retain dedicated runtime carriers
+- a value of a struct `MirDeclarations::register_field` answers, one that
+  declares `TrivialRegisterPassable` unconditionally and has one field, is
+  held as that field in registers, variables, fields, heap slots, and
+  payloads, as upstream's `LowerKGENToLLVM` lowers a one-element
+  register-passable `!kgen.struct` to its element
 - field and index operations work through high-level value navigation
 - calls allocate a new VM frame
+
+A held struct's `struct.create` is its operand and its `field.get` its
+base. `Prog::new` lowers every field projection over one to `Proj::Rebind`
+(`hold_register_fields`), so places and reference handles address the
+field as the struct's whole storage. Concrete MIR keeps the struct's
+operations, as upstream's KGEN keeps `kgen.struct.create` and
+`kgen.struct.extract` until LLVM lowering; the representation is the VM's
+alone. Three VM rules narrow it, each decided in `build_structs`:
+
+- A struct whose field is a reference or a pointer stays boxed: either
+  may be a `Value::Ref`, which a frame slot holds only as a reference
+  alias to the VM (R1269).
+- Every instance of a template is held or none is: an erased instance
+  lays out as every instance agreeing on its kept arguments, though a
+  conditional `TrivialRegisterPassable` row it cannot decide drops from its
+  declaration.
+- A struct with a lifecycle member is never held (the trait forbids one),
+  so drops, copies, and moves, which find their members by the runtime
+  struct name, never meet a held value.
+
+Where the VM still dispatches by runtime shape, a held operand is reboxed
+from its static type (`Prog::boxed`): a builtin call's operands (`print`,
+`String`, `repr`), a method receiver and its arguments, a subscript base
+and index, a `simd.make` element, and a variant handler. A frame's entry
+and a call's result unbox it again at the declared type (`Prog::unboxed`).
+`VmBackend::freeze` takes the result's static type, so a held result
+freezes as the nominal struct `CtValue` it is, and typed `thaw` makes it
+its field again.
 
 Frames are owned by an explicit VM stack and have monotonic identities. Direct
 user-function calls push a frame plus a return/write-back continuation; returns

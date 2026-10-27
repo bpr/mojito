@@ -100,6 +100,9 @@ impl VmBackend {
         let Some(target) = target else {
             return Ok(value);
         };
+        if prog.held_field(Some(target)).is_some() {
+            return Ok(prog.unboxed(value, Some(target)));
+        }
         let TyKind::Struct(name, _) = target.kind() else {
             return Ok(crate::runtime::coerce_checked(value, target));
         };
@@ -210,6 +213,15 @@ impl VmBackend {
                     allocation,
                     offset: *offset,
                 }
+            }
+            // A held struct is its one field, thawed at the field's type.
+            CtValue::Struct { name, fields }
+                if let Some(definition) = prog.structs.get(name)
+                    && definition.register_field.is_some()
+                    && let ([(_, value)], [(_, ty)]) =
+                        (fields.as_slice(), definition.fields.as_slice()) =>
+            {
+                return self.thaw(prog, value, Some(ty));
             }
             CtValue::Struct { name, fields } => {
                 let declared = prog.structs.get(name).map(|definition| &definition.fields);
@@ -364,6 +376,7 @@ impl VmBackend {
         } else {
             nav_mut(vars, regs, &parent)?.clone()
         };
+        let recv = prog.boxed(recv, parent.ty.as_ref().map(peel_references));
         match &recv {
             Value::Struct { name, .. } => {
                 let sname = name.clone();

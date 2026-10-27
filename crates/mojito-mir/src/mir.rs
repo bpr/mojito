@@ -434,28 +434,39 @@ impl MirDeclarations {
         if mojito_types::types::trivially_register_passable_leaf(ty.kind()) {
             return true;
         }
-        let refines_trivial = |trait_name: &str| {
-            trait_name == "TrivialRegisterPassable"
-                || self.trait_refines(trait_name, "TrivialRegisterPassable")
-        };
         let name = match ty.kind() {
             TyKind::Struct(name, _) => name,
             TyKind::Param { bounds, .. } => {
-                return bounds.iter().any(|bound| refines_trivial(bound));
+                return bounds
+                    .iter()
+                    .any(|bound| self.refines_trivial_register_passable(bound));
             }
             _ => return false,
         };
         self.structure(name).is_some_and(|declaration| {
-            declaration.declared.iter().any(|row| {
-                refines_trivial(&row.trait_name)
-                    && matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
-            }) && ["__copyinit__", "__deinit__"]
-                .iter()
-                .all(|member| declaration.member(member).is_none())
+            self.declares_trivial_register_passable(declaration)
                 && self.field_types(ty).is_some_and(|fields| {
                     fields.iter().all(|(_, field)| self.copy_is_identity(field))
                 })
         })
+    }
+
+    /// The one field a value of the struct `name` is held as below the MIR
+    /// waist, as upstream's `LowerKGENToLLVM` lowers a register-passable
+    /// `!kgen.struct` of one element to that element: the pin's
+    /// unoptimized LLVM passes `L(TrivialRegisterPassable){v: Int}` as
+    /// `i64`. The struct declares `TrivialRegisterPassable` unconditionally
+    /// ([`Self::copy_is_identity`]'s declaration half) and has exactly one
+    /// field; the trait already requires that field to conform, and the
+    /// answer is the declaration's, so every instance of a template, erased
+    /// ones included, agrees. A struct with a lifecycle member is held
+    /// boxed.
+    pub fn register_field(&self, name: &str) -> Option<&(String, Ty)> {
+        let declaration = self.structure(name)?;
+        match declaration.fields.as_slice() {
+            [field] if self.declares_trivial_register_passable(declaration) => Some(field),
+            _ => None,
+        }
     }
 
     /// Whether a value of `ty` is register-passable, as upstream's
@@ -519,6 +530,24 @@ impl MirDeclarations {
             "TrivialRegisterPassable" => Some(self.copy_is_identity(ty)),
             _ => None,
         }
+    }
+
+    /// Whether `declaration` declares `TrivialRegisterPassable`
+    /// unconditionally, directly or through a refining trait, and so owns no
+    /// `__copyinit__` or `__deinit__`, which the trait forbids.
+    fn declares_trivial_register_passable(&self, declaration: &MirStructDeclaration) -> bool {
+        declaration.declared.iter().any(|row| {
+            self.refines_trivial_register_passable(&row.trait_name)
+                && matches!(row.conditions.as_slice(), [GenericConstraint::Bool(true)])
+        }) && ["__copyinit__", "__deinit__"]
+            .iter()
+            .all(|member| declaration.member(member).is_none())
+    }
+
+    /// Whether `trait_name` is or refines `TrivialRegisterPassable`.
+    fn refines_trivial_register_passable(&self, trait_name: &str) -> bool {
+        trait_name == "TrivialRegisterPassable"
+            || self.trait_refines(trait_name, "TrivialRegisterPassable")
     }
 
     /// Whether dropping a value of `ty` runs no code, as upstream's

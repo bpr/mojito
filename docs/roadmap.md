@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1524**.
+Next free ID: **R1525**.
 
 ## Ordered Work
 
@@ -1171,6 +1171,15 @@ change that needs a new `MJRT_ABI_VERSION`.
     raising `lower_input_builtin` that turns it into `Error("EOF")`.
     `assets/ok/pliron_input_echo.mojo` catches the error, so its text is the
     same on both backends in the meantime.
+  - Pliron passes a one-field `TrivialRegisterPassable` struct as an
+    aggregate by reference, where the pin passes its element by value:
+    `define internal i64 @"u2::add(u2::L,u2::L)"(i64, i64)` for a builtin
+    `__add__` on `L{v: Int}`, and `i1` for `B{v: Bool}`.
+  - The fix: `lower/types.rs::lower_ty` lowers a struct
+    `MirDeclarations::register_field` answers as its field, as the VM
+    holds it. `struct.create` and `field.get` forward, a field place adds
+    no GEP, and the layout is unchanged; only the signature classification
+    moves, with the SIMD-by-value change above.
   - A later task that needs an ABI bump joins this entry rather than
     getting its own.
   - The signature classification changes the native calling convention itself,
@@ -6731,6 +6740,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Pinned by `conformance/probes/trivial_register_passable_custom_copy.mojo`,
     `trivial_register_passable_custom_del.mojo`, and
     `trivial_register_passable_non_trivial_field.mojo`.
+  - Probe (from R1396): `struct B[n: Int](Copyable, TrivialRegisterPassable
+    where n > 0)` is accepted, where the pin rejects it: "conditional
+    conformance to 'TrivialRegisterPassable' is not supported". Its erased
+    instance `B[_REMOVED_ARG]` drops the row its concrete instances keep,
+    so the VM's `build_structs` boxes every instance of a template whose
+    instances disagree. That rule goes with the rejection.
   - Found while landing R838 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7908,6 +7923,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `ref` root type, where the rewrite leaves `through: absent`, which
     Pliron reads as the referent itself (native SIGSEGV on
     `assets/extensions/ok/ref_field_written_nodebug_init.mojo`).
+  - Probe (from R1396): a one-field `TrivialRegisterPassable` struct whose
+    field is a reference or a pointer stays a boxed `Value::Struct` in the
+    VM (`build_structs`), where the pin holds it as the pointer. Held as
+    its field, `S[o]{p: UnsafePointer[Int, o]}` over `UnsafePointer(to=x)`
+    fails `s.get()` with "ReadRef r0 received Int(5)", since its slot then
+    holds the `Value::Ref` the VM takes for an alias.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -9582,19 +9603,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1396 A one-field register-passable struct is a boxed struct value
-  in the VM**
+- [ ] **R1524 A one-field `RegisterPassable` struct with lifecycle
+  members is a boxed struct value in the VM**
 
-  Every struct is a `Value::Struct` with a name and a field vector
-  (`runtime.rs`), so a library `SIMD`, and through R1389 every `Int`, would
-  allocate per value, where upstream's `TrivialRegisterPassable` struct
-  reaches LLVM as its element after `SROA`.
-  - After builtin inlining, `canonicalize` forwards a `GetField` of a
-    `MakeStruct`.
-  - A register value of a `TrivialRegisterPassable` struct whose one field
-    is register-passable is held as that field.
-  - Done when the concrete MIR of an inlined `@always_inline("builtin")`
-    `__add__` on a one-field struct holds no `MakeStruct`.
+  The pin holds `R(RegisterPassable){v: Int}` with a `__del__` as its
+  element (`define internal i64 @"u3::fr(u3::R$)"(i64)` in unoptimized
+  LLVM), as it holds a trivial one, where the VM keeps it a `Value::Struct`.
+  - Cause: `drop_value`, `clone_value`, and `move_typed_value`
+    (`backend/vm/dispatch.rs`, `values.rs`) find `__deinit__`,
+    `__copyinit__`, and `__moveinit__` by the value's runtime struct name,
+    which a value held as its field no longer carries.
+  - `MirDeclarations::register_field` therefore answers only a struct
+    declaring `TrivialRegisterPassable` unconditionally, which owns none.
+  - Lever: every drop, copy, and move dispatches by its static type, as
+    `drop.var` and `drop.place` already name their destructor. Then
+    `register_field` widens to `register_passable` at the instance, which
+    holds `VariadicList` and a register-passable `Tuple` instance too.
+  - The VM's `build_structs` keeps every instance of a template held or
+    none, so a per-instance answer stays consistent with an erased
+    instance.
+  - Found while landing R1396 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -10047,6 +10075,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and a writer's `write_string` from the value's type
     (`mir::TYPE_REACHED_MEMBERS`), so they keep every argument until
     `print` calls them.
+  - The VM formats a `print`, `String`, or `repr` operand by its runtime
+    struct name (`format_value`), so it reboxes a struct it holds as its
+    one field (`Prog::boxed`) from the operand's static type at the
+    builtin call. The bridge goes with the builtin.
   - Found while landing R1075 (2026-10-22).
   - Depends on R424 and R422.
   - Model: Fable, Not Planned.
@@ -10247,6 +10279,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `index_of` scans `mir.functions` for the exact name on every call.
   - The lever is to have the elaborator record each concrete call's
     target, so the VM resolves no name; failing that, an index by name.
+  - `method_call` resolves a method by the receiver's runtime struct
+    name, so it reboxes a struct the VM holds as its one field from the
+    receiver's static type (`MethodInvocation::receiver_ty`), as it
+    reboxes a builtin method's operands. The bridge goes when the call
+    names its target.
   - Found while landing R580 (2026-10-10), which moved the elaborator's
     resolution onto by-name lookups.
   - Depends on nothing.

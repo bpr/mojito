@@ -40,6 +40,13 @@ impl ConcreteProgram {
         let mir: MirProgram = (**mir).clone();
         Self(Prog::new(mir))
     }
+
+    /// The result type of the function `name`, which a value
+    /// [`VmBackend::call_concrete`] returned freezes at.
+    pub fn result_ty(&self, name: &str) -> Option<&Ty> {
+        let index = self.0.index_of(name)?;
+        self.0.mir.functions[index].1.ret_ty.as_ref()
+    }
 }
 
 #[derive(Default)]
@@ -474,10 +481,18 @@ impl VmBackend {
         Ok((result?, remaining))
     }
 
-    /// Freeze a result while this VM owns its heap. Pointer leaves retain
-    /// allocation contents and uninitialized slots; strings retain their text.
-    pub fn freeze(&self, value: Value) -> Result<CtValue, RuntimeError> {
-        self.freeze_value(value, &mut std::collections::HashSet::new())
+    /// Freeze a result of the static type `ty`, when known, which
+    /// `program` ran, while this VM owns its heap. Pointer leaves retain allocation contents and
+    /// uninitialized slots; strings retain their text. A held struct
+    /// ([`StructDef::register_field`]) freezes as the struct it is, so the
+    /// compile-time value stays nominal.
+    pub fn freeze(
+        &self,
+        program: &ConcreteProgram,
+        value: Value,
+        ty: Option<&Ty>,
+    ) -> Result<CtValue, RuntimeError> {
+        self.freeze_value(&program.0, value, ty, &mut HashSet::new())
     }
 
     /// Captured standard output.
@@ -516,9 +531,13 @@ impl VmBackend {
 
     fn freeze_value(
         &self,
+        prog: &Prog,
         value: Value,
-        active: &mut std::collections::HashSet<u64>,
+        ty: Option<&Ty>,
+        active: &mut HashSet<u64>,
     ) -> Result<CtValue, RuntimeError> {
+        use mojito_types::types::TyKind;
+        let value = prog.boxed(value, ty);
         if let Some(text) = self.nominal_string_text(&value) {
             return Ok(CtValue::Str(text));
         }
@@ -542,6 +561,10 @@ impl VmBackend {
                             "cannot freeze cyclic pointer memory".to_string(),
                         ));
                     }
+                    let element = match ty.map(Ty::kind) {
+                        Some(TyKind::Pointer { element, .. }) => Some(element),
+                        _ => None,
+                    };
                     let slots = region
                         .slots
                         .iter()
@@ -550,7 +573,8 @@ impl VmBackend {
                             if *never || matches!(slot, Value::Moved) {
                                 Ok(None)
                             } else {
-                                self.freeze_value(slot.clone(), active).map(Some)
+                                self.freeze_value(prog, slot.clone(), element, active)
+                                    .map(Some)
                             }
                         })
                         .collect::<Result<Vec<_>, RuntimeError>>()?;
@@ -560,46 +584,84 @@ impl VmBackend {
                 Ok(CtValue::Pointer { memory, offset })
             }
             Value::Struct { name, fields } => {
+                let declared = prog.structs.get(&name).map(|definition| &definition.fields);
+                let field_ty = |field: &str| {
+                    declared.and_then(|declared| {
+                        declared
+                            .iter()
+                            .find(|(name, _)| name == field)
+                            .map(|(_, ty)| ty)
+                    })
+                };
                 if let [(storage, Value::Tuple(elements))] = fields.as_slice()
                     && storage == "storage"
                     && crate::crossing::is_nominal_tuple(&name)
                 {
+                    let types = match field_ty(storage).map(Ty::kind) {
+                        Some(TyKind::Tuple(types)) => types.as_slice(),
+                        _ => &[],
+                    };
                     return elements
                         .iter()
-                        .map(|value| self.freeze_value(value.clone(), active))
+                        .enumerate()
+                        .map(|(at, value)| {
+                            self.freeze_value(prog, value.clone(), types.get(at), active)
+                        })
                         .collect::<Result<Vec<_>, _>>()
                         .map(CtValue::Tuple);
                 }
-                Ok(CtValue::Struct {
-                    name,
-                    fields: fields
-                        .into_iter()
-                        .map(|(name, value)| Ok((name, self.freeze_value(value, active)?)))
-                        .collect::<Result<Vec<_>, RuntimeError>>()?,
-                })
+                let fields = fields
+                    .into_iter()
+                    .map(|(field, value)| {
+                        let frozen = self.freeze_value(prog, value, field_ty(&field), active)?;
+                        Ok((field, frozen))
+                    })
+                    .collect::<Result<Vec<_>, RuntimeError>>()?;
+                Ok(CtValue::Struct { name, fields })
             }
-            Value::Tuple(elements) => elements
-                .into_iter()
-                .map(|value| self.freeze_value(value, active))
-                .collect::<Result<Vec<_>, _>>()
-                .map(CtValue::Tuple),
+            Value::Tuple(elements) => {
+                let types = match ty.map(Ty::kind) {
+                    Some(TyKind::Tuple(types) | TyKind::RuntimePack(types)) => types.as_slice(),
+                    _ => &[],
+                };
+                elements
+                    .into_iter()
+                    .enumerate()
+                    .map(|(at, value)| self.freeze_value(prog, value, types.get(at), active))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(CtValue::Tuple)
+            }
             Value::Variant {
                 alternatives,
                 index,
                 value,
-            } => Ok(CtValue::Variant {
-                alternatives,
-                index,
-                payload: match *value {
+            } => {
+                let payload = match *value {
                     Value::None => None,
-                    value => Some(Box::new(self.freeze_value(value, active)?)),
-                },
-            }),
-            Value::ComptimeList(elements) => elements
-                .into_iter()
-                .map(|value| self.freeze_value(value, active))
-                .collect::<Result<Vec<_>, _>>()
-                .map(CtValue::List),
+                    value => Some(Box::new(self.freeze_value(
+                        prog,
+                        value,
+                        alternatives.get(index),
+                        active,
+                    )?)),
+                };
+                Ok(CtValue::Variant {
+                    alternatives,
+                    index,
+                    payload,
+                })
+            }
+            Value::ComptimeList(elements) => {
+                let element = match ty.map(Ty::kind) {
+                    Some(TyKind::ComptimeList(element)) => Some(element),
+                    _ => None,
+                };
+                elements
+                    .into_iter()
+                    .map(|value| self.freeze_value(prog, value, element, active))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(CtValue::List)
+            }
             Value::Ref {
                 frame: COMPTIME_MEMORY_FRAME,
                 ..
@@ -609,9 +671,17 @@ impl VmBackend {
                     FrameId(COMPTIME_MEMORY_FRAME),
                     &self.comptime_memory,
                 )?;
-                Ok(CtValue::StoreToMem(Box::new(
-                    self.freeze_value(referent, active)?,
-                )))
+                let referent_ty = match ty.map(Ty::kind) {
+                    Some(TyKind::Ref(reference)) => Some(&reference.referent),
+                    Some(TyKind::Pointer { element, .. }) => Some(element),
+                    _ => None,
+                };
+                Ok(CtValue::StoreToMem(Box::new(self.freeze_value(
+                    prog,
+                    referent,
+                    referent_ty,
+                    active,
+                )?)))
             }
             Value::Ref { .. } => Err(RuntimeError::Unsupported(
                 "cannot freeze a reference to run-time storage".to_string(),
@@ -643,12 +713,17 @@ impl VmBackend {
         // bindings.
         if let Some(top) = prog.index_of("__toplevel__") {
             let (_, vars) = self.call_frame(prog, top, Vec::new())?;
-            let names = &prog.mir.functions[top].1.var_names;
-            self.bindings = names
+            let function = &prog.mir.functions[top].1;
+            self.bindings = function
+                .var_names
                 .iter()
-                .zip(&vars)
-                .filter(|(name, _)| !name.starts_with('$'))
-                .map(|(name, v)| (name.clone(), v.clone()))
+                .zip(vars)
+                .enumerate()
+                .filter(|(_, (name, _))| !name.starts_with('$'))
+                .map(|(slot, (name, value))| {
+                    let ty = function.var_tys.get(&(slot as VarId));
+                    (name.clone(), prog.boxed(value, ty))
+                })
                 .collect();
         }
         if let Some(main) = prog.index_of("main") {
@@ -697,6 +772,44 @@ fn peel_references(ty: &mojito_types::types::Ty) -> &mojito_types::types::Ty {
     ty
 }
 
+/// The struct `ty` is and the field it is held as, among `structs`.
+fn held_field<'s>(structs: &'s HashMap<String, StructDef>, ty: &Ty) -> Option<(&'s str, &'s str)> {
+    let mojito_types::types::TyKind::Struct(name, _) = ty.kind() else {
+        return None;
+    };
+    let (name, declaration) = structs.get_key_value(name)?;
+    Some((name.as_str(), declaration.register_field.as_deref()?))
+}
+
+/// Lower every field step whose base is a held struct to [`Proj::Rebind`]:
+/// the held field is the struct's whole storage, as upstream's
+/// `LowerKGENToLLVM` makes a one-element struct's `struct_gep` the
+/// struct's own address.
+fn hold_register_fields(structs: &HashMap<String, StructDef>, blocks: &mut [MirBlock]) {
+    for block in blocks {
+        for instruction in &mut block.instrs {
+            for place in mojito_mir::mir::verify::instruction_places_mut(instruction) {
+                for position in 0..place.proj.len() {
+                    let base = match position {
+                        0 => place.root_ty.as_ref(),
+                        _ => place.projection_tys.get(position - 1),
+                    };
+                    if matches!(place.proj[position], Proj::Field(_))
+                        && base.is_some_and(|base| {
+                            held_field(structs, peel_references(base)).is_some()
+                        })
+                    {
+                        place.proj[position] = Proj::Rebind;
+                    }
+                }
+            }
+            for region in mojito_mir::mir::instruction_regions_mut(instruction) {
+                hold_register_fields(structs, region);
+            }
+        }
+    }
+}
+
 impl Prog {
     fn new(mir: MirProgram) -> Self {
         let edge_errors = mir
@@ -721,12 +834,67 @@ impl Prog {
                     .collect()
             })
             .collect();
+        let structs = build_structs(&mir.declarations);
+        let mut mir = mir;
+        for (_, function) in &mut mir.functions {
+            hold_register_fields(&structs, &mut function.blocks);
+        }
         Self {
-            structs: build_structs(&mir.declarations),
+            structs,
             sigs: build_sigs(&mir.declarations),
             mir,
             edge_errors,
             error_slots,
+        }
+    }
+
+    /// The struct a value of `ty` is and the field it is held as, when
+    /// `ty` is a struct held as its one field ([`StructDef::register_field`]).
+    fn held_field(&self, ty: Option<&Ty>) -> Option<(&str, &str)> {
+        held_field(&self.structs, ty?)
+    }
+
+    /// `value`, a value of `ty`, as the [`Value::Struct`] the VM's
+    /// runtime-shape dispatch reads, where `ty` is a held struct: the
+    /// operand of a builtin, a method receiver, or a frozen result. Any
+    /// other value, a boxed one included, is returned as it is.
+    fn boxed(&self, value: Value, ty: Option<&Ty>) -> Value {
+        match self.held_field(ty) {
+            Some((name, _)) if matches!(&value, Value::Struct { name: held, .. } if held == name) => {
+                value
+            }
+            Some((name, field)) => Value::Struct {
+                name: name.to_string(),
+                fields: vec![(field.to_string(), value)],
+            },
+            None => value,
+        }
+    }
+
+    /// The struct `value`, a value of `ty`, is to runtime-shape dispatch:
+    /// the held struct `ty` names, else its box's name.
+    fn struct_name<'a>(&'a self, value: &'a Value, ty: Option<&Ty>) -> Option<&'a str> {
+        self.held_field(ty).map(|(name, _)| name).or(match value {
+            Value::Struct { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+    }
+
+    /// `value`, a value of `ty`, as the field it is held as where `ty` is a
+    /// held struct and `value` is its box: [`Self::boxed`]'s inverse, which
+    /// a frame's entry and a call's result apply.
+    fn unboxed(&self, value: Value, ty: Option<&Ty>) -> Value {
+        match (self.held_field(ty), value) {
+            (
+                Some((name, _)),
+                Value::Struct {
+                    name: held,
+                    mut fields,
+                },
+            ) if held == name && fields.len() == 1 => {
+                fields.pop().map_or(Value::None, |(_, value)| value)
+            }
+            (_, value) => value,
         }
     }
 
@@ -1089,6 +1257,12 @@ struct StructDef {
     mut_self_methods: std::collections::HashSet<String>,
     /// The lifecycle members the struct owns, with their symbols.
     members: Vec<(String, String)>,
+    /// The one field a value of the struct is held as
+    /// ([`mojito_mir::mir::MirDeclarations::register_field`]), but for a
+    /// reference or pointer field: a reference, and a pointer to a place,
+    /// are a [`Value::Ref`], which a frame slot holds only as a reference
+    /// alias to the VM, so a struct holding one stays boxed.
+    register_field: Option<String>,
 }
 
 fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
@@ -1227,6 +1401,9 @@ struct WritebackCall<'a> {
 
 struct MethodInvocation<'a> {
     receiver: Value,
+    /// The receiver operand's static type, which names a held struct's
+    /// method table ([`Prog::boxed`]).
+    receiver_ty: Option<&'a Ty>,
     method: &'a str,
     resolved_name: Option<&'a str>,
     result_adapter: Option<ResultAdapter<'a>>,
@@ -1320,9 +1497,13 @@ fn edge_errors(blocks: &[MirBlock], errors: &mut HashSet<u32>) {
     }
 }
 
-/// Build the VM registry from declaration metadata carried by MIR.
+/// Build the VM registry from declaration metadata carried by MIR. Every
+/// instance of a template is held or none is: an erased instance
+/// (`B$mono$V$REMOVED$ARG`) lays out as every instance agreeing on its
+/// kept arguments, though a conditional `TrivialRegisterPassable` row it
+/// cannot decide drops from its declaration.
 fn build_structs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<String, StructDef> {
-    declarations
+    let mut structs: HashMap<String, StructDef> = declarations
         .structs
         .iter()
         .map(|declaration| {
@@ -1336,10 +1517,42 @@ fn build_structs(declarations: &mojito_mir::mir::MirDeclarations) -> HashMap<Str
                         .iter()
                         .map(|entry| (entry.member.clone(), entry.symbol.clone()))
                         .collect(),
+                    register_field: declarations
+                        .register_field(&declaration.name)
+                        .filter(|(_, ty)| {
+                            !matches!(
+                                ty.kind(),
+                                mojito_types::types::TyKind::Ref(_)
+                                    | mojito_types::types::TyKind::Pointer { .. }
+                            )
+                        })
+                        .map(|(field, _)| field.clone()),
                 },
             )
         })
-        .collect()
+        .collect();
+    let mut held: HashMap<&str, (bool, bool)> = HashMap::new();
+    for (name, declaration) in &structs {
+        let agreement = held
+            .entry(mojito_types::types::struct_template(name))
+            .or_insert((false, false));
+        if declaration.register_field.is_some() {
+            agreement.0 = true;
+        } else {
+            agreement.1 = true;
+        }
+    }
+    let mixed: HashSet<String> = held
+        .into_iter()
+        .filter(|(_, (some, none))| *some && *none)
+        .map(|(template, _)| template.to_string())
+        .collect();
+    for (name, declaration) in &mut structs {
+        if mixed.contains(mojito_types::types::struct_template(name)) {
+            declaration.register_field = None;
+        }
+    }
+    structs
 }
 
 /// Build the VM calling registry from declaration metadata carried by MIR.
@@ -1614,6 +1827,111 @@ mod regions;
 use regions::{RegionCursor, Transfer};
 
 #[cfg(test)]
+mod held_struct_tests {
+    use super::*;
+    use mojito_types::types::TyKind;
+
+    /// A program declaring `L(trait_name)` of `fields` `Int` fields, and
+    /// `make() -> L` building one from sevens.
+    fn program(trait_name: &str, fields: usize) -> Prog {
+        let declaration = mojito_mir::mir::MirStructDeclaration {
+            name: "L".into(),
+            fields: (0..fields)
+                .map(|at| (format!("f{at}"), Ty::int()))
+                .collect(),
+            mut_self_methods: HashSet::new(),
+            fieldwise_init: true,
+            param_decls: Vec::new(),
+            explicit_destructors: HashMap::new(),
+            explicit_destroy: None,
+            conformances: Vec::new(),
+            declared: vec![mojito_checked::checked::StructConformance {
+                trait_name: trait_name.into(),
+                conditions: vec![mojito_types::types::GenericConstraint::Bool(true)],
+            }],
+            associated_types: Vec::new(),
+            parameterized_associated_types: Vec::new(),
+            associated_values: Vec::new(),
+            parameterized_associated_values: Vec::new(),
+            witness_tables: Vec::new(),
+            members: Vec::new(),
+        };
+        let built = Reg(fields as u32);
+        let mut instrs: Vec<MirInstr> = (0..fields as u32)
+            .map(|at| MirInstr::Const {
+                dest: Reg(at),
+                k: Const::Int(7),
+            })
+            .collect();
+        instrs.push(MirInstr::MakeStruct {
+            dest: built,
+            fields: (0..fields as u32).map(Reg).collect(),
+        });
+        let mut reg_types: HashMap<u32, Ty> =
+            (0..fields as u32).map(|at| (at, Ty::int())).collect();
+        reg_types.insert(built.0, struct_ty());
+        let make = MirFunction {
+            blocks: vec![MirBlock {
+                instrs,
+                term: MirTerm::Return(Some(built)),
+            }],
+            n_regs: built.0 + 1,
+            ret_ty: Some(struct_ty()),
+            reg_types,
+            ..MirFunction::default()
+        };
+        Prog::new(MirProgram {
+            functions: vec![("make".to_string(), make)],
+            declarations: mojito_mir::mir::MirDeclarations {
+                structs: vec![declaration],
+                ..mojito_mir::mir::MirDeclarations::default()
+            },
+            invariant_errors: Vec::new(),
+        })
+    }
+
+    fn struct_ty() -> Ty {
+        Ty::new(TyKind::Struct("L".into(), Vec::new()))
+    }
+
+    #[test]
+    fn held_one_field_struct_is_its_field() {
+        let prog = program("TrivialRegisterPassable", 1);
+        let mut vm = VmBackend::default();
+        let value = vm.call_function(&prog, 0, Vec::new()).expect("make");
+        assert_eq!(value, Value::Int(7));
+        let frozen = vm
+            .freeze_value(&prog, value, Some(&struct_ty()), &mut HashSet::new())
+            .expect("freeze");
+        assert_eq!(
+            frozen,
+            CtValue::Struct {
+                name: "L".into(),
+                fields: vec![("f0".into(), CtValue::Int(7))],
+            }
+        );
+        assert_eq!(
+            vm.thaw(&prog, &frozen, Some(&struct_ty())).expect("thaw"),
+            Value::Int(7)
+        );
+    }
+
+    #[test]
+    fn boxed_struct_stays_a_struct() {
+        for (trait_name, fields) in [("TrivialRegisterPassable", 2), ("Copyable", 1)] {
+            let prog = program(trait_name, fields);
+            let value = VmBackend::default()
+                .call_function(&prog, 0, Vec::new())
+                .expect("make");
+            assert!(
+                matches!(&value, Value::Struct { name, fields: built } if name == "L" && built.len() == fields),
+                "{trait_name}: {value:?}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod pointer_storage_tests {
     use super::*;
     use mojito_types::types::TyKind;
@@ -1632,6 +1950,12 @@ mod pointer_storage_tests {
         }
     }
 
+    /// Freeze `value` with no static type, as a program with no held
+    /// struct does.
+    fn freeze(vm: &VmBackend, value: Value) -> Result<CtValue, RuntimeError> {
+        vm.freeze_value(&empty_program(), value, None, &mut HashSet::new())
+    }
+
     #[test]
     fn frozen_pointer_round_trip_preserves_holes_offsets_and_independence() {
         let mut vm = VmBackend::default();
@@ -1640,12 +1964,14 @@ mod pointer_storage_tests {
             unreachable!("heap allocator returns a pointer")
         };
         vm.heap_store(allocation as usize - 1, 1, Value::Int(7));
-        let frozen = vm
-            .freeze(Value::Pointer {
+        let frozen = freeze(
+            &vm,
+            Value::Pointer {
                 allocation,
                 offset: 1,
-            })
-            .expect("freeze");
+            },
+        )
+        .expect("freeze");
         assert_eq!(
             frozen,
             CtValue::Pointer {
@@ -1678,13 +2004,13 @@ mod pointer_storage_tests {
         assert!(vm.heap_read(first_id, 0, 0).is_err());
         assert!(vm.heap_read(first_id, 0, 2).is_err());
         vm.heap_store(first_id as usize - 1, 1, Value::Int(9));
-        assert_eq!(vm.freeze(second).expect("independent allocation"), frozen);
+        assert_eq!(freeze(&vm, second).expect("independent allocation"), frozen);
         vm.heap_free(allocation, 0).expect("free source");
-        assert!(vm.freeze(source).is_err());
+        assert!(freeze(&vm, source).is_err());
         let copy = vm
             .thaw(&empty_program(), &frozen, Some(&ty))
             .expect("survives source");
-        assert_eq!(vm.freeze(copy).expect("freeze copy"), frozen);
+        assert_eq!(freeze(&vm, copy).expect("freeze copy"), frozen);
     }
 
     #[test]
@@ -1705,7 +2031,7 @@ mod pointer_storage_tests {
             slot,
             projection: vec![crate::runtime::RefProjection::Field("b".to_string())],
         };
-        let frozen = vm.freeze(field).expect("freeze");
+        let frozen = freeze(&vm, field).expect("freeze");
         assert_eq!(frozen, CtValue::StoreToMem(Box::new(CtValue::Int(2))));
         let ty = Ty::new(TyKind::Ref(mojito_types::origin::RefTy {
             referent: Ty::int(),
@@ -1721,19 +2047,21 @@ mod pointer_storage_tests {
             vm.read_reference(&thawed, FrameId(0), &[]).expect("read"),
             Value::Int(2)
         );
-        assert_eq!(vm.freeze(thawed).expect("freeze again"), frozen);
+        assert_eq!(freeze(&vm, thawed).expect("freeze again"), frozen);
     }
 
     #[test]
     fn freezing_a_reference_to_frame_storage_is_rejected() {
         let vm = VmBackend::default();
-        let error = vm
-            .freeze(Value::Ref {
+        let error = freeze(
+            &vm,
+            Value::Ref {
                 frame: 0,
                 slot: 0,
                 projection: Vec::new(),
-            })
-            .expect_err("a frame reference has no compile-time form");
+            },
+        )
+        .expect_err("a frame reference has no compile-time form");
         assert!(error.to_string().contains("run-time storage"), "{error}");
     }
 
@@ -1741,10 +2069,13 @@ mod pointer_storage_tests {
     fn frozen_pointer_distinguishes_dangling_and_empty_and_rejects_cycles() {
         let mut vm = VmBackend::default();
         assert_eq!(
-            vm.freeze(Value::Pointer {
-                allocation: 0,
-                offset: 0
-            })
+            freeze(
+                &vm,
+                Value::Pointer {
+                    allocation: 0,
+                    offset: 0
+                }
+            )
             .expect("dangling"),
             CtValue::Pointer {
                 memory: None,
@@ -1753,7 +2084,7 @@ mod pointer_storage_tests {
         );
         let empty = vm.heap_alloc(0, 8).expect("empty allocation");
         assert_eq!(
-            vm.freeze(empty).expect("empty"),
+            freeze(&vm, empty).expect("empty"),
             CtValue::Pointer {
                 memory: Some(vec![]),
                 offset: 0
@@ -1765,7 +2096,7 @@ mod pointer_storage_tests {
         };
         vm.heap_store(allocation as usize - 1, 0, cycle.clone());
         assert!(
-            vm.freeze(cycle)
+            freeze(&vm, cycle)
                 .expect_err("cycle")
                 .to_string()
                 .contains("cyclic pointer memory")

@@ -101,9 +101,11 @@ impl VmBackend {
         }
         let regs = vec![Value::None; f.n_regs as usize];
         let mut vars = vec![Value::None; f.n_vars];
+        // A boxed operand of a held struct parameter (a reboxed receiver,
+        // an initializer's skeleton) enters as its field.
         for (i, arg) in args.into_iter().enumerate() {
             vars[i] = match f.param_types.get(i) {
-                Some(t) => crate::runtime::coerce_checked(arg, t),
+                Some(t) => prog.unboxed(crate::runtime::coerce_checked(arg, t), Some(t)),
                 None => arg,
             };
         }
@@ -410,7 +412,10 @@ impl VmBackend {
             kwarg_places,
             ..
         } = instruction
-            && let Value::Struct { name, .. } = &caller.registers[recv.0 as usize]
+            && let Some(name) = prog.struct_name(
+                &caller.registers[recv.0 as usize],
+                prog.mir.functions[caller.function].1.reg_types.get(&recv.0),
+            )
         {
             let positional: Vec<Value> = args
                 .iter()

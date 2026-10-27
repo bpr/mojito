@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The VM holds a value of a struct declaring `TrivialRegisterPassable` with
+  one field as that field, as upstream lowers a one-element
+  register-passable struct to its element, so such a value no longer
+  allocates a named field vector (R1396). The library's
+  `RawFileDescriptor`, `_ParameterListIter`, and `OptionalReg` are held
+  this way. Builtin calls and method dispatch rebox it from its static
+  type, and a compile-time result of one still freezes as the nominal
+  struct. A struct holding a reference or pointer stays boxed.
 - A call of an `@always_inline("builtin")` function or static method in a
   parameter expression is now its body's expression, as the pin folds it,
   so `SIMD[DType.int8, twice(n)]` over `return n + n` and `SIMD[DType.int8,

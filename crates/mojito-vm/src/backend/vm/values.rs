@@ -328,6 +328,14 @@ impl VmBackend {
     /// type.
     pub(super) fn uninitialized_value(prog: &Prog, ty: &Ty) -> Option<Value> {
         match ty.kind() {
+            // A held struct's storage is its one field's.
+            TyKind::Struct(name, _)
+                if let Some(definition) = prog.structs.get(name)
+                    && definition.register_field.is_some()
+                    && let [(_, field)] = definition.fields.as_slice() =>
+            {
+                Some(uninitialized_field(field))
+            }
             TyKind::Struct(name, _) => Some(Value::Struct {
                 name: name.clone(),
                 fields: uninitialized_fields(&prog.structs.get(name)?.fields),

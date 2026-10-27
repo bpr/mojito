@@ -51,7 +51,11 @@ impl VmBackend {
                 // applying an element projection as pointer arithmetic (a
                 // single-pointee deref designates the pointee the pointer
                 // already addresses).
-                if let Value::Pointer { allocation, offset } = root {
+                if let Value::Pointer { allocation, offset } = root
+                    && prog
+                        .held_field(place.root_ty.as_ref().map(peel_references))
+                        .is_none()
+                {
                     // A reference within the pointee (`q[i]._data[k]`, a
                     // `Span` member's element reference inlined at the
                     // pointee place `q[i]`) is the heap address the pointee's
@@ -622,6 +626,22 @@ impl VmBackend {
                     // frame identity reachable even without direct ref
                     // parameters because by-value arguments may contain
                     // nested reference handles.
+                    // A builtin (`print`, `String`, `repr`) dispatches its
+                    // operands by runtime shape, so a held struct operand
+                    // passes as its box; a function's frame entry unboxes it.
+                    let reg_types = &prog.mir.functions[function].1.reg_types;
+                    let argv: Vec<Value> = argv
+                        .into_iter()
+                        .zip(args)
+                        .map(|(value, register)| prog.boxed(value, reg_types.get(&register.0)))
+                        .collect();
+                    let kw: Vec<(String, Value)> = kw
+                        .into_iter()
+                        .zip(kwargs)
+                        .map(|((name, value), (_, register))| {
+                            (name, prog.boxed(value, reg_types.get(&register.0)))
+                        })
+                        .collect();
                     let stack_base = self.push_caller_mirror(frame_id, regs, vars);
                     let arg_types: Vec<Option<mojito_types::types::Ty>> = args
                         .iter()
@@ -806,16 +826,26 @@ impl VmBackend {
                 if pointer_copy {
                     regs[dest.0 as usize] = recv_val;
                 } else {
-                    let argv: Vec<Value> =
-                        args.iter().map(|r| regs[r.0 as usize].clone()).collect();
+                    // A builtin method (`Writer.write` on the builtin
+                    // string writer) formats its operands by runtime shape,
+                    // so a held struct operand passes as its box.
+                    let reg_types = &prog.mir.functions[function].1.reg_types;
+                    let operand = |register: &Reg| {
+                        prog.boxed(
+                            regs[register.0 as usize].clone(),
+                            reg_types.get(&register.0),
+                        )
+                    };
+                    let argv: Vec<Value> = args.iter().map(operand).collect();
                     let kw: Vec<(String, Value)> = kwargs
                         .iter()
-                        .map(|(name, reg)| (name.clone(), regs[reg.0 as usize].clone()))
+                        .map(|(name, reg)| (name.clone(), operand(reg)))
                         .collect();
                     let result = self.method_call(
                         prog,
                         MethodInvocation {
                             receiver: recv_val,
+                            receiver_ty: reg_types.get(&recv.0),
                             method,
                             resolved_name: resolved.as_deref(),
                             result_adapter: result_adapter.as_deref().map(|adapter| {
@@ -925,7 +955,13 @@ impl VmBackend {
                 regs[dest.0 as usize] = Value::None;
             }
             MirInstr::GetField { dest, base, field } => {
+                let base_ty = prog.mir.functions[function].1.reg_types.get(&base.0);
                 let base = regs[base.0 as usize].clone();
+                // A held struct's field is the struct's value.
+                if prog.held_field(base_ty).is_some() {
+                    regs[dest.0 as usize] = prog.unboxed(base, base_ty);
+                    return Ok(());
+                }
                 // A ref-typed base register holds a handle; field access
                 // addresses its referent (another read twin of the ref-field
                 // second dereference).
@@ -934,7 +970,12 @@ impl VmBackend {
                 } else {
                     base
                 };
-                regs[dest.0 as usize] = get_field(&base, field)?;
+                let referent_ty = base_ty.map(peel_references);
+                regs[dest.0 as usize] = if prog.held_field(referent_ty).is_some() {
+                    prog.unboxed(base, referent_ty)
+                } else {
+                    get_field(&base, field)?
+                };
             }
             MirInstr::Index {
                 dest,
@@ -968,7 +1009,8 @@ impl VmBackend {
                     // Int versus Slice overloads) still takes the runtime index.
                     // Use the checked argument contract, not the mere presence
                     // of a selected symbol, to distinguish those ABIs.
-                    let recv = match base_value {
+                    let base_ty = prog.mir.functions[function].1.reg_types.get(&base.0);
+                    let recv = match prog.boxed(base_value, base_ty.map(peel_references)) {
                         recv @ Value::Struct { .. } => recv,
                         other => {
                             return Err(RuntimeError::TypeError(format!(
@@ -989,6 +1031,7 @@ impl VmBackend {
                         prog,
                         MethodInvocation {
                             receiver: recv,
+                            receiver_ty: None,
                             method: "__getitem__",
                             resolved_name: Some(&call.target),
                             result_adapter: None,
@@ -1015,6 +1058,12 @@ impl VmBackend {
                             "vm: call-less index lacks an intrinsic dispatch kind".to_string(),
                         )
                     })?;
+                    // An `Indexer` struct normalizes through its
+                    // `__mlir_index__`, found by runtime shape.
+                    let index_operand = prog.boxed(
+                        regs[index.0 as usize].clone(),
+                        prog.mir.functions[function].1.reg_types.get(&index.0),
+                    );
                     regs[dest.0 as usize] = match (intrinsic, base_value) {
                         // A pointer subscript is a shallow read of the
                         // pointee, as `LoadPlace` and `ReadRef` are; the
@@ -1024,19 +1073,19 @@ impl VmBackend {
                         // bound to a placeholder-origin parameter) reads the
                         // pointee; the handle designates one value.
                         (MirIntrinsicSubscript::Pointer, handle @ Value::Ref { .. }) => {
-                            let off = self.normalize_index(prog, &regs[index.0 as usize])?;
+                            let off = self.normalize_index(prog, &index_operand)?;
                             let handle = super::references::offset_place_handle(handle, off)?;
                             self.read_reference(&handle, frame_id, vars)?
                         }
                         // `ptr[i]` loads the pointee at `base + i` from the heap arena.
                         (MirIntrinsicSubscript::Pointer, Value::Pointer { allocation, offset }) => {
-                            let off = self.normalize_index(prog, &regs[index.0 as usize])?;
+                            let off = self.normalize_index(prog, &index_operand)?;
                             self.heap_read(allocation, offset, off)?
                         }
                         (MirIntrinsicSubscript::ComptimeList, Value::ComptimeList(items))
                             if self.ctfe_fuel.is_some() =>
                         {
-                            let idx = self.normalize_index(prog, &regs[index.0 as usize])?;
+                            let idx = self.normalize_index(prog, &index_operand)?;
                             let index = crate::runtime::bounds_check(
                                 idx,
                                 items.len(),
@@ -1049,7 +1098,7 @@ impl VmBackend {
                             | MirIntrinsicSubscript::VariadicStorage,
                             value,
                         ) => {
-                            let idx = self.normalize_index(prog, &regs[index.0 as usize])?;
+                            let idx = self.normalize_index(prog, &index_operand)?;
                             index_value(&value, idx)?
                         }
                         (kind, value) => {
@@ -1088,6 +1137,7 @@ impl VmBackend {
                     prog,
                     MethodInvocation {
                         receiver: regs[object.0 as usize].clone(),
+                        receiver_ty: prog.mir.functions[function].1.reg_types.get(&object.0),
                         method: "__getitem__",
                         resolved_name: Some(&call.target),
                         result_adapter: None,
@@ -1131,6 +1181,7 @@ impl VmBackend {
                     prog,
                     MethodInvocation {
                         receiver: regs[receiver.0 as usize].clone(),
+                        receiver_ty: prog.mir.functions[function].1.reg_types.get(&receiver.0),
                         method: "__setitem__",
                         resolved_name: Some(&call.target),
                         result_adapter: None,
@@ -1318,7 +1369,10 @@ impl VmBackend {
                 let selected = alternatives.get(*index).cloned().ok_or_else(|| {
                     RuntimeError::TypeError("Variant.set has an invalid checked tag".to_string())
                 })?;
-                let factory = regs[factory.0 as usize].clone();
+                let factory = prog.boxed(
+                    regs[factory.0 as usize].clone(),
+                    prog.mir.functions[function].1.reg_types.get(&factory.0),
+                );
                 let produced = self.invoke_callable_value(
                     prog,
                     &factory,
@@ -1358,7 +1412,10 @@ impl VmBackend {
                 // The receiver place was moved to a tombstone before this
                 // instruction; the handler consumes the payload.
                 let payload = value.as_ref().clone();
-                let handler = regs[handler.0 as usize].clone();
+                let handler = prog.boxed(
+                    regs[handler.0 as usize].clone(),
+                    prog.mir.functions[function].1.reg_types.get(&handler.0),
+                );
                 self.invoke_callable_value(
                     prog,
                     &handler,
@@ -1458,8 +1515,11 @@ impl VmBackend {
                 width,
                 elems,
             } => {
-                let mut vals: Vec<Value> =
-                    elems.iter().map(|r| regs[r.0 as usize].clone()).collect();
+                let reg_types = &prog.mir.functions[function].1.reg_types;
+                let mut vals: Vec<Value> = elems
+                    .iter()
+                    .map(|r| prog.boxed(regs[r.0 as usize].clone(), reg_types.get(&r.0)))
+                    .collect();
                 // An `Intable`-bounded element arrives erased as its concrete
                 // struct; normalize it through `__int__` before lane build.
                 for val in &mut vals {
@@ -1776,7 +1836,9 @@ impl VmBackend {
             MirInstr::ConsumeVar { var } => {
                 let value = std::mem::replace(&mut vars[*var as usize], Value::Moved);
                 let value = match prog.mir.functions[function].1.var_tys.get(var) {
-                    Some(ty) => dispatch::erased_instance_value(prog, value, ty),
+                    Some(ty) => {
+                        dispatch::erased_instance_value(prog, prog.boxed(value, Some(ty)), ty)
+                    }
                     None => value,
                 };
                 // A synthesized destructor's consume of its receiver is no

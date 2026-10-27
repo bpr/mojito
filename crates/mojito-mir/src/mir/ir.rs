@@ -4179,6 +4179,76 @@ mod tests {
     }
 
     #[test]
+    fn register_field_answers_a_one_field_trivial_declaration() {
+        use mojito_checked::checked::StructConformance;
+        let structure =
+            |name: &str, fields: usize, trait_name: &str, conditions| MirStructDeclaration {
+                name: name.into(),
+                fields: (0..fields)
+                    .map(|at| (format!("f{at}"), Ty::int()))
+                    .collect(),
+                mut_self_methods: HashSet::new(),
+                fieldwise_init: true,
+                param_decls: Vec::new(),
+                explicit_destructors: HashMap::new(),
+                explicit_destroy: None,
+                conformances: Vec::new(),
+                declared: vec![StructConformance {
+                    trait_name: trait_name.into(),
+                    conditions,
+                }],
+                associated_types: Vec::new(),
+                parameterized_associated_types: Vec::new(),
+                associated_values: Vec::new(),
+                parameterized_associated_values: Vec::new(),
+                witness_tables: Vec::new(),
+                members: Vec::new(),
+            };
+        let unconditional = || vec![GenericConstraint::Bool(true)];
+        let trivial = "TrivialRegisterPassable";
+        let mut destroyed = structure("Destroyed", 1, trivial, unconditional());
+        destroyed.members.push(MirStructMember {
+            member: "__deinit__".into(),
+            symbol: "Destroyed.__deinit__".into(),
+        });
+        let declarations = MirDeclarations {
+            structs: vec![
+                structure("Held", 1, trivial, unconditional()),
+                structure("Pair", 2, trivial, unconditional()),
+                structure("Copied", 1, "Copyable", unconditional()),
+                structure("Passed", 1, "RegisterPassable", unconditional()),
+                structure(
+                    "Conditional",
+                    1,
+                    trivial,
+                    vec![GenericConstraint::Conforms {
+                        operand: mojito_types::types::ConstraintOperand::Param(
+                            mojito_types::param_expr::ParamRef::unbound("T"),
+                        ),
+                        trait_name: trivial.into(),
+                    }],
+                ),
+                destroyed,
+            ],
+            ..MirDeclarations::default()
+        };
+        assert_eq!(
+            declarations.register_field("Held"),
+            Some(&("f0".to_string(), Ty::int()))
+        );
+        for boxed in [
+            "Pair",
+            "Copied",
+            "Passed",
+            "Conditional",
+            "Destroyed",
+            "Absent",
+        ] {
+            assert_eq!(declarations.register_field(boxed), None, "{boxed}");
+        }
+    }
+
+    #[test]
     fn register_passable_answers_memory_only_by_default() {
         use mojito_checked::checked::StructConformance;
         let structure = |name: &str, trait_name: &str, conditions| MirStructDeclaration {

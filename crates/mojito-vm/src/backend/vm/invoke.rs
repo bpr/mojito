@@ -236,6 +236,7 @@ impl VmBackend {
     ) -> Result<Value, RuntimeError> {
         let MethodInvocation {
             receiver: recv,
+            receiver_ty,
             method,
             resolved_name: resolved,
             result_adapter,
@@ -255,8 +256,13 @@ impl VmBackend {
         // handle: dispatch on its referent. A `mut self` write-back re-enters
         // the storage through the receiver place, which chases the same
         // handle.
-        let recv = if matches!(recv, Value::Ref { .. }) {
-            self.read_reference(&recv, frame_id, vars)?
+        // A held struct receiver dispatches as its box, which the method's
+        // frame entry unboxes.
+        let recv = if prog.held_field(receiver_ty).is_some() {
+            prog.boxed(recv, receiver_ty)
+        } else if matches!(recv, Value::Ref { .. }) {
+            let referent = self.read_reference(&recv, frame_id, vars)?;
+            prog.boxed(referent, receiver_ty.map(peel_references))
         } else {
             recv
         };
@@ -281,6 +287,7 @@ impl VmBackend {
                                 prog,
                                 MethodInvocation {
                                     receiver: materialized,
+                                    receiver_ty: None,
                                     method,
                                     resolved_name: instance.as_deref(),
                                     result_adapter,

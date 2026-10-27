@@ -114,11 +114,12 @@ pub(super) fn bind_args(
 
 /// The struct value `name` of one value per field, in declaration order,
 /// each coerced to its field type, running no constructor: a
-/// `struct.create`.
+/// `struct.create`. A held struct ([`StructDef::register_field`]) is its
+/// one field's value.
 pub(super) fn struct_value(
     def: &StructDef,
     name: &str,
-    args: Vec<Value>,
+    mut args: Vec<Value>,
 ) -> Result<Value, RuntimeError> {
     if def.fields.len() != args.len() {
         return Err(RuntimeError::ArityMismatch {
@@ -126,6 +127,12 @@ pub(super) fn struct_value(
             expected: def.fields.len(),
             got: args.len(),
         });
+    }
+    if def.register_field.is_some()
+        && let [(_, ty)] = def.fields.as_slice()
+        && let Some(value) = args.pop()
+    {
+        return Ok(crate::runtime::coerce_checked(value, ty));
     }
     let fields = def
         .fields
