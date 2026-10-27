@@ -313,6 +313,7 @@ assets/ok/for_destructuring_targets.mojo	main	exe-differential	sanitized
 assets/ok/for_destructuring_tuple_not_copied.mojo	main	exe-differential	sanitized
 assets/ok/forward_struct_reference_iterator.mojo	main	exe-differential	sanitized
 assets/ok/forwarded_argument_instances.mojo	main	exe-differential	sanitized
+assets/ok/forwarded_capturing_callable_parameter.mojo	main	exe-differential	sanitized
 assets/ok/forwarded_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/free_function_origin_binder_result.mojo	main	exe-differential	sanitized
 assets/ok/free_function_origin_binders.mojo	main	exe-differential	sanitized
@@ -470,6 +471,7 @@ assets/ok/maybe_uninit_roundtrip.mojo	main	exe-differential	sanitized
 assets/ok/maybe_uninit_write.mojo	main	exe-differential	sanitized
 assets/ok/member_alias_application.mojo	main	exe-differential	sanitized
 assets/ok/member_call_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
+assets/ok/method_capturing_callable_parameter.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_named_result.mojo	main	exe-differential	sanitized
 assets/ok/method_result_pointer_field_write.mojo	main	exe-differential	sanitized

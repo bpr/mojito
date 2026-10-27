@@ -1368,6 +1368,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- An `@parameter` closure that captures, bound to a compile-time callable
+  parameter, is now folded into the instance whether it is generic or not,
+  as upstream keys such a closure on its body (R533): the instance takes
+  only the captured places, as trailing reference parameters, and calls the
+  body directly, where a non-generic closure was passed whole as a runtime
+  parameter and called indirectly. So a method's callable parameter binds
+  one (`runner.apply[scale](5)` prints `115`, R172), a forwarded binding
+  calls it (`outer[f]` calling `inner[f](x)`, R980), and an unread one
+  elaborates with the pre-elaboration pipeline off (R983). A method call
+  now records the capture accesses of a closure its bracket arguments
+  bind, as a direct call does, so a captured local stays live across it.
+
 - A call, operator, or subscript through a bound now resolves at a struct
   instance to the member its witness table records, as upstream's
   specialization folds `#kgen.get_witness` (R1281), where the elaborator

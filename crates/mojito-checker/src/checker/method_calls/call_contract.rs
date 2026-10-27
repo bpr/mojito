@@ -49,8 +49,12 @@ impl Checker {
         } = selected;
         let receiver_elided = self.receiver_is_elided(obj_ty, method, &target);
         let arguments = checked_call_arguments(resolved, &conventions);
-        let argument_types = args
-            .iter()
+        // A capturing closure bound to a compile-time callable parameter
+        // runs while the call is active, as a runtime callable argument does.
+        let argument_types = self
+            .runtime_param_arg_expressions(param_args)
+            .into_iter()
+            .chain(args)
             .chain(kwargs.iter().map(|argument| &argument.value))
             .filter_map(|expression| {
                 self.fact(&expression.source_span(), |facts| facts.ty.as_ref())

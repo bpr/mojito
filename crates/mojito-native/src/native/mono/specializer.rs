@@ -834,11 +834,11 @@ impl<'a> Specializer<'a> {
     }
 
     /// Bind the callable parameters this call binds to a closure that
-    /// captures, but those the callee removed, answering the trailing arguments the call passes for them
-    /// and the loads those arguments need first. An environment survives no
-    /// name: a generic closure's instance folds the lifted body and takes
-    /// the captured places as reference parameters, and any other closure
-    /// is passed whole, a runtime parameter its instance calls indirectly.
+    /// captures, but those the callee removed, answering the trailing
+    /// arguments the call passes for them and the loads those arguments need
+    /// first. An environment survives no name: the instance folds the lifted
+    /// body, as upstream keys a `@parameter` closure on its body, and takes
+    /// the captured places as reference parameters.
     pub(super) fn bind_capturing_callables(
         &self,
         owner: &str,
@@ -847,7 +847,6 @@ impl<'a> Specializer<'a> {
         param_args: &[mojito_mir::mir::MirParamArg],
         bindings: &mut Bindings,
     ) -> Result<CapturingArguments, MonoError> {
-        bindings.runtime_callables.clear();
         bindings.callable_environments.clear();
         let mut trailing = CapturingArguments::default();
         let Some(declaration) = self.declarations.get(target) else {
@@ -863,19 +862,15 @@ impl<'a> Specializer<'a> {
             if removed.contains(decl.id()) {
                 continue;
             }
-            let generic = match peel_refs(ty).kind() {
-                TyKind::GenericFunc(_) => true,
-                TyKind::Func(_) => false,
-                _ => continue,
-            };
+            if !matches!(
+                peel_refs(ty).kind(),
+                TyKind::GenericFunc(_) | TyKind::Func(_)
+            ) {
+                continue;
+            }
             let Some((callee, false)) = self.callable_targets.get(&reg.0) else {
                 continue;
             };
-            if !generic {
-                bindings.runtime_callables.push(decl.binder());
-                trailing.closures.push(reg);
-                continue;
-            }
             let captured = self.capture_arguments(owner, function, callee)?;
             let environment = captured
                 .iter()
@@ -1099,20 +1094,9 @@ impl<'a> Specializer<'a> {
                 error
             })?;
         self.close_lane_masks(&key.template, &mut function)?;
-        // A callable parameter the call site could not fold into this body
-        // becomes its last runtime parameter, carrying the closure — and its
-        // environment — that the body then calls indirectly.
-        let promoted: Vec<(String, Ty)> = bindings
-            .runtime_callables
-            .iter()
-            .filter_map(|parameter| {
-                promote_to_runtime_parameter(&mut function, &parameter.name)
-                    .map(|ty| (parameter.name.to_string(), ty))
-            })
-            .collect();
-        // A generic closure's environment follows them: the body folds the
-        // lifted body's name, and a call through the parameter passes these
-        // reference parameters as the environment of its specialization.
+        // A capturing closure's environment trails the parameter block: the
+        // body folds the lifted body's name, and a call through the
+        // parameter passes these reference parameters as its environment.
         let environments: Vec<(String, Vec<mojito_hir::hir::VarId>)> = bindings
             .callable_environments
             .iter()
@@ -1177,9 +1161,6 @@ impl<'a> Specializer<'a> {
             declaration.param_decls.clear();
             declaration.availability.clear();
             declaration.enclosing = None;
-            for (parameter, ty) in promoted {
-                declare_runtime_parameter(&mut declaration, &parameter, ty);
-            }
             for (target, slots) in environments {
                 let body = &self.declarations[target.as_str()];
                 for (position, slot) in slots.into_iter().enumerate() {
@@ -2850,7 +2831,7 @@ impl<'a> Specializer<'a> {
                         {
                             *result_adapter = None;
                         }
-                        let (target, bindings, arguments) = self.infer_call(
+                        let (target, mut bindings, arguments) = self.infer_call(
                             owner,
                             function,
                             &target,
@@ -2860,6 +2841,15 @@ impl<'a> Specializer<'a> {
                             kwargs,
                             param_arg_regs,
                             instantiated_args,
+                        )?;
+                        // As at a direct call, a callable parameter bound to
+                        // a capturing closure takes its environment.
+                        let capturing = self.bind_capturing_callables(
+                            owner,
+                            function,
+                            &target,
+                            param_arg_regs,
+                            &mut bindings,
                         )?;
                         let reduced = bindings.reduced;
                         let concrete = self.enqueue(&target, bindings, arguments)?;
@@ -2880,6 +2870,21 @@ impl<'a> Specializer<'a> {
                         param_decls.clear();
                         if reduced {
                             self.reduce_method_call(owner, &target, instruction)?;
+                        }
+                        if let MirInstr::MethodCall {
+                            args, arg_places, ..
+                        }
+                        | MirInstr::Call {
+                            args, arg_places, ..
+                        } = instruction
+                        {
+                            pass_capturing_arguments(
+                                capturing,
+                                index,
+                                args,
+                                arg_places,
+                                &mut preludes,
+                            );
                         }
                     }
                     // An indirect call whose callee is a nominal callable
@@ -2919,7 +2924,9 @@ impl<'a> Specializer<'a> {
                             });
                         if let Some((callable, captures_are_empty)) =
                             self.callable_targets.get(&callee.0).cloned()
-                            && (captures_are_empty || dependent_callable)
+                            && (captures_are_empty
+                                || dependent_callable
+                                || self.enclosing.binds_environment(&callable))
                         {
                             let target = callable.clone();
                             // The lifted body takes its environment as leading
@@ -3831,7 +3838,7 @@ impl<'a> Specializer<'a> {
         {
             return Err(self.error(
                 Some(owner),
-                format!("generic retained callable `{target}` captures by value"),
+                format!("retained callable `{target}` captures by value"),
             ));
         }
         captures
@@ -3840,7 +3847,7 @@ impl<'a> Specializer<'a> {
                 let ty = capture.place.ty.clone().ok_or_else(|| {
                     self.error(
                         Some(owner),
-                        format!("capture of generic retained callable `{target}` is untyped"),
+                        format!("capture of retained callable `{target}` is untyped"),
                     )
                 })?;
                 let reg = Reg(function.n_regs);
@@ -3880,14 +3887,10 @@ fn pass_capturing_arguments(
     arg_places: &mut Vec<Option<MirPlace>>,
     preludes: &mut Vec<(usize, Vec<MirInstr>)>,
 ) {
-    arg_places.resize(args.len(), None);
-    for closure in capturing.closures {
-        args.push(closure);
-        arg_places.push(None);
-    }
     if capturing.environment.is_empty() {
         return;
     }
+    arg_places.resize(args.len(), None);
     let mut loads = Vec::with_capacity(capturing.environment.len());
     for (dest, place) in capturing.environment {
         args.push(dest);

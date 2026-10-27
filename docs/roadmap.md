@@ -822,21 +822,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1288.
   - Model: Fable, Not Planned.
 
-- [ ] **R983 With the pre-elaboration pipeline off, a capturing callable
-  parameter its body never calls fails to elaborate**
-
-  `assets/ok/unread_callable_parameter_instances.mojo` fails under
-  `MOJITO_PRE_ELABORATION=0` with "value parameter `f` is not compile-time
-  constant" in `ignore_capturing`, so its `pre_elaboration::*` on/off trial
-  fails.
-  - With the pipeline on, `remove-unused-params` removes `f` and the
-    elaborator binds no closure for it (R910), which hides the gap.
-  - The elaborator should bind a capturing closure's environment for an
-    uncalled parameter as it does for a called one.
-  - Depends on R533: the uncalled parameter takes the environment path
-    R533 moves every capturing closure onto.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1350 `mem-2-reg` keeps a slot whose stored register another
   instruction also reads**
 
@@ -6709,30 +6694,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R303 A capturing generic callable parameter cannot be applied at
-  its own compile-time arguments**
+- [ ] **R303 A capturing generic callable parameter applied at its own
+  compile-time arguments fails to verify once its callee is inlined**
 
-  Problem: `callback[2](40)` in `def invoke_captured[origins: OriginSet, //,
-  callback: def[n: Int](Int) capturing[origins] -> Int]()`, bound to an
-  `@parameter` closure that captures a local, runs erased and stops in the
-  elaborator with "place keeps symbolic type `def[n: Int](Int)
-  capturing[...] -> Int`".
-  - The elaborator resolves an indirect call through a capture-free generic
-    callable, or a capturing non-generic one passed as a trailing runtime
-    argument, but never specializes a capturing generic closure at the
-    call's compile-time arguments while passing its environment.
-  - `conformance/fixtures/generic_anonymous_callables.mojo` (artifact
-    conformance case `generic-anonymous-callables`) and
-    `generic_callable_contract_defaults_override_implementation_defaults`
-    (`tests/param_callable_value_test.rs`) pin it.
-  - A legacy `@parameter` closure follows R533's environment path, not
-    R1376's storage struct.
-  - Probe: with `invoke_captured` `@always_inline("nodebug")`,
-    `inline-parametric` splices `callback[2](40)` into `main` as a
-    `call.indirect` the verifier rejects ("indirect-call compile-time
-    parameter metadata does not match its callable contract"), so
-    `canonicalize` folds no call that carries compile-time arguments.
-  - Depends on R533.
+  Problem: with `invoke_captured` `@always_inline("nodebug")`,
+  `inline-parametric` splices `callback[2](40)` into `main` as a
+  `call.indirect` the verifier rejects ("indirect-call compile-time
+  parameter metadata does not match its callable contract"); the pin runs
+  it.
+  - `def invoke_captured[origins: OriginSet, //, callback: def[n: Int](Int)
+    capturing[origins] -> Int]()`, bound to an `@parameter` closure that
+    captures a local.
+  - Without `nodebug` the elaborator folds the closure and passes its
+    environment, so `assets/ok/capturing_generic_callable_parameter_environment.mojo`
+    runs.
+  - So `canonicalize` folds no call that carries compile-time arguments.
+  - Probe: `assets/ok/capturing_generic_callable_parameter_environment.mojo`
+    with `invoke_captured` `@always_inline("nodebug")`.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R327 An out-of-range value-pack index fails as an unsupported
@@ -7564,45 +7543,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Ledger name: `native-arithmetic-edge-cases`.
   - Depends on nothing.
   - Model: Opus, Planned.
-
-- [ ] **R172 A capturing closure bound to a method's compile-time callable
-  parameter does not elaborate**
-
-  Problem: a method whose compile-time callable parameter binds a
-  capturing closure (`runner.apply[scale](5)`, `scale` reading an enclosing
-  `var`) stops with "unsupported binding call to `main$scale` during
-  monomorphization: Missing("x")" in `Runner.apply`, while the pin prints
-  `15` then `115`. The same closure through a free function is
-  `assets/ok/lambda_hof.mojo`.
-  - The checker accepts it now; the gap is the elaborator's.
-  - Only the direct-call arm promotes a capturing callable argument to a
-    runtime parameter (`mono/promote.rs`, `Bindings::runtime_callables`),
-    so a `MethodCall` carrying one finds no binding for the callee's
-    argument.
-  - R533 moves every capturing closure onto the environment path, which
-    a method's instance can take as a free function's does.
-  - Pinned by `conformance/probes/method_capturing_callable_parameter.mojo`.
-  - Ledger name: `method-capturing-callable-parameter`.
-  - Depends on R533: its elaboration follows R533's environment path.
-  - Model: Opus, Planned.
-
-- [ ] **R980 A capturing callable parameter forwarded to a callee that
-  calls it is rejected**
-
-  Problem: `outer[f]` calling `inner[f](x)`, where `f` binds a non-generic
-  capturing closure and `inner` calls `f`, is rejected at elaboration
-  ("value parameter `f` is not compile-time constant"), while the pin runs
-  it.
-  - `outer`'s instance takes the closure as a runtime parameter
-    (`Bindings::runtime_callables`), so the forwarded argument is no
-    compile-time value `inner`'s instance can be keyed on.
-  - A forward to a callee that removed the parameter works since R910.
-  - Moving non-generic closures onto the environment path, which already
-    forwards a generic closure's environment through another binding,
-    should close it.
-  - Found while landing R910 (2026-10-15).
-  - Depends on R533.
-  - Model: Opus, Not Planned.
 
 - [ ] **R981 A callable parameter's default naming a function declared
   later is rejected**
@@ -9140,10 +9080,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `inline-parametric` rewrite by name into the bound function, where
   upstream reads it as `kgen.param.constant` of the binder like any other
   parameter.
-  - Mojito binds a capturing closure argument as a runtime parameter of
-    the instance (`Bindings::runtime_callables`, `mono/promote.rs`), so
-    the slot is the closure's storage there, and the check keeps callable
-    binders out of `Checker::value_binder_read`.
+  - The check keeps callable binders out of `Checker::value_binder_read`,
+    though no instance now takes a bound closure as a runtime parameter
+    (R533).
   - The by-name rewrites: `substitute_callable_binder_reads`
     (`mono/substitute.rs`) and `inline-parametric`'s `read_binder`.
   - `mem-2-reg` skips a slot nothing stores or declares for this reason
@@ -10555,22 +10494,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     the inlined construction would name the callee's binder, which the
     caller does not declare, though substitution already closes its type.
   - Found while landing R364 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R533 A non-generic capturing closure bound to a callable parameter
-  is passed whole and called indirectly**
-
-  Problem: a generic capturing closure's instance folds the closure's body
-  and takes only its environment, but a non-generic one is still promoted
-  to a runtime closure parameter (`Bindings::runtime_callables`), where the
-  pin specializes on the bound function in both cases.
-  - Two mechanisms carry one rule (`mono/promote.rs`).
-  - Moving the non-generic case onto the environment path leaves one, and
-    makes its calls direct.
-  - A body using the parameter as a value would rebuild a `MakeClosure`
-    over the environment parameters.
-  - Found while landing R526 (2026-10-09).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -5,13 +5,13 @@
 //! consume. It never mutates the canonical MIR artifact.
 
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
+use environment::*;
+#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use equiv::*;
 use mojito_mir::mir::{
     addressed_slots, callable_targets, destroyed_structs, dunder_method_call, nested_instructions,
     relocated_structs, renumber_slots, retire_slots,
 };
-#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
-use promote::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use spread::*;
 use std::cell::RefCell;
@@ -419,12 +419,7 @@ struct Bindings {
     /// once `C` is bound to an instance, where no signature spelled the
     /// member for unification, and a reflection query reads the fields.
     structs: Rc<StructCatalog>,
-    /// Callable parameters whose bound argument is a closure with captures.
-    /// The environment survives no name, so the instance takes the closure as
-    /// a runtime parameter and its body keeps the indirect call, instead of
-    /// folding the callable's name into a direct one.
-    runtime_callables: Vec<ParamRef>,
-    /// Callable parameters bound to a generic closure with captures, each
+    /// Callable parameters bound to a closure with captures, each
     /// beside the closure's lifted body and environment. The instance folds
     /// the body's name, as for a callable that captures nothing, and takes
     /// the environment alone: one trailing reference parameter per captured
@@ -454,6 +449,15 @@ struct Bindings {
 }
 
 impl Bindings {
+    /// Whether a callable parameter of the instance is bound to the lifted
+    /// body `target` of a closure that captures, whose environment the
+    /// instance takes as reference parameters.
+    fn binds_environment(&self, target: &str) -> bool {
+        self.callable_environments
+            .iter()
+            .any(|(_, body, _)| body == target)
+    }
+
     /// Erase every origin the bound types carry, as upstream binds a type
     /// parameter to a type whose origins read `origin={ }`. The instance key
     /// names these erased types, so a binding keeps none of the origins of
@@ -482,10 +486,8 @@ impl Bindings {
 /// capture ([`Specializer::bind_capturing_callables`]).
 #[derive(Default)]
 struct CapturingArguments {
-    /// Each closure passed whole, in the order its instance promotes them.
-    closures: Vec<Reg>,
-    /// Each captured place a generic closure's instance takes by reference,
-    /// after every closure, beside the register its load fills.
+    /// Each captured place the instance takes by reference, beside the
+    /// register its load fills.
     environment: Vec<(Reg, MirPlace)>,
 }
 
@@ -707,12 +709,12 @@ fn origin_erased(ty: &Ty) -> Ty {
 mod availability;
 mod bodies;
 mod catalog;
+mod environment;
 mod equiv;
 mod failure;
 mod gather;
 mod infer;
 mod instances;
-mod promote;
 mod rebind;
 mod select;
 mod specializer;

@@ -1,9 +1,7 @@
-# Defect probe (Mojo 1.2.0.dev2026092105): a method whose compile-time
-# callable parameter binds a capturing closure. The pin runs it and prints
-# `15` then `115`. The free-function form of the same shape is
-# `assets/ok/lambda_hof.mojo`, and the closure alone runs in Mojito too;
-# the method call stops the elaborator with "unsupported binding call to
-# `main$scale` during monomorphization" (roadmap R172).
+# A method whose compile-time callable parameter binds a capturing
+# `@parameter` closure. The method's instance folds the closure's body and
+# takes its environment by reference, as a free function's does
+# (`lambda_hof.mojo`). The pin prints `15` then `115`.
 struct Runner(Movable):
     var base: Int
 

@@ -765,9 +765,9 @@ pub(super) fn array_display_construction(
 
 /// The constant each compile-time parameter's local reads. MIR names a
 /// value binder's local by its spelling, which the declaration's `scope`
-/// resolves to the binder: a signature declares a spelling once. A callable
-/// promoted to a runtime parameter keeps its reads, and a `comptime for`
-/// index, which a thunk reads as a parameter reference, has no local.
+/// resolves to the binder: a signature declares a spelling once. A
+/// `comptime for` index, which a thunk reads as a parameter reference, has no
+/// local.
 pub(super) fn bound_parameter_locals<'a>(
     scope: &[ParamDecl],
     bindings: &'a Bindings,
@@ -777,7 +777,6 @@ pub(super) fn bound_parameter_locals<'a>(
         .filter(|decl| matches!(decl, ParamDecl::Value { .. }))
         .map(ParamDecl::binder)
         .filter(|binder| !binder.id.is_comptime_for_binder())
-        .filter(|binder| !bindings.runtime_callables.contains(binder))
         .filter_map(|binder| {
             let value = bindings.values.get(&binder)?;
             Some((binder.name.trim_start_matches('*').to_string(), value))
