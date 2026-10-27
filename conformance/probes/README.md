@@ -128,7 +128,6 @@ template; a field type under a symbolic index is opaque until a
 | `comptime_for_other_struct_list.mojo` | Does a `comptime for` iterate another struct's compile-time list member (`K.L`), in a function and in a generic struct's method? | **differs**: the pin prints `6` `7 7`, Mojito rejects ("Undefined variable 'K'"); roadmap R513 |
 | `conforms_to_condition_generic_def.mojo` | Does `comptime if conforms_to(T, Copyable):` decide over a plain `def`'s parameter? | **differs**: the pin prints `copyable`, Mojito fails ("register r0 has no checked type"); roadmap R280 |
 | `mut_self_hash_witness.mojo` | Does a `mut self` `__hash__` witness a read-`self` requirement? | **differs**: the pin prints `True`, Mojito rejects the conformance ("does not match the signature required") — `docs/roadmap.md` R67 |
-| `setter_without_getter.mojo` | Is a subscript store accepted on a struct that declares `__setitem__` but no `__getitem__`? | **differs**: the pin rejects the store ("'Sink' has '__setitem__' but no '__getitem__' method"), Mojito prints `3` — `docs/roadmap.md` R35 |
 | `bound_call_result_converted_at_binding.mojo` | Does a generic body bind a bound method's call result through an `@implicit` conversion at an annotated `var`? | **differs**: the pin prints `2 a`, Mojito rejects the generic body ("register r1 has no checked type") — `docs/roadmap.md` R44 |
 | `comprehension_binder_method_call.mojo` | Does a method called on a borrowed comprehension binder run? | **differs**: the pin prints `2`, Mojito stops at run time ("call passed 0 args to 1-parameter function 'P.get'") — `docs/roadmap.md` R56 |
 | `generic_method_transfer_in_try.mojo` | Does a generic method move its `var` parameter into a field's `append` inside `try`/`finally`, as under a `with`? | **differs**: the pin prints `finally` `2`, Mojito rejects the template ("use of uninitialized value 'value'") — `docs/roadmap.md` R49 |
@@ -152,7 +151,6 @@ against the `ae386d1b204` build (2026-08-15); re-confirmed against
 | Program | Expected on both | Enforced by |
 |---|---|---|
 | `../fixtures/unified_capture_lists.mojo` | reject (`unified` removed) | parser error |
-| `../fixtures/setter_overload_extension.mojo` | reject (competing `__setitem__` pair) | declaration-time checker error |
 | `../fixtures/captured_nested_origin_specialization.mojo` | reject (capturing nested fn as specialized value) | checker error at value materialization |
 | `../../assets/type_error/capturing_closure_plain_def_param.mojo` | reject (capturing closure into unqualified `def(...)`) | value-coercion checker error |
 

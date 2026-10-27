@@ -534,7 +534,7 @@ pub fn subscript_store_call(
     else {
         return false;
     };
-    let mut positional: Vec<Reg> = args
+    let positional: Vec<Reg> = args
         .iter()
         .map(|argument| match argument {
             MirSubscriptArg::Index(reg) => *reg,
@@ -542,13 +542,7 @@ pub fn subscript_store_call(
         .collect();
     arg_places.resize(positional.len(), None);
     let value_place = value_place.map(|place| *place);
-    let (kwargs, kwarg_places) = if value_keyword {
-        (vec![("value".to_string(), value)], vec![value_place])
-    } else {
-        positional.push(value);
-        arg_places.push(value_place);
-        (Vec::new(), Vec::new())
-    };
+    let (kwargs, kwarg_places) = (vec![(value_keyword, value)], vec![value_place]);
     let call = *call;
     let spread = collector_operand(declared, positional.len(), &kwargs);
     *instruction = MirInstr::MethodCall {
@@ -2399,8 +2393,9 @@ pub enum MirInstr {
     },
     /// `object[a, b:c] = value`: checked `__setitem__` dispatch. The receiver
     /// place is retained so a `mut self` implementation is written back after
-    /// the call. Variadic setitem methods receive `value` in their keyword-only
-    /// slot; fixed-arity methods receive it as the last positional argument.
+    /// the call. The value is passed by keyword, under `value_keyword`, the
+    /// name of the first declared setter's last argument (upstream's
+    /// `SubscriptDLValue::emitStore`).
     MultiSet {
         receiver: Reg,
         receiver_place: Option<Box<MirPlace>>,
@@ -2408,7 +2403,7 @@ pub enum MirInstr {
         arg_places: Vec<Option<MirPlace>>,
         value: Reg,
         value_place: Option<Box<MirPlace>>,
-        value_keyword: bool,
+        value_keyword: String,
         call: Box<MirSubscriptCall>,
     },
     /// `place = src` — a write through a place (`p.x = e`, `xs[i] = e`, nested).

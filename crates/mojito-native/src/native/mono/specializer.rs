@@ -3332,14 +3332,14 @@ impl<'a> Specializer<'a> {
                         ..
                     } => {
                         let receiver = *receiver;
-                        let keywords: &[&str] = if *value_keyword { &["value"] } else { &[] };
+                        let keywords: &[&str] = &[value_keyword.as_str()];
                         let dropped = self.rewrite_subscript_call(
                             owner,
                             function,
                             receiver,
                             SubscriptOperands {
                                 registers: &[],
-                                positional: args.len() + usize::from(!*value_keyword),
+                                positional: args.len(),
                                 keywords,
                             },
                             None,

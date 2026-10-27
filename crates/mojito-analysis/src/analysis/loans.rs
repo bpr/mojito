@@ -457,16 +457,10 @@ pub(super) fn loan_accesses(
             value_place,
             call,
             value,
-            value_keyword,
             ..
         } => {
-            let mut positional = arg_places.clone();
-            let keyword = if *value_keyword {
-                vec![value_place.as_deref().cloned()]
-            } else {
-                positional.push(value_place.as_deref().cloned());
-                Vec::new()
-            };
+            let positional = arg_places.clone();
+            let keyword = vec![value_place.as_deref().cloned()];
             subscript_accesses(
                 call,
                 receiver_place.as_deref(),

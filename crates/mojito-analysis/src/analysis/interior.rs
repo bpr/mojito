@@ -379,17 +379,11 @@ pub(super) fn interior_reference_uses(instr: &MirInstr) -> Vec<(VarId, Reg)> {
             arg_places,
             value_place,
             value,
-            value_keyword,
             call,
             ..
         } => {
-            let mut positional = arg_places.clone();
-            let keyword = if *value_keyword {
-                vec![value_place.as_deref().cloned()]
-            } else {
-                positional.push(value_place.as_deref().cloned());
-                Vec::new()
-            };
+            let positional = arg_places.clone();
+            let keyword = vec![value_place.as_deref().cloned()];
             add_subscript_call_places(
                 &mut uses,
                 call,

@@ -343,7 +343,23 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   checker, `checked.rs`, and `mir/nested.rs`.
 - `checker/indexing.rs` owns place validation, subscript/index inference and
   assignment (including keyword slices and the `BorrowViewResult` marking for
-  view-typed subscript results), slice-literal binding (a literal's operands
+  view-typed subscript results), the subscript lvalue (`SubscriptLValue`,
+  formed by `subscript_lvalue` as upstream's `emitGetterSetterAccess` forms
+  its `SubscriptDLValue`: a setter requires a getter
+  (`TypeError::SetterWithoutGetter`), the getter is resolved over the indices
+  inside a probe with `Checker::resolving_accessor_only` set, so its `raises`
+  is no effect, and its result is the element type; the value name is the
+  first declared setter's last argument, `setter_value_name`), the one store
+  through it (`store_through_subscript`, the setter call taking the indices
+  and `<value name>=value`, which `check_nominal_subscript_assignment` (the
+  `SetPlace` arm), the `AugAssign` arm, and nothing else call; a right-hand
+  side not already of the element type is converted to it and the setter is
+  selected over a `synthetic_store_value`, whose facts
+  `release_synthetic_store_value` forgets, keying the setter's value
+  argument at the store's site, where MIR's `converted_store_value` applies
+  the setter's own adaptations), the getter-reference place
+  (`subscript_reference_place`, which rejects a value getter's result with a
+  setter until R1503 writes it back), slice-literal binding (a literal's operands
   stand behind one checker-only argument, `synthetic_slice_descriptor`, while
   its subscript's overload is selected; `slice_literal_binding` binds it to a
   parameter type through that type's `__slice_literal__` constructor, each

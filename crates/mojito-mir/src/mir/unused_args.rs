@@ -943,13 +943,9 @@ fn keep_store_operands(
     else {
         return false;
     };
-    let keywords: &[&str] = if *value_keyword { &["value"] } else { &[] };
-    let Ok((positional, keyword)) = removed_argument_operands(
-        declaration,
-        slots,
-        args.len() + usize::from(!*value_keyword),
-        keywords,
-    ) else {
+    let Ok((positional, keyword)) =
+        removed_argument_operands(declaration, slots, args.len(), &[value_keyword.as_str()])
+    else {
         return false;
     };
     let mut changed = !positional.is_empty() || !keyword.is_empty();

@@ -4231,7 +4231,7 @@ fn dynamic_reference_returning_call_actual_retains_one_hidden_place() {
 
 #[test]
 fn nominal_setter_mir_orders_receiver_index_and_rhs_evaluation() {
-    let src = "@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\n@fieldwise_init\nstruct Outer(Copyable, Movable):\n    var box: Box\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.box)] Box:\n        return self.box\n\ndef rhs() -> Int:\n    return 40\n\ndef receiver_index() -> Int:\n    return 0\n\ndef index() -> Int:\n    return 2\n\ndef main():\n    var outer = Outer(Box(0))\n    outer[receiver_index()][index()] = rhs()\n";
+    let src = "@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\n@fieldwise_init\nstruct Outer(Copyable, Movable):\n    var box: Box\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.box)] Box:\n        return self.box\n\ndef rhs() -> Int:\n    return 40\n\ndef receiver_index() -> Int:\n    return 0\n\ndef index() -> Int:\n    return 2\n\ndef main():\n    var outer = Outer(Box(0))\n    outer[receiver_index()][index()] = rhs()\n";
     let checked = mojito::check_program(&parse(src).expect("parse")).expect("check");
     let mir = mojito::mir::lower_checked_program(&checked);
     let (_, main) = mir

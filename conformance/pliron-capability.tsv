@@ -42,7 +42,7 @@ instruction	uninit.destroy	partial	in-place payload destructor; raising or dropp
 instruction	field.get	partial	layoutable base aggregates
 instruction	index.get	partial	nominal `__getitem__` dispatch (value, reference, and raising-reference results) plus the `pointer` and constant-index pack-storage intrinsics; runtime pack indexes reject until the packs slice
 instruction	index.multi	supported	variadic `__getitem__` dispatch with index actuals, a slice literal's constructed value among them, positional or keyword
-instruction	index.multi_set	supported	`__setitem__` dispatch with the keyword or trailing-positional value slot and `mut self` write-back
+instruction	index.multi_set	supported	`__setitem__` dispatch with the value passed by the setter's value name and `mut self` write-back
 instruction	place.store	supported	whole-variable stores set the initialization flag
 instruction	place.store_ref	supported	stores the reference handle
 instruction	place.load	partial	layoutable, typed places

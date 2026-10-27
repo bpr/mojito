@@ -1633,7 +1633,7 @@ fn dynamic_intrinsic_index_actual_is_evaluated_once_and_writes_back() {
 
 #[test]
 fn nominal_setter_evaluates_receiver_then_subscripts_then_rhs() {
-    let src = "@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\n@fieldwise_init\nstruct Outer(Copyable, Movable):\n    var box: Box\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.box)] Box:\n        return self.box\n\ndef rhs() -> Int:\n    print(\"rhs\")\n    return 40\n\ndef receiver_index() -> Int:\n    print(\"receiver\")\n    return 0\n\ndef index() -> Int:\n    print(\"index\")\n    return 2\n\ndef main():\n    var outer = Outer(Box(0))\n    outer[receiver_index()][index()] = rhs()\n    print(outer.box.value)\n";
+    let src = "@fieldwise_init\nstruct Box(Copyable, Movable):\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\n@fieldwise_init\nstruct Outer(Copyable, Movable):\n    var box: Box\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.box)] Box:\n        return self.box\n\ndef rhs() -> Int:\n    print(\"rhs\")\n    return 40\n\ndef receiver_index() -> Int:\n    print(\"receiver\")\n    return 0\n\ndef index() -> Int:\n    print(\"index\")\n    return 2\n\ndef main():\n    var outer = Outer(Box(0))\n    outer[receiver_index()][index()] = rhs()\n    print(outer.box.value)\n";
     assert_eq!(vm(src), "receiver\nindex\nrhs\n42\n");
 }
 
@@ -1677,13 +1677,13 @@ fn multi_index_dispatch_supports_variadic_getitem() {
 
 #[test]
 fn mixed_slice_assignment_dispatches_to_fixed_setitem() {
-    let src = "@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __setitem__(mut self, row: Int, columns: Slice, value: Int):\n        var normalized = columns.indices(10)\n        self.value = row * 100 + normalized[0] + normalized[1] + normalized[2] + value\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = 9\n    print(grid.value)\n";
+    let src = "@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Int, columns: Slice) -> Int:\n        return self.value\n    def __setitem__(mut self, row: Int, columns: Slice, value: Int):\n        var normalized = columns.indices(10)\n        self.value = row * 100 + normalized[0] + normalized[1] + normalized[2] + value\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = 9\n    print(grid.value)\n";
     assert_eq!(run_compiled(src).expect("vm backend failed"), "320\n");
 }
 
 #[test]
 fn multidimensional_assignment_supports_variadic_setitem() {
-    let src = "@fieldwise_init\nstruct Cube:\n    var value: Int\n    def __setitem__(mut self, *indices: Int, *, value: Int):\n        self.value = indices[0] * 1000 + indices[1] * 100 + indices[2] * 10 + value\n\ndef main():\n    var cube = Cube(0)\n    cube[1, 2, 3] = 4\n    print(cube.value)\n";
+    let src = "@fieldwise_init\nstruct Cube:\n    var value: Int\n    def __getitem__(self, *indices: Int) -> Int:\n        return self.value\n    def __setitem__(mut self, *indices: Int, *, value: Int):\n        self.value = indices[0] * 1000 + indices[1] * 100 + indices[2] * 10 + value\n\ndef main():\n    var cube = Cube(0)\n    cube[1, 2, 3] = 4\n    print(cube.value)\n";
     assert_eq!(parity(src), "1234\n");
 }
 

@@ -4,6 +4,7 @@
 
 use super::comptime_validation::ComptimeTest;
 use super::decorators::DecoratorSite;
+use super::indexing::SubscriptLValue;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_common::timing;
@@ -1572,19 +1573,8 @@ impl Checker {
                             other => other,
                         })?;
                 }
-                let nominal_subscript = match &place.kind {
-                    ExprKind::Index { object, index }
-                        if self.type_keyed_projection(object, index) =>
-                    {
-                        false
-                    }
-                    ExprKind::Index { object, .. }
-                    | ExprKind::Slice { object, .. }
-                    | ExprKind::MultiIndex { object, .. } => {
-                        matches!((self.infer(object)?).kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
-                    }
-                    _ => false,
-                };
+                let lvalue = self.subscript_lvalue(place)?;
+                let nominal_subscript = lvalue.is_some();
                 // `target OP= value` means `target = target OP value`: the place
                 // must be writable, and the result of the operator must keep the
                 // place's type. A nominal subscript is two selected calls, not a
@@ -1714,7 +1704,7 @@ impl Checker {
                         if matches!(place.kind, ExprKind::Index { .. }) {
                             self.record_at(site.clone())
                                 .subscript_descriptor
-                                .get_or_insert_with(|| (vec![None], false));
+                                .get_or_insert_with(|| (vec![None], None));
                         }
                         // The store writes the element through the handle, so
                         // it stales every view lent below that element.
@@ -1733,6 +1723,11 @@ impl Checker {
                         ));
                         return Ok(());
                     }
+                    let Some(SubscriptLValue::GetterSetter { value_name, .. }) = &lvalue else {
+                        return Err(TypeError::ImmutableBinding(
+                            "the value a subscript returns".to_string(),
+                        ));
+                    };
                     // The getter and setter share syntax, not parameter
                     // adaptation or call effects. Freeze the getter above, then
                     // return those source-keyed compatibility tables to their
@@ -1740,48 +1735,9 @@ impl Checker {
                     self.restore_value_adjustments(&shared_adjustments);
                     self.remove_call_boundary_invalidations(&site, &getter.boundary);
 
-                    let mut computed = Expr::new(ExprKind::None, mojito_common::token::DUMMY_SPAN);
-                    computed.source.clone_from(&place.source);
-                    let value_source = computed.source_span();
-                    self.record_at(value_source.clone()).ty = Some(result.clone());
-                    self.check_nominal_subscript_assignment(place, &computed)?
-                        .ok_or_else(|| {
-                            TypeError::InvariantViolation(
-                                "augmented nominal subscript lost its setter selection".to_string(),
-                            )
-                        })?;
-                    let mut setter = self
-                        .fact(&site, |facts| facts.selected_call.as_deref())
-                        .ok_or_else(|| {
-                            TypeError::InvariantViolation(
-                                "augmented nominal subscript lost its setter contract".to_string(),
-                            )
-                        })?;
-                    self.clear_fact(&value_source, |facts| facts.implicit_conversion.take());
-                    self.clear_fact(&value_source, |facts| facts.conversion_source_borrow.take());
-                    self.clear_fact(&value_source, |facts| facts.ty.take());
-                    if matches!(
-                        self.node_facts
-                            .borrow()
-                            .get(&value_source)
-                            .and_then(|facts| facts.adjustment.as_deref()),
-                        Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))
-                    ) {
-                        self.clear_fact(&value_source, |facts| facts.adjustment.take());
-                    }
-                    // The computed result is no expression: lowering binds
-                    // its register to the setter directly, so the value is
-                    // keyed at the store's own site and nothing is recorded
-                    // for it as a temporary argument.
-                    self.clear_flag(&value_source, |facts| &mut facts.read_temporary_argument);
-                    self.unconsumed_temporaries
-                        .borrow_mut()
-                        .remove(&value_source);
-                    for argument in &mut setter.boundary.arguments {
-                        if argument.value_source == value_source {
-                            argument.value_source.clone_from(&site);
-                        }
-                    }
+                    let computed = self.synthetic_store_value(place, &result);
+                    let mut setter = self.store_through_subscript(place, value_name, &computed)?;
+                    self.release_synthetic_store_value(&site, &computed, &mut setter);
                     let before_write = self
                         .fact(&site, |facts| facts.interior_invalidations.as_ref())
                         .unwrap_or_default();

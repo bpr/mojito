@@ -1149,7 +1149,7 @@ fn instruction_families_reprint_byte_identically() {
             arg_places: vec![None],
             value: Reg(2),
             value_place: Some(Box::new(place(2))),
-            value_keyword: true,
+            value_keyword: "value".to_string(),
             call: Box::new(sample_subscript_call()),
         },
         MirInstr::Store {

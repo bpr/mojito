@@ -944,18 +944,6 @@ impl Checker {
             }) {
                 return Err(TypeError::Redeclaration(method_name.to_string()));
             }
-            if method_name == "__setitem__"
-                && overloads
-                    .iter()
-                    .any(|existing| competing_setitem_value_shapes(existing, &sig))
-            {
-                return Err(TypeError::Unsupported(
-                    "competing '__setitem__' overloads for the same indices: one takes the \
-                     assignment value positionally and the other as keyword-only '*, value:'; \
-                     declare a single setter shape"
-                        .to_string(),
-                ));
-            }
             overloads.push(sig);
         }
         self.register_default_wrappers(declaration)

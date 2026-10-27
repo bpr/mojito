@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A subscript store is typed through the getter, as upstream's
+  `SubscriptDLValue` is (R1373, R35, R690): a `__setitem__` without a
+  `__getitem__` is rejected at the store, the getter is resolved over the
+  indices (so a getter of the wrong arity rejects, and a raising one stays
+  harmless in a non-raising body), the right-hand side is converted to the
+  getter's result type, and the setter is selected over that value and
+  passed it by keyword under the first setter's value name, so a
+  positional-only value parameter is no longer viable and a read-`self`
+  setter is called. The declaration-time rejection of a positional and
+  keyword-only setter pair, which the pin does not have, is gone, and
+  `index.multi_set` names its value keyword (MIR text 1.115,
+  `mojito-package 112`). A value getter's result used as a mutable base,
+  which used to update a temporary silently, is now rejected until it is
+  written back through the setter (R1503); a slice or multi-index store
+  through a getter's reference is filed as R1504.
 - Whether a value owes explicit destruction is one verdict on its type, as
   upstream's `getDestructorForType` decides it (R1368, R711, R30): an
   opaque pack element, a reflected field type, and a parameter spelled

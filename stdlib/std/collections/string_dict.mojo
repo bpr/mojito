@@ -95,7 +95,7 @@ struct StringDict[V: Movable](
     def _insert(mut self, var key: String, var value: Self.V) where conforms_to(
         Self.V, Deinitable
     ):
-        self[key] = value^
+        self.__setitem__(key, value^)
 
     @inline(.always)
     def _insert(mut self, key: StringLiteral, var value: Self.V) where conforms_to(

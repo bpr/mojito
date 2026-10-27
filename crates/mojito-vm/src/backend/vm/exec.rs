@@ -1086,25 +1086,16 @@ impl VmBackend {
                 value_keyword,
                 call,
             } => {
-                let mut arguments = Vec::with_capacity(args.len() + usize::from(!value_keyword));
-                for argument in args {
-                    arguments.push(match argument {
+                let arguments = args
+                    .iter()
+                    .map(|argument| match argument {
                         MirSubscriptArg::Index(register) => regs[register.0 as usize].clone(),
-                    });
-                }
-                let keyword_arguments = if *value_keyword {
-                    vec![("value".to_string(), regs[value.0 as usize].clone())]
-                } else {
-                    arguments.push(regs[value.0 as usize].clone());
-                    Vec::new()
-                };
-                let mut argument_places = arg_places.clone();
-                let keyword_argument_places = if *value_keyword {
-                    vec![value_place.as_deref().cloned()]
-                } else {
-                    argument_places.push(value_place.as_deref().cloned());
-                    Vec::new()
-                };
+                    })
+                    .collect::<Vec<_>>();
+                let keyword_arguments =
+                    vec![(value_keyword.clone(), regs[value.0 as usize].clone())];
+                let argument_places = arg_places.clone();
+                let keyword_argument_places = vec![value_place.as_deref().cloned()];
                 let _ = self.method_call(
                     prog,
                     MethodInvocation {

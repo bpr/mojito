@@ -174,7 +174,7 @@ augmented-mutating-index	run	conformance/fixtures/augmented_mutating_index.mojo
 augmented-reference-getter	run	conformance/fixtures/augmented_reference_getter.mojo
 projected-subscript-reference	run	conformance/fixtures/projected_subscript_reference.mojo
 projected-pointer-subscript	run	conformance/fixtures/projected_pointer_subscript.mojo
-setter-overload-extension	reject	conformance/fixtures/setter_overload_extension.mojo
+setter-value-by-keyword	run	conformance/fixtures/setter_value_by_keyword.mojo
 owned-nominal-element-copy	run	conformance/fixtures/owned_nominal_element_copy.mojo
 index-implicit-conversion	run	conformance/fixtures/index_implicit_conversion.mojo
 slice-implicit-conversion-rejected	reject	conformance/fixtures/slice_implicit_conversion_rejected.mojo

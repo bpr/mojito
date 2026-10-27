@@ -1342,7 +1342,7 @@ fn variadic_struct_dependent_getitem_rejects_bad_indices() {
         "{template}def main():\n    var p = Pair[Int, Bool](1, True)\n    p[0] = 9\n    print(p[0])\n"
     );
     let err = run(&write).unwrap_err();
-    assert!(err.contains("cannot be indexed here"), "got: {err}");
+    assert!(err.contains("must be mutable in assignment"), "got: {err}");
 }
 
 #[test]

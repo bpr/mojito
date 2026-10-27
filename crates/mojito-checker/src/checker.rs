@@ -756,6 +756,10 @@ pub struct Checker {
     /// `StringLiteral`: upstream's value-parameterized literal type infers
     /// its parameter there and is not concrete anywhere else.
     bare_string_literal_parameter: std::cell::Cell<bool>,
+    /// Set while a subscript's getter is resolved only to learn its element
+    /// type (upstream's `filterOverloadSet` in `emitGetterSetterAccess`):
+    /// nothing is emitted, so its `raises` is no effect of the body.
+    resolving_accessor_only: std::cell::Cell<bool>,
     /// The declaration currently being checked comes from the bundled
     /// standard-library crossing package (`stdlib/std/memory/`). Only such
     /// declarations may name compiler-private storage types (`__UninitStorage`)
@@ -1086,6 +1090,7 @@ impl Checker {
             transfer_effects: RefCell::new(transfer_effects.into()),
             resolving_parameter_annotation: std::cell::Cell::new(false),
             bare_string_literal_parameter: std::cell::Cell::new(false),
+            resolving_accessor_only: std::cell::Cell::new(false),
             effect_observations: RefCell::new(HashMap::new()),
             call_through_effects: RefCell::new(call_through_seed.into()),
             call_through_observations: RefCell::new(HashMap::new()),
@@ -1141,6 +1146,9 @@ impl Checker {
     }
 
     fn require_error(&self, operation: impl Into<String>, error: Ty) -> Result<(), TypeError> {
+        if self.resolving_accessor_only.get() {
+            return Ok(());
+        }
         // A raising operation escapes the innermost observed region (a
         // linear owned-iteration body) unless a `try` INSIDE that region
         // contains it — a handler outside the region still aborts the region.
@@ -3211,15 +3219,6 @@ struct ValueAdjustmentSnapshot {
     overload_target: Option<String>,
     implicit_conversion: Option<String>,
     operation: Option<Box<mojito_checked::checked::SemanticAdjustment>>,
-}
-
-struct SubscriptResolution {
-    return_type: Ty,
-    lowered_name: Option<String>,
-    value_keyword: bool,
-    /// Each index argument's slice literal, as the selected parameter binds
-    /// it.
-    descriptors: Vec<Option<mojito_checked::checked::CheckedSliceLiteral>>,
 }
 
 type SplitCallableSpecialization = (

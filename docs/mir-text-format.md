@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.114
+mojito-mir 1.115
 ```
 
-The writer emits 1.114. The reader accepts 1.0 through 1.114; *Schema 1.0*
+The writer emits 1.115. The reader accepts 1.0 through 1.115; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -652,6 +652,13 @@ an associated projection. The field names the requirement's traits, so a
 call through a requirement only the refinement declares binds that
 requirement's conventions (R1365). A call recording none omits it, as every
 older artifact does. The package format moves to `mojito-package 110`.
+
+Schema 1.115 makes an `index.multi_set`'s `value_keyword` the string the
+store passes its value under, the name of the first declared `__setitem__`'s
+last argument (upstream's `SubscriptDLValue::setterValueName`): a store
+always passes its value by keyword (R1373). An older record's `true` reads as
+`"value"`; its `false`, a positional value, no store passes any more. The
+package format moves to `mojito-package 112`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:

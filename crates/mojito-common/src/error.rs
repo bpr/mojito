@@ -465,6 +465,9 @@ pub enum TypeError {
     },
     /// A subscript `v[i]` was applied to a non-SIMD value.
     NotIndexable(String),
+    /// A subscript of a type that declares `__setitem__` but no
+    /// `__getitem__`: the store has no element type to convert its value to.
+    SetterWithoutGetter(String),
     /// A function with a non-`None` return type can fall off the end without
     /// returning (does not return on every path).
     MissingReturn(String),
@@ -1031,6 +1034,9 @@ impl fmt::Display for TypeError {
             ),
             Self::NotIndexable(ty) => {
                 write!(f, "type '{ty}' cannot be indexed here")
+            }
+            Self::SetterWithoutGetter(ty) => {
+                write!(f, "'{ty}' has '__setitem__' but no '__getitem__' method")
             }
             Self::MissingReturn(name) => {
                 write!(f, "'{name}' does not return a value on every path")

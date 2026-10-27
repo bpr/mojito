@@ -681,7 +681,7 @@ assets/type_error/set_clear_with_bad_handler.mojo	compile-reject	agree	error: in
 assets/type_error/set_display_requires_deinitable_element.mojo	compile-reject	agree	error: invalid call to '__init__': lacking evidence to prove correctness
 assets/type_error/set_element_ref_write.mojo	runs	subset	the pin runs it;Mojito rejects: must be mutable
 assets/type_error/set_requires_hashable_element.mojo	compile-reject	agree	error: 'Set' parameter 'T' has 'KeyElement' type, but value has type 'AnyStruct[Elem]'
-assets/type_error/setter_overload_competing_pair.mojo	compile-reject	agree	error: 'Sink' has '__setitem__' but no '__getitem__' method
+assets/type_error/setter_without_getter.mojo	compile-reject	agree	error: 'Sink' has '__setitem__' but no '__getitem__' method
 assets/type_error/simd_bool_positional_splat.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_generic_width_rejected.mojo	compile-reject	agree	error: SIMD vector length must be a power of two between 1 and 2^15, found '!kgen.simd<3, si32>'
 assets/type_error/simd_inferred_width_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int64, 4]' value to 'SIMD[.int32, _]'

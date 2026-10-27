@@ -112,7 +112,7 @@ accessed; the compact notation omits this analysis-only field.
 | `field.get` | `GetField` | Read a named field from a register value |
 | `index.get` | `Index` | Execute the complete selected `__getitem__` contract, or read an intrinsic indexed element |
 | `index.multi` | `MultiIndex` | Execute the complete selected `__getitem__` contract with mixed index/slice arguments |
-| `index.multi_set` | `MultiSet` | Execute the complete selected `__setitem__` contract (including one-index assignment) and write back its mutable receiver, even through a caller reference handle |
+| `index.multi_set` | `MultiSet` | Execute the complete selected `__setitem__` contract (including one-index assignment), passing the value under its `value_keyword`, and write back its mutable receiver, even through a caller reference handle |
 | `place.load` | `LoadPlace` | Read a place without reevaluating it |
 | `place.store` | `Store` | Write a value through a place |
 | `place.store_ref` | `StoreRef` | Initialize reference-valued storage with an existing handle |

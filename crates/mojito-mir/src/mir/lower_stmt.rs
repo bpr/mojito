@@ -23,12 +23,13 @@ struct DestructureFrame<'a, 'p> {
 }
 
 /// One `receiver[arguments] OP= rhs` store's checked facts: the subscript
-/// `target`, its accessor `plan`, whether the setter takes its value by
-/// keyword, the operator, and the right-hand side.
+/// `target`, its accessor `plan`, the keyword the setter takes its value
+/// under (none for a store through the getter's reference), the operator,
+/// and the right-hand side.
 struct AugmentedStore<'a> {
     target: Node<'a>,
     plan: mojito_checked::checked::CheckedAugmentedSubscript,
-    value_keyword: bool,
+    value_keyword: Option<String>,
     op: InfixOp,
     rhs: Node<'a>,
 }
@@ -781,7 +782,7 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::SemanticAdjustment::SliceDescriptors {
                     descriptors,
                     set_value_keyword,
-                } => Some((descriptors.clone(), *set_value_keyword)),
+                } => Some((descriptors.clone(), set_value_keyword.clone())),
                 _ => None,
             })
             .expect("checked augmented subscript has descriptor metadata");
@@ -824,7 +825,7 @@ impl<'a> Flatten<'a> {
         let AugmentedStore {
             target,
             ref plan,
-            value_keyword,
+            ref value_keyword,
             op,
             rhs: rhs_expression,
         } = *store;
@@ -920,11 +921,7 @@ impl<'a> Flatten<'a> {
             setter_raw_index,
             index.location(),
         );
-        let value_argument = if value_keyword {
-            mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
-        } else {
-            mojito_checked::checked::CheckedCallArgumentSource::Positional(1)
-        };
+        let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
         let (value, value_place) =
             self.augmented_setter_value(target, setter, value_argument, result);
         let setter_call = self.mir_subscript_call_contract(
@@ -944,7 +941,9 @@ impl<'a> Flatten<'a> {
             )],
             value,
             value_place: value_place.map(Box::new),
-            value_keyword,
+            value_keyword: value_keyword
+                .clone()
+                .expect("a store through a setter names its value"),
             call: Box::new(setter_call),
         });
     }
@@ -960,7 +959,7 @@ impl<'a> Flatten<'a> {
         let AugmentedStore {
             target,
             ref plan,
-            value_keyword,
+            ref value_keyword,
             op,
             rhs: rhs_expression,
         } = *store;
@@ -999,11 +998,7 @@ impl<'a> Flatten<'a> {
             .expect("value-returning augmented getter has a setter");
         let setter_receiver =
             self.reload_augmented_receiver(receiver, receiver_place.as_ref(), plan, object);
-        let value_argument = if value_keyword {
-            mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
-        } else {
-            mojito_checked::checked::CheckedCallArgumentSource::Positional(1)
-        };
+        let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
         let (value, value_place) =
             self.augmented_setter_value(target, setter, value_argument, result);
         let setter_call = self.mir_subscript_call_contract(setter.clone(), &[], target.location());
@@ -1015,7 +1010,9 @@ impl<'a> Flatten<'a> {
             arg_places: vec![argument_place],
             value,
             value_place: value_place.map(Box::new),
-            value_keyword,
+            value_keyword: value_keyword
+                .clone()
+                .expect("a store through a setter names its value"),
             call: Box::new(setter_call),
         });
     }
@@ -1032,7 +1029,7 @@ impl<'a> Flatten<'a> {
         let AugmentedStore {
             target,
             ref plan,
-            value_keyword,
+            ref value_keyword,
             op,
             rhs: rhs_expression,
         } = *store;
@@ -1192,11 +1189,7 @@ impl<'a> Flatten<'a> {
                 )
             })
             .collect::<Vec<_>>();
-        let value_argument = if value_keyword {
-            mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
-        } else {
-            mojito_checked::checked::CheckedCallArgumentSource::Positional(source.len())
-        };
+        let value_argument = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
         let (value, value_place) =
             self.augmented_setter_value(target, setter, value_argument, result);
         let setter_call =
@@ -1209,7 +1202,9 @@ impl<'a> Flatten<'a> {
             arg_places: setter_places,
             value,
             value_place: value_place.map(Box::new),
-            value_keyword,
+            value_keyword: value_keyword
+                .clone()
+                .expect("a store through a setter names its value"),
             call: Box::new(setter_call),
         });
     }
@@ -1468,17 +1463,17 @@ impl<'a> Flatten<'a> {
             .map(|(object, _)| object)
             .zip(target.index())
         {
-            let Some(value_keyword) = target
-                .adjustments()
-                .iter()
-                .find_map(|adjustment| match adjustment {
-                    mojito_checked::checked::SemanticAdjustment::SliceDescriptors {
-                        descriptors,
-                        set_value_keyword,
-                    } if descriptors.as_slice() == [None] => Some(set_value_keyword),
-                    _ => None,
-                })
-                .copied()
+            let Some(value_keyword) =
+                target
+                    .adjustments()
+                    .iter()
+                    .find_map(|adjustment| match adjustment {
+                        mojito_checked::checked::SemanticAdjustment::SliceDescriptors {
+                            descriptors,
+                            set_value_keyword: Some(value_keyword),
+                        } if descriptors.as_slice() == [None] => Some(value_keyword.clone()),
+                        _ => None,
+                    })
             else {
                 return false;
             };
@@ -1488,8 +1483,10 @@ impl<'a> Flatten<'a> {
                 });
             let (argument_register, argument_place) = self.lower_call_argument(index);
             let argument = MirSubscriptArg::Index(argument_register);
-            let (value, value_place) = self
-                .outside_call_setup(|this| this.lower_assignment_value(target, value_expression));
+            let (value, value_place) = self.outside_call_setup(|this| {
+                let value = this.lower_assignment_value(target, value_expression);
+                this.converted_store_value(target, value)
+            });
             self.close_call_setup(None);
             let call = self
                 .subscript_call_contract(target, std::slice::from_ref(&argument))
@@ -1528,8 +1525,8 @@ impl<'a> Flatten<'a> {
                 .find_map(|adjustment| match adjustment {
                     mojito_checked::checked::SemanticAdjustment::SliceDescriptors {
                         descriptors,
-                        set_value_keyword,
-                    } => Some((descriptors.clone(), *set_value_keyword)),
+                        set_value_keyword: Some(value_keyword),
+                    } => Some((descriptors.clone(), value_keyword.clone())),
                     _ => None,
                 })
         else {
@@ -1581,8 +1578,10 @@ impl<'a> Flatten<'a> {
                 vec![argument]
             }
         };
-        let (value, value_place) =
-            self.outside_call_setup(|this| this.lower_assignment_value(target, value_expression));
+        let (value, value_place) = self.outside_call_setup(|this| {
+            let value = this.lower_assignment_value(target, value_expression);
+            this.converted_store_value(target, value)
+        });
         self.close_call_setup(None);
         let call = self
             .subscript_call_contract(target, &args)
@@ -1610,6 +1609,31 @@ impl<'a> Flatten<'a> {
             call: Box::new(call),
         });
         true
+    }
+
+    /// A plain store's lowered right-hand side `value` as its setter takes
+    /// it. One the checker converted to the element type is not the setter's
+    /// argument itself (its value argument is keyed at the store's own site):
+    /// the setter's adaptations of the converted value apply here, as they
+    /// do to an augmented store's computed value.
+    fn converted_store_value(
+        &mut self,
+        target: Node<'a>,
+        (value, value_place): (Reg, Option<MirPlace>),
+    ) -> (Reg, Option<MirPlace>) {
+        let source = mojito_checked::checked::CheckedCallArgumentSource::Keyword(0);
+        let Some(setter) = target.call_contract().filter(|setter| {
+            setter.boundary.arguments.iter().any(|argument| {
+                argument.source == source && argument.value_source == target.location()
+            })
+        }) else {
+            return (value, value_place);
+        };
+        let converted = match value_place {
+            Some(_) => self.take_c(target, CValue::Value(value)),
+            None => value,
+        };
+        self.augmented_setter_value(target, &setter, source, CValue::Value(converted))
     }
 
     pub(super) fn lower_assignment_value(

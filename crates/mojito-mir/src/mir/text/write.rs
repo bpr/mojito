@@ -1293,7 +1293,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
                     "value_place",
                     option(value_place.as_deref().map(place_value)),
                 ),
-                ("value_keyword", value_keyword.to_string()),
+                ("value_keyword", quote(value_keyword)),
                 ("call", subscript_call(call)),
             ],
         ),

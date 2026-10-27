@@ -1279,7 +1279,7 @@ mod tests {
             arg_places: vec![None],
             value: Reg(2),
             value_place: None,
-            value_keyword: false,
+            value_keyword: "value".to_string(),
             call: Box::new(call),
         };
         assert_eq!(consumed(&set, &declarations), vec![Reg(1), Reg(2)]);

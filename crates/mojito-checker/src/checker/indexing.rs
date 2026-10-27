@@ -6,6 +6,24 @@
 use super::*;
 use mojito_types::types::TyKind;
 
+/// A nominal subscript as an assignment target, as upstream's
+/// `emitGetterSetterAccess` forms it.
+pub(super) enum SubscriptLValue {
+    /// Only a getter: its result is the place, written through when it is a
+    /// mutable reference.
+    Getter,
+    /// A getter and a setter (upstream's `SubscriptDLValue`).
+    GetterSetter {
+        /// The selected getter's result, a `ref` result looked through.
+        element: Ty,
+        /// Whether that getter returns a reference.
+        getter_returns_ref: bool,
+        /// The keyword a store passes its value under: the last argument
+        /// of the first declared `__setitem__`.
+        value_name: String,
+    },
+}
+
 impl Checker {
     /// Validate an assignment **place** and return the type stored there. A place
     /// is a chain of field (`.x`) and index (`[i]`) accesses over a root that
@@ -196,34 +214,11 @@ impl Checker {
                     }
                     return Ok(alternative);
                 }
-                // Without any `__setitem__`, a mutable-reference-returning
-                // `__getitem__` (upstream's `Span`, `VariadicList`) is the
-                // place: its result handle is written through, as a call
-                // returning a mutable reference is.
-                if let TyKind::Struct(name, _) = obj_ty.kind()
-                    && self.structs.get(name).is_some_and(|info| {
-                        info.methods.contains_key("__getitem__")
-                            && !info.methods.contains_key("__setitem__")
-                    })
-                {
-                    let referent = self.infer(place)?;
-                    let span = place.source_span();
-                    let mutability = self
-                        .fact(&span, |facts| facts.selected_call.as_deref())
-                        .and_then(|contract| contract.reference_result)
-                        .map(|reference| reference.mutability);
-                    return match mutability {
-                        Some(mutability)
-                            if mutability != mojito_types::origin::Mutability::Immutable =>
-                        {
-                            self.record_at(span).reference_value_use = Some(true);
-                            Ok(referent)
-                        }
-                        Some(_) => Err(TypeError::ImmutableBinding(
-                            "immutable reference returned by '__getitem__'".to_string(),
-                        )),
-                        None => Err(TypeError::NotIndexable(obj_ty.to_string())),
-                    };
+                // A declared struct's subscript is upstream's getter/setter
+                // lvalue (`emitGetterSetterAccess`): as a place, it is
+                // written through the getter's mutable reference.
+                if let Some(lvalue) = self.subscript_lvalue(place)? {
+                    return self.subscript_reference_place(place, &obj_ty, &lvalue);
                 }
                 self.prepare_index_argument(&obj_ty, index, "__setitem__", 0)?;
                 if let TyKind::Struct(name, _) = obj_ty.kind()
@@ -270,31 +265,6 @@ impl Checker {
                         ));
                     }
                 }
-                // A user struct with `__setitem__(mut self, i, v)` is index-assignable:
-                // `c[i] = e` → `c.__setitem__(i, e)`. The index must coerce to the
-                // first parameter; the *target* type (what `e` must be) is the second.
-                if let TyKind::Struct(_, _) = obj_ty.kind() {
-                    let idx_ty = if self.has_index_normalization(index, &Ty::int()) {
-                        Ty::int()
-                    } else {
-                        self.infer(index)?
-                    };
-                    let resolution =
-                        self.resolve_struct_setitem(&obj_ty, &[idx_ty], &[None], None)?;
-                    if let Some(target) = resolution.lowered_name {
-                        self.record_at(place.source_span()).overload_target = Some(target);
-                    }
-                    self.record_at(place.source_span()).subscript_descriptor =
-                        Some((vec![None], resolution.value_keyword));
-                    return Ok(match resolution.return_type.kind() {
-                        // Indexing a reference-valued container reads and writes
-                        // through the stored handle. The physical storage type
-                        // remains available through `place_storage_ty`; the
-                        // assignment target is the referent.
-                        TyKind::Ref(reference) => reference.referent.clone(),
-                        _ => resolution.return_type,
-                    });
-                }
                 // Compiler-private heterogeneous storage is built or replaced
                 // one element at a time: each compile-time index is a place
                 // of its own inside the writable storage.
@@ -322,33 +292,14 @@ impl Checker {
                     _ => elem,
                 })
             }
-            ExprKind::Slice {
-                object,
-                lower,
-                upper,
-                step,
-            } => {
+            ExprKind::Slice { object, .. } => {
                 let object_type = self.check_place(object)?;
-                let literal = self.synthetic_slice_descriptor(
-                    &place.source_span(),
-                    0,
-                    [lower.as_deref(), upper.as_deref(), step.as_deref()],
-                )?;
-                let descriptor = Self::slice_literal_default_type(step.as_deref());
-                let resolution = self.resolve_struct_setitem(
-                    &object_type,
-                    &[descriptor],
-                    &[Some(literal)],
-                    None,
-                )?;
-                if let Some(target) = resolution.lowered_name {
-                    self.record_at(place.source_span()).overload_target = Some(target);
+                match self.subscript_lvalue(place)? {
+                    Some(lvalue) => self.subscript_reference_place(place, &object_type, &lvalue),
+                    None => Err(TypeError::NotIndexable(object_type.to_string())),
                 }
-                self.record_at(place.source_span()).subscript_descriptor =
-                    Some((resolution.descriptors, resolution.value_keyword));
-                Ok(resolution.return_type)
             }
-            ExprKind::MultiIndex { object, args } => {
+            ExprKind::MultiIndex { object, .. } => {
                 // `ptr[unsafe_offset=i] = e` (current Mojo's keyword
                 // dereference): the pointer store, exactly like `ptr[i] = e`.
                 if let Some((object, offset)) =
@@ -371,50 +322,11 @@ impl Checker {
                     });
                 }
                 let object_type = self.check_place(object)?;
-                let mut argument_types = Vec::with_capacity(args.len());
-                let mut descriptors = Vec::with_capacity(args.len());
-                for (position, argument) in args.iter().enumerate() {
-                    match argument {
-                        SubscriptArg::Keyword { name, .. }
-                        | SubscriptArg::KeywordSlice { name, .. } => {
-                            return Err(TypeError::Unsupported(format!(
-                                "keyword subscript assignment ('[{name}=…] = value') is not supported; keyword subscripts are read-only"
-                            )));
-                        }
-                        SubscriptArg::Index(value) => {
-                            self.prepare_index_argument(
-                                &object_type,
-                                value,
-                                "__setitem__",
-                                position,
-                            )?;
-                            let argument_type = if self.has_index_normalization(value, &Ty::int()) {
-                                Ty::int()
-                            } else {
-                                self.infer(value)?
-                            };
-                            argument_types.push(argument_type);
-                            descriptors.push(None);
-                        }
-                        SubscriptArg::Slice { lower, upper, step } => {
-                            let literal = self.synthetic_slice_descriptor(
-                                &place.source_span(),
-                                position,
-                                [lower.as_deref(), upper.as_deref(), step.as_deref()],
-                            )?;
-                            argument_types.push(Self::slice_literal_default_type(step.as_deref()));
-                            descriptors.push(Some(literal));
-                        }
-                    }
+                reject_keyword_subscript_store(place)?;
+                match self.subscript_lvalue(place)? {
+                    Some(lvalue) => self.subscript_reference_place(place, &object_type, &lvalue),
+                    None => Err(TypeError::NotIndexable(object_type.to_string())),
                 }
-                let resolution =
-                    self.resolve_struct_setitem(&object_type, &argument_types, &descriptors, None)?;
-                if let Some(target) = resolution.lowered_name {
-                    self.record_at(place.source_span()).overload_target = Some(target);
-                }
-                self.record_at(place.source_span()).subscript_descriptor =
-                    Some((resolution.descriptors, resolution.value_keyword));
-                Ok(resolution.return_type)
             }
             ExprKind::TypeApply { name, args } => {
                 self.check_capture_access(name, true)?;
@@ -587,26 +499,147 @@ impl Checker {
         self.slice_literal_construction(&target, &operands, record)
     }
 
-    /// Check one nominal `object[...] = value` as the exact selected
-    /// `__setitem__` invocation. `Ok(None)` leaves primitive pointer/SIMD and
-    /// compiler-private storage assignments on their intrinsic place path.
+    /// The nominal subscript `target` as an assignment target, as upstream's
+    /// `emitGetterSetterAccess` forms it. `None` for a receiver that is not a
+    /// declared struct and for a type-keyed projection (upstream's
+    /// `__getitem_param__`, which precedes the accessor lookup). A setter
+    /// requires a getter: the getter is resolved over the indices, without
+    /// being called, and its result is the element type every store converts
+    /// its value to.
+    pub(super) fn subscript_lvalue(
+        &self,
+        target: &Expr,
+    ) -> Result<Option<SubscriptLValue>, TypeError> {
+        let object = match &target.kind {
+            ExprKind::Index { object, index } if self.type_keyed_projection(object, index) => {
+                return Ok(None);
+            }
+            ExprKind::Index { object, .. }
+            | ExprKind::Slice { object, .. }
+            | ExprKind::MultiIndex { object, .. } => object,
+            _ => return Ok(None),
+        };
+        let receiver = self.infer(object)?;
+        let receiver = match receiver.kind() {
+            TyKind::Ref(reference) => reference.referent.clone(),
+            _ => receiver,
+        };
+        let TyKind::Struct(name, _) = receiver.kind() else {
+            return Ok(None);
+        };
+        let Some(info) = self.structs.get(name) else {
+            return Ok(None);
+        };
+        let has_getter = info.methods.contains_key("__getitem__");
+        // Upstream emits a static getter (`__getitem_param__`) before it
+        // looks up the accessors: its result is the place.
+        if !has_getter && info.methods.contains_key("__getitem_param__") {
+            return Ok(Some(SubscriptLValue::Getter));
+        }
+        let Some(setters) = info.methods.get("__setitem__") else {
+            return if has_getter {
+                Ok(Some(SubscriptLValue::Getter))
+            } else {
+                Err(TypeError::NotIndexable(receiver.to_string()))
+            };
+        };
+        if !has_getter {
+            return Err(TypeError::SetterWithoutGetter(receiver.to_string()));
+        }
+        let value_name =
+            setters
+                .first()
+                .and_then(setter_value_name)
+                .ok_or_else(|| TypeError::BadCall {
+                    func: format!("{name}.__setitem__"),
+                    reason: "__setitem__ must take at least one argument for the value to set"
+                        .to_string(),
+                })?;
+        let saved = self.resolving_accessor_only.replace(true);
+        let getter = self.probe(|| {
+            let element = self.infer(target)?;
+            let returns_reference = self
+                .fact(&target.source_span(), |facts| {
+                    facts.selected_call.as_deref()
+                })
+                .is_some_and(|getter| getter.reference_result.is_some());
+            Ok((element, returns_reference))
+        });
+        self.resolving_accessor_only.set(saved);
+        let (element, getter_returns_ref) = getter?;
+        Ok(Some(SubscriptLValue::GetterSetter {
+            element,
+            getter_returns_ref,
+            value_name,
+        }))
+    }
+
+    /// Check `target = value` for a nominal subscript `target`, as
+    /// upstream's `emitAssign` stores into a `SubscriptDLValue`: the value is
+    /// typed at the getter's element type, then passed to `__setitem__`
+    /// under the setter's value name. `Ok(None)` leaves primitive
+    /// pointer/SIMD and compiler-private storage assignments on their
+    /// intrinsic place path.
     pub(super) fn check_nominal_subscript_assignment(
         &self,
         target: &Expr,
         value: &Expr,
     ) -> Result<Option<Ty>, TypeError> {
-        let (object, mut arguments, descriptors) = match &target.kind {
-            // A type-keyed projection target writes through the accessor's
-            // reference on the ordinary place path.
-            ExprKind::Index { object, index } if self.type_keyed_projection(object, index) => {
-                return Ok(None);
-            }
+        reject_keyword_subscript_store(target)?;
+        let Some(lvalue) = self.subscript_lvalue(target)? else {
+            return Ok(None);
+        };
+        let SubscriptLValue::GetterSetter {
+            element,
+            value_name,
+            ..
+        } = lvalue
+        else {
+            return self
+                .check_subscript_reference_assignment(target, value)
+                .map(Some);
+        };
+        let found = self.infer_with_expected(value, &element, true)?;
+        // A value already of the element type is the setter's argument
+        // itself, read in place by a `read` parameter.
+        if found == element {
+            self.store_through_subscript(target, &value_name, value)?;
+            return Ok(Some(element));
+        }
+        // Any other value is converted to the element type first, and the
+        // converted value is what the setter is selected over and passed.
+        if !self.record_implicit_conversion(value, &found, &element)? {
+            return Err(TypeError::TypeMismatch {
+                expected: element.to_string(),
+                found: found.to_string(),
+                context: "index assignment".to_string(),
+            });
+        }
+        if !self.storage_conversion_borrows_source(&found, Some(&element)) {
+            self.check_consuming(value, &found, "index assignment")?;
+        }
+        let converted = self.synthetic_store_value(target, &element);
+        let mut setter = self.store_through_subscript(target, &value_name, &converted)?;
+        let site = target.source_span();
+        self.release_synthetic_store_value(&site, &converted, &mut setter);
+        self.record_at(site).selected_call = Some(Box::new(setter));
+        Ok(Some(element))
+    }
+
+    /// Store `value` through the subscript `target`'s `__setitem__`, as
+    /// upstream's `SubscriptDLValue::emitStore` does: an ordinary method
+    /// call taking the indices and `value_name=value`. The target records
+    /// the element type (`value`'s) and the setter's contract, which is
+    /// returned.
+    pub(super) fn store_through_subscript(
+        &self,
+        target: &Expr,
+        value_name: &str,
+        value: &Expr,
+    ) -> Result<mojito_checked::checked::CheckedCallContract, TypeError> {
+        let (object, arguments, descriptors) = match &target.kind {
             ExprKind::Index { object, index } => {
                 let object_ty = self.infer(object)?;
-                if !matches!(object_ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
-                {
-                    return Ok(None);
-                }
                 // A base that is itself a reference result (`v[List[Int]][0]
                 // = x` on the self-hosted `Variant`) is borrowed for the
                 // setter like any method receiver.
@@ -625,11 +658,6 @@ impl Checker {
                 upper,
                 step,
             } => {
-                let object_ty = self.infer(object)?;
-                if !matches!(object_ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
-                {
-                    return Ok(None);
-                }
                 let descriptor = self.synthetic_slice_descriptor(
                     &target.source_span(),
                     0,
@@ -646,20 +674,12 @@ impl Checker {
                 args: source,
             } => {
                 let object_ty = self.infer(object)?;
-                if !matches!(object_ty.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
-                {
-                    return Ok(None);
-                }
                 let mut arguments = Vec::with_capacity(source.len());
                 let mut descriptors = Vec::with_capacity(source.len());
+                reject_keyword_subscript_store(target)?;
                 for (position, argument) in source.iter().enumerate() {
                     match argument {
-                        SubscriptArg::Keyword { name, .. }
-                        | SubscriptArg::KeywordSlice { name, .. } => {
-                            return Err(TypeError::Unsupported(format!(
-                                "keyword subscript assignment ('[{name}=…] = value') is not supported; keyword subscripts are read-only"
-                            )));
-                        }
+                        SubscriptArg::Keyword { .. } | SubscriptArg::KeywordSlice { .. } => {}
                         SubscriptArg::Index(index) => {
                             self.prepare_index_argument(
                                 &object_ty,
@@ -684,34 +704,17 @@ impl Checker {
                 }
                 (object.as_ref(), arguments, descriptors)
             }
-            _ => return Ok(None),
+            _ => {
+                return Err(TypeError::InvariantViolation(
+                    "a subscript store's target is not a subscript".to_string(),
+                ));
+            }
         };
-
         let object_ty = self.infer(object)?;
-        // `receiver[index] = value` without any `__setitem__`: current Mojo
-        // writes through a mutable-reference-returning `__getitem__` (upstream
-        // `Array` has no setter). Slice and multi-index assignment keep the
-        // setter requirement.
-        let has_setitem = matches!(object_ty.kind(), TyKind::Struct(name, _) if self
-            .structs
-            .get(name)
-            .is_some_and(|info| info.methods.contains_key("__setitem__")));
-        if !has_setitem && matches!(&target.kind, ExprKind::Index { .. }) {
-            return self
-                .check_subscript_reference_assignment(target, value, &object_ty)
-                .map(Some);
-        }
-        let index_argument_count = arguments.len();
-        let value_keyword = self.select_subscript_set_call_shape(&object_ty, &arguments, value)?;
-        let kwargs = if value_keyword {
-            vec![mojito_ast::ast::KwArg {
-                name: "value".to_string(),
-                value: value.clone(),
-            }]
-        } else {
-            arguments.push(value.clone());
-            Vec::new()
-        };
+        let kwargs = vec![mojito_ast::ast::KwArg {
+            name: value_name.to_string(),
+            value: value.clone(),
+        }];
         // List element replacement is allocation-stable.  Its projected write
         // is recorded after this check as `list[AnyIndex]`, preserving the
         // List's `element` generation while still expiring interiors nested in
@@ -734,39 +737,98 @@ impl Checker {
                     "nominal subscript assignment lost its selected call contract".to_string(),
                 )
             })?;
-        if contract.receiver_convention != Some(ArgConvention::Mut) {
-            return Err(TypeError::TypeMismatch {
-                expected: "a 'mut self' __setitem__".to_string(),
-                found: "read-only self".to_string(),
-                context: format!("index assignment on '{object_ty}'"),
-            });
-        }
-        let value_source = if value_keyword {
-            mojito_checked::checked::CheckedCallArgumentSource::Keyword(0)
-        } else {
-            mojito_checked::checked::CheckedCallArgumentSource::Positional(index_argument_count)
-        };
-        let target_ty = contract
-            .arguments
-            .iter()
-            .find(|argument| argument.source == value_source)
-            .map(|argument| argument.parameter_ty.clone())
-            .ok_or_else(|| {
-                TypeError::InvariantViolation(
-                    "selected __setitem__ contract has no assignment-value slot".to_string(),
-                )
-            })?;
+        let element = self.infer(value)?;
         let descriptors =
             self.bind_selected_slice_literals(&target.source_span(), &[], &descriptors)?;
         self.record_at(target.source_span()).subscript_descriptor =
-            Some((descriptors, value_keyword));
-        let target_ty = match target_ty.kind() {
-            TyKind::Ref(reference) => reference.referent.clone(),
-            _ => target_ty,
-        };
-        self.record_at(target.source_span()).ty = Some(target_ty.clone());
-        self.record_at(target.source_span()).place_ty = Some(target_ty.clone());
-        Ok(Some(target_ty))
+            Some((descriptors, Some(value_name.to_string())));
+        self.record_at(target.source_span()).ty = Some(element.clone());
+        self.record_at(target.source_span()).place_ty = Some(element);
+        Ok(contract)
+    }
+
+    /// A value of type `ty` standing for a store's computed value (an
+    /// augmented operator's result, or a right-hand side converted to the
+    /// element type): no expression, so the setter is selected over `ty`.
+    pub(super) fn synthetic_store_value(&self, target: &Expr, ty: &Ty) -> Expr {
+        let mut value = Expr::new(ExprKind::None, mojito_common::token::DUMMY_SPAN);
+        value.source.clone_from(&target.source);
+        self.record_at(value.source_span()).ty = Some(ty.clone());
+        value
+    }
+
+    /// Forget the facts the setter call recorded on the synthetic `value`
+    /// ([`Self::synthetic_store_value`]): lowering binds the computed
+    /// register to the setter directly, so the setter's value argument is
+    /// keyed at the store's own `site` and nothing is recorded for it as a
+    /// temporary argument.
+    pub(super) fn release_synthetic_store_value(
+        &self,
+        site: &SourceSpan,
+        value: &Expr,
+        setter: &mut mojito_checked::checked::CheckedCallContract,
+    ) {
+        let value_source = value.source_span();
+        self.clear_fact(&value_source, |facts| facts.implicit_conversion.take());
+        self.clear_fact(&value_source, |facts| facts.conversion_source_borrow.take());
+        self.clear_fact(&value_source, |facts| facts.ty.take());
+        if matches!(
+            self.node_facts
+                .borrow()
+                .get(&value_source)
+                .and_then(|facts| facts.adjustment.as_deref()),
+            Some(mojito_checked::checked::SemanticAdjustment::MaterializeLiteral(_))
+        ) {
+            self.clear_fact(&value_source, |facts| facts.adjustment.take());
+        }
+        self.clear_flag(&value_source, |facts| &mut facts.read_temporary_argument);
+        self.unconsumed_temporaries
+            .borrow_mut()
+            .remove(&value_source);
+        for argument in &mut setter.boundary.arguments {
+            if argument.value_source == value_source {
+                argument.value_source.clone_from(site);
+            }
+        }
+    }
+
+    /// The nominal subscript `place`, of a `receiver` whose accessors form
+    /// `lvalue`, as a place: the getter's mutable reference result, written
+    /// through as a call returning one is.
+    fn subscript_reference_place(
+        &self,
+        place: &Expr,
+        receiver: &Ty,
+        lvalue: &SubscriptLValue,
+    ) -> Result<Ty, TypeError> {
+        if let SubscriptLValue::GetterSetter {
+            getter_returns_ref: false,
+            ..
+        } = lvalue
+        {
+            return Err(TypeError::Unsupported(format!(
+                "a value '__getitem__' result of '{receiver}' used as a mutable place is \
+                 written back through '__setitem__' (get, modify, set); not supported yet"
+            )));
+        }
+        let referent = self.infer(place)?;
+        let span = place.source_span();
+        let mutability = self
+            .fact(&span, |facts| facts.selected_call.as_deref())
+            .and_then(|contract| contract.reference_result)
+            .map(|reference| reference.mutability);
+        match mutability {
+            Some(mutability) if mutability != mojito_types::origin::Mutability::Immutable => {
+                self.record_at(span).reference_value_use = Some(true);
+                Ok(referent)
+            }
+            Some(_) => Err(TypeError::ImmutableBinding(
+                "immutable reference returned by '__getitem__'".to_string(),
+            )),
+            None => Err(TypeError::ImmutableBinding(format!(
+                "the value a subscript of '{receiver}' returns"
+            ))),
+        }
     }
 
     /// Check `receiver[index] = value` against a mutable-reference-returning
@@ -778,8 +840,15 @@ impl Checker {
         &self,
         target: &Expr,
         value: &Expr,
-        object_ty: &Ty,
     ) -> Result<Ty, TypeError> {
+        let ExprKind::Index { object, .. } = &target.kind else {
+            return Err(TypeError::Unsupported(
+                "a slice or multi-index store through '__getitem__''s reference result is not \
+                 supported; declare '__setitem__'"
+                    .to_string(),
+            ));
+        };
+        let object_ty = self.infer(object)?;
         let element = self.infer(target)?;
         let site = target.source_span();
         let getter = self
@@ -791,8 +860,10 @@ impl Checker {
             })?;
         let Some(reference) = &getter.reference_result else {
             // A value-returning getter offers no write-through path; without a
-            // setter the receiver is simply not index-assignable.
-            return Err(TypeError::NotIndexable(object_ty.to_string()));
+            // setter its result is no place.
+            return Err(TypeError::ImmutableBinding(format!(
+                "the value a subscript of '{object_ty}' returns"
+            )));
         };
         // A provably immutable reference rejects here; a parametric-mut
         // reference (`Origin[mut=m]`) is judged per instantiation at the
@@ -813,7 +884,7 @@ impl Checker {
         self.check_consuming(value, &found, "index assignment")?;
         self.record_at(site.clone())
             .subscript_descriptor
-            .get_or_insert_with(|| (vec![None], false));
+            .get_or_insert_with(|| (vec![None], None));
         self.record_at(site.clone()).ty = Some(element.clone());
         self.record_at(site.clone()).place_ty = Some(element.clone());
         self.record_at(site).adjustment = Some(Box::new(
@@ -828,125 +899,6 @@ impl Checker {
             )),
         ));
         Ok(element)
-    }
-
-    /// Select how assignment syntax supplies the implicit RHS to
-    /// `__setitem__`. Both the final-positional and `value=` shapes participate
-    /// in ordinary overload scoring, including RHS-driven generic inference.
-    /// A signature which accepts both shapes is considered only once and uses
-    /// the conventional positional ABI; distinct equally-ranked signatures are
-    /// still an ambiguous overload.
-    pub(super) fn select_subscript_set_call_shape(
-        &self,
-        receiver: &Ty,
-        index_arguments: &[Expr],
-        value: &Expr,
-    ) -> Result<bool, TypeError> {
-        let TyKind::Struct(name, type_arguments) = receiver.kind() else {
-            return Err(TypeError::NotIndexable(receiver.to_string()));
-        };
-        let info = self
-            .structs
-            .get(name)
-            .ok_or_else(|| TypeError::NotIndexable(receiver.to_string()))?;
-        let signatures = info
-            .methods
-            .get("__setitem__")
-            .ok_or_else(|| TypeError::NotIndexable(receiver.to_string()))?;
-        let receiver_substitution = struct_subst(&info.decls, type_arguments);
-        let mut positional_arguments = index_arguments.to_vec();
-        positional_arguments.push(value.clone());
-        let keyword_arguments = vec![mojito_ast::ast::KwArg {
-            name: "value".to_string(),
-            value: value.clone(),
-        }];
-        let no_keywords: &[mojito_ast::ast::KwArg] = &[];
-        let shapes = [
-            (false, positional_arguments.as_slice(), no_keywords),
-            (true, index_arguments, keyword_arguments.as_slice()),
-        ];
-
-        // Keep only the best ABI for each declaration. A normal fixed setter
-        // accepts its final parameter both positionally and by name; counting
-        // those as two overloads would make every such assignment ambiguous.
-        let mut best_by_signature: Vec<Option<(usize, bool)>> = vec![None; signatures.len()];
-        for (signature_index, signature) in signatures.iter().enumerate() {
-            if !signature.has_self {
-                continue;
-            }
-            let receiver_params = signature
-                .params
-                .iter()
-                .map(|parameter| substitute(parameter, &receiver_substitution))
-                .collect::<Vec<_>>();
-            let receiver_variadic = signature
-                .variadic
-                .as_ref()
-                .map(|parameter| substitute(parameter, &receiver_substitution));
-            let receiver_kw_variadic = signature
-                .kw_variadic
-                .as_ref()
-                .map(|parameter| substitute(parameter, &receiver_substitution));
-            for (value_keyword, arguments, keywords) in shapes {
-                let Ok((params, variadic, kw_variadic, _, method_arguments, _)) = self
-                    .instantiate_method_generics(
-                        &format!("{name}.__setitem__"),
-                        signature,
-                        &receiver_params,
-                        receiver_variadic.as_ref(),
-                        receiver_kw_variadic.as_ref(),
-                        &[],
-                        arguments,
-                        keywords,
-                    )
-                else {
-                    continue;
-                };
-                if !self.method_constraints_apply(
-                    signature,
-                    &method_arguments,
-                    &info.decls,
-                    type_arguments,
-                ) {
-                    continue;
-                }
-                let Ok(scored) = self.score_method_call(
-                    signature,
-                    &params,
-                    variadic.as_ref(),
-                    kw_variadic.as_ref(),
-                    arguments,
-                    keywords,
-                ) else {
-                    continue;
-                };
-                let candidate = (scored.rank, value_keyword);
-                let replace =
-                    best_by_signature[signature_index].is_none_or(|current| candidate < current);
-                if replace {
-                    best_by_signature[signature_index] = Some(candidate);
-                }
-            }
-        }
-
-        let candidates = best_by_signature.into_iter().flatten().collect::<Vec<_>>();
-        let Some(best_rank) = candidates.iter().map(|(rank, _)| *rank).min() else {
-            return Err(TypeError::BadCall {
-                func: format!("{name}.__setitem__"),
-                reason: "no overload matches the supplied indices and assignment value".to_string(),
-            });
-        };
-        let mut selected = candidates
-            .into_iter()
-            .filter(|(rank, _)| *rank == best_rank);
-        let (_, value_keyword) = selected.next().expect("at least one best setter shape");
-        if selected.next().is_some() {
-            return Err(TypeError::BadCall {
-                func: format!("{name}.__setitem__"),
-                reason: "ambiguous subscript-assignment overload".to_string(),
-            });
-        }
-        Ok(value_keyword)
     }
 
     pub(super) fn infer_slice_subscript(
@@ -995,7 +947,7 @@ impl Checker {
         };
         self.record_borrowed_view_result(&span, &result);
         let descriptors = self.bind_selected_slice_literals(&span, &[], &[Some(literal)])?;
-        self.record_at(span).subscript_descriptor = Some((descriptors, false));
+        self.record_at(span).subscript_descriptor = Some((descriptors, None));
         Ok(result)
     }
 
@@ -1107,204 +1059,8 @@ impl Checker {
             })
             .collect::<Vec<_>>();
         let descriptors = self.bind_selected_slice_literals(&span, &keyword, &descriptors)?;
-        self.record_at(span).subscript_descriptor = Some((descriptors, false));
+        self.record_at(span).subscript_descriptor = Some((descriptors, None));
         Ok(result)
-    }
-
-    /// Resolve `receiver[indices...] = value`. The assignment value is the final
-    /// regular parameter for a fixed-arity `__setitem__`. A variadic setitem uses
-    /// Mojo's `*indices, *, value: T` shape, so lowering must pass the value through
-    /// the keyword-only slot while the source indices fill the variadic pack.
-    pub(super) fn resolve_struct_setitem(
-        &self,
-        receiver: &Ty,
-        arguments: &[Ty],
-        literals: &[Option<Expr>],
-        value: Option<&Ty>,
-    ) -> Result<SubscriptResolution, TypeError> {
-        let TyKind::Struct(name, type_arguments) = receiver.kind() else {
-            return Err(TypeError::NotIndexable(receiver.to_string()));
-        };
-        let info = self
-            .structs
-            .get(name)
-            .ok_or_else(|| TypeError::NotIndexable(receiver.to_string()))?;
-        let method = "__setitem__";
-        let signatures = info
-            .methods
-            .get(method)
-            .ok_or_else(|| TypeError::NotIndexable(receiver.to_string()))?;
-        let substitution = struct_subst(&info.decls, type_arguments);
-        let mut matches = Vec::new();
-        let mut saw_read_only = false;
-        let mut value_mismatches = Vec::new();
-
-        for signature in signatures
-            .iter()
-            .filter(|signature| signature.has_self && signature.decls.is_empty())
-        {
-            if !matches!(
-                signature.self_convention,
-                Some(mojito_ast::ast::ArgConvention::Mut)
-            ) {
-                saw_read_only = true;
-                continue;
-            }
-            let parameters: Vec<_> = signature
-                .params
-                .iter()
-                .map(|parameter| substitute(parameter, &substitution))
-                .collect();
-            if parameters.is_empty() {
-                continue;
-            }
-            let variadic = signature
-                .variadic
-                .as_ref()
-                .map(|parameter| substitute(parameter, &substitution));
-
-            let (value_index, value_keyword, fixed_index_count) = if variadic.is_some() {
-                let Some(value_index) = signature.names.iter().position(|name| name == "value")
-                else {
-                    continue;
-                };
-                let fixed_index_count = signature.variadic_index.unwrap_or(0);
-                // The currently published variadic operator shape has only a
-                // keyword-only `value` parameter after `*indices`.
-                if value_index < fixed_index_count || parameters.len() != fixed_index_count + 1 {
-                    continue;
-                }
-                (value_index, true, fixed_index_count)
-            } else {
-                (parameters.len() - 1, false, parameters.len() - 1)
-            };
-            if arguments.len() < fixed_index_count
-                || (variadic.is_none() && arguments.len() != fixed_index_count)
-            {
-                continue;
-            }
-
-            // A slice literal binds through its parameter type's
-            // `__slice_literal__` constructor, at one cost whichever type
-            // that is.
-            let binds = |position: usize, actual: &Ty, expected: &Ty| match literals
-                .get(position)
-                .and_then(Option::as_ref)
-            {
-                Some(literal) => Ok(self
-                    .slice_literal_binding(literal, expected, false)?
-                    .map(|_| 0)),
-                None => Ok::<_, TypeError>(
-                    coerces(actual, expected).then(|| conversion_count(actual, expected)),
-                ),
-            };
-            let mut score = 0;
-            let mut compatible = true;
-            for (position, (actual, expected)) in arguments
-                .iter()
-                .take(fixed_index_count)
-                .zip(parameters.iter().take(fixed_index_count))
-                .enumerate()
-            {
-                let Some(cost) = binds(position, actual, expected)? else {
-                    compatible = false;
-                    break;
-                };
-                score += cost;
-            }
-            if compatible && let Some(element) = &variadic {
-                for (position, actual) in arguments.iter().enumerate().skip(fixed_index_count) {
-                    let Some(cost) = binds(position, actual, element)? else {
-                        compatible = false;
-                        break;
-                    };
-                    score += cost;
-                }
-            }
-            if compatible && let Some(actual) = value {
-                let expected = &parameters[value_index];
-                if !self.value_coerces(actual, expected)
-                    && self.implicit_conversion_target(actual, expected)?.is_none()
-                {
-                    value_mismatches.push(expected.clone());
-                    compatible = false;
-                } else {
-                    score += conversion_count(actual, expected);
-                }
-            }
-            if compatible {
-                // This site ranks by types alone: it is handed `&[Ty]`, not
-                // the call's expressions, so it charges no candidate the copy
-                // a place costs a `var` parameter the way every other ranking
-                // site does. The signature-length slot carries the runtime
-                // parameter count here, not compile-time parameters.
-                let bound = literals
-                    .iter()
-                    .enumerate()
-                    .map(|(position, literal)| {
-                        let parameter = if position < fixed_index_count {
-                            parameters.get(position)
-                        } else {
-                            variadic.as_ref()
-                        };
-                        literal.clone().zip(parameter.cloned())
-                    })
-                    .collect::<Vec<_>>();
-                matches.push((
-                    overload_rank(score, variadic.is_some(), parameters.len(), false),
-                    signature,
-                    parameters[value_index].clone(),
-                    value_keyword,
-                    bound,
-                ));
-            }
-        }
-
-        matches.sort_by_key(|(score, ..)| *score);
-        let Some((best, signature, value_type, value_keyword, bound)) = matches.first() else {
-            if let (Some(found), Some(expected)) = (value, value_mismatches.first()) {
-                return Err(TypeError::TypeMismatch {
-                    expected: expected.to_string(),
-                    found: found.to_string(),
-                    context: format!("assignment value for '{name}.__setitem__'"),
-                });
-            }
-            if saw_read_only {
-                return Err(TypeError::TypeMismatch {
-                    expected: "a 'mut self' __setitem__".to_string(),
-                    found: "read-only self".to_string(),
-                    context: format!("index assignment on '{name}'"),
-                });
-            }
-            return Err(TypeError::NotIndexable(receiver.to_string()));
-        };
-        if matches.get(1).is_some_and(|(score, ..)| score == best) {
-            return Err(TypeError::BadCall {
-                func: format!("{name}.__setitem__"),
-                reason: "ambiguous subscript-assignment overload".to_string(),
-            });
-        }
-        Ok(SubscriptResolution {
-            return_type: value_type.clone(),
-            lowered_name: (signatures.len() > 1).then(|| {
-                method_lowered_name(
-                    name,
-                    method,
-                    signature,
-                    self.self_instance_ty(name).as_ref(),
-                )
-            }),
-            value_keyword: *value_keyword,
-            descriptors: bound
-                .iter()
-                .map(|bound| {
-                    bound
-                        .as_ref()
-                        .map(|(literal, parameter)| self.bound_slice_literal(literal, parameter))
-                        .transpose()
-                })
-                .collect::<Result<_, _>>()?,
-        })
     }
 
     /// Type a subscript over tuples, SIMD, lists, pointers, or a user-defined
@@ -2489,4 +2245,33 @@ impl Checker {
             indirect_result,
         }))
     }
+}
+
+/// The name of `setter`'s last argument, which upstream takes as every
+/// `__setitem__` overload's value name. `None` when it takes only `self`.
+fn setter_value_name(setter: &MethodSig) -> Option<String> {
+    match (setter.variadic_index, &setter.variadic_name) {
+        (Some(index), Some(name)) if index == setter.names.len() => Some(name.clone()),
+        _ => setter.names.last().cloned(),
+    }
+}
+
+/// Reject a store to a subscript with a keyword argument (`s[byte=0] = v`):
+/// a keyword subscript is read-only here.
+fn reject_keyword_subscript_store(target: &Expr) -> Result<(), TypeError> {
+    let ExprKind::MultiIndex { args, .. } = &target.kind else {
+        return Ok(());
+    };
+    args.iter()
+        .find_map(|argument| match argument {
+            SubscriptArg::Keyword { name, .. } | SubscriptArg::KeywordSlice { name, .. } => {
+                Some(name)
+            }
+            SubscriptArg::Index(_) | SubscriptArg::Slice { .. } => None,
+        })
+        .map_or(Ok(()), |name| {
+            Err(TypeError::Unsupported(format!(
+                "keyword subscript assignment ('[{name}=…] = value') is not supported; keyword subscripts are read-only"
+            )))
+        })
 }

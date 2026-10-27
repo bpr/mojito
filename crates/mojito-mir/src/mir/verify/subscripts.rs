@@ -137,7 +137,6 @@ pub(super) fn verify_subscript_instruction(
             arg_places,
             value,
             value_place,
-            value_keyword,
             call,
             ..
         } => {
@@ -152,23 +151,13 @@ pub(super) fn verify_subscript_instruction(
                     "{prefix}: subscript-set place metadata is not aligned with its index arguments"
                 ));
             }
-            let mut positional = arg_places.clone();
-            let mut positional_types = args
+            let positional = arg_places.clone();
+            let positional_types = args
                 .iter()
                 .map(|argument| subscript_argument_ty(cx.function, argument))
                 .collect::<Vec<_>>();
-            let keyword = if *value_keyword {
-                vec![value_place.as_deref().cloned()]
-            } else {
-                positional.push(value_place.as_deref().cloned());
-                positional_types.push(cx.reg_ty(*value).cloned());
-                Vec::new()
-            };
-            let keyword_types = if *value_keyword {
-                vec![cx.reg_ty(*value).cloned()]
-            } else {
-                Vec::new()
-            };
+            let keyword = vec![value_place.as_deref().cloned()];
+            let keyword_types = vec![cx.reg_ty(*value).cloned()];
             verify_subscript_call(
                 prefix,
                 cx.function,

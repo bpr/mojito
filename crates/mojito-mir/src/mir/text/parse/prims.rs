@@ -201,6 +201,19 @@ impl Decoder {
             }
         }
     }
+    /// An `index.multi_set`'s `value_keyword`: the setter's value name
+    /// (schema 1.115). Schema 1.114 and older wrote `true` for the keyword
+    /// `value` and `false` for a positional value, which no store passes.
+    pub(super) fn setter_value_keyword(&mut self, value: &Value) -> Option<String> {
+        match &value.kind {
+            ValueKind::String(name) => Some(name.clone()),
+            ValueKind::Atom(flag) if flag == "true" => Some("value".to_string()),
+            _ => {
+                self.error(value.span, "expected the setter's value name");
+                None
+            }
+        }
+    }
     pub(super) fn uint(&mut self, value: &Value) -> Option<usize> {
         self.atom(value)?.parse().ok().or_else(|| {
             self.error(value.span, "expected unsigned integer");

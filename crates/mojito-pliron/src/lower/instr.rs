@@ -621,16 +621,11 @@ impl FnLowering<'_> {
                 // The discarded `__setitem__` result binds to a scratch
                 // register outside the function's register space.
                 let scratch = Reg(u32::MAX);
-                let mut positional = Self::subscript_actuals(args, arg_places);
-                let mut keywords = Vec::new();
-                if *value_keyword {
-                    keywords.push((
-                        "value",
-                        SubscriptActual::Reg(*value, value_place.as_deref()),
-                    ));
-                } else {
-                    positional.push(SubscriptActual::Reg(*value, value_place.as_deref()));
-                }
+                let positional = Self::subscript_actuals(args, arg_places);
+                let keywords = vec![(
+                    value_keyword.as_str(),
+                    SubscriptActual::Reg(*value, value_place.as_deref()),
+                )];
                 self.lower_subscript_call(
                     ctx,
                     scratch,

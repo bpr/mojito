@@ -681,7 +681,12 @@ impl Decoder {
                 value_place: (self
                     .req(value, fields, "value_place", |d, v| Some(d.option_place(v)))?)
                 .map(Box::new),
-                value_keyword: self.req(value, fields, "value_keyword", Self::boolean)?,
+                value_keyword: self.req(
+                    value,
+                    fields,
+                    "value_keyword",
+                    Self::setter_value_keyword,
+                )?,
                 call: Box::new(self.req(value, fields, "call", Self::subscript_call)?),
             }),
             "place.store" => Some(MirInstr::Store {

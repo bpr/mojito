@@ -369,7 +369,7 @@ fn a_user_indexer_overload_receives_the_source_value_without_normalization() {
 #[test]
 fn a_user_setitem_index_type_receives_the_source_value_without_normalization() {
     let actual = output(
-        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"unexpected normalization\")\n        return self.value\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __setitem__(mut self, offset: Offset, value: Int):\n        self.value = value + offset.value\n\ndef main():\n    var bag = Bag(0)\n    bag[Offset(3)] = 7\n    print(bag.value)\n",
+        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"unexpected normalization\")\n        return self.value\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __getitem__(self, offset: Offset) -> Int:\n        return self.value\n    def __setitem__(mut self, offset: Offset, value: Int):\n        self.value = value + offset.value\n\ndef main():\n    var bag = Bag(0)\n    bag[Offset(3)] = 7\n    print(bag.value)\n",
     );
     assert_eq!(actual, "10\n");
 }

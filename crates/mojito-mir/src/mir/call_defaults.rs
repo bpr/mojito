@@ -399,7 +399,8 @@ fn fill_call(
 
 /// Build the positional collector of a subscript store (`g[1, 2] = v`) of
 /// a `__setitem__` declaring one, as [`build_collector`] builds a call's:
-/// its index operands are the overflow, its value the keyword-only `value`.
+/// its index operands are the overflow, its value the keyword argument
+/// `value_keyword` names.
 /// A store indexing by a slice keeps its operands.
 fn collect_subscript_store(
     instruction: &mut MirInstr,
@@ -414,7 +415,7 @@ fn collect_subscript_store(
         arg_places,
         value,
         value_place,
-        value_keyword: true,
+        value_keyword,
         call,
     } = instruction
     else {
@@ -446,7 +447,7 @@ fn collect_subscript_store(
         callee: call.target.clone(),
         leading: 0,
         args: registers,
-        kwargs: vec![("value".to_string(), *value)],
+        kwargs: vec![(value_keyword.clone(), *value)],
         arg_places: arg_places.clone(),
         kwarg_places: vec![value_place.as_deref().cloned()],
         bound: bindings_of(&call.target, callee, &[], receiver_ty.as_ref(), caller),

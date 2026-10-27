@@ -5284,28 +5284,36 @@ fn len_dunder_must_return_int() {
 
 #[test]
 fn setitem_dunder_typing_and_errors() {
-    // `c[i] = e` needs `__setitem__`; a struct with only `__getitem__` can't be
-    // assigned into.
+    // `c[i] = e` without `__setitem__` writes through the getter's result,
+    // which a value getter does not offer.
     let e = err(
         "@fieldwise_init\nstruct P:\n    var a: Int\n    def __getitem__(self, i: Int) -> Int:\n        return self.a\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
     );
-    assert!(matches!(e, TypeError::NotIndexable(_)), "got {e:?}");
-    // `__setitem__` must take `mut self` (else the write couldn't persist).
+    assert!(matches!(e, TypeError::ImmutableBinding(_)), "got {e:?}");
+    // A setter needs a getter: its result is the stored value's type.
     let e = err(
-        "@fieldwise_init\nstruct P:\n    var a: Int\n    def __setitem__(self, i: Int, v: Int):\n        pass\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
-    );
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
-    // A well-formed `__setitem__` type-checks (value coerces to the 2nd parameter).
-    ok(
         "@fieldwise_init\nstruct P:\n    var a: Int\n    def __setitem__(mut self, i: Int, v: Int):\n        self.a = v\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
+    );
+    assert!(matches!(e, TypeError::SetterWithoutGetter(_)), "got {e:?}");
+    // The getter is resolved over the indices, so its arity is checked.
+    let e = err(
+        "@fieldwise_init\nstruct P:\n    var a: Int\n    def __getitem__(self, i: Int, j: Int) -> Int:\n        return self.a\n    def __setitem__(mut self, i: Int, v: Int):\n        self.a = v\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
+    );
+    assert!(matches!(e, TypeError::BadCall { .. }), "got {e:?}");
+    // A well-formed `__setitem__` type-checks, whatever its `self` convention.
+    ok(
+        "@fieldwise_init\nstruct P:\n    var a: Int\n    def __getitem__(self, i: Int) -> Int:\n        return self.a\n    def __setitem__(mut self, i: Int, v: Int):\n        self.a = v\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
+    );
+    ok(
+        "@fieldwise_init\nstruct P:\n    var a: Int\n    def __getitem__(self, i: Int) -> Int:\n        return self.a\n    def __setitem__(self, i: Int, v: Int):\n        pass\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
     );
 
     // Slice and mixed-dimensional assignment use the same checked contract.
     ok_std(
-        "@fieldwise_init\nstruct Grid:\n    var a: Int\n    def __setitem__(mut self, row: Int, columns: Slice, value: Int):\n        self.a = value\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = 9\n",
+        "@fieldwise_init\nstruct Grid:\n    var a: Int\n    def __getitem__(self, row: Int, columns: Slice) -> Int:\n        return self.a\n    def __setitem__(mut self, row: Int, columns: Slice, value: Int):\n        self.a = value\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = 9\n",
     );
     let e = err_std(
-        "@fieldwise_init\nstruct Grid:\n    var a: Int\n    def __setitem__(mut self, row: Int, columns: Slice, value: Int):\n        self.a = value\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = \"wrong\"\n",
+        "@fieldwise_init\nstruct Grid:\n    var a: Int\n    def __getitem__(self, row: Int, columns: Slice) -> Int:\n        return self.a\n    def __setitem__(mut self, row: Int, columns: Slice, value: Int):\n        self.a = value\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = \"wrong\"\n",
     );
     assert!(
         matches!(
@@ -5314,14 +5322,10 @@ fn setitem_dunder_typing_and_errors() {
         ),
         "got {e:?}"
     );
-    let e = err_std(
-        "@fieldwise_init\nstruct Grid:\n    var a: Int\n    def __setitem__(self, row: Int, columns: Slice, value: Int):\n        pass\n\ndef main():\n    var grid = Grid(0)\n    grid[3, 1:8:2] = 9\n",
-    );
-    assert!(matches!(e, TypeError::TypeMismatch { .. }), "got {e:?}");
 
-    // Generic setter parameters are inferred from the implicit assignment RHS.
+    // Generic setter parameters are inferred from the element-typed value.
     ok(
-        "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __setitem__[T: Copyable & Deinitable](mut self, index: Int, value: T):\n        self.value = index\n\ndef main():\n    var sink = Sink(0)\n    sink[42] = True\n",
+        "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __getitem__(self, index: Int) -> Bool:\n        return self.value != 0\n    def __setitem__[T: Copyable & Deinitable](mut self, index: Int, value: T):\n        self.value = index\n\ndef main():\n    var sink = Sink(0)\n    sink[42] = True\n",
     );
 }
 
@@ -5338,26 +5342,27 @@ fn slice_literals_do_not_use_user_implicit_conversions() {
 }
 
 #[test]
-fn rejects_competing_positional_and_keyword_setter_pair() {
-    // Current Mojo rejects this focused positional-only/keyword-only
-    // setter-overload pair; selection would otherwise depend on the
-    // assignment's right-hand side.
-    let source = include_str!("../conformance/fixtures/setter_overload_extension.mojo");
-    let TypeError::Unsupported(message) = err(source) else {
-        panic!("expected an unsupported-feature error");
-    };
-    assert!(
-        message.contains("competing '__setitem__'"),
-        "unexpected diagnostic: {message}"
-    );
+fn setter_value_passes_by_the_first_setters_name() {
+    // The store passes its element-typed value as `value=`, the first
+    // setter's last argument: the keyword-only overload is selected.
+    ok(include_str!(
+        "../conformance/fixtures/setter_value_by_keyword.mojo"
+    ));
 
-    // A mismatched right-hand side against a lone setter stays an ordinary
-    // bad-call rejection.
+    // A positional-only value parameter is never viable for a store.
     assert!(matches!(
         err(
-            "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __setitem__(mut self, index: Int, value: Int, /):\n        self.value = value\n\ndef main():\n    var sink = Sink(0)\n    sink[1] = \"wrong\"\n"
+            "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int, /):\n        self.value = value\n\ndef main():\n    var sink = Sink(0)\n    sink[1] = 2\n"
         ),
         TypeError::BadCall { .. }
+    ));
+
+    // A right-hand side is converted to the getter's result type first.
+    assert!(matches!(
+        err(
+            "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value\n\ndef main():\n    var sink = Sink(0)\n    sink[1] = \"wrong\"\n"
+        ),
+        TypeError::TypeMismatch { .. }
     ));
 }
 

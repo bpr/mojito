@@ -1202,10 +1202,11 @@ pub enum SemanticAdjustment {
     /// binds ([`CheckedSliceLiteral`]).
     SliceDescriptors {
         descriptors: Vec<Option<CheckedSliceLiteral>>,
-        /// A variadic `__setitem__` receives the assignment value through its
-        /// required keyword-only `value` slot. Reads and fixed-arity writes leave
-        /// this false.
-        set_value_keyword: bool,
+        /// A store passes its value to `__setitem__` by keyword, under the
+        /// name of the first declared setter's last argument (upstream's
+        /// `SubscriptDLValue::setterValueName`). `None` on a read and on a
+        /// store through a getter's mutable reference.
+        set_value_keyword: Option<String>,
     },
     /// This place expression produces a reference into a named storage region
     /// owned by a container. The full stable path is a checker fact; MIR must
@@ -6367,7 +6368,7 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     if let Some((descriptors, set_value_keyword)) = &facts.subscript_descriptor {
         adjustments.push(SemanticAdjustment::SliceDescriptors {
             descriptors: descriptors.clone(),
-            set_value_keyword: *set_value_keyword,
+            set_value_keyword: set_value_keyword.clone(),
         });
     }
     if let Some(target) = &facts.implicit_conversion {
@@ -6720,7 +6721,7 @@ node_facts! {
         binding_ty: Ty,
         effects: EffectFacts,
         selected_call: Box<CheckedCallContract>,
-        subscript_descriptor: (Vec<Option<CheckedSliceLiteral>>, bool),
+        subscript_descriptor: (Vec<Option<CheckedSliceLiteral>>, Option<String>),
         iteration_protocol: Box<IterationProtocol>,
         /// The protocol a `comptime for` steps the construction spelled
         /// for its iterable by (`seq.__iter__()`).

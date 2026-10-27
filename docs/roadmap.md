@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1503**.
+Next free ID: **R1505**.
 
 ## Ordered Work
 
@@ -2501,32 +2501,53 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1373 A subscript store selects `__setitem__` without typing the
-  target through `__getitem__`**
+- [ ] **R1503 A value-getter subscript used as a mutable base is not
+  written back through `__setitem__`**
 
-  `check_nominal_subscript_assignment` (`checker/indexing.rs`) picks the
-  setter from the right-hand side alone, and the `AugAssign` arm
-  (`checker/statements.rs`) runs its own getter-then-setter selection, where
-  upstream's `emitGetterSetterAccess` (`ExprNodes.cpp`) builds one
-  `SubscriptDLValue` for every store.
-  - Upstream requires a getter ("'T' has '__setitem__' but no '__getitem__'
-    method"), selects it over the indices, takes its result type as the
-    element type, and stores a value of that type through the setter.
-  - The lever: one checker subscript-lvalue function that both statement
-    arms call.
-  - Fixtures that declare a setter alone need a getter added.
-  - Probe: `s[1] = 4.0`, with `__getitem__(self, a: Int) -> Int` and
-    `__setitem__(mut self, a: Int, value: Float64)`, prints `4` in Mojito.
-    The pin says "value passed to 'value' cannot be converted from 'Int' to
-    'Float64'".
-  - Probe (from R1109): `s[0].x = 5` over a value `__getitem__` and
-    `__setitem__` prints `5` at the pin through get-modify-set; Mojito
-    fails with "dynamic element projection requires checked indexed
-    storage, got S".
-  - Closes R35 (a store with a setter but no getter is accepted) and R690
-    (the getter's arity is not checked on a store).
+  Problem: `s[0].x = 5`, `s[0].bump()` (a `mut self` method), and `s[0][1] =
+  7` over a value-returning `__getitem__` and a `__setitem__` run at the pin
+  through get, modify, set, while Mojito rejects them ("a value
+  '__getitem__' result of 'S' used as a mutable place is written back
+  through '__setitem__' (get, modify, set); not supported yet").
+  - Upstream's `StoredAttributeRefDLValue::emitStore` (`DLValues.cpp`) loads
+    the element through the getter, stores into the loaded value, and stores
+    the whole value back through the `SubscriptDLValue`; a `mut` argument
+    over a DLValue does the same around the call.
+  - The checker's `subscript_reference_place` (`checker/indexing.rs`) is
+    where the rejection sits; the lever is a write-back plan recorded on the
+    place beside `subscript_lvalue`, and a MIR get-modify-set beside
+    `lower_augmented_subscript` that ends in `store_through_subscript`'s
+    setter call.
+  - Probe: `s[0].x = 5` with `__getitem__(self, i: Int) -> P` and
+    `__setitem__(mut self, i: Int, value: P)` prints `5` at the pin.
+  - Probe: `s[0].bump()` on the same struct prints `get`, `set`, `1` at the
+    pin.
+  - Probe: `s[0][1] = 7`, both levels a value getter and a setter, prints
+    `get`, `inner set`, `set`, `7` at the pin.
+  - Found while landing R1373 (2026-10-27).
   - Depends on nothing.
-  - Model: Opus, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1504 A slice or multi-index store through a getter's mutable
+  reference is rejected**
+
+  Problem: `s[1, 2] = 5` on a struct whose only accessor is `__getitem__(ref
+  self, a: Int, b: Int) -> ref [self.n] Int` prints `5` at the pin, while
+  Mojito rejects it ("a slice or multi-index store through '__getitem__''s
+  reference result is not supported").
+  - Upstream's `emitGetterSetterAccess` emits the getter call whenever there
+    is no setter, whatever the subscript's shape, and the store writes
+    through its reference.
+  - `check_subscript_reference_assignment` (`checker/indexing.rs`) and
+    `lower_subscript_reference_set` (`mir/lower_stmt.rs`) take a single
+    index only; the augmented store's `lower_augmented_slice` and
+    `lower_augmented_multi_index` already lower the getter's handle for
+    every shape and are the model.
+  - Probe: the store above, and `s[1:2] = 5` over a slice getter returning a
+    reference.
+  - Found while landing R1373 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1374 A destructuring leaf stores through its own path, not the
   assignment's lvalue**
@@ -2536,9 +2557,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   upstream's `TupleDLValue::emitStore` (`DLValues.cpp`) stores each element
   through `emitStoreToLValue`, so a subscript leaf goes through its
   `SubscriptDLValue`.
-  - The lever: the leaf takes R1373's subscript lvalue. MIR gains a setter
-    call whose value is an element register (`lower_subscript_set` takes
-    only an expression today).
+  - The lever: the leaf takes the subscript lvalue (`subscript_lvalue` in
+    `checker/indexing.rs`) and stores through `store_through_subscript`
+    with a synthetic element-typed value, as the augmented store does. MIR
+    gains a setter call whose value is an element register
+    (`lower_subscript_set` takes only an expression today).
   - Probe: R1247's `(xs[0], xs[1]) = pair`, which the pin runs, printing `3
     4`.
   - Closes R1247 (a nominal subscript as a destructuring target). Shrinks
@@ -2557,7 +2580,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   `:=` alike.
   - The lever: the parser takes any expression as a target.
     `check_place_impl` gains an `Invoke` arm, and the walrus stores through
-    the same lvalue.
+    the same lvalue (`subscript_lvalue`, `store_through_subscript`).
   - Update `docs/grammar.md` first (`assign_target`, `NAME ':='`).
   - Probe: `print(xs[0] := 5)` then `print(xs[0])` prints `5` twice at the
     pin. Mojito stops parsing at "walrus ':=' target must be a name". Also
@@ -2948,21 +2971,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R690 A subscript assignment is accepted without a `__getitem__`
-  matching its indices**
-
-  Problem: `s[k] = v` on a struct whose `__setitem__(mut self, a: Int,
-  b: Int)` sits beside `__getitem__(self, a: Int, b: Int)` runs in Mojito,
-  while the pin rejects it: "invalid call to '__getitem__': missing
-  required argument: 'b'".
-  - The pin type-checks a subscript assignment's target through
-    `__getitem__` over the same indices before it selects the setter; the
-    checker's subscript-store selection checks the setter alone.
-  - R35 is the getter-absent half of the same check.
-  - Found while landing R681 (2026-10-13).
-  - Depends on R35.
-  - Model: Opus, Not Planned.
-
 - [ ] **R792 `conforms_to` takes only a parameter name and one trait**
 
   Problem: `where conforms_to(IteratorType.Element, Movable & Deinitable)`
@@ -3175,21 +3183,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The bundled `List.deinit_with`, `Optional.deinit_with`, `Set.clear_with`,
     `Dict.clear_with`, and `DictEntry.reap_with` declare such parameters and
     are callable only through this conversion.
-  - Depends on nothing.
-  - Model: Opus, Planned.
-
-- [ ] **R35 A subscript store on a struct with a setter and no getter is
-  accepted**
-
-  Problem: `s[0] = 3` on a struct that declares `__setitem__` but no
-  `__getitem__` runs in Mojito, while the pin refuses the store ("'Sink' has
-  '__setitem__' but no '__getitem__' method").
-  - The pin accepts the declaration itself while nothing subscripts it.
-  - The lever is the setter selection in `check_nominal_subscript_assignment`
-    (`checker/indexing.rs`), which never asks for a getter.
-  - Fixtures that declare a setter alone need a getter first; the fallout is
-    not enumerated.
-  - Pinned by `conformance/probes/setter_without_getter.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
