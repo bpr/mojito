@@ -848,11 +848,11 @@ impl Checker {
             TyKind::UInt => Ty::uint(),
             TyKind::Bool => Ty::bool(),
             TyKind::Float64 | TyKind::FloatLiteral => Ty::float64(),
-            // A struct-valued call is an application the elaborator below MIR
-            // runs and materializes, and so is any `String` expression, which it
-            // freezes to a compile-time string; no other struct expression
-            // lifts.
-            TyKind::Struct(..) if called.is_some() => ty,
+            // A struct- or sized-scalar-valued call is an application the
+            // elaborator below MIR runs and materializes, and so is any
+            // `String` expression, which it freezes to a compile-time string;
+            // no other struct expression lifts.
+            TyKind::Struct(..) | TyKind::Simd { .. } if called.is_some() => ty,
             TyKind::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
             {
@@ -924,7 +924,12 @@ impl Checker {
         let result = self.ty_from_anno(&function.result).ok().filter(|ty| {
             matches!(
                 ty.kind(),
-                TyKind::Int | TyKind::UInt | TyKind::Bool | TyKind::Float64 | TyKind::Struct(..)
+                TyKind::Int
+                    | TyKind::UInt
+                    | TyKind::Bool
+                    | TyKind::Float64
+                    | TyKind::Simd { .. }
+                    | TyKind::Struct(..)
             )
         })?;
         (!function.raises).then(|| {

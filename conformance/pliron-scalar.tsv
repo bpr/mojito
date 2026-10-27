@@ -1242,6 +1242,7 @@ assets/ok/value_pack_runtime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_typed_by_type_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_param_forwarded_to_keyed_def.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/value_param_typed_by_alias_or_sized_scalar.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_param_typed_by_type_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_parameter_field_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_parameter_inferred_from_argument_type.mojo	-	ineligible	no-scalar-entry-shape

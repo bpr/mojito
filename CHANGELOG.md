@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A parameter binder's annotation resolves like any type expression, as
+  upstream's `emitExprType` resolves it (R1372, R482): a trait makes a type
+  parameter, and any other type a value parameter of that type, so
+  `[v: Int16]`, `struct S[i8: Int8]`, `[n: MyInt]` over `comptime MyInt =
+  Int`, and `show[doubled(n)]()` over a `def` returning `Int8` run on the
+  VM and natively where they were rejected as unknown traits. A local
+  `comptime` annotated with a sized scalar is still no parameter value
+  (R602).
 - A bracket after a name is classified by what the name denotes, as
   upstream's `SubscriptNode::emitLCVIR` classifies it (R1371, R326): over a
   function its operands bind the function's parameters, positionally or by

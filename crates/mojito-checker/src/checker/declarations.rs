@@ -708,10 +708,10 @@ impl Checker {
     }
 
     /// Classify a `[...]` parameter list into type and value parameters, and
-    /// validate them: names must be distinct; a single bound naming a value
-    /// type (a scalar, a registered struct, or an earlier type binder of the
-    /// same list) is a **value** parameter; otherwise the bounds must all name
-    /// traits (built-in or user), giving a **type** parameter. The
+    /// validate them: names must be distinct; a single bound naming a type
+    /// (a scalar, a registered struct, an alias of a type, or an earlier type
+    /// binder of the same list) is a **value** parameter; otherwise the bounds
+    /// must all name traits (built-in or user), giving a **type** parameter. The
     /// parser guarantees each parameter carries at least one `: bound` (Mojo has
     /// no unconstrained parameters).
     /// `owner` names the declaration whose binders these are
@@ -828,6 +828,14 @@ impl Checker {
             if let [only] = tp.bounds.as_slice()
                 && let Some(ty) = sibling_type_binder(&decls, only)
             {
+                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
+                continue;
+            }
+            // Any other lone annotation is resolved like any type expression,
+            // as upstream's `emitExprType` resolves it: a trait makes a type
+            // parameter, and a type (`Int16`, an alias of `Int`) a value
+            // parameter of that type.
+            if let Some(ty) = self.value_binder_type(tp, &decls) {
                 decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
                 continue;
             }
@@ -971,6 +979,28 @@ impl Checker {
             }
             _ => None,
         }
+    }
+
+    /// The type `tp`'s lone annotation denotes when it names neither a
+    /// trait nor a trait-valued binder among `earlier`: the value type of a
+    /// value parameter. `None` when it names a trait or resolves to no type.
+    fn value_binder_type(
+        &self,
+        tp: &mojito_ast::ast::TypeParam,
+        earlier: &[ParamDecl],
+    ) -> Option<Ty> {
+        let [only] = tp.bounds.as_slice() else {
+            return None;
+        };
+        if self.check_trait_name(only).is_ok()
+            || tp.callable_bound.is_some()
+            || sibling_trait_binder(earlier, only).is_some()
+        {
+            return None;
+        }
+        self.ty_from_anno(&SourceType::Named(only.clone(), Vec::new()))
+            .ok()
+            .filter(|ty| !matches!(ty.kind(), TyKind::Trait(_) | TyKind::AnyTrait(_)))
     }
 
     /// The value declaration `tp` classifies to once its type is `ty`.

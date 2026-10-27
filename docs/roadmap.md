@@ -4225,23 +4225,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on R1371, which classifies the receiver by what it denotes.
   - Model: Opus, Not Planned.
 
-- [ ] **R1372 A parameter binder is a value parameter only for a fixed list
-  of type names**
-
-  `ct_value_param_type` (`mojito-comptime/src/comptime/params.rs`) treats a
-  binder annotation as a value type only for `Int`, `Bool`, `DType`, and a
-  few others, and reads every other name as a trait bound, where upstream
-  resolves the annotation like any type expression (`emitExprType`): a trait
-  makes a type parameter, and anything else a value parameter of that type.
-  - The lever: classify by the declaration table. A struct, or an alias of
-    one, is a value type, and a trait is a bound.
-  - Probe: `comptime MyInt = Int` then `def g[n: MyInt]()` makes `g[3]()`
-    print `3` at the pin. Mojito says "unknown trait 'MyInt' in a
-    type-parameter bound".
-  - Closes R482 (a sized-scalar or alias-typed value binder is rejected).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1511 A scalar type name in a bracket is a type by its spelling**
 
   `peek_starts_type` (`parser/types.rs`) sends `Int`, `UInt`, `Bool`,
@@ -4330,14 +4313,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R602 A local annotated `comptime` constant as a bracket value
-  argument fails to elaborate**
+- [ ] **R602 A local `comptime` constant annotated with a sized scalar is
+  no parameter value**
 
-  Problem: `comptime y: Int = 5` then `f[y]()`, for `def f[v: Int]() -> Int`, stops with "keeps the parameter constant `$comptime$main$c0()` in elaborated MIR"; the pin prints 5.
-  - The call's instantiated arguments and its slot carry the application of the lifted constant (`param_apply { function: "$comptime$main$c0" }`), which reaches concrete MIR unanswered.
-  - `comptime x = f[3]()` then `print(x)` runs.
-  - `assets/ok/value_param_typed_by_type_param.mojo` fails on it.
-  - Found while landing R601 (2026-10-10); HEAD before R601 fails the same way.
+  `comptime c: Int8 = 5` (or `= Int8(5)`) then `show[c]()`, for
+  `def show[x: Int8]()`, fails with "not a compile-time Int constant: c",
+  where the pin prints `5`.
+  - `Checker::bind_template_comptime` (`checker/comptime_validation.rs`)
+    folds a closed initializer to its constant only when the binding is
+    unannotated ("which an annotation would convert"): no parameter
+    expression converts the constant to the annotated type.
+  - `comptime c = Int8(5)` runs, and so do annotations of `Int`, `UInt`,
+    and a struct (`comptime e: E = E(7)`).
+  - Probe: `comptime c: Float32 = 1.5` then `show[c]()` for
+    `def show[x: Float32]()`, in a body with or without binders (pin: `1.5`).
+  - The original shape, `comptime y: Int = 5` then `f[y]()`, now runs.
+  - Found while landing R601 (2026-10-10); rescoped while landing R1372
+    (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4489,28 +4481,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R482 A sized-scalar value binder is rejected**
-
-  Problem: `s[v: Int16]() -> Int16` is rejected with "unknown trait 'Int16'
-  in a type-parameter bound", where the pin prints `6` for `s[5]()`.
-  - The capitalized name in the binder's annotation is read as a trait
-    bound, not as a value type.
-  - Probe: a binder typed by a module type alias, `comptime MyInt = Int`
-    then `def g[n: MyInt]()`, fails with "unknown trait 'MyInt' in a
-    type-parameter bound", where the pin prints `3` for `g[3]()`. Prepare
-    folds only aliases of `!kgen.type` and `!kgen.string` this way.
-  - Probe: a struct's binder, `struct S[i8: Int8]` with `Self.i8` read in
-    a static method, fails the same way (pin: `3` for `S[3].num()`).
-  - Probe: `show[b(n)]()` in `def f[n: Int]()` for `def b(n: Int) -> Int8`
-    and `def show[x: Int8]()` (pin: `6` for `f[3]()`). Once the binder is
-    accepted, a call computing a sized integer must apply as an `Int`,
-    `UInt`, `Float64`, or `String` one does (`Checker::called_application`
-    and `ApplicableShape::applicable`, `checker/comptime_validation.rs`,
-    take those scalars only).
-  - Found while landing R477 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R940 An `@inline` level that is not a spelled member is rejected**
 
   Problem: `comptime L = InlineLevel.never` then `@inline(L)` is rejected
@@ -4541,14 +4511,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Model: Opus, Not Planned.
 
 - [ ] **R893 A conditional expression over a sized-integer value parameter
-  will be a run-time `if`, where the pin selects its arm per instance**
+  is a run-time `if`, where the pin selects its arm per instance**
 
   `1 if x == 0 else 2 * f[x - 1]()` in `def f[x: UInt8]()` prints `8` on
   the pin for `f[3]()`: a sized integer's comparison is a parameter value.
   - `Checker::parameter_valued_condition`
     (`checker/comptime_validation.rs`) admits only `Int`, `UInt`, `Bool`,
-    and literal operands, so once R482 accepts the binder, this
-    conditional elaborates both arms and recurses past the instance budget.
+    and literal operands, so this conditional elaborates both arms and
+    recurses past the instance budget.
+  - Probe: the `UInt8` shape prints `8` only because `x - 1` wraps, so
+    the 256 instances fit the budget; over `UInt16` it stops with
+    "unsupported instantiation past the 4096-instance budget" (pin: `8`).
   - A `Float64` operand stays run-time: the pin runs out of memory on the
     float twin of the probe.
   - Found while landing R887 (2026-10-14).
