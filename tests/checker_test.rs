@@ -7172,16 +7172,13 @@ fn parameterized_comptime_values_bind_at_each_application() {
         ),
         TypeError::TraitComptimeMemberMismatch { member, .. } if member == "get"
     ));
-    // Read through a bound, the generator is applied, never read whole.
+    // Read through a bound unapplied, the requirement is a generator,
+    // which is not `Writable`.
     assert!(matches!(
         err(
             "trait HasGet:\n    comptime get[idx: Int]: Int\n\ndef use[T: HasGet]():\n    print(T.get)\n",
         ),
-        TypeError::WrongTypeArgCount {
-            expected: 1,
-            got: 0,
-            ..
-        }
+        TypeError::BadCall { reason, .. } if reason.contains("'__generator_type[idx: Int] Int' does not conform to trait 'Writable'")
     ));
 }
 

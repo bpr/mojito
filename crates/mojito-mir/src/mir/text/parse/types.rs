@@ -97,6 +97,13 @@ impl Decoder {
                     }
                     .into()
                 }
+                "generator" => {
+                    let params =
+                        self.req(value, fields, "params", |d, v| Some(d.param_decls(v)))?;
+                    let result = self.req(value, fields, "result", Self::ty)?;
+                    self.unknown(fields, &["params", "result"]);
+                    Ty::generator(params, result)
+                }
                 "assoc" => {
                     let base = self.req(value, fields, "base", Self::ty)?;
                     let name = self.req(value, fields, "member", Self::symbol)?;
@@ -839,6 +846,22 @@ impl Decoder {
                     let built = self.context.list_tabulate(&count, &element);
                     self.built(value, built)
                 }
+                "param_bind_params" => {
+                    let generator = self.req(value, fields, "generator", Self::param_expr)?;
+                    let args_value = self.required(value, fields, "args")?;
+                    let args: Vec<Option<ParamExpr>> = self
+                        .list(args_value)
+                        .ok()?
+                        .iter()
+                        .map(|arg| match self.option_value(Some(arg)) {
+                            Some(arg) => self.param_expr(arg).map(Some),
+                            None => Some(None),
+                        })
+                        .collect::<Option<_>>()?;
+                    self.unknown(fields, &["generator", "args", "type"]);
+                    let built = self.context.bind_params(&generator, &args);
+                    self.built(value, built)
+                }
                 "param_list_concat" => {
                     let lists_value = self.required(value, fields, "lists")?;
                     let lists: Vec<ParamExpr> = self
@@ -1216,6 +1239,14 @@ impl Decoder {
                     None
                 }
             },
+            ValueKind::Record(tag, fields) if tag == "ct_generator" => {
+                let params = self.req(value, fields, "params", |d, v| Some(d.param_decls(v)))?;
+                let body = self.req(value, fields, "body", Self::param_expr)?;
+                self.unknown(fields, &["params", "body"]);
+                Some(CtValue::Generator(Box::new(
+                    mojito_types::ct::GeneratorValue { params, body },
+                )))
+            }
             ValueKind::Record(tag, fields) if tag == "ct_simd" => {
                 let dtype_value = self.required(value, fields, "dtype")?;
                 let dtype = self.dtype(dtype_value)?;

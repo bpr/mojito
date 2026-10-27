@@ -521,6 +521,17 @@ pub fn walk_type<V: Visitor>(visitor: &mut V, ty: &Type) {
             walk_expr(visitor, index);
         }
         Type::TypeOf(operand) | Type::Value(operand) => walk_expr(visitor, operand),
+        Type::Generator { params, result } => {
+            let names = params
+                .iter()
+                .map(|parameter| parameter.name.as_str())
+                .collect::<Vec<_>>();
+            if !visitor.enter_scope(&names) {
+                return;
+            }
+            walk_type_params(visitor, params);
+            walk_type(visitor, result);
+        }
         Type::Func {
             type_params,
             params,
@@ -1360,6 +1371,10 @@ fn walk_type_children_mut<V: MutVisitor>(visitor: &mut V, ty: &mut Type) {
             walk_expr_mut(visitor, index);
         }
         Type::TypeOf(operand) | Type::Value(operand) => walk_expr_mut(visitor, operand),
+        Type::Generator { params, result } => {
+            walk_type_params_mut(visitor, params);
+            walk_type_mut(visitor, result);
+        }
         Type::Ref { referent, origin } => {
             walk_type_mut(visitor, referent);
             if let Some(origins) = origin {

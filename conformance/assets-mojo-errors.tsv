@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	775
+# swept-count	780
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -130,6 +130,7 @@ assets/parse_error/comptime_match_module_level.mojo	compile-reject	agree	error: 
 assets/parse_error/destructure_literal_target.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/parse_error/destructure_sequence_literal_target.mojo	compile-reject	agree	error: expression must be mutable in collection literal
 assets/parse_error/for_target_trailing_comma.mojo	compile-reject	agree	error: unexpected token in expression
+assets/parse_error/generator_type_missing_result.mojo	compile-reject	agree	error: unexpected token in expression
 assets/parse_error/lambda_missing_colon.mojo	compile-reject	agree	error: unknown function effect 'x', expected 'raises', 'capturing', or 'thin'
 assets/parse_error/lambda_unparenthesized_args.mojo	compile-reject	agree	error: unparenthesized lambda arguments are not supported; write them in parentheses, with types, e.g. `lambda (x: Int, y: Int) -> Int: x + y`
 assets/parse_error/match_mapping_pattern.mojo	compile-reject	agree	error: expression is not a valid match pattern; use '==' to compare against its value
@@ -372,6 +373,10 @@ assets/type_error/for_target_var_leaf_not_copyable.mojo	compile-reject	agree	err
 assets/type_error/function_type.mojo	compile-reject	agree	error: cannot implicitly convert 'def wrong(value: String) thin -> Int' value to 'def(Int) thin -> Int' in 'var' initializer
 assets/type_error/function_type_where_call_violates.mojo	compile-reject	agree	error: violated constraint
 assets/type_error/function_type_where_missing_on_contract.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'F' has 'def[w: Int](Int) thin -> None' type, but value has type 'def kernel[w: Int](x: Int) thin -> None where (w > Int(0))'
+assets/type_error/generator_parameter_non_generator.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'G' has '__generator_type[Idx: Int] Int' type, but value has type 'IntLiteral[5]'
+assets/type_error/generator_parameter_signature_mismatch.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'G' has '__generator_type[Idx: Int] Int' type, but value has type '__generator_type[a: Int, b: Int] Int'
+assets/type_error/generator_parameter_type_mismatch.mojo	compile-reject	agree	error: invalid call to 'apply': 'apply' parameter 'G' has '__generator_type[Idx: Int] Int' type, but value has type '__generator_type[a: Bool] IntLiteral[1]'
+assets/type_error/generator_value_runtime_read.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__generator_type[Idx: Int] Int' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/generic_abandoned_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/generic_callable_value_contextual_specialization.mojo	compile-reject	agree	error: cannot implicitly convert 'def identity[T: Copyable](value: T) thin -> T' value to 'def(Int) thin -> Int' in 'var' initializer
 assets/type_error/generic_constructor_argument_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'G[Int]' initializer call

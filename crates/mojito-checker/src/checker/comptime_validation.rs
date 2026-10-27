@@ -1435,6 +1435,51 @@ impl Checker {
                 .insert(name.to_string(), value.clone());
             return Ok(true);
         }
+        // A module generator constant is bound ahead of its statement, or,
+        // reading a struct's member, by it.
+        if self.function_bases.is_empty() && self.scopes.len() == 1 {
+            if matches!(self.module_values.get(name), Some(CtValue::Generator(_))) {
+                return Ok(true);
+            }
+            if let Ok(generator @ CtValue::Generator(_)) = self.eval_associated_ct(value) {
+                self.module_values.insert(name.to_string(), generator);
+                return Ok(true);
+            }
+        }
+        // A parameterized declaration read unapplied (`comptime g = T.get`,
+        // `comptime t = Twice`) is a generator, compile-time data with no
+        // runtime form: the binding is its parameter expression alone.
+        if !self.function_bases.is_empty()
+            && let Ok(generator) = self.compile_dependent_ct_expr(value)
+            && generator
+                .meta()
+                .as_value()
+                .is_some_and(|ty| matches!(ty.kind(), TyKind::Generator(_)))
+        {
+            if let Some(annotation) = annotation {
+                let expected = self
+                    .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
+                let found = generator.meta().to_string();
+                if !generator
+                    .meta()
+                    .is_generator_of(&MetaTy::value(expected.clone()))
+                {
+                    return Err(TypeError::TypeMismatch {
+                        expected: expected.to_string(),
+                        found,
+                        context: format!("comptime '{name}'"),
+                    });
+                }
+            }
+            let level = self.tparams.len().saturating_sub(1);
+            self.local_comptime_parameters
+                .last_mut()
+                .ok_or_else(|| {
+                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
+                })?
+                .insert(name.to_string(), (level, generator));
+            return Ok(true);
+        }
         let Some(level) = self.tparams.len().checked_sub(1) else {
             if self.bind_compile_time_only_value(name, value)? {
                 return Ok(true);

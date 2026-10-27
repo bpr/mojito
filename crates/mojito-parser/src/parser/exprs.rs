@@ -227,6 +227,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 let ty = self.parse_function_type_tail()?;
                 Ok(self.node(ExprKind::TypeValue(ty), start))
             }
+            Token::GeneratorType => {
+                let ty = self.parse_generator_type_tail()?;
+                Ok(self.node(ExprKind::TypeValue(ty), start))
+            }
             Token::Lambda => self.parse_lambda(start),
             // `comptime(expr)`: compile-time evaluation of an expression in a
             // runtime position; elaboration folds it to its materialized result.

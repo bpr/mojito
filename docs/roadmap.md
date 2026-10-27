@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1485**.
+Next free ID: **R1489**.
 
 ## Ordered Work
 
@@ -5351,27 +5351,98 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R808 A `__generator_type[...] T` parameter and an unbound
-  application `Alias[a, _]` are not supported**
+- [ ] **R1485 An unbound application `Alias[a, _]` or `Alias[b=1, ...]`
+  is rejected**
 
-  Problem: upstream passes parameterized `comptime` aliases as generator
-  values to `ParameterList.tabulate`, `reduce`, `any`, `all`, and
-  `map_to_type`, and Mojito parses neither spelling.
-  - `__generator_type` appears nowhere in `crates/`.
-  - Mojito's `TypeList.any`/`all` predicates are checker builtins
-    (`checker/constraints.rs`), not a parameter type.
-  - The work covers the parser (`docs/grammar.md` first), the checker's
-    parameter type, and the elaborator's application of a generator.
-  - Probe: a parameterized member bound unapplied as a generator value,
-    `comptime g = T.get` then `g[4]` through a bound `T: HasGet`, prints
-    `8` at the pin, where Mojito rejects the read with "type 'T.get'
-    expects 1 type argument(s), got 0"; the concrete `comptime g = A.get`
-    is rejected likewise.
-  - A session should plan this first and split it if it does not fit.
-  - Found while planning R493 (2026-10-13).
-  - Depends on R801, since a generator's body is a parameterized `comptime`
-    value.
-  - Model: Fable, Planned.
+  Problem: `apply[Add[10, _]]()`, `apply[Add[b=1, ...]]()`, and `comptime
+  P = Add[100, _]` then `P[1]` print `13`, `4`, and `101` at the pin, where
+  Mojito rejects each with "type mismatch for value parameter 'b':
+  expected Int, found a non-materializable compile-time value".
+  - `Checker::apply_parametric_value` binds the bracket list through
+    `resolve_use_params`, which has no unbound slot, so `_` and `...`
+    resolve as values. Upstream marks a `_` argument explicitly unbound
+    (`ParamInf.cpp`), installing no default for it, and a trailing `...`
+    unbinds every slot left, defaulted ones included.
+  - `ParamContext::bind_params` already folds a partial binding of a
+    constant generator to the generator over the open slots; only the
+    bracket list's binding is missing.
+  - Probe: `Add[_, _]`, `Add[...]`, and `Add[a=_, b=5]` applied print `3
+    7 6`.
+  - Probe: over `Add3[a, b, c]`, `Add3[1, _, 3]`, `Add3[_, 2, ...]`,
+    `Add3[1, ...]`, and `Add3[b=2, ...]` print `7 11 7 3`.
+  - Probe: over `AddD[a: Int, b: Int = 10]`, `AddD[...]` then `P[1, 2]`
+    and `AddD[1, ...]` then `Q[5]` print `3 6`, and `AddD[_]` then `Q[5]`
+    prints `15`.
+  - Probe: `print(Add[1, _])` is rejected at the pin as not `Writable`,
+    its type `__generator_type[b: Int] Int`.
+  - A partially bound struct (`Box[Int, _]`) is no generator at the pin
+    and keeps today's meaning.
+  - Plan: `R808-a-generator-type-t-parameter-and-plan.md`, §S7.
+  - Found while landing R808 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Planned.
+
+- [ ] **R1486 A type-valued generator is neither passed unapplied nor
+  applied in a type position**
+
+  Problem: `f[Id]()` over `comptime Id[T: AnyType] = T` and `def f[G:
+  __generator_type[T: AnyType] AnyType]()` runs at the pin, where Mojito
+  reports "cannot infer type parameter 'T' of 'Id' from the arguments".
+  - `Checker::alias_generator` answers value and predicate bodies only: a
+    type body (`AliasBody::Type`) read unapplied is no generator.
+  - An application in a type position (`G[Int]`) resolves through
+    `ty_from_anno`, which knows no value binder `G`. Upstream's is a type
+    value over `#kgen.bind_params`: a `TyKind::Dependent` over a
+    `ParamKind::BindParams` node, which `native::mono` folds per instance.
+  - `Checker::generator_type` classifies a generator type's own list with
+    no binder scope, so a result naming its own binders (`__generator_type[T:
+    AnyType] List[T]`) does not resolve.
+  - Probe: `size_of[G[Int]]()` over `Id` and `Pair[T: AnyType] =
+    Tuple[Int, Int]` prints `8 16`.
+  - Probe: `comptime L = G[Int]` in `build[G: __generator_type[T:
+    Copyable] AnyType]`, called as `build[MkList]()` over `MkList[T:
+    Copyable] = List[T]`, runs.
+  - Probe: `var x: G[Int] = 5` over `Id` is rejected at the pin with
+    "cannot implicitly convert 'IntLiteral[5]' value to 'G[Int]'", where
+    Mojito reports "unknown type 'G'".
+  - R1181 and R812 need it: their `tabulate` and `map_to_type` bodies apply
+    type generators in type positions.
+  - Found while landing R808 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1487 A generator-typed generator parameter is not supported**
+
+  Problem: upstream's
+  `test/mojo-integration/generator_param_applied_to_earlier_params.mojo`
+  declares `GT: __generator_type[From: type_of(AnyType), To:
+  type_of(AnyType)] type_of(__generator_type[From: From] To)` and `G: GT[F,
+  T]`, and runs.
+  - The result of `GT` is itself a generator type, applied in a later
+    parameter's type: R1486's type-position application, over a
+    `type_of(...)` of a generator type, which `type_of` rejects as "of a
+    value or a struct type".
+  - No bundled library use needs it yet.
+  - Found while landing R808 (2026-10-27).
+  - Depends on R1486.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1488 A trait's parameterized value requirement is not a
+  generator-typed value requirement**
+
+  Problem: upstream types `comptime get[idx: Int]: Int` as a value
+  requirement of type `__generator_type[idx: Int] Int`, where Mojito keeps
+  a requirement form of its own, `CtMemberReq::Generator { params, result
+  }`, beside `CtMemberReq::Value`.
+  - `TyKind::Generator` now types a generator value and a generator
+    parameter; folding the requirement into
+    `CtMemberReq::Value(Ty::generator(..))` gives all three one type, and
+    witness matching becomes `generator_converts`.
+  - `Checker::lookup_trait_generator` and the witness comparison in
+    `traits.rs` are the readers to move.
+  - Found while landing R808 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R396 A signature that converts a computed value or calls a method
   on a struct value is rejected**
@@ -10633,7 +10704,8 @@ residue found inside a task moves to the task that owns its fix.
     header.
   - `contains` also reads `downcast`/`rebind` over `Equatable`.
   - Found while planning R493 (2026-10-13).
-  - Depends on R808 (generator parameters) and R800 (`__getitem_param__`).
+  - Depends on R808 (generator parameters), R800 (`__getitem_param__`),
+    and R1485 (`Self._AnySatisfiesReducer[predicate, ...]`).
   - Model: Opus, Not Planned.
 
 - [ ] **R811 `ParameterList.tabulate`, `splat`, and `_concat` are not
@@ -10644,7 +10716,8 @@ residue found inside a task moves to the task that owns its fix.
   - Upstream uses `#kgen.param_list.tabulate` and `.concat`. Port them as
     variadics-private stand-ins, like R810's.
   - Found while planning R493 (2026-10-13).
-  - Depends on R807 (the raw list type) and R808 (generator parameters).
+  - Depends on R807 (the raw list type), R808 (generator parameters), and
+    R1485 (an unbound application, `idx=_`).
   - Model: Opus, Not Planned.
 
 - [ ] **R812 `ParameterList.map_to_type` is not ported**
@@ -10654,7 +10727,8 @@ residue found inside a task moves to the task that owns its fix.
   - Its body is `TypeList.tabulate[...]`, so it needs a bundled `TypeList`
     with `tabulate`.
   - Found while planning R493 (2026-10-13).
-  - Depends on R811 and R1181 (`TypeList.tabulate`).
+  - Depends on R811, R1181 (`TypeList.tabulate`), and R1486 (a type
+    generator applied in a type position).
   - Model: Opus, Not Planned.
 
 - [ ] **R1181 `TypeList.tabulate`, `splat`, and `_concat` are not ported**
@@ -10667,7 +10741,9 @@ residue found inside a task moves to the task that owns its fix.
   - Upstream uses `#kgen.param_list.tabulate` and `.concat`. Port them as
     variadics-private stand-ins, as R811 does for `ParameterList`.
   - Found while landing R1168 (2026-10-20).
-  - Depends on R808 (generator parameters).
+  - Depends on R808 (generator parameters), R1485 (`Self._MapTabulator[
+    ToTrait, Mapper, idx=_]`), and R1486 (a type generator applied in a
+    type position).
   - Model: Opus, Not Planned.
 
 - [ ] **R813 `FormatStruct` lacks upstream's callback `fields` overload**

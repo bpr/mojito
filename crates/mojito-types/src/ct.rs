@@ -424,6 +424,11 @@ pub enum CtValue {
     /// is [`TyKind::KgenString`]. It displays as `"text"`, as the pin prints
     /// `Tag["Some"]`.
     KgenString(String),
+    /// A closed generator — upstream's `#kgen.gen<body>`, the value of a
+    /// parameterized `comptime` declaration read unapplied (`Twice`,
+    /// `A.get`). Its body names its own parameters and nothing else; its
+    /// type is [`TyKind::Generator`]. It displays as `__gen[x: Int] x * 2`.
+    Generator(Box<GeneratorValue>),
     /// A residual parameter expression: a declared parameter, or an operator
     /// over one, while a generic declaration is checked. Never a constant — a
     /// folded expression is its ordinary concrete variant
@@ -446,6 +451,27 @@ pub enum CtValue {
     /// argument, so it agrees with every instance of its template that
     /// matches the kept arguments. It never reaches a runtime value.
     RemovedArg,
+}
+
+/// A generator's input parameters over the body applying them yields,
+/// upstream's `GeneratorAttr { inputParamTypes, body }`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct GeneratorValue {
+    pub params: Vec<crate::types::ParamDecl>,
+    pub body: ParamExpr,
+}
+
+impl GeneratorValue {
+    /// The generator type this value has: its parameters over its body's
+    /// type, a type-valued body yielding the type of all types.
+    pub fn ty(&self) -> Ty {
+        let result = self
+            .body
+            .meta()
+            .value_ty()
+            .unwrap_or_else(|| TyKind::TypeType.into());
+        Ty::generator(self.params.clone(), result)
+    }
 }
 
 /// What the elaborator knows about a name that has no compile-time value.
@@ -719,12 +745,14 @@ impl CtValue {
     pub fn is_compile_time_only(&self) -> bool {
         self.is_metatype_valued()
             || match self {
-                Self::KgenString(_) => true,
+                Self::KgenString(_) | Self::Generator(_) => true,
                 Self::List(values) | Self::Tuple(values) => {
                     values.iter().any(Self::is_compile_time_only)
                 }
                 Self::Expr(expr) => expr.meta().as_value().is_some_and(|ty| {
-                    crate::types::mentions(ty, &|ty| matches!(ty.kind(), TyKind::KgenString))
+                    crate::types::mentions(ty, &|ty| {
+                        matches!(ty.kind(), TyKind::KgenString | TyKind::Generator(_))
+                    })
                 }),
                 _ => false,
             }
@@ -819,6 +847,7 @@ impl CtValue {
             | Self::Type(_)
             | Self::Trait(_)
             | Self::KgenString(_)
+            | Self::Generator(_)
             | Self::Expr(_)
             | Self::Deferred(_)
             | Self::Marker(_)
@@ -894,6 +923,9 @@ impl CtValue {
             // list of that trait whose conversion the checker proved.
             (value @ Self::Type(_), TyKind::Trait(_)) => Some(value),
             (value @ Self::KgenString(_), TyKind::KgenString) => Some(value),
+            // A generator binds a generator-typed parameter whose
+            // conversion the checker proved.
+            (value @ Self::Generator(_), TyKind::Generator(_)) => Some(value),
             (
                 value @ Self::Simd { .. },
                 TyKind::Simd {
@@ -1168,6 +1200,7 @@ impl CtValue {
             | Self::StoreToMem(_)
             | Self::Type(_)
             | Self::Trait(_)
+            | Self::Generator(_)
             | Self::Expr(_)
             | Self::Deferred(_)
             | Self::Marker(_)
@@ -1393,6 +1426,11 @@ impl fmt::Display for CtValue {
             Self::Type(ty) => write!(f, "{ty}"),
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::KgenString(text) => write!(f, "{text:?}"),
+            Self::Generator(generator) => {
+                f.write_str("__gen")?;
+                crate::types::write_param_decls(f, &generator.params)?;
+                write!(f, " {}", generator.body)
+            }
             Self::Expr(expr) => write!(f, "{expr}"),
             Self::Deferred(binder) => write!(f, "{binder}"),
             Self::Marker(marker) => write!(f, "{marker}"),

@@ -184,6 +184,10 @@ impl Checker {
             {
                 self.module_values.insert(name.clone(), folded);
                 self.infer(value).ok()
+            } else if let Ok(generator @ CtValue::Generator(_)) = self.eval_associated_ct(value) {
+                // A generator (`comptime g = Twice`) has no runtime form.
+                self.module_values.insert(name.clone(), generator);
+                None
             } else {
                 None
             };
@@ -599,7 +603,8 @@ impl Checker {
                             || self.structs.contains_key(base))));
         if type_params.is_empty()
             && (self.names_module_value_constant(value)
-                || super::reflection::spells_reflection_handle(value))
+                || super::reflection::spells_reflection_handle(value)
+                || self.builds_generator(value))
         {
             return Ok(());
         }
@@ -615,6 +620,17 @@ impl Checker {
             return Ok(());
         }
         self.check_generic_comptime_alias(name, type_params, ty.as_ref(), where_clauses, value)
+    }
+
+    /// Whether `value` builds to a generator (`Twice`, `S.k` read
+    /// unapplied): a module `comptime` bound to it is a value constant.
+    fn builds_generator(&self, value: &Expr) -> bool {
+        self.compile_dependent_ct_expr(value).is_ok_and(|built| {
+            built
+                .meta()
+                .as_value()
+                .is_some_and(|ty| matches!(ty.kind(), TyKind::Generator(_)))
+        })
     }
 
     /// Whether the parameter expression `value` spells a type the check
@@ -3679,12 +3695,19 @@ impl Checker {
                 },
             },
         };
+        let predicate_value = matches!(body, AliasBody::Predicate(_))
+            .then(|| {
+                self.lower_parametric_value(&decls, value, Some(&Ty::bool()))
+                    .ok()
+            })
+            .flatten();
         self.comptime_aliases.insert(
             name.to_string(),
             ComptimeAlias {
                 decls,
                 body,
                 value: value.clone(),
+                predicate_value,
             },
         );
         Ok(())

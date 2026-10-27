@@ -309,6 +309,10 @@ pub enum Token {
     /// the lexer emits it only where a statement starts with `enum Name`, so
     /// `enum` elsewhere stays an ordinary name.
     Enum,
+    /// `__generator_type`, upstream's spelling of the type of a
+    /// parameterized compile-time declaration (`__generator_type[Idx: Int]
+    /// Int`).
+    GeneratorType,
 
     // --- Keywords shared with Python ---
     Def,
@@ -440,6 +444,7 @@ impl Token {
             "trait" => Self::Trait,
             "comptime" => Self::Comptime,
             "raises" => Self::Raises,
+            "__generator_type" => Self::GeneratorType,
             // Shared with Python
             "def" => Self::Def,
             "lambda" => Self::Lambda,

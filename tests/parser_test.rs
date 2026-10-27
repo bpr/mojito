@@ -1130,6 +1130,43 @@ fn parses_trait_valued_parameters_spelled_type_of() {
 }
 
 #[test]
+fn parses_generator_types_as_parameter_types_and_alias_bodies() {
+    let statements = parse(
+        "comptime Gen = __generator_type[Idx: Int] Int\n\
+         def apply[G: __generator_type[T: AnyType, U: AnyType] T, H: __generator_type Int]():\n    pass\n",
+    );
+    let StmtKind::Comptime { value, .. } = &statements[0].kind else {
+        panic!("expected a comptime alias");
+    };
+    let ExprKind::TypeValue(Type::Generator { params, result }) = &value.kind else {
+        panic!("expected a generator type, got {value:?}");
+    };
+    assert_eq!(params[0].name, "Idx");
+    assert_eq!(**result, Type::Int);
+    let StmtKind::Def { type_params, .. } = &statements[1].kind else {
+        panic!("expected def");
+    };
+    assert_eq!(type_params[0].bounds, ["__generator_type"]);
+    let Some(Type::Generator { params, result }) = &type_params[0].value_type else {
+        panic!("expected a generator-typed parameter");
+    };
+    assert_eq!(params.len(), 2);
+    assert_eq!(**result, Type::Named("T".into(), Vec::new()));
+    assert!(matches!(
+        &type_params[1].value_type,
+        Some(Type::Generator { params, result }) if params.is_empty() && **result == Type::Int
+    ));
+}
+
+#[test]
+fn rejects_a_generator_type_without_a_result() {
+    let mut parser = Parser::new(Lexer::new(
+        "def apply[G: __generator_type[Idx: Int]]():\n    pass\n",
+    ));
+    assert!(parser.parse_program().is_err());
+}
+
+#[test]
 fn parses_a_bare_type_of_bound_as_a_bound_name() {
     let statements = parse("def g[T: type_of]():\n    pass\n");
     let StmtKind::Def { type_params, .. } = &statements[0].kind else {

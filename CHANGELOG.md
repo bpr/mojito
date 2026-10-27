@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Upstream's generators (R808): a parameterized `comptime` declaration
+  read unapplied (`comptime t = Twice`, `comptime g = T.get`, `A.get`,
+  `Self.times`) is a generator value, and `__generator_type[Idx: Int] Int`
+  is a keyword type a value parameter may take, applied in its body
+  (`G[3]`) and folded per instance on both backends. A generator converts
+  to a generator-typed parameter when its parameter list matches position
+  by position and its result converts; another signature or a non-generator
+  is rejected with the pin's message, and `print(T.get)` now reports the
+  pin's `Writable` rejection. New forms: `TyKind::Generator`,
+  `CtValue::Generator`, and `ParamKind::BindParams` (MIR text 1.112,
+  package 108). An unbound application (R1485) and a type-valued generator
+  (R1486) are not supported yet.
+
 - A `TypeList` pack query (`contains[T]()`, `all[P]()`/`any[P]()`,
   `length`) now holds the list it asks of as an operand, as upstream's
   `TypeList` queries take the type list, so a `nodebug` callee testing one

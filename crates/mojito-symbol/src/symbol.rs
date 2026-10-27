@@ -2849,6 +2849,7 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         | CtValue::Simd { .. }
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
+        | CtValue::Generator(_)
         | CtValue::RemovedArg => true,
     }
 }
@@ -2960,6 +2961,10 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
             out.push_str(&format!("T{}:{rendered}", rendered.len()));
         }
         CtValue::RemovedArg => out.push('R'),
+        CtValue::Generator(_) => {
+            let rendered = value.to_string();
+            out.push_str(&format!("g{}:{rendered}", rendered.len()));
+        }
         // `mangle_parts` validated the whole key before encoding began.
         CtValue::Expr(_) | CtValue::Deferred(_) | CtValue::Marker(_) => {}
     }

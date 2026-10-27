@@ -328,6 +328,8 @@ assets/ok/function_type_where_unconstrained_actual.mojo	main	exe-differential	sa
 assets/ok/function_typed_kwargs.mojo	main	exe-differential	sanitized
 assets/ok/function_value_array_display.mojo	main	exe-differential	sanitized
 assets/ok/function_value_array_element_binding.mojo	main	exe-differential	sanitized
+assets/ok/generator_type_parameter.mojo	main	exe-differential	sanitized
+assets/ok/generator_value_unapplied.mojo	main	exe-differential	sanitized
 assets/ok/generic_alias_type_pack.mojo	main	exe-differential	sanitized
 assets/ok/generic_constructor_literal_argument.mojo	main	exe-differential	sanitized
 assets/ok/generic_conversion_reads_argument_in_place.mojo	main	exe-differential	sanitized

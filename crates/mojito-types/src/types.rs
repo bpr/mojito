@@ -580,6 +580,11 @@ pub enum TyKind {
     /// [`CtValue::KgenString`](crate::ct::CtValue::KgenString). It is
     /// compile-time only; no runtime register holds one.
     KgenString,
+    /// Upstream's generator type `!kgen.generator`, spelled
+    /// `__generator_type[idx: Int] Int`: the type of a parameterized
+    /// `comptime` declaration read unapplied, and of a parameter that takes
+    /// one. It is compile-time only; no runtime register holds one.
+    Generator(Box<GeneratorTy>),
     /// Compiler-private `__RuntimeTuple[T1, ..., Tn]` storage. Public
     /// `Tuple[T1, ..., Tn]` values are nominal standard-library structs.
     Tuple(Vec<Ty>),
@@ -695,6 +700,12 @@ dataless_types! {
 }
 
 impl Ty {
+    /// The generator type over `params` yielding `result`
+    /// ([`TyKind::Generator`]).
+    pub fn generator(params: Vec<ParamDecl>, result: Self) -> Self {
+        Self::new(TyKind::Generator(Box::new(GeneratorTy { params, result })))
+    }
+
     /// The type of variant `kind`. A variant that carries no data shares one
     /// node per compilation.
     pub fn new(kind: TyKind) -> Self {
@@ -997,6 +1008,26 @@ impl Deref for GenericFuncTy {
 impl DerefMut for GenericFuncTy {
     fn deref_mut(&mut self) -> &mut FuncTy {
         &mut self.func
+    }
+}
+
+/// A generator type's input parameters over the type of what applying
+/// them yields, upstream's `GeneratorType { inputParamTypes, body }`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct GeneratorTy {
+    pub params: Vec<ParamDecl>,
+    pub result: Ty,
+}
+
+impl GeneratorTy {
+    /// The parameters a binding of `bound` leaves, in declaration order.
+    pub fn unbound_params<T>(&self, bound: &[Option<T>]) -> Vec<ParamDecl> {
+        self.params
+            .iter()
+            .zip(bound)
+            .filter(|(_, slot)| slot.is_none())
+            .map(|(decl, _)| decl.clone())
+            .collect()
     }
 }
 
@@ -2349,6 +2380,13 @@ impl fmt::Display for TyKind {
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::TypeType => write!(f, "{TYPE_OF_ALL_TYPES}"),
             Self::KgenString => f.write_str(KGEN_STRING_TYPE_SPELLING),
+            Self::Generator(generator) => {
+                f.write_str("__generator_type")?;
+                if !generator.params.is_empty() {
+                    write_param_decls(f, &generator.params)?;
+                }
+                write!(f, " {}", generator.result)
+            }
             Self::Tuple(elems) => {
                 write!(f, "Tuple[")?;
                 for (i, t) in elems.iter().enumerate() {
@@ -2540,6 +2578,118 @@ pub fn substitute_origin_params<S: std::hash::BuildHasher>(
         TyKind::Dependent(dependent) => dependent.map_types(recur),
         _ => ty.clone(),
     }
+}
+
+/// A declaration's parameter list as its source spells it, `[a: Int, T:
+/// Copyable]`.
+pub fn write_param_decls(f: &mut fmt::Formatter<'_>, decls: &[ParamDecl]) -> fmt::Result {
+    write!(f, "[")?;
+    for (index, decl) in decls.iter().enumerate() {
+        if index > 0 {
+            write!(f, ", ")?;
+        }
+        match decl {
+            ParamDecl::Type { name, bounds, .. } => {
+                write!(f, "{name}")?;
+                if !bounds.is_empty() {
+                    write!(f, ": {}", bounds.join(" & "))?;
+                }
+            }
+            ParamDecl::Value { name, ty, .. } => write!(f, "{name}: {ty}")?,
+        }
+    }
+    write!(f, "]")
+}
+
+/// Whether two generators' parameter lists declare the same signature.
+///
+/// Position by position, the same kind, declared type or bounds, infer-only
+/// and variadic markers, as upstream compares generator types. Names are
+/// the declarations' own and do not take part.
+pub fn same_generator_signature(left: &[ParamDecl], right: &[ParamDecl]) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|pair| match pair {
+            (
+                ParamDecl::Type {
+                    bounds,
+                    infer_only,
+                    variadic,
+                    ..
+                },
+                ParamDecl::Type {
+                    bounds: more_bounds,
+                    infer_only: more_infer_only,
+                    variadic: more_variadic,
+                    ..
+                },
+            ) => {
+                bounds.len() == more_bounds.len()
+                    && bounds.iter().all(|bound| more_bounds.contains(bound))
+                    && infer_only == more_infer_only
+                    && variadic == more_variadic
+            }
+            (
+                ParamDecl::Value {
+                    ty,
+                    infer_only,
+                    variadic,
+                    ..
+                },
+                ParamDecl::Value {
+                    ty: more_ty,
+                    infer_only: more_infer_only,
+                    variadic: more_variadic,
+                    ..
+                },
+            ) => ty == more_ty && infer_only == more_infer_only && variadic == more_variadic,
+            _ => false,
+        })
+}
+
+/// Whether a generator of type `actual` converts to the generator type
+/// `expected`, as upstream converts a generator argument.
+///
+/// The two have the same signature ([`same_generator_signature`]), and
+/// `actual`'s result coerces to `expected`'s once `actual`'s own type
+/// binders are `expected`'s.
+pub fn generator_converts(actual: &Ty, expected: &Ty) -> bool {
+    let (TyKind::Generator(actual), TyKind::Generator(expected)) = (actual.kind(), expected.kind())
+    else {
+        return false;
+    };
+    if !same_generator_signature(&actual.params, &expected.params) {
+        return false;
+    }
+    let renamed: TySubst = actual
+        .params
+        .iter()
+        .zip(&expected.params)
+        .filter_map(|pair| match pair {
+            (
+                ParamDecl::Type { id, .. },
+                ParamDecl::Type {
+                    id: target,
+                    name,
+                    bounds,
+                    ..
+                },
+            ) => Some((
+                id.clone(),
+                TyKind::Param {
+                    binder: ParamRef {
+                        id: target.clone(),
+                        name: std::sync::Arc::from(name.as_str()),
+                    },
+                    bounds: bounds.clone(),
+                    callable_bound: None,
+                }
+                .into(),
+            )),
+            _ => None,
+        })
+        .collect();
+    let result = substitute(&actual.result, &renamed);
+    result == expected.result || coerces(&result, &expected.result)
 }
 
 /// The checker's value-coercion predicate, shared with MIR verification so the
@@ -3798,6 +3948,27 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
                 .collect(),
         )
         .into(),
+        TyKind::Generator(generator) => {
+            let mut nested = subst.clone();
+            for declaration in &generator.params {
+                nested.remove(declaration.id());
+            }
+            let params = generator
+                .params
+                .iter()
+                .map(|declaration| match declaration {
+                    ParamDecl::Value { ty, .. } => {
+                        let mut declaration = declaration.clone();
+                        if let ParamDecl::Value { ty: slot, .. } = &mut declaration {
+                            *slot = substitute(ty, &nested);
+                        }
+                        declaration
+                    }
+                    ParamDecl::Type { .. } => declaration.clone(),
+                })
+                .collect();
+            Ty::generator(params, substitute(&generator.result, &nested))
+        }
         _ => ty.clone(),
     }
 }
@@ -3949,6 +4120,21 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
             rewrite.exit_signature();
             Ty::new(rebuilt?)
         }
+        TyKind::Generator(generator) => {
+            rewrite.enter_signature(&generator.params);
+            let rebuilt = (|| {
+                Ok(TyKind::Generator(Box::new(GeneratorTy {
+                    params: generator
+                        .params
+                        .iter()
+                        .map(|decl| rewrite_decl(decl, rewrite))
+                        .collect::<Result<_, _>>()?,
+                    result: rewrite_ty(&generator.result, rewrite)?,
+                })))
+            })();
+            rewrite.exit_signature();
+            Ty::new(rebuilt?)
+        }
         TyKind::Simd { dtype, width } => {
             let dtype = match dtype {
                 SimdDtype::Expr(expr) => SimdDtype::Expr(rewrite.expr(expr)?),
@@ -4077,6 +4263,7 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::Dtype(_)
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
+        | CtValue::Generator(_)
         | CtValue::Simd { .. }
         | CtValue::Deferred(_)
         | CtValue::Marker(_)
@@ -4461,6 +4648,22 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
             .is_some_and(|func| func.types().any(is_symbolic)),
+        // The generator's own binders are bound inside it.
+        TyKind::Generator(generator) => {
+            let bound: Vec<&ParamId> = generator.params.iter().map(ParamDecl::id).collect();
+            let free = |ty: &Ty| {
+                mentions(ty, &|inner| match inner.kind() {
+                    TyKind::Param { binder, .. } => !bound.contains(&&binder.id),
+                    TyKind::Infer | TyKind::Assoc { .. } | TyKind::SelfType => true,
+                    TyKind::Dependent(_) => is_symbolic(inner),
+                    _ => false,
+                })
+            };
+            generator.params.iter().any(|decl| match decl {
+                ParamDecl::Value { ty, .. } => free(ty),
+                ParamDecl::Type { .. } => false,
+            }) || free(&generator.result)
+        }
         TyKind::Overload(types)
         | TyKind::Tuple(types)
         | TyKind::RuntimePack(types)
@@ -4587,6 +4790,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::Str(_)
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
+        | CtValue::Generator(_)
         | CtValue::RemovedArg => false,
     }
 }
@@ -5120,22 +5324,9 @@ fn write_callable(
         ..
     } = func;
     if let Some(decls) = decls {
-        write!(f, "def[")?;
-        for (index, decl) in decls.iter().enumerate() {
-            if index > 0 {
-                write!(f, ", ")?;
-            }
-            match decl {
-                ParamDecl::Type { name, bounds, .. } => {
-                    write!(f, "{name}")?;
-                    if !bounds.is_empty() {
-                        write!(f, ": {}", bounds.join(" & "))?;
-                    }
-                }
-                ParamDecl::Value { name, ty, .. } => write!(f, "{name}: {ty}")?,
-            }
-        }
-        write!(f, "](")?;
+        write!(f, "def")?;
+        write_param_decls(f, decls)?;
+        write!(f, "(")?;
     } else {
         write!(f, "def(")?;
     }

@@ -2072,6 +2072,13 @@ fn ty_value(ty: &Ty) -> String {
             )
         }
         TyKind::Overload(values) => positional("overload", &list(values.iter().map(ty_value))),
+        TyKind::Generator(generator) => record(
+            "generator",
+            &[
+                ("params", list(generator.params.iter().map(param_decl))),
+                ("result", ty_value(&generator.result)),
+            ],
+        ),
         TyKind::Param {
             binder,
             bounds,
@@ -2608,6 +2615,17 @@ fn param_expr(value: &ParamExpr) -> String {
                 ("args", list(args.iter().map(param_expr))),
             ],
         ),
+        ParamKind::BindParams { generator, args } => record(
+            "param_bind_params",
+            &[
+                ("generator", param_expr(generator)),
+                (
+                    "args",
+                    list(args.iter().map(|arg| option(arg.as_ref().map(param_expr)))),
+                ),
+                meta,
+            ],
+        ),
         // A hole never crosses into MIR: the parser rejects the form, and the
         // token keeps the text honest if one is reached.
         ParamKind::Hole { kind, token } => record(
@@ -2762,6 +2780,13 @@ fn ct_value(value: &CtValue) -> String {
         CtValue::Type(v) => positional("ct_type", &ty_value(v)),
         CtValue::Trait(traits) => positional("ct_trait", &list(traits.iter().map(|v| symbol(v)))),
         CtValue::KgenString(v) => positional("ct_kgen_string", &quote(v)),
+        CtValue::Generator(generator) => record(
+            "ct_generator",
+            &[
+                ("params", list(generator.params.iter().map(param_decl))),
+                ("body", param_expr(&generator.body)),
+            ],
+        ),
         CtValue::Expr(v) => positional("ct_expr", &param_expr(v)),
         CtValue::Deferred(v) => positional("ct_deferred", &binder_ref(v)),
         CtValue::Marker(v) => positional("ct_marker", &ct_marker(v)),

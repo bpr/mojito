@@ -1808,6 +1808,7 @@ impl Checker {
             CtValue::Dtype(_) => Some(Ty::dtype()),
             CtValue::Trait(traits) => Some(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::KgenString(_) => Some(TyKind::KgenString.into()),
+            CtValue::Generator(generator) => Some(generator.ty()),
             CtValue::Simd { dtype, lanes } => Some(mojito_types::types::canonical_simd_ty(
                 *dtype,
                 lanes.len() as i64,

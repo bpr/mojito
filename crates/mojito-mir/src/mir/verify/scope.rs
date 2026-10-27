@@ -632,6 +632,22 @@ impl ScopeCx<'_> {
                 }
                 nested.truncate(mark);
             }
+            TyKind::Generator(generator) => {
+                let mark = nested.len();
+                nested.extend(
+                    generator
+                        .params
+                        .iter()
+                        .map(|decl| (decl.id().clone(), decl.binder_meta())),
+                );
+                for decl in &generator.params {
+                    if let ParamDecl::Value { ty, .. } = decl {
+                        self.walk_in(role, ty, nested);
+                    }
+                }
+                self.walk_in(role, &generator.result, nested);
+                nested.truncate(mark);
+            }
             TyKind::Func(func) => {
                 let FuncTy {
                     params,

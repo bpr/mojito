@@ -326,6 +326,26 @@ fn substitute_source_type_bindings(ty: &mut Type, subs: rewrite::TypeSubs) {
         Type::Ref { referent, .. } => {
             substitute_source_type_bindings(referent, subs);
         }
+        Type::Generator { params, result } => {
+            // The generator's own binders shadow the binding.
+            let binders: Vec<String> = params
+                .iter()
+                .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                .collect();
+            let inner = |name: &str| {
+                if binders.iter().any(|binder| binder == name) {
+                    None
+                } else {
+                    subs(name)
+                }
+            };
+            for parameter in params {
+                if let Some(value_type) = &mut parameter.value_type {
+                    substitute_source_type_bindings(value_type, &inner);
+                }
+            }
+            substitute_source_type_bindings(result, &inner);
+        }
         // The operand of `type_of` is an expression, which names no type
         // binder.
         Type::TypeOf(_) => {}

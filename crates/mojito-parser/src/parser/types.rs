@@ -27,6 +27,8 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
             // A function type: `def(types) [effects] -> ret`.
             Token::Def => self.parse_function_type_tail(),
+            // A generator type: `__generator_type [params] result`.
+            Token::GeneratorType => self.parse_generator_type_tail(),
             Token::None => Ok(Type::None),
             Token::Identifier(id) => match id.as_str() {
                 "Int" => Ok(Type::Int),
@@ -186,6 +188,21 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             break;
         }
         Ok(ty)
+    }
+
+    /// Parses a generator type after its leading `__generator_type` has been
+    /// consumed, as upstream's `parseGeneratorType` does: an optional
+    /// parameter list, then the result type.
+    pub(super) fn parse_generator_type_tail(&mut self) -> Result<Type, ParseError> {
+        let params = if matches!(self.peek_token()?, Some(Token::LBracket)) {
+            self.parse_type_params()?
+        } else {
+            Vec::new()
+        };
+        Ok(Type::Generator {
+            params,
+            result: Box::new(self.parse_type()?),
+        })
     }
 
     /// Parses a function type after its leading `def` has been consumed:
@@ -693,6 +710,7 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 &Token::Colon,
                 "A type parameter requires a ': bound' (e.g. 'T: Copyable')",
             )?;
+            let mut value_type = None;
             let (first_bound, callable_bound, fixed_mutability, spelled_bound) =
                 if matches!(self.peek_token()?, Some(Token::Def)) {
                     (
@@ -700,6 +718,16 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         Some(self.parse_type()?),
                         None,
                         String::new(),
+                    )
+                // `G: __generator_type[Idx: Int] Int` is a value parameter
+                // typed by a generator type, recorded as for `type_of`.
+                } else if matches!(self.peek_token()?, Some(Token::GeneratorType)) {
+                    value_type = Some(self.parse_type()?);
+                    (
+                        "__generator_type".to_string(),
+                        None,
+                        None,
+                        "__generator_type".to_string(),
                     )
                 } else {
                     let bound = self.expect_identifier(
@@ -729,7 +757,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             // and `MutOrigin` are `comptime` aliases of `Origin[mut=False]` and
             // `Origin[mut=True]`, so they record as the `Origin` bound with a
             // fixed mutability.
-            let mut value_type = None;
             // `Tr: type_of(AnyType)` is a value parameter typed by the trait
             // metatype; the spelled head stays the bound, as for a qualified
             // value type.

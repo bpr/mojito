@@ -60,7 +60,8 @@ and a `#` inside `( … )`/`[ … ]` is skipped like any other continuation whit
 Following the reference tree-sitter Mojo grammar, reserved words split into the ones Mojo
 **shares with Python** (`def return pass None and or not if elif else while for in break
 continue raise try except finally import from as`, plus the `True`/`False` literals) and
-the **Mojo-only** ones (`var struct trait comptime raises`). `Token::keyword` is the single
+the **Mojo-only** ones (`var struct trait comptime raises`, and upstream's
+`__generator_type`). `Token::keyword` is the single
 lookup table. Soft/contextual words such as `mut` (in `mut self`) are **not** reserved — they
 lex as identifiers, so they stay usable as ordinary names, matching Mojo. `enum` is one too:
 the lexer emits the `enum` keyword only where a statement starts with `enum` followed by a
@@ -390,7 +391,7 @@ captures implicitly, mutable where the enclosing binding is mutable.
 
 ```
 params_decl: '[' ','.param_decl+ ']'
-param_decl: ['*'] NAME ':' ( bound | type ) ['=' expression]
+param_decl: ['*'] NAME ':' ( bound | type | generator_type ) ['=' expression]
                                              # a type/callable parameter (or pack), or a value parameter
 bound: '&'.NAME+
 ```
@@ -413,6 +414,13 @@ trait or a `&` composition of traits (`g[Copyable]()`, `g[Tr=Movable]()`).
 The parser records `type_of` as the bound and the `type_of(...)` type as the
 value type, as for a qualified type; `type_of` without parentheses stays an
 ordinary bound name.
+
+A **generator-typed parameter** is a value parameter whose type is a
+`generator_type` (`[G: __generator_type[Idx: Int] Int]`, see **Types**). Its
+argument is a parameterized `comptime` declaration read unapplied (`Twice`,
+`S.k`, `T.get`) or another generator parameter, which the body applies
+(`G[3]`). The parser records `__generator_type` as the bound and the
+generator type as the value type, as for `type_of`.
 
 A `params_decl` list may follow the name in a `struct` or `def` header, declaring
 compile-time **parameters**. Each `NAME: X` is either a **type parameter** — when `X`
@@ -1112,10 +1120,12 @@ type:
     | NAME [param_args]            # struct type, optionally with type/value arguments
     | '__mlir_type' '.' 'index'    # the Indexer requirement's return spelling (the only `__mlir_type` form accepted)
     | 'type_of' '(' expression ')' # the type of a compile-time expression (`type_of(AnyType)`, the trait metatype)
+    | generator_type               # the type of a parameterized compile-time declaration
     | NAME [param_args] '(' [call_args] ')'  # a compile-time value (a struct construction); a type only through a subscript
     | type '.' NAME param_args '(' [call_args] ')'  # a construction through a type's parameterized member
     | type type_projection        # a member or a subscript of a type, or of a construction
 type_projection: '.' NAME | '.' NAME param_args | '[' expression ']'
+generator_type: '__generator_type' [params_decl] type
 function_type: 'def' [params_decl] '(' [','.function_type_param+] ')' fn_effect* '->' type
 function_type_param:
     | 'var' '**' NAME ':' type
@@ -1155,6 +1165,13 @@ The checker accepts a trait or a `&` composition of traits, whose type is
 the trait metatype (displayed `AnyTrait[Copyable]`, which has no source
 spelling). `type_of` of a value or of a struct type (`var y: type_of(x) =
 3`) is a checker error.
+`generator_type` is upstream's `__generator_type[params] Result`
+(`ParserExprs.cpp`'s `parseGeneratorType`): the type of a parameterized
+`comptime` declaration read unapplied, its parameter list and the type its
+application yields. `__generator_type` is a keyword. It parses into
+`Type::Generator` wherever a type does, and as an expression too (an alias
+body, `comptime Gen = __generator_type[Idx: Int] Int`), as `def` function
+types do. A missing result type is a parse error.
 A **member application** `type '.' NAME param_args` reads a type's
 parameterized `comptime` member (`S[Int].Of[Bool]`, `M.Pair[A, B]`,
 `_MLIR.KGENParamListType[Int]`) and parses into `Type::Assoc` with the

@@ -831,3 +831,99 @@ fn ordering_is_not_defined_on_types() {
     }
     assert!(context.infix(InfixOp::Ne, &t, &int).is_ok());
 }
+
+fn int_decl(owner: &str, slot: usize, name: &str) -> crate::types::ParamDecl {
+    crate::types::ParamDecl::Value {
+        id: ParamId::new(owner, slot),
+        name: name.to_string(),
+        ty: Ty::int(),
+        default: None,
+        callable_default: None,
+        infer_only: false,
+        variadic: false,
+        constraints: Vec::new(),
+    }
+}
+
+/// `Add[a: Int, b: Int] = a + b` read unapplied, upstream's `#kgen.gen`.
+fn add_generator(context: &ParamContext) -> ParamExpr {
+    let (a, b) = (
+        int_param(context, "Add", 0, "a"),
+        int_param(context, "Add", 1, "b"),
+    );
+    let body = infix(context, InfixOp::Add, &a, &b);
+    context
+        .constant(CtValue::Generator(Box::new(crate::ct::GeneratorValue {
+            params: vec![int_decl("Add", 0, "a"), int_decl("Add", 1, "b")],
+            body,
+        })))
+        .expect("a closed generator is a constant")
+}
+
+#[test]
+fn bind_params_folds_a_constant_generator_and_binds_one_partially() {
+    let context = ParamContext::new();
+    let add = add_generator(&context);
+    let three = context.constant(CtValue::Int(3)).expect("a constant");
+    let four = context.constant(CtValue::Int(4)).expect("a constant");
+    let applied = context
+        .bind_params(&add, &[Some(three.clone()), Some(four.clone())])
+        .expect("every slot binds");
+    assert_eq!(applied.as_i64(), Some(7));
+    // Binding `a` alone is the generator over `b`.
+    let partial = context
+        .bind_params(&add, &[Some(three), None])
+        .expect("a partial binding");
+    let Some(CtValue::Generator(rest)) = partial.as_constant() else {
+        panic!("expected a constant generator, got {partial}");
+    };
+    assert_eq!(rest.params.len(), 1);
+    let applied = context
+        .bind_params(&partial, &[Some(four)])
+        .expect("the open slot binds");
+    assert_eq!(applied.as_i64(), Some(7));
+}
+
+#[test]
+fn bind_params_applies_a_member_read_and_waits_on_a_parameter() {
+    let context = ParamContext::new();
+    let generator_ty = Ty::generator(vec![int_decl("$generator", 0, "Idx")], Ty::int());
+    let subject = context.type_shape(
+        TyKind::Param {
+            binder: ParamRef {
+                id: ParamId::new("f", 0),
+                name: "T".into(),
+            },
+            bounds: vec!["HasGet".to_string()],
+            callable_bound: None,
+        }
+        .into(),
+    );
+    let member = context.type_member(&subject, "get", &[], MetaTy::value(generator_ty.clone()));
+    let four = context.constant(CtValue::Int(4)).expect("a constant");
+    let applied = context
+        .bind_params(&member, &[Some(four.clone())])
+        .expect("the member applies");
+    assert!(matches!(applied.kind(), ParamKind::TypeMember { args, .. } if args.len() == 1));
+    assert_eq!(*applied.meta(), MetaTy::int());
+    // A generator parameter stays a node until it is bound.
+    let g = context.register(ParamId::new("apply", 0), "G", MetaTy::value(generator_ty));
+    let residual = context
+        .bind_params(&g, &[Some(four)])
+        .expect("a parameter applies");
+    assert!(matches!(residual.kind(), ParamKind::BindParams { .. }));
+    let mut bindings = ParamBindings::new();
+    bindings.bind(ParamId::new("apply", 0), add_partially(&context));
+    let replaced = context
+        .replace(&residual, &bindings)
+        .expect("the binding folds");
+    assert_eq!(replaced.as_i64(), Some(14));
+}
+
+/// `Add[10, _]`, a one-parameter generator.
+fn add_partially(context: &ParamContext) -> ParamExpr {
+    let ten = context.constant(CtValue::Int(10)).expect("a constant");
+    context
+        .bind_params(&add_generator(context), &[Some(ten), None])
+        .expect("a partial binding")
+}

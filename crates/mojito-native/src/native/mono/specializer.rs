@@ -2032,7 +2032,17 @@ impl<'a> Specializer<'a> {
             }
             _ => None,
         };
-        if let Some(conforms) = self.decided_conformance(value, bindings) {
+        // A generator applied at the instance (`P[Int]` over a predicate
+        // alias `conforms_to(T, Copyable)`) is its body there.
+        let applied = match value.kind() {
+            ParamKind::BindParams { .. } => mojito_types::param_expr::ParamContext::detached()
+                .replace(value, &symbolic::ct_bindings(bindings))
+                .ok(),
+            _ => None,
+        };
+        if let Some(conforms) =
+            self.decided_conformance(applied.as_ref().unwrap_or(value), bindings)
+        {
             return Ok(Some(Const::Bool(conforms)));
         }
         match proposition {

@@ -459,6 +459,20 @@ fn const_param_round_trips() {
     assert_reprints(&program);
 }
 
+/// A generator parameter's application (`G[3]`) and a partial binding of
+/// a constant generator over a parameter still open (`Add[n, _]`) reprint
+/// as `param_bind_params` nodes, a `ct_generator` constant, and a
+/// `generator` type.
+#[test]
+fn param_bind_params_round_trips() {
+    let context = ParamContext::detached();
+    let (program, partial) = generator_program(&context);
+    let text = write::program(&program);
+    assert!(text.contains("param_bind_params") && text.contains("ct_generator"));
+    assert!(text.contains("generator {"), "{partial}");
+    assert_reprints(&program);
+}
+
 /// The reversal of a pack still open reprints as a `param_list_tabulate`
 /// node, spread as the one argument of a `Tuple` type.
 #[test]
@@ -494,6 +508,64 @@ fn param_list_concat_round_trips() {
 
 /// A program whose one register has the type `Tuple[*list]`, asserting the
 /// canonical text spells `list` as the node `tag`.
+/// A program binding the generator parameter `G` at `3` and the constant
+/// generator `Add[a: Int, b: Int] = a + b` at the open `n`, returned
+/// beside the partial binding.
+fn generator_program(context: &ParamContext) -> (MirProgram, ParamExpr) {
+    let decl = |owner: &str, slot: usize, name: &str| ParamDecl::Value {
+        id: ParamId::new(owner, slot),
+        name: name.into(),
+        ty: Ty::int(),
+        default: None,
+        callable_default: None,
+        infer_only: false,
+        variadic: false,
+        constraints: Vec::new(),
+    };
+    let generator_ty = Ty::generator(vec![decl("$generator", 0, "Idx")], Ty::int());
+    let g = context.decl_ref(
+        test_id("G"),
+        "G",
+        mojito_types::param_expr::MetaTy::value(generator_ty),
+    );
+    let applied = context
+        .bind_params(&g, &[Some(constant(CtValue::Int(3)))])
+        .expect("a generator parameter applies");
+    let params = vec![decl("Add", 0, "a"), decl("Add", 1, "b")];
+    let reads: Vec<ParamExpr> = params
+        .iter()
+        .map(|param| context.decl_ref(param.id().clone(), param.name(), MetaTy::int()))
+        .collect();
+    let body = context
+        .op(mojito_types::param_expr::ParamOp::Add, &reads)
+        .expect("a sum");
+    let add = constant(CtValue::Generator(Box::new(
+        mojito_types::ct::GeneratorValue { params, body },
+    )));
+    let n = context.decl_ref(test_id("n"), "n", MetaTy::int());
+    let partial = context
+        .bind_params(&add, &[Some(n), None])
+        .expect("a partial binding");
+    let instrs = vec![
+        MirInstr::Const {
+            dest: Reg(0),
+            k: Const::Param(applied),
+        },
+        MirInstr::Const {
+            dest: Reg(1),
+            k: Const::Param(partial.clone()),
+        },
+    ];
+    let types = vec![
+        Ty::int(),
+        partial.meta().value_ty().expect("a generator type"),
+    ];
+    (
+        program_with(vec![("generators".into(), function_with(types, instrs))]),
+        partial,
+    )
+}
+
 fn program_with_spread(list: ParamExpr, tag: &str) -> MirProgram {
     let spread = TyKind::Struct(
         "Tuple".into(),

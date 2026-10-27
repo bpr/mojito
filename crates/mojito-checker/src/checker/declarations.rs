@@ -813,6 +813,15 @@ impl Checker {
                 decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty.into())?);
                 continue;
             }
+            // A lone bound naming an alias of a generator type (`G: Gen` over
+            // `comptime Gen = __generator_type[Idx: Int] Int`) is a value
+            // parameter of that type.
+            if let [only] = tp.bounds.as_slice()
+                && let Some(ty) = self.generator_type_alias(only)
+            {
+                decls.push(self.value_param_decl(tp, binder_id(decls.len()), ty)?);
+                continue;
+            }
             // A lone bound naming an earlier type binder of this list is a
             // value parameter of that type (`[T: AnyType, //, v: T]`): the
             // list is a telescope, each binder in scope for the ones after it.
@@ -948,6 +957,20 @@ impl Checker {
         })();
         self.tparams.pop();
         result
+    }
+
+    /// The generator type an unparameterized alias names (`comptime Gen =
+    /// __generator_type[Idx: Int] Int`). `None` for any other name.
+    fn generator_type_alias(&self, name: &str) -> Option<Ty> {
+        let alias = self.comptime_aliases.get(name)?;
+        match &alias.body {
+            AliasBody::Type(ty)
+                if alias.decls.is_empty() && matches!(ty.kind(), TyKind::Generator(_)) =>
+            {
+                Some(ty.clone())
+            }
+            _ => None,
+        }
     }
 
     /// The value declaration `tp` classifies to once its type is `ty`.

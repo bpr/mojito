@@ -712,6 +712,26 @@ pub(super) fn rewrite_type(ty: &mut Type, subs: Subs) {
             }
             rewrite_type(base, subs);
         }
+        Type::Generator { params, result } => {
+            // The generator's own binders shadow same-spelled outer names.
+            let own: Vec<String> = params
+                .iter()
+                .map(|parameter| parameter.name.trim_start_matches('*').to_string())
+                .collect();
+            let subs: Subs = &|name: &str| {
+                if own.iter().any(|binder| binder == name) {
+                    None
+                } else {
+                    subs(name)
+                }
+            };
+            for parameter in params {
+                if let Some(value_type) = &mut parameter.value_type {
+                    rewrite_type(value_type, subs);
+                }
+            }
+            rewrite_type(result, subs);
+        }
         Type::Func {
             type_params,
             params,

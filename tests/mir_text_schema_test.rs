@@ -13,8 +13,8 @@ use std::collections::HashSet;
 #[test]
 fn schema_version_and_envelope_are_stable() {
     assert_eq!(MAGIC, "mojito-mir");
-    assert_eq!((VERSION_MAJOR, VERSION_MINOR), (1, 111));
-    assert_eq!(version_header(), "mojito-mir 1.111");
+    assert_eq!((VERSION_MAJOR, VERSION_MINOR), (1, 112));
+    assert_eq!(version_header(), "mojito-mir 1.112");
 }
 
 #[test]

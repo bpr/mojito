@@ -938,7 +938,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `parametric_value_application` recognizes every application shape
   (`subscript_param_args` reads the brackets) and dispatches to
   `value_alias_application` or `parameterized_member_value`, whose `where`
-  clauses `validate_member_availability` checks; `compile_dependent_ct_expr`,
+  clauses `validate_member_availability` checks, else to
+  `generator_application_of`, which binds the brackets against a generator
+  value's type (`g[4]` over `comptime g = T.get`, `G[3]` over a
+  `__generator_type` parameter) into `ParamContext::bind_params`. A
+  parameterized declaration read unapplied is the generator it declares:
+  `alias_generator` (a value or predicate alias, the latter's `Bool` body
+  `ComptimeAlias::predicate_value`), `struct_generator_member` (a struct's
+  member), and `type_member_value` (a bound's requirement, a `TypeMember`
+  typed by `Ty::generator`); `bind_template_comptime` binds a local or
+  module `comptime` of one as a compile-time-only value. A
+  `__generator_type` annotation resolves in `type_resolution.rs:
+  generator_type` (`TyKind::Generator`, `mojito-types`), a parameter
+  typed by one (or by an alias of one, `declarations.rs:
+  generator_type_alias`) takes its argument through
+  `resolve_generator_param_arg`, which checks `types::generator_converts`
+  and converts a literal body (`converted_generator`); `compile_dependent_ct_expr`,
   `eval_associated_ct`, and `indexing.rs`'s `read_parametric_value` (a runtime
   read, recorded as `SemanticAdjustment::ParamValue`) all consult it. Predicate aliases live here too: `compile_predicate_alias_body`
   lowers a Bool body, and `predicate_alias_application`/`apply_predicate_alias`

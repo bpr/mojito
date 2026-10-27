@@ -390,6 +390,23 @@ discharge API for the by-value `rebind` gap; the four-outcome unifier
 (`solve_value_args` binds a direct reference and leaves any other residual as
 an equation) for variadic-constructor inference.
 
+Generators are landed too (R808). A parameterized `comptime` declaration
+read unapplied is `CtValue::Generator` (`#kgen.gen`: its parameters over a
+body naming them by binder identity), typed `TyKind::Generator`
+(`!kgen.generator`, spelled `__generator_type[idx: Int] Int`). Applying a
+generator is `ParamKind::BindParams` (`#kgen.bind_params`), built by
+`ParamContext::bind_params`: binding every slot of a constant generator is
+its body replaced at the arguments; binding some is the generator over the
+rest, `None` standing for upstream's unbound `?`; binding a type member
+read unapplied (`T.get`) is the member's application (`T.get[4]`), so `g[4]`
+over `comptime g = T.get` and `T.get[4]` are one node; and a generator
+still a parameter (`G[3]`) stays a node, which replacement rebuilds through
+the constructor, so substituting `G` folds it. A generator binds a
+generator-typed parameter when `types::generator_converts` holds:
+parameter lists alike position by position, names aside, and a result
+that coerces. There is no open generator node: every source spelling in
+scope reaches a `BindParams` over a closed generator or a member read.
+
 ## Pack elements
 
 A variadic pack that is still a parameter is a binder of meta-type

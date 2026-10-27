@@ -2701,6 +2701,10 @@ struct ComptimeAlias {
     /// through a zero-parameter type alias is spelled over
     /// ([`Checker::infer_type_alias_read`]).
     value: Expr,
+    /// A predicate alias's body as the `Bool` value over its own binders:
+    /// the body of the generator the alias read unapplied is
+    /// ([`Checker::alias_generator`]). `None` for any other alias.
+    predicate_value: Option<ParamExpr>,
 }
 
 /// The `@implicit` converting constructor selected for one conversion.

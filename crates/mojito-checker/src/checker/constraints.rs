@@ -552,18 +552,73 @@ impl Checker {
         expr: &Expr,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let (object, args) = match &expr.kind {
-            ExprKind::TypeApply { name, args } => return self.value_alias_application(name, args),
+            ExprKind::TypeApply { name, args } => {
+                return self.value_alias_application(name, args).or_else(|| {
+                    let object = Expr::new(ExprKind::Identifier(name.clone()), expr.span);
+                    self.generator_application_of(&object, args)
+                });
+            }
             ExprKind::Index { object, index } => (object, subscript_param_args(index)),
             ExprKind::MultiIndex { object, args } => (object, multi_subscript_param_args(args)?),
             _ => return None,
         };
         match &object.kind {
-            ExprKind::Identifier(name) => self.value_alias_application(name, &args),
-            ExprKind::Member { object, field } => {
-                self.parameterized_member_value(object, field, &args)
-            }
+            ExprKind::Identifier(name) => self
+                .value_alias_application(name, &args)
+                .or_else(|| self.generator_application_of(object, &args)),
+            ExprKind::Member {
+                object: base,
+                field,
+            } => self
+                .parameterized_member_value(base, field, &args)
+                .or_else(|| self.generator_application_of(object, &args)),
             _ => None,
         }
+    }
+
+    /// The application of a generator value `object` names to `args`
+    /// (`g[4]` over `comptime g = T.get`, `G[3]` over a parameter `G:
+    /// __generator_type[Idx: Int] Int`), upstream's `#kgen.bind_params`:
+    /// the bracket list is bound against the generator type's parameters
+    /// as an alias application's is. `None` when `object` denotes no
+    /// generator.
+    pub(super) fn generator_application_of(
+        &self,
+        object: &Expr,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let generator = match &object.kind {
+            ExprKind::Identifier(name) => self.value_parameter_in_scope(name).or_else(|| {
+                matches!(self.module_values.get(name), Some(CtValue::Generator(_)))
+                    .then(|| self.compile_dependent_ct_expr(object).ok())
+                    .flatten()
+            })?,
+            ExprKind::Member { object, field } => self.type_member_value(object, field)?.ok()?,
+            _ => return None,
+        };
+        let TyKind::Generator(ty) = generator.meta().as_value()?.kind() else {
+            return None;
+        };
+        let label = generator.to_string();
+        Some((|| {
+            let arguments = self
+                .resolve_use_params(&label, &ty.params, args, &[], &[])?
+                .arguments;
+            let context = &self.param_context;
+            let arguments = arguments
+                .into_iter()
+                .map(|argument| match argument {
+                    TyArg::Ty(ty) => Ok(Some(context.type_shape(ty))),
+                    TyArg::Val(value) => context.constant(value).map(Some).map_err(param_error),
+                    TyArg::Origin(_) => Err(TypeError::Unsupported(
+                        "origin parameters on a parameterized comptime value".to_string(),
+                    )),
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            context
+                .bind_params(&generator, &arguments)
+                .map_err(param_error)
+        })())
     }
 
     /// The application of the value-bodied generic alias `name` to `args`.
@@ -590,6 +645,32 @@ impl Checker {
             )
             .map(|(value, _)| value),
         )
+    }
+
+    /// The value-bodied generic alias `name` read unapplied (`Twice`): the
+    /// generator its declaration is, upstream's `#kgen.gen`. `None` when
+    /// `name` names a binding or no such alias.
+    pub(super) fn alias_generator(&self, name: &str) -> Option<ParamExpr> {
+        if self.lookup(name).is_some() {
+            return None;
+        }
+        let alias = self.comptime_aliases.get(name)?;
+        if alias.decls.is_empty() {
+            return None;
+        }
+        let body = match &alias.body {
+            AliasBody::Value(body) => body.clone(),
+            AliasBody::Predicate(_) => alias.predicate_value.clone()?,
+            AliasBody::Type(_) => return None,
+        };
+        self.param_context
+            .constant(CtValue::Generator(Box::new(
+                mojito_types::ct::GeneratorValue {
+                    params: alias.decls.clone(),
+                    body,
+                },
+            )))
+            .ok()
     }
 
     /// Whether `expr` applies a value-bodied generic alias (`First[5, 6]`),
@@ -1665,6 +1746,9 @@ impl Checker {
         if self.is_enclosing_struct_param(name) {
             return Err(TypeError::UnqualifiedStructParam(name.to_string()));
         }
+        if let Some(generator) = self.alias_generator(name) {
+            return Ok(generator);
+        }
         self.ty_value_from_name(name, &[])?
             .ok_or_else(|| TypeError::NotComptime(name.to_string()))
             .and_then(|ty| self.ct_param(ty))
@@ -2028,13 +2112,19 @@ impl Checker {
                         mojito_types::param_expr::MetaTy::value(ty),
                     )));
                 }
-                // A generator is applied, never read whole.
-                if let Some((params, _)) = self.lookup_trait_generator(bounds, field) {
-                    return Some(Err(TypeError::WrongTypeArgCount {
-                        name: format!("{subject}.{field}"),
-                        expected: params.len(),
-                        got: 0,
-                    }));
+                // A parameterized requirement read unapplied is the
+                // generator the instance's member is (`comptime g = T.get`).
+                if let Some((params, result)) = self.lookup_trait_generator(bounds, field) {
+                    let subject = self.param_context.type_shape(subject.clone());
+                    return Some(Ok(self.param_context.type_member(
+                        &subject,
+                        field,
+                        &[],
+                        mojito_types::param_expr::MetaTy::value(Ty::generator(
+                            params.to_vec(),
+                            result.clone(),
+                        )),
+                    )));
                 }
                 let declared = bounds
                     .iter()
@@ -2076,7 +2166,9 @@ impl Checker {
                 {
                     return Some(Err(error));
                 }
-                let value = self.struct_value_member(info, arguments, field)?;
+                let value = self
+                    .struct_value_member(info, arguments, field)
+                    .or_else(|| self.struct_generator_member(&subject, info, arguments, field))?;
                 Some(value.and_then(|value| {
                     self.reject_generator_dependence(object, field, &value)
                         .map(|()| value)
@@ -2208,6 +2300,48 @@ impl Checker {
             Some(value) => Some(self.struct_member_at(info, arguments, value)),
             None => self.struct_parameter_at(info, arguments, field),
         }
+    }
+
+    /// A struct's parameterized value member `field` read unapplied
+    /// (`A.get`, `S[3].plus`): the generator its declaration is, upstream's
+    /// `#kgen.gen`, at the struct's arguments. Over arguments still
+    /// symbolic it is the member read the elaborator answers per instance.
+    /// `None` when `field` is no parameterized value member.
+    fn struct_generator_member(
+        &self,
+        subject: &Ty,
+        info: &StructInfo,
+        arguments: &[TyArg],
+        field: &str,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let member = info.parameterized_associated.get(field)?;
+        let MemberTemplate::Value { decls, body } = &member.template else {
+            return None;
+        };
+        Some((|| {
+            let mut outer = mojito_types::param_expr::ParamBindings::new();
+            self.bind_declared(&mut outer, &info.decls, arguments)?;
+            let context = &self.param_context;
+            let body = context
+                .replace(body, &outer)
+                .and_then(|replaced| context.fold(&replaced))
+                .map_err(param_error)?;
+            let generator = mojito_types::ct::GeneratorValue {
+                params: decls.clone(),
+                body,
+            };
+            if generator_is_closed(&generator) {
+                return context
+                    .constant(CtValue::Generator(Box::new(generator)))
+                    .map_err(param_error);
+            }
+            Ok(context.type_member(
+                &context.type_shape(subject.clone()),
+                field,
+                &[],
+                mojito_types::param_expr::MetaTy::value(generator.ty()),
+            ))
+        })())
     }
 
     /// The pack a collector named by `object` spreads (`args` of `*args:
@@ -4572,4 +4706,27 @@ fn module_alias_spelling(value: &Expr) -> Option<SourceType> {
         }
         spelling => Some(spelling),
     }
+}
+
+/// Whether a generator's body names no parameter but its own.
+fn generator_is_closed(generator: &mojito_types::ct::GeneratorValue) -> bool {
+    let own: Vec<&mojito_types::param_expr::ParamId> =
+        generator.params.iter().map(ParamDecl::id).collect();
+    let mut closed = true;
+    generator.body.visit(&mut |node| {
+        closed &= match node.kind() {
+            mojito_types::param_expr::ParamKind::DeclRef(reference) => own.contains(&&reference.id),
+            mojito_types::param_expr::ParamKind::IndexRef { .. }
+            | mojito_types::param_expr::ParamKind::Hole { .. }
+            | mojito_types::param_expr::ParamKind::PackQuery { .. } => false,
+            _ => node.embedded_types().into_iter().all(|ty| {
+                !mojito_types::types::mentions(ty, &|inner| match inner.kind() {
+                    TyKind::Param { binder, .. } => !own.contains(&&binder.id),
+                    TyKind::Assoc { .. } | TyKind::SelfType | TyKind::Dependent(_) => true,
+                    _ => false,
+                })
+            }),
+        };
+    });
+    closed
 }

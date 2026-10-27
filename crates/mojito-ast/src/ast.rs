@@ -197,6 +197,13 @@ pub enum Type {
     /// composition of traits, whose type is the trait metatype
     /// (`type_of(AnyType)` types a trait-valued parameter).
     TypeOf(Box<Expr>),
+    /// Upstream's generator type `__generator_type[params] Result`: the type
+    /// of a parameterized compile-time declaration read unapplied, its
+    /// parameter list and the type its application yields.
+    Generator {
+        params: Vec<TypeParam>,
+        result: Box<Self>,
+    },
     /// A compile-time value where the type grammar expects a type: a struct
     /// construction such as `TypeList[Trait=AnyType, Ts.values]()`. It is a
     /// type only as the base of an `IndexedProjection`, which reads the
@@ -2877,6 +2884,10 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     }
                 }
                 Type::TypeOf(operand) | Type::Value(operand) => self.expr(operand),
+                Type::Generator { params, result } => {
+                    self.type_params(params);
+                    self.ty(result);
+                }
                 Type::Func {
                     type_params,
                     params,

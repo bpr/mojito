@@ -772,6 +772,89 @@ impl ParamContext {
         )
     }
 
+    /// `generator` with `args` bound to its parameters in declaration
+    /// order, `None` leaving a slot unbound: upstream's
+    /// `#kgen.bind_params`. Binding every slot of a constant generator is
+    /// its body at the arguments, and binding some is the generator over
+    /// the rest; binding every slot of a type's member read unapplied
+    /// (`T.get`) is the member's application (`T.get[4]`); a partial
+    /// binding of a partial binding binds the first's open slots. Any other
+    /// generator — a parameter still unbound — stays a node, typed as the
+    /// application's result or the generator over the open slots.
+    pub fn bind_params(
+        &self,
+        generator: &ParamExpr,
+        args: &[Option<ParamExpr>],
+    ) -> Result<ParamExpr, ParamError> {
+        let generator = self.intern(generator);
+        let Some(TyKind::Generator(ty)) = generator.meta().as_value().map(Ty::kind) else {
+            return Err(ParamError::TypeMismatch {
+                operation: "parameter binding".to_string(),
+                expected: "a generator".to_string(),
+                found: generator.meta().to_string(),
+            });
+        };
+        if args.len() != ty.params.len() {
+            return Err(ParamError::TypeMismatch {
+                operation: "parameter binding".to_string(),
+                expected: format!("{} argument(s)", ty.params.len()),
+                found: args.len().to_string(),
+            });
+        }
+        let args: Vec<Option<ParamExpr>> = args
+            .iter()
+            .map(|arg| arg.as_ref().map(|arg| self.intern(arg)))
+            .collect();
+        let complete = args.iter().all(Option::is_some);
+        let bindings = generator_bindings(&ty.params, &args);
+        match generator.kind() {
+            ParamKind::Constant(CtValue::Generator(value)) => {
+                if complete {
+                    return self.fold(&self.replace(&value.body, &bindings)?);
+                }
+                // A partial binding over a parameter still unbound stays a
+                // node, so a later replacement reaches that argument.
+                if args.iter().flatten().all(ParamExpr::is_closed) {
+                    let body = self.fold(&self.replace(&value.body, &bindings)?)?;
+                    let params = bound_generator_params(&ty.unbound_params(&args), &bindings);
+                    return self.constant(CtValue::Generator(Box::new(
+                        crate::ct::GeneratorValue { params, body },
+                    )));
+                }
+            }
+            ParamKind::TypeMember {
+                subject,
+                name,
+                args: applied,
+            } if applied.is_empty() && complete => {
+                let applied: Vec<ParamExpr> = args.iter().flatten().cloned().collect();
+                let result = crate::types::substitute(&ty.result, bindings.types());
+                return Ok(self.type_member(subject, name, &applied, MetaTy::value(result)));
+            }
+            ParamKind::BindParams {
+                generator: inner,
+                args: inner_args,
+            } => {
+                let mut open = args.into_iter();
+                let merged: Vec<Option<ParamExpr>> = inner_args
+                    .iter()
+                    .map(|slot| slot.clone().or_else(|| open.next().flatten()))
+                    .collect();
+                return self.bind_params(inner, &merged);
+            }
+            _ => {}
+        }
+        let meta = if complete {
+            MetaTy::value(crate::types::substitute(&ty.result, bindings.types()))
+        } else {
+            MetaTy::value(Ty::generator(
+                bound_generator_params(&ty.unbound_params(&args), &bindings),
+                ty.result.clone(),
+            ))
+        };
+        Ok(self.make(meta, ParamKind::BindParams { generator, args }))
+    }
+
     /// A compile-time application, typed by the callee's declared result.
     /// The arguments keep their order; nothing folds, since only the
     /// elaborator evaluates an application.
@@ -905,6 +988,13 @@ impl ParamContext {
                     .map(|arg| self.fold(arg))
                     .collect::<Result<_, _>>()?;
                 self.apply(function, &args, expr.meta().clone())
+            }
+            ParamKind::BindParams { generator, args } => {
+                let args: Vec<Option<ParamExpr>> = args
+                    .iter()
+                    .map(|arg| arg.as_ref().map(|arg| self.fold(arg)).transpose())
+                    .collect::<Result<_, _>>()?;
+                self.bind_params(&self.fold(generator)?, &args)?
             }
             _ => expr.clone(),
         })
@@ -1121,6 +1211,17 @@ impl ParamContext {
                     .map(|arg| self.answer_queries(arg, answer))
                     .collect::<Result<_, _>>()?;
                 self.apply(function, &args, expr.meta().clone())
+            }
+            ParamKind::BindParams { generator, args } => {
+                let args: Vec<Option<ParamExpr>> = args
+                    .iter()
+                    .map(|arg| {
+                        arg.as_ref()
+                            .map(|arg| self.answer_queries(arg, answer))
+                            .transpose()
+                    })
+                    .collect::<Result<_, _>>()?;
+                return self.bind_params(&self.answer_queries(generator, answer)?, &args);
             }
             _ => return Ok(expr.clone()),
         };
@@ -1618,6 +1719,17 @@ impl ParamContext {
                     .collect::<Result<_, _>>()?;
                 self.apply(function, &args, expr.meta().clone())
             }
+            ParamKind::BindParams { generator, args } => {
+                let args: Vec<Option<ParamExpr>> = args
+                    .iter()
+                    .map(|arg| {
+                        arg.as_ref()
+                            .map(|arg| self.replace_at(arg, bindings, depth, memo))
+                            .transpose()
+                    })
+                    .collect::<Result<_, _>>()?;
+                self.bind_params(&self.replace_at(generator, bindings, depth, memo)?, &args)?
+            }
         };
         memo.insert(key, replaced.clone());
         Ok(replaced)
@@ -1651,6 +1763,7 @@ impl ParamContext {
             _ => value.clone(),
         };
         if *value.meta() != declared
+            && !value.meta().is_generator_of(&declared)
             && !value.meta().is_trait_metatype_of(&declared)
             && !value.meta().is_unresolved_struct(&declared)
             && !value.meta().is_list_of(&declared)
@@ -1728,6 +1841,17 @@ impl ParamContext {
                     .map(|arg| self.shift(arg, cutoff, by))
                     .collect::<Result<_, _>>()?;
                 self.apply(function, &args, expr.meta().clone())
+            }
+            ParamKind::BindParams { generator, args } => {
+                let args: Vec<Option<ParamExpr>> = args
+                    .iter()
+                    .map(|arg| {
+                        arg.as_ref()
+                            .map(|arg| self.shift(arg, cutoff, by))
+                            .transpose()
+                    })
+                    .collect::<Result<_, _>>()?;
+                self.bind_params(&self.shift(generator, cutoff, by)?, &args)?
             }
             _ => expr.clone(),
         })
@@ -1958,6 +2082,9 @@ impl ParamExpr {
                 ..
             } => vec![element],
             ParamKind::Apply { args, .. } => args.iter().collect(),
+            ParamKind::BindParams { generator, args } => std::iter::once(generator)
+                .chain(args.iter().flatten())
+                .collect(),
             ParamKind::Constant(_)
             | ParamKind::DeclRef(_)
             | ParamKind::IndexRef { .. }
@@ -2003,6 +2130,7 @@ impl ParamExpr {
             ParamKind::ListTabulate { .. } => 15,
             ParamKind::ListConcat { .. } => 16,
             ParamKind::TypeMember { .. } => 17,
+            ParamKind::BindParams { .. } => 18,
         }
     }
 }
@@ -2193,6 +2321,15 @@ pub enum ParamKind {
     /// `param_list.concat`: the lists' elements in order. It holds at least
     /// two lists, none of them a concatenation or an empty constant.
     ListConcat { lists: Vec<ParamExpr> },
+    /// `#kgen.bind_params`: `generator` with `args` bound to its parameters
+    /// in declaration order, `None` (upstream's `?`) leaving a slot unbound.
+    /// A constant generator, or a type's member read unapplied, folds when
+    /// built ([`ParamContext::bind_params`]); this node is a generator that
+    /// is still a parameter (`G[3]` in `apply[G: …]`).
+    BindParams {
+        generator: ParamExpr,
+        args: Vec<Option<ParamExpr>>,
+    },
     /// Reserved typed unknown/unbound state; see [`ParamContext::hole`].
     /// Its token is one process's, so no encoding carries one. It stays the
     /// last variant: a decoder numbers the variants an encoding skips out.
@@ -2553,6 +2690,16 @@ impl MetaTy {
         Self::value(Ty::bool())
     }
 
+    /// Whether this generator type converts to `declared`, another one
+    /// ([`crate::types::generator_converts`]), as a generator argument
+    /// binds a generator-typed parameter.
+    pub fn is_generator_of(&self, declared: &Self) -> bool {
+        matches!(
+            (self.as_value(), declared.as_value()),
+            (Some(actual), Some(expected)) if crate::types::generator_converts(actual, expected)
+        )
+    }
+
     /// The runtime value domain, when this is one.
     pub const fn as_value(&self) -> Option<&Ty> {
         match self {
@@ -2601,6 +2748,7 @@ impl MetaTy {
             CtValue::Type(_) => Self::Type,
             CtValue::Trait(traits) => Self::value(TyKind::AnyTrait(traits.clone()).into()),
             CtValue::KgenString(_) => Self::value(TyKind::KgenString.into()),
+            CtValue::Generator(generator) => Self::value(generator.ty()),
             CtValue::Expr(expr) => expr.meta().clone(),
             // A deferred slot has no value yet, so no domain either.
             CtValue::Deferred(_) | CtValue::Marker(_) | CtValue::RemovedArg => {
@@ -3751,7 +3899,60 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             write_operands(f, &lists.iter().collect::<Vec<_>>())?;
             write!(f, ")")
         }
+        ParamKind::BindParams { generator, args } => {
+            write!(f, "{generator}[")?;
+            for (position, arg) in args.iter().enumerate() {
+                if position > 0 {
+                    write!(f, ", ")?;
+                }
+                match arg {
+                    Some(arg) => write!(f, "{arg}")?,
+                    None => write!(f, "_")?,
+                }
+            }
+            write!(f, "]")
+        }
     }
+}
+
+/// The bindings a generator's application installs: each bound slot's
+/// argument for its declaration, a type slot's as its type too.
+fn generator_bindings(
+    params: &[crate::types::ParamDecl],
+    args: &[Option<ParamExpr>],
+) -> ParamBindings {
+    let mut bindings = ParamBindings::new();
+    for (decl, arg) in params.iter().zip(args) {
+        let Some(arg) = arg else {
+            continue;
+        };
+        if matches!(decl, crate::types::ParamDecl::Type { .. }) && *arg.meta() == MetaTy::Type {
+            bindings.bind_type(
+                decl.id().clone(),
+                crate::types::DependentType::resolve(arg.clone()),
+            );
+        }
+        bindings.bind(decl.id().clone(), arg.clone());
+    }
+    bindings
+}
+
+/// A partial binding's open parameters, their declared types read at the
+/// bound slots' arguments.
+fn bound_generator_params(
+    params: &[crate::types::ParamDecl],
+    bindings: &ParamBindings,
+) -> Vec<crate::types::ParamDecl> {
+    params
+        .iter()
+        .map(|decl| {
+            let mut decl = decl.clone();
+            if let crate::types::ParamDecl::Value { ty, .. } = &mut decl {
+                *ty = crate::types::substitute(ty, bindings.types());
+            }
+            decl
+        })
+        .collect()
 }
 
 fn write_operands(f: &mut fmt::Formatter<'_>, operands: &[&ParamExpr]) -> fmt::Result {

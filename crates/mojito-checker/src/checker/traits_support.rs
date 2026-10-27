@@ -7,6 +7,8 @@ use mojito_types::param_expr::fold::comparison_holds;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, TransferSet};
 
+pub(super) use mojito_types::types::same_generator_signature;
+
 /// Compose inherited associated-member requirements. Type-valued members with
 /// the same name denote one associated type, so refinement accumulates their
 /// bounds instead of treating stronger composition as an ambiguity. Value
@@ -53,50 +55,6 @@ pub(super) fn merge_associated_requirement(
             "conflicting inherited associated member '{member}'"
         ))),
     }
-}
-
-/// Whether two generators' parameter lists declare the same signature:
-/// position by position the same kind, declared type or bounds,
-/// infer-only and variadic markers, as upstream compares generator types.
-/// Names are the declarations' own and do not take part.
-pub(super) fn same_generator_signature(left: &[ParamDecl], right: &[ParamDecl]) -> bool {
-    left.len() == right.len()
-        && left.iter().zip(right).all(|pair| match pair {
-            (
-                ParamDecl::Type {
-                    bounds,
-                    infer_only,
-                    variadic,
-                    ..
-                },
-                ParamDecl::Type {
-                    bounds: more_bounds,
-                    infer_only: more_infer_only,
-                    variadic: more_variadic,
-                    ..
-                },
-            ) => {
-                bounds.len() == more_bounds.len()
-                    && bounds.iter().all(|bound| more_bounds.contains(bound))
-                    && infer_only == more_infer_only
-                    && variadic == more_variadic
-            }
-            (
-                ParamDecl::Value {
-                    ty,
-                    infer_only,
-                    variadic,
-                    ..
-                },
-                ParamDecl::Value {
-                    ty: more_ty,
-                    infer_only: more_infer_only,
-                    variadic: more_variadic,
-                    ..
-                },
-            ) => ty == more_ty && infer_only == more_infer_only && variadic == more_variadic,
-            _ => false,
-        })
 }
 
 /// Whether two compile-time arguments are equal: values as the one folder

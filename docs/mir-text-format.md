@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.111
+mojito-mir 1.112
 ```
 
-The writer emits 1.111. The reader accepts 1.0 through 1.111; *Schema 1.0*
+The writer emits 1.112. The reader accepts 1.0 through 1.112; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -626,6 +626,16 @@ caller's binders) (R1342). An older artifact's `param`, and a bare binder
 under `operand_pack_length`, read as `operand_param`. The package format
 moves to `mojito-package 107`.
 
+Schema 1.112 adds upstream's generators (R808): the type `generator {
+params: [param-decl...], result }` (`!kgen.generator`, spelled
+`__generator_type[Idx: Int] Int`), the constant `ct_generator { params:
+[param-decl...], body: param-expr }` (`#kgen.gen`, a parameterized
+`comptime` declaration read unapplied), and the parameter expression
+`param_bind_params { generator, args: [present(param-expr) | absent...],
+type: meta }` (`#kgen.bind_params`), a generator that is still a parameter
+applied, `absent` leaving a slot unbound. The package format moves to
+`mojito-package 108`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1016,6 +1026,9 @@ only the positional form.
 `ct_trait([trait, ...])` for a trait or a `&` composition of
 traits used as a value (schema 1.76), `ct_kgen_string("text")` for a
 string literal's KGEN string, its `value` parameter (schema 1.79),
+`ct_generator { params, body }` for a generator, upstream's `#kgen.gen`:
+a parameterized `comptime` declaration read unapplied, its body naming its
+own parameters and nothing else (schema 1.112),
 `ct_expr(param-expr)` for a residual
 parameter expression,
 `ct_deferred(binder)` for a slot whose value arrives later (a callable-value
@@ -1072,6 +1085,7 @@ param_reflect   { subject, query }
 param_type_member { subject, name: symbol, args: [param-expr...], type: meta }
 param_pack_query { pack, query }
 param_apply     { function: "symbol", type: meta, args: [param-expr...] }
+param_bind_params { generator, args: [present(param-expr) | absent...], type: meta }
 ```
 
 `param_list_get` is an element of a parameter list that is still a parameter
@@ -1096,7 +1110,13 @@ applied to `args` when the member is parameterized (`T.get[0]`; schema
 application of a callable symbol, never folded (schema 1.14;
 `docs/notes/param-expr-attributes.md` §Register types). Only the elaborator
 below MIR evaluates one; a 1.37 artifact's `evaluated` field is read and
-dropped (schema 1.38).
+dropped (schema 1.38). `param_bind_params` (schema 1.112) is upstream's
+`#kgen.bind_params`: a generator still a parameter (`G[3]` over `G:
+__generator_type[Idx: Int] Int`) bound to `args` in its parameters'
+order, `absent` leaving a slot unbound. Its `type` is the generator type's
+result once every slot is bound, else the generator over the open slots.
+Binding a `ct_generator`, or a `param_type_member` read unapplied, folds
+when the node is built, so concrete MIR holds none.
 
 `op` is one of `add`, `mul`, `neg`, `sub`, `div`, `floordiv`, `mod`, `pow`,
 `shl`, `shr`, `and`, `or`, `xor`, `eq`, `lt`, `le`, `bool_and`, `bool_or`,
@@ -1174,6 +1194,12 @@ it types records the bound `__TypeOfAllTypes`.
 `KgenString` (schema 1.79) is upstream's KGEN string type `!kgen.string`, the
 type of a `StringLiteral`'s `value` parameter, whose values are
 `ct_kgen_string`. It is compile-time only, as `any_trait` is.
+
+`generator { params: [param-decl...], result }` (schema 1.112) is
+upstream's generator type `!kgen.generator`, spelled `__generator_type[Idx:
+Int] Int`: the type of a `ct_generator` and of a parameter taking one. Its
+`params` are its own binders, which `result` may name. It is compile-time
+only, as `any_trait` is.
 
 `trait_type([trait, ...])` (schema 1.78) is upstream's `TraitType`: a trait,
 or a composition, used as a type, the type of every type conforming to its

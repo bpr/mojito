@@ -202,6 +202,168 @@ impl Checker {
         self.resolve_ty_from_anno(ty)
     }
 
+    /// The argument of a generator-typed parameter (`apply[Twice]()`,
+    /// `apply[S.k]()`, `apply[G]()`): a generator that converts to the
+    /// declared generator type ([`mojito_types::types::generator_converts`]),
+    /// as upstream converts one, constant or still a parameter. Any other
+    /// argument is rejected with the pin's parameter-type mismatch.
+    fn resolve_generator_param_arg(
+        &self,
+        decl: &ParamDecl,
+        expected: &Ty,
+        arg: &mojito_ast::ast::ParamArg,
+    ) -> Result<TyArg, TypeError> {
+        use mojito_ast::ast::ParamArg;
+        let expr = match arg {
+            ParamArg::Named { value, .. } => {
+                return self.resolve_generator_param_arg(decl, expected, value);
+            }
+            ParamArg::Value(expr) => expr.clone(),
+            ParamArg::Type(ty) => ty
+                .expression_spelling(mojito_common::token::Span::default())
+                .ok_or_else(|| TypeError::TypeMismatch {
+                    expected: expected.to_string(),
+                    found: "a type".to_string(),
+                    context: format!("value parameter '{}'", decl.name()),
+                })?,
+        };
+        let generator = self.compile_dependent_ct_expr(&expr)?;
+        if !generator
+            .meta()
+            .is_generator_of(&mojito_types::param_expr::MetaTy::value(expected.clone()))
+        {
+            return Err(TypeError::ParamValueType {
+                callee: decl.id().owner.to_string(),
+                param: decl.name().to_string(),
+                expected: expected.to_string(),
+                found: generator.meta().to_string(),
+            });
+        }
+        let argument = TyArg::Val(self.converted_generator(generator, expected)?.into_value());
+        // A generator is an attribute, never a runtime value.
+        if let ParamArg::Value(expr) = arg {
+            self.record_at(expr.source_span()).argument_attribute = Some(argument.clone());
+        }
+        Ok(argument)
+    }
+
+    /// A constant generator converted to the generator type `expected`, as
+    /// upstream's generator conversion converts the body: a literal body
+    /// (`One[a: Int] = 1`) takes the expected result type (`Int`).
+    fn converted_generator(
+        &self,
+        generator: ParamExpr,
+        expected: &Ty,
+    ) -> Result<ParamExpr, TypeError> {
+        let (Some(CtValue::Generator(value)), TyKind::Generator(expected)) =
+            (generator.as_constant(), expected.kind())
+        else {
+            return Ok(generator);
+        };
+        let Some(body) = value
+            .body
+            .as_constant()
+            .filter(|_| value.body.meta().as_value() != Some(&expected.result))
+        else {
+            return Ok(generator);
+        };
+        let context = &self.param_context;
+        let body = context
+            .constant_as(body.clone(), &expected.result)
+            .map_err(param_error)?;
+        context
+            .constant(CtValue::Generator(Box::new(
+                mojito_types::ct::GeneratorValue {
+                    params: value.params.clone(),
+                    body,
+                },
+            )))
+            .map_err(param_error)
+    }
+
+    /// Upstream's generator type `__generator_type[params] result`
+    /// ([`TyKind::Generator`]): its parameters classified as a declaration's
+    /// are (a value parameter by its type, a type parameter by its bounds),
+    /// under the one owner every generator type's binders share, since a
+    /// generator converts by signature, names aside. A result naming one of
+    /// its own type parameters is that binder; a result naming a trait is
+    /// the trait used as a type, the type of a type a generator yields.
+    fn generator_type(
+        &self,
+        params: &[mojito_ast::ast::TypeParam],
+        result: &SourceType,
+    ) -> Result<Ty, TypeError> {
+        let mut decls = Vec::new();
+        for (slot, param) in params.iter().enumerate() {
+            let id = mojito_types::param_expr::ParamId::new(GENERATOR_TYPE_OWNER, slot);
+            let value_ty = match (&param.value_type, param.bounds.as_slice()) {
+                (Some(value_type), _) => Some(self.resolve_ty_from_anno(value_type)?),
+                (None, [only]) => scalar_type_name(only).or_else(|| {
+                    self.structs
+                        .contains_key(only)
+                        .then(|| TyKind::Struct(only.clone(), Vec::new()).into())
+                }),
+                _ => None,
+            };
+            let (name, infer_only, variadic) = (
+                param.name.clone(),
+                param.infer_only,
+                param.name.starts_with('*'),
+            );
+            if let Some(ty) = value_ty {
+                decls.push(ParamDecl::Value {
+                    id,
+                    name,
+                    ty,
+                    default: None,
+                    callable_default: None,
+                    infer_only,
+                    variadic,
+                    constraints: Vec::new(),
+                });
+                continue;
+            }
+            for bound in &param.bounds {
+                self.check_trait_name(bound)?;
+            }
+            decls.push(ParamDecl::Type {
+                id,
+                name,
+                bounds: param.bounds.clone(),
+                trait_param: None,
+                callable_bound: None,
+                default: None,
+                infer_only,
+                variadic,
+                constraints: Vec::new(),
+            });
+        }
+        let result = match result {
+            SourceType::Named(name, args) if args.is_empty() => {
+                match decls.iter().find(|decl| decl.name() == name) {
+                    Some(ParamDecl::Type { id, bounds, .. }) => TyKind::Param {
+                        binder: mojito_types::param_expr::ParamRef {
+                            id: id.clone(),
+                            name: name.as_str().into(),
+                        },
+                        bounds: bounds.clone(),
+                        callable_bound: None,
+                    }
+                    .into(),
+                    _ if !self.structs.contains_key(name)
+                        && !self.comptime_aliases.contains_key(name)
+                        && self.check_trait_name(name).is_ok() =>
+                    {
+                        TyKind::Trait(vec![name.clone()]).into()
+                    }
+                    _ => self.resolve_ty_from_anno(result)?,
+                }
+            }
+            _ => self.resolve_ty_from_anno(result)?,
+        };
+        Ok(Ty::generator(decls, result))
+    }
+
     /// The source spelling `StringLiteral`: upstream parameterizes the type
     /// by the literal's value, so the bare spelling is concrete only as a
     /// whole parameter annotation, where the value infers per call.
@@ -268,6 +430,7 @@ impl Checker {
             },
             SourceType::Float64 => Ty::float64(),
             SourceType::None => Ty::none(),
+            SourceType::Generator { params, result } => self.generator_type(params, result)?,
             SourceType::Func {
                 type_params,
                 params,
@@ -2541,6 +2704,9 @@ impl Checker {
             ParamDecl::Value { ty, .. } if let TyKind::AnyTrait(bound) = ty.kind() => {
                 self.resolve_trait_param_arg(decl, bound, arg)
             }
+            ParamDecl::Value { ty, .. } if matches!(ty.kind(), TyKind::Generator(_)) => {
+                self.resolve_generator_param_arg(decl, ty, arg)
+            }
             ParamDecl::Value { name, ty, .. } => match arg {
                 ParamArg::Value(expr) => {
                     // Function values are compile-time parameters in source, but
@@ -4086,6 +4252,10 @@ impl Checker {
 
 /// Whether `value` is an application computing a compile-time string
 /// ([`Checker::string_parameter_value`]).
+/// The owner of every generator type's own binders
+/// ([`Checker::generator_type`]).
+const GENERATOR_TYPE_OWNER: &str = "$generator";
+
 fn computed_string_literal(value: &CtValue) -> bool {
     matches!(value, CtValue::Expr(expression)
         if matches!(expression.kind(), mojito_types::param_expr::ParamKind::Apply { .. })
@@ -4119,6 +4289,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
             .is_some_and(|func| func.types().any(type_is_symbolic)),
+        TyKind::Generator(_) => mojito_types::types::is_symbolic(ty),
         TyKind::Overload(types)
         | TyKind::Tuple(types)
         | TyKind::RuntimePack(types)

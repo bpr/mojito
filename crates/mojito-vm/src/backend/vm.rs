@@ -1177,6 +1177,7 @@ fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
         | CtValue::Type(_)
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
+        | CtValue::Generator(_)
         // No unresolved expression or deferred slot becomes a runtime value.
         | CtValue::Expr(_)
         | CtValue::Deferred(_) | CtValue::Marker(_) | CtValue::RemovedArg => return None,
