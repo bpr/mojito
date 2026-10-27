@@ -4086,7 +4086,7 @@ impl Checker {
             mojito_ast::ast::ParamArg::Value(expr) => self
                 .member_value_type(expr)
                 .or_else(|| {
-                    self.eval_associated_ct(expr, &HashMap::new())
+                    self.eval_associated_ct(expr)
                         .ok()
                         .and_then(|value| self.ct_value_ty(&value, declared))
                 })

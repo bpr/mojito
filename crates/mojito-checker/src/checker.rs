@@ -2062,7 +2062,7 @@ impl Checker {
     }
 
     fn exact_literal_value(&self, expression: &Expr) -> Option<CtValue> {
-        match self.eval_associated_ct(expression, &HashMap::new()).ok()? {
+        match self.eval_associated_ct(expression).ok()? {
             value @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_)) => Some(value),
             _ => None,
         }

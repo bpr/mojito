@@ -189,7 +189,7 @@ impl Checker {
                     // struct's parameters, which each instance evaluates.
                     let value = {
                         let _lifting = self.lifting_position();
-                        self.eval_associated_ct(&member.value, &out)?
+                        self.eval_associated_ct(&member.value)?
                     };
                     if let Some(CtMemberReq::Value(declared)) = &requirement {
                         self.check_raw_list_member(&member.name, &value, declared)?;
@@ -684,355 +684,30 @@ impl Checker {
         })
     }
 
-    /// Evaluate a struct-level associated comptime value. This intentionally
-    /// accepts type-valued expressions in addition to runtime-materializable
-    /// constants because associated facts are type metadata, not executable code.
-    pub(super) fn eval_associated_ct(
-        &self,
-        expr: &Expr,
-        associated: &HashMap<String, CtValue>,
-    ) -> Result<CtValue, TypeError> {
-        match &expr.kind {
-            _ if let Some(read) = self.display_read(expr) => read.map(CtValue::Expr),
-            // A parametric value's application, recorded for a bracket
-            // argument MIR reads as a value.
-            _ if let Some(value) = self.parametric_value_application(expr) => {
-                let value = value?;
-                self.record_member_value(expr.source_span(), value.clone());
-                Ok(value.into_value())
-            }
-            ExprKind::Int(n) => Ok(CtValue::IntLiteral(n.clone())),
-            ExprKind::Float(value) => Ok(CtValue::FloatLiteral(value.clone())),
-            ExprKind::Bool(b) => Ok(CtValue::Bool(*b)),
-            ExprKind::Str(s) => Ok(CtValue::Str(s.clone())),
-            ExprKind::TypeValue(ty) => self.type_value(expr, ty).map(CtValue::Type),
-            ExprKind::Identifier(name) => {
-                // A value parameter of an enclosing declaration is its typed
-                // reference: `Buf[n + 1]` stays symbolic in the template.
-                if let Some(reference) = self.value_parameter_in_scope(name) {
-                    return Ok(CtValue::Expr(reference));
-                }
-                // A local `comptime` binding of a string literal's KGEN
-                // string (`comptime v = "None".value`) or of a closed raw
-                // list is inlined.
-                if let Some(bound) = self.local_comptime_value(name)
-                    && (self.reads_literal_value(bound) || self.reads_raw_list(bound))
-                {
-                    return self.eval_associated_ct(bound, associated);
-                }
-                // An applied constant is its application in a type
-                // position, whatever literal the elaborator folded it to.
-                if !self.module_constant_shadowed(name) {
-                    if let Some(applied) = self.comptime_applied.get(name) {
-                        return Ok(CtValue::Expr(applied.clone()));
-                    }
-                    if let Some(n) = self.comptimes.get(name) {
-                        return Ok(CtValue::IntLiteral(n.clone()));
-                    }
-                    if let Some(value) = self.module_value(name) {
-                        return Ok(value.clone());
-                    }
-                }
-                // A local `comptime` `DType` binding (`comptime c = pick(True)`)
-                // is its dtype, known or the expression a template names.
-                if let Some(dtype) = self.comptime_dtype(name) {
-                    return Ok(match dtype {
-                        SimdDtype::Known(dtype) => CtValue::Dtype(*dtype),
-                        SimdDtype::Expr(expr) => CtValue::Expr(expr.clone()),
-                    });
-                }
-                // The enclosing struct's own parameter is spelled `Self.<name>`
-                // inside the body (the `Member` arm below); the bare spelling
-                // is upstream's error.
-                if self.is_enclosing_struct_param(name) {
-                    return Err(TypeError::UnqualifiedStructParam(name.clone()));
-                }
-                self.ty_value_from_name(name, &[])?
-                    .ok_or_else(|| TypeError::NotComptime(name.clone()))
-            }
-            ExprKind::TypeApply { name, args } => {
-                let (ty, attributes) = self
-                    .applied_type_value(name, args)?
-                    .ok_or_else(|| TypeError::NotComptime(name.clone()))?;
-                self.record_bracket_attributes(expr.source_span(), attributes);
-                Ok(ty)
-            }
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if name == mojito_types::param_expr::SIZE_OF_FUNCTION && kwargs.is_empty() => {
-                let ty = self.size_of_operand(param_args, args)?;
-                Ok(CtValue::Expr(self.param_context.size_of(ty)))
-            }
-            // `len(Self.values)` over the bundled `ParameterList`'s or
-            // `TypeList`'s raw list: its `#kgen.param_list.size`.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if name == "len"
-                && param_args.is_empty()
-                && kwargs.is_empty()
-                && let [list] = args.as_slice()
-                && let Some(pack) = self.bundled_raw_list_operand(list)
-                && let Some(pack) = pack.as_decl_ref() =>
-            {
-                Ok(CtValue::Expr(self.param_context.pack_query(
-                    pack,
-                    mojito_types::param_expr::PackQuery::Length,
-                )))
-            }
-            // `len(Self.Ts)` over the struct's own type pack, which each
-            // application's elements fix.
-            _ if let Some(length) = self.pack_length_query(expr) => Ok(CtValue::Expr(length)),
-            // `Int(3)`: a scalar conversion of a compile-time value, which is
-            // the declared type's ordinary literal materialization. It makes
-            // `Array[Int, Int(3)]` and `Array[Int, 3]` one type.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if kwargs.is_empty()
-                && param_args.is_empty()
-                && args.len() == 1
-                && matches!(
-                    scalar_type_name(name).as_ref().map(Ty::kind),
-                    Some(TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Bool)
-                ) =>
-            {
-                let target = scalar_type_name(name).expect("guard established a scalar type");
-                let value = self.eval_associated_ct(&args[0], associated)?;
-                if let CtValue::Expr(expr) = &value {
-                    return (*expr.meta() == mojito_types::param_expr::MetaTy::value(target))
-                        .then_some(value.clone())
-                        .ok_or_else(|| {
-                            TypeError::NotComptime(format!(
-                                "'{name}' conversion of a symbolic '{}' value",
-                                expr.meta()
-                            ))
-                        });
-                }
-                let rendered = value.to_string();
-                value.materialize_as(&target).ok_or_else(|| {
-                    TypeError::NotComptime(format!(
-                        "'{name}({rendered})' is not a compile-time {name}"
-                    ))
-                })
-            }
-            // `SIMD[DType.d, w](lanes...)`, or a vector alias's application
-            // (`U256(0)`), is a compile-time vector — a hasher key: one lane
-            // per element, or one element splatted across the width.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if kwargs.is_empty()
-                && let Some((dtype, width)) = self.simd_constructor_shape(name, param_args) =>
-            {
-                let values = args
-                    .iter()
-                    .map(|argument| self.eval_associated_ct(argument, associated))
-                    .collect::<Result<Vec<_>, _>>()?;
-                simd_construction(dtype, width as usize, &values)
-            }
-            _ if let Some(frozen) = self.frozen_enum_case(expr) => frozen,
-            // The fieldwise construction of a non-generic struct from
-            // compile-time values (`Extent(2, 3)`) is a frozen struct value,
-            // the form a struct-typed parameter argument takes (the
-            // elaborator materializes any other construction to it).
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if param_args.is_empty()
-                && kwargs.is_empty()
-                && let Some(info) = self.structs.get(name)
-                && info.fieldwise_init
-                && info.decls.is_empty()
-                && args.len() == info.declared_field_names.len() =>
-            {
-                let fields = info
-                    .declared_field_names
-                    .iter()
-                    .zip(args)
-                    .map(|(field, argument)| {
-                        let value = self.eval_associated_ct(argument, associated)?;
-                        let value = match info.fields.iter().find(|(name, _)| name == field) {
-                            Some((_, ty)) => {
-                                let rendered = value.to_string();
-                                value.materialize_as(ty).ok_or_else(|| {
-                                    TypeError::NotComptime(format!(
-                                        "field '{field}' of '{name}' expects {ty}, got {rendered}"
-                                    ))
-                                })?
-                            }
-                            None => value,
-                        };
-                        Ok((field.clone(), value))
-                    })
-                    .collect::<Result<Vec<_>, TypeError>>()?;
-                Ok(CtValue::Struct {
-                    name: name.clone(),
-                    fields,
-                })
-            }
-            // A type application whose bracket argument parses as runtime
-            // indexing (`Scalar[DType.int32]` — the standing Index-vs-TypeApply
-            // parse split for a single non-scalar argument).
-            ExprKind::Index { object, index }
-                if matches!(&object.kind, ExprKind::Identifier(_)) =>
-            {
-                let ExprKind::Identifier(name) = &object.kind else {
-                    unreachable!("guarded above");
-                };
-                self.ty_value_from_name(name, &subscript_param_args(index))?
-                    .ok_or_else(|| TypeError::NotComptime(name.clone()))
-            }
-            // An element of the struct's own type pack (`Self.Ts[0]`): its
-            // `TypeList`'s `__getitem_param__`, at an index that may read an
-            // earlier member (`Self.Ts[Self.width - 1]`).
-            ExprKind::Index { object, index } if let Some(pack) = self.type_pack_named(object) => {
-                let index = self
-                    .param_context
-                    .constant(self.eval_associated_ct(index, associated)?)
-                    .map_err(param_error)?;
-                self.type_pack_element(&pack, &index).map(CtValue::Type)
-            }
-            // An element of a member's parameter list (`Self.values[0]`):
-            // its `param_list.get`, folded when the list is closed.
-            ExprKind::Index { object, .. }
-                if matches!(object.kind, ExprKind::Member { .. })
-                    && let Ok(element) = self.compile_dependent_ct_expr(expr) =>
-            {
-                Ok(element.into_value())
-            }
-            // `DType.int`: a compile-time element-type value, as it appears
-            // in a `dtype: DType` argument (`_StridedRange[DType.int]`).
-            ExprKind::Member { object, field }
-                if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
-                    && let Some(dtype) = Dtype::from_name(field) =>
-            {
-                Ok(CtValue::Dtype(dtype))
-            }
-            // Upstream's KGEN types (`comptime KGENTypeType =
-            // __mlir_type.`!kgen.type``, `comptime KS =
-            // __mlir_type.`!kgen.string``).
-            ExprKind::Member { object, field }
-                if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type")
-                    && let Some(ty) = mojito_types::types::kgen_type_named(field) =>
-            {
-                Ok(CtValue::Type(ty))
-            }
-            // A compile-time `StringLiteral`'s `value` parameter
-            // (`comptime none = "None".value`).
-            ExprKind::Member { object, field }
-                if field == mojito_types::ct::LITERAL_VALUE_MEMBER
-                    && let Ok(literal) = self.eval_associated_ct(object, associated)
-                    && let Some(parameter) = literal.literal_value() =>
-            {
-                Ok(parameter)
-            }
-            ExprKind::Member { object, field } => {
-                if let ExprKind::Identifier(s) = &object.kind
-                    && s == "Self"
-                {
-                    if let Some(value) = self.self_param_ct_value(field) {
-                        return Ok(value);
-                    }
-                    if let Some(value) = associated.get(field) {
-                        return Ok(value.clone());
-                    }
-                    // A member of the struct's shell, or a trait's requirement
-                    // read through its own `Self`.
-                    if let Some(member) = self.type_member_value(object, field) {
-                        let member = member?;
-                        self.record_member_value(expr.source_span(), member.clone());
-                        return Ok(member.into_value());
-                    }
-                    if let Some(error) = self.instance_field_without_instance(field) {
-                        return Err(error);
-                    }
-                    return Err(TypeError::UnknownSelfParam(field.clone()));
-                }
-                // A field of a struct-typed parameter value (`Self.e.rows`).
-                if let Some(projection) = self.struct_value_field(object, field) {
-                    return projection.map(ParamExpr::into_value);
-                }
-                // A type's value member (`T.K`, `A.K`, `B[4].K`), recorded
-                // for a bracket argument MIR reads as a value.
-                if let Some(member) = self.type_member_value(object, field) {
-                    let member = member?;
-                    self.record_member_value(expr.source_span(), member.clone());
-                    return Ok(member.into_value());
-                }
-                // A type application whose own resolution fails reports why
-                // (`Box[Self.B].w` over a type member `B`).
-                if !matches!(&object.kind, ExprKind::Identifier(_))
-                    && let Some(Err(error)) = self.member_type_operand_resolution(object)
-                {
-                    return Err(error);
-                }
-                Err(TypeError::NotComptime(
-                    "unsupported associated comptime member access".to_string(),
-                ))
-            }
-            ExprKind::Prefix(PrefixOp::Neg, e) => self
-                .fold_ct_neg(&self.eval_associated_ct(e, associated)?)
-                .map_err(param_error),
-            // `not b` over a compile-time `Bool`; any other operand is the
-            // ordinary rejection below.
-            ExprKind::Prefix(PrefixOp::Not, operand)
-                if let Ok(value) = self.eval_associated_ct(operand, associated)
-                    && let Some(negated) = self.fold_ct_not(&value) =>
-            {
-                negated.map_err(param_error)
-            }
-            // `a if c else b`: the arm a closed condition selects, else the
-            // selection over both arms.
-            ExprKind::IfExpr {
-                cond,
-                then_branch,
-                else_branch,
-            } if let Ok(condition) = self.eval_associated_ct(cond, associated)
-                && let Some(selected) =
-                    self.fold_ct_cond(&condition, then_branch, else_branch, associated) =>
-            {
-                selected
-            }
-            ExprKind::Infix(op, l, r) => self.eval_associated_ct_infix(
-                *op,
-                &self.eval_associated_ct(l, associated)?,
-                &self.eval_associated_ct(r, associated)?,
-            ),
-            ExprKind::TupleLit(elems) => elems
-                .iter()
-                .map(|e| self.eval_associated_ct(e, associated))
-                .collect::<Result<Vec<_>, _>>()
-                .map(CtValue::Tuple),
-            ExprKind::ListLit(elems) => elems
-                .iter()
-                .map(|e| self.eval_associated_ct(e, associated))
-                .collect::<Result<Vec<_>, _>>()
-                .map(CtValue::List),
-            _ => self
-                .eval_reflection_expr(expr)?
-                .or_else(|| self.positioned_application(expr).map(CtValue::Expr))
-                .ok_or_else(|| match self.calls_raising_application(expr) {
-                    Some(function) => TypeError::BadCall {
-                        func: function.to_string(),
-                        reason: "cannot call raising function in type parameter".to_string(),
-                    },
-                    None => {
-                        TypeError::NotComptime("not an associated comptime expression".to_string())
-                    }
-                }),
-        }
+    /// Evaluate a compile-time expression to the value a struct member, a
+    /// bracket argument, or a constant holds: its parameter expression
+    /// ([`Self::compile_dependent_ct_expr`]), folded, in the `CtValue`
+    /// transport form, a symbolic type included. Member reads, parametric
+    /// applications, and type applications record what they denote at their
+    /// spans, for MIR to carry where a bracket argument is read as a value.
+    pub(super) fn eval_associated_ct(&self, expr: &Expr) -> Result<CtValue, TypeError> {
+        self.ct_value(expr, Recording::Record)
+    }
+
+    /// Compile a compile-time expression into its typed parameter
+    /// expression, as upstream's parameter emitter does: one name lookup,
+    /// with operator semantics and canonical form from [`ParamContext`].
+    pub(super) fn compile_dependent_ct_expr(&self, expr: &Expr) -> Result<ParamExpr, TypeError> {
+        self.build_ct(expr, Recording::Silent)
+    }
+
+    /// The member `field` the enclosing struct's shell holds, as resolved
+    /// so far.
+    fn self_struct_member(&self, field: &str) -> Option<&CtValue> {
+        let Some(TyKind::Struct(name, _)) = self.self_ty.as_ref().map(Ty::kind) else {
+            return None;
+        };
+        self.structs.get(name)?.associated.get(field)
     }
 
     /// An `enum`'s case without a payload (`comptime eof: Self =
@@ -1143,93 +818,6 @@ impl Checker {
         }
     }
 
-    /// `left op right` over two associated compile-time values. Concrete
-    /// operands fold through the shared folder; a residual operand builds the
-    /// canonical expression, so `Self.n + 1` stays symbolic in a template.
-    pub(super) fn eval_associated_ct_infix(
-        &self,
-        op: InfixOp,
-        left: &CtValue,
-        right: &CtValue,
-    ) -> Result<CtValue, TypeError> {
-        if matches!(left, CtValue::Expr(_)) || matches!(right, CtValue::Expr(_)) {
-            let context = &self.param_context;
-            return context
-                .constant(left.clone())
-                .and_then(|left| Ok((left, context.constant(right.clone())?)))
-                .and_then(|(left, right)| context.infix(op, &left, &right))
-                .map(ParamExpr::into_value)
-                .map_err(param_error);
-        }
-        mojito_types::param_expr::fold::fold_infix(op, left, right).map_err(param_error)
-    }
-
-    /// Unary `-` over an associated compile-time value; see
-    /// [`Self::eval_associated_ct_infix`].
-    fn fold_ct_neg(
-        &self,
-        value: &CtValue,
-    ) -> Result<CtValue, mojito_types::param_expr::ParamError> {
-        match value {
-            CtValue::Expr(expr) => self.param_context.neg(expr).map(ParamExpr::into_value),
-            concrete => mojito_types::param_expr::fold::fold_neg(concrete),
-        }
-    }
-
-    /// `not value` over an associated compile-time `Bool`; `None` for a value
-    /// of any other type.
-    fn fold_ct_not(
-        &self,
-        value: &CtValue,
-    ) -> Option<Result<CtValue, mojito_types::param_expr::ParamError>> {
-        match value {
-            CtValue::Bool(value) => Some(Ok(CtValue::Bool(!value))),
-            CtValue::Expr(expr) if *expr.meta() == MetaTy::bool() => {
-                Some(self.param_context.not(expr).map(ParamExpr::into_value))
-            }
-            _ => None,
-        }
-    }
-
-    /// `then_branch if condition else else_branch` over an associated
-    /// compile-time `Bool` condition: the arm a closed condition selects,
-    /// else the selection between the two arms' values, an integer literal
-    /// arm taking the `Int` the other arm or a bare literal has. `None` for
-    /// a condition of any other type.
-    fn fold_ct_cond(
-        &self,
-        condition: &CtValue,
-        then_branch: &Expr,
-        else_branch: &Expr,
-        associated: &HashMap<String, CtValue>,
-    ) -> Option<Result<CtValue, TypeError>> {
-        let condition = match condition {
-            CtValue::Bool(true) => return Some(self.eval_associated_ct(then_branch, associated)),
-            CtValue::Bool(false) => return Some(self.eval_associated_ct(else_branch, associated)),
-            CtValue::Expr(condition) if *condition.meta() == MetaTy::bool() => condition,
-            _ => return None,
-        };
-        let arm = |branch: &Expr| {
-            let value = match self.eval_associated_ct(branch, associated)? {
-                literal @ CtValue::IntLiteral(_) => literal
-                    .clone()
-                    .materialize_as(&Ty::int())
-                    .unwrap_or(literal),
-                value => value,
-            };
-            self.param_context.constant(value).map_err(param_error)
-        };
-        Some(arm(then_branch).and_then(|then_value| {
-            self.param_context
-                .op(
-                    mojito_types::param_expr::ParamOp::Cond,
-                    &[condition.clone(), then_value, arm(else_branch)?],
-                )
-                .map(ParamExpr::into_value)
-                .map_err(param_error)
-        }))
-    }
-
     /// The application a local `comptime NAME = f(…)` binding denotes, which
     /// each of its reads materializes as upstream's alias reference does: the
     /// binding has no storage of its own. `None` for any other binding, and
@@ -1305,16 +893,31 @@ impl Checker {
             }
             .ok()
         };
-        if let Some(n) = self.comptimes.get(name) {
-            return declared(CtValue::IntLiteral(n.clone()));
+        match self.module_constant_entry(name)? {
+            ModuleConstant::Applied(applied) => Some(applied.clone()),
+            ModuleConstant::Int(n) => declared(CtValue::IntLiteral(n.clone())),
+            ModuleConstant::Value(value) => declared(value.clone()),
+            ModuleConstant::Literal(literal) => self.compile_dependent_ct_expr(literal).ok(),
         }
-        if let Some(value) = self.module_values.get(name) {
-            return declared(value.clone());
+    }
+
+    /// The table entry the module constant `name` reads from, unless a
+    /// nearer binding shadows it: its application, its folded `Int`, its
+    /// folded attribute, or its literal initializer, in that order.
+    fn module_constant_entry(&self, name: &str) -> Option<ModuleConstant<'_>> {
+        if self.module_constant_shadowed(name) {
+            return None;
         }
-        let context = &self.param_context;
-        let literal = self.comptime_literals.get(name)?;
-        let value = self.eval_associated_ct(literal, &HashMap::new()).ok()?;
-        context.constant(value).ok()
+        self.comptime_applied
+            .get(name)
+            .map(ModuleConstant::Applied)
+            .or_else(|| self.comptimes.get(name).map(ModuleConstant::Int))
+            .or_else(|| self.module_values.get(name).map(ModuleConstant::Value))
+            .or_else(|| {
+                self.comptime_literals
+                    .get(name)
+                    .map(ModuleConstant::Literal)
+            })
     }
 
     /// Whether a binding nearer than the module scope (a local, a
@@ -1328,14 +931,6 @@ impl Checker {
     pub(super) fn module_comptime(&self, name: &str) -> Option<mojito_common::literal::IntLiteral> {
         (!self.module_constant_shadowed(name))
             .then(|| self.comptimes.get(name).cloned())
-            .flatten()
-    }
-
-    /// The closed attribute module constant `name` folds to
-    /// (`comptime D = DType.int16`), unless a nearer binding shadows it.
-    pub(super) fn module_value(&self, name: &str) -> Option<&CtValue> {
-        (!self.module_constant_shadowed(name))
-            .then(|| self.module_values.get(name))
             .flatten()
     }
 
@@ -1613,157 +1208,465 @@ impl Checker {
             })
     }
 
-    /// Compile a dependent parameter expression through the shared typed
-    /// builder. Name resolution is the checker's; operator semantics and
-    /// canonical form are [`ParamContext`]'s.
-    pub(super) fn compile_dependent_ct_expr(&self, expr: &Expr) -> Result<ParamExpr, TypeError> {
+    /// The value [`Self::eval_associated_ct`] transports. A tuple, list, or
+    /// fieldwise construction is the aggregate of its elements' values,
+    /// which may be symbolic: a parameter expression has no aggregate node.
+    fn ct_value(&self, expr: &Expr, recording: Recording) -> Result<CtValue, TypeError> {
+        if let Some(aggregate) = self.aggregate_value(expr, recording) {
+            return aggregate;
+        }
+        let built = self.build_ct(expr, recording)?;
+        let folded = self.param_context.fold(&built).map_err(param_error)?;
+        Ok(ct_transport(folded))
+    }
+
+    /// The parameter expression of `expr`; see
+    /// [`Self::compile_dependent_ct_expr`].
+    fn build_ct(&self, expr: &Expr, recording: Recording) -> Result<ParamExpr, TypeError> {
         let context = &self.param_context;
-        let constant = |value: CtValue| context.constant(value).map_err(param_error);
-        let aggregate = |values: &[Expr]| {
-            values
-                .iter()
-                .map(|value| self.eval_associated_ct(value, &HashMap::new()))
-                .collect::<Result<Vec<_>, _>>()
-        };
+        let record = recording == Recording::Record;
+        let build = |expr: &Expr| self.build_ct(expr, recording);
         match &expr.kind {
-            ExprKind::Int(value) => constant(CtValue::IntLiteral(value.clone())),
-            ExprKind::Float(value) => constant(CtValue::FloatLiteral(value.clone())),
-            ExprKind::Bool(value) => constant(CtValue::Bool(*value)),
-            ExprKind::Str(value) => constant(CtValue::Str(value.clone())),
-            _ if let Some(value) = self.parametric_value_application(expr) => value,
-            // A value binder in scope (a `comptime for` index, a callable
-            // contract's own binder) shadows a same-named module constant.
-            ExprKind::Identifier(name) => match self.value_parameter_in_scope(name) {
-                Some(reference) => Ok(reference),
-                None => match self.module_comptime(name) {
-                    Some(value) => constant(CtValue::IntLiteral(value)),
-                    None if let Some(value) = self.module_value(name) => constant(value.clone()),
-                    None if self.is_enclosing_struct_param(name) => {
-                        Err(TypeError::UnqualifiedStructParam(name.clone()))
-                    }
-                    None => Err(TypeError::NotComptime(name.clone())),
-                },
-            },
-            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") =>
+            _ if let Some(read) = self.display_read(expr) => read,
+            // A parametric value's application, recorded for a bracket
+            // argument MIR reads as a value.
+            _ if let Some(value) = self.parametric_value_application(expr) => {
+                let value = value?;
+                if record {
+                    self.record_member_value(expr.source_span(), value.clone());
+                }
+                Ok(value)
+            }
+            ExprKind::Int(n) => self.ct_param(CtValue::IntLiteral(n.clone())),
+            ExprKind::Float(value) => self.ct_param(CtValue::FloatLiteral(value.clone())),
+            ExprKind::Bool(b) => self.ct_param(CtValue::Bool(*b)),
+            ExprKind::Str(s) => self.ct_param(CtValue::Str(s.clone())),
+            ExprKind::TypeValue(ty) => {
+                let ty = if record {
+                    self.type_value(expr, ty)?
+                } else {
+                    self.ty_from_anno(ty)?
+                };
+                Ok(context.type_shape(ty))
+            }
+            ExprKind::Identifier(name) => self.build_ct_name(name, recording),
+            ExprKind::TypeApply { name, args } => {
+                let (ty, attributes) = self
+                    .applied_type_value(name, args)?
+                    .ok_or_else(|| TypeError::NotComptime(name.clone()))?;
+                if record {
+                    self.record_bracket_attributes(expr.source_span(), attributes);
+                }
+                self.ct_param(ty)
+            }
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == mojito_types::param_expr::SIZE_OF_FUNCTION && kwargs.is_empty() => {
+                Ok(context.size_of(self.size_of_operand(param_args, args)?))
+            }
+            // `len(Self.values)` over the bundled `ParameterList`'s or
+            // `TypeList`'s raw list: its `#kgen.param_list.size`.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "len"
+                && param_args.is_empty()
+                && kwargs.is_empty()
+                && let [list] = args.as_slice()
+                && let Some(pack) = self.bundled_raw_list_operand(list)
+                && let Some(pack) = pack.as_decl_ref() =>
             {
-                match self.self_param_ct_value(field) {
-                    Some(CtValue::Expr(expr)) => Ok(context.intern(&expr)),
-                    Some(value) => constant(value),
-                    // A sibling value member (`comptime get[i: Int]: Int = i
-                    // + Self.K`).
-                    None => self
-                        .type_member_value(object, field)
-                        .unwrap_or_else(|| Err(TypeError::UnknownSelfParam(field.clone()))),
+                Ok(context.pack_query(pack, mojito_types::param_expr::PackQuery::Length))
+            }
+            // The length of a pack that is still a parameter, which the
+            // instance's elements fix (`len(Self.Ts)`).
+            _ if let Some(length) = self.pack_length_query(expr) => Ok(length),
+            // `Int(3)`: a scalar conversion of a compile-time value, which is
+            // the declared type's ordinary literal materialization. It makes
+            // `Array[Int, Int(3)]` and `Array[Int, 3]` one type.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if kwargs.is_empty()
+                && param_args.is_empty()
+                && args.len() == 1
+                && matches!(
+                    scalar_type_name(name).as_ref().map(Ty::kind),
+                    Some(TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Bool)
+                ) =>
+            {
+                let target = scalar_type_name(name).expect("guard established a scalar type");
+                match ct_transport(build(&args[0])?) {
+                    CtValue::Expr(operand) => (*operand.meta() == MetaTy::value(target))
+                        .then_some(operand.clone())
+                        .ok_or_else(|| {
+                            TypeError::NotComptime(format!(
+                                "'{name}' conversion of a symbolic '{}' value",
+                                operand.meta()
+                            ))
+                        }),
+                    value => {
+                        let rendered = value.to_string();
+                        let converted = value.materialize_as(&target).ok_or_else(|| {
+                            TypeError::NotComptime(format!(
+                                "'{name}({rendered})' is not a compile-time {name}"
+                            ))
+                        })?;
+                        self.ct_param(converted)
+                    }
                 }
             }
-            // A closed `StringLiteral`'s `value` parameter (`s: KGENString =
-            // "x".value`).
-            ExprKind::Member { object, field }
-                if field == mojito_types::ct::LITERAL_VALUE_MEMBER
-                    && let Ok(literal) = self.compile_dependent_ct_expr(object)
-                    && let Some(parameter) =
-                        literal.as_constant().and_then(CtValue::literal_value) =>
+            // `SIMD[DType.d, w](lanes...)`, or a vector alias's application
+            // (`U256(0)`), is a compile-time vector — a hasher key: one lane
+            // per element, or one element splatted across the width.
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if kwargs.is_empty()
+                && let Some((dtype, width)) = self.simd_constructor_shape(name, param_args) =>
             {
-                constant(parameter)
+                let lanes = args
+                    .iter()
+                    .map(|lane| self.ct_value(lane, recording))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.ct_param(simd_construction(dtype, width as usize, &lanes)?)
             }
-            // `DType.<dt>` — a dtype value parameter's default (`dtype: DType
-            // = DType.int`), mirroring the comptime evaluator's spelling.
-            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType") =>
-            {
-                let dtype = mojito_ast::ast::Dtype::from_name(field).ok_or_else(|| {
-                    TypeError::Unsupported(format!("unknown DType member '{field}'"))
-                })?;
-                constant(CtValue::Dtype(dtype))
+            _ if let Some(frozen) = self.frozen_enum_case(expr) => self.ct_param(frozen?),
+            _ if let Some(aggregate) = self.aggregate_value(expr, recording) => {
+                self.ct_param(aggregate?)
             }
-            ExprKind::TupleLit(values) => constant(CtValue::Tuple(aggregate(values)?)),
-            ExprKind::ListLit(values) => constant(CtValue::List(aggregate(values)?)),
             // An element of a literal display (`[1, 2][i]`): `param_list.get`
             // over the closed list.
             ExprKind::Index { object, index } if matches!(object.kind, ExprKind::ListLit(_)) => {
                 context
-                    .list_get(
-                        &self.compile_dependent_ct_expr(object)?,
-                        &self.compile_dependent_ct_expr(index)?,
-                    )
+                    .list_get(&build(object)?, &build(index)?)
                     .map_err(param_error)
             }
-            _ if let Some(read) = self.display_read(expr) => read,
-            // An element of a list a constant denotes (`XS[0]` of a module
-            // display constant, `l[i]` of a requested local): `param_list.get`
-            // over the list's expression.
+            // A type application whose bracket argument parses as runtime
+            // indexing (`Scalar[DType.int32]` — the standing Index-vs-TypeApply
+            // parse split for a single non-scalar argument).
             ExprKind::Index { object, index }
-                if let Ok(list) = self.compile_dependent_ct_expr(object)
-                    && matches!(list.meta(), mojito_types::param_expr::MetaTy::ParamList(_)) =>
+                if let ExprKind::Identifier(name) = &object.kind
+                    && let Some(ty) = self
+                        .ty_value_from_name(name, &subscript_param_args(index))
+                        .transpose() =>
             {
-                context
-                    .list_get(&list, &self.compile_dependent_ct_expr(index)?)
-                    .map_err(param_error)
+                self.ct_param(ty?)
             }
-            // The length of a pack that is still a parameter, which the
-            // instance's elements fix.
-            _ if let Some(pack) = self.pack_length_query(expr) => Ok(pack),
-            ExprKind::Prefix(PrefixOp::Neg, value) => context
-                .neg(&self.compile_dependent_ct_expr(value)?)
-                .map_err(param_error),
-            ExprKind::Infix(
-                op @ (InfixOp::Add
-                | InfixOp::Sub
-                | InfixOp::Mul
-                | InfixOp::FloorDiv
-                | InfixOp::Mod
-                | InfixOp::Pow
-                | InfixOp::Shl),
-                left,
-                right,
-            ) => context
-                .infix(
-                    *op,
-                    &self.compile_dependent_ct_expr(left)?,
-                    &self.compile_dependent_ct_expr(right)?,
-                )
-                .map_err(param_error),
+            // An element of the struct's own type pack (`Self.Ts[0]`): its
+            // `TypeList`'s `__getitem_param__`, at an index that may read an
+            // earlier member (`Self.Ts[Self.width - 1]`).
+            ExprKind::Index { object, index } if let Some(pack) = self.type_pack_named(object) => {
+                Ok(context.type_shape(self.type_pack_element(&pack, &build(index)?)?))
+            }
+            // An element of a list a constant or a member denotes (`XS[0]`
+            // of a module display constant, `l[i]` of a requested local,
+            // `Self.values[0]`): `param_list.get` over the list's expression.
+            ExprKind::Index { object, index }
+                if let Ok(list) = build(object)
+                    && matches!(list.meta(), MetaTy::ParamList(_)) =>
+            {
+                context.list_get(&list, &build(index)?).map_err(param_error)
+            }
+            // `DType.int`: a compile-time element-type value, as it appears
+            // in a `dtype: DType` argument (`_StridedRange[DType.int]`).
+            ExprKind::Member { object, field }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType")
+                    && let Some(dtype) = Dtype::from_name(field) =>
+            {
+                self.ct_param(CtValue::Dtype(dtype))
+            }
+            // Upstream's KGEN types (`comptime KGENTypeType =
+            // __mlir_type.`!kgen.type``, `comptime KS =
+            // __mlir_type.`!kgen.string``).
+            ExprKind::Member { object, field }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type")
+                    && let Some(ty) = mojito_types::types::kgen_type_named(field) =>
+            {
+                Ok(context.type_shape(ty))
+            }
+            // A compile-time `StringLiteral`'s `value` parameter
+            // (`comptime none = "None".value`).
+            ExprKind::Member { object, field }
+                if field == mojito_types::ct::LITERAL_VALUE_MEMBER
+                    && let Ok(literal) = build(object)
+                    && let Some(parameter) =
+                        literal.as_constant().and_then(CtValue::literal_value) =>
+            {
+                self.ct_param(parameter)
+            }
+            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") =>
+            {
+                if let Some(value) = self.self_param_ct_value(field) {
+                    return self.ct_param(value);
+                }
+                // A member of the struct's shell, or a trait's requirement
+                // read through its own `Self`.
+                if let Some(member) = self.type_member_value(object, field) {
+                    let member = member?;
+                    if record {
+                        self.record_member_value(expr.source_span(), member.clone());
+                    }
+                    return Ok(member);
+                }
+                // A type member the shell holds (`comptime m = Self.T2`).
+                if let Some(member @ CtValue::Type(_)) = self.self_struct_member(field) {
+                    return self.ct_param(member.clone());
+                }
+                Err(self
+                    .instance_field_without_instance(field)
+                    .unwrap_or_else(|| TypeError::UnknownSelfParam(field.clone())))
+            }
             // A field of a struct-typed parameter value (`Self.e.rows`).
             ExprKind::Member { object, field }
                 if let Some(projection) = self.struct_value_field(object, field) =>
             {
                 projection
             }
-            // A type's value member (`T.K`, `Self.T.K`): the member read the
-            // elaborator answers per instance.
+            // A type's value member (`T.K`, `A.K`, `B[4].K`): the member read
+            // the elaborator answers per instance, recorded for a bracket
+            // argument MIR reads as a value.
             ExprKind::Member { object, field }
                 if let Some(member) = self.type_member_value(object, field) =>
             {
-                member
+                let member = member?;
+                if record {
+                    self.record_member_value(expr.source_span(), member.clone());
+                }
+                Ok(member)
             }
-            // A comparison, a boolean connective, `not`, or a conditional
-            // over compile-time values, in the operators' canonical form.
-            ExprKind::Infix(
-                InfixOp::Eq
-                | InfixOp::Ne
-                | InfixOp::Lt
-                | InfixOp::Le
-                | InfixOp::Gt
-                | InfixOp::Ge
-                | InfixOp::And
-                | InfixOp::Or,
-                _,
-                _,
-            )
-            | ExprKind::Prefix(PrefixOp::Not, _)
-            | ExprKind::IfExpr { .. }
-                if let Ok(value) = self.eval_associated_ct(expr, &HashMap::new()) =>
+            ExprKind::Prefix(PrefixOp::Neg, operand) => {
+                let operand = build(operand)?;
+                match operand.as_constant() {
+                    Some(value) => mojito_types::param_expr::fold::fold_neg(value)
+                        .map_err(param_error)
+                        .and_then(|value| self.ct_param(value)),
+                    None => context.neg(&operand).map_err(param_error),
+                }
+            }
+            // `not b` over a compile-time `Bool`; any other operand is the
+            // ordinary rejection below.
+            ExprKind::Prefix(PrefixOp::Not, operand)
+                if let Ok(operand) = build(operand)
+                    && *operand.meta() == MetaTy::bool() =>
             {
-                constant(value)
+                context.not(&operand).map_err(param_error)
+            }
+            // `a if c else b`: the arm a closed condition selects, else the
+            // selection over both arms, an integer literal arm taking the
+            // `Int` the other arm or a bare literal has.
+            ExprKind::IfExpr {
+                cond,
+                then_branch,
+                else_branch,
+            } if let Ok(condition) = build(cond)
+                && *condition.meta() == MetaTy::bool() =>
+            {
+                match condition.as_bool() {
+                    Some(true) => build(then_branch),
+                    Some(false) => build(else_branch),
+                    None => {
+                        let arm = |branch: &Expr| {
+                            let value = build(branch)?;
+                            match value.as_constant() {
+                                Some(literal @ CtValue::IntLiteral(_)) => {
+                                    match literal.clone().materialize_as(&Ty::int()) {
+                                        Some(int) => self.ct_param(int),
+                                        None => Ok(value),
+                                    }
+                                }
+                                _ => Ok(value),
+                            }
+                        };
+                        context
+                            .op(
+                                mojito_types::param_expr::ParamOp::Cond,
+                                &[condition, arm(then_branch)?, arm(else_branch)?],
+                            )
+                            .map_err(param_error)
+                    }
+                }
+            }
+            // `left op right`: closed operands fold through the shared
+            // folder; a residual operand builds the canonical expression, so
+            // `Self.n + 1` stays symbolic in a template.
+            ExprKind::Infix(op, left, right) => {
+                let (left, right) = (build(left)?, build(right)?);
+                match (left.as_constant(), right.as_constant()) {
+                    (Some(left), Some(right)) => {
+                        mojito_types::param_expr::fold::fold_infix(*op, left, right)
+                            .map_err(param_error)
+                            .and_then(|value| self.ct_param(value))
+                    }
+                    _ => context.infix(*op, &left, &right).map_err(param_error),
+                }
             }
             // `reflect[T].field_count()`: a constant for a struct subject, a
             // query node for a symbolic one.
-            _ => match self.eval_reflection_expr(expr)? {
-                Some(CtValue::Expr(query)) => Ok(context.intern(&query)),
-                Some(value) => constant(value),
-                None => self.positioned_application(expr).ok_or_else(|| {
-                    TypeError::Unsupported("unsupported dependent parameter expression".to_string())
-                }),
-            },
+            _ => {
+                if let Some(value) = self.eval_reflection_expr(expr)? {
+                    return self.ct_param(value);
+                }
+                if let ExprKind::Member { object, field } = &expr.kind {
+                    if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType") {
+                        return Err(TypeError::Unsupported(format!(
+                            "unknown DType member '{field}'"
+                        )));
+                    }
+                    // A type application whose own resolution fails reports
+                    // why (`Box[Self.B].w` over a type member `B`).
+                    if !matches!(&object.kind, ExprKind::Identifier(_))
+                        && let Some(Err(error)) = self.member_type_operand_resolution(object)
+                    {
+                        return Err(error);
+                    }
+                }
+                self.positioned_application(expr).ok_or_else(|| {
+                    match (self.calls_raising_application(expr), &expr.kind) {
+                        (Some(function), _) => TypeError::BadCall {
+                            func: function.to_string(),
+                            reason: "cannot call raising function in type parameter".to_string(),
+                        },
+                        (None, ExprKind::Member { .. }) => TypeError::NotComptime(
+                            "unsupported associated comptime member access".to_string(),
+                        ),
+                        (None, ExprKind::Index { object, .. })
+                            if let ExprKind::Identifier(name) = &object.kind =>
+                        {
+                            TypeError::NotComptime(name.clone())
+                        }
+                        (None, _) => TypeError::NotComptime(
+                            "not an associated comptime expression".to_string(),
+                        ),
+                    }
+                })
+            }
+        }
+    }
+
+    /// The parameter expression a bare name denotes in a compile-time
+    /// position, innermost first: a value parameter or local `comptime`
+    /// binding, a module constant, a local `DType` binding, then a type.
+    fn build_ct_name(&self, name: &str, recording: Recording) -> Result<ParamExpr, TypeError> {
+        // A value parameter of an enclosing declaration is its typed
+        // reference: `Buf[n + 1]` stays symbolic in the template. A value
+        // binder in scope (a `comptime for` index) shadows a same-named
+        // module constant.
+        if let Some(reference) = self.value_parameter_in_scope(name) {
+            return Ok(reference);
+        }
+        // A local `comptime` binding of a string literal's KGEN string
+        // (`comptime v = "None".value`) or of a closed raw list is inlined.
+        if let Some(bound) = self.local_comptime_value(name)
+            && (self.reads_literal_value(bound) || self.reads_raw_list(bound))
+        {
+            return self.build_ct(bound, recording);
+        }
+        // An applied constant is its application in a type position,
+        // whatever literal the elaborator folded it to.
+        if let Some(entry) = self.module_constant_entry(name) {
+            return match entry {
+                ModuleConstant::Applied(applied) => Ok(self.param_context.intern(applied)),
+                ModuleConstant::Int(n) => self.ct_param(CtValue::IntLiteral(n.clone())),
+                ModuleConstant::Value(value) => self.ct_param(value.clone()),
+                ModuleConstant::Literal(literal) => self.build_ct(literal, recording),
+            };
+        }
+        // A local `comptime` `DType` binding (`comptime c = pick(True)`) is
+        // its dtype, known or the expression a template names.
+        if let Some(dtype) = self.comptime_dtype(name) {
+            return match dtype {
+                SimdDtype::Known(dtype) => self.ct_param(CtValue::Dtype(*dtype)),
+                SimdDtype::Expr(expr) => Ok(self.param_context.intern(expr)),
+            };
+        }
+        // The enclosing struct's own parameter is spelled `Self.<name>`
+        // inside the body; the bare spelling is upstream's error.
+        if self.is_enclosing_struct_param(name) {
+            return Err(TypeError::UnqualifiedStructParam(name.to_string()));
+        }
+        self.ty_value_from_name(name, &[])?
+            .ok_or_else(|| TypeError::NotComptime(name.to_string()))
+            .and_then(|ty| self.ct_param(ty))
+    }
+
+    /// A tuple, list, or fieldwise struct construction's value over its
+    /// elements' values, which may be symbolic. `None` for any other
+    /// expression.
+    fn aggregate_value(
+        &self,
+        expr: &Expr,
+        recording: Recording,
+    ) -> Option<Result<CtValue, TypeError>> {
+        let elements = |values: &[Expr]| {
+            values
+                .iter()
+                .map(|value| self.ct_value(value, recording))
+                .collect::<Result<Vec<_>, _>>()
+        };
+        match &expr.kind {
+            ExprKind::TupleLit(values) => Some(elements(values).map(CtValue::Tuple)),
+            ExprKind::ListLit(values) => Some(elements(values).map(CtValue::List)),
+            // The fieldwise construction of a non-generic struct from
+            // compile-time values (`Extent(2, 3)`) is a frozen struct value,
+            // the form a struct-typed parameter argument takes (the
+            // elaborator materializes any other construction to it).
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if param_args.is_empty()
+                && kwargs.is_empty()
+                && let Some(info) = self.structs.get(name)
+                && info.fieldwise_init
+                && info.decls.is_empty()
+                && args.len() == info.declared_field_names.len() =>
+            {
+                let fields = info
+                    .declared_field_names
+                    .iter()
+                    .zip(args)
+                    .map(|(field, argument)| {
+                        let value = self.ct_value(argument, recording)?;
+                        let value = match info.fields.iter().find(|(name, _)| name == field) {
+                            Some((_, ty)) => {
+                                let rendered = value.to_string();
+                                value.materialize_as(ty).ok_or_else(|| {
+                                    TypeError::NotComptime(format!(
+                                        "field '{field}' of '{name}' expects {ty}, got {rendered}"
+                                    ))
+                                })?
+                            }
+                            None => value,
+                        };
+                        Ok((field.clone(), value))
+                    })
+                    .collect::<Result<Vec<_>, TypeError>>();
+                Some(fields.map(|fields| CtValue::Struct {
+                    name: name.clone(),
+                    fields,
+                }))
+            }
+            _ => None,
+        }
+    }
+
+    /// `value` as a parameter expression: a type as its shape, closed or
+    /// not, and any other value as its constant.
+    fn ct_param(&self, value: CtValue) -> Result<ParamExpr, TypeError> {
+        match value {
+            CtValue::Type(ty) => Ok(self.param_context.type_shape(ty)),
+            value => self.param_context.constant(value).map_err(param_error),
         }
     }
 
@@ -2517,7 +2420,7 @@ impl Checker {
         matches!(&expr.kind, ExprKind::Member { field, .. }
             if field == mojito_types::ct::LITERAL_VALUE_MEMBER)
             && self
-                .eval_associated_ct(expr, &HashMap::new())
+                .eval_associated_ct(expr)
                 .is_ok_and(|value| matches!(value, CtValue::KgenString(_)))
     }
 
@@ -2527,7 +2430,7 @@ impl Checker {
         self.member_value_type(expr)
             .is_some_and(|ty| matches!(ty.kind(), TyKind::ParamList(_)))
             && self
-                .eval_associated_ct(expr, &HashMap::new())
+                .eval_associated_ct(expr)
                 .is_ok_and(|value| matches!(value, CtValue::Tuple(_)))
     }
 
@@ -3890,6 +3793,32 @@ impl Checker {
 
 /// The conjuncts of a proposition: the operands of a canonical `and`, or the
 /// proposition itself.
+/// Whether [`Checker::eval_associated_ct`]'s builder records what a read
+/// denotes at its span.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Recording {
+    Record,
+    Silent,
+}
+
+/// A parameter expression in the `CtValue` transport form: a type shape is
+/// its type, closed or not.
+fn ct_transport(expr: ParamExpr) -> CtValue {
+    match expr.kind() {
+        mojito_types::param_expr::ParamKind::TypeShape(ty) => CtValue::Type(ty.clone()),
+        _ => expr.into_value(),
+    }
+}
+
+/// Where a module constant's compile-time value is recorded; see
+/// [`Checker::module_constant_entry`].
+enum ModuleConstant<'a> {
+    Applied(&'a ParamExpr),
+    Int(&'a mojito_common::literal::IntLiteral),
+    Value(&'a CtValue),
+    Literal(&'a Expr),
+}
+
 fn conjuncts(proposition: &ParamExpr) -> Vec<ParamExpr> {
     match proposition.kind() {
         mojito_types::param_expr::ParamKind::Op {

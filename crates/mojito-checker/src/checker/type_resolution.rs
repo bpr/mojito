@@ -808,7 +808,7 @@ impl Checker {
                 if is_value_parameter(param)
                     && let Some(read) = self.type_spelled_member_read(source) =>
             {
-                return Ok(TyArg::Val(self.eval_associated_ct(&read, &HashMap::new())?));
+                return Ok(TyArg::Val(self.eval_associated_ct(&read)?));
             }
             ParamArg::Type(_) if is_value_parameter(param) => {
                 return Err(TypeError::TypeMismatch {
@@ -825,7 +825,7 @@ impl Checker {
             }
         };
         if is_value_parameter(param) {
-            return Ok(TyArg::Val(self.eval_associated_ct(arg, &HashMap::new())?));
+            return Ok(TyArg::Val(self.eval_associated_ct(arg)?));
         }
         // A `!kgen.type` binder takes a trait as a type
         // (`_MLIR.KGENParamListType[Tr]`).
@@ -844,7 +844,7 @@ impl Checker {
             ExprKind::Member { .. } if let Some(spelled) = arg.type_spelling() => {
                 self.ty_from_anno(&spelled)?
             }
-            _ => match self.eval_associated_ct(arg, &HashMap::new())? {
+            _ => match self.eval_associated_ct(arg)? {
                 CtValue::Type(ty) => ty,
                 _ => {
                     return Err(TypeError::TypeMismatch {
@@ -2560,27 +2560,12 @@ impl Checker {
                     // (`h(L[0])`, `n > 2`) is the application of the function
                     // lifted for it.
                     let _lifting = self.lifting_position();
-                    let open = || {
-                        self.compile_dependent_ct_expr(expr)
-                            .ok()
-                            .or_else(|| self.lifted_application(expr))
+                    let value = match self.eval_associated_ct(expr) {
+                        Ok(value) => value,
+                        Err(error) => match self
+                            .lifted_application(expr)
                             .filter(|expression| expression.as_constant().is_none())
-                    };
-                    let value = match self.eval_associated_ct(expr, &HashMap::new()) {
-                        Ok(value @ CtValue::Expr(_)) => value,
-                        // A closed value stays the value it is (`Int(3)`),
-                        // unless a binder it reads keeps it open: nothing
-                        // is lifted for it.
-                        Ok(value) => {
-                            let lifting = self.lifting_positions.replace(0);
-                            let compiled = self
-                                .compile_dependent_ct_expr(expr)
-                                .ok()
-                                .filter(|expression| expression.as_constant().is_none());
-                            self.lifting_positions.set(lifting);
-                            compiled.map_or(value, CtValue::Expr)
-                        }
-                        Err(error) => match open() {
+                        {
                             Some(expression) => CtValue::Expr(expression),
                             None => return Err(error),
                         },
@@ -3339,12 +3324,12 @@ impl Checker {
         }
     }
 
-    /// The type of the compile-time value a type expression subscripts: a
-    /// struct construction (`TypeList[Ts.values]()`), or one through a
-    /// type's parameterized member (`M.List[Bool, Int]()`) or a generic
-    /// alias (`L[Bool, Int]()`), whose struct has an `__init__` taking no
-    /// argument.
-    fn compile_time_value_type(&self, value: &Expr) -> Result<Ty, TypeError> {
+    /// The type of the compile-time value a type expression subscripts or a
+    /// member read reads through: a struct construction
+    /// (`TypeList[Ts.values]()`), or one through a type's parameterized
+    /// member (`M.List[Bool, Int]()`) or a generic alias (`L[Bool, Int]()`),
+    /// whose struct has an `__init__` taking no argument.
+    pub(super) fn compile_time_value_type(&self, value: &Expr) -> Result<Ty, TypeError> {
         let not_construction = || {
             TypeError::Unsupported("a subscript in a type takes a struct construction".to_string())
         };
@@ -3402,7 +3387,7 @@ impl Checker {
         let info = self.structs.get(&name).ok_or_else(not_construction)?;
         if !args.is_empty() || !kwargs.is_empty() {
             return Err(TypeError::Unsupported(
-                "a type expression subscripts a construction that takes no arguments".to_string(),
+                "a compile-time construction takes no arguments".to_string(),
             ));
         }
         let nullary = info.methods.get("__init__").is_some_and(|overloads| {
@@ -3922,7 +3907,7 @@ impl Checker {
         let value = match arg {
             mojito_ast::ast::ParamArg::Value(expr) => {
                 let _lifting = self.lifting_position();
-                match self.eval_associated_ct(expr, &HashMap::new()) {
+                match self.eval_associated_ct(expr) {
                     Ok(value) => value,
                     Err(error) => CtValue::Expr(self.lifted_application(expr).ok_or(error)?),
                 }
@@ -3935,7 +3920,7 @@ impl Checker {
             mojito_ast::ast::ParamArg::Type(source)
                 if let Some(read) = self.type_spelled_member_read(source) =>
             {
-                self.eval_associated_ct(&read, &HashMap::new())?
+                self.eval_associated_ct(&read)?
             }
             // `Self.e.rows`, a field of a struct-typed value parameter,
             // parses as an associated member of the parameter.
@@ -3944,7 +3929,7 @@ impl Checker {
                     && let Some(read) =
                         source.expression_spelling(mojito_common::token::DUMMY_SPAN) =>
             {
-                self.eval_associated_ct(&read, &HashMap::new())?
+                self.eval_associated_ct(&read)?
             }
             mojito_ast::ast::ParamArg::Type(ty)
                 if let Some(element) = self.display_element_argument(ty) =>

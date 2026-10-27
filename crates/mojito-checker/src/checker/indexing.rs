@@ -2130,8 +2130,9 @@ impl Checker {
 
     /// The type a member's object names when it is a type operand (`Int32`,
     /// `SIMD[DType.int16, 4]`, `Scalar[DType.int8]`, a member application
-    /// `TypeList.of[Trait=AnyType, Int]`) rather than a value. `None` when
-    /// its root names a binding or it names no type.
+    /// `TypeList.of[Trait=AnyType, Int]`) or a construction of one
+    /// (`TypeList[Trait=AnyType, Ts.values]()`), rather than a value. `None`
+    /// when its root names a binding or it names no type.
     pub(super) fn member_type_operand(&self, object: &Expr) -> Option<Ty> {
         self.member_type_operand_resolution(object)?.ok()
     }
@@ -2160,6 +2161,22 @@ impl Checker {
             },
             ExprKind::MultiIndex { object, .. } => Some(applied_member_root(object)?),
             ExprKind::TypeApply { .. } | ExprKind::TypeValue(_) => None,
+            // A construction (`TypeList[Trait=AnyType, Ts.values]()`,
+            // `TypeList.of[Int]()`) is read on the type it constructs.
+            ExprKind::Call { name, .. }
+                if self.lookup(name).is_none()
+                    && (self.structs.contains_key(name)
+                        || self.comptime_aliases.contains_key(name)) =>
+            {
+                return Some(self.compile_time_value_type(object));
+            }
+            ExprKind::Invoke { callee, .. }
+                if matches!(&callee.kind, ExprKind::Member { object, .. }
+                    if matches!(&object.kind, ExprKind::Identifier(name)
+                        if name != "Self" && self.lookup(name).is_none())) =>
+            {
+                return Some(self.compile_time_value_type(object));
+            }
             _ => return None,
         };
         if root.is_some_and(|name| name == "Self" || self.lookup(name).is_some()) {

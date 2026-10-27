@@ -309,9 +309,10 @@ missing.
   - `mojito-comptime`'s `Elab`: `eval`, `type_from_name`,
     `associated_value_at`, `apply_generic_alias`, and the `TypeAliases`
     table. It has its own name resolution and no `Self`.
-  - The checker's `eval_associated_ct`, `compile_dependent_ct_expr`, and
-    `constraint_operand` (`checker/constraints.rs`), and
-    `comptime_type_operand` and `member_type_operand`.
+  - The checker's `compile_dependent_ct_expr` (`checker/constraints.rs`),
+    with `eval_associated_ct` its `CtValue` adapter, beside
+    `constraint_operand`, `comptime_type_operand`, and
+    `member_type_operand`.
   - The lifted fallback (`Checker::lifted_application`). It serves only
     `Int` and `Bool` results, and mints a `$comptime$$N` function per
     occurrence rather than per expression.
@@ -326,7 +327,8 @@ missing.
   - R1383: reflection.
   - R1384: struct-valued bracket arguments.
   - R1385: associated members that apply a callable.
-  - R1386: the checker's second per-shape folder.
+  - R1386 (landed): the checker's second per-shape folder. Its residue,
+    a symbolic aggregate with no parameter expression, is R1472.
   - R1387: type operands.
   - R1388: delete what is left of `Elab`'s evaluator and type resolver.
 - **Slices filed earlier**:

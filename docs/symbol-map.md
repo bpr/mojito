@@ -862,7 +862,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   operands to their binders (`GenericConstraint::bind`), and
   `ConstraintEnvironment` is the identity-keyed argument environment every
   verdict reads. Its evaluators resolve names and delegate operator
-  semantics to `param_expr::fold`; `compile_dependent_ct_expr` builds a
+  semantics to `param_expr::fold`; `compile_dependent_ct_expr` is the one
+  builder of a compile-time expression (`build_ct`, its names through
+  `build_ct_name` and `module_constant_entry`), and `eval_associated_ct`
+  its `CtValue` adapter: build, `ParamContext::fold`, then `ct_transport`,
+  recording member reads and type applications at their spans
+  (`Recording`), with `aggregate_value` carrying a tuple, list, or
+  fieldwise construction whose elements are symbolic. It builds a
   `ParamExpr` through the compilation's `ParamContext`
   (`Checker::param_context`, the compilation's `CheckContext::param_context`),
   and `value_parameter_in_scope`/`push_param_scope` resolve a bare value
@@ -1447,7 +1453,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `lifts_comptime_value`, which adds a collection display and a
   `Dict[...]`/`Set[...]` constructor call, module or local. The checker
   folds every other closed module constant into `Checker.module_values`
-  (`Checker::module_value`, `Checker::module_constant_value`); a local
+  (`Checker::module_constant_entry`, which reads `comptime_applied`,
+  `comptimes`, `module_values`, then `comptime_literals`, and
+  `Checker::module_constant_value`); a local
   binding of an application is read the same way
   (`Checker::local_comptime_application`). The
   elaborator keeps every collection-valued `comptime` binding for the
@@ -1720,7 +1728,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `solve_applied_args` (`checker/generics.rs`, from `solve_value_args`)
   solves a value parameter through one, and
   `ComptimeThunks::request_applications` lifts nothing for it. `not` and a
-  conditional are compiled by `fold_ct_not` and `fold_ct_cond`
+  conditional are compiled by `build_ct`'s arms
   (`checker/constraints.rs`). A static call through `Self` in a body is
   typed by `infer_type_receiver_call`
   (`checker/method_calls/type_receivers.rs`) as the call on the enclosing
@@ -2066,7 +2074,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`simd_width`, `type_resolution.rs`); `infer_member` (`indexing.rs`)
   types every `Self.x` value-parameter read at its declared type and records
   it as the binder's parameter constant, never a projection of `self`.
-- `eval_associated_ct` freezes a fieldwise construction of a non-generic
+- `aggregate_value` (`checker/constraints.rs`, behind `eval_associated_ct`
+  and `compile_dependent_ct_expr`) freezes a fieldwise construction of a non-generic
   struct from compile-time values (`Extent(2, 3)`) to `CtValue::Struct`;
   `Elab::freeze_struct_value_arguments` (`comptime/elab.rs`) rewrites any
   other struct-typed argument of a struct or a uniquely named `def` to that

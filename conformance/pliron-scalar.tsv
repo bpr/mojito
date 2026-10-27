@@ -473,6 +473,7 @@ assets/ok/maybe_uninit_roundtrip.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/maybe_uninit_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/member_alias_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/member_call_unread_struct_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/member_read_through_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_capturing_callable_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_mut_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_named_result.mojo	-	ineligible	no-scalar-entry-shape
@@ -481,6 +482,7 @@ assets/ok/method_simd_pattern_beside_bare.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/method_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_unused_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_value_parameter_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/module_constant_literal_bracket.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_reference_result_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/movable_where_false_explicit_destroy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/move_after_last_raise_in_try.mojo	-	ineligible	no-scalar-entry-shape

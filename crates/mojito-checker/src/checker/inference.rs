@@ -2499,7 +2499,7 @@ impl Checker {
         let elements = values
             .iter()
             .map(|value| {
-                self.eval_associated_ct(value, &HashMap::new())
+                self.eval_associated_ct(value)
                     .ok()?
                     .materialize_as(&element)
             })

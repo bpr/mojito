@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A module string, float, or `Bool` constant is now its literal's value in
+  a bracket argument (`bind[lit]()`, `bind[lit + "me"]()`,
+  `kbind[lit.value]()`, `gf[F]()`), and a compile-time member read through
+  a construction (`TypeList[Trait=AnyType, Self.Ts.values]().length`) reads
+  the member on the constructed type, both as at the pin (R1386, R1194).
+  The checker builds every compile-time expression through one
+  parameter-expression builder, `compile_dependent_ct_expr`, of which
+  `eval_associated_ct` is the folded `CtValue` form, where the two were
+  separate per-shape evaluators with different name lookups.
+
 - A struct's `comptime` member that applies a function (`comptime V =
   f(Self.k)`) is now the application over the struct's parameters, which
   each instance evaluates, as at the pin (R1385, R489), where it was

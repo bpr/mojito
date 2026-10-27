@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1472**.
+Next free ID: **R1474**.
 
 ## Ordered Work
 
@@ -150,9 +150,9 @@ which names the upstream pass each one follows. Each is measured by the
     else n` and `comptime d = UInt8(n)` inside `def g[n: Int]` both run.
   - Probe: R1245's `t[1] if c else t[0]` and R853's `comptime d =
     UInt8(250)` in `main` are rejected. The pin prints `5` and `250`.
-  - Closes R1245 (a closed conditional is rejected) and R853 (a sized-scalar
-    local binding is refused). Shrinks R518 (its local form) and R1191 (a
-    local string constant).
+  - Closes R1245 (a closed conditional is rejected), R853 (a sized-scalar
+    local binding is refused), and R1191 (a local string constant in a
+    bracket). Shrinks R518 (its local form).
   - Depends on R386, so a closed `String` or float binding is lifted instead
     of regressing.
   - Model: Opus, Not Planned.
@@ -194,7 +194,7 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: R135's module `comptime K = Int32(4)` is refused. The pin prints
     `4`.
   - Closes R135 (a sized-scalar module constant) and R518's constant half.
-    Shrinks R1191 and R1171.
+    Shrinks R1171.
   - Depends on R1379.
   - Model: Fable, Planned.
 
@@ -252,21 +252,24 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1386 Bracket arguments and associated members are evaluated by a
-  second per-shape folder**
+- [ ] **R1472 A symbolic tuple, list, or struct parameter value has no
+  parameter expression**
 
-  `eval_associated_ct` (`checker/constraints.rs`) repeats
-  `compile_dependent_ct_expr`'s arms with its own name lookup, where
-  upstream checks each compile-time expression once into a typed parameter
-  value.
-  - The lever: `eval_associated_ct` becomes `compile_dependent_ct_expr`
-    followed by `param_expr::fold`.
-  - `member_type_operand` reads a member through a construction's type.
-  - Probe: R1191's `bind[lit]()` over a string constant fails with "not a
-    compile-time Int constant". The pin prints `So`.
-  - Closes R1191 (a string constant in a bracket) and R1194 (a member read
-    through a `TypeList` construction). Shrinks R1199.
-  - Depends on R1385.
+  `ParamKind` has no aggregate construction node, so `(n, 1)` over a binder
+  `n` cannot be built as a parameter expression, where upstream's
+  parameter-level struct and list constructions take parameter operands.
+  - `eval_associated_ct` carries such an aggregate in its `CtValue`
+    transport form instead (`aggregate_value`, `checker/constraints.rs`).
+  - `ParamContext::constant` rejects it, so a bracket argument cannot record
+    it as an open expression.
+  - The lever: a `ParamKind` aggregate node with replacement, folding,
+    display, MIR text, and a package version bump. `aggregate_value`'s
+    symbolic case goes.
+  - Probe: `g[(n, 1)]()` in `def f[n: Int]` over `def g[t: Tuple[Int,
+    Int]]()` fails with "type mismatch for value parameter 't': expected
+    Tuple[Int, Int], found (n, 1)". The pin prints `5 1` for `f[5]()`.
+  - Found while landing R1386 (2026-10-26).
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R1387 A type operand in a condition and in a value are built by
@@ -277,8 +280,8 @@ which names the upstream pass each one follows. Each is measured by the
   reader, where upstream's type comparison is one parameter operator over
   type-valued parameter expressions.
   - The lever: `constraint_operand` and `comptime_type_operand` take their
-    operands from R1386's builder, which then returns type-valued
-    expressions too.
+    operands from `compile_dependent_ct_expr`, which already returns
+    type-valued expressions (a type shape).
   - Probe: R1180's `comptime b = T == Int` in `def g[T: Movable]` fails with
     "Undefined variable 'T'". The pin prints `True`.
   - Closes R1180 (a type comparison as a `Bool`) and R1170's `comptime if
@@ -5222,26 +5225,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1191 A `comptime` string constant is not read in a bracket
+- [ ] **R1191 A local `comptime` string constant is not read in a bracket
   argument**
 
-  Problem: `comptime lit = "So"` then `bind[lit]()` over `def bind[s:
-  StringLiteral]()` fails with "not a compile-time Int constant: lit",
-  where the pin prints `So`.
-  - The `ExprKind::Identifier` arm of `Checker::eval_associated_ct`
-    (`checker/constraints.rs`) reads only `Int` constants (`comptimes`),
-    applied constants, and `module_values`, which holds only
-    `is_folded_parameter_argument` values.
-  - A module string constant sits in `comptime_literals`, and a local one
-    is an ordinary immutable binding, so neither is a compile-time value
-    there.
-  - Probe: a local `comptime local = "Lo"` then `bind[local]()`.
-  - Probe: `bind[lit + "me"]()`, which prints `Some` at the pin.
-  - Probe: the literal's KGEN string read through one,
-    `kbind[(lit + "me").value]()` and `kbind[local.value]()` over `def
-    kbind[s: KGENString]()`.
+  Problem: `comptime local = "Lo"` in `main`, then `bind[local]()` over
+  `def bind[s: StringLiteral]()`, fails with "not a compile-time Int
+  constant: local", where the pin prints `Lo`.
+  - The elaborator folds the closed local binding above the check, so the
+    check never records it as a compile-time value.
+  - `bind_compile_time_only_value` (`checker/comptime_validation.rs`) keeps
+    only reflection handles, type lists, `.value` reads, and raw lists.
+  - A module string constant is read in a bracket since R1386.
+  - Probe: `kbind[local.value]()` over `def kbind[s: KGENString]()`, which
+    prints at the pin.
   - Found while landing R1183 (2026-10-20).
-  - Depends on nothing.
+  - Depends on R1379, which binds every local value binding through the
+    check.
   - Model: Opus, Not Planned.
 
 - [ ] **R1193 A member read on a struct applied to a forwarded pack names
@@ -5261,36 +5260,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1194 A member read through a `TypeList` construction in a local
-  `comptime` is lifted as a function**
+- [ ] **R1473 A member read through a construction that takes arguments is
+  rejected**
 
-  Problem: `comptime n = TypeList[Ts.values]().length` in `def h[*Ts:
-  AnyType]` stops with "MIR function '$comptime$h$c0' block 0 parameter
-  constant names parameter `Ts` of `h` that no enclosing declaration
-  binds", where the pin prints `3` for `h[Int, Bool, Int]()`.
-  - `TypeList[Ts.values].length`, without `()`, runs, and so does `return
-    TypeList[Ts.values]().length`.
-  - `compile_dependent_ct_expr` (`checker/constraints.rs`) reads a member
-    through a type (`type_member_value` over `member_subject`), but
-    `member_type_operand` gives up on a construction.
-  - The binding is then lifted to a thunk, which does not bind the `def`'s
-    pack.
-  - Upstream reads a `comptime` member through an instance on the
-    instance's type.
-  - Probe: a value alias's body over a construction, `comptime Count[*Ts:
-    AnyType] = TypeList[Trait=AnyType, Ts.values]().length`, is rejected
-    at the declaration with "a variadic pack on a Bool-bodied comptime
-    alias parameter", where the pin prints `3` for `Count[Int, Bool,
-    Float64]`: `Checker::lower_parametric_value` reads the body through
-    `compile_dependent_ct_expr`, which gives up on the construction.
-  - Probe: a struct member's body over a construction, `comptime n =
-    TypeList[Trait=AnyType, Self._types]().length`, fails with
-    "unsupported associated comptime member access", where the pin prints
-    `2` for `S[Int, Bool].n`; `eval_associated_ct` reaches the same
-    `member_type_operand`.
-  - Found while landing R1184 (2026-10-20).
+  Problem: `g[S(3).n]()` over `comptime n = 7` in a `@fieldwise_init struct
+  S` fails with "a compile-time construction takes no arguments", where the
+  pin prints `7`.
+  - `member_type_operand` reads a member through a construction on the
+    type `compile_time_value_type` (`checker/type_resolution.rs`) gives it.
+  - That function accepts only a construction with no arguments, since a
+    type subscript needs the value itself.
+  - Upstream types the construction as a call and reads the member on its
+    result type, without evaluating it.
+  - The lever: a member read types the construction through call inference
+    in the compile-time position.
+  - Probe: a struct member's body, `comptime m = S(3).n`, fails the same
+    way.
+  - Found while landing R1386 (2026-10-26).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1195 A struct `comptime` member's body is not checked against its
   annotation**

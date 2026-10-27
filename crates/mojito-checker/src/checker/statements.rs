@@ -148,7 +148,7 @@ impl Checker {
                 self.comptime_literals.insert(name.clone(), value.clone());
                 self.infer(value).ok()
             } else if let Some(folded) = self
-                .eval_associated_ct(value, &HashMap::new())
+                .eval_associated_ct(value)
                 .ok()
                 .filter(CtValue::is_folded_parameter_argument)
             {

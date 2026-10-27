@@ -1430,10 +1430,7 @@ impl Checker {
                 },
                 mojito_ast::ast::ParamArg::Type(_) => continue,
             };
-            if matches!(
-                self.eval_associated_ct(expression, &HashMap::new()),
-                Ok(CtValue::Dtype(_))
-            ) {
+            if matches!(self.eval_associated_ct(expression), Ok(CtValue::Dtype(_))) {
                 // Its value was solved already; inference only records how
                 // it lowers.
                 let _ = self.infer(expression);

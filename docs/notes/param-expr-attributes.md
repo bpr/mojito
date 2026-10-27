@@ -234,7 +234,7 @@ monomorphization still binds a value binder by spelling (`docs/roadmap.md`).
 ## One folder
 
 `param_expr::fold::fold_infix` is the only implementation of compile-time
-scalar operators. The checker's `eval_ct` and `eval_associated_ct_infix`, the
+scalar operators. The checker's `eval_ct` and `build_ct`'s `Infix` arm, the
 elaborator's `eval_infix` (which no longer evaluates each operand three times,
 and no longer manufactures identifier ASTs in `eval_infix_values`), native
 monomorphization's `eval_ct`, and the canonicalizing constructors all call it.

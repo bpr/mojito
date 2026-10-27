@@ -404,7 +404,7 @@ impl Checker {
         let literal = match self.eval_ct(expression) {
             Ok(literal) => literal,
             Err(error) => {
-                return match self.eval_associated_ct(expression, &HashMap::new()) {
+                return match self.eval_associated_ct(expression) {
                     Ok(CtValue::Expr(expr)) if expr.meta().is_integer() => Ok(expr),
                     _ => Err(error),
                 };
