@@ -914,7 +914,7 @@ pub struct Checker {
     /// Call results typed by one of the enclosing body's own type parameters
     /// whose bounds do not prove `Deinitable`: the caller owns each and cannot
     /// destroy it (`explicit_destroy`'s abandoned-temporary rule).
-    linear_temporaries: RefCell<FactSet<SourceSpan>>,
+    linear_temporaries: RefCell<FactMap<SourceSpan, crate::explicit_destroy::Linear>>,
     /// Iterables whose selected `__iter__` raises: the loop header is a
     /// raise point (`explicit_destroy`'s raise edges).
     raising_iterations: RefCell<FactSet<SourceSpan>>,
@@ -1107,7 +1107,7 @@ impl Checker {
             slice_literals: RefCell::new(HashMap::new()),
             parameter_field_objects: RefCell::new(FactSet::default()),
             unconsumed_temporaries: RefCell::new(FactSet::default()),
-            linear_temporaries: RefCell::new(FactSet::default()),
+            linear_temporaries: RefCell::new(FactMap::default()),
             raising_iterations: RefCell::new(FactSet::default()),
             return_ref_contracts: Vec::new(),
             return_annotations: Vec::new(),
@@ -2558,46 +2558,17 @@ fn run_explicit_destroy(
     let node_facts = checker.node_facts.borrow();
     let deletability = checker.explicit_destroy_deletability.borrow();
     // An installed struct's entry is the package build's.
-    let mut types = checker.explicit_destroy_table(struct_types.clone());
-    // A non-`Deinitable` temporary is keyed by its struct's entry or, typed
-    // by a type parameter, the linear one. One in a position that takes no
-    // ownership of it is one the caller owns and cannot implicitly destroy;
-    // any other is owned in flight until the operation that consumes it.
-    let linear_key = |span: &SourceSpan| match node_facts
-        .get(span)
-        .and_then(|facts| facts.ty.as_ref())
-        .map(Ty::kind)
-    {
-        Some(TyKind::Struct(name, _)) if types.contains_key(name) => name.clone(),
-        _ => crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
-    };
+    let types = checker.explicit_destroy_table(struct_types.clone());
+    // A non-`Deinitable` temporary in a position that takes no ownership of
+    // it is one the caller owns and cannot implicitly destroy; any other is
+    // owned in flight until the operation that consumes it.
     let unconsumed = checker.unconsumed_temporaries.borrow();
     let (linear_temporaries, owned_temporaries): (HashMap<_, _>, HashMap<_, _>) = checker
         .linear_temporaries
         .borrow()
         .iter()
-        .map(|span| (span.clone(), linear_key(span)))
+        .map(|(span, linear)| (span.clone(), linear.clone()))
         .partition(|(span, _)| unconsumed.contains(span));
-    // A value typed by a non-`Deinitable` type parameter is linear with
-    // upstream's message; the entry exists only for this pass, and only when
-    // some value is one.
-    if !deletability.linear_declarations.is_empty()
-        || !deletability.linear_bindings.is_empty()
-        || linear_temporaries
-            .values()
-            .chain(owned_temporaries.values())
-            .any(|key| key == crate::explicit_destroy::LINEAR_TYPE_PARAMETER)
-    {
-        types.insert(
-            crate::explicit_destroy::LINEAR_TYPE_PARAMETER.to_string(),
-            mojito_checked::checked::ExplicitDestroyInfo {
-                message: "unhandled explicitly destroyed type 'AnyType'".to_string(),
-                declared: true,
-                destructors: HashMap::new(),
-                fields: HashMap::new(),
-            },
-        );
-    }
     let members: Vec<Stmt> = checker
         .checked_trait_members(program)
         .into_iter()
@@ -2617,6 +2588,18 @@ fn run_explicit_destroy(
                 .collect(),
             linear_temporaries,
             owned_temporaries,
+            generators: checker
+                .comprehension_iterables
+                .borrow()
+                .values()
+                .flatten()
+                .filter_map(|span| {
+                    deletability
+                        .bindings
+                        .get(span)
+                        .map(|linear| (span.clone(), linear.clone()))
+                })
+                .collect(),
             raise_points: node_facts
                 .iter()
                 .filter(|(_, facts)| {
@@ -2834,6 +2817,12 @@ type StructAssociatedMembers = (
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct TraitInfo {
     refines: Vec<String>,
+    /// The symbol path of the module declaring the trait
+    /// (`std.builtin.comparable`), which orders a composition's traits as
+    /// upstream's `sortAndDeduplicateTraitSymbols` does. An installed
+    /// trait's is the package directory's.
+    #[serde(skip)]
+    module: Vec<String>,
     #[serde(serialize_with = "interface::sorted")]
     methods: HashMap<String, Vec<MethodSig>>,
     #[serde(serialize_with = "interface::sorted")]

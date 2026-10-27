@@ -5714,6 +5714,18 @@ false condition rejects `^` transfers, `var` parameters and receivers, and
 move/copy captures at the checker's consuming positions (`check_consuming_as`
 distinguishes an ownership `Move` from `Deinit` consumption, so destructors
 and named destructors still consume a non-Movable value).
+Whether a value owes explicit destruction is one verdict on its type, the
+checker's `destruction_verdict`, upstream's `getDestructorForType`
+(`LowerLIT/CheckLifetimes.cpp`): an archetype of the body (its own type
+parameter, an opaque pack element) is linear unless its refined bound
+proves `Deinitable`, with the message of the first trait of the bound's
+ancestor-closed composition in symbol-path order
+(`getMessageIfTraitIsLinear` over `sortAndDeduplicateTraitSymbols`); a struct
+instance is linear unless its `Deinitable` condition holds under the
+scope's assumptions, with the struct's message. The checker records the
+verdict per parameter, binding, and temporary (`CheckedDeletability`,
+`linear_temporaries`), and the walk reads it rather than any type's shape or
+spelled name.
 The optional `@explicit_destroy("message")` decorator does not control
 linearity; it supplies the required user-facing diagnostic when an obligation
 is violated and is inert on an implicitly deletable type. A checked,

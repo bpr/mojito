@@ -5,30 +5,43 @@ use mojito_ast::ast::{
     ArgConvention, Condition, Expr, ExprKind, SourceType, Stmt, StmtKind, TStringPart,
 };
 use mojito_checked::checked::{AnnotationSite, ExplicitDestroyInfo, NodeFacts};
-use mojito_checked::fact_store::FactSet;
+use mojito_checked::fact_store::FactMap;
 use mojito_common::error::TypeError;
 use mojito_common::token::SourceSpan;
-use mojito_types::types::Ty;
-use mojito_types::types::TyKind;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-/// Positive deletability facts proved by the type checker in the lexical
-/// constraint environment where each binding is introduced.
+/// The destruction verdicts the type checker recorded for owned values.
+///
+/// Each is decided in the lexical constraint environment where the value is
+/// introduced (the checker's `destruction_verdict`): a value absent here is
+/// `Deinitable` there.
 ///
 /// Conditional conformances cannot be recovered from a nominal type name after
 /// checking: `List[T]` is linear in general, while it is ordinarily droppable
 /// under a proven `T: Deinitable` constraint.
 #[derive(Debug, Default)]
 pub struct CheckedDeletability {
-    pub declarations: FactSet<AnnotationSite>,
-    pub bindings: FactSet<SourceSpan>,
-    /// Parameters typed by a type parameter (or an opaque dependent pack
-    /// element) whose bounds do not prove `Deinitable`: an owned one is
-    /// linear, as upstream.
-    pub linear_declarations: FactSet<AnnotationSite>,
-    /// Bindings whose declared type is such a type parameter.
-    pub linear_bindings: FactSet<SourceSpan>,
+    /// Parameter declarations whose type is not `Deinitable` there.
+    pub declarations: FactMap<AnnotationSite, Linear>,
+    /// Bindings (`var`, `for`, a comprehension's generator) whose type is
+    /// not `Deinitable` there.
+    pub bindings: FactMap<SourceSpan, Linear>,
+}
+
+/// Why a value cannot be implicitly destroyed, upstream's
+/// `SpecialMemberInfo::unavailable`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Linear {
+    /// The denying message: an archetype's first linear trait's, or the
+    /// struct's.
+    pub message: String,
+    /// An archetype (a type parameter, an associated projection, an opaque
+    /// pack element): its diagnostic carries upstream's `Deinitable` note.
+    pub archetype: bool,
+    /// The struct whose explicit-destroy entry names its destructors and
+    /// linear fields; `None` for an archetype.
+    pub destroy_type: Option<String>,
 }
 
 /// Per-expression facts the checker recorded for one program, carried on
@@ -39,22 +52,19 @@ pub struct SpanFacts {
     /// receiver: they lend their place and consume nothing.
     pub lent: HashSet<SourceSpan>,
     /// Temporaries the enclosing body owns but cannot destroy, in a position
-    /// that takes no ownership of them, each with its explicit-destroy type
-    /// name: its struct, or [`LINEAR_TYPE_PARAMETER`] when its type is one of
-    /// the body's own type parameters whose bounds do not prove `Deinitable`.
-    pub linear_temporaries: HashMap<SourceSpan, String>,
-    /// Linear temporaries in a position that takes ownership of them, keyed
-    /// as [`Self::linear_temporaries`]: each is owned in flight from its
-    /// evaluation until the operation that consumes it.
-    pub owned_temporaries: HashMap<SourceSpan, String>,
+    /// that takes no ownership of them, each with its verdict.
+    pub linear_temporaries: HashMap<SourceSpan, Linear>,
+    /// Linear temporaries in a position that takes ownership of them: each
+    /// is owned in flight from its evaluation until the operation that
+    /// consumes it.
+    pub owned_temporaries: HashMap<SourceSpan, Linear>,
+    /// The linear binders of comprehension generators, keyed by their
+    /// iterable, as [`CheckedDeletability::bindings`] records them.
+    pub generators: HashMap<SourceSpan, Linear>,
     /// Occurrences that may raise: a raising call, operator, conversion, or
     /// `__iter__`. Each is a raise edge of its body.
     pub raise_points: HashSet<SourceSpan>,
 }
-
-/// The synthetic explicit-destroy type name of a value typed by a
-/// non-`Deinitable` type parameter (`ExplicitDestroyInfo` key).
-pub const LINEAR_TYPE_PARAMETER: &str = "$linear";
 
 /// Check `statements`, and each trait member of `members` (a `def` whose
 /// first argument is its trait's receiver).
@@ -66,7 +76,12 @@ pub(crate) fn check(
     types: &DeclarationTable<ExplicitDestroyInfo>,
     spans: SpanFacts,
 ) -> Result<(), TypeError> {
-    if types.is_empty() {
+    if types.is_empty()
+        && deletability.declarations.is_empty()
+        && deletability.bindings.is_empty()
+        && spans.linear_temporaries.is_empty()
+        && spans.owned_temporaries.is_empty()
+    {
         return Ok(());
     }
     let root = Env {
@@ -99,10 +114,8 @@ pub(crate) fn check(
                             };
                             (
                                 &p.name,
-                                &p.ty,
                                 p.convention,
-                                deletability.declarations.contains(&site),
-                                deletability.linear_declarations.contains(&site),
+                                deletability.declarations.get(&site).cloned(),
                             )
                         })
                         .collect::<Vec<_>>();
@@ -141,16 +154,8 @@ fn check_expr(
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
     let span = expr.source_span();
-    if let Some(key) = env.spans.linear_temporaries.get(&span)
-        && let Some(info) = types.get(key)
-    {
-        let var = "(expression temporary)".to_string();
-        let message = info.message.clone();
-        return Err(if key == LINEAR_TYPE_PARAMETER {
-            TypeError::LinearAbandoned { var, message }
-        } else {
-            TypeError::Abandoned { var, message }
-        });
+    if let Some(linear) = env.spans.linear_temporaries.get(&span) {
+        return Err(abandoned(TEMPORARY, linear));
     }
     let baseline = (env.in_flight.len(), env.pending.len());
     check_operands(expr, env, node_facts, types)?;
@@ -158,11 +163,11 @@ fn check_expr(
         consume_operands(env, baseline, types)?;
     }
     if env.spans.raise_points.contains(&span) {
-        raise_edge(env, types)?;
+        raise_edge(env)?;
     }
-    if let Some(key) = env.spans.owned_temporaries.get(&span) {
-        let key = key.clone();
-        env.in_flight.push(key);
+    if let Some(linear) = env.spans.owned_temporaries.get(&span) {
+        let linear = linear.clone();
+        env.in_flight.push(linear);
     }
     Ok(())
 }
@@ -224,12 +229,9 @@ fn check_operands(
                 ExprKind::Transfer(inner) => obligation_place(inner, env)
                     .filter(|(id, _)| !env.vars[*id].uninitialized)
                     .filter(|(id, path)| {
-                        env.vars[*id]
-                            .explicit_type
-                            .as_ref()
-                            .is_some_and(|type_name| {
-                                destructor_at_path(type_name, path, method, types)
-                            })
+                        env.vars[*id].linear.as_ref().is_some_and(|linear| {
+                            destructor_at_path(linear.destroy_type.as_deref(), path, method, types)
+                        })
                     }),
                 _ => None,
             };
@@ -377,9 +379,9 @@ struct Env {
     /// Names of the compile-time parameters in scope: the enclosing
     /// declarations' own and the owning struct's.
     params: std::rc::Rc<HashSet<String>>,
-    /// Explicit-destroy keys of the owned linear temporaries evaluated but
-    /// not yet consumed by their operation.
-    in_flight: Vec<String>,
+    /// The verdicts of the owned linear temporaries evaluated but not yet
+    /// consumed by their operation.
+    in_flight: Vec<Linear>,
     /// Places transferred (`x^`) but not yet consumed by their operation.
     pending: Vec<(usize, Vec<String>)>,
     /// The enclosing `try` regions a raise reaches, innermost last.
@@ -441,18 +443,11 @@ impl Env {
         }
     }
 
-    fn declare(
-        &mut self,
-        name: &str,
-        explicit_type: Option<String>,
-        message: Option<String>,
-        live: bool,
-    ) {
+    fn declare(&mut self, name: &str, linear: Option<Linear>, live: bool) {
         let id = self.vars.len();
         self.vars.push(Var {
             name: name.to_string(),
-            explicit_type,
-            message,
+            linear,
             uninitialized: false,
             by_parts: false,
             obligations: if live {
@@ -479,9 +474,9 @@ impl Env {
         for id in ids {
             let var = &self.vars[id];
             if !var.obligations.is_empty()
-                && let Some(message) = &var.message
+                && let Some(linear) = &var.linear
             {
-                return Err(var.abandoned(message));
+                return Err(abandoned(&var.name, linear));
             }
         }
         Ok(())
@@ -492,9 +487,9 @@ impl Env {
         for id in ids {
             let var = &self.vars[id];
             if !var.obligations.is_empty()
-                && let Some(message) = &var.message
+                && let Some(linear) = &var.linear
             {
-                return Err(var.abandoned_on_raise(message));
+                return Err(abandoned_on_raise(&var.name, linear));
             }
         }
         Ok(())
@@ -550,7 +545,11 @@ fn check_block(
 fn explicit_error<T>(var: &Var, problem: &str) -> Result<T, TypeError> {
     Err(TypeError::ExplicitDestroy {
         var: var.name.clone(),
-        message: var.message.clone().unwrap_or_default(),
+        message: var
+            .linear
+            .as_ref()
+            .map(|linear| linear.message.clone())
+            .unwrap_or_default(),
         problem: problem.to_string(),
     })
 }
@@ -558,8 +557,9 @@ fn explicit_error<T>(var: &Var, problem: &str) -> Result<T, TypeError> {
 #[derive(Clone)]
 struct Var {
     name: String,
-    explicit_type: Option<String>,
-    message: Option<String>,
+    /// Why the value cannot be implicitly destroyed; `None` when it is
+    /// `Deinitable` and owes nothing.
+    linear: Option<Linear>,
     /// Consumed on a path that may have raised into the enclosing `except`
     /// arm: every use there is a use of an uninitialized value, as upstream.
     uninitialized: bool,
@@ -573,30 +573,26 @@ struct Var {
     moved: HashSet<Vec<String>>,
 }
 
-impl Var {
-    /// The error for leaving this variable's obligations undischarged.
-    fn abandoned(&self, message: &str) -> TypeError {
-        if self.explicit_type.as_deref() == Some(LINEAR_TYPE_PARAMETER) {
-            TypeError::LinearAbandoned {
-                var: self.name.clone(),
-                message: message.to_string(),
-            }
-        } else {
-            TypeError::Abandoned {
-                var: self.name.clone(),
-                message: message.to_string(),
-            }
-        }
-    }
+/// The description of an expression temporary in a diagnostic.
+const TEMPORARY: &str = "(expression temporary)";
 
-    /// The error for a raise edge leaving this variable's obligations
-    /// undischarged.
-    fn abandoned_on_raise(&self, message: &str) -> TypeError {
-        TypeError::AbandonedOnRaise {
-            var: self.name.clone(),
-            message: message.to_string(),
-            linear: self.explicit_type.as_deref() == Some(LINEAR_TYPE_PARAMETER),
-        }
+/// The error for leaving `var`, which `linear` describes, undischarged.
+fn abandoned(var: &str, linear: &Linear) -> TypeError {
+    let (var, message) = (var.to_string(), linear.message.clone());
+    if linear.archetype {
+        TypeError::LinearAbandoned { var, message }
+    } else {
+        TypeError::Abandoned { var, message }
+    }
+}
+
+/// The error for a raise edge leaving `var`, which `linear` describes,
+/// undischarged.
+fn abandoned_on_raise(var: &str, linear: &Linear) -> TypeError {
+    TypeError::AbandonedOnRaise {
+        var: var.to_string(),
+        message: linear.message.clone(),
+        linear: linear.archetype,
     }
 }
 
@@ -634,7 +630,7 @@ fn join_parametric(mut exits: Vec<Env>) -> Option<Env> {
     let mut joined = exits.pop()?;
     for other in &exits {
         for (var, arm) in joined.vars.iter_mut().zip(&other.vars) {
-            if var.message.is_some()
+            if var.linear.is_some()
                 && (var.obligations != arm.obligations || var.moved != arm.moved)
             {
                 var.obligations.extend(arm.obligations.iter().cloned());
@@ -819,7 +815,7 @@ fn check_try(
             types,
         )?
     {
-        raise_edge(&exit, types)?;
+        raise_edge(&exit)?;
     }
     let Some(joined) = join_try(normal, raised)? else {
         // Every route is terminal (return, raise, break, or continue), but
@@ -847,9 +843,9 @@ fn join_try(normal: Vec<Env>, raised: Vec<Env>) -> Result<Option<Env>, TypeError
             for (kept, consumed) in arm.vars.iter().zip(&exit.vars) {
                 if !kept.obligations.is_empty()
                     && consumed.obligations.is_empty()
-                    && let Some(message) = &kept.message
+                    && let Some(linear) = &kept.linear
                 {
-                    return Err(kept.abandoned_on_raise(message));
+                    return Err(abandoned_on_raise(&kept.name, linear));
                 }
             }
         }
@@ -909,28 +905,23 @@ impl mojito_ast::visit::Visitor for ParamMention<'_> {
     }
 }
 
+/// The struct at `path` beneath a value of the struct `root_type`; an
+/// archetype has none.
 fn type_at_path(
-    root_type: &str,
+    root_type: Option<&str>,
     path: &[String],
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Option<String> {
-    let mut current = root_type.to_string();
+    let mut current = root_type?.to_string();
     for field in path {
         current = types.get(&current)?.fields.get(field)?.clone();
     }
     Some(current)
 }
 
-fn ty_explicit_name(ty: &Ty, types: &DeclarationTable<ExplicitDestroyInfo>) -> Option<String> {
-    match ty.kind() {
-        TyKind::Struct(name, _) if types.contains_key(name) => Some(name.clone()),
-        _ => None,
-    }
-}
-
 fn ensure_same(before: &Env, after: &Env) -> Result<(), TypeError> {
     for (a, b) in before.vars.iter().zip(&after.vars) {
-        if a.message.is_some() && (a.obligations != b.obligations || a.moved != b.moved) {
+        if a.linear.is_some() && (a.obligations != b.obligations || a.moved != b.moved) {
             return explicit_error(
                 a,
                 "was conditionally destroyed or has inconsistent residual field obligations",
@@ -941,15 +932,7 @@ fn ensure_same(before: &Env, after: &Env) -> Result<(), TypeError> {
 }
 
 fn check_function<'a>(
-    params: impl Iterator<
-        Item = (
-            &'a String,
-            &'a SourceType,
-            Option<ArgConvention>,
-            bool,
-            bool,
-        ),
-    >,
+    params: impl Iterator<Item = (&'a String, Option<ArgConvention>, Option<Linear>)>,
     body: &[Stmt],
     node_facts: &HashMap<SourceSpan, NodeFacts>,
     deletability: &CheckedDeletability,
@@ -957,26 +940,16 @@ fn check_function<'a>(
     mut env: Env,
 ) -> Result<(), TypeError> {
     env.push();
-    for (name, ty, convention, deinitable, linear) in params {
-        let explicit = if deinitable {
-            None
-        } else {
-            source_explicit_name(ty, types)
-                .or_else(|| linear.then(|| LINEAR_TYPE_PARAMETER.to_string()))
-        };
+    for (name, convention, linear) in params {
         // A `deinit` parameter whose storage the body marks destroyed is
         // torn down by parts, as a `deinit self` receiver is, so it owes no
         // whole-value destruction.
         let by_parts =
             convention == Some(ArgConvention::Deinit) && marks_storage_destroyed(body, name);
-        let live = explicit.is_some()
+        let live = linear.is_some()
             && !by_parts
             && matches!(convention, Some(ArgConvention::Var | ArgConvention::Deinit));
-        let message = explicit
-            .as_ref()
-            .and_then(|name| types.get(name))
-            .map(|info| info.message.clone());
-        env.declare(name, explicit, message, live);
+        env.declare(name, linear, live);
         if let Some(parameter) = env.vars.last_mut() {
             parameter.by_parts = by_parts;
         }
@@ -1059,7 +1032,7 @@ fn contains_index(expr: &Expr) -> bool {
 /// they are handled by ordinary residual field dropping.
 fn expose_path(
     id: usize,
-    root_type: &str,
+    root_type: Option<&str>,
     path: &[String],
     env: &mut Env,
     types: &DeclarationTable<ExplicitDestroyInfo>,
@@ -1094,25 +1067,9 @@ fn check_stmt(
         StmtKind::VarDecl { name, value, .. } => {
             check_expr(value, &mut env, node_facts, types)?;
             finish_statement(&mut env, types)?;
-            let explicit = if deletability.bindings.contains(&value.source_span()) {
-                None
-            } else {
-                node_facts
-                    .get(&value.source_span())
-                    .and_then(|facts| facts.binding_ty.as_ref())
-                    .and_then(|ty| ty_explicit_name(ty, types))
-                    .or_else(|| {
-                        deletability
-                            .linear_bindings
-                            .contains(&value.source_span())
-                            .then(|| LINEAR_TYPE_PARAMETER.to_string())
-                    })
-            };
-            let message = explicit
-                .as_ref()
-                .and_then(|name| types.get(name))
-                .map(|info| info.message.clone());
-            env.declare(name, explicit.clone(), message, explicit.is_some());
+            let linear = deletability.bindings.get(&value.source_span()).cloned();
+            let live = linear.is_some();
+            env.declare(name, linear, live);
         }
         StmtKind::Assign { name, value } => {
             // `_ = x^` destroys the transferred value implicitly, which a
@@ -1120,21 +1077,20 @@ fn check_stmt(
             if name == "_"
                 && let ExprKind::Transfer(inner) = &value.kind
                 && let Some((id, _)) = obligation_place(inner, &env)
-                && env.vars[id].message.is_some()
+                && env.vars[id].linear.is_some()
             {
                 env.check_ids([id])?;
             }
             check_expr(value, &mut env, node_facts, types)?;
             finish_statement(&mut env, types)?;
             if let Some(id) = env.lookup(name) {
-                if !env.vars[id].obligations.is_empty() && env.vars[id].message.is_some() {
-                    return Err(TypeError::Abandoned {
-                        var: env.vars[id].name.clone(),
-                        message: env.vars[id].message.clone().unwrap_or_default(),
-                    });
+                if !env.vars[id].obligations.is_empty()
+                    && let Some(linear) = &env.vars[id].linear
+                {
+                    return Err(abandoned(&env.vars[id].name, linear));
                 }
                 env.vars[id].uninitialized = false;
-                env.vars[id].obligations = if env.vars[id].explicit_type.is_some() {
+                env.vars[id].obligations = if env.vars[id].linear.is_some() {
                     HashSet::from([Vec::new()])
                 } else {
                     HashSet::new()
@@ -1162,7 +1118,7 @@ fn check_stmt(
         StmtKind::Raise(expr) => {
             check_expr(expr, &mut env, node_facts, types)?;
             finish_statement(&mut env, types)?;
-            raise_edge(&env, types)?;
+            raise_edge(&env)?;
             return Ok(None);
         }
         // The same branch walk, joined by each form's own rule; no exit at
@@ -1300,27 +1256,11 @@ fn check_stmt(
             };
             check_expr(iter, &mut env, node_facts, types)?;
             finish_statement(&mut env, types)?;
-            let explicit = if deletability.bindings.contains(&stmt.source_span()) {
-                None
-            } else {
-                node_facts
-                    .get(&stmt.source_span())
-                    .and_then(|facts| facts.binding_ty.as_ref())
-                    .and_then(|ty| ty_explicit_name(ty, types))
-                    .or_else(|| {
-                        deletability
-                            .linear_bindings
-                            .contains(&stmt.source_span())
-                            .then(|| LINEAR_TYPE_PARAMETER.to_string())
-                    })
-            };
-            let message = explicit
-                .as_ref()
-                .and_then(|name| types.get(name))
-                .map(|info| info.message.clone());
+            let linear = deletability.bindings.get(&stmt.source_span()).cloned();
+            let live = linear.is_some();
             let mut iteration = env.clone();
             iteration.push();
-            iteration.declare(var, explicit.clone(), message, explicit.is_some());
+            iteration.declare(var, linear, live);
             if let Some(mut after) =
                 check_block(body, iteration, false, node_facts, deletability, types)?
             {
@@ -1422,10 +1362,8 @@ fn check_def(
         };
         (
             &p.name,
-            &p.ty,
             p.convention,
-            deletability.declarations.contains(&site),
-            deletability.linear_declarations.contains(&site),
+            deletability.declarations.get(&site).cloned(),
         )
     });
     check_function(
@@ -1472,17 +1410,10 @@ fn check_comprehension_expr(
                         )
                     })?;
                     binding_index += 1;
-                    let explicit = if binding.deinitable {
-                        None
-                    } else {
-                        ty_explicit_name(&binding.ty, types)
-                    };
-                    let message = explicit
-                        .as_ref()
-                        .and_then(|name| types.get(name))
-                        .map(|info| info.message.clone());
+                    let linear = env.spans.generators.get(&iter.source_span()).cloned();
+                    let live = linear.is_some();
                     env.push();
-                    env.declare(&binding.name, explicit.clone(), message, explicit.is_some());
+                    env.declare(&binding.name, linear, live);
                     if let Some(unpack) = unpack
                         && let StmtKind::Destructure { target, .. } = &unpack.kind
                     {
@@ -1522,7 +1453,7 @@ fn check_comprehension_expr(
 fn transferred_place(expr: &Expr, env: &Env) -> Result<Option<(usize, Vec<String>)>, TypeError> {
     if contains_index(expr)
         && let Some(id) = root_id(expr, env)
-        && env.vars[id].explicit_type.is_some()
+        && env.vars[id].linear.is_some()
     {
         return explicit_error(
             &env.vars[id],
@@ -1533,7 +1464,7 @@ fn transferred_place(expr: &Expr, env: &Env) -> Result<Option<(usize, Vec<String
         return Ok(None);
     };
     ensure_initialized(id, env)?;
-    Ok(env.vars[id].explicit_type.is_some().then_some((id, path)))
+    Ok(env.vars[id].linear.is_some().then_some((id, path)))
 }
 
 /// Consume what the operands evaluated since `baseline` own: the in-flight
@@ -1546,11 +1477,8 @@ fn consume_operands(
 ) -> Result<(), TypeError> {
     env.in_flight.truncate(in_flight);
     for (id, path) in env.pending.split_off(pending) {
-        let root_type = env.vars[id]
-            .explicit_type
-            .clone()
-            .expect("a transferred place has a linear type");
-        expose_path(id, &root_type, &path, env, types)?;
+        let root_type = linear_root(id, env);
+        expose_path(id, root_type.as_deref(), &path, env, types)?;
         // A whole linear subobject carries its obligation to the
         // destination. An ordinary field has no entry after decomposition
         // and needs no discharge.
@@ -1574,15 +1502,9 @@ fn finish_statement(
 /// inside the innermost `try` region ends with the raise; with no region,
 /// the raise leaves the function and every value ends. The state the target
 /// starts from is recorded on the region.
-fn raise_edge(env: &Env, types: &DeclarationTable<ExplicitDestroyInfo>) -> Result<(), TypeError> {
-    if let Some(key) = env.in_flight.first()
-        && let Some(info) = types.get(key)
-    {
-        return Err(TypeError::AbandonedOnRaise {
-            var: "(expression temporary)".to_string(),
-            message: info.message.clone(),
-            linear: key == LINEAR_TYPE_PARAMETER,
-        });
+fn raise_edge(env: &Env) -> Result<(), TypeError> {
+    if let Some(linear) = env.in_flight.first() {
+        return Err(abandoned_on_raise(TEMPORARY, linear));
     }
     let Some(frame) = env.frames.last() else {
         return env.check_raised(0..env.vars.len());
@@ -1603,7 +1525,7 @@ fn raise_edge(env: &Env, types: &DeclarationTable<ExplicitDestroyInfo>) -> Resul
 }
 
 fn destructor_at_path(
-    root_type: &str,
+    root_type: Option<&str>,
     path: &[String],
     method: &str,
     types: &DeclarationTable<ExplicitDestroyInfo>,
@@ -1619,11 +1541,8 @@ fn consume_destructor(
     env: &mut Env,
     types: &DeclarationTable<ExplicitDestroyInfo>,
 ) -> Result<(), TypeError> {
-    let root_type = env.vars[id]
-        .explicit_type
-        .clone()
-        .expect("linear obligation has a type");
-    expose_path(id, &root_type, path, env, types)?;
+    let root_type = linear_root(id, env);
+    expose_path(id, root_type.as_deref(), path, env, types)?;
     if env.vars[id]
         .moved
         .iter()
@@ -1665,7 +1584,7 @@ fn reinitialize_place(
     let Some((id, path)) = obligation_place(expr, env) else {
         return Ok(());
     };
-    let Some(root_type) = env.vars[id].explicit_type.clone() else {
+    let Some(linear) = env.vars[id].linear.clone() else {
         return Ok(());
     };
     env.vars[id]
@@ -1674,20 +1593,21 @@ fn reinitialize_place(
     if env.vars[id].moved.is_empty() {
         env.vars[id].obligations.clear();
         env.vars[id].obligations.insert(Vec::new());
-    } else if type_at_path(&root_type, &path, types).is_some_and(|name| types.contains_key(&name)) {
+    } else if type_at_path(linear.destroy_type.as_deref(), &path, types)
+        .is_some_and(|name| types.contains_key(&name))
+    {
         env.vars[id].obligations.insert(path);
     }
     Ok(())
 }
 
-fn source_explicit_name(
-    ty: &SourceType,
-    types: &DeclarationTable<ExplicitDestroyInfo>,
-) -> Option<String> {
-    match ty {
-        SourceType::Named(name, _) if types.contains_key(name) => Some(name.clone()),
-        _ => None,
-    }
+/// The struct a linear local's obligations decompose by: its
+/// explicit-destroy entry's key, or `None` for an archetype.
+fn linear_root(id: usize, env: &Env) -> Option<String> {
+    env.vars[id]
+        .linear
+        .as_ref()
+        .and_then(|linear| linear.destroy_type.clone())
 }
 
 /// Reject a use of a value consumed on a path that may have raised.

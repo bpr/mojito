@@ -221,7 +221,13 @@ impl Checker {
                 deferred_traits.push(index);
                 continue;
             }
-            match self.check_trait(name, refines, methods, comptime_members) {
+            match self.check_trait(
+                name,
+                refines,
+                methods,
+                comptime_members,
+                statement.module.as_deref(),
+            ) {
                 Ok(()) => {
                     self.predeclared_traits.insert(name.clone());
                 }
@@ -328,7 +334,13 @@ impl Checker {
                 comptime_members,
             } = &stmts[index].kind
             {
-                self.check_trait(name, refines, methods, comptime_members)?;
+                self.check_trait(
+                    name,
+                    refines,
+                    methods,
+                    comptime_members,
+                    stmts[index].module.as_deref(),
+                )?;
             }
         }
         drop(phase);
@@ -502,7 +514,13 @@ impl Checker {
                     .any(|parent| trait_is_deferred(stmts, deferred, parent));
                 if !parent_waits
                     && self
-                        .check_trait(name, refines, methods, comptime_members)
+                        .check_trait(
+                            name,
+                            refines,
+                            methods,
+                            comptime_members,
+                            stmts[deferred[index]].module.as_deref(),
+                        )
                         .is_ok()
                 {
                     self.predeclared_traits.insert(name.clone());
@@ -1305,17 +1323,7 @@ impl Checker {
                     self.record_literal_materializations(value, &found, &declared)?;
                 }
                 self.record_at(value.source_span()).binding_ty = Some(declared.clone());
-                if self.is_deinitable(&declared) {
-                    self.explicit_destroy_deletability
-                        .borrow_mut()
-                        .bindings
-                        .insert(value.source_span());
-                } else if matches!(declared.kind(), TyKind::Param { .. }) {
-                    self.explicit_destroy_deletability
-                        .borrow_mut()
-                        .linear_bindings
-                        .insert(value.source_span());
-                }
+                self.record_binding_verdict(value.source_span(), &declared);
                 let (aggregate_origins, aggregate_field_origins) =
                     if !matches!(declared.kind(), TyKind::Ref(_))
                         && self.type_may_carry_loans(&declared)
@@ -1364,6 +1372,9 @@ impl Checker {
                         .insert(value.source_span());
                     self.check_consuming(value, &found, "discard assignment")?;
                     self.record_discarded_transfer(value);
+                    // The discard destroys the value implicitly: a linear
+                    // one is abandoned there, as a statement expression's is.
+                    self.record_unconsumed_temporary(value);
                     return Ok(());
                 }
                 self.check_capture_access(name, true)?;
@@ -1991,7 +2002,13 @@ impl Checker {
                 if self.predeclared_traits.remove(name) {
                     Ok(())
                 } else {
-                    self.check_trait(name, refines, methods, comptime_members)
+                    self.check_trait(
+                        name,
+                        refines,
+                        methods,
+                        comptime_members,
+                        stmt.module.as_deref(),
+                    )
                 }
             }
 
@@ -2354,17 +2371,7 @@ impl Checker {
                 self.record_at(iter.source_span()).iteration_protocol = Some(Box::new(protocol));
                 self.push_scope();
                 self.record_at(stmt.source_span()).binding_ty = Some(binding_ty.clone());
-                if self.is_deinitable(&binding_ty) {
-                    self.explicit_destroy_deletability
-                        .borrow_mut()
-                        .bindings
-                        .insert(stmt.source_span());
-                } else if matches!(binding_ty.kind(), TyKind::Param { .. }) {
-                    self.explicit_destroy_deletability
-                        .borrow_mut()
-                        .linear_bindings
-                        .insert(stmt.source_span());
-                }
+                self.record_binding_verdict(stmt.source_span(), &binding_ty);
                 if linear_element.is_some() {
                     let baseline = self.handled_raise_depth;
                     self.raise_observation_frames
@@ -3092,21 +3099,17 @@ impl Checker {
                 syntax: stmt.syntax_id,
                 param,
             };
-            let bound_ty = opaque.as_ref().unwrap_or(ty);
-            let mut deletability = self.explicit_destroy_deletability.borrow_mut();
-            // A type parameter whose bounds do not prove `Deinitable` makes an
-            // owned parameter linear, as upstream — except a positional
-            // variadic pack (`var *values: T`), whose elements upstream
-            // destroys implicitly (a `**kwargs` pack stays linear).
-            let positional_pack = params[param].kind == mojito_ast::ast::ParamKind::Variadic;
-            if matches!(bound_ty.kind(), TyKind::Param { .. })
-                && !self.is_deinitable(bound_ty)
-                && !positional_pack
-            {
-                deletability.linear_declarations.insert(site);
-            } else if self.is_deinitable(bound_ty) {
-                deletability.declarations.insert(site);
-            }
+            // A positional variadic pack (`var *values: T`) is never linear:
+            // upstream destroys its elements implicitly (a `**kwargs` pack
+            // stays linear).
+            let verdict = if params[param].kind == mojito_ast::ast::ParamKind::Variadic {
+                None
+            } else if let Some(opaque) = opaque {
+                self.archetype_verdict(opaque)
+            } else {
+                self.destruction_verdict(ty)
+            };
+            self.record_declaration_verdict(site, verdict);
         }
         let module_level = self.function_bases.is_empty() && !lambda;
         self.push_scope();
@@ -3810,9 +3813,10 @@ impl Checker {
         self.unconsumed_temporaries.borrow_mut().remove(span);
         self.linear_temporaries.borrow_mut().remove(span);
         self.raising_iterations.borrow_mut().remove(span);
-        let mut deletability = self.explicit_destroy_deletability.borrow_mut();
-        deletability.bindings.remove(span);
-        deletability.linear_bindings.remove(span);
+        self.explicit_destroy_deletability
+            .borrow_mut()
+            .bindings
+            .remove(span);
     }
 }
 

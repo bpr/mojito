@@ -551,8 +551,8 @@ and `conformance/probes/reflection_*.mojo`: a body reading `reflect[T]` is
 checked before instantiation; a field type is opaque and inherits nothing
 from `T`'s bound; a `conforms_to` arm proves exactly its traits; `types[i]
 == Int` narrows nothing; a `var` of an opaque type needs `Deinitable`
-proved (which Mojito's destruction walk does not yet require of any opaque
-parameter, `docs/roadmap.md` R30).
+proved, which Mojito's destruction verdict requires as upstream's does
+(`assets/type_error/abandoned_reflected_field_binding.mojo`).
 
 ## Register types
 

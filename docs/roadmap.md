@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1497**.
+Next free ID: **R1500**.
 
 ## Ordered Work
 
@@ -1596,53 +1596,40 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1368 A value's abandonment is keyed by struct name or
-  `TyKind::Param`, not by its type's `Deinitable` verdict**
+- [ ] **R1497 An associated projection's abandonment is not asked of its
+  bound**
 
-  The checker marks a value linear by type shape, where upstream's
-  `TypeDeclInfo::getDestructorForType` (`LowerLIT/CheckLifetimes.cpp`) asks
-  each value's type.
-  - Three switches handle a `TyKind::Param` or a struct only:
-    `record_linear_temporary`, the `VarDecl` `linear_bindings` insert, and
-    the parameter `linear_declarations` insert.
-  - `explicit_destroy.rs` keys a struct by name and every type parameter as
-    `LINEAR_TYPE_PARAMETER`, fixed at 'AnyType'.
-  - Upstream refines a parameter's or projection's bound by the function's
-    `where` facts. If every trait is linear, the message is the trait's own
-    (`getMessageIfTraitIsLinear`).
-  - Upstream judges a struct instance's `Deinitable` condition under those
-    facts (`isTypeDeinitable`). Anything short of proven is linear, with the
-    struct's message.
-  - The lever: one verdict query that returns the denying message. The
-    checker records it per binding, parameter, and temporary in
-    `CheckedDeletability`, and the walk reads the recorded message.
-  - The three switches, `LINEAR_TYPE_PARAMETER`, and the nominal
-    `explicit_destroy_types` key go away.
-  - Probe: R711's `return mk(a) < b` in `def g[T: Comparable & Copyable]`.
-    The pin names 'Comparable', Mojito names 'AnyType'.
-  - Probe: `_ = s.get()` in `def g[T: Source](mut s: T)`, where `Source`
-    declares `comptime Element: Movable` and `def get(mut self) ->
-    Self.Element`, runs in Mojito. The pin rejects it: "'(expression
-    temporary)' abandoned without being explicitly destroyed". The
-    projection is no longer `Deinitable` (R1364), but the walk never asks.
-  - Probe: `return a < b < c` in `def less[T: ImplicitlyCopyable](a: T,
-    b: T, c: T) -> Bool where conforms_to(T, Comparable)`. Both reject the
-    abandoned link temporary, but the pin names 'Comparable', the
-    refinement's trait, and Mojito 'ImplicitlyCopyable', the declared bound.
+  Problem: `_ = s.get()` in `def g[T: Source](mut s: T)`, where `Source`
+  declares `comptime Element: Movable` and `def get(mut self) ->
+  Self.Element`, runs in Mojito, where the pin rejects it:
+  "'(expression temporary)' abandoned without being explicitly destroyed:
+  unhandled explicitly destroyed type 'AnyType'".
+  - `Checker::destruction_verdict` (`checker/traits.rs`) answers a type
+    parameter and an opaque element, not a `TyKind::Assoc` rooted at one,
+    which upstream's `getDestructorForType` refines and judges as an
+    archetype.
+  - Asking it today breaks the bundled `paramfor_*` stubs
+    (`std/builtin/_stubs.mojo`), whose `var elem = result.__next__()` is
+    `Deinitable` at the pin only through `where
+    conforms_to(IteratorType.Element, Movable & Deinitable)`, which needs R792.
+  - It also breaks generic borrowed loops while the bundled `Iterator` does
+    not refine `Deinitable` (R669) and `Iterable` declares an `Element`
+    upstream does not.
+  - The lever: an `Assoc` arm in `destruction_verdict` whose root base is an
+    own parameter (`is_own_parameter`), judged by `archetype_verdict`.
   - Probe: `x.first() > y.first()` in `def bigger[C: Holder](x: C, y: C)`,
     for `comptime Elem: Comparable & ImplicitlyCopyable` in `trait Holder`,
-    runs in Mojito, where the pin rejects both operand temporaries as
-    abandoned.
-  - `moving_an_iterable_while_its_generic_iterator_lives_rejects`
-    (`tests/vm_test.rs`) discards an element. If it starts failing for
-    this reason, give it a non-discarding read.
-  - Closes R711 ('AnyType' named instead of the bound) and R30 (an opaque
-    `var` is not required to be `Deinitable`). Shrinks R302.
-  - R351 (a named `out` result called abandoned) is a different cause:
-    upstream's `out` argument ends initialized.
-  - Depends on R1364 (the three-valued verdict) and R1365 (the refined
-    bound).
-  - Model: Opus, Planned.
+    runs in Mojito, where the pin rejects both operand temporaries
+    ('Comparable').
+  - Probe: `var e = s.get()` over the same `Source` is accepted, where the
+    pin reports `'e'` abandoned ('AnyType').
+  - Probe: `for x in items` in `def total[C: Iterable](items: C)` runs,
+    where the pin rejects the `__next__` result at `items` ('AnyType').
+  - Probe: `moving_an_iterable_while_its_generic_iterator_lives_rejects`
+    (`tests/vm_test.rs`) discards an `Element: Movable` with `_ =
+    it.__next__()`; give it a non-discarding read when this lands.
+  - Depends on R792, R669.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1366 A `^` source is admitted per shape, not by upstream's origin
   rule**
@@ -1693,24 +1680,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     Shrinks R750 (a field transfer lowered as a move before the discard fact
     is read).
   - Depends on R1366, which records the verdict.
-  - Model: Opus, Not Planned.
-
-- [ ] **R30 A `var` of an opaque type is not required to be `Deinitable`**
-
-  Problem: `var v: FT = FT()` under `comptime if conforms_to(FT, Defaultable
-  & Writable):` validates at Mojito, while the pin reports "'v' abandoned
-  without being explicitly destroyed ... consider adding trait conformance
-  to Deinitable" until `Deinitable` is proved too.
-  - Mojito accepts a program the pin rejects, so this is a divergence; it
-    holds for every opaque parameter, not only a reflected field type.
-  - The abstract destruction walk (`explicit_destroy.rs`) does not ask the
-    view's bounds for `Deinitable`.
-  - Probe: `var y = Ts[0]()` then `print(y)` in `def f[*Ts: Movable &
-    Defaultable & Writable]()`, also spelled `var x:
-    TypeList[Ts.values].__getitem_param__[0]`; the pin reports "'y'
-    abandoned without being explicitly destroyed" (found while landing
-    R1168, 2026-10-20).
-  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R31 An indexed element that is implicitly copyable may be
@@ -2296,7 +2265,7 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   `deinit self` residual teardown, so `--backend pliron` leaks its buffer.
   - That list's `__deinit__` is conditional on a `Deinitable` element, so the
     elaborator rightly mints none and concrete MIR never frees the buffer.
-  - The checker's acceptance of that residual destruction is R1368's.
+  - The checker accepts that residual destruction, as the pin does.
   - `StringDict.deinit_with` (`stdlib/std/collections/string_dict.mojo`)
     has the same shape.
   - The lever: `def forward(var entry: DictEntry[...]) {elt_handler}:
@@ -2570,22 +2539,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Found while landing R672 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R711 An abandoned type-parameter temporary's diagnostic names
-  `AnyType`, not its bound**
-
-  Problem: `return mk(a) < b` in `def g[T: Comparable & Copyable](a: T,
-  b: T)` is rejected by both, but the pin says `unhandled explicitly
-  destroyed type 'Comparable'` and Mojito says `'AnyType'`.
-  - The same holds for `h(mk(a))` at a read parameter.
-  - Cause: `run_explicit_destroy` (`crates/mojito-checker/src/checker.rs`)
-    keys every linear type-parameter temporary as
-    `explicit_destroy::LINEAR_TYPE_PARAMETER`, fixed at `'AnyType'`.
-  - `demand_chain_middle_destroyable` already names the first bound, as
-    the pin does.
-  - Found while landing R709 (2026-10-13).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1323 A pointer cast to an unsafe any-origin keeps no owner alive**
 
@@ -6549,6 +6502,39 @@ fixture. Each entry's `Ledger name` is the slug `conformance/cases.tsv` uses
 for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R1498 A module outside the bundled library is rooted at its file
+  stem, not its dotted name**
+
+  Problem: `def f[T: Foo](var x: T): pass`, with `trait Foo` imported from
+  `zpkg/aa.mojo` (`from zpkg.aa import Foo`), names `'Foo'` as the abandoned
+  type, where the pin names `'AnyType'`.
+  - Upstream orders a composition's traits by fully qualified symbol
+    (`sortAndDeduplicateTraitSymbols`), rooted at the module's dotted name
+    (`zpkg.aa`), so `zpkg` sorts after `std`.
+  - `module_symbol_path` (`checker/traits.rs`) reads only a statement's
+    stamped file path, which names the dotted module for a bundled module
+    and the entry module (its stem) alone.
+  - The lever: the linker's `rooted_module_name` knows each loaded module's
+    dotted name; stamp or carry it beside the path.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1499 `@explicit_destroy` on a `trait` does not parse**
+
+  Problem: `@explicit_destroy("baz must be closed") trait Baz: pass`
+  stops with "a decorator must precede a 'def' or 'struct'", where the pin
+  accepts it and names `baz must be closed` when a `T: Baz` value is
+  abandoned.
+  - Upstream sets the trait's `LinearTypeErrorMsg` from the decorator
+    (`DeclResolution.cpp`), and rejects it on a trait conforming to
+    `Deinitable`.
+  - `Checker::linear_trait_message` (`checker/traits.rs`) gives every trait
+    the default `unhandled explicitly destroyed type '<Trait>'`; it would
+    read a message `TraitInfo` records.
+  - Probe: `def f[T: Baz](var x: T): pass` with the trait above.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1439 A `try` whose first raise is a `String` catches an
   `Error`**

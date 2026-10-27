@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	783
+# swept-count	791
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -176,7 +176,12 @@ assets/runtime_error/span_index_out_of_range.mojo	trap	agree	error: execution cr
 assets/runtime_error/span_slice_out_of_range.mojo	trap	agree	error: execution crashed
 assets/runtime_error/string_span_grapheme_slice_out_of_range.mojo	trap	agree	error: execution crashed
 assets/runtime_error/walrus.mojo	trap	agree	boom
+assets/type_error/abandoned_aliased_linear_parameter.mojo	compile-reject	agree	error: 'x' abandoned without being explicitly destroyed: close me
+assets/type_error/abandoned_opaque_pack_element_binding.mojo	compile-reject	agree	error: 'y' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Defaultable'
+assets/type_error/abandoned_refined_chain_link.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Comparable'
+assets/type_error/abandoned_reflected_field_binding.mojo	compile-reject	agree	error: 'v' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Defaultable'
 assets/type_error/abandoned_struct_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: type 'Res' does not conform to 'Deinitable' and must be explicitly destroyed
+assets/type_error/abandoned_temporary_names_first_linear_bound.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Comparable'
 assets/type_error/absable_no_power.mojo	compile-reject	agree	error: 'T' does not implement the '__pow__' method
 assets/type_error/abs_undeclared_absable.mojo	compile-reject	agree	error: invalid call to 'abs': value passed to 'value' cannot be converted from 'S' to 'T', argument type 'S' does not conform to trait 'Absable'
 assets/type_error/advanced_origins_untracked_local.mojo	compile-reject	agree	error: invalid call to 'observe_untracked': value passed to 'value' cannot be converted from 'Int' to ref 'Int'
@@ -326,6 +331,8 @@ assets/type_error/dict_display_symbolic_value_lacks_evidence.mojo	compile-reject
 assets/type_error/dict_requires_hashable_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Key]'
 assets/type_error/dict_view_index_rejected.mojo	compile-reject	agree	error: '_DictKeyIter[Int, Int, AHasher[SIMD[.uint64, 4](0)], origin_of(d)]' is not subscriptable, it does not implement the `__getitem__`/`__setitem__` methods
 assets/type_error/dict_view_len_rejected.mojo	compile-reject	agree	error: no matching function in call to 'len'
+assets/type_error/discarded_linear_call_result.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: close me
+assets/type_error/discarded_type_parameter_call_result.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
 assets/type_error/dtype_compare_int_rejected.mojo	compile-reject	agree	error: invalid call to '__eq__': value passed to 'rhs' cannot be converted from 'IntLiteral[5]' to 'DType'
 assets/type_error/dtype_dynamic_comptime_if_rejected.mojo	compile-reject	agree	error: cannot use a dynamic value in 'comptime if' condition
 assets/type_error/dtype_dynamic_parameter_rejected.mojo	compile-reject	agree	error: cannot use a dynamic value in a parameter list
@@ -463,6 +470,7 @@ assets/type_error/lane_gather_template_slice_bounds.mojo	compile-reject	agree	er
 assets/type_error/legacy_implicitly_deletable.mojo	compile-reject	agree	error: use of unknown declaration 'ImplicitlyDestructible'
 assets/type_error/len_sized_raising_cannot_raise.mojo	compile-reject	agree	error: cannot call function that may raise in a context that cannot raise
 assets/type_error/len_undeclared_sized_struct.mojo	compile-reject	agree	error: no matching function in call to 'len'
+assets/type_error/linear_bound_message_sorts_by_module.mojo	compile-reject	agree	error: 'x' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Comparable'
 assets/type_error/linear_parameter_abandoned_on_raise.mojo	compile-reject	agree	error: 't' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
 assets/type_error/list_anytype_append_requires_movable.mojo	compile-reject	agree	error: invalid call to 'append': violated constraint
 assets/type_error/list_element_not_hashable.mojo	compile-reject	agree	error: no matching function in call to 'hash'

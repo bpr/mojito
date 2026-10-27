@@ -916,27 +916,12 @@ impl Checker {
     }
 
     /// A chain's first middle place or `^` becomes the owned temporary its
-    /// second link reads, which the body must be able to destroy: a type
-    /// parameter whose bounds do not prove `Deinitable` is abandoned, as
-    /// upstream rejects it, naming the parameter's first bound.
+    /// second link reads, which the body must be able to destroy: one whose
+    /// [`Self::destruction_verdict`] denies it is abandoned, as upstream
+    /// rejects it.
     fn demand_chain_middle_destroyable(&self, operand: &Expr) -> Result<(), TypeError> {
-        const TEMPORARY: &str = "(expression temporary)";
-        let ty = self.chain_operand_ty(operand)?;
-        match ty.kind() {
-            TyKind::Param { binder, bounds, .. }
-                if self.is_own_parameter(binder) && !self.is_deinitable(&ty) =>
-            {
-                Err(TypeError::LinearAbandoned {
-                    var: TEMPORARY.to_string(),
-                    message: format!(
-                        "unhandled explicitly destroyed type '{}'",
-                        bounds.first().map_or("AnyType", String::as_str)
-                    ),
-                })
-            }
-            TyKind::Param { .. } => Ok(()),
-            _ => self.check_overwritten_referent(TEMPORARY, &ty),
-        }
+        let ty = self.infer(operand)?;
+        self.check_overwritten_referent("(expression temporary)", &ty)
     }
 
     /// A chain's first middle place is copied into the temporary its

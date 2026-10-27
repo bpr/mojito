@@ -836,9 +836,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `checker.rs`'s `run_explicit_destroy` once over the elaborated program,
   where `check_comptime_if` joins the arms of a condition naming a parameter as
   branches (`join_parametric`) and the arms of any other condition as
-  alternatives (`join_comptime`). `LINEAR_TYPE_PARAMETER` (`$linear`) keys
-  the obligation of a value typed by a non-`Deinitable` type parameter;
-  `Env.linear_temporaries` carries the call results the checker recorded as
+  alternatives (`join_comptime`). Whether a value owes explicit destruction
+  is the checker's one `traits.rs` query, `destruction_verdict` (upstream's
+  `getDestructorForType`; `archetype_verdict` for an archetype, whose
+  message `linear_trait_message` picks by `trait_symbol_path`), recorded as
+  an `explicit_destroy::Linear` per parameter and binding
+  (`CheckedDeletability`, through `places.rs`'s `record_binding_verdict`/
+  `record_declaration_verdict`) and per temporary (`linear_temporaries`);
+  the walk reads the recorded message, and `Linear::destroy_type` keys the
+  struct's `ExplicitDestroyInfo` for its destructors and linear fields.
+  `SpanFacts::linear_temporaries` carries the call results the checker recorded as
   owned-but-unconsumed (`places.rs`'s `record_linear_temporary` and
   `record_unconsumed_temporary`, intersected in `run_explicit_destroy`),
   reported as `'(expression temporary)'`. `SpanFacts::owned_temporaries`

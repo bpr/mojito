@@ -1339,19 +1339,11 @@ impl Checker {
                         // A positional variadic pack (`var *values: T`) is
                         // never linear: upstream destroys its elements
                         // implicitly even for a non-`Deinitable` `T`.
-                        let positional_pack =
-                            m.params[param].kind == mojito_ast::ast::ParamKind::Variadic;
-                        if self.is_deinitable(&ty) {
-                            self.explicit_destroy_deletability
-                                .borrow_mut()
-                                .declarations
-                                .insert(site);
-                        } else if matches!(ty.kind(), TyKind::Param { .. }) && !positional_pack {
-                            self.explicit_destroy_deletability
-                                .borrow_mut()
-                                .linear_declarations
-                                .insert(site);
-                        }
+                        let verdict = (m.params[param].kind
+                            != mojito_ast::ast::ParamKind::Variadic)
+                            .then(|| self.destruction_verdict(&ty))
+                            .flatten();
+                        self.record_declaration_verdict(site, verdict);
                     }
                     // Transfer summaries belong to the same callable identity
                     // as dispatch. Same-name overloads may have different loan

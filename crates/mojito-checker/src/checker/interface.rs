@@ -416,6 +416,14 @@ impl InstalledInterfaces {
         lowered
     }
 
+    /// The dotted name of the reached module declaring `table`'s `key`
+    /// (`std.builtin.comparable`), decoding nothing.
+    pub(super) fn declaring_module(&self, table: Table, key: &str) -> Option<&str> {
+        let directory = self.0.package.package.directory();
+        let entry = directory.declaration(self.position(table, key)?)?;
+        Some(directory.module(entry.module as usize)?.name)
+    }
+
     /// Whether a reached module's declaration holds `table`'s `key`,
     /// decoding nothing.
     pub(super) fn has_key(&self, table: Table, key: &str) -> bool {

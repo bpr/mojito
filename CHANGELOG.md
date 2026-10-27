@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Whether a value owes explicit destruction is one verdict on its type, as
+  upstream's `getDestructorForType` decides it (R1368, R711, R30): an
+  opaque pack element, a reflected field type, and a parameter spelled
+  through an alias of a linear struct are now linear when not proven
+  `Deinitable`, `_ = e` abandons a linear call result, and an archetype's
+  message names the first trait of its bound's composition in symbol-path
+  order (`'Comparable'` for `Comparable & Copyable`), refined by its `where`
+  facts, rather than `'AnyType'` or the first bound spelled.
 - A `where conforms_to(T, Tr)` clause or `comptime if conforms_to(T, Tr)`
   refines the type parameter `T` for every member lookup in its scope, as
   upstream's `maybeRefineParamType` does (R1365): `T.N`, `var e: T.E`,

@@ -154,31 +154,59 @@ impl Checker {
     }
 
     /// Record a temporary the enclosing body owns but cannot destroy — a
-    /// reference result is none: a call result or display whose struct type is not `Deinitable` under the
-    /// body's bounds, or a call result typed by one of the body's own type
-    /// parameters whose bounds do not prove `Deinitable`. The parameter must
-    /// be in scope here — the same `TyKind::Param` at a concrete call site is the
-    /// erased-dispatch spelling of a solved argument, not a linear value.
+    /// reference result is none: a call result or display whose type's
+    /// [`Self::destruction_verdict`] denies its implicit destruction.
     pub(super) fn record_linear_temporary(&self, expr: &Expr, ty: &Ty) {
-        let call = matches!(
+        if !matches!(
             expr.kind,
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
-        );
-        let linear = match ty.kind() {
-            TyKind::Param { binder, .. } => {
-                call && self.is_own_parameter(binder) && !self.is_deinitable(ty)
-            }
-            TyKind::Struct(..) => {
-                (call || matches!(expr.kind, ExprKind::ListLit(_) | ExprKind::TupleLit(_)))
-                    && !self.is_deinitable(ty)
-            }
-            _ => false,
-        };
-        if linear && self.infer_reference_value(expr).is_none() {
+            ExprKind::Call { .. }
+                | ExprKind::MethodCall { .. }
+                | ExprKind::Invoke { .. }
+                | ExprKind::ListLit(_)
+                | ExprKind::TupleLit(_)
+        ) {
+            return;
+        }
+        // A variant's `unsafe_get[T]()` projects its payload in place, as
+        // upstream's `ref [self] T` result does.
+        let projection = self.has_fact(&expr.source_span(), |facts| {
+            matches!(
+                facts.adjustment.as_deref(),
+                Some(mojito_checked::checked::SemanticAdjustment::VariantProject { .. })
+            )
+        });
+        if !projection
+            && let Some(linear) = self.destruction_verdict(ty)
+            && self.infer_reference_value(expr).is_none()
+        {
             self.linear_temporaries
                 .borrow_mut()
-                .insert(expr.source_span());
+                .insert(expr.source_span(), linear);
         }
+    }
+
+    /// Record the verdict of the binding introduced at `span` with type
+    /// `ty`: linear, or `Deinitable` (no entry).
+    pub(super) fn record_binding_verdict(&self, span: SourceSpan, ty: &Ty) {
+        let verdict = self.destruction_verdict(ty);
+        let mut deletability = self.explicit_destroy_deletability.borrow_mut();
+        match verdict {
+            Some(linear) => deletability.bindings.insert(span, linear),
+            None => deletability.bindings.remove(&span),
+        };
+    }
+
+    /// Record `verdict` for the parameter declared at `site`.
+    pub(super) fn record_declaration_verdict(
+        &self,
+        site: mojito_checked::checked::AnnotationSite,
+        verdict: Option<crate::explicit_destroy::Linear>,
+    ) {
+        let mut deletability = self.explicit_destroy_deletability.borrow_mut();
+        match verdict {
+            Some(linear) => deletability.declarations.insert(site, linear),
+            None => deletability.declarations.remove(&site),
+        };
     }
 
     /// Reject a write through a reference (`ref r = x; r = v`, or
@@ -190,28 +218,15 @@ impl Checker {
         target: &str,
         referent: &Ty,
     ) -> Result<(), TypeError> {
-        if self.is_deinitable(referent) {
+        let Some(linear) = self.destruction_verdict(referent) else {
             return Ok(());
-        }
-        match referent.kind() {
-            TyKind::Param { binder, .. } if self.is_own_parameter(binder) => {
-                Err(TypeError::LinearAbandoned {
-                    var: target.to_string(),
-                    message: "unhandled explicitly destroyed type 'AnyType'".to_string(),
-                })
-            }
-            TyKind::Struct(name, _) => match self.structs.get(name) {
-                Some(info) => Err(TypeError::Abandoned {
-                    var: target.to_string(),
-                    message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
-                        "value is not implicitly deletable and must be explicitly destroyed"
-                            .to_string()
-                    }),
-                }),
-                None => Ok(()),
-            },
-            _ => Ok(()),
-        }
+        };
+        let (var, message) = (target.to_string(), linear.message);
+        Err(if linear.archetype {
+            TypeError::LinearAbandoned { var, message }
+        } else {
+            TypeError::Abandoned { var, message }
+        })
     }
 
     /// Reject `source^` out of a place rooted at an immutable value binding

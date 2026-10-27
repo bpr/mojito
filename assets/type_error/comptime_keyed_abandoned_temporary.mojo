@@ -3,7 +3,7 @@
 # handing it to `print` — which only borrows it — abandons it. The body is
 # keyed on its own parameter, so only source validation ever sees it with `T`
 # symbolic: elaboration replaces the template with a trapping stub.
-# expect: '(expression temporary)' abandoned without being explicitly destroyed
+# expect: '(expression temporary)' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 def pick[T: ImplicitlyCopyable & Writable](x: T) -> T:
     comptime if T == Int:
         pass

@@ -6,6 +6,7 @@
 use super::decorators::DecoratorSite;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use crate::explicit_destroy::Linear;
 use mojito_checked::declaration::{Witness, WitnessTable};
 use mojito_symbol::symbol::{TRAIT_DISPATCH, qualified_method_symbol};
 use mojito_types::conformance::{
@@ -159,6 +160,7 @@ impl Checker {
         refines: &[String],
         methods: &[mojito_ast::ast::TraitMethod],
         comptime_members: &[TraitComptime],
+        module: Option<&str>,
     ) -> Result<(), TypeError> {
         if self.traits.contains_key(name) || self.structs.contains_key(name) {
             return Err(TypeError::Redeclaration(name.to_string()));
@@ -428,6 +430,7 @@ impl Checker {
             name.to_string(),
             TraitInfo {
                 refines: refines.to_vec(),
+                module: module_symbol_path(module),
                 methods,
                 comptime_members: ct_members,
                 comptime_constraints: ct_constraints,
@@ -2835,6 +2838,123 @@ impl Checker {
         self.conformance(ty, "Deinitable").is_proven()
     }
 
+    /// Why a value of `ty` the body owns cannot be implicitly destroyed
+    /// here, upstream's `getDestructorForType` answering
+    /// `unavailable(message)`; `None` when it is `Deinitable`. An archetype
+    /// of the body (one of its own type parameters, or an opaque pack
+    /// element) is judged under its refined bound, a struct instance by its
+    /// `Deinitable` condition under the scope's assumptions. The same
+    /// `TyKind::Param` at a concrete call site is the erased-dispatch
+    /// spelling of a solved argument, which owes nothing. An associated
+    /// projection is not asked yet (R1497).
+    pub(super) fn destruction_verdict(&self, ty: &Ty) -> Option<Linear> {
+        if let Some(element) = self.opaque_element(ty) {
+            return self.archetype_verdict(&element);
+        }
+        match ty.kind() {
+            TyKind::Param { binder, .. } if self.is_own_parameter(binder) => {
+                self.archetype_verdict(ty)
+            }
+            TyKind::Struct(name, _) if !self.is_deinitable(ty) => {
+                let info = self.structs.get(name)?;
+                Some(Linear {
+                    message: info.explicit_destroy_message.clone().unwrap_or_else(|| {
+                        mojito_checked::checked::ExplicitDestroyInfo::default_message(name)
+                    }),
+                    archetype: false,
+                    destroy_type: Some(name.clone()),
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// [`Self::destruction_verdict`] for an archetype: linear unless its
+    /// refined bound proves `Deinitable`, with the message of its first
+    /// linear trait ([`Self::linear_trait_message`]).
+    pub(super) fn archetype_verdict(&self, ty: &Ty) -> Option<Linear> {
+        if self.is_deinitable(ty) {
+            return None;
+        }
+        Some(Linear {
+            message: self.linear_trait_message(&self.refined_bound(ty).unwrap_or_default()),
+            archetype: true,
+            destroy_type: None,
+        })
+    }
+
+    /// The message an archetype bounded by `bounds`, none of which conforms
+    /// to `Deinitable`, is abandoned with, upstream's
+    /// `getMessageIfTraitIsLinear` over the composition
+    /// `canonicalizeTraitCompositionSymbols` closes: every trait it names
+    /// with its ancestors and `AnyType`, ordered by symbol path
+    /// ([`Self::trait_symbol_path`]), whose first trait's message it is.
+    pub(super) fn linear_trait_message(&self, bounds: &[String]) -> String {
+        let mut closure: Vec<String> = Vec::new();
+        let mut pending: Vec<String> = bounds
+            .iter()
+            .filter(|bound| *bound != TYPE_OF_ALL_TYPES)
+            .cloned()
+            .collect();
+        if !pending.is_empty() || bounds.is_empty() {
+            pending.push("AnyType".to_string());
+        }
+        while let Some(name) = pending.pop() {
+            if closure.contains(&name) {
+                continue;
+            }
+            match self.traits.get(&name) {
+                Some(info) => pending.extend(info.refines.iter().cloned()),
+                None => pending.extend(
+                    lifecycle_trait_parent(&name)
+                        .into_iter()
+                        .map(str::to_string),
+                ),
+            }
+            closure.push(name);
+        }
+        closure
+            .into_iter()
+            .map(|name| (self.trait_symbol_path(&name), name))
+            .min()
+            .map_or_else(
+                || "type conforms to no traits".to_string(),
+                |(_, name)| {
+                    let shown = name.rsplit('$').next().unwrap_or(&name);
+                    format!("unhandled explicitly destroyed type '{shown}'")
+                },
+            )
+    }
+
+    /// The fully qualified symbol path of the trait `name`, upstream's sort
+    /// key for a trait composition: its declaring module's path, then its
+    /// name. A compiler-known lifecycle trait the bundled library leaves
+    /// undeclared roots at its upstream module.
+    fn trait_symbol_path(&self, name: &str) -> Vec<String> {
+        let shown = name.rsplit('$').next().unwrap_or(name).to_string();
+        let mut path = match self.traits.own().get(name) {
+            Some(info) => info.module.clone(),
+            None => self
+                .installed
+                .as_ref()
+                .and_then(|(installed, _)| {
+                    installed.declaring_module(interface::Table::Traits, name)
+                })
+                .or_else(|| {
+                    LIFECYCLE_TRAIT_MODULES
+                        .iter()
+                        .find(|(lifecycle, _)| *lifecycle == name)
+                        .map(|(_, module)| *module)
+                })
+                .unwrap_or("std")
+                .split('.')
+                .map(str::to_string)
+                .collect(),
+        };
+        path.push(shown);
+        path
+    }
+
     /// Whether a parameter's bounds prove `Deinitable`: the trait itself or
     /// a trait refining it (`TrivialRegisterPassable`).
     pub(super) fn bounds_prove_deinitable(&self, bounds: &[String]) -> bool {
@@ -3480,6 +3600,53 @@ pub(super) fn binder_fact(known: &ParamExpr) -> Option<(ParamId, String)> {
         } => Some((pack.id.clone(), trait_name.clone())),
         _ => None,
     }
+}
+
+/// The upstream modules declaring the compiler-known lifecycle traits,
+/// which the bundled library leaves undeclared.
+const LIFECYCLE_TRAIT_MODULES: &[(&str, &str)] = &[
+    ("AnyType", "std.traits.anytype"),
+    ("Movable", "std.traits.movable"),
+    ("Copyable", "std.traits.copyable"),
+    ("ImplicitlyCopyable", "std.traits.copyable"),
+    ("Deinitable", "std.traits.deinitable"),
+];
+
+/// The parent upstream's `std.traits` declares for the compiler-known
+/// lifecycle trait `name`.
+fn lifecycle_trait_parent(name: &str) -> Option<&'static str> {
+    match name {
+        "ImplicitlyCopyable" => Some("Copyable"),
+        "Copyable" => Some("Movable"),
+        _ => None,
+    }
+}
+
+/// The symbol path upstream roots a module's declarations at: a bundled
+/// library module's dotted name (`std.builtin.comparable`), any other
+/// module's file stem, as the entry module's is.
+fn module_symbol_path(stamped: Option<&str>) -> Vec<String> {
+    let Some(stamped) = stamped else {
+        return vec!["__main__".to_string()];
+    };
+    let source = stamped.split('$').next().unwrap_or(stamped);
+    let relative = super::overload_support::library_relative(source);
+    let path = std::path::Path::new(relative.as_ref());
+    if !super::overload_support::is_bundled_module_source(Some(source)) {
+        return path
+            .file_stem()
+            .map(|stem| vec![stem.to_string_lossy().into_owned()])
+            .unwrap_or_default();
+    }
+    let mut segments: Vec<String> = path
+        .with_extension("")
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    if segments.last().is_some_and(|last| last == "__init__") {
+        segments.pop();
+    }
+    segments
 }
 
 /// Whether the compiler-known `name` is `AnyType` or a lifecycle trait,

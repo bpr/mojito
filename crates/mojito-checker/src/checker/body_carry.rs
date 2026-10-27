@@ -149,7 +149,7 @@ pub struct InternalStores {
     discarded_reference_results: FactSet<SourceSpan>,
     borrowed_reference_receivers: FactSet<SourceSpan>,
     unconsumed_temporaries: FactSet<SourceSpan>,
-    linear_temporaries: FactSet<SourceSpan>,
+    linear_temporaries: FactMap<SourceSpan, crate::explicit_destroy::Linear>,
     raising_iterations: FactSet<SourceSpan>,
     deletability: CheckedDeletability,
 }
@@ -201,7 +201,7 @@ impl HandoffStores {
 /// Every store a body site is measured and copied over: where the carry
 /// holds it (`result` is the checked handoff, `internal` the rest), how it
 /// logs (`map`, `set`, `vec`), its field in the carry, and its field in the
-/// checker. The deletability sets are handled by hand beside them.
+/// checker. The deletability verdicts are handled by hand beside them.
 macro_rules! carried_stores {
     ($apply:ident) => {
         $apply! {
@@ -225,7 +225,7 @@ macro_rules! carried_stores {
             internal set discarded_reference_results = discarded_reference_results;
             internal set borrowed_reference_receivers = borrowed_reference_receivers;
             internal set unconsumed_temporaries = unconsumed_temporaries;
-            internal set linear_temporaries = linear_temporaries;
+            internal map linear_temporaries = linear_temporaries;
             internal set raising_iterations = raising_iterations;
         }
     };
@@ -237,8 +237,6 @@ macro_rules! define_marks {
         #[derive(Debug, Clone, Copy)]
         pub struct StoreMarks {
             $($carry: usize,)*
-            deletable_declarations: usize,
-            deletable_bindings: usize,
             linear_declarations: usize,
             linear_bindings: usize,
             /// The identity cursor, its ceiling, and the fresh cursor.
@@ -294,10 +292,8 @@ macro_rules! define_carry_ops {
                 let deletability = self.explicit_destroy_deletability.borrow();
                 StoreMarks {
                     $($carry: own_mark!(self, $field),)*
-                    deletable_declarations: deletability.declarations.mark(),
-                    deletable_bindings: deletability.bindings.mark(),
-                    linear_declarations: deletability.linear_declarations.mark(),
-                    linear_bindings: deletability.linear_bindings.mark(),
+                    linear_declarations: deletability.declarations.mark(),
+                    linear_bindings: deletability.bindings.mark(),
                     owner: self.next_owner.get(),
                     ceiling: self.owner_ceiling.get(),
                     fresh: self.fresh_owner_cursor.get(),
@@ -318,29 +314,17 @@ macro_rules! define_carry_ops {
                 )*
                 let from = &previous.internal.deletability;
                 let mut deletability = self.explicit_destroy_deletability.borrow_mut();
-                copy_set(
+                copy_map(
                     from.declarations
-                        .logged(record.range(|marks| marks.deletable_declarations)),
+                        .logged(record.range(|marks| marks.linear_declarations)),
                     &from.declarations,
                     &mut deletability.declarations,
                 );
-                copy_set(
+                copy_map(
                     from.bindings
-                        .logged(record.range(|marks| marks.deletable_bindings)),
+                        .logged(record.range(|marks| marks.linear_bindings)),
                     &from.bindings,
                     &mut deletability.bindings,
-                );
-                copy_set(
-                    from.linear_declarations
-                        .logged(record.range(|marks| marks.linear_declarations)),
-                    &from.linear_declarations,
-                    &mut deletability.linear_declarations,
-                );
-                copy_set(
-                    from.linear_bindings
-                        .logged(record.range(|marks| marks.linear_bindings)),
-                    &from.linear_bindings,
-                    &mut deletability.linear_bindings,
                 );
             }
 

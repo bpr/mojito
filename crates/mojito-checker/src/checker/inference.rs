@@ -92,6 +92,7 @@ impl Checker {
                             Some(Box::new(protocol));
                         let binding_ty = binding_plan.binding_ty.clone();
                         let deinitable = self.is_deinitable(&binding_ty);
+                        self.record_binding_verdict(iter.source_span(), &binding_ty);
                         // A generator binder scopes everything to its right, but
                         // not its own iterable. Giving every generator a lexical
                         // scope also permits a later generator to shadow the same
