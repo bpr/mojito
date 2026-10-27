@@ -1800,9 +1800,9 @@ impl Checker {
             ExprKind::TupleLit(values) => Some(elements(values).map(CtValue::Tuple)),
             ExprKind::ListLit(values) => Some(elements(values).map(CtValue::List)),
             // The fieldwise construction of a non-generic struct from
-            // compile-time values (`Extent(2, 3)`) is a frozen struct value,
-            // the form a struct-typed parameter argument takes (the
-            // elaborator materializes any other construction to it).
+            // compile-time values (`Extent(2, 3)`) is a frozen struct value;
+            // any other struct-valued argument is the application
+            // `called_application` builds, which `native::mono` evaluates.
             ExprKind::Call {
                 name,
                 param_args,

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	774
+# swept-count	775
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -697,6 +697,7 @@ assets/type_error/struct_method_instance_clone_fails.mojo	compile-reject	agree	e
 assets/type_error/struct_method_per_call_clone_fails.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/struct_operator_abandoned_temporary.mojo	compile-reject	agree	error: '(expression temporary)' abandoned without being explicitly destroyed: type 'Res' does not conform to 'Deinitable' and must be explicitly destroyed
 assets/type_error/struct_param_bare_bracket_slot.mojo	compile-reject	agree	error: unqualified access to struct parameter 'length'; use 'Self.length' instead
+assets/type_error/struct_value_param_application_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Tagged[Extent.square(Int(4))]' value to 'Tagged[Extent(Int(4), Int(4))]'
 assets/type_error/struct_value_param_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Tagged[Extent(Int(2), Int(3))]' value to 'Tagged[Extent(Int(3), Int(2))]'
 assets/type_error/struct_value_param_missing_field.mojo	compile-reject	agree	error: 'Extent' value has no attribute 'depth'
 assets/type_error/subscript_inplace_operand_aliasing.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'other' argument in '__iadd__' call

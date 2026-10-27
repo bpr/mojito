@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1483**.
+Next free ID: **R1484**.
 
 ## Ordered Work
 
@@ -176,22 +176,30 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1388.
   - Model: Opus, Not Planned.
 
-- [ ] **R1384 A struct-valued bracket argument is frozen to its fieldwise
-  construction above the check**
+- [ ] **R1483 A struct construction in a parameter position is frozen
+  fieldwise by the check, not applied**
 
-  `Elab::freeze_struct_value_arguments` evaluates `Tagged[Extent.square(4)]`
-  to `Tagged[Extent(4, 4)]`, where upstream keeps the argument symbolic as a
-  `kgen.param.apply` its elaborator interprets.
-  - The lever: `lifted_application` already lifts a struct-valued call in a
-    body. Signatures and field types take the `called_application` arm, and
-    mono freezes the result (`VmBackend::freeze`).
-  - `freeze_struct_value_arguments`, `freeze_arguments`, and
-    `explicit_parameters` go.
-  - Probe: R1175's `T[k=3, Extent.square(2)]`, which prints `23` only
-    because CTFE later evaluates the construction the freeze failed on.
-  - Shrinks R1175 (its `freeze_arguments` bullet).
+  `aggregate_value` (`checker/constraints.rs`) reads `Extent(2, 3)` as a
+  `CtValue::Struct` constant, where the pin keeps it as an application of
+  `Extent.__init__` (its diagnostic spells `Tagged[Extent(Int(2),
+  Int(3))]`).
+  - The lever: a struct's `__init__`, the synthesized fieldwise one
+    included (`CheckedProgram::synthesizes_fieldwise_constructor`), becomes
+    an `ApplicableFunction`, so `called_application` applies it.
+    `aggregate_value`'s struct arm goes.
+  - Probe: `Tagged[Extent(n, n + 1)]` in `def gen[n: Int]` stops with
+    "field 'rows' of 'Extent' expects Int, got n". The pin prints `12` for
+    `gen[3]()`.
+  - Probe: over a module `comptime E = Extent(4, 4)`, `var d: Tagged[E] =
+    Tagged[Extent(4, 4)](1)` stops with "expected
+    Tagged[$comptime$E$module()], found Tagged[Extent(4, 4)]": the
+    constant is lifted to a thunk, the bracket argument frozen. The pin
+    prints `16`.
+  - Shrinks R1472 (its struct half). Related to R218 (the synthesized
+    `__init__` as an overload).
+  - Found while landing R1384 (2026-10-26).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1472 A symbolic tuple, list, or struct parameter value has no
   parameter expression**
@@ -213,6 +221,8 @@ which names the upstream pass each one follows. Each is measured by the
     fails with "expected Tuple[Int, String], found (1,
     $comptime$main$c0())": the `String` element is an application. The pin
     prints `1 a`.
+  - Its struct half is an application of `__init__` at the pin, not an
+    aggregate node: R1483.
   - Found while landing R1386 (2026-10-26).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -240,7 +250,7 @@ which names the upstream pass each one follows. Each is measured by the
     `ElaboratedConstant`, which R1480 then deletes.
   - Done when `rg 'fn eval\b|type_from_name' crates/mojito-comptime` is
     empty.
-  - Depends on R1380, R1382, R1383, R1384, and R603.
+  - Depends on R1380, R1382, R1383, and R603.
   - Model: Opus, Not Planned.
 
 - [ ] **R1474 A predicate alias body or a struct header's condition is
@@ -5610,7 +5620,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 
 - [ ] **R1175 Compile-time bracket binding is re-implemented outside `call.rs`**
 
-  Problem: six sites bind a bracket list to a declaration's parameters by
+  Problem: five sites bind a bracket list to a declaration's parameters by
   their own rule instead of `mojito_ast::call::match_parameter_slots`, the
   pin's rule the checker's `bracket_bindings` uses.
   - `callable_value_argument` (`checker/origins/subst.rs`) binds positional
@@ -5620,11 +5630,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `mir::supplied_parameter_arguments` (`mir/ir.rs`) is a separate copy.
   - `verify_param_arguments` (`mir/verify/subscripts.rs`) lets a
     positional argument skip a keyword-filled slot, which the pin rejects.
-  - `freeze_arguments` (`comptime/elab.rs`) counts keywords when indexing
-    the explicit list.
-  - Probe: `T[k=3, Extent.square(2)]` over `struct T[e: Extent, k: Int]`
-    prints the pin's `23` only because CTFE later evaluates the unfrozen
-    construction.
   - `Elab::type_from_name` (`comptime/elab.rs`) binds a list positionally
     without skipping infer-only binders. Probe: `comptime n =
     TypeList[S[Int, Bool]._types].length` in `main` stops with "type

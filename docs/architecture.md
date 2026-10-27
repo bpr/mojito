@@ -355,8 +355,8 @@ import (every compilation that links the bundled library):
   (`ConformanceOracle::importing`). Its struct and
   function indexes hold the own declarations; a package struct or `def`
   is read from the oracle as the package's check resolved it
-  (`ConformanceOracle::{package_struct, package_associated_value,
-  package_function_params}`), as upstream's emitters
+  (`ConformanceOracle::{package_struct, package_associated_value}`), as
+  upstream's emitters
   read a package declaration resolved, never its syntax.
   The check is given the program's own statements alone: each transfer
   pass attaches the declaration records of the modules the link reached
@@ -1437,10 +1437,10 @@ a tuple-typed value parameter (`g[p: Tuple[Int, Int]]`) reads the same way.
 A tuple or struct value whose leaves include a `String`
 (`CtValue::is_constructed_parameter_value`) is the same typed constant
 (`CtValue::is_materialized_constant`): each read materializes a fresh
-value its consumer owns. The elaborator above the check freezes a computed
-struct-typed argument (`Extent.square(4)`) to its fieldwise construction
-(`Elab::freeze_struct_value_arguments`), which the checker reads as the
-frozen value. Every variadic struct is a generator too, `native::mono`
+value its consumer owns. A computed struct-typed argument
+(`Extent.square(4)`) is the application `Checker::called_application`
+binds, which `native::mono` evaluates (`VmBackend::freeze`), so
+`Tagged[Extent.square(4)]` is not `Tagged[Extent(4, 4)]`. Every variadic struct is a generator too, `native::mono`
 binding its pack per instance. The public `Tuple`, `TString`, and `Variant`
 are spelled element by element (`types::binds_pack_elementwise`,
 `types::canonical_pack_arguments`): `t[k]` is the template's

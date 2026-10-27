@@ -839,8 +839,8 @@ impl Checker {
             TyKind::UInt => Ty::uint(),
             TyKind::Bool => Ty::bool(),
             TyKind::Float64 | TyKind::FloatLiteral => Ty::float64(),
-            // A struct-valued call is an application the elaborator runs and
-            // materializes, and so is any `String` expression, which it
+            // A struct-valued call is an application the elaborator below MIR
+            // runs and materializes, and so is any `String` expression, which it
             // freezes to a compile-time string; no other struct expression
             // lifts.
             TyKind::Struct(..) if called.is_some() => ty,

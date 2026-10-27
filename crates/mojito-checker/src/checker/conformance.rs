@@ -365,16 +365,6 @@ impl ConformanceOracle {
         self.installed().is_some() && self.checker.overload_sets.is_function(name)
     }
 
-    /// The compile-time parameters of the imported package's function
-    /// `name`, when it is one generic declaration rather than an overload
-    /// family.
-    pub fn package_function_params(&self, name: &str) -> Option<&[ParamDecl]> {
-        match (self.installed()?.binding(name)?.1.ty).kind() {
-            TyKind::GenericFunc(generic) => Some(&generic.decls),
-            _ => None,
-        }
-    }
-
     /// The parameterized value member `member` of `base`, an instance of a
     /// package struct, applied to the closed `arguments`, a type argument
     /// as its type value. `None` when `base` declares no such member.

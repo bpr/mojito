@@ -1442,8 +1442,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ConstEnv` and `Elab::module_constant`; a package
   struct or `def` read through `Elab::{ct_struct, declares_struct,
   declares_function}` from the oracle's
-  `ConformanceOracle::{package_struct, package_associated_value,
-  package_function_params}`, `checker::PackageStruct`)
+  `ConformanceOracle::{package_struct, package_associated_value}`,
+  `checker::PackageStruct`)
   are the
   route the driver enters once per compilation, `elaborate_exporting` the
   package build's, which also returns the module value constants it folded;
@@ -1457,9 +1457,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   methods are split across `impl<'a> Elab<'a>` blocks in the submodules
   below, and the root's helper clusters live in `comptime/{synth,params}.rs`.
 - `comptime/elab.rs` holds the root driver's own cluster, and owns
-  `Elab::freeze_struct_value_arguments` (a whole-program `MutVisitor` walk
-  folding a computed struct-typed value argument, `Tagged[Extent.square(4)]`,
-  to its fieldwise construction) and `instantiation_failure_stub` (below).
+  `instantiation_failure_stub` (below).
 - `comptime/pack_qualification.rs` owns upstream's spelling rule for a
   variadic struct's own pack (`qualify_struct_packs`, the first step of
   `prepare`): a member naming the pack bare reports
@@ -2108,9 +2106,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `aggregate_value` (`checker/constraints.rs`, behind `eval_associated_ct`
   and `compile_dependent_ct_expr`) freezes a fieldwise construction of a non-generic
   struct from compile-time values (`Extent(2, 3)`) to `CtValue::Struct`;
-  `Elab::freeze_struct_value_arguments` (`comptime/elab.rs`) rewrites any
-  other struct-typed argument of a struct or a uniquely named `def` to that
-  construction, evaluated by CTFE.
+  `Checker::called_application` binds any other struct-valued argument as
+  an application `native::mono` evaluates (`VmBackend::freeze`).
 - `bind_ty_args` (`mono/unify.rs`) binds a struct's pack element by element,
   whole (`CtValue::Tuple`), or forwarded (`TyKind::RuntimePack`) through
   `bind_pack`.

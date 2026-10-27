@@ -957,6 +957,7 @@ assets/ok/struct_slot_fields_split.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_type_param_construction_clone.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_member_runtime_read.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_pack_method_read.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/struct_value_param_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_param_frozen.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/struct_value_parameter_declared_type_reads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/symbolic_instance_construction.mojo	-	ineligible	no-scalar-entry-shape

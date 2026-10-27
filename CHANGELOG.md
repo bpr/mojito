@@ -1489,6 +1489,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- The elaborator above the check no longer carries a struct-value freeze
+  (`Elab::freeze_struct_value_arguments`), which could no longer evaluate
+  any call: a struct-valued bracket argument that calls a function
+  (`Tagged[Extent.square(4)]`) is the application the check binds and
+  `native::mono` evaluates, in a signature, a field type, a body, over a
+  binder, and through a `comptime` alias, so it is not `Tagged[Extent(4,
+  4)]`, as at the pin (R1384).
+
 - An `@parameter` closure that captures, bound to a compile-time callable
   parameter, is now folded into the instance whether it is generic or not,
   as upstream keys such a closure on its body (R533): the instance takes

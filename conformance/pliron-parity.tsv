@@ -957,6 +957,7 @@ assets/ok/struct_slot_fields_split.mojo	main	exe-differential	sanitized
 assets/ok/struct_type_param_construction_clone.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_member_runtime_read.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_pack_method_read.mojo	main	exe-differential	sanitized
+assets/ok/struct_value_param_application.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_param_frozen.mojo	main	exe-differential	sanitized
 assets/ok/struct_value_parameter_declared_type_reads.mojo	main	exe-differential	sanitized
 assets/ok/symbolic_instance_construction.mojo	main	exe-differential	sanitized

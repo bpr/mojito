@@ -372,7 +372,6 @@ fn elaborate_in<'a>(
                 ))
             })?;
     let elab = Elab {
-        program,
         fns: collect_fns(program),
         structs: collect_structs(program, &conformance),
         conformance,
@@ -390,8 +389,6 @@ fn elaborate_in<'a>(
     // A body's read of a module constant stays a name: the check binds it as
     // the parameter value its declaration denotes (decision D3).
     let mut result = mark_struct_names(elaborated, &|name| elab.declares_struct(name));
-    let frozen = elab.top_consts.borrow().clone();
-    elab.freeze_struct_value_arguments(&mut result, &ConstEnv::over(frozen, imported.installed));
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
@@ -904,7 +901,6 @@ impl<'e> StructView<'e> {
 /// The compile-time elaboration engine: the program's own functions, structs,
 /// and module constants, and the imported package's interfaces.
 struct Elab<'a> {
-    program: &'a [Stmt],
     /// The program's own `def` names; the package's are the oracle's.
     fns: HashSet<String>,
     /// The program's own structs; the package's are the oracle's.
