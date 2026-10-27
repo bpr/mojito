@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct's `comptime` member that applies a function (`comptime V =
+  f(Self.k)`) is now the application over the struct's parameters, which
+  each instance evaluates, as at the pin (R1385, R489), where it was
+  rejected with "not an associated comptime expression". A compile-time
+  binding reading a member whose body reads a sibling through `Self`
+  (`comptime m = S[Int].b`, `S.b`, `A.get[2] + 1`) is now elaborated
+  (R1206), and through the unbound struct a member depending on a
+  parameter through a sibling is rejected with the pin's "cannot access
+  comptime member" error.
+
 - A capture-list closure's value, and a capturing lambda's, is now its
   closure's `__storage` struct, as at the pin (R1378): `var g = inner`,
   `Optional(a)`, `[a, a]`, `var h = peek^` and a `F: def(...)` binder all

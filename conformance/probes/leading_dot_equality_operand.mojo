@@ -7,7 +7,7 @@
 #
 # Observed 2026-10-20 against `Mojo 1.2.0.dev2026101705 (46f49943)`.
 # Mojito: rejects `d == .int64` ("no contextual type is available here")
-# until R1238 lands; `case .X` also needs R489.
+# until R1238 lands; `case .X` also needs R396.
 #
 # Run:    mojo run leading_dot_equality_operand.mojo
 #         cargo run -- run conformance/probes/leading_dot_equality_operand.mojo

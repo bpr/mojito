@@ -252,24 +252,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1385 A struct's associated `comptime` member that applies a
-  callable is not a parameter expression**
-
-  `Checker::eval_associated_ct` refuses `comptime V = f(Self.k)` with "not
-  an associated comptime expression", where upstream emits a member through
-  the same `EC_AliasValue` emitter as any alias, with an apply the
-  elaborator runs per instance.
-  - The lever: the applied-constant shape over the generator's binders. The
-    fallback arm binds a call as `ParamKind::Apply` and reads
-    `Self.<sibling>` through the generator.
-  - `Elab::associated_value_at` then has no reader the check does not own.
-  - Probe: R489's `S[3].get()` returning `Self.V`. The pin prints `4`.
-  - Closes R489 (a member applies a function), R802 (a `len(Self.values)`
-    member), R518's member bullet, and R1206's sibling probes. Shrinks R1178
-    and R1194.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1386 Bracket arguments and associated members are evaluated by a
   second per-shape folder**
 
@@ -2900,7 +2882,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A leading-dot case head over a subject that is not `EnumLike` is the
     same `==` test.
   - `k == .X` and `case .X:` over a struct's `comptime X = K(1)` also need
-    R489 ("not an associated comptime expression"), as `take(.X)` does.
+    R396 ("not an associated comptime expression"), as `take(.X)` does.
   - Probe: `conformance/probes/leading_dot_equality_operand.mojo`.
   - Found while landing R1133 (2026-10-20).
   - Depends on nothing.
@@ -4649,10 +4631,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Elab::apply_generic_alias`, which folds no call. The lever is the one
     the module constants took: `Elab::applied_initializer` leaves an
     initializer applying such an alias to the check.
-  - A struct's associated `comptime` member that applies a callable
-    (`comptime k = f(1)` inside a struct) is refused with "not an associated
-    comptime expression" and takes the same lever through
-    `eval_associated_ct`.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -5119,24 +5097,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R489 An associated `comptime` member that applies a function is
-  rejected**
-
-  Problem: `comptime V = f(Self.k)` in `struct S[k: Int]`, read as
-  `Self.V`, prints at the pin, while Mojito reports "not a compile-time Int
-  constant: not an associated comptime expression".
-  - A function body's local binding of the same call is a request the
-    elaborator serves per instance (`docs/notes/ctfe-request-path.md`).
-  - The member is the generator's, evaluated under the instance's bindings,
-    so it can denote the same application.
-  - Probe: `comptime X = K(1)` in `struct K`, matched as `case K.X:`
-    (an equality test over a subject that is not `EnumLike`), fails the
-    same way; the pin prints `x`. `case .X:` also needs R1238
-    (`conformance/probes/leading_dot_equality_operand.mojo`).
-  - Found while planning R7 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1208 A parameterized `comptime` value's declared type cannot read
   the member's own parameters**
 
@@ -5156,36 +5116,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime get[T: AnyType]: T` in a trait is rejected with
     "unknown type 'T'", where the pin accepts the trait.
   - Found while landing R1146 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1206 The pre-check elaborator does not read a struct member's
-  sibling members**
-
-  Problem: over `struct S[T: AnyType]` with `comptime a = 2` and `comptime
-  b = Self.a + 1`, `comptime m = S[Int].b` stops with "'Self' is not a
-  compile-time type", where the pin prints `3`.
-  - `Elab::associated_value_at` (`comptime/elab.rs`) evaluates a member's
-    body over the struct's parameters and the member's own, but not the
-    struct's other members, so `Self.a` falls to an unknown `Self`.
-  - The check reads the same member at run time: `print(S[Int].b)` prints
-    `3`.
-  - Probe: through the unbound struct, `comptime m = S.b` fails the same
-    way, where the pin prints `3`.
-  - Probe: a member depending on the parameters through a sibling,
-    `comptime a = Self.T` and `comptime b = Self.a`, makes `comptime m =
-    S.b` fail the same way, where the pin reports "cannot access comptime
-    member 'b' with unbound parameter 'S.T'". `Elab::generator_member`
-    tests only the body's own spelling for the parameters.
-  - Probe: a member passing a sibling as a bracket value, `comptime m =
-    Box[Self.n].w` beside `comptime n = 3`, read as `comptime x = S.m`,
-    fails with "value parameter 'n' expects a compile-time Int, got
-    Self.n", where the pin prints `30`; `print(S.m)` prints `30`.
-  - Probe: a parameterized value member reading a sibling, `comptime get[i:
-    Int]: Int = i + Self.K` beside `comptime K = 100` (or taken from a
-    trait's default), read as `comptime k = A.get[2] + 1`, fails the same
-    way, where the pin prints `103`; `print(A.get[2])` prints `102`.
-  - Found while landing R1204 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5651,21 +5581,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     value.
   - Model: Fable, Planned.
 
-- [ ] **R802 A struct's `comptime` member over the length of its own value
-  pack is rejected**
-
-  Problem: `comptime size: Int = len(Self.values)` in `struct PL[*values:
-  Int]`, read as `PL[1, 2, 3].size` or as `Self.size` in a method, prints
-  `3` at the pin, while Mojito reports "not an associated comptime
-  expression".
-  - `Self.values` is a `ParameterList` value, so the member applies its
-    `__len__` at compile time, which a struct member cannot do yet (R489).
-  - Only the bundled `ParameterList` reads its own raw list's length
-    (`Checker::bundled_raw_list_operand`).
-  - Found while landing R494 (2026-10-13).
-  - Depends on R489, which lets a struct member apply a function.
-  - Model: Opus, Not Planned.
-
 - [ ] **R396 A signature that calls a function over a value that is no
   `Int` or `Bool` is rejected**
 
@@ -5681,6 +5596,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     different value from the same call spelled in another declaration.
   - A struct value in the parameter domain can take the frozen form a
     struct-typed parameter argument already has.
+  - Probe: a struct's member `comptime X = K(1)` in `struct K(Equatable,
+    ImplicitlyCopyable)`, matched as `case K.X:`, fails with "not an
+    associated comptime expression", where the pin prints `x`: no
+    initializer is a callable a compile-time call applies.
   - Found while landing the callee shapes a signature applies (2026-10-06).
   - Depends on R386, which gives the parameter domain a value meta for a
     `Float64` and a `String`.
@@ -8808,6 +8727,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Done when each operand's length is a compile-time application of the
     library overload and the bare `len` callee is gone.
   - Probe: R804's `Box[len(vs)]`.
+  - Probe: a user struct's member `comptime size: Int = len(Self.values)`
+    over `*values: Int`, read as `PL[1, 2, 3].size`, fails with "not an
+    associated comptime expression", where the pin prints `3`: a member
+    has no body to lift the call from, and the check answers `len` of a
+    raw list only inside the bundled `ParameterList`.
   - Found while landing R988 (2026-10-22).
   - Depends on nothing.
   - Model: Opus, Not Planned.

@@ -110,7 +110,7 @@ impl Elab<'_> {
                     return self.generator_member(name, field, &[]);
                 }
                 match self.eval(object, scope)? {
-                    CtValue::Type(ty) => self.associated_value(&ty, field),
+                    CtValue::Type(ty) => self.member_of(&ty, field),
                     CtValue::Reflected(ty) if field == "T" => Ok(CtValue::Type(ty)),
                     // A compile-time `StringLiteral`'s `value` parameter.
                     value

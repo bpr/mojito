@@ -185,7 +185,12 @@ impl Checker {
             self.assumed_conformances.borrow_mut().push(facts);
             let resolved = (|| {
                 if member.params.is_empty() {
-                    let value = self.eval_associated_ct(&member.value, &out)?;
+                    // A call is the application of its callee over the
+                    // struct's parameters, which each instance evaluates.
+                    let value = {
+                        let _lifting = self.lifting_position();
+                        self.eval_associated_ct(&member.value, &out)?
+                    };
                     if let Some(CtMemberReq::Value(declared)) = &requirement {
                         self.check_raw_list_member(&member.name, &value, declared)?;
                     }

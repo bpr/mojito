@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	768
+# swept-count	769
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -765,6 +765,7 @@ assets/type_error/unavailable_function_replacement.mojo	compile-reject	agree	err
 assets/type_error/unavailable_function_value.mojo	compile-reject	agree	error: gone
 assets/type_error/unavailable_initializer.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/unbound_struct_member_dependent.mojo	compile-reject	agree	error: cannot access comptime member 'Y' with unbound parameter 'D.T'
+assets/type_error/unbound_struct_member_through_sibling.mojo	compile-reject	agree	error: cannot access comptime member 'b' with unbound parameter 'S.T'
 assets/type_error/uninit_storage_compiler_private.mojo	compile-reject	agree	error: use of unknown declaration '__UninitStorage'
 assets/type_error/untaken_comptime_for_reflection_body.mojo	compile-reject	agree	error: cannot implicitly convert 'StringLiteral["oops"]' value to 'Int'
 assets/type_error/untaken_comptime_if_fieldwise_pack_construction.mojo	compile-reject	agree	error: no matching function in initialization

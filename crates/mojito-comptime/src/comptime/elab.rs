@@ -592,7 +592,13 @@ impl Elab<'_> {
                 }
                 // `Self.n` names the enclosing struct's own value parameter;
                 // a walk that bound it to a value materializes that value.
-                ParamArg::Type(Type::SelfParam(param)) => match scope.get(param) {
+                ParamArg::Type(Type::SelfParam(param)) => match scope
+                    .get(param)
+                    .cloned()
+                    .map(Ok)
+                    .or_else(|| self.self_sibling(param, scope))
+                    .transpose()?
+                {
                     Some(CtValue::Type(_)) | None => Err(ComptimeError::NotComptime(format!(
                         "value parameter '{name}' expects a compile-time {ty}, got Self.{param}"
                     ))),
@@ -667,8 +673,14 @@ impl Elab<'_> {
                     "'type_of' of a value or a struct type is not supported yet".to_string(),
                 )
             }),
-            Type::SelfParam(name) => match scope.get(name) {
-                Some(CtValue::Type(ty)) => Ok(ty.clone()),
+            Type::SelfParam(name) => match scope
+                .get(name)
+                .cloned()
+                .map(Ok)
+                .or_else(|| self.self_sibling(name, scope))
+                .transpose()?
+            {
+                Some(CtValue::Type(ty)) => Ok(ty),
                 Some(_) => Err(ComptimeError::NotComptime(format!(
                     "Self.{name} is not type-valued"
                 ))),
@@ -954,7 +966,8 @@ impl Elab<'_> {
     /// The compile-time member `member` of struct `name`'s generator,
     /// applied to the closed `member_args` (none for an unparameterized
     /// member). As at the pin, a member that does not depend on the unbound
-    /// parameters reads, and one that does is rejected.
+    /// parameters reads, and one that does, spelled or through a sibling it
+    /// reads, is rejected.
     pub(super) fn generator_member(
         &self,
         name: &str,
@@ -963,17 +976,7 @@ impl Elab<'_> {
     ) -> Result<CtValue, ComptimeError> {
         match self.ct_struct(name) {
             Some(StructView::Own(info)) => {
-                if let Some(parameter) = info
-                    .associated
-                    .iter()
-                    .find(|associated| associated.name == member)
-                    .and_then(|associated| {
-                        info.decls.iter().find(|decl| {
-                            let qualified = self_qualified(decl.name());
-                            expression_names_any(&associated.value, &|name| name == qualified)
-                        })
-                    })
-                {
+                if let Some(parameter) = member_parameter(info, member, &mut HashSet::new()) {
                     return Err(ComptimeError::Type(TypeError::UnboundParameterMember {
                         member: member.to_string(),
                         parameter: format!("{name}.{}", parameter.name().trim_start_matches('*')),
@@ -1041,6 +1044,38 @@ impl Elab<'_> {
         member: &str,
     ) -> Result<CtValue, ComptimeError> {
         self.associated_value_at(base, member, &[])
+    }
+
+    /// The compile-time member `member` of `ty`: through the generator
+    /// when `ty` is a parameterized struct no argument binds
+    /// ([`Self::generator_member`]), else the instance's.
+    pub(super) fn member_of(&self, ty: &Ty, member: &str) -> Result<CtValue, ComptimeError> {
+        match ty.kind() {
+            TyKind::Struct(name, args)
+                if args.is_empty()
+                    && self
+                        .ct_struct(name)
+                        .is_some_and(|info| !info.decls().is_empty()) =>
+            {
+                self.generator_member(name, member, &[])
+            }
+            _ => self.associated_value(ty, member),
+        }
+    }
+
+    /// `Self.<name>` where `scope` binds no parameter of the name: the
+    /// sibling member of the struct `scope` binds `Self` to, while a
+    /// member's body is evaluated ([`Self::associated_value_at`]). `None`
+    /// when `scope` binds no `Self`.
+    pub(super) fn self_sibling(
+        &self,
+        name: &str,
+        scope: &ConstEnv<'_>,
+    ) -> Option<Result<CtValue, ComptimeError>> {
+        match scope.get("Self")? {
+            CtValue::Type(ty) => Some(self.member_of(ty, name)),
+            _ => None,
+        }
     }
 
     /// Whether the struct `base` names declares a parameterized `comptime`
@@ -1169,6 +1204,9 @@ impl Elab<'_> {
         for (param, value) in assoc.params.iter().zip(member_args) {
             env.insert(param.name.clone(), value.clone());
         }
+        // A sibling member reads through `Self`, the instance or generator
+        // the member is read on.
+        env.insert("Self".to_string(), CtValue::Type(base.clone()));
         if !assoc.params.is_empty() {
             self.check_where_clauses(&format!("{base}.{member}"), &assoc.where_clauses, &env)?;
         }
@@ -1207,6 +1245,7 @@ impl Elab<'_> {
     fn applied_initializer(&self, expression: &Expr, env: &ConstEnv<'_>) -> bool {
         self.applies_callable(expression)
             || asks_layout(expression)
+            || self.reads_applied_member(expression)
             || expression_names_any(expression, &|name| {
                 matches!(env.get(name), Some(CtValue::Marker(CtMarker::Applied)))
             })
@@ -1215,6 +1254,71 @@ impl Elab<'_> {
                 self.generic_alias(name).is_some_and(|alias| {
                     alias.params.iter().any(|param| param.name.starts_with('*'))
                 })
+            })
+    }
+
+    /// Whether `expression` reads a `comptime` member of one of the
+    /// program's structs (`S[3].V`, `S.k`) whose body applies a callable or
+    /// asks a layout, itself or through a sibling it reads: the parameter
+    /// expression the check binds for the member, which the elaborator
+    /// below MIR runs per instance.
+    fn reads_applied_member(&self, expression: &Expr) -> bool {
+        struct Finder<'e, 'x> {
+            elab: &'e Elab<'x>,
+            found: bool,
+        }
+        impl mojito_ast::visit::Visitor for Finder<'_, '_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                let ExprKind::Member { object, field } = &expr.kind else {
+                    return;
+                };
+                let owner = match &object.kind {
+                    ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. } => name,
+                    ExprKind::Index { object, .. } => match &object.kind {
+                        ExprKind::Identifier(name) => name,
+                        _ => return,
+                    },
+                    _ => return,
+                };
+                if let Some(StructView::Own(info)) = self.elab.ct_struct(owner) {
+                    self.found |= self.elab.member_applies(info, field, &mut HashSet::new());
+                }
+            }
+        }
+        let mut finder = Finder {
+            elab: self,
+            found: false,
+        };
+        mojito_ast::visit::walk_expr(&mut finder, expression);
+        finder.found
+    }
+
+    /// Whether the body of `info`'s member `member` applies a callable or
+    /// asks a layout, itself or through a sibling it reads. `seen` holds the
+    /// members already walked.
+    fn member_applies(
+        &self,
+        info: &CtStruct<'_>,
+        member: &str,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        if !seen.insert(member.to_string()) {
+            return false;
+        }
+        let Some(body) = info
+            .associated
+            .iter()
+            .find(|a| a.name == member)
+            .map(|a| &a.value)
+        else {
+            return false;
+        };
+        self.applies_callable(body)
+            || asks_layout(body)
+            || info.associated.iter().any(|sibling| {
+                let qualified = self_qualified(&sibling.name);
+                expression_names_any(body, &|spelled| spelled == qualified)
+                    && self.member_applies(info, &sibling.name, seen)
             })
     }
 
@@ -1752,6 +1856,33 @@ fn type_packs(parameters: &[TypeParam]) -> impl Iterator<Item = &TypeParam> {
 
 fn self_qualified(name: &str) -> String {
     format!("Self.{}", name.trim_start_matches('*'))
+}
+
+/// The parameter of `info` the body of its member `member` reads: spelled
+/// (`Self.T`), or through a sibling member it reads (`Self.a` over
+/// `comptime a = Self.T`). `seen` holds the members already walked.
+fn member_parameter<'i>(
+    info: &'i CtStruct<'_>,
+    member: &str,
+    seen: &mut HashSet<String>,
+) -> Option<&'i ParamDecl> {
+    if !seen.insert(member.to_string()) {
+        return None;
+    }
+    let body = &info.associated.iter().find(|a| a.name == member)?.value;
+    let reads = |name: &str| {
+        let qualified = self_qualified(name);
+        expression_names_any(body, &|spelled| spelled == qualified)
+    };
+    info.decls
+        .iter()
+        .find(|decl| reads(decl.name()))
+        .or_else(|| {
+            info.associated
+                .iter()
+                .filter(|sibling| sibling.params.is_empty() && reads(&sibling.name))
+                .find_map(|sibling| member_parameter(info, &sibling.name, seen))
+        })
 }
 
 /// Whether an elaboration error names the enclosing struct's `Self` or one
