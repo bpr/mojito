@@ -268,9 +268,10 @@ pub fn bool_lane_binop(op: mojito_ast::ast::InfixOp, a: bool, b: bool) -> Option
     }
 }
 
-/// The target of a built-in scalar conversion call: `Int(x)`, `UInt(x)`,
-/// `Float64(x)`, or `Bool(x)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The target of a built-in scalar conversion: `Int(x)`, `UInt(x)`,
+/// `Float64(x)`, or `Bool(x)`, the type upstream's inlined `pop.cast` (or
+/// `Bool.__init__`'s compare) produces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ScalarConversion {
     Int,
     UInt,
@@ -279,8 +280,8 @@ pub enum ScalarConversion {
 }
 
 impl ScalarConversion {
-    /// The conversion a builtin callee name denotes, or `None` for any other
-    /// name.
+    /// The conversion to the scalar type spelled `name`, or `None` for any
+    /// other spelling.
     pub fn named(name: &str) -> Option<Self> {
         Some(match name {
             "Int" => Self::Int,
@@ -289,6 +290,53 @@ impl ScalarConversion {
             "Bool" => Self::Bool,
             _ => return None,
         })
+    }
+
+    /// The conversion producing `ty`, or `None` for any other type.
+    pub fn to(ty: &Ty) -> Option<Self> {
+        Some(match ty.kind() {
+            TyKind::INT => Self::Int,
+            TyKind::UINT => Self::UInt,
+            TyKind::FLOAT64 => Self::Float64,
+            TyKind::Bool => Self::Bool,
+            _ => return None,
+        })
+    }
+
+    /// The spelling of the type this conversion produces.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Int => "Int",
+            Self::UInt => "UInt",
+            Self::Float64 => "Float64",
+            Self::Bool => "Bool",
+        }
+    }
+
+    /// The type this conversion produces.
+    pub fn ty(self) -> Ty {
+        match self {
+            Self::Int => Ty::int(),
+            Self::UInt => Ty::uint(),
+            Self::Float64 => Ty::float64(),
+            Self::Bool => Ty::bool(),
+        }
+    }
+
+    /// Whether a value of type `ty` converts by this conversion as a cast:
+    /// a numeric scalar or literal, a `Bool`, a width-one SIMD value, and,
+    /// to `Int`, a pointer (its address).
+    pub fn casts_from(self, ty: &Ty) -> bool {
+        matches!(
+            ty.kind(),
+            TyKind::INT
+                | TyKind::UINT
+                | TyKind::FLOAT64
+                | TyKind::IntLiteral
+                | TyKind::FloatLiteral
+                | TyKind::Bool
+        ) || crate::types::is_scalar_simd(ty.kind())
+            || (self == Self::Int && matches!(ty.kind(), TyKind::Pointer { .. }))
     }
 }
 

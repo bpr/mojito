@@ -167,7 +167,7 @@ impl<'a> Flatten<'a> {
     }
 
     /// A call the check recorded as a construction or an intrinsic by an
-    /// adjustment on its node (a copy, a scalar zero, a type parameter's or
+    /// adjustment on its node (a copy, a scalar cast, a scalar zero, a type parameter's or
     /// a pack element's construction, a size, a type name, a pointer to a
     /// place, inline storage, a `Variant`): `None` for any other call.
     fn checked_construction(
@@ -199,6 +199,23 @@ impl<'a> Flatten<'a> {
             )
         }) {
             return args.first().map(|argument| self.expr(*argument));
+        }
+        if let Some(target) = node
+            .adjustments
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::ScalarCast(target) => Some(*target),
+                _ => None,
+            })
+        {
+            let value = self.expr(*args.first()?);
+            let dest = self.fresh_typed(call.location(), None, target.ty());
+            self.emit(MirInstr::ScalarCast {
+                dest,
+                value,
+                target,
+            });
+            return Some(dest);
         }
         if let Some(zero) = self.default_scalar_construction(node) {
             return Some(zero);

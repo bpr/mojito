@@ -98,13 +98,13 @@ impl FnLowering<'_> {
                     )
             })
             && let Some(target) = match method {
-                "__bool__" => Some("Bool"),
-                "__float__" => Some("Float64"),
-                "__int__" | "__mlir_index__" => Some("Int"),
+                "__bool__" => Some(mojito_types::ct::ScalarConversion::Bool),
+                "__float__" => Some(mojito_types::ct::ScalarConversion::Float64),
+                "__int__" | "__mlir_index__" => Some(mojito_types::ct::ScalarConversion::Int),
                 _ => None,
             }
         {
-            return self.lower_convert(ctx, dest, target, &[recv], &[]);
+            return self.lower_convert(ctx, dest, target, recv);
         }
         if matches!(
             self.func.reg_types.get(&recv.0).map(Ty::kind),

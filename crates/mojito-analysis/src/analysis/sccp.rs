@@ -347,7 +347,7 @@ impl Solver<'_> {
         ) {
             return self.meet(*dest, Lattice::Constant(k));
         }
-        let unknown_operand = fold_operands(instruction, self.declarations)
+        let unknown_operand = fold_operands(instruction)
             .iter()
             .any(|reg| matches!(self.lattice.get(reg.0 as usize), Some(Lattice::Unknown)));
         if !unknown_operand {
@@ -377,18 +377,14 @@ impl Solver<'_> {
 
 /// The operands of an instruction [`MirInstr::folded_constant`] may fold;
 /// none for any other.
-fn fold_operands(instruction: &MirInstr, declarations: &MirDeclarations) -> Vec<Reg> {
+fn fold_operands(instruction: &MirInstr) -> Vec<Reg> {
     match instruction {
         MirInstr::BinOp { a, b, .. } => vec![*a, *b],
         MirInstr::UnOp { a, .. } => vec![*a],
         MirInstr::MakeSimd { elems, .. } => elems.clone(),
-        MirInstr::MaterializeLiteral { value, .. } | MirInstr::CopyValue { value, .. } => {
-            vec![*value]
-        }
-        MirInstr::Call { .. } => instruction
-            .scalar_conversion(declarations)
-            .map(|(arg, _)| vec![arg])
-            .unwrap_or_default(),
+        MirInstr::MaterializeLiteral { value, .. }
+        | MirInstr::ScalarCast { value, .. }
+        | MirInstr::CopyValue { value, .. } => vec![*value],
         _ => Vec::new(),
     }
 }

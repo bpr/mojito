@@ -1705,6 +1705,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `Int(x)`, `UInt(x)`, `Float64(x)`, and `Bool(x)` of a scalar operand are
+  now a `scalar.cast` MIR instruction carrying its target, upstream's
+  inlined `pop.cast` or compare, where they were a `call` the VM, Pliron,
+  and `sccp` each recognized by its bare name (R857). The check records the
+  cast, and the elaborator writes it for a conversion a template spells
+  over a type parameter at a scalar instance, so neither backend resolves a
+  conversion by name and a program's own `def UInt` is never taken for
+  one. MIR text 1.118, package 116.
 - A variadic value parameter (`*vs: T`) is now declared with the raw list
   it binds, `KGENParamList[T]`, as upstream's implicit `vs.values` binder
   is typed, where it was declared with its element (R1151). Each bracket

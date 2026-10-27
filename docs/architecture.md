@@ -6569,11 +6569,11 @@ point where a slot declared in a loop is uninitialized again.
   splat `SIMD.__init__`) or one element per lane (upstream's
   `SIMD.__init__(*elems: Scalar[dtype])`), each element a literal, a
   one-lane constant of its dtype, or a `Bool` into a `bool` vector, a built-in scalar conversion
-  (`MirInstr::scalar_conversion`: a bare `call` of `Int`, `UInt`,
-  `Float64`, or `Bool` with one argument that names no declared function,
-  as the VM and Pliron resolve it, Mojito's counterpart of the
-  `pop.cast` or compare upstream's inlined `SIMD.__init__` and
-  `Bool.__init__` leave), and an identity
+  (`MirInstr::ScalarCast`, `scalar.cast`: the `pop.cast` or compare
+  upstream's inlined `SIMD.__init__` and `Bool.__init__` leave, which the
+  check records as `SemanticAdjustment::ScalarCast` over a scalar operand
+  and the elaborator writes for a conversion a template spelled over a
+  type parameter at a scalar instance), and an identity
   copy, over values whose constant kind is the one their register's type
   names. A conversion folds by `CtValue::folded_conversion` over
   `ct::convert_lane`, the rule the VM's `runtime::builtin_convert` and the

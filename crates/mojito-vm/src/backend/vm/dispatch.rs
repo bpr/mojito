@@ -551,14 +551,6 @@ impl VmBackend {
                     line => Ok(line),
                 }
             }
-            // The elaborator rewrites a conversion of a struct value into
-            // a call of its member, so a struct reaching here fails in
-            // `builtin_convert`.
-            "Int" | "Float64" | "Bool" => builtin_convert(name, arg1(name, args)?),
-            // `Scalar[DType.x](arg)` lowers through the recorded SIMD
-            // construction (`MakeSimd`), never a direct builtin call — a bare
-            // `Scalar` name here has lost its dtype and cannot be executed.
-            "UInt" => builtin_convert(name, arg1(name, args)?),
             "divmod" => {
                 let (a, b) = arg2(name, args)?;
                 if let Value::Struct { name: sname, .. } = &a {

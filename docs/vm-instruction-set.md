@@ -95,6 +95,7 @@ accessed; the compact notation omits this analysis-only field.
 | `not` | `UnOp(Not)` | Logical negation |
 | `add` through `not_in` | `BinOp` | Binary arithmetic, comparison, logic, or membership |
 | `literal.materialize` | `MaterializeLiteral` | Convert an exact numeric literal once to its checked runtime scalar type |
+| `scalar.cast` | `ScalarCast` | `Int(x)`, `UInt(x)`, `Float64(x)`, or `Bool(x)` of a scalar operand |
 
 ### Calls
 
@@ -241,6 +242,20 @@ boundary selected by the checker. Integer targets use destination-width
 two's-complement wrapping; floating targets round directly from the exact value
 to binary32 or binary64. The verifier rejects a concrete source, a literal-only
 target, or an incompatible integer/float target combination.
+
+### `scalar.cast` — Built-in Scalar Conversion
+
+```text
+scalar.cast %dest, %value, Int|UInt|Float64|Bool
+```
+
+Converts a numeric scalar or literal, a `Bool`, or a width-one SIMD value to
+the named scalar (`runtime::builtin_convert`): an integer wraps or rounds to
+`Float64`, a float truncates toward zero, saturating, a `bool` is 0/1, and a
+`Bool` target is a non-zero test, so `NaN` is `True`. `Int` of a pointer is
+its address. It is upstream's inlined `SIMD.__init__` (`pop.cast`) or
+`Bool.__init__` (a compare). The verifier rejects any other operand type and
+a destination not of the target type.
 
 ### `var.copy` — Copy Variable
 

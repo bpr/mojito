@@ -283,6 +283,7 @@ impl Table<'_> {
         match instruction {
             MirInstr::Const { .. }
             | MirInstr::MaterializeLiteral { .. }
+            | MirInstr::ScalarCast { .. }
             | MirInstr::SizeOf { .. }
             | MirInstr::TypeName { .. }
             | MirInstr::ParamListAddress { .. }

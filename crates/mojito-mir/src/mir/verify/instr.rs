@@ -77,6 +77,11 @@ pub(super) fn verify_instruction(
         | MirInstr::WriteRef { .. }
         | MirInstr::Store { .. }
         | MirInstr::StoreRef { .. } => verify_reference_instruction(&cx, instruction, errors),
+        MirInstr::ScalarCast {
+            dest,
+            value,
+            target,
+        } => verify_scalar_cast(&cx, *dest, *value, *target, errors),
         MirInstr::MaterializeLiteral { .. }
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::ConstructType { .. }
@@ -1061,5 +1066,33 @@ fn parameter_binds(
                 .get(index)
                 .is_some_and(|param| types_compatible(ty, param))
         }),
+    }
+}
+
+/// A `scalar.cast` reads a value its target `casts_from` and defines a
+/// register of the target type.
+fn verify_scalar_cast(
+    cx: &InstrCx<'_>,
+    dest: Reg,
+    value: Reg,
+    target: mojito_types::ct::ScalarConversion,
+    errors: &mut Vec<String>,
+) {
+    let prefix = cx.prefix;
+    if let Some(found) = cx.reg_ty(value)
+        && !target.casts_from(found)
+    {
+        errors.push(format!(
+            "{prefix}: scalar cast to {} of the non-scalar {found}",
+            target.name()
+        ));
+    }
+    if let Some(found) = cx.reg_ty(dest)
+        && *found != target.ty()
+    {
+        errors.push(format!(
+            "{prefix}: scalar cast to {} defines a register of type {found}",
+            target.name()
+        ));
     }
 }

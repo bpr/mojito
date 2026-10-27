@@ -858,7 +858,8 @@ impl Checker {
     }
 
     /// Type a conversion built-in `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`:
-    /// exactly one argument of a numeric or `Bool` type, producing `target`. An
+    /// exactly one argument of a numeric or `Bool` type, producing `target`,
+    /// recorded as the `ScalarCast` upstream's inlined `pop.cast` is. An
     /// opaque type parameter is also accepted when its bound promises the
     /// conversion — `Int(x)` on `T: Intable`, `Float64(x)` on `T: Floatable`,
     /// `Bool(x)` on `T: Boolable` (`__int__`/`__float__`/`__bool__` run after
@@ -898,11 +899,16 @@ impl Checker {
             ));
             return Ok(target);
         }
-        // `Int(pointer)` is the address conversion (upstream `Pointer.__int__`);
-        // a null pointer converts to 0, which is how the libc-facing stdlib
-        // tests an optional result.
-        if target == *TyKind::INT && matches!(arg_ty.kind(), TyKind::Pointer { .. }) {
-            return Ok(Ty::int());
+        // A scalar operand is cast; `Int(pointer)` is the address conversion
+        // (upstream `Pointer.__int__`), a null pointer converting to 0, which
+        // is how the libc-facing stdlib tests an optional result.
+        let cast = mojito_types::ct::ScalarConversion::to(&target)
+            .filter(|conversion| conversion.casts_from(&arg_ty));
+        if let Some(cast) = cast {
+            self.record_at(span.clone()).adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::ScalarCast(cast),
+            ));
+            return Ok(target);
         }
         // A concrete value routes through its conversion dunder
         // (`Int(x)` → `x.__int__() -> Int`, `Float64`/`Bool` likewise); the
@@ -939,21 +945,15 @@ impl Checker {
             }
             return Ok(target);
         }
-        let bounded = conversion.is_some_and(|(_, bound)| self.param_has_bound(&arg_ty, bound));
-        if bounded {
-            self.borrow_parameter_place_argument(&args[0], &arg_ty);
-            self.record_read_temporary_argument(&args[0]);
-        }
-        // A width-1 SIMD value is a scalar alias (`UInt8`, `Byte`, ...);
-        // Mojo's scalar conversions accept it.
-        let simd_scalar = is_scalar_simd(&arg_ty);
-        if !(is_numeric(&arg_ty) || arg_ty == TyKind::Bool || bounded || simd_scalar) {
+        if !conversion.is_some_and(|(_, bound)| self.param_has_bound(&arg_ty, bound)) {
             return Err(TypeError::TypeMismatch {
                 expected: "a numeric or Bool value".to_string(),
                 found: arg_ty.to_string(),
                 context: format!("argument to '{target}'"),
             });
         }
+        self.borrow_parameter_place_argument(&args[0], &arg_ty);
+        self.record_read_temporary_argument(&args[0]);
         Ok(target)
     }
 

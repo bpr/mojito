@@ -8,9 +8,8 @@
 
 use crate::runtime::RuntimeError;
 use crate::runtime::{
-    ClosureCapture, RefProjection, Value, apply_infix, apply_prefix, builtin_abs, builtin_convert,
-    builtin_divmod, builtin_error, builtin_input, builtin_min_max, builtin_round, simd_from_values,
-    value_as_index,
+    ClosureCapture, RefProjection, Value, apply_infix, apply_prefix, builtin_abs, builtin_divmod,
+    builtin_error, builtin_input, builtin_min_max, builtin_round, simd_from_values, value_as_index,
 };
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use calls::*;
@@ -24,6 +23,7 @@ use mojito_mir::mir::{
     MirPlace, MirProgram, MirSubscriptArg, MirTerm, Proj, Raises, Reg,
 };
 use mojito_types::ct::CtValue;
+use mojito_types::ct::ScalarConversion;
 use mojito_types::types::Ty;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use places::*;

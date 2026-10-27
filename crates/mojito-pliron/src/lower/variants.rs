@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::ct::ScalarConversion;
 use mojito_types::types::TyKind;
 use mojito_types::types::VariantIndex;
 
@@ -16,29 +17,24 @@ pub(super) struct VariantStoreMembers<'m> {
 }
 
 impl FnLowering<'_> {
-    /// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)` over a scalar operand,
-    /// mirroring `runtime::builtin_convert`: float-to-integer saturates (NaN
-    /// becomes 0), integer reinterpretations are bit-exact, and `Bool` is a
-    /// non-zero test (`fcmp une` — `Bool(NaN)` is `True`).
+    /// The `scalar.cast` of `arg` to `conversion` (`Int(x)` / `UInt(x)` /
+    /// `Float64(x)` / `Bool(x)`), mirroring `runtime::builtin_convert`:
+    /// float-to-integer saturates (NaN becomes 0), integer reinterpretations
+    /// are bit-exact, and `Bool` is a non-zero test (`fcmp une` — `Bool(NaN)`
+    /// is `True`).
     pub(super) fn lower_convert(
         &mut self,
         ctx: &mut Context,
         dest: Reg,
-        name: &str,
-        args: &[Reg],
-        kwargs: &[(String, Reg)],
+        conversion: ScalarConversion,
+        arg: Reg,
     ) -> Result<(), PlironError> {
-        if args.len() != 1 || !kwargs.is_empty() {
-            return Err(
-                self.unsupported_reg(format!("conversion call contract for `{name}`"), dest)
-            );
-        }
-        let arg = args[0];
-        let target = match name {
-            "Int" => ScalarTy::Int,
-            "UInt" => ScalarTy::UInt,
-            "Float64" => ScalarTy::Float64,
-            _ => ScalarTy::Bool,
+        let name = conversion.name();
+        let target = match conversion {
+            ScalarConversion::Int => ScalarTy::Int,
+            ScalarConversion::UInt => ScalarTy::UInt,
+            ScalarConversion::Float64 => ScalarTy::Float64,
+            ScalarConversion::Bool => ScalarTy::Bool,
         };
 
         // Literal arguments fold at compile time (the VM's literal branches

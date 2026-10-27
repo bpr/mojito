@@ -779,12 +779,6 @@ pub fn input_eof() -> RuntimeError {
     RuntimeError::Raised(Value::Error("EOF".to_string()))
 }
 
-/// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`.
-///
-/// Convert one numeric-or-`Bool` value (`Float64`→integer truncates toward
-/// zero, `Bool` is 0/1, `Bool(x)` is truthiness — a nonzero value is `True`),
-/// following Mojo.
-///
 /// The synthetic integer address of a VM pointer: 0 for the null (allocation
 /// 0) pointer, otherwise the allocation id in the high word with the element
 /// offset added, so distinct provenances never collide.
@@ -795,28 +789,34 @@ pub const fn pointer_address(allocation: u64, offset: i64) -> i64 {
     ((allocation as i64) << 32).wrapping_add(offset)
 }
 
-pub fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeError> {
+/// `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`, the `scalar.cast` to
+/// `target`.
+///
+/// Convert one numeric-or-`Bool` value (`Float64`→integer truncates toward
+/// zero, `Bool` is 0/1, `Bool(x)` is truthiness — a nonzero value is `True`),
+/// following Mojo.
+pub fn builtin_convert(target: ScalarConversion, v: Value) -> Result<Value, RuntimeError> {
     match &v {
         // `Int(pointer)`: a synthetic address (provenance-unique, 0 for the
         // null/dangling pointer) — the libc-facing stdlib tests optional
         // results with `Int(ptr) == 0`, and never prints an address.
-        Value::Pointer { allocation, offset } if name == "Int" => {
+        Value::Pointer { allocation, offset } if target == ScalarConversion::Int => {
             return Ok(Value::Int(pointer_address(*allocation, *offset)));
         }
         Value::IntLiteral(value) => {
-            return Ok(match name {
-                "Int" => Value::Int(
+            return Ok(match target {
+                ScalarConversion::Int => Value::Int(
                     value
                         .wrapping_signed(64)
                         .ok_or_else(|| literal_materialization_error(&value, "Int"))?,
                 ),
-                "UInt" => Value::UInt(
+                ScalarConversion::UInt => Value::UInt(
                     value
                         .wrapping_unsigned(64)
                         .ok_or_else(|| literal_materialization_error(&value, "UInt"))?,
                 ),
-                "Bool" => Value::Bool(!value.is_zero()),
-                _ => Value::Float64(
+                ScalarConversion::Bool => Value::Bool(!value.is_zero()),
+                ScalarConversion::Float64 => Value::Float64(
                     value
                         .to_f64()
                         .ok_or_else(|| literal_materialization_error(&value, "Float64"))?,
@@ -824,21 +824,21 @@ pub fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeError> {
             });
         }
         Value::FloatLiteral(value) => {
-            return Ok(match name {
-                "Int" => Value::Int(
+            return Ok(match target {
+                ScalarConversion::Int => Value::Int(
                     value
                         .trunc_to_int()
                         .wrapping_signed(64)
                         .ok_or_else(|| literal_materialization_error(&value, "Int"))?,
                 ),
-                "UInt" => Value::UInt(
+                ScalarConversion::UInt => Value::UInt(
                     value
                         .trunc_to_int()
                         .wrapping_unsigned(64)
                         .ok_or_else(|| literal_materialization_error(&value, "UInt"))?,
                 ),
-                "Bool" => Value::Bool(!value.is_zero()),
-                _ => Value::Float64(
+                ScalarConversion::Bool => Value::Bool(!value.is_zero()),
+                ScalarConversion::Float64 => Value::Float64(
                     value
                         .to_f64()
                         .ok_or_else(|| literal_materialization_error(&value, "Float64"))?,
@@ -861,21 +861,19 @@ pub fn builtin_convert(name: &str, v: Value) -> Result<Value, RuntimeError> {
         other => {
             return Err(RuntimeError::TypeError(format!(
                 "{}() expects a numeric or Bool value, got {}",
-                name,
+                target.name(),
                 type_name(&other)
             )));
         }
     };
-    let target = ScalarConversion::named(name).ok_or_else(|| {
-        RuntimeError::TypeError(format!("{name}() is not a built-in scalar conversion"))
-    })?;
     match convert_lane(&lane, target) {
         CtValue::Int(n) => Ok(Value::Int(n)),
         CtValue::UInt(n) => Ok(Value::UInt(n)),
         CtValue::Float(bits) => Ok(Value::Float64(f64::from_bits(bits))),
         CtValue::Bool(b) => Ok(Value::Bool(b)),
         other => Err(RuntimeError::TypeError(format!(
-            "{name}() produced the non-scalar {other:?}"
+            "{}() produced the non-scalar {other:?}",
+            target.name()
         ))),
     }
 }

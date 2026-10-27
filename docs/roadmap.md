@@ -2972,24 +2972,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R858 A program's own `def Int` breaks a library body's builtin
-  `Int(...)`**
-
-  Problem: `def Int(x: Bool) -> Bool: return x` beside `print(Int(True))`
-  prints `True` at the pin and stops in Mojito with "in
-  `__module$std$$intrinsics$_uint_digits_at`: unsupported monomorphizing
-  `Int` return: expected `Bool`, found `Int`".
-  - The library's bare `call Int` resolves to the program's declaration
-    once both are linked, where at the pin the user's `Int` shadows the
-    builtin in its own module alone.
-  - The same holds with `MOJITO_PRE_ELABORATION=0`, so `sccp` is not the
-    cause; its conversion fold already declines a declared name.
-  - Probe: `def Int(x: Float64) -> Float64: return x + 1` and
-    `print(Int(Float64(2.0)))`, which prints `3.0` at the pin.
-  - Found while landing R856 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R726 A constructor with its own origin parameter matches no
   overload over a struct argument**
 
@@ -8309,23 +8291,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1483.
   - Model: Opus, Not Planned.
 
-- [ ] **R857 A built-in scalar conversion is a named builtin `call`, not a
-  cast op**
-
-  `Int(x)`, `UInt(x)`, `Float64(x)`, and `Bool(x)` stay a
-  `call { func: Int|UInt|Float64|Bool }` that the VM, Pliron, and `sccp`
-  each recognize by its bare name, where upstream inlines
-  `SIMD.__init__` and `Bool.__init__` to a `pop.cast` or a compare.
-  - A MIR cast instruction, lowered by the check, would carry the target
-    type and need no name lookup, so a program's own `def UInt` could not
-    be confused with it.
-  - It touches MIR text and the verifier (a MIR version bump), the VM's
-    `builtin_convert` dispatch, Pliron's `lower_convert`, and
-    `MirInstr::scalar_conversion`, which would become the cast's fold.
-  - Found while landing R856 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R594 A trait member's `Self` is respelled `_Self` in its syntax**
 
   The elaborator and the check see a trait default through a declaration
@@ -9576,8 +9541,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   declares `__init__[T: Intable]`, `__init__[T: IntableRaising](out self:
   Int, ...) raises`, and `__init__[T: Floatable](out self: Float64, ...)`.
   - Port the overloads, including the refined `out self` they use, and
-    delete the scalar arms of all three sites. R857's cast becomes their
-    `pop.cast`.
+    delete the scalar arms of all three sites. The `scalar.cast`
+    instruction (R857) becomes their `pop.cast`.
+  - Probe (from R857): a conversion over a struct or a bounded type
+    parameter is still a bare-name `call` of `Int`, `Float64`, or `Bool` in
+    parametric MIR, as is MIR's `bool_conversion` of a `Boolable` struct
+    condition. The elaborator's `Specializer::rewrite_blocks` resolves it by
+    name to the dunder's `call.method` or a `scalar.cast`, where upstream's
+    `__init__[T: Intable]` body is `value.__int__()`.
   - Probe: `Int(StringSpan("12"))`, which the checker's rule converts
     through `StringSpan.__int__`.
   - Probe: a struct whose `__int__` or `__float__` raises converts through

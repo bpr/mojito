@@ -846,7 +846,7 @@ impl<'a> Flatten<'a> {
                     || mojito_types::conformance::is_numeric(&ty)
                     || mojito_types::types::is_scalar_simd(&ty)
             }) {
-            self.bool_conversion(value.location(), ra)
+            self.bool_conversion(value.location(), ra, value.ty().as_ref())
         } else {
             ra
         };

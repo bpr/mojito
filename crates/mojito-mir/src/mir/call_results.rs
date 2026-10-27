@@ -153,7 +153,7 @@ impl<'a> Flatten<'a> {
             return self.expr(condition);
         }
         let value = self.read_operand(condition);
-        self.bool_conversion(condition.location(), value)
+        self.bool_conversion(condition.location(), value, condition.ty().as_ref())
     }
 
     /// `e` read by a consumer with a read convention: a place the checker

@@ -372,9 +372,9 @@ impl VmBackend {
                 }
                 ("__bool__" | "__int__" | "__float__" | "__mlir_index__", 0) => {
                     let target = match method {
-                        "__bool__" => "Bool",
-                        "__float__" => "Float64",
-                        _ => "Int",
+                        "__bool__" => ScalarConversion::Bool,
+                        "__float__" => ScalarConversion::Float64,
+                        _ => ScalarConversion::Int,
                     };
                     return crate::runtime::builtin_convert(target, recv);
                 }

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.117
+mojito-mir 1.118
 ```
 
-The writer emits 1.117. The reader accepts 1.0 through 1.117; *Schema 1.0*
+The writer emits 1.118. The reader accepts 1.0 through 1.118; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -678,6 +678,17 @@ spellings. No older artifact holds the dtype. The package format moves to
 The MIR schema is unchanged by the checked `SimdStorage` adjustment, upstream's
 `v._mlir_value` read of a SIMD value's `!kgen.simd` storage, which a packaged
 body may hold (R1391). The package format moves to `mojito-package 115`.
+
+Schema 1.118 adds `scalar.cast { dest, value, target }`, the built-in
+scalar conversion `Int(x)`, `UInt(x)`, `Float64(x)`, or `Bool(x)` of a
+scalar operand, upstream's inlined `pop.cast` or compare (R857). It carries
+its target, so no backend resolves a conversion by a callee's bare name and
+a program's own `def UInt` is never taken for one. An older artifact's
+`call` of the bare name over a scalar operand no longer runs on either
+backend; the elaborator still turns one over a type parameter into the cast
+or, at a struct, into the conversion dunder's `call.method`. The checked
+`ScalarCast` adjustment records the conversion, and the package format
+moves to `mojito-package 116`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1402,6 +1413,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `CopyValue` / `Rebind` | `value.copy` / `value.rebind` — a `value.copy` carries `constructor: "<symbol>"` after its operands when it names the `__copyinit__` it runs, as `var.use` does (schema 1.68) |
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`: a capture is a `reference` or a lambda's storage moved in) |
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
+| `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
 | `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |

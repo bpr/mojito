@@ -2424,8 +2424,9 @@ impl<'a> Specializer<'a> {
                 // (`call_dunder`); rewrite them into ordinary method calls so
                 // the shared resolver and the `MethodCall` arm below
                 // monomorphize the dunder instance like any other method.
-                // Non-struct operands pass through for the backend's scalar
-                // interception.
+                // A conversion over a scalar operand is its `scalar.cast`;
+                // other non-struct operands pass through for the backend's
+                // scalar interception.
                 if let MirInstr::Call {
                     dest,
                     func,
@@ -2439,16 +2440,16 @@ impl<'a> Specializer<'a> {
                         "abs" => Some("__abs__"),
                         "round" => Some("__round__"),
                         "divmod" => Some("__divmod__"),
-                        // Conversion builtins over a nominal receiver are the
-                        // same VM dunder dispatch (`builtin_convert`'s struct
-                        // arm).
+                        // A conversion over a nominal receiver is upstream's
+                        // `__init__[T: Intable]` body, the dunder's call.
                         "Int" => Some("__int__"),
                         "Float64" => Some("__float__"),
                         "Bool" => Some("__bool__"),
                         _ => None,
                     };
+                    let builtin = !self.functions.contains_key(func.0.as_str());
                     if let Some(method) = dunder
-                        && !self.functions.contains_key(func.0.as_str())
+                        && builtin
                         && kwargs.is_empty()
                         && args.len() == 1 + usize::from(method == "__divmod__")
                         && matches!(
@@ -2464,6 +2465,25 @@ impl<'a> Specializer<'a> {
                             raises.take(),
                             args[1..].to_vec(),
                         );
+                    } else if builtin
+                        && raises.is_none()
+                        && kwargs.is_empty()
+                        && let [value] = args.as_slice()
+                        && let Some(target) =
+                            mojito_types::ct::ScalarConversion::named(func.0.as_str())
+                        && function
+                            .reg_types
+                            .get(&value.0)
+                            .is_some_and(|ty| target.casts_from(ty))
+                    {
+                        // A conversion a template spelled over a type
+                        // parameter is, at a scalar instance, the cast the
+                        // check records where the operand is spelled scalar.
+                        *instruction = MirInstr::ScalarCast {
+                            dest: *dest,
+                            value: *value,
+                            target,
+                        };
                     }
                 }
                 // `x.__pow__(y)` on a scalar is its `**`, which an integer
@@ -2621,19 +2641,10 @@ impl<'a> Specializer<'a> {
                     );
                     conversions.push((
                         index,
-                        MirInstr::Call {
+                        MirInstr::ScalarCast {
                             dest: std::mem::replace(dest, mask),
-                            func: mojito_mir::mir::FuncRef::named("Bool"),
-                            raises: None,
-                            args: vec![mask],
-                            kwargs: Vec::new(),
-                            arg_places: vec![None],
-                            kwarg_places: Vec::new(),
-                            capture_accesses: Vec::new(),
-                            param_arg_regs: Vec::new(),
-                            receiver: None,
-                            instantiated_args: Vec::new(),
-                            spread: None,
+                            value: mask,
+                            target: mojito_types::ct::ScalarConversion::Bool,
                         },
                     ));
                 }

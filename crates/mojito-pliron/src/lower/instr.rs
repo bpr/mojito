@@ -267,6 +267,11 @@ impl FnLowering<'_> {
                 value,
                 target,
             } => self.lower_materialize(ctx, *dest, *value, target),
+            MirInstr::ScalarCast {
+                dest,
+                value,
+                target,
+            } => self.lower_convert(ctx, *dest, *target, *value),
             MirInstr::UnOp { op, dest, a, .. } => self.lower_unop(ctx, *op, *dest, *a),
             MirInstr::BinOp {
                 op,

@@ -135,7 +135,7 @@
             instructions: [
               const { dest: %r0, value: float_literal(1000000000000000000000000000000.0) },
               const { dest: %r1, value: float(46293e5939a08cea) },
-              call { dest: %r2, func: Int, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              scalar.cast { dest: %r2, value: %r1, target: Int }
             ],
             terminator: return { value: present(%r2) }
           }

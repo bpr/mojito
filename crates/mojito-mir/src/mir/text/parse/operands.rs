@@ -4,6 +4,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use crate::mir::Raises;
+use mojito_types::ct::ScalarConversion;
 
 impl Decoder {
     pub(super) fn use_mode(&mut self, value: &Value) -> Option<UseMode> {
@@ -18,6 +19,14 @@ impl Decoder {
                 None
             }
         }
+    }
+
+    pub(super) fn scalar_conversion(&mut self, value: &Value) -> Option<ScalarConversion> {
+        let atom = self.atom(value)?.to_string();
+        ScalarConversion::named(&atom).or_else(|| {
+            self.error(value.span, format!("unknown scalar conversion `{atom}`"));
+            None
+        })
     }
 
     pub(super) fn prefix_op(&mut self, value: &Value) -> Option<PrefixOp> {

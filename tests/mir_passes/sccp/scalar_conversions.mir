@@ -1,4 +1,4 @@
-mojito-mir 1.53
+mojito-mir 1.118
 artifact {
   features: [],
   files: [
@@ -37,7 +37,7 @@ artifact {
             instructions: [
               const { dest: %r0, value: int_literal(7) },
               literal.materialize { dest: %r1, value: %r0, target: Int },
-              call { dest: %r2, func: UInt, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent },
+              scalar.cast { dest: %r2, value: %r1, target: UInt },
               const { dest: %r3, value: int_literal(2) },
               literal.materialize { dest: %r4, value: %r3, target: UInt },
               binary { op: floor_div, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent }
@@ -67,7 +67,7 @@ artifact {
           bb0 {
             instructions: [
               const { dest: %r0, value: int_literal(1) },
-              call { dest: %r1, func: Bool, raises: absent, args: [%r0], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              scalar.cast { dest: %r1, value: %r0, target: Bool }
             ],
             terminator: return { value: present(%r1) }
           }
@@ -95,7 +95,7 @@ artifact {
             instructions: [
               const { dest: %r0, value: int_literal(3) },
               literal.materialize { dest: %r1, value: %r0, target: UInt },
-              call { dest: %r2, func: Float64, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              scalar.cast { dest: %r2, value: %r1, target: Float64 }
             ],
             terminator: return { value: present(%r2) }
           }
@@ -123,7 +123,7 @@ artifact {
             instructions: [
               const { dest: %r0, value: int_literal(200) },
               simd.make { dest: %r1, dtype: uint8, width: 1, elems: [%r0] },
-              call { dest: %r2, func: Int, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              scalar.cast { dest: %r2, value: %r1, target: Int }
             ],
             terminator: return { value: present(%r2) }
           }
@@ -151,7 +151,7 @@ artifact {
             instructions: [
               const { dest: %r0, value: float_literal(1000000000000000000000000000000.0) },
               literal.materialize { dest: %r1, value: %r0, target: Float64 },
-              call { dest: %r2, func: Int, raises: absent, args: [%r1], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              scalar.cast { dest: %r2, value: %r1, target: Int }
             ],
             terminator: return { value: present(%r2) }
           }

@@ -68,9 +68,24 @@ pub(super) fn array_literal_plan(node: &CheckedExpr) -> Option<(Ty, String)> {
 }
 
 impl<'a> Flatten<'a> {
-    /// The `Bool(x)` call both backends dispatch to a struct's `__bool__`.
-    pub(in crate::mir) fn bool_conversion(&mut self, span: SourceSpan, value: Reg) -> Reg {
+    /// `Bool(x)` of `value`, of the checked type `operand`: the `scalar.cast`
+    /// of a scalar, and otherwise the `Bool` call the elaborator resolves to
+    /// its type's `__bool__`.
+    pub(in crate::mir) fn bool_conversion(
+        &mut self,
+        span: SourceSpan,
+        value: Reg,
+        operand: Option<&Ty>,
+    ) -> Reg {
         let dest = self.fresh_typed(span, None, Ty::bool());
+        if operand.is_some_and(|ty| ScalarConversion::Bool.casts_from(ty)) {
+            self.emit(MirInstr::ScalarCast {
+                dest,
+                value,
+                target: ScalarConversion::Bool,
+            });
+            return dest;
+        }
         self.emit(MirInstr::Call {
             dest,
             func: FuncRef::named("Bool"),

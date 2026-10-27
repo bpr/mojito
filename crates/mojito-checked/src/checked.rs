@@ -603,6 +603,11 @@ pub enum SemanticAdjustment {
     /// is the literal's conversion. MIR lowers the call as its one argument,
     /// which carries the `MaterializeLiteral` to the constructed type.
     LiteralConstruction,
+    /// `Int(x)`, `UInt(x)`, `Float64(x)`, `Bool(x)` over a scalar operand:
+    /// upstream's inlined `SIMD.__init__` or `Bool.__init__`, a `pop.cast`
+    /// or a compare. MIR lowers the call as a `scalar.cast` of its one
+    /// argument.
+    ScalarCast(mojito_types::ct::ScalarConversion),
     /// Complete selected method/subscript contract.  `ResolveCallable` remains
     /// as a compatibility projection while downstream consumers migrate; this
     /// record is authoritative whenever both are present.

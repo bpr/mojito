@@ -1,4 +1,4 @@
-mojito-mir 1.53
+mojito-mir 1.118
 artifact {
   features: [],
   files: [
@@ -131,7 +131,7 @@ artifact {
               const { dest: %r2, value: int_literal(4) },
               simd.make { dest: %r3, dtype: uint8, width: 1, elems: [%r2] },
               binary { op: lt, dest: %r4, a: %r1, b: %r3, resolved: absent, raises: absent },
-              call { dest: %r5, func: Bool, raises: absent, args: [%r4], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              scalar.cast { dest: %r5, value: %r4, target: Bool }
             ],
             terminator: return { value: present(%r5) }
           }

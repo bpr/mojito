@@ -164,6 +164,11 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         CapabilityStatus::Partial,
         "scalar and width-1 SIMD targets (wrapping, VM-exact) plus exact literal-typed storage; a constant exceeding i64/f64 storage rejects",
     ),
+    (
+        "scalar.cast",
+        CapabilityStatus::Partial,
+        "numeric, Bool, width-1 SIMD, and literal operands, VM-exact; Int of a pointer is its address; a pointer to any other target rejects",
+    ),
     ("var.use", CapabilityStatus::Supported, "copy/move/borrow"),
     (
         "var.declare",

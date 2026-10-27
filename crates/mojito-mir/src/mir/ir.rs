@@ -828,7 +828,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::TypeName { dest, .. }
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(dest),
-        MirInstr::MaterializeLiteral { dest, value, .. } => out.extend([dest, value]),
+        MirInstr::MaterializeLiteral { dest, value, .. }
+        | MirInstr::ScalarCast { dest, value, .. } => out.extend([dest, value]),
         MirInstr::StoreToMem { dest, src } => out.extend([dest, src]),
         MirInstr::UseVar { dest, .. } => out.push(dest),
         MirInstr::DefVar { src, .. } => out.push(src),
@@ -2065,6 +2066,16 @@ pub enum MirInstr {
         value: Reg,
         target: Ty,
     },
+    /// The built-in scalar conversion `Int(x)`, `UInt(x)`, `Float64(x)`, or
+    /// `Bool(x)` of a scalar operand: upstream's inlined `SIMD.__init__`
+    /// (`pop.cast`) or `Bool.__init__` (a compare against zero). The operand
+    /// is a numeric scalar or literal, a `Bool`, a width-one SIMD value, or,
+    /// to `Int`, a pointer, whose address it reads.
+    ScalarCast {
+        dest: Reg,
+        value: Reg,
+        target: ScalarConversion,
+    },
     /// `x`, `x^`, `borrow x`, … — a use of a variable, tagged with how (`mode`).
     /// `constructor` names the `__copyinit__` a copy runs or the
     /// `__moveinit__` a move runs, as upstream's copy/move insertion names it
@@ -2932,6 +2943,7 @@ impl MirInstr {
         match self {
             Self::Const { .. }
             | Self::MaterializeLiteral { .. }
+            | Self::ScalarCast { .. }
             | Self::SizeOf { .. }
             | Self::TypeName { .. }
             | Self::ParamListAddress { .. }
@@ -3032,40 +3044,6 @@ impl MirInstr {
             .then_some(*value)
     }
 
-    /// The operand and target of a built-in scalar conversion
-    /// (`Int(x)`, `UInt(x)`, `Float64(x)`, `Bool(x)`): a `call` of the bare
-    /// builtin name that `declarations` declares no function under, with one
-    /// positional argument and nothing else, which the VM's `call_named` and
-    /// Pliron's `lower_call` treat as the cast upstream's inlined
-    /// `SIMD.__init__`/`Bool.__init__` leave behind.
-    pub fn scalar_conversion(
-        &self,
-        declarations: &MirDeclarations,
-    ) -> Option<(Reg, ScalarConversion)> {
-        let Self::Call {
-            func,
-            raises: None,
-            args,
-            kwargs,
-            param_arg_regs,
-            receiver: None,
-            instantiated_args,
-            spread: None,
-            ..
-        } = self
-        else {
-            return None;
-        };
-        let [arg] = args.as_slice() else {
-            return None;
-        };
-        let builtin = declarations.function(&func.0).is_none();
-        (builtin && kwargs.is_empty() && param_arg_regs.is_empty() && instantiated_args.is_empty())
-            .then(|| ScalarConversion::named(&func.0))
-            .flatten()
-            .map(|target| (*arg, target))
-    }
-
     /// The constant this instruction's one result always equals when its
     /// operands hold the constants `constant` gives: MLIR's `fold` returning
     /// an attribute, which upstream's `SCCP` asks.
@@ -3076,7 +3054,7 @@ impl MirInstr {
     /// `SIMD.__init__`) or one element per lane (upstream's
     /// `SIMD.__init__(*elems: Scalar[dtype])`), each a literal, a one-lane
     /// constant of its dtype, or a `Bool` into a `bool` vector, a built-in scalar conversion
-    /// ([`Self::scalar_conversion`], upstream's inlined `pop.cast`), and a
+    /// ([`Self::ScalarCast`], upstream's inlined `pop.cast`), and a
     /// forwarded copy fold, and only over values
     /// whose constant kind is the one their register's type names. A
     /// materialization or a one-lane `simd.make` folds to the lane the VM
@@ -3200,10 +3178,11 @@ impl MirInstr {
                 dest,
                 operand(self.forwarded_operand(reg_types, declarations)?)?,
             ),
-            Self::Call { dest, .. } => {
-                let (arg, target) = self.scalar_conversion(declarations)?;
-                (dest, operand(arg)?.folded_conversion(target)?)
-            }
+            Self::ScalarCast {
+                dest,
+                value,
+                target,
+            } => (dest, operand(*value)?.folded_conversion(*target)?),
             _ => return None,
         };
         ct_const(value, reg_types.get(&dest.0)?)
@@ -4829,74 +4808,32 @@ mod tests {
     fn folded_constant_folds_scalar_conversions() {
         use mojito_common::literal::IntLiteral;
         let none = MirDeclarations::default();
-        let conversion =
-            |name: &str, kwargs: Vec<(String, Reg)>, operand: Const, source, target| {
-                let reg_types = HashMap::from([(0, Ty::new(source)), (1, Ty::new(target))]);
-                MirInstr::Call {
-                    dest: Reg(1),
-                    func: FuncRef::named(name),
-                    raises: None,
-                    args: vec![Reg(0)],
-                    kwargs,
-                    arg_places: vec![None],
-                    kwarg_places: Vec::new(),
-                    capture_accesses: Vec::new(),
-                    param_arg_regs: Vec::new(),
-                    receiver: None,
-                    instantiated_args: Vec::new(),
-                    spread: None,
-                }
-                .folded_constant(|_| Some(operand.clone()), &reg_types, &none)
-            };
+        let conversion = |target: ScalarConversion, operand: Const, source| {
+            let reg_types = HashMap::from([(0, Ty::new(source)), (1, target.ty())]);
+            MirInstr::ScalarCast {
+                dest: Reg(1),
+                value: Reg(0),
+                target,
+            }
+            .folded_constant(|_| Some(operand.clone()), &reg_types, &none)
+        };
         assert!(matches!(
-            conversion(
-                "UInt",
-                Vec::new(),
-                Const::Int(7),
-                TyKind::INT.clone(),
-                TyKind::UINT.clone()
-            ),
+            conversion(ScalarConversion::UInt, Const::Int(7), TyKind::INT.clone()),
             Some(Const::Value(CtValue::UInt(7)))
         ));
         assert!(matches!(
             conversion(
-                "Bool",
-                Vec::new(),
+                ScalarConversion::Bool,
                 Const::IntLiteral(IntLiteral::from(1)),
-                TyKind::IntLiteral,
-                TyKind::Bool
+                TyKind::IntLiteral
             ),
             Some(Const::Bool(true))
         ));
-        let huge = Const::Float(1e30);
         assert!(
             conversion(
-                "Int",
-                Vec::new(),
-                huge,
-                TyKind::FLOAT64.clone(),
-                TyKind::INT.clone()
-            )
-            .is_none()
-        );
-        let keyword = vec![("x".to_string(), Reg(0))];
-        assert!(
-            conversion(
-                "Int",
-                keyword,
-                Const::Int(7),
-                TyKind::INT.clone(),
-                TyKind::INT.clone()
-            )
-            .is_none()
-        );
-        assert!(
-            conversion(
-                "print",
-                Vec::new(),
-                Const::Int(7),
-                TyKind::INT.clone(),
-                TyKind::INT.clone()
+                ScalarConversion::Int,
+                Const::Float(1e30),
+                TyKind::FLOAT64.clone()
             )
             .is_none()
         );

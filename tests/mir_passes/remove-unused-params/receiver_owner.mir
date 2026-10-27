@@ -1,4 +1,4 @@
-mojito-mir 1.63
+mojito-mir 1.118
 artifact {
   features: [],
   files: [
@@ -276,7 +276,7 @@ artifact {
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [] }), projections: [projection { op: field(data), type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) } }], type: present(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) }), through: absent } },
               const { dest: %r1, value: int_literal(0) },
               index.get { dest: %r2, base: %r0, index: %r1, base_place: present(place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [] }), projections: [projection { op: field(data), type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) } }], type: present(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "Arr", slot: 0, name: n, type: meta_value(Int) }) }), through: absent }), index_place: absent, call: absent, intrinsic: present(simd) },
-              call { dest: %r3, func: Int, raises: absent, args: [%r2], kwargs: [], arg_places: [absent], kwarg_places: [], capture_accesses: [], param_arg_regs: [], receiver: absent, instantiated_args: [], spread: absent }
+              scalar.cast { dest: %r3, value: %r2, target: Int }
             ],
             terminator: return { value: present(%r3) }
           }

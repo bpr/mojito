@@ -327,6 +327,14 @@ impl VmBackend {
                 regs[dest.0 as usize] =
                     crate::runtime::materialize_literal(regs[value.0 as usize].clone(), target)?;
             }
+            MirInstr::ScalarCast {
+                dest,
+                value,
+                target,
+            } => {
+                regs[dest.0 as usize] =
+                    crate::runtime::builtin_convert(*target, regs[value.0 as usize].clone())?;
+            }
             MirInstr::UseVar {
                 dest,
                 var,
@@ -465,7 +473,7 @@ impl VmBackend {
                 let declared_bool = matches!(value, Value::Simd { .. })
                     && prog.mir.functions[function].1.reg_types.get(&dest.0) == Some(&Ty::bool());
                 regs[dest.0 as usize] = if declared_bool {
-                    crate::runtime::builtin_convert("Bool", value)?
+                    crate::runtime::builtin_convert(ScalarConversion::Bool, value)?
                 } else {
                     value
                 };

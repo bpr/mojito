@@ -892,6 +892,18 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("target", ty_value(target)),
             ],
         ),
+        MirInstr::ScalarCast {
+            dest,
+            value,
+            target,
+        } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("value", reg_value(*value)),
+                ("target", target.name().into()),
+            ],
+        ),
         MirInstr::UseVar {
             dest,
             var,

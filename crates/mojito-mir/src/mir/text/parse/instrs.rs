@@ -395,6 +395,11 @@ impl Decoder {
                 value: self.req(value, fields, "value", Self::reg)?,
                 target: self.req(value, fields, "target", Self::ty)?,
             }),
+            "scalar.cast" => Some(MirInstr::ScalarCast {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                value: self.req(value, fields, "value", Self::reg)?,
+                target: self.req(value, fields, "target", Self::scalar_conversion)?,
+            }),
             "var.use" => Some(MirInstr::UseVar {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 var: self.req(value, fields, "var", Self::var)?,

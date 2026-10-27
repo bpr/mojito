@@ -292,6 +292,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::ConstructTypeParam { .. } => "ConstructTypeParam",
         MirInstr::ConstructType { .. } => "ConstructType",
         MirInstr::MaterializeLiteral { .. } => "MaterializeLiteral",
+        MirInstr::ScalarCast { .. } => "ScalarCast",
         MirInstr::UseVar { .. } => "UseVar",
         MirInstr::MovePlace { .. } => "MovePlace",
         MirInstr::DefVar { .. } => "DefVar",
@@ -443,15 +444,7 @@ fn borrowed_operands(
                 Some(_) => Vec::new(),
                 None if matches!(
                     func.0.as_str(),
-                    "print"
-                        | "String"
-                        | "repr"
-                        | "len"
-                        | "abs"
-                        | "round"
-                        | "Int"
-                        | "Float64"
-                        | "Bool"
+                    "print" | "String" | "repr" | "len" | "abs" | "round"
                 ) =>
                 {
                     args.iter()

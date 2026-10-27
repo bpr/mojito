@@ -25,9 +25,6 @@ impl FnLowering<'_> {
             return self.lower_unsafe_alloc(ctx, dest, args, kwargs);
         }
         if !self.signatures.contains_key(name) {
-            if matches!(name, "Int" | "UInt" | "Float64" | "Bool") {
-                return self.lower_convert(ctx, dest, name, args, kwargs);
-            }
             if name == "print" {
                 return self.lower_print(ctx, dest, args, kwargs);
             }

@@ -386,6 +386,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         | I::WriteRef { .. }
         | I::KeepAlive { .. }
         | I::StoreToMem { .. }
+        | I::ScalarCast { .. }
         | I::UseVar { .. }
         | I::DeclareVar { .. }
         | I::UninitStorage { .. }
