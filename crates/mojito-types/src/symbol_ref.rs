@@ -48,3 +48,17 @@ pub fn serialize_option_seq<S: Serializer>(
 ) -> Result<S::Ok, S::Error> {
     serializer.collect_seq(names.iter().map(|name| name.as_deref().map(SymbolRef)))
 }
+
+/// The struct whose member `member` (`__init__`) the function symbol
+/// `symbol` names.
+///
+/// It is the spelling before `.member`, which ends the symbol or precedes a
+/// `$`-mangled overload or specialization suffix (`E2.__init__$ov$Int$Int`
+/// is `E2`'s); `None` for any other symbol.
+/// `mojito_symbol::symbol::lifecycle_constructor` reads a constructor's
+/// struct through it, and a parameter expression displays an `__init__`
+/// application under it.
+pub fn member_owner<'s>(symbol: &'s str, member: &str) -> Option<&'s str> {
+    let (owner, rest) = symbol.rsplit_once(&format!(".{member}"))?;
+    (rest.is_empty() || rest.starts_with('$')).then_some(owner)
+}

@@ -1,6 +1,7 @@
-# A struct may take a struct-instance value parameter: the argument
-# expression evaluates through VM-backed CTFE, freezes, and keys the
-# specialization — the same frozen value at two sites is one type.
+# A struct may take a struct-instance value parameter: the argument is its
+# constructor's application, which the elaborator evaluates through
+# VM-backed CTFE and freezes to key the specialization — the same
+# construction at two sites is one type.
 @fieldwise_init
 struct Extent(ImplicitlyCopyable, Movable):
     var rows: Int

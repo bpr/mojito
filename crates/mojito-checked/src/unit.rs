@@ -18,6 +18,20 @@ use mojito_types::types::{GenericConstraint, ParamDecl, Ty};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// Whether a struct gets the synthesized fieldwise `__init__`.
+///
+/// It does when declared `@fieldwise_init` (`fieldwise_init`) and none of
+/// its `methods` is an `__init__` of its own
+/// ([`CheckedProgram::synthesizes_fieldwise_constructor`]). The check lists
+/// that constructor for a compile-time construction by the same rule MIR
+/// lowers it by.
+pub fn synthesizes_fieldwise_constructor<'m>(
+    fieldwise_init: bool,
+    mut methods: impl Iterator<Item = &'m str>,
+) -> bool {
+    fieldwise_init && !methods.any(|method| method == "__init__")
+}
+
 /// One lowering unit of a checked program, borrowed from it: the nodes of
 /// one declaration, as upstream's unit is an op.
 #[derive(Debug, Clone, Copy)]
@@ -97,11 +111,13 @@ impl CheckedProgram {
     /// ([`crate::checked::CheckedField::fieldwise_ref`]). A struct that also
     /// declares an `__init__` gets none.
     pub fn synthesizes_fieldwise_constructor(&self, declaration: &CheckedStruct) -> bool {
-        declaration.fieldwise_init
-            && !declaration
+        synthesizes_fieldwise_constructor(
+            declaration.fieldwise_init,
+            declaration
                 .methods
                 .iter()
-                .any(|method| method.registered == "__init__")
+                .map(|method| method.registered.as_str()),
+        )
     }
 
     /// Whether the compiler synthesizes `declaration`'s destructor, as

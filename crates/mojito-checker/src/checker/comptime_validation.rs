@@ -134,18 +134,22 @@ pub(super) struct ForwardedPack {
 }
 
 /// A callable a compile-time call applies by name
-/// ([`Checker::called_application`]): a module `def` or a static method of a
-/// struct, whose own compile-time parameters and runtime parameters are each
-/// an `Int`, a `UInt`, a `Bool`, or a `Float64`, and which returns one or a
-/// named struct. A `where` clause it declares binds a call as a runtime
+/// ([`Checker::called_application`]): a module `def`, a static method of a
+/// struct, or a struct's `__init__`, whose own compile-time parameters and
+/// runtime parameters are each an `Int`, a `UInt`, a `Bool`, or a
+/// `Float64`, and which returns one or a named struct. A `where` clause it declares binds a call as a runtime
 /// call's does.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
     /// The MIR declaration the elaborator runs.
     symbol: String,
-    /// Whether it is a static method of a generic struct, which is applied
-    /// to the instance it is called on before any other argument.
+    /// Whether it is a static method or an `__init__` of a generic struct,
+    /// which is applied to the instance it is called on, or constructs,
+    /// before any other argument.
     on_instance: bool,
+    /// Whether it is an `__init__`, the synthesized fieldwise one included,
+    /// whose `out self` is its result: the instance a call constructs.
+    constructs: bool,
     /// The callable's own compile-time parameters, in declared order.
     binders: Vec<(String, Ty)>,
     /// Its runtime parameters, in declared order.
@@ -196,6 +200,12 @@ impl ApplicableFunction {
             .collect()
     }
 
+    /// Whether it is an `__init__`, whose result is the instance it
+    /// constructs.
+    pub(in crate::checker) const fn constructs(&self) -> bool {
+        self.constructs
+    }
+
     /// Whether it is declared `raises`.
     pub(in crate::checker) const fn raises(&self) -> bool {
         self.raises
@@ -218,8 +228,8 @@ pub(super) struct ApplicableDeclaration<'a> {
     pub(super) name: String,
     pub(super) function: ApplicableFunction,
     pub(super) body: &'a [Stmt],
-    /// The struct statement declaring a static method; `None` for a module
-    /// `def`.
+    /// The struct statement declaring a static method or an `__init__`;
+    /// `None` for a module `def`.
     pub(super) owner: Option<&'a Stmt>,
 }
 
@@ -304,7 +314,7 @@ pub(super) fn applicable_declarations<'a>(
                     overloads,
                     constants,
                 );
-                declarations.extend(shape.applicable(symbol, false).map(|function| {
+                declarations.extend(shape.applicable(symbol, false, false).map(|function| {
                     ApplicableDeclaration {
                         name: name.clone(),
                         function,
@@ -317,9 +327,83 @@ pub(super) fn applicable_declarations<'a>(
                 name,
                 type_params,
                 methods,
+                fields,
+                fieldwise_init,
                 ..
             } => {
+                let on_instance = !type_params.is_empty();
+                // A construction calls its `__init__` under the struct's
+                // name, its `out self` the result.
+                let constructed = SourceType::Named(name.clone(), Vec::new());
+                let mut list =
+                    |source: String, function: Option<ApplicableFunction>, body: &'a [Stmt]| {
+                        declarations.extend(function.map(|function| ApplicableDeclaration {
+                            name: source,
+                            function,
+                            body,
+                            owner: Some(statement),
+                        }));
+                    };
+                if mojito_checked::unit::synthesizes_fieldwise_constructor(
+                    *fieldwise_init,
+                    methods.iter().map(|method| method.name.as_str()),
+                ) {
+                    let params: Vec<_> = fields
+                        .iter()
+                        .map(|field| mojito_ast::ast::FnParam {
+                            name: field.name.clone(),
+                            ty: field.ty.clone(),
+                            default: None,
+                            kind: mojito_ast::ast::ParamKind::Regular,
+                            convention: None,
+                            origin: None,
+                        })
+                        .collect();
+                    let shape = ApplicableShape {
+                        decorators: &[],
+                        type_params: &[],
+                        params: &params,
+                        positional_only: None,
+                        keyword_only: None,
+                        raises: false,
+                        ret: &constructed,
+                        where_clauses: &[],
+                    };
+                    let symbol = format!("{name}.__init__");
+                    list(
+                        name.clone(),
+                        shape.applicable(symbol, on_instance, true),
+                        &[],
+                    );
+                }
                 for method in methods {
+                    if method.name == "__init__"
+                        && method.self_convention == Some(ArgConvention::Out)
+                    {
+                        let shape = ApplicableShape {
+                            decorators: &method.decorators,
+                            type_params: &method.type_params,
+                            params: &method.params,
+                            positional_only: method.positional_only,
+                            keyword_only: method.keyword_only,
+                            raises: method.raises,
+                            ret: &constructed,
+                            where_clauses: &method.where_clauses,
+                        };
+                        let symbol = mojito_symbol::symbol::lowered_method_name(
+                            &format!("{name}.__init__"),
+                            type_params,
+                            mojito_symbol::symbol::MethodShape::of(method),
+                            overloads,
+                            constants,
+                        );
+                        list(
+                            name.clone(),
+                            shape.applicable(symbol, on_instance, true),
+                            &method.body,
+                        );
+                        continue;
+                    }
                     let Some(ret) = method.ret.as_ref().filter(|_| !method.has_self) else {
                         continue;
                     };
@@ -341,14 +425,11 @@ pub(super) fn applicable_declarations<'a>(
                         overloads,
                         constants,
                     );
-                    declarations.extend(shape.applicable(symbol, !type_params.is_empty()).map(
-                        |function| ApplicableDeclaration {
-                            name: source,
-                            function,
-                            body: &method.body,
-                            owner: Some(statement),
-                        },
-                    ));
+                    list(
+                        source,
+                        shape.applicable(symbol, on_instance, false),
+                        &method.body,
+                    );
                 }
             }
             _ => {}
@@ -998,9 +1079,11 @@ impl Checker {
             .insert(expr.source_span(), expression.clone());
     }
 
-    /// The application a call of a module function or a static method
-    /// denotes when every argument is a compile-time `Int`, `UInt`, `Bool`,
-    /// or `Float64` (`h(n)`, `h(Self.n + 1)`, `twice[n]()`, `S.f(n)`, `d(n, m=4)`): the
+    /// The application a call of a module function, a static method, or a
+    /// struct's `__init__` denotes when every argument is a compile-time
+    /// `Int`, `UInt`, `Bool`, or `Float64` (`h(n)`, `h(Self.n + 1)`,
+    /// `twice[n]()`, `S.f(n)`, `d(n, m=4)`, `Extent(n, 2)`, `G[2](n)`, a
+    /// construction's result the instance it constructs): the
     /// callable applied to the parameter expressions of its compile-time
     /// arguments, then of its runtime ones in declared order, a default
     /// standing where the call omits one, as the pin's call node is. It
@@ -1027,7 +1110,11 @@ impl Checker {
             arguments,
             ..
         } = selected;
-        let result = self.ty_from_anno(&function.result).ok().filter(|ty| {
+        let result = match &instance {
+            Some(instance) if function.constructs => Some(instance.clone()),
+            _ => self.ty_from_anno(&function.result).ok(),
+        }
+        .filter(|ty| {
             matches!(
                 ty.kind(),
                 TyKind::INT
@@ -1186,13 +1273,24 @@ impl Checker {
             .get(&name)?
             .iter()
             .filter_map(|function| {
+                // A generic struct's construction is bracketed by the
+                // instance it constructs (`G[2](n)`), not by binders of its
+                // `__init__`.
+                let (instance, param_args) = match (function.constructs, function.on_instance) {
+                    (true, true) if !param_args.is_empty() => (
+                        self.ty_from_anno(&SourceType::Named(name.clone(), param_args.to_vec()))
+                            .ok(),
+                        [].as_slice(),
+                    ),
+                    _ => (instance.clone(), param_args),
+                };
                 if (function.on_instance && instance.is_none()) || function.constraints.is_none() {
                     return None;
                 }
                 Some(Selected {
                     name: name.clone(),
                     function,
-                    instance: instance.clone(),
+                    instance,
                     arguments: self.applied_arguments(function, param_args, args, kwargs)?,
                 })
             });
@@ -1539,15 +1637,28 @@ impl Checker {
                     .or_else(|| self.pack_parameter_in_scope(name)),
             };
             match denoted {
-                Some(denoted) => denoted.visit(&mut |node| match node.kind() {
-                    mojito_types::param_expr::ParamKind::DeclRef(reference)
-                    | mojito_types::param_expr::ParamKind::PackQuery {
-                        pack: reference, ..
-                    } => {
-                        read.insert(reference.id.clone());
+                Some(denoted) => {
+                    // A type it embeds over a binder (the instance an
+                    // `__init__` application constructs) is type-shaped.
+                    let mut typed = false;
+                    denoted.visit(&mut |node| {
+                        typed |= node
+                            .embedded_types()
+                            .into_iter()
+                            .any(mojito_types::types::has_free_parameters);
+                        if let mojito_types::param_expr::ParamKind::DeclRef(reference)
+                        | mojito_types::param_expr::ParamKind::PackQuery {
+                            pack: reference,
+                            ..
+                        } = node.kind()
+                        {
+                            read.insert(reference.id.clone());
+                        }
+                    });
+                    if typed {
+                        return None;
                     }
-                    _ => {}
-                }),
+                }
                 None if self.binding_scope(name).is_none_or(|scope| scope == 0) => {}
                 None => return None,
             }
@@ -3840,8 +3951,14 @@ struct ApplicableShape<'a> {
 }
 
 impl ApplicableShape<'_> {
-    /// The callable under `symbol`, when a compile-time call can apply it.
-    fn applicable(&self, symbol: String, on_instance: bool) -> Option<ApplicableFunction> {
+    /// The callable under `symbol`, when a compile-time call can apply it:
+    /// an `__init__` when it `constructs`.
+    fn applicable(
+        &self,
+        symbol: String,
+        on_instance: bool,
+        constructs: bool,
+    ) -> Option<ApplicableFunction> {
         let scalar = |ty: &SourceType| match ty {
             SourceType::Int => Some(Ty::int()),
             SourceType::UInt => Some(Ty::uint()),
@@ -3888,6 +4005,7 @@ impl ApplicableShape<'_> {
         Some(ApplicableFunction {
             symbol,
             on_instance,
+            constructs,
             binders,
             params,
             positional_only: self.positional_only,

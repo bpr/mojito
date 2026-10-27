@@ -291,6 +291,26 @@ impl VmBackend {
         args: Vec<Value>,
         kwargs: &[(String, Value)],
     ) -> Result<Value, RuntimeError> {
+        let user_args = match prog.sigs.get(constructor) {
+            Some(signature) => {
+                self.bind_for_call(prog, constructor, signature, &args, kwargs)?
+                    .0
+            }
+            None => args,
+        };
+        self.construct_bound(prog, name, constructor, user_args)
+    }
+
+    /// [`Self::construct_via_init`] over `user_args` already bound to the
+    /// constructor's parameters in declared order, as a compile-time
+    /// application passes them.
+    pub(super) fn construct_bound(
+        &mut self,
+        prog: &Prog,
+        name: &str,
+        constructor: &str,
+        user_args: Vec<Value>,
+    ) -> Result<Value, RuntimeError> {
         let def = prog.structs.get(name).ok_or_else(|| {
             RuntimeError::Unsupported(format!(
                 "vm: constructed struct '{name}' is missing from MIR"
@@ -305,13 +325,6 @@ impl VmBackend {
                 "vm: checked constructor '{constructor}' is missing from MIR"
             ))
         })?;
-        let user_args = match prog.sigs.get(constructor) {
-            Some(signature) => {
-                self.bind_for_call(prog, constructor, signature, &args, kwargs)?
-                    .0
-            }
-            None => args,
-        };
         let mut bound = Vec::with_capacity(user_args.len() + 1);
         bound.push(skeleton);
         bound.extend(user_args);

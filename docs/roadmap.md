@@ -155,32 +155,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1483 A struct construction in a parameter position is frozen
-  fieldwise by the check, not applied**
-
-  `aggregate_value` (`checker/constraints.rs`) reads `Extent(2, 3)` as a
-  `CtValue::Struct` constant, where the pin keeps it as an application of
-  `Extent.__init__` (its diagnostic spells `Tagged[Extent(Int(2),
-  Int(3))]`).
-  - The lever: a struct's `__init__`, the synthesized fieldwise one
-    included (`CheckedProgram::synthesizes_fieldwise_constructor`), becomes
-    an `ApplicableFunction`, so `called_application` applies it.
-    `aggregate_value`'s struct arm goes.
-  - Probe: `Tagged[Extent(n, n + 1)]` in `def gen[n: Int]` stops with
-    "field 'rows' of 'Extent' expects Int, got n". The pin prints `12` for
-    `gen[3]()`.
-  - Probe: over a module `comptime E = Extent(4, 4)`, `var d: Tagged[E] =
-    Tagged[Extent(4, 4)](1)` stops with "expected
-    Tagged[$comptime$E$module()], found Tagged[Extent(4, 4)]": the
-    constant is lifted to a thunk, the bracket argument frozen. The pin
-    prints `16`.
-  - Shrinks R1529: a tuple display is `Tuple.__init__`'s application
-    at the pin. Related to R218 (the synthesized `__init__` as an
-    overload).
-  - Found while landing R1384 (2026-10-26).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1528 An application takes only scalar parameters**
 
   `ApplicableShape::applicable` (`checker/comptime_validation.rs`) admits
@@ -201,6 +175,17 @@ which names the upstream pass each one follows. Each is measured by the
     type-pack collector, bound through `mojito-ast`'s call binder.
     `Specializer::demand_application` regroups a collector's run into the
     one value its MIR parameter takes (read the VM's `thaw` first).
+  - Probe: a construction whose `__init__` takes a struct or `String`
+    parameter is still frozen fieldwise by `aggregate_value`'s
+    `frozen_construction` (`checker/constraints.rs`), where the pin applies
+    it: `fields[Q(8, "x")]()` in
+    `assets/ok/value_parameter_string_aggregate.mojo` and `ints[N(8,
+    In(9))]()` in `assets/ok/value_parameter_field_read.mojo`. Delete that
+    arm here.
+  - Probe: `TB[Box[Int](6)]` and `TB[Box(5)]` over `@fieldwise_init struct
+    Box[T: ImplicitlyCopyable & Deinitable]` with `var v: Self.T` stop with
+    "not an associated comptime expression": the constructor's parameter
+    is typed by the struct's binder. The pin prints `12` and `10`.
   - Plan: `R1472-a-symbolic-tuple-list-or-struct-plan.md`, Slice 1.
   - Related to R397 (a callee's own type parameters).
   - Found while landing R1472 (2026-10-27).
@@ -231,13 +216,23 @@ which names the upstream pass each one follows. Each is measured by the
     against `Tag[(n + 1, 1)]` are rejected; the pin runs both.
   - Probe: closed `Tag[(5, 1)]` against `Tag[(5, 2)]` must stay rejected, as
     the pin rejects it naming `Tag[Tuple(Int(5), Int(2))]`.
+  - Probe: a closed construction inside a display is still frozen
+    (`Checker::element_value`, `checker/constraints.rs`), as a display of
+    applications has no parameter expression: `comptime r = [NC(1),
+    NC(2)][0]` in `assets/ok/ctfe_projection_of_temporary_in_body.mojo`.
+    Delete that freeze here.
+  - Probe: `comptime r = [mk(1), mk(2)][0]` over `def mk(n: Int) -> NC`, `NC`
+    only `Movable`, is lifted to a thunk whose return copies the element
+    out of `__getitem__`'s reference result, so it is rejected with "cannot
+    copy non-Copyable type 'NC'". The pin prints `1`.
   - The lever: `build_ct` builds a display as the `Apply` of the
     constructor `record_display_construction` selects for its contextual
-    type, through the R1483 route. No new `ParamKind` node.
+    type, as a struct construction is applied
+    (`Checker::called_application`). No new `ParamKind` node.
     `aggregate_value` goes.
   - Plan: `R1472-a-symbolic-tuple-list-or-struct-plan.md`, Slice 3.
   - Found while landing R1386 (2026-10-26).
-  - Depends on R1483, R1528.
+  - Depends on R1528.
   - Model: Fable, Planned.
 - [ ] **R1474 A predicate alias body or a struct header's condition is
   compiled without its binders in scope**
@@ -8414,8 +8409,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     raw list only inside the bundled `ParameterList`.
   - Blocker: a struct member `comptime count = len(Self.Ts)` becomes an
     application only once `called_application` applies a function to a
-    struct-valued argument (`TypeList[Self.Ts.values]()`), which is
-    R1483's lever. `comptime count = mylen(Foo())` fails the same way.
+    struct-valued argument (`TypeList[Self.Ts.values]()`), which needs
+    R1528 (a struct-typed parameter). `comptime count = mylen(Foo())` fails
+    the same way.
   - Probe: `def f[*Ts: Movable]() where len(Ts) == 2`, called as
     `f[Int, Bool]()`, prints its body in Mojito, where the pin rejects it
     for "lacking evidence" of `len[TypeList[Int, Bool]](TypeList[Int,
@@ -8423,7 +8419,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `Box[len(Ts)]` passed where `Box[Ts.length]` is expected is
     rejected by both, with the pin naming `len[TypeList[Ts.values]](Ts)`.
   - Found while landing R988 (2026-10-22).
-  - Depends on R1483.
+  - Depends on R1528.
   - Model: Opus, Not Planned.
 
 - [ ] **R594 A trait member's `Self` is respelled `_Self` in its syntax**
@@ -9635,10 +9631,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   `L(n).v * 2` over a `TrivialRegisterPassable` `L` with an
   `@always_inline("builtin")` `__init__(out self, v: Int)` that stores
-  `self.v = v` is `2 * n` at the pin, where Mojito says "a compile-time
-  construction takes no arguments".
-  - `applicable_declarations` (`checker/comptime_validation.rs`) lists no
-    `__init__`, and `builtin_fold.rs` folds only a body ending in `return`.
+  `self.v = v` is `2 * n` at the pin, where Mojito keeps the unfolded
+  application and says "expected SIMD[DType.int8, 2 * n], found
+  SIMD[DType.int8, 2 * L(n).v]".
+  - `Checker::called_application` already applies `L(n)`, but
+    `fold_builtin_bodies` (`builtin_fold.rs`) skips a constructor
+    (`ApplicableFunction::constructs`) and folds only a body ending in
+    `return`, so the `__init__`'s `folded_body` is never set.
   - The pin's folded construction is a struct aggregate displayed as a
     call: `Tagged[L(n)]` against `Tagged[L(n + 1)]` is rejected as
     "cannot implicitly convert 'Tagged[L(n)]' value to
@@ -9647,13 +9646,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `__init__` needs one (upstream's `foldInlineBuiltinFunction`). An `out
     self` body that stores each field once folds to it, and
     `ParamContext::field` reads a field through it.
-  - The construction call in `build_ct` (`L(n)`, `Self(...)`) applies the
-    folded `__init__`, as `called_application` applies a function.
+  - `called_application` then replaces the folded body over the call's
+    arguments, as it does a builtin function's. `Self(...)` is R58.
   - Probe: `def f[n: Int](x: SIMD[DType.int8, L(n).v * 2]) ->
     SIMD[DType.int8, 2 * n]: return x`, called as `f[1](SIMD[DType.int8,
     2](1))`, prints `[1, 1]` at the pin.
   - Found while landing R1522 (2026-10-27).
-  - Depends on R1483.
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1526 A call of an `@always_inline("builtin")` method with `self`
@@ -9677,8 +9676,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     bundled `Span` carries builtin members but is not
     `TrivialRegisterPassable`, where upstream's is, so it changes first.
   - Probe: `L(n).doubled()` over a `@fieldwise_init` `L` is rejected at
-    the pin naming the folded `Int((mul L(n).v, 2))`, which needs R1483
-    for its message.
+    the pin naming the folded `Int((mul L(n).v, 2))`, which names the
+    field read of the folded construction R1525 builds.
   - `Self(...)` in such a body is R58.
   - Found while landing R1522 (2026-10-27).
   - Depends on R1525 and R58.

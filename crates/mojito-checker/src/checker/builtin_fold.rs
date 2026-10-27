@@ -31,7 +31,12 @@ impl Checker {
         let declarations: Vec<_> =
             applicable_declarations(stmts, &*self.overload_sets, &*self.program_constants)
                 .into_iter()
-                .filter(|declaration| declaration.function.inline == InlineLevel::Builtin)
+                // A builtin `__init__` stays its application until R1525
+                // folds a constructor body.
+                .filter(|declaration| {
+                    declaration.function.inline == InlineLevel::Builtin
+                        && !declaration.function.constructs()
+                })
                 .collect();
         if let Some(error) = declarations.iter().find_map(|declaration| {
             self.in_owner_scope(declaration, |checker| {
@@ -220,9 +225,9 @@ impl Checker {
                 .applicable_functions
                 .get(name)
                 .is_some_and(|overloads| {
-                    overloads
-                        .iter()
-                        .all(|function| function.inline != InlineLevel::Builtin)
+                    overloads.iter().all(|function| {
+                        !function.constructs() && function.inline != InlineLevel::Builtin
+                    })
                 })
     }
 

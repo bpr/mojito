@@ -42,10 +42,15 @@ impl ConcreteProgram {
     }
 
     /// The result type of the function `name`, which a value
-    /// [`VmBackend::call_concrete`] returned freezes at.
+    /// [`VmBackend::call_concrete`] returned freezes at: an initializer's
+    /// is the struct its `out self` receiver constructs.
     pub fn result_ty(&self, name: &str) -> Option<&Ty> {
         let index = self.0.index_of(name)?;
-        self.0.mir.functions[index].1.ret_ty.as_ref()
+        let function = &self.0.mir.functions[index].1;
+        match self.0.constructed(name, &function.param_types) {
+            Some(_) => function.param_types.first(),
+            None => function.ret_ty.as_ref(),
+        }
     }
 }
 
@@ -463,20 +468,27 @@ impl VmBackend {
             .index_of(name)
             .ok_or_else(|| RuntimeError::UndefinedVariable(name.to_string()))?;
         let param_types = &prog.mir.functions[index].1.param_types;
-        if args.len() != param_types.len() {
+        // An initializer's `out self` is its result, not an argument: it
+        // enters as the skeleton a construction builds.
+        let constructed = prog.constructed(name, param_types);
+        let declared = &param_types[usize::from(constructed.is_some())..];
+        if args.len() != declared.len() {
             return Err(RuntimeError::ArityMismatch {
                 name: name.to_string(),
-                expected: param_types.len(),
+                expected: declared.len(),
                 got: args.len(),
             });
         }
         let args = args
             .iter()
-            .zip(param_types)
+            .zip(declared)
             .map(|(value, ty)| self.thaw(prog, value, Some(ty)))
             .collect::<Result<Vec<_>, _>>()?;
         self.ctfe_fuel = Some(fuel);
-        let result = self.call_function(prog, index, args);
+        let result = match constructed {
+            Some(constructed) => self.construct_bound(prog, constructed, name, args),
+            None => self.call_function(prog, index, args),
+        };
         let remaining = self.ctfe_fuel.take().unwrap_or(0);
         Ok((result?, remaining))
     }
@@ -900,6 +912,20 @@ impl Prog {
 
     fn index_of(&self, name: &str) -> Option<usize> {
         self.mir.functions.iter().position(|(n, _)| n == name)
+    }
+
+    /// The struct the `__init__` `name`, whose parameters are
+    /// `param_types`, constructs: its `out self` receiver's. `None` for any
+    /// other function.
+    fn constructed<'s>(&'s self, name: &'s str, param_types: &'s [Ty]) -> Option<&'s str> {
+        let receiver = match param_types.first().map(Ty::kind) {
+            Some(mojito_types::types::TyKind::Struct(receiver, _)) => Some(receiver.as_str()),
+            _ => None,
+        };
+        match self.lifecycle_constructor(name, receiver)? {
+            (constructed, "__init__") => Some(constructed),
+            _ => None,
+        }
     }
 
     /// Per argument a closure's captures fill in a call of its body

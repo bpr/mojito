@@ -953,8 +953,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `build_ct_name` and `module_constant_entry`), and `eval_associated_ct`
   its `CtValue` adapter: build, `ParamContext::fold`, then `ct_transport`,
   recording member reads and type applications at their spans
-  (`Recording`), with `aggregate_value` carrying a tuple, list, or
-  fieldwise construction whose elements are symbolic. A type operand has
+  (`Recording`), with `aggregate_value` carrying a tuple or list whose
+  elements are symbolic, and the closed fieldwise construction no
+  `__init__` applies (`frozen_construction`, also a display's element). A type operand has
   that one reader too: `type_operand_expression` is the builder filtered
   to a type (`None` for a value), `denoted_type` the same filter with
   upstream's `emitType` rejection ("expected a type"), which reads a type
@@ -1788,7 +1789,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Specializer::demand_application` runs every compile-time application in
   a fragment built and verified once per instance
   (`Specializer::verified_fragment`, kept as a `mojito_vm::backend::
-  ConcreteProgram`).
+  ConcreteProgram`); a generic struct's `__init__` takes its restated
+  struct parameters from the instance (`owner_covered_prefix`), and
+  `VmBackend::call_concrete` runs an `__init__` on the skeleton a
+  construction builds (`construct_bound`), its `out self` the result
+  (`ConcreteProgram::result_ty`).
   `Flatten::lower_comptime_binding` (`mir/lower_stmt.rs`) records the
   binding with its value's node handle and sequence (`DisplayBinding`, in
   the scoped `Flatten::displays`; `ComptimeThunks::bind_display`) and gives
@@ -1812,8 +1817,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SemanticAdjustment::ComptimeApplication` beside the expression's own
   operation. The arena builder gives such an expression inside an
   annotation a node (`type_applications`, `checked.rs`). A call of a module
-  `def` or a static method over `Int` and `Bool` values is instead the
-  application of the callable itself (`Checker::called_application`, tried
+  `def`, a static method, or a struct's `__init__` (a construction, the
+  synthesized fieldwise one included, listed under the struct's name with
+  `ApplicableFunction::constructs`, its result the instance it constructs)
+  over `Int` and `Bool` values is instead the application of the callable
+  itself (`Checker::called_application`, tried
   first by `lifted_application` and alone in a signature or a field type):
   `applicable_functions` (`checker/comptime_validation.rs`, run by
   `check_program`) collects every
@@ -2199,11 +2207,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`simd_width`, `type_resolution.rs`); `infer_member` (`indexing.rs`)
   types every `Self.x` value-parameter read at its declared type and records
   it as the binder's parameter constant, never a projection of `self`.
-- `aggregate_value` (`checker/constraints.rs`, behind `eval_associated_ct`
-  and `compile_dependent_ct_expr`) freezes a fieldwise construction of a non-generic
-  struct from compile-time values (`Extent(2, 3)`) to `CtValue::Struct`;
-  `Checker::called_application` binds any other struct-valued argument as
-  an application `native::mono` evaluates (`VmBackend::freeze`).
+- `Checker::called_application` binds a struct-valued argument, a
+  construction (`Extent(2, 3)`, `G[2](n)`) or a call (`Extent.square(4)`),
+  as an application `native::mono` evaluates (`VmBackend::freeze`), and a
+  struct parameter's default as one (`default_argument`,
+  `checker/declarations.rs`); `aggregate_value` (`checker/constraints.rs`)
+  freezes to `CtValue::Struct` only a closed fieldwise construction no
+  `__init__` applies (R1528). `param_expr`'s display spells an `__init__`
+  application as its struct or instance (`symbol_ref::member_owner`, which
+  `mojito_symbol::symbol::lifecycle_constructor` reads too).
 - `bind_ty_args` (`mono/unify.rs`) binds a struct's pack element by element,
   whole (`CtValue::Tuple`), or forwarded (`TyKind::RuntimePack`) through
   `bind_pack`.

@@ -815,6 +815,12 @@ impl Checker {
         self.ct_value(expr, Recording::Record)
     }
 
+    /// [`Self::eval_associated_ct`] of an element of a display, which the
+    /// display freezes element by element (R1529).
+    pub(super) fn eval_display_element(&self, element: &Expr) -> Result<CtValue, TypeError> {
+        self.element_value(element, Recording::Record)
+    }
+
     /// Compile a compile-time expression into its typed parameter
     /// expression, as upstream's parameter emitter does: one name lookup,
     /// with operator semantics and canonical form from [`ParamContext`].
@@ -1439,9 +1445,9 @@ impl Checker {
             })
     }
 
-    /// The value [`Self::eval_associated_ct`] transports. A tuple, list, or
-    /// fieldwise construction is the aggregate of its elements' values,
-    /// which may be symbolic: a parameter expression has no aggregate node.
+    /// The value [`Self::eval_associated_ct`] transports. A tuple or list
+    /// is the aggregate of its elements' values, which may be symbolic: a
+    /// parameter expression has no aggregate node.
     fn ct_value(&self, expr: &Expr, recording: Recording) -> Result<CtValue, TypeError> {
         if let Some(aggregate) = self.aggregate_value(expr, recording) {
             return aggregate;
@@ -2095,9 +2101,9 @@ impl Checker {
         }
     }
 
-    /// A tuple, list, or fieldwise struct construction's value over its
-    /// elements' values, which may be symbolic. `None` for any other
-    /// expression.
+    /// A tuple's or list's value over its elements' values, which may be
+    /// symbolic, or a closed fieldwise construction's no `__init__`
+    /// applies. `None` for any other expression.
     fn aggregate_value(
         &self,
         expr: &Expr,
@@ -2106,59 +2112,25 @@ impl Checker {
         let elements = |values: &[Expr]| {
             values
                 .iter()
-                .map(|value| self.ct_value(value, recording))
+                .map(|value| self.element_value(value, recording))
                 .collect::<Result<Vec<_>, _>>()
         };
         match &expr.kind {
             ExprKind::TupleLit(values) => Some(elements(values).map(CtValue::Tuple)),
             ExprKind::ListLit(values) => Some(elements(values).map(CtValue::List)),
-            // The fieldwise construction of a non-generic struct from
-            // compile-time values (`Extent(2, 3)`) is a frozen struct value;
-            // any other struct-valued argument is the application
-            // `called_application` builds, which `native::mono` evaluates.
-            ExprKind::Call {
-                name,
-                param_args,
-                args,
-                kwargs,
-            } if param_args.is_empty()
-                && kwargs.is_empty()
-                && let Some(info) = self.structs.get(name)
-                && info.fieldwise_init
-                && info.decls.is_empty()
-                && args.len() == info.declared_field_names.len() =>
-            {
-                let fields = info
-                    .declared_field_names
-                    .iter()
-                    .zip(args)
-                    .map(|(field, argument)| {
-                        let value = self.ct_value(argument, recording)?;
-                        let value = match info.fields.iter().find(|(name, _)| name == field) {
-                            Some((_, ty)) => {
-                                let rendered = value.to_string();
-                                value.materialize_as(ty).ok_or_else(|| {
-                                    TypeError::NotComptime(format!(
-                                        "field '{field}' of '{name}' expects {ty}, got {rendered}"
-                                    ))
-                                })?
-                            }
-                            None => value,
-                        };
-                        Ok((field.clone(), value))
-                    })
-                    .collect::<Result<Vec<_>, TypeError>>();
-                Some(fields.map(|fields| CtValue::Struct {
-                    name: name.clone(),
-                    fields,
-                }))
+            // A construction an `__init__` applies is that application
+            // (`build_ct_rest`'s positioned application), which
+            // `native::mono` evaluates. A closed fieldwise construction
+            // whose `__init__` takes a parameter no application takes yet
+            // (a `String` field) is a frozen struct value until R1528
+            // applies it.
+            ExprKind::Call { .. } if self.called_application(expr).is_none() => {
+                self.frozen_construction(expr, recording)
             }
             _ => None,
         }
     }
 
-    /// `value` as a parameter expression: a type as its shape, closed or
-    /// not, and any other value as its constant.
     /// `conforms_to(subject, Tr)`, upstream's compile-time conformance
     /// query, as a `Bool` parameter expression: a closed type's answer, or
     /// the conjunction of `Conforms` propositions over a type the instance
@@ -2215,11 +2187,73 @@ impl Checker {
         }
     }
 
+    /// The value of an element of a display or of a frozen construction,
+    /// each frozen element by element (R1529, R1528): a closed
+    /// construction among them is its frozen struct value, as an aggregate
+    /// of applications has no parameter expression.
+    fn element_value(&self, value: &Expr, recording: Recording) -> Result<CtValue, TypeError> {
+        self.frozen_construction(value, recording)
+            .and_then(Result::ok)
+            .map_or_else(|| self.ct_value(value, recording), Ok)
+    }
+
+    /// `value` as a parameter expression: a type as its shape, closed or
+    /// not, and any other value as its constant.
     fn ct_param(&self, value: CtValue) -> Result<ParamExpr, TypeError> {
         match value {
             CtValue::Type(ty) => Ok(self.param_context.type_shape(ty)),
             value => self.param_context.constant(value).map_err(param_error),
         }
+    }
+
+    /// The fieldwise construction of a non-generic `@fieldwise_init`
+    /// struct from compile-time values (`Q(1, "x")`) as a frozen struct
+    /// value, field by field. `None` for any other expression.
+    fn frozen_construction(
+        &self,
+        expr: &Expr,
+        recording: Recording,
+    ) -> Option<Result<CtValue, TypeError>> {
+        let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+        else {
+            return None;
+        };
+        let info = self.structs.get(name).filter(|info| {
+            param_args.is_empty()
+                && kwargs.is_empty()
+                && info.fieldwise_init
+                && info.decls.is_empty()
+                && args.len() == info.declared_field_names.len()
+        })?;
+        let fields = info
+            .declared_field_names
+            .iter()
+            .zip(args)
+            .map(|(field, argument)| {
+                let value = self.element_value(argument, recording)?;
+                let value = match info.fields.iter().find(|(name, _)| name == field) {
+                    Some((_, ty)) => {
+                        let rendered = value.to_string();
+                        value.materialize_as(ty).ok_or_else(|| {
+                            TypeError::NotComptime(format!(
+                                "field '{field}' of '{name}' expects {ty}, got {rendered}"
+                            ))
+                        })?
+                    }
+                    None => value,
+                };
+                Ok((field.clone(), value))
+            })
+            .collect::<Result<Vec<_>, TypeError>>();
+        Some(fields.map(|fields| CtValue::Struct {
+            name: name.clone(),
+            fields,
+        }))
     }
 
     /// The parameter expression of an element or the length of a local

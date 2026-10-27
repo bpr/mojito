@@ -1499,7 +1499,13 @@ impl<'a> Specializer<'a> {
             (Some(owner), Some((instance, args))) => (Some((owner, instance)), args),
             _ => (None, args),
         };
-        let parameters = declaration.param_decls.len() + declaration.param_types.len();
+        // A generic struct's `__init__` restates its struct's parameters
+        // first, which the instance binds and names, as a construction's
+        // receiver does: no argument carries them.
+        let own_decls = &declaration.param_decls[instance.map_or(0, |(owner, _)| {
+            owner_covered_prefix(&owner.param_decls, &declaration.param_decls)
+        })..];
+        let parameters = own_decls.len() + declaration.param_types.len();
         if parameters != args.len() {
             return Err(self.error(
                 Some(template),
@@ -1510,7 +1516,7 @@ impl<'a> Specializer<'a> {
                 ),
             ));
         }
-        let (args, called) = args.split_at(declaration.param_decls.len());
+        let (args, called) = args.split_at(own_decls.len());
         let unresolved = |what: &str, arg: &ParamExpr| {
             self.error(
                 Some(template),
@@ -1546,7 +1552,7 @@ impl<'a> Specializer<'a> {
         }
         let removed = self.removed_params(function, false);
         let mut arguments = Vec::new();
-        for (decl, arg) in declaration.param_decls.iter().zip(args) {
+        for (decl, arg) in own_decls.iter().zip(args) {
             let keyed = !removed.contains(decl.id());
             let binder = decl.binder();
             let unresolved = |what: &str| unresolved(what, arg);
@@ -3550,11 +3556,14 @@ impl<'a> Specializer<'a> {
             // struct is declared by the body that uses it, once the method
             // has run. A struct whose field types are closed lays out now,
             // for the method to construct it. A method that removed its
-            // struct's parameters is named off the template.
+            // struct's parameters is named off the template. An `__init__`
+            // being run constructs the struct, which is declared for it.
             if template.fields.iter().any(|(_, ty)| is_symbolic(ty))
                 && self.demand_stack.iter().any(|demanded| {
-                    mojito_symbol::symbol::split_method_symbol(demanded)
-                        .is_some_and(|(instance, _)| instance == name || instance == template_name)
+                    !mojito_symbol::symbol::is_initializer_symbol(demanded)
+                        && mojito_symbol::symbol::split_method_symbol(demanded).is_some_and(
+                            |(instance, _)| instance == name || instance == template_name,
+                        )
                 })
             {
                 self.discovered_types.remove(&ty);

@@ -2560,7 +2560,7 @@ impl Checker {
         let elements = values
             .iter()
             .map(|value| {
-                self.eval_associated_ct(value)
+                self.eval_display_element(value)
                     .ok()?
                     .materialize_as(&element)
             })

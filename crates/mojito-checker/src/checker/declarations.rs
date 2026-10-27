@@ -1014,9 +1014,14 @@ impl Checker {
             (Some(expr), TyKind::AnyTrait(bound)) => {
                 Some(self.trait_param_default(tp, &id, bound, expr)?)
             }
+            // A default that calls a function or constructs a struct
+            // (`e: Extent = Extent(2, 3)`) is that application.
             (default, _) => default
                 .as_ref()
-                .map(|expr| self.compile_dependent_ct_expr(expr))
+                .map(|expr| {
+                    let _lifting = self.lifting_position();
+                    self.compile_dependent_ct_expr(expr)
+                })
                 .transpose()?,
         };
         let variadic = tp.name.starts_with('*');
@@ -3606,19 +3611,12 @@ impl Checker {
                     ..
                 } = decl
                 {
-                    let value = value.evaluate_named(&value_environment).map_err(|_| {
-                        TypeError::NotComptime(format!("default for parameter '{}'", decl.name()))
-                    })?;
-                    let rendered = value.to_string();
-                    TyArg::Val(
-                        value
-                            .materialize_as(ty)
-                            .ok_or_else(|| TypeError::TypeMismatch {
-                                expected: ty.to_string(),
-                                found: rendered,
-                                context: format!("default for parameter '{}'", decl.name()),
-                            })?,
-                    )
+                    TyArg::Val(default_argument(
+                        value,
+                        &value_environment,
+                        ty,
+                        decl.name(),
+                    )?)
                 } else if let ParamDecl::Type { id, .. } = decl
                     && let Some(inferred) = subst.get(id)
                 {
@@ -3741,18 +3739,7 @@ impl Checker {
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value.clone()));
                     } else if let Some(value) = default {
-                        let value = value.evaluate_named(&value_environment).map_err(|_| {
-                            TypeError::NotComptime(format!("default for parameter '{pname}'"))
-                        })?;
-                        let rendered = value.to_string();
-                        let value =
-                            value
-                                .materialize_as(ty)
-                                .ok_or_else(|| TypeError::TypeMismatch {
-                                    expected: ty.to_string(),
-                                    found: rendered,
-                                    context: format!("default for parameter '{pname}'"),
-                                })?;
+                        let value = default_argument(value, &value_environment, ty, pname)?;
                         value_environment
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
@@ -4492,6 +4479,34 @@ fn with_trait_arguments(
     }
     let solved = mojito_types::types::replace_parameters(&context, ty, &bindings, 0).ok()?;
     (solved != **ty).then(|| decl.with_value_type(solved))
+}
+
+/// The argument the default `value` of the value parameter `name` of type
+/// `ty` gives a use that omits it, under the earlier arguments
+/// `environment`: the value it folds to, or a closed application it denotes
+/// (`e: Extent = Extent(2, 3)`), which the elaborator evaluates.
+fn default_argument(
+    value: &ParamExpr,
+    environment: &HashMap<String, CtValue>,
+    ty: &Ty,
+    name: &str,
+) -> Result<CtValue, TypeError> {
+    let context = || format!("default for parameter '{name}'");
+    let value = match value.evaluate_named(environment) {
+        Ok(value) => value,
+        Err(_) if value.is_closed() && value.meta().as_value() == Some(ty) => {
+            return Ok(CtValue::Expr(value.clone()));
+        }
+        Err(_) => return Err(TypeError::NotComptime(context())),
+    };
+    let rendered = value.to_string();
+    value
+        .materialize_as(ty)
+        .ok_or_else(|| TypeError::TypeMismatch {
+            expected: ty.to_string(),
+            found: rendered,
+            context: context(),
+        })
 }
 
 /// `decl` with the binders its value type names replaced by their solutions

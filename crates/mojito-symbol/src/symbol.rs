@@ -1400,11 +1400,11 @@ pub fn init_overload_struct(symbol: &str) -> Option<&str> {
 /// The copy and move constructors answer here too: a construction that names
 /// one builds its receiver the same way.
 pub fn lifecycle_constructor(symbol: &str) -> Option<(&str, &str)> {
-    [".__init__", ".__copyinit__", ".__moveinit__"]
+    ["__init__", "__copyinit__", "__moveinit__"]
         .iter()
         .find_map(|lifecycle| {
-            let (struct_name, rest) = symbol.rsplit_once(lifecycle)?;
-            (rest.is_empty() || rest.starts_with('$')).then_some((struct_name, &lifecycle[1..]))
+            mojito_types::symbol_ref::member_owner(symbol, lifecycle)
+                .map(|struct_name| (struct_name, *lifecycle))
         })
 }
 
@@ -1421,14 +1421,7 @@ pub fn is_initializer_member(method: &str) -> bool {
 /// bare or with a `$`-mangled overload or specialization suffix, but not a
 /// function lifted from one ([`lifted_owner`]), which has no receiver.
 pub fn is_initializer_symbol(symbol: &str) -> bool {
-    lifted_owner(symbol).is_none()
-        && [".__init__", ".__copyinit__", ".__moveinit__"]
-            .iter()
-            .any(|initializer| {
-                symbol
-                    .rsplit_once(initializer)
-                    .is_some_and(|(_, rest)| rest.is_empty() || rest.starts_with('$'))
-            })
+    lifted_owner(symbol).is_none() && lifecycle_constructor(symbol).is_some()
 }
 
 /// Which identity a mangled type spelling serves: an overload key, or a
@@ -3072,6 +3065,20 @@ mod tests {
             Some(LiftedOwner::Numbered("S.g$ov$Int"))
         );
         assert_eq!(lifted_owner("$comptime$$7"), None);
+    }
+
+    #[test]
+    fn a_constructor_symbol_names_the_struct_it_builds() {
+        assert_eq!(
+            lifecycle_constructor("E2.__init__$ov$Int$Int"),
+            Some(("E2", "__init__"))
+        );
+        assert_eq!(
+            lifecycle_constructor("Box.__copyinit__"),
+            Some(("Box", "__copyinit__"))
+        );
+        assert_eq!(lifecycle_constructor("Box.__init__x"), None);
+        assert_eq!(lifecycle_constructor("Box.pop"), None);
     }
 
     #[test]

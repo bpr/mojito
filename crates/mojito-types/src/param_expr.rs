@@ -3882,11 +3882,21 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             PackQuery::IndexOf(element) => write!(f, "_get_type_index[{element}, *{pack}]()"),
         },
         // Mojo-shaped: a type argument in brackets, a value in parentheses.
+        // A construction spells its struct, or the generic instance it
+        // constructs, its leading type argument (`Extent(2, 3)`, `G[2](n)`);
+        // a function lifted from a constructor (`$comptime$S.__init__$c0`)
+        // constructs nothing.
         ParamKind::Apply { function, args, .. } => {
-            let (types, values): (Vec<_>, Vec<_>) = args
+            let (mut types, values): (Vec<_>, Vec<_>) = args
                 .iter()
                 .partition(|arg| matches!(arg.meta(), MetaTy::Type));
-            write!(f, "{function}")?;
+            let constructed = crate::symbol_ref::member_owner(function, "__init__")
+                .filter(|_| !function.starts_with('$'));
+            match constructed {
+                Some(_) if !types.is_empty() => write!(f, "{}", types.remove(0))?,
+                Some(owner) => write!(f, "{owner}")?,
+                None => write!(f, "{function}")?,
+            }
             if !types.is_empty() {
                 write!(f, "[")?;
                 write_operands(f, &types)?;

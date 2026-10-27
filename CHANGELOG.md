@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A struct construction in a type or a parameter argument is now the
+  application of the struct's `__init__`, the synthesized fieldwise one
+  included, as at the pin, so `Tagged[Extent(n, n + 1)]` in `def gen[n:
+  Int]` compiles, a module `comptime E = Extent(4, 4)` names the same type
+  as `Tagged[Extent(4, 4)]`, and `Tagged[Extent(n, n + 1)]` against
+  `Tagged[Extent(n + 1, n)]` is rejected by structure (R1483). Keywords,
+  defaults, written and overloaded constructors, generic (`G[2](n)`),
+  one-field register-passable, and library (`List[Int]()`) structs, and a
+  struct parameter's default (`[e: Extent = Extent(2, 3)]`) all apply. The
+  package format moves to `mojito-package 122`. A closed construction
+  whose `__init__` takes a `String` or struct parameter, and one inside a
+  tuple or list display, is still frozen (R1528, R1529).
 - A call of a function or static method with a `where` clause in a type or
   a parameter argument is now its application, as at the pin, so
   `SIMD[DType.int8, h[1](n)]` over `def h[k: Int](x: Int) -> Int where k >
