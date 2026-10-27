@@ -50,6 +50,9 @@ assets/ok/bound_generic_write_to.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_member_list_generic_conformer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_operator_requirement_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bound_value_member_in_signature.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bracket_capitalized_display_element.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bracket_capitalized_module_constant.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bracket_capitalized_subscript_operator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/builtins_numeric.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bundled_def_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bundled_instance_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
@@ -580,6 +583,7 @@ assets/ok/origin_placeholder_initialized_local.mojo	-	ineligible	no-scalar-entry
 assets/ok/origin_placeholder_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/os_dir_operations.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/os_path_functions.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/overload_nested_application_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_transfer_effect_isolation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_var_copy_beside_generic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/overload_var_copy_constructor.mojo	-	ineligible	no-scalar-entry-shape

@@ -1633,6 +1633,24 @@ fn ast_raw(
     type_bounds: &HashMap<String, BinderSpelling>,
     self_spelling: Option<&str>,
 ) -> String {
+    // A bracket operand parses as an expression; an application among a
+    // type's arguments (`List[Pair[Int]]`) spells as the type it names.
+    if let Type::Named(name, args) = ty
+        && args
+            .iter()
+            .any(|arg| matches!(spelled_type_argument(arg), Cow::Owned(_)))
+    {
+        let args = args
+            .iter()
+            .map(|arg| spelled_type_argument(arg).into_owned())
+            .collect();
+        return ast_raw(
+            &Type::Named(name.clone(), args),
+            comptimes,
+            type_bounds,
+            self_spelling,
+        );
+    }
     let raw = match ty {
         // A module type alias spells as the type it names, as the checker's
         // resolved type does; a binder of the same name shadows it.
@@ -1845,6 +1863,25 @@ fn ast_raw(
     clippy::format_push_string,
     reason = "TODO: write! into the buffer instead"
 )]
+/// A value operand that applies a type (`Pair[Int]`, `Box[1]`) as the type
+/// argument it spells; any other argument unchanged. A bare name keeps its
+/// value spelling.
+fn spelled_type_argument(arg: &ParamArg) -> Cow<'_, ParamArg> {
+    match arg {
+        ParamArg::Value(value)
+            if matches!(
+                value.kind,
+                ExprKind::TypeApply { .. } | ExprKind::Index { .. }
+            ) =>
+        {
+            value.type_spelling().map_or(Cow::Borrowed(arg), |spelled| {
+                Cow::Owned(ParamArg::Type(spelled))
+            })
+        }
+        _ => Cow::Borrowed(arg),
+    }
+}
+
 fn func_annotation_raw(ty: &Type) -> String {
     let Type::Func {
         type_params,
@@ -1886,7 +1923,9 @@ fn func_annotation_raw(ty: &Type) -> String {
             ] => match type_params.iter().position(|parameter| {
                 parameter.name == *name && parameter.bounds.as_slice() == ["OriginSet"]
             }) {
-                Some(index) => s.push_str(&format!("origin_set#{index}")),
+                Some(index) => {
+                    let _ = write!(s, "origin_set#{index}");
+                }
                 None => s.push_str(name),
             },
             _ => s.push_str("..."),

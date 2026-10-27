@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A bracket operand is one expression whatever its capitalization, as
+  upstream's `parseSubscriptSuffix` parses it, and the check classifies it
+  as a type or a value by what it denotes (R1370, R377, R381, R512): a
+  capitalized display, reflection, or module-constant element reads as a
+  value (`materialize[L[1]]()`, `materialize[NAMES[0]]()`,
+  `SIMD[DType.int32, L[0] * 2]`, `show[XS[1]]()`,
+  `materialize[Ts[0] == Int]()`), and an applied type (`List[Pair[Int]]`,
+  `v[CBox[1]]` on a `Variant`) as a type, keyed for overloads as the type
+  it spells. An undeclared applied head is "unknown type". The scalar
+  names, `Self`, and `None` still parse as types in a bracket (R1511,
+  R1512).
 - A type expression resolves by what its names denote (R1369, R134,
   R1203): `type_of(value)` is the value's type, typed without being
   evaluated, in an annotation, a bracket argument, a `comptime` binding,

@@ -2853,45 +2853,6 @@ impl Checker {
                 {
                     self.resolve_param_arg(decl, &ParamArg::Value(read))
                 }
-                // A nested application of a value alias (`Twice[Twice[5]]`)
-                // parses as a type argument.
-                ParamArg::Type(SourceType::Named(alias, alias_args))
-                    if let Some(value) = self.value_alias_application(alias, alias_args) =>
-                {
-                    let value = value?;
-                    let actual = value.meta().as_value().cloned().unwrap_or_else(Ty::error);
-                    if !coerces(&actual, ty) {
-                        return Err(TypeError::TypeMismatch {
-                            expected: ty.to_string(),
-                            found: actual.to_string(),
-                            context: format!("value parameter '{name}'"),
-                        });
-                    }
-                    Ok(TyArg::Val(match value.as_constant() {
-                        Some(closed) => closed.clone().materialize_as(ty).ok_or_else(|| {
-                            TypeError::TypeMismatch {
-                                expected: ty.to_string(),
-                                found: closed.to_string(),
-                                context: format!("value parameter '{name}'"),
-                            }
-                        })?,
-                        None => CtValue::Expr(value),
-                    }))
-                }
-                ParamArg::Type(source)
-                    if let Some(element) = self.display_element_argument(source) =>
-                {
-                    let element = element?;
-                    let actual = element.meta().as_value().cloned().unwrap_or_else(Ty::error);
-                    if !coerces(&actual, ty) {
-                        return Err(TypeError::TypeMismatch {
-                            expected: ty.to_string(),
-                            found: actual.to_string(),
-                            context: format!("value parameter '{name}'"),
-                        });
-                    }
-                    Ok(TyArg::Val(CtValue::Expr(element)))
-                }
                 // A bare parameter name, or `Self.<field>`, in a value slot.
                 ParamArg::Type(ty) if let Some(error) = self.bare_or_field_in_value_slot(ty) => {
                     Err(error)
@@ -3132,12 +3093,8 @@ impl Checker {
                 kind: ExprKind::Identifier(id),
                 ..
             }) => self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?,
-            mojito_ast::ast::ParamArg::Value(_) => {
-                return Err(TypeError::TypeMismatch {
-                    expected: "a type".to_string(),
-                    found: "a value".to_string(),
-                    context: format!("{name} element type"),
-                });
+            mojito_ast::ast::ParamArg::Value(element) => {
+                self.denoted_type(element, &format!("{name} element type"))?
             }
             mojito_ast::ast::ParamArg::Named { .. } => {
                 return Err(TypeError::Unsupported(
@@ -3472,12 +3429,8 @@ impl Checker {
                     kind: ExprKind::Identifier(id),
                     ..
                 }) => self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?,
-                mojito_ast::ast::ParamArg::Value(_) => {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "a type".to_string(),
-                        found: "a value".to_string(),
-                        context: "Tuple element type".to_string(),
-                    });
+                mojito_ast::ast::ParamArg::Value(element) => {
+                    self.denoted_type(element, "Tuple element type")?
                 }
                 mojito_ast::ast::ParamArg::Named { .. } => {
                     return Err(TypeError::Unsupported(
@@ -4045,11 +3998,7 @@ impl Checker {
                 kind: ExprKind::Identifier(name),
                 ..
             }) => self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new())),
-            mojito_ast::ast::ParamArg::Value(_) => Err(TypeError::TypeMismatch {
-                expected: "a type".to_string(),
-                found: "a value".to_string(),
-                context: context.to_string(),
-            }),
+            mojito_ast::ast::ParamArg::Value(expression) => self.denoted_type(expression, context),
             mojito_ast::ast::ParamArg::Named { .. } => Err(TypeError::Unsupported(format!(
                 "named arguments are not supported in {context}"
             ))),
@@ -4151,13 +4100,9 @@ impl Checker {
             {
                 self.eval_associated_ct(&read)?
             }
-            mojito_ast::ast::ParamArg::Type(ty)
-                if let Some(element) = self.display_element_argument(ty) =>
-            {
-                CtValue::Expr(element?)
-            }
-            // A lowercase name parses as a type argument: the enclosing
-            // struct's own value parameter spelled bare, or `Self.<field>`.
+            // A type argument in a width slot: the enclosing struct's own
+            // parameter spelled bare, a field spelled `Self.<field>`, or a
+            // type.
             mojito_ast::ast::ParamArg::Type(ty) => {
                 if let Some(error) = self.bare_or_field_in_value_slot(ty) {
                     return Err(error);

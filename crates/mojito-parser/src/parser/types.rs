@@ -436,12 +436,11 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         Ok(args)
     }
 
-    /// Parses a single parameter argument: a `Type` (for a type parameter) or a
-    /// comptime value `Expr` (for a value parameter). A leading type keyword,
-    /// `None`, or `Self` is unambiguously a type. A bare identifier followed by
-    /// `[` is a parameterized type (`Foo[Int]`); otherwise an identifier starts a
-    /// value expression (a lone identifier is left for the checker to reinterpret
-    /// as a type when the parameter is a type one). Anything else is a value.
+    /// Parses a single parameter argument. An operand only the type grammar
+    /// spells (a function type, `ref`, a `*` pack) is a `Type`, as are, for
+    /// now, a scalar keyword, `None`, and `Self`. Every other operand is one
+    /// expression (`Foo[Int]`, `L[0] * 2`), which the checker classifies as a
+    /// type or a value by what it denotes.
     pub(super) fn parse_param_arg(&mut self) -> Result<mojito_ast::ast::ParamArg, ParseError> {
         use mojito_ast::ast::ParamArg;
         // A spread: of a pack (`*Ts`, `*Self.Ts`), which stays the pack's own
@@ -582,58 +581,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 ));
             }
             return Ok(ParamArg::Type(ty));
-        }
-        if let Some(Token::Identifier(_)) = self.peek_token()? {
-            let id = self.expect_identifier("unreachable: peeked identifier")?;
-            let id_span = self.last_span;
-            if matches!(self.peek_token()?, Some(Token::LBracket)) {
-                // Mojo type names and type parameters are conventionally
-                // uppercase. A lowercase binding followed by brackets inside
-                // another bracket list is therefore a runtime indexed value
-                // (`mapping[indexes[i]]`), not a nested parameterized type.
-                // Parsing from the identifier atom preserves the complete
-                // postfix expression and lets the outer bracket choose Index.
-                if id.chars().next().is_some_and(char::is_lowercase) {
-                    let atom = Expr::new(ExprKind::Identifier(id), id_span);
-                    return Ok(ParamArg::Value(
-                        self.parse_expression_from(atom, Precedence::Lowest)?,
-                    ));
-                }
-                let args = self.parse_param_args()?;
-                if matches!(self.peek_token()?, Some(Token::LParen)) {
-                    self.next_token()?;
-                    let (call_args, kwargs) = self.parse_call_args()?;
-                    self.expect(&Token::RParen, "Expected ')' after arguments")?;
-                    let call = Expr::new(
-                        ExprKind::Call {
-                            name: id,
-                            param_args: args,
-                            args: call_args,
-                            kwargs,
-                        },
-                        (id_span.0, self.last_span.1),
-                    );
-                    return Ok(ParamArg::Value(
-                        self.parse_expression_from(call, Precedence::Lowest)?,
-                    ));
-                }
-                // A member of the applied type (`Grid[n].cells()`, a static
-                // method call) is a value expression over the application.
-                if matches!(self.peek_token()?, Some(Token::Dot)) {
-                    let atom = Expr::new(
-                        ExprKind::TypeApply { name: id, args },
-                        (id_span.0, self.last_span.1),
-                    );
-                    return Ok(ParamArg::Value(
-                        self.parse_expression_from(atom, Precedence::Lowest)?,
-                    ));
-                }
-                return Ok(ParamArg::Type(Type::Named(id, args)));
-            }
-            // A value expression whose first atom is this identifier.
-            let atom = Expr::new(ExprKind::Identifier(id), id_span);
-            let expr = self.parse_expression_from(atom, Precedence::Lowest)?;
-            return Ok(ParamArg::Value(expr));
         }
         Ok(ParamArg::Value(self.parse_expression(Precedence::Lowest)?))
     }

@@ -496,6 +496,16 @@ param_arg:
 typelist_expr: expression                  # a pack, `Self.` pack, or a postfix chain over one
 ```
 
+A bracket operand is one `expression`, as upstream's `parseSubscriptSuffix`
+parses it, whatever the capitalization of the name it starts with:
+`Pair[Int]`, `L[1]`, `L[0] * 2`, and `Ts[0] == Int` are all expressions, and
+the checker decides whether each denotes a type or a value. An operand is a
+`type` only where the type grammar alone spells it: a function type
+`def(...)`, a `ref` type, and a `*` pack. The scalar names (`Int`, `UInt`,
+`Bool`, `StringLiteral`, `Float64`, and the sized aliases such as `UInt8`),
+`Self` and its members, and `None` still parse as a `type` there, a
+divergence (roadmap R1511, R1512).
+
 A **spread** argument `'*' typelist_expr` supplies a whole argument list from
 a type list. Its operand is a pack (`*Ts`, or a struct's own `*Self.Ts`), or
 a type-list expression over packs: a reversal (`*Ts.reverse()`) or a
@@ -507,9 +517,9 @@ application (`Tuple[*Ts.reverse()]`), never a subscript. A `Self`-rooted
 chain an operator continues (`storage[Self.Ts.length - 1 - i]`) is the value
 expression it starts, and `Self.Ts.values` is a value argument like a `def`'s
 own `Ts.values`. A call on a type is a value expression too: `Self.width()`
-calls a static method of the enclosing struct, and a member of an applied
-type (`Grid[n].cells()`) continues as the postfix chain it starts, where the
-applied type alone (`Grid[n]`) stays a type argument.
+calls a static method of the enclosing struct, and an applied type is a
+subscript expression like any other (`Grid[n]`), which a member continues as
+the postfix chain it starts (`Grid[n].cells()`).
 
 A `param_arg`'s `type` is never an origin-bearing reference type: upstream
 reads `ref[o] T` there as the expression `ref[o]` followed by a stray type,
@@ -1145,7 +1155,8 @@ is expected (the struct's `@implicit` literal constructor). Any other `NAME` is 
 (`Point`), a **type parameter** in scope (a bare `T` inside a generic `def`), or a
 **parameterized struct type** with arguments (`Pair[Int]`, `Pair[T]`, or the value form
 `FixedBuffer[8]` / `Pair[2 + 3]`); the checker resolves which. A `param_args` entry is a
-`type` or a comptime value `expression` (see **Parameterization**). `Self.T` names one
+`type` or a comptime value `expression` (see **Parameterization**); the checker, not the
+capitalization of a name, decides which an expression operand denotes. `Self.T` names one
 of the enclosing struct's type parameters (Mojo spelling — a bare `T` is not in scope
 inside a struct body); bare `Self` names the enclosing struct type (in a struct method)
 or the conforming type (in a trait method). Inside a value-parameterized struct, bare

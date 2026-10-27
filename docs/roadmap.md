@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1511**.
+Next free ID: **R1513**.
 
 ## Ordered Work
 
@@ -4123,31 +4123,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1370 A bracket argument is a type or a value by its
-  capitalization**
-
-  `parse_param_arg` parses a capitalized `Name[` as `ParamArg::Type`, and a
-  fixed name list (`peek_starts_type`) as a type, where upstream parses
-  every bracket operand as one expression
-  (`ExprParser::parseSubscriptSuffix`, then `parseExprOrSlice`) and lets
-  sema classify it.
-  - The lever: parse every name-led operand as an expression. Only spellings
-    that just the type grammar can write stay `ParamArg::Type`: `def(...)`
-    types, `ref`, and `*Ts`.
-  - `Checker::denoted_type` (`checker/constraints.rs`) turns the
-    expression into a type wherever a type parameter takes it.
-  - Pre-check consumers (`mojito-comptime`'s `params.rs`,
-    `simd_width.rs`) read a value operand's type spelling where they read
-    `ParamArg::Type` today.
-  - Update `docs/grammar.md` first (`param_arg`, the lowercase-name notes).
-  - Probe: `comptime L = [1, 2]` then `print(materialize[L[1]]())` prints
-    `2` at the pin. Mojito says "takes one compile-time value".
-  - Closes R377 (a capitalized `L[1]` in `materialize[...]`), R381 (`L[0] *
-    2` stops the parser), the capitalized half of R512, and the
-    `s[Int16(5)]()` half of R482.
-  - Depends on R1369, which supplies the resolver.
-  - Model: Opus, Planned.
-
 - [ ] **R1371 A bracket after an expression is an index, an application, or
   a dereference by its shape**
 
@@ -4171,8 +4146,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     at the pin. Mojito says "cannot be indexed here".
   - The call-bracket form `size[Self.n * 2]()` runs (carried from R72).
   - Closes R326 (`f[]()` read as a dereference) and the parse half of
-    R490. Shrinks R383 and R512, whose lowercase subscripts still
-    need compile-time `__getitem__` folding.
+    R490. Shrinks R383, whose lowercase subscripts still need
+    compile-time `__getitem__` folding.
   - Depends on R1370, so operands are already expressions.
   - Model: Fable, Planned.
 
@@ -4204,10 +4179,46 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime MyInt = Int` then `def g[n: MyInt]()` makes `g[3]()`
     print `3` at the pin. Mojito says "unknown trait 'MyInt' in a
     type-parameter bound".
-  - Closes R482 (a sized-scalar or alias-typed value binder is rejected),
-    together with R1370.
+  - Closes R482 (a sized-scalar or alias-typed value binder is rejected).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1511 A scalar type name in a bracket is a type by its spelling**
+
+  `peek_starts_type` (`parser/types.rs`) sends `Int`, `UInt`, `Bool`,
+  `StringLiteral`, `Float64`, and the sized aliases (`UInt8`) to
+  `parse_type`, where upstream parses every bracket operand as one
+  expression and sema classifies it.
+  - Dropping the sized aliases alone breaks `UnsafePointer[UInt8]`
+    declaration identity (14 corpus fixtures,
+    `String.__init__$ov$UnsafePointer$UInt8$kw$unsafe_from_utf8_ptr`).
+  - Dropping all five names also changes five diagnostics
+    (`convert[Int]` into a `DType` slot, `objs[Int](3)`,
+    `UnsafePointer[Int].alloc`, `g[Int]()` into a trait binder, `k[Int]()`
+    into `!kgen.type`) and stops `var element: M.Of[Int]()[0]` parsing.
+  - The lever: `symbol::ast_raw` spells a bare type operand as the type it
+    names, excluding `_`/`...`, binders, `Int` constants, and `DType`
+    members (measured 0 corpus diffs while planning R1370); R600's
+    resolved-signature mangling is the full fix.
+  - Found while landing R1370 (2026-10-27).
+  - Depends on R1371, for the single-operand `Index` forms.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1512 `Self`, `Self.T`, and `None` in a bracket are types by their
+  spelling**
+
+  `peek_starts_type` (`parser/types.rs`) parses `Self`, a `Self` member,
+  and `None` in a bracket as a type, where upstream parses each as an
+  expression.
+  - As expressions the bundled std does not package ("unknown type
+    'Self'"): about 20 `ParamArg::Type(SourceType::SelfParam(..))` arms in
+    the checker and `mojito-comptime/src/comptime/rewrite.rs` read the
+    type spelling.
+  - The end state is `ParamArg::Type` only for `def(...)`, `ref`, and
+    `*Ts`, which only the type grammar spells.
+  - Found while landing R1370 (2026-10-27).
+  - Depends on R1511.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1244 A compile-time arm does not assume that the earlier
   conditions failed**
@@ -4425,8 +4436,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   in a type-parameter bound", where the pin prints `6` for `s[5]()`.
   - The capitalized name in the binder's annotation is read as a trait
     bound, not as a value type.
-  - Its argument `s[Int16(5)]()` also stops the parser with "Expected ']'
-    after a subscript", a different shape from R381's operator.
   - Probe: a binder typed by a module type alias, `comptime MyInt = Int`
     then `def g[n: MyInt]()`, fails with "unknown trait 'MyInt' in a
     type-parameter bound", where the pin prints `3` for `g[3]()`. Prepare
@@ -4656,41 +4665,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     same way.
   - A local `comptime` display binding read in such an arm does too.
   - Found while landing reads of a local display binding (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R377 `materialize[L[1]]()` over a capitalized name is parsed as a
-  type application**
-
-  Problem: `comptime L = [1, 2]` then `print(materialize[L[1]]())` in `main`
-  is rejected with "materialize[...]() takes one compile-time value", where
-  the pin prints `2`.
-  - The parser reads `L[1]` in a parameter argument as the type `L` applied
-    to `1`, since the name is capitalized.
-  - A lower-case name (`vals[1]`) is parsed as a subscript and runs.
-  - Probe: `comptime NAMES = reflect[P].field_names()` then
-    `print(materialize[NAMES[0]]())` in `main` is rejected the same way,
-    where the pin prints the first field's name.
-  - Found while landing reads of a local display binding (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R381 A capitalized subscript followed by an operator does not parse
-  in a parameter argument**
-
-  Problem: `comptime L = [n, n * 2]` then `SIMD[DType.int32, L[0] * 2](5)`
-  in `def f[n: Int]()` stops with "Expected ']' after a subscript", where
-  the pin prints an eight-lane vector for `f[4]()`.
-  - The parser reads `L[0]` in a parameter argument as the type `L` applied
-    to `0`, since the name is capitalized, and a type takes no operator.
-  - The bare `L[0]` is accepted: the check and MIR read the type
-    application as the element (`display_element_argument`).
-  - A lower-case name (`vals[0] * 2`) is parsed as a subscript and runs.
-  - Found while landing a display binding read in a type or a parameter
-    argument (2026-10-06).
-  - Probe: `print(materialize[Ts[0] == Int]())` in `def f[*Ts: Movable]()`
-    stops with the same "Expected ']' after a subscript" (found while
-    landing R1168, 2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5374,25 +5348,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     one list (`ParamKind::Apply`, `param_expr.rs`), so the printer knows
     neither the source name nor which arguments are compile-time ones.
   - Found while landing the callee shapes a signature applies (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R512 A subscript of a module list or tuple constant in a parameter
-  argument is rejected**
-
-  Problem: `show[XS[1]]()`, `show[T[1]]()`, and `SIMD[DType.int64,
-  xs[1]](7)` over module constants `comptime XS = [1, 4, 5]` and
-  `comptime T = (2, 3)` are rejected, where the pin runs all three.
-  - A capitalized constant (`XS[1]`, `T[1]`) parses as a type application
-    and is rejected with "type mismatch for value parameter 'n': expected a
-    value, found a type", or "SIMD width … got a type".
-  - A lowercase one (`xs[1]`) is rejected with "not a compile-time Int
-    constant: xs".
-  - It does not matter whether the constant is folded where it is declared
-    or waits for its first demand.
-  - R383 reports the local display binding's spelling of the same parse.
-  - Found while deferring display and subscript module constants
-    (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8400,6 +8355,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`check_def` classifies binders under it), so the lever restructures
     binder ownership: type the signature, then name its declaration.
   - Found while landing R599 (2026-10-10).
+  - Probe: `def pick(p: Pair[Point])` beside `def pick(n: Int)` fails on
+    the VM with "does not support … `pick$ov$Pair$Point`", where the pin
+    prints `4` for `pick(Pair[Point](Point(4)))`. The declaration spells
+    the bare operand `VPoint` (`symbol::value_expr_raw`), the call
+    `Point` (found while landing R1370, 2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

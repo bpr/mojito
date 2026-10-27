@@ -127,9 +127,12 @@ fn param_arg_uses_simd_width(width_position: bool, argument: &ParamArg, names: &
         // A struct's own parameter in a width slot is spelled `Self.<name>`.
         ParamArg::Type(Type::SelfParam(name)) => width_position && names.contains(&name.as_str()),
         ParamArg::Type(inner) => type_uses_param_simd_width(inner, names),
+        // A nested application (`List[SIMD[DType.float32, w]]`) is an
+        // expression operand, scanned as one.
         ParamArg::Value(value) => {
             width_position
                 && matches!(&value.kind, ExprKind::Identifier(name) if names.contains(&name.as_str()))
+                || expr_uses_param_simd_width(value, names)
         }
         ParamArg::Named { value, .. } => param_arg_uses_simd_width(width_position, value, names),
     }

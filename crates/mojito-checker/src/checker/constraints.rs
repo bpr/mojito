@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::conformance::Conformance;
 use mojito_types::ct::SimdConstructionError;
 use mojito_types::param_expr::fold::comparison_holds;
@@ -1482,7 +1483,7 @@ impl Checker {
             ExprKind::TypeApply { name, args } => {
                 let (ty, attributes) = self
                     .applied_type_value(name, args)?
-                    .ok_or_else(|| TypeError::NotComptime(name.clone()))?;
+                    .ok_or_else(|| self.unresolved_head(name))?;
                 if record {
                     self.record_bracket_attributes(expr.source_span(), attributes);
                 }
@@ -1822,6 +1823,27 @@ impl Checker {
             .and_then(|ty| self.ct_param(ty))
     }
 
+    /// The rejection of an application or subscript headed by `name` that
+    /// reads no compile-time value: an unknown type when `name` names no
+    /// declaration in scope, as upstream rejects the use of an unknown
+    /// declaration.
+    fn unresolved_head(&self, name: &str) -> TypeError {
+        let declared = self.lookup(name).is_some()
+            || self.local_comptime_value(name).is_some()
+            || self.overload_sets.is_function(name)
+            || self.traits.contains_key(name)
+            || mojito_types::conformance::COMPILER_TRAITS.contains(&name)
+            || !matches!(
+                self.build_ct_name(name, Recording::Silent),
+                Err(TypeError::NotComptime(unknown)) if unknown == name
+            );
+        if declared {
+            TypeError::NotComptime(name.to_string())
+        } else {
+            TypeError::UnknownType(name.to_string())
+        }
+    }
+
     /// [`Self::build_ct`] for a shape no direct arm reads: a `TypeList`
     /// read, a reflection query (`reflect[T].field_count()`, a constant for
     /// a struct subject and a query node for a symbolic one), or a
@@ -1913,7 +1935,7 @@ impl Checker {
                 (None, ExprKind::Index { object, .. })
                     if let ExprKind::Identifier(name) = &object.kind =>
                 {
-                    TypeError::NotComptime(name.clone())
+                    self.unresolved_head(name)
                 }
                 (None, _) => {
                     TypeError::NotComptime("not an associated comptime expression".to_string())
@@ -2170,22 +2192,6 @@ impl Checker {
             Ok(index) => display.element(&self.param_context, &index),
             Err(error) => Some(Err(error)),
         }
-    }
-
-    /// The element of a local display binding a type-shaped argument spells
-    /// (`L[0]`, which parses as a type application under a capitalized
-    /// name). `None` for any other type.
-    pub(super) fn display_element_argument(
-        &self,
-        ty: &SourceType,
-    ) -> Option<Result<ParamExpr, TypeError>> {
-        let SourceType::Named(name, args) = ty else {
-            return None;
-        };
-        let [mojito_ast::ast::ParamArg::Value(index)] = args.as_slice() else {
-            return None;
-        };
-        self.display_element(self.display_named(name)?, index)
     }
 
     /// The projection of `field` out of `object` when `object` compiles to a

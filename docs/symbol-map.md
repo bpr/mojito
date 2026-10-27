@@ -1727,8 +1727,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `local_comptime_displays` (source validation notes one too,
   `note_validated_display`); an element or the length in a type or a
   parameter argument is a parameter expression over that sequence
-  (`Checker::display_read`, `display_element_argument` for the capitalized
-  spelling, `checker/constraints.rs`, from `eval_associated_ct` and
+  (`Checker::display_read`, `checker/constraints.rs`, from `eval_associated_ct` and
   `compile_dependent_ct_expr`; `BoundDisplay::element` and `length` over
   `ParamContext::list_get` and `list_length`, whose
   `LIST_LENGTH_FUNCTION` application `builtin_application_value` answers);
@@ -1776,9 +1775,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   it no runtime form, lifting the
   display under the name and over the binders the check's sequence spells,
   and an alias of the binding is found by `Flatten::display`. A bracket argument that reads a
-  display is lowered by `Flatten::param_arg_reg` through `display_read`, or
-  for the capitalized spelling as the element its attribute holds
-  (`attribute_value_reg`), and an inferred
+  display is lowered by `Flatten::param_arg_reg` through `display_read`, and an inferred
   one by `inferred_value_register`. An `Int` or a `Bool` such an
   argument, or a local `comptime` value, computes some way the parameter
   domain does not express (`h(L[0])`, `n > 2`) is lifted by
@@ -1815,9 +1812,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`checker/constraints.rs`). A static call through `Self` in a body is
   typed by `infer_type_receiver_call`
   (`checker/method_calls/type_receivers.rs`) as the call on the enclosing
-  struct applied to its own parameters, and the parser spells the type
-  argument forms (`Self.w()`, `G[n].w()`) in `parse_param_arg`
-  (`parser/types.rs`).
+  struct applied to its own parameters. The parser spells `Self.w()` in
+  `parse_param_arg` (`parser/types.rs`); every other bracket operand,
+  `G[n].w()` and a capitalized `L[0] * 2` included, is the one expression
+  the bracket suffix parses, which the checker classifies as a type or a
+  value by what it denotes (`Checker::denoted_type`). An overload key spells
+  an application operand (`List[Pair[Int]]`) as the type it names
+  (`Expr::type_spelling`, read by `symbol::ast_raw`).
   `ComptimeThunks::request_applications` (`mir.rs`, from `lower_fn_nested`,
   the nested-`def` lowering, and the top level once the body is lowered,
   over the body's statement ids `Cfg::body`, and from a module constant's

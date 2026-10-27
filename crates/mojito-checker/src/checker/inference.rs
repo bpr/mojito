@@ -1536,8 +1536,9 @@ impl Checker {
     }
 
     /// The type argument a subscript-shaped Variant projection names: a
-    /// struct or scalar type name (`v[String]`), or a substituted type value
-    /// in a specialized method body (`self._storage[T]` with `T` baked).
+    /// struct or scalar type name (`v[String]`), an application that denotes
+    /// a type (`v[Box[1]]`), or a substituted type value in a specialized
+    /// method body (`self._storage[T]` with `T` baked).
     pub(super) fn variant_projection_type_argument(
         &self,
         index: &Expr,
@@ -1556,6 +1557,11 @@ impl Checker {
             ExprKind::TypeValue(ty) => {
                 self.type_value(index, ty).ok();
                 Some(mojito_ast::ast::ParamArg::Type(ty.clone()))
+            }
+            ExprKind::Index { .. } | ExprKind::TypeApply { .. } | ExprKind::MultiIndex { .. }
+                if self.denoted_type(index, "Variant projection").is_ok() =>
+            {
+                Some(mojito_ast::ast::ParamArg::Value(index.clone()))
             }
             _ => None,
         }

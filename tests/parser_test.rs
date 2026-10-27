@@ -2192,7 +2192,8 @@ fn distinguishes_origin_specialization_from_runtime_indexing() {
 
 #[test]
 fn parses_nested_type_argument() {
-    // A parameterized type as a type argument: `Box[Pair[Int]]`.
+    // A parameterized type as a type argument: `Box[Pair[Int]]`, whose
+    // operand is the expression the checker classifies.
     let stmts = parse("var b: Box[Pair[Int]] = q\n");
     match &stmts[0].kind {
         StmtKind::VarDecl { ty: Some(ty), .. } => {
@@ -2200,10 +2201,10 @@ fn parses_nested_type_argument() {
                 *ty,
                 Type::Named(
                     "Box".into(),
-                    vec![ParamArg::Type(Type::Named(
-                        "Pair".into(),
-                        vec![ParamArg::Type(Type::Int)],
-                    ))],
+                    vec![ParamArg::Value(Expr::from(ExprKind::TypeApply {
+                        name: "Pair".into(),
+                        args: vec![ParamArg::Type(Type::Int)],
+                    }))],
                 )
             );
         }
@@ -3329,16 +3330,43 @@ fn parses_a_static_call_on_a_type_as_a_parameter_argument() {
     };
     assert!(
         matches!(&call.kind, ExprKind::MethodCall { object, method, args, .. }
-            if matches!(&object.kind, ExprKind::TypeApply { name, .. } if name == "Grid")
+            if matches!(&object.kind, ExprKind::Index { object, .. }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "Grid"))
                 && method == "cells"
                 && args.len() == 1),
         "got {call:?}"
     );
-    // An applied type with no member stays a type argument.
+    // An applied type with no member is a subscript expression too.
     assert!(matches!(
         arguments("Pair[Grid[n], Int]").as_slice(),
-        [ParamArg::Type(_), ParamArg::Type(_)]
+        [
+            ParamArg::Value(Expr {
+                kind: ExprKind::Index { .. },
+                ..
+            }),
+            ParamArg::Type(_)
+        ]
     ));
+}
+
+#[test]
+fn parses_a_capitalized_subscript_operand_as_one_expression() {
+    // `L[1] * 2` is one operand whatever the capitalization of `L`.
+    let ExprKind::Call {
+        param_args: args, ..
+    } = parse_expr("materialize[L[1] * 2]()").kind
+    else {
+        panic!("expected a call");
+    };
+    assert!(
+        matches!(args.as_slice(), [ParamArg::Value(Expr {
+                kind: ExprKind::Infix(_, left, right),
+                ..
+            })] if matches!(&left.kind, ExprKind::Index { object, .. }
+                if matches!(&object.kind, ExprKind::Identifier(name) if name == "L"))
+                && matches!(right.kind, ExprKind::Int(_))),
+        "got {args:?}"
+    );
 }
 
 #[test]

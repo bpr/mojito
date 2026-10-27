@@ -931,3 +931,22 @@ fn a_package_answers_a_function_name_prefix_from_its_by_name_table() {
     assert!(prefixed("f$ov$Z").is_empty());
     assert_eq!(package.struct_count(), 0);
 }
+
+#[test]
+fn an_applied_type_operand_mangles_as_the_type_it_spells() {
+    // A bracket operand parses as an expression; `List[Pair[Int]]` keys the
+    // same as the type argument it spells.
+    use mojito::ast::{Expr, ExprKind, ParamArg, Type};
+    use mojito::symbol::TypeKey;
+    let pair = || ParamArg::Type(Type::Named("Pair".into(), vec![ParamArg::Type(Type::Int)]));
+    let spelled = Type::Named("List".into(), vec![pair()]);
+    let parsed = Type::Named(
+        "List".into(),
+        vec![ParamArg::Value(Expr::from(ExprKind::TypeApply {
+            name: "Pair".into(),
+            args: vec![ParamArg::Type(Type::Int)],
+        }))],
+    );
+    assert_eq!(TypeKey::from_ast(&parsed), TypeKey::from_ast(&spelled));
+    assert_eq!(TypeKey::from_ast(&parsed).as_str(), "List$Pair$Int");
+}

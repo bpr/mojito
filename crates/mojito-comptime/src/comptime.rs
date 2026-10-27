@@ -436,17 +436,11 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
         // A trait-valued parameter (`Tr: type_of(AnyType)`).
         Type::TypeOf(operand) => any_trait_source_type(operand),
         Type::Named(name, args) if name == "List" && args.len() == 1 => {
-            let ParamArg::Type(element) = &args[0] else {
-                return None;
-            };
-            Some(list_type(ct_param_source_type(element)?))
+            Some(list_type(ct_param_argument_type(&args[0])?))
         }
         Type::Named(name, args) if name == "Tuple" => args
             .iter()
-            .map(|argument| match argument {
-                ParamArg::Type(ty) => ct_param_source_type(ty),
-                _ => None,
-            })
+            .map(ct_param_argument_type)
             .collect::<Option<Vec<_>>>()
             .map(tuple_type),
         // A vector-typed value parameter (`[key: SIMD[DType.uint64, 4]]`).
@@ -458,6 +452,24 @@ fn ct_param_source_type(source: &Type) -> Option<Ty> {
                 }
                 .into()
             })
+        }
+        _ => None,
+    }
+}
+
+/// The type an element argument of a value binder's `List` or `Tuple`
+/// annotation names: a type, or an application operand (`List[Int]`,
+/// which parses as an expression) by the type it spells.
+fn ct_param_argument_type(argument: &ParamArg) -> Option<Ty> {
+    match argument {
+        ParamArg::Type(ty) => ct_param_source_type(ty),
+        ParamArg::Value(value)
+            if matches!(
+                value.kind,
+                ExprKind::TypeApply { .. } | ExprKind::Index { .. }
+            ) =>
+        {
+            ct_param_source_type(&value.type_spelling()?)
         }
         _ => None,
     }

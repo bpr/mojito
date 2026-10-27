@@ -3437,8 +3437,7 @@ impl<'a> Flatten<'a> {
         // The index names a type, never a runtime value (the Int-keyed
         // dependent accessors of a variadic struct index by a checked Int).
         let type_index = self.checked.expression(*index).is_some_and(|index| {
-            matches!(index.op, CheckedOp::TypeValue { .. })
-                || matches!(index.op, CheckedOp::Identifier(_)) && index.ty.is_none()
+            matches!(index.op, CheckedOp::TypeValue { .. }) || index.ty.is_none()
         });
         let contract = expression.call_contract()?;
         (type_index
@@ -4083,8 +4082,8 @@ impl<'a> Flatten<'a> {
     /// elaborator folds per instance and a backend binds to the callee's
     /// own pack. An enclosing value binder (`Self.n`) is read where it
     /// lives: the receiver's reified parameter for the struct's own. Any
-    /// other expression (a display element `L[0]`) is the parameter
-    /// constant the elaborator evaluates. `None` for a binder not in scope.
+    /// other expression is the parameter constant the elaborator
+    /// evaluates. `None` for a binder not in scope.
     fn attribute_value_reg(&mut self, value: &CtValue, site: &SourceSpan) -> Option<Reg> {
         let CtValue::Expr(expr) = value else {
             let constant = ParamContext::detached().constant(value.clone()).ok()?;

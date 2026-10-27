@@ -1902,9 +1902,9 @@ impl Expr {
     }
 
     /// The type a type-shaped expression spells: a capitalized name, `Self`,
-    /// a parameter application (`S[Int]`), or a member chain rooted at one
-    /// (`M.Inner`, `Self.T`). `None` for a value-shaped expression, whose
-    /// lowercase root names a binding.
+    /// a parameter application (`S[Int]`, or the one-operand subscript
+    /// `S[1]`), or a member chain rooted at one (`M.Inner`, `Self.T`). `None`
+    /// for a value-shaped expression, whose lowercase root names a binding.
     pub fn type_spelling(&self) -> Option<Type> {
         match &self.kind {
             ExprKind::Identifier(name) if name == "Self" => Some(Type::SelfType),
@@ -1919,6 +1919,15 @@ impl Expr {
                 })
             }
             ExprKind::TypeApply { name, args } => Some(Type::Named(name.clone(), args.clone())),
+            ExprKind::Index { object, index }
+                if let ExprKind::Identifier(name) = &object.kind
+                    && !name.chars().next()?.is_lowercase() =>
+            {
+                Some(Type::Named(
+                    name.clone(),
+                    vec![ParamArg::Value((**index).clone())],
+                ))
+            }
             ExprKind::Member { object, field } => Some(match object.type_spelling()? {
                 Type::SelfType => Type::SelfParam(field.clone()),
                 base => Type::Assoc {
