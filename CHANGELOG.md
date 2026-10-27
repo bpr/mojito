@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A parameter argument that computes a `String`, a `Float64`, or a `UInt`
+  from a parameter (`label[pick(n)]()`, `scale[half(n)]()`,
+  `label[String(n)]()`, `label[pick(n) + "!"]()`) is now the application
+  the elaborator runs per instance, as at the pin (R386, R461's
+  `g[String("a")]()`), where it was rejected with "not an associated
+  comptime expression". A call over `UInt` and `Float64` values applies in
+  a signature too (`-> Scaled[twice(half(n))]`), and a `String` result binds
+  a `String` value parameter as the compile-time string it freezes to.
+
 - A type comparison (`T == Int`, `Self.First == Int`, `F == Int` over a
   local alias of a pack element) is now one compile-time `Bool` wherever it
   is written: a `comptime` binding, a bracket argument, a runtime argument,

@@ -268,6 +268,10 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: `g[(n, 1)]()` in `def f[n: Int]` over `def g[t: Tuple[Int,
     Int]]()` fails with "type mismatch for value parameter 't': expected
     Tuple[Int, Int], found (n, 1)". The pin prints `5 1` for `f[5]()`.
+  - Probe: `g[(1, String("a"))]()` over `def g[p: Tuple[Int, String]]()`
+    fails with "expected Tuple[Int, String], found (1,
+    $comptime$main$c0())": the `String` element is an application. The pin
+    prints `1 a`.
   - Found while landing R1386 (2026-10-26).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -4718,6 +4722,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     folds only aliases of `!kgen.type` and `!kgen.string` this way.
   - Probe: a struct's binder, `struct S[i8: Int8]` with `Self.i8` read in
     a static method, fails the same way (pin: `3` for `S[3].num()`).
+  - Probe: `show[b(n)]()` in `def f[n: Int]()` for `def b(n: Int) -> Int8`
+    and `def show[x: Int8]()` (pin: `6` for `f[3]()`). Once the binder is
+    accepted, a call computing a sized integer must apply as an `Int`,
+    `UInt`, `Float64`, or `String` one does (`Checker::called_application`
+    and `ApplicableShape::applicable`, `checker/comptime_validation.rs`,
+    take those scalars only).
   - Found while landing R477 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5062,24 +5072,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R386 A parameter argument that computes a `String` or a float from
-  a parameter is rejected**
-
-  Problem: `label[pick(n)]()` for `def label[s: String]()` and
-  `scale[half(n)]()` for `def scale[x: Float64]()`, in `def f[n: Int]()`,
-  are rejected with "not a compile-time Int constant: not an associated
-  comptime expression", where the pin prints both.
-  - The check lifts an `Int` or a `Bool` expression only
-    (`Checker::lifted_application`, `checker/comptime_validation.rs`).
-  - A lifted function returning a `String` or a `Float64` already serves a
-    `comptime for` display, so the elaborator can freeze either value.
-  - The parameter domain needs a value meta for each, and `UInt` and the
-    sized integers want the same.
-  - Found while landing an application in a type or a parameter argument
-    (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R901 An `Array` value parameter is rejected**
 
@@ -5568,17 +5560,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     value.
   - Model: Fable, Planned.
 
-- [ ] **R396 A signature that calls a function over a value that is no
-  `Int` or `Bool` is rejected**
+- [ ] **R396 A signature that converts a computed value or calls a method
+  on a struct value is rejected**
 
   Problem: `def gen[n: Int]() -> SIMD[DType.int32, Int(half(n))]:` for `def
-  half(x: Int) -> Float64`, and `-> SIMD[DType.int32, P(n).get()]` for a
-  method `get` of `struct P`, are rejected with "not a compile-time Int
-  constant: not an associated comptime expression", where the pin runs both.
-  - A call is the application of its callee by name only when every
-    parameter and the result is an `Int` or a `Bool`
-    (`applicable_functions`, `checker/comptime_validation.rs`).
-  - A method call's receiver is a struct value, which is no such argument.
+  half(x: Int) -> Float64` is rejected with "not a compile-time Int
+  constant: 'Int' conversion of a symbolic 'Float64' value", and `->
+  SIMD[DType.int32, P(n).get()]` for a method `get` of `struct P` with "not
+  an associated comptime expression", where the pin runs both.
+  - The builder's scalar-conversion arm (`build_ct`,
+    `checker/constraints.rs`) re-reads an operand already of the target
+    type, where upstream applies the target's `__init__` to it.
+  - A method call's receiver is a struct value, which no applicable
+    function takes (`applicable_functions`,
+    `checker/comptime_validation.rs`).
   - In a body each of these is lifted whole, so it runs there, as a
     different value from the same call spelled in another declaration.
   - A struct value in the parameter domain can take the frozen form a
@@ -5847,21 +5842,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The alias path evaluates the right-hand side as a type application.
   - With a type argument (`f[Int, 7]`) it fails with "unknown type 'f'".
   - Found while landing R446 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R461 A `String(...)` construction in a parameter argument is
-  rejected**
-
-  Problem: `g[String("a")]()` for `def g[s: String]()` and
-  `g[(1, String("a"))]()` for `def g[p: Tuple[Int, String]]()` fail with
-  "not a compile-time Int constant: not an associated comptime expression",
-  where the pin prints `a` and `1 a`.
-  - `Checker::eval_associated_ct` does not evaluate a `String` construction,
-    and the lifted fallback serves `Int` and `Bool` only.
-  - The literal spellings (`g["a"]`, `g[(1, "a")]`) run.
-  - R386 is the same gap over an open parameter (`label[pick(n)]`).
-  - Found while landing R455 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -135,7 +135,8 @@ pub(super) struct ForwardedPack {
 /// A callable a compile-time call applies by name
 /// ([`Checker::called_application`]): a module `def` or a static method of a
 /// struct, whose own compile-time parameters and runtime parameters are each
-/// an `Int` or a `Bool`, and which returns one.
+/// an `Int`, a `UInt`, a `Bool`, or a `Float64`, and which returns one or a
+/// named struct.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
     /// The MIR declaration the elaborator runs.
@@ -149,8 +150,8 @@ pub(in crate::checker) struct ApplicableFunction {
     params: Vec<ApplicableParameter>,
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
-    /// The declared result: an `Int` or a `Bool`, or a named struct the
-    /// check resolves where a call applies it.
+    /// The declared result: an `Int`, a `UInt`, a `Bool`, or a `Float64`, or
+    /// a named struct the check resolves where a call applies it.
     result: SourceType,
     /// Whether it is declared `raises`, which no type or parameter argument
     /// may call.
@@ -790,10 +791,10 @@ impl Checker {
             .flatten()
     }
 
-    /// The parameter expression of a compile-time `Int` or `Bool`
-    /// expression that compiles to none (`h(L[0])`, `n > 2`,
-    /// `min(L[0], L[1])`), written in a type or a parameter argument or
-    /// bound by a local `comptime`.
+    /// The parameter expression of a compile-time `Int`, `UInt`, `Bool`,
+    /// `Float64`, or `String` expression that compiles to none (`h(L[0])`,
+    /// `n > 2`, `min(L[0], L[1])`, `half(n)`, `pick(n) + "!"`), written in a
+    /// type or a parameter argument or bound by a local `comptime`.
     ///
     /// A call of a module function is the application of that function to
     /// what its arguments denote ([`Self::called_application`]), wherever
@@ -835,10 +836,19 @@ impl Checker {
         let ty = ty.ok()?;
         let ty = match ty.kind() {
             TyKind::Int | TyKind::IntLiteral => Ty::int(),
+            TyKind::UInt => Ty::uint(),
             TyKind::Bool => Ty::bool(),
+            TyKind::Float64 | TyKind::FloatLiteral => Ty::float64(),
             // A struct-valued call is an application the elaborator runs and
-            // materializes; no other struct expression lifts.
+            // materializes, and so is any `String` expression, which it
+            // freezes to a compile-time string; no other struct expression
+            // lifts.
             TyKind::Struct(..) if called.is_some() => ty,
+            TyKind::Struct(name, args)
+                if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
+            {
+                ty
+            }
             _ => return None,
         };
         let application = match called {
@@ -889,8 +899,8 @@ impl Checker {
     }
 
     /// The application a call of a module function or a static method
-    /// denotes when every argument is a compile-time `Int` or `Bool`
-    /// (`h(n)`, `h(Self.n + 1)`, `twice[n]()`, `S.f(n)`, `d(n, m=4)`): the
+    /// denotes when every argument is a compile-time `Int`, `UInt`, `Bool`,
+    /// or `Float64` (`h(n)`, `h(Self.n + 1)`, `twice[n]()`, `S.f(n)`, `d(n, m=4)`): the
     /// callable applied to the parameter expressions of its compile-time
     /// arguments, then of its runtime ones in declared order, a default
     /// standing where the call omits one, as the pin's call node is. It
@@ -902,10 +912,12 @@ impl Checker {
     /// parameter expression.
     fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
         let (function, arguments) = self.selected_application(expr)?;
-        let result = self
-            .ty_from_anno(&function.result)
-            .ok()
-            .filter(|ty| matches!(ty.kind(), TyKind::Int | TyKind::Bool | TyKind::Struct(..)))?;
+        let result = self.ty_from_anno(&function.result).ok().filter(|ty| {
+            matches!(
+                ty.kind(),
+                TyKind::Int | TyKind::UInt | TyKind::Bool | TyKind::Float64 | TyKind::Struct(..)
+            )
+        })?;
         (!function.raises).then(|| {
             self.param_context.apply(
                 &function.symbol,
@@ -3343,7 +3355,9 @@ impl ApplicableShape<'_> {
     fn applicable(&self, symbol: String, on_instance: bool) -> Option<ApplicableFunction> {
         let scalar = |ty: &SourceType| match ty {
             SourceType::Int => Some(Ty::int()),
+            SourceType::UInt => Some(Ty::uint()),
             SourceType::Bool => Some(Ty::bool()),
+            SourceType::Float64 => Some(Ty::float64()),
             _ => None,
         };
         let binders = self
@@ -3358,7 +3372,9 @@ impl ApplicableShape<'_> {
                     && !binder.infer_only;
                 let ty = match binder.bounds.as_slice() {
                     [bound] if plain && bound == "Int" => Ty::int(),
+                    [bound] if plain && bound == "UInt" => Ty::uint(),
                     [bound] if plain && bound == "Bool" => Ty::bool(),
+                    [bound] if plain && bound == "Float64" => Ty::float64(),
                     _ => return None,
                 };
                 Some((binder.name.clone(), ty))
@@ -3388,7 +3404,11 @@ impl ApplicableShape<'_> {
             positional_only: self.positional_only,
             keyword_only: self.keyword_only,
             result: match self.ret {
-                SourceType::Int | SourceType::Bool | SourceType::Named(..) => self.ret.clone(),
+                SourceType::Int
+                | SourceType::UInt
+                | SourceType::Bool
+                | SourceType::Float64
+                | SourceType::Named(..) => self.ret.clone(),
                 _ => return None,
             },
             raises: self.raises,

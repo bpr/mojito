@@ -89,6 +89,7 @@ assets/ok/comptime_alias_value_body.mojo	main	exe-differential	sanitized
 assets/ok/comptime_alias_value_parametric.mojo	main	exe-differential	sanitized
 assets/ok/comptime_annotated_scalar.mojo	main	exe-differential	sanitized
 assets/ok/comptime_application_argument.mojo	main	exe-differential	sanitized
+assets/ok/comptime_application_string_float_argument.mojo	main	exe-differential	sanitized
 assets/ok/comptime_applied_constant_in_signature.mojo	main	exe-differential	sanitized
 assets/ok/comptime_array_materialized_frozen.mojo	main	exe-differential	sanitized
 assets/ok/comptime_assert_judged_per_instance.mojo	main	exe-differential	sanitized

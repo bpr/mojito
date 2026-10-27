@@ -335,7 +335,9 @@ missing.
     `GenericConstraint` (R1475).
   - R1388: delete what is left of `Elab`'s evaluator and type resolver.
 - **Slices filed earlier**:
-  - R386: a value meta for any result type.
+  - R386 (landed): a `Float64`, `UInt`, or `String` result lifts, a
+    `String` one binding a `String` value parameter as a compile-time
+    string.
   - R389 (landed): one lifted function per expression, so equal
     applications are one type (R380, R390).
   - R849: every condition is decided by `param_expr::fold`.
@@ -344,7 +346,7 @@ missing.
   - `Elab` arms: R1245, R475, R1170, R1206, R1171, R518, R489, R802,
     R1178, R1208.
   - `Self` and associated reads: R269, R513, R338, R436, R415.
-  - Checker arms: R1194, R1191, R1199, R461, R332, R462,
+  - Checker arms: R1194, R1191, R1199, R332, R462,
     R1220, R1210, R448, R512.
   - Domain: R480, R893, R396, R397, R901, R481, R1197.
   - Constructions: R135, R853, R1179, R1175.

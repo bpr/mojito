@@ -71,11 +71,17 @@ pub(super) fn bracket_attribute(
         ParamArg::Named { value, .. } => bracket_attribute(value, bound),
         ParamArg::Type(_) => Some(bound.clone()),
         // A trait, a type list, or a KGEN string has no run-time form, so
-        // such an argument is an attribute like a type.
+        // such an argument is an attribute like a type. So is a compile-time
+        // string an application computes, which is the elaborator's frozen
+        // result rather than the argument expression's own value.
         ParamArg::Value(_) => matches!(bound, TyArg::Ty(_) | TyArg::Origin(_))
             .then(|| bound.clone())
             .or_else(|| match bound {
-                TyArg::Val(value) if value.is_compile_time_only() => Some(bound.clone()),
+                TyArg::Val(value)
+                    if value.is_compile_time_only() || computed_string_literal(value) =>
+                {
+                    Some(bound.clone())
+                }
                 _ => None,
             }),
     }
@@ -2556,9 +2562,9 @@ impl Checker {
                     // (`self[Self.Ts.length - 1 - i]`) is that expression,
                     // and a binder in scope shadows a module constant of its
                     // name (a `comptime for i` under a module `comptime i`).
-                    // An `Int` or a `Bool` computed some other way from them
-                    // (`h(L[0])`, `n > 2`) is the application of the function
-                    // lifted for it.
+                    // A scalar or a `String` computed some other way from
+                    // them (`h(L[0])`, `n > 2`, `pick(n)`) is the application
+                    // of the function lifted for it.
                     let _lifting = self.lifting_position();
                     let value = match self.eval_associated_ct(expr) {
                         Ok(value) => value,
@@ -2570,6 +2576,7 @@ impl Checker {
                             None => return Err(error),
                         },
                     };
+                    let value = self.string_parameter_value(value, ty);
                     if let CtValue::Expr(expression) = &value {
                         self.record_compiled_expression(expr, expression);
                     }
@@ -3404,6 +3411,34 @@ impl Checker {
         Ok(ty)
     }
 
+    /// `value`, an argument of a value parameter of type `ty`, in the
+    /// parameter's domain: an application computing a `String`
+    /// (`label[pick(n)]()`) binds a `String` value parameter as the
+    /// compile-time string the elaborator freezes its result to, which the
+    /// call carries as the argument's attribute ([`bracket_attribute`]).
+    fn string_parameter_value(&self, value: CtValue, ty: &Ty) -> CtValue {
+        let CtValue::Expr(application) = &value else {
+            return value;
+        };
+        let mojito_types::param_expr::ParamKind::Apply { function, args } = application.kind()
+        else {
+            return value;
+        };
+        let computes_string = application.meta().as_value().is_some_and(|computed| {
+            matches!(computed.kind(), TyKind::Struct(name, computed_args)
+                if computed_args.is_empty()
+                    && mojito_symbol::symbol::is_stdlib_string_struct(name))
+        });
+        if *ty != TyKind::StringLiteral || !computes_string {
+            return value;
+        }
+        CtValue::Expr(self.param_context.apply(
+            function,
+            args,
+            mojito_types::param_expr::MetaTy::value(ty.clone()),
+        ))
+    }
+
     /// Whether a nearer type parameter shadows the pack `*Ts`: a nested
     /// `def[Ts: AnyType]` binds the bare name to something that is not a
     /// pack, so a `*Ts` inside it does not reach the enclosing pack. Both
@@ -4028,6 +4063,14 @@ impl Checker {
             self.param_context.type_list(types).ok()
         })
     }
+}
+
+/// Whether `value` is an application computing a compile-time string
+/// ([`Checker::string_parameter_value`]).
+fn computed_string_literal(value: &CtValue) -> bool {
+    matches!(value, CtValue::Expr(expression)
+        if matches!(expression.kind(), mojito_types::param_expr::ParamKind::Apply { .. })
+            && expression.meta().as_value().is_some_and(|ty| *ty == TyKind::StringLiteral))
 }
 
 fn type_is_symbolic(ty: &Ty) -> bool {
