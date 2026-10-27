@@ -741,14 +741,15 @@ impl CtValue {
     /// Whether this value is compile-time data no run-time value holds, so a
     /// bracket argument of it is an attribute like a type: a
     /// [metatype-valued](Self::is_metatype_valued) value, a KGEN string, a
-    /// raw list or pack of them, or a parameter expression of such a type.
+    /// raw list or pack of them or of types (`TypeList.of[Trait=AnyType,
+    /// Int].values`), or a parameter expression of such a type.
     pub fn is_compile_time_only(&self) -> bool {
         self.is_metatype_valued()
             || match self {
                 Self::KgenString(_) | Self::Generator(_) => true,
-                Self::List(values) | Self::Tuple(values) => {
-                    values.iter().any(Self::is_compile_time_only)
-                }
+                Self::List(values) | Self::Tuple(values) => values
+                    .iter()
+                    .any(|value| matches!(value, Self::Type(_)) || value.is_compile_time_only()),
                 Self::Expr(expr) => expr.meta().as_value().is_some_and(|ty| {
                     crate::types::mentions(ty, &|ty| {
                         matches!(ty.kind(), TyKind::KgenString | TyKind::Generator(_))

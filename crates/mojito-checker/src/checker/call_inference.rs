@@ -23,16 +23,6 @@ type InferredCall = (
 );
 
 impl Checker {
-    /// Whether `len(args)` measures an operand only a compile-time position
-    /// holds, a type pack or a compile-time `TypeList` value, which the
-    /// library `len` cannot bind: upstream applies `len` to the `TypeList`
-    /// value at compile time, and the check answers it with the list's
-    /// length query.
-    pub(super) fn compile_time_len_operand(&self, args: &[Expr]) -> bool {
-        matches!(args, [operand] if self.type_pack_named(operand).is_some()
-            || matches!(self.type_list_operand(operand), Ok(Some(_))))
-    }
-
     /// Reject a reference to the module function `name` as a value when
     /// it is `@unavailable`, as a call selecting it is.
     pub(super) fn reject_unavailable_reference(&self, name: &str) -> Result<(), TypeError> {
@@ -342,7 +332,7 @@ impl Checker {
             "min" | "max" => self.infer_min_max(name, args),
             "round" => self.infer_round(args),
             "input" => self.infer_input(span, args),
-            "len" => self.infer_len(span, args),
+            "len" => self.infer_len(args),
             "range" => self.infer_range(args),
             "Int" => self.infer_conversion(&span, Ty::int(), args),
             "UInt" => self.infer_conversion(&span, Ty::uint(), args),
@@ -804,13 +794,6 @@ impl Checker {
             }
         }
         self.reject_nested_self_reference(name)?;
-        if name == "len"
-            && param_args.is_empty()
-            && kwargs.is_empty()
-            && self.compile_time_len_operand(args)
-        {
-            return self.infer_len(span, args);
-        }
         let Some(ty) = self.lookup(name).cloned() else {
             return self.infer_unbound_call(span, name, param_args, args, kwargs);
         };

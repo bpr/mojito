@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A type pack read as a value is the zero-sized `TypeList[Ts.values]()`
+  the pin types it as (R1169): `var x = Ts`, `Self.Ts` in a method, and
+  `show(Ts)` over `def show[T: Sized]` run, and a run-time `len(Ts)` is
+  the library `len` calling `TypeList.__len__` rather than a checker rule.
+  A `comptime` binding of a `TypeList` value reads at run time as that
+  list and checks its annotation, so `comptime y: Int = Ts` is rejected as
+  at the pin. A closed raw list of types is a bracket attribute, so
+  `var t = TypeList.of[Trait=AnyType, Int, Bool]()` now constructs. A
+  computed list read at run time (R348), a pack named in a parameter's
+  type (R1490), and the pin's display of a list type (R1489) remain.
+
 - Upstream's generators (R808): a parameterized `comptime` declaration
   read unapplied (`comptime t = Twice`, `comptime g = T.get`, `A.get`,
   `Self.times`) is a generator value, and `__generator_type[Idx: Int] Int`

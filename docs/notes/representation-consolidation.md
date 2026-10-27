@@ -360,15 +360,18 @@ missing.
 
 ### I. Packs are binder kinds
 
-- **Mojito**: `*Ts` and `*values` are scoped binders. `len`, subscript,
-  and the `TypeList` vocabulary are answered by spelling (`infer_len`,
-  `pack_length_binder`, `typelist_receiver`,
-  `comptime/rewrite.rs:fold_pack_typelist_use`). A `__generator_type`
+- **Mojito**: `*Ts` and `*values` are scoped binders, read at run time
+  as the `TypeList` / `ParameterList` value the pin types them as
+  (R1169 landed the type-pack half: run-time `len(Ts)` is
+  `TypeList.__len__`). A compile-time `len`, subscript, and the
+  `TypeList` vocabulary are still answered by spelling
+  (`pack_length_binder`, `typelist_receiver`,
+  `comptime/rewrite.rs:fold_pack_typelist_use`; R1284). A `__generator_type`
   parameter takes a value-bodied or predicate generator (R808), but not
   an unbound application (R1485) or a type-valued generator (R1486).
 - **Upstream**: a pack is a `TypeList` / `ParameterList` value, and its
   library members run by CTFE.
-- **Cores**: R1169 (a type pack is a `TypeList` value), R1151 (a value
+- **Cores**: R1169 (a type pack is a `TypeList` value, landed), R1151 (a value
   pack is typed as the raw list), R808 (generator parameters, landed),
   R1485 (unbound applications), and R1486 (type-valued generators).
 - **Members**:
@@ -376,6 +379,7 @@ missing.
     R348, R1071.
   - Library ports: R810, R811, R812, R1181, R223.
   - Pack constraints: R1343.
+  - Pack-typed parameters and display: R1490, R1489.
 
 ### Blocks without a size lever
 

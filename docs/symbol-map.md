@@ -963,8 +963,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   position read through `read_parametric_value`. The `TypeList` vocabulary
   is the check's too: `compile_typelist_proposition`/`typelist_receiver`
   lower the constraint forms (`PackPredicate`/`PackContains`/`PackLength`
-  in `types.rs`), and `len` of a compile-time `TypeList` value is its
-  length query (`Checker::infer_len`). A construction through a struct's
+  in `types.rs`). A run-time `len` of a type pack or of a `TypeList`
+  binding is the library `len` over the spelled `TypeList` value;
+  `Checker::infer_len` only types `len(x)` for a program linked without
+  the prelude. A construction through a struct's
   parameterized type member (`ParameterList.of[4, 5]()`, `S[Int].Of[Bool](3,
   4)`, or a local alias of one) is the construction of the type the member
   names (`Checker::infer_type_member_construction`,
@@ -2086,8 +2088,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   records it as `SemanticAdjustment::ParamValue { value }`
   (`mojito-checked`, `checked.rs`) through `Checker::record_pack_query_value`
   and `typelist_proposition_query` (`checker/comptime_validation.rs`), from
-  `infer_member` (`Ts.length`, `indexing.rs`), `infer_len` (`len(Ts)`,
-  `builtins.rs`), and the `Invoke` arm of `infer` (`Ts.contains[X]()`,
+  `infer_member` (`Ts.length`, `indexing.rs`) and the `Invoke` arm of `infer` (`Ts.contains[X]()`,
   `Ts.all_conforms_to[T]()`, `inference.rs`). A value pack that is still a
   parameter (`*values: Int`) is a `ParamList` of its element, as is a
   raw-list binder (`values: KGENParamList[T]`, `TyKind::ParamList`, which
@@ -2119,8 +2120,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   over `_MLIR.KGENParamListType`, with `_ParameterListIter`):
   `Checker::infer_value_pack_read` (top of `infer_impl`) spells that
   construction as a `SpelledConstruction` whose identity is derived at
-  `ast::VALUE_PACK_READ_ORDINAL` (its argument and the argument's pack at
-  `VALUE_PACK_RAW_LIST_ORDINAL` and `VALUE_PACK_OPERAND_ORDINAL`), the
+  `ast::PACK_READ_ORDINAL` (its argument and the argument's pack at
+  `PACK_READ_RAW_LIST_ORDINAL` and `PACK_READ_OPERAND_ORDINAL`); a type
+  pack read as a value (`var l = Ts`, `len(Ts)` at run time, `Self.Ts`) is
+  the zero-sized `TypeList[Ts.values]()` spelled the same way
+  (`Checker::infer_type_pack_read`, sharing `infer_spelled_pack_read`),
+  and a run-time read of a `comptime` binding of a `TypeList` value spells
+  its initializer again under the read's derived identities
+  (`Checker::infer_type_list_binding_read`, the `Identifier` fallback of
+  `infer_impl`). The
   checked arena and HIR (the read's operand is that construction's node)
   lower it in the read's place,
   and `origin_place` / `materialize_borrow_owner` treat the read as that
@@ -2268,9 +2276,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   binder read in `inference.rs`). `fold_kgen_type_parameters` spells a
   parameter typed by an alias of it as a value binder of the direct
   spelling, and a local `comptime` of one is compile-time only
-  (`Checker::reads_literal_value`, `bind_compile_time_only_value`).
-  `CtValue::is_compile_time_only` makes a bracket argument of one an
-  attribute with no run-time form (`bracket_attribute`,
+  (`Checker::reads_literal_value`, `bind_compile_time_only_value`, which
+  also binds a `TypeList` value and checks its annotation through
+  `check_type_list_annotation`).
+  `CtValue::is_compile_time_only` makes a bracket argument of one, or of
+  a closed raw list of types, an attribute with no run-time form (`bracket_attribute`,
   `mir::attribute_has_no_runtime_form`, `is_parameter_attribute`).
   `param_expr::fold::fold_infix` gives it no operator, and
   `conformance::reflects_no_conformance` makes a closed `conforms_to` over

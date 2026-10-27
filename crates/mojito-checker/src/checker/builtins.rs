@@ -674,28 +674,11 @@ impl Checker {
         Ok(None)
     }
 
-    /// Type `len(x)` where the library `len` cannot bind it: a type pack
-    /// (`len(Ts)`), which records the pack's length query, and any operand
-    /// of a program linked without the prelude, as a phase test links,
-    /// where every possible type of a dependent input must fulfill the same
-    /// `Sized`/`__len__ -> Int` contract.
-    pub(super) fn infer_len(&self, span: SourceSpan, args: &[Expr]) -> Result<Ty, TypeError> {
-        // `len(Ts)` of a pack that is still a parameter.
-        if let [pack] = args
-            && let Some(pack) = self.type_pack_named(pack)
-        {
-            self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
-            return Ok(Ty::int());
-        }
-        // `len(l)` of a compile-time `TypeList` value: its length, as
-        // `l.length` reads it.
-        if let [list] = args
-            && let Some(list) = self.type_list_operand(list)?
-        {
-            let value = self.param_context.list_length(&list).map_err(param_error)?;
-            self.record_member_value(span, value);
-            return Ok(Ty::int());
-        }
+    /// Type `len(x)` for a program linked without the prelude, as a phase
+    /// test links, where every possible type of a dependent input must
+    /// fulfill the same `Sized`/`__len__ -> Int` contract the library `len`
+    /// asks.
+    pub(super) fn infer_len(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("len", 1, args)?;
         self.borrow_nominal_place_argument(&args[0], &tys[0]);
         self.borrow_storage_place_argument(&args[0], &tys[0]);

@@ -1415,10 +1415,10 @@ impl Checker {
         // types it as a template's expression.
         if self.reads_raw_list(value) {
             self.check_raw_list_annotation(name, annotation, value)?;
-            return self.bind_compile_time_only_value(name, value);
+            return self.bind_compile_time_only_value(name, annotation, value);
         }
         if self.reads_literal_value(value) {
-            return self.bind_compile_time_only_value(name, value);
+            return self.bind_compile_time_only_value(name, annotation, value);
         }
         // A reflected field type (`comptime F = r.field_at[1].T`) is a type
         // alias where a type is read, and the `AnyType` value it spells
@@ -1481,7 +1481,7 @@ impl Checker {
             return Ok(true);
         }
         let Some(level) = self.tparams.len().checked_sub(1) else {
-            if self.bind_compile_time_only_value(name, value)? {
+            if self.bind_compile_time_only_value(name, annotation, value)? {
                 return Ok(true);
             }
             // A body with no binders keeps a binding only when it applies a
@@ -1577,7 +1577,7 @@ impl Checker {
                 .insert(name.to_string(), display);
             return Ok(true);
         }
-        if self.bind_compile_time_only_value(name, value)? {
+        if self.bind_compile_time_only_value(name, annotation, value)? {
             return Ok(true);
         }
         // A closed binding is the application it requests, else the
@@ -1626,29 +1626,63 @@ impl Checker {
         })
     }
 
+    /// Require a `TypeList` binding's annotation, if any, to accept the
+    /// list's type (`comptime tl: TypeList[Trait=Movable, Ts.values] = Ts`),
+    /// as a runtime binding's does.
+    fn check_type_list_annotation(
+        &self,
+        name: &str,
+        annotation: Option<&SourceType>,
+        value: &Expr,
+    ) -> Result<(), TypeError> {
+        let Some(annotation) = annotation else {
+            return Ok(());
+        };
+        let found = {
+            let _position = self.comptime_position();
+            self.infer(value)?
+        };
+        let expected =
+            self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)?;
+        if coerces(&found, &expected) {
+            return Ok(());
+        }
+        Err(TypeError::TypeMismatch {
+            expected: expected.to_string(),
+            found: found.to_string(),
+            context: format!("comptime '{name}'"),
+        })
+    }
+
     /// Bind a reflection handle (`reflect[T]`, `r.field["x"]`), a reflected
-    /// list (`r.field_names()`), a
-    /// type list computed from the body's packs
-    /// (`TypeList._concat[Self.Ts.values, OtherTs.values]()`), a string
-    /// literal's KGEN string (`"None".value`), or a closed raw list
-    /// (`ParameterList.of[4, 5].values`): a compile-time-only value inlined
-    /// at its uses. `false` when `value` is none of these.
+    /// list (`r.field_names()`), a string literal's KGEN string
+    /// (`"None".value`), a closed raw list (`ParameterList.of[4, 5].values`),
+    /// or a `TypeList` value (`Ts`, `TypeList.of[Trait=AnyType, Int]()`,
+    /// `TypeList._concat[Self.Ts.values, OtherTs.values]()`): a compile-time
+    /// position reads the bound expression, and a run-time read of a
+    /// `TypeList` spells it again ([`Self::infer_type_list_binding_read`]).
+    /// `false` when `value` is none of these.
     fn bind_compile_time_only_value(
         &mut self,
         name: &str,
+        annotation: Option<&SourceType>,
         value: &Expr,
     ) -> Result<bool, TypeError> {
+        let type_list = matches!(self.type_list_operand(value), Ok(Some(_)));
         // A handle binds as written: a bad selection
         // (`reflect[P].field["missing"]`) is reported where it is read, as
         // the pin runs an unread binding.
-        if !(super::reflection::spells_reflection_handle(value)
+        if !(type_list
+            || super::reflection::spells_reflection_handle(value)
             || matches!(self.reflection_handle(value), Ok(Some(_)))
             || matches!(self.reflection_list(value), Ok(Some(_)))
-            || matches!(self.type_list_operand(value), Ok(Some(_)))
             || self.reads_literal_value(value)
             || self.reads_raw_list(value))
         {
             return Ok(false);
+        }
+        if type_list {
+            self.check_type_list_annotation(name, annotation, value)?;
         }
         self.local_comptime_values
             .last_mut()
@@ -2502,48 +2536,56 @@ impl Checker {
     /// `ParameterList[values.values]()` the pin types the read as, spelled in
     /// the read's place and checked as any construction is.
     pub(super) fn infer_value_pack_read(&self, expression: &Expr) -> Result<Ty, TypeError> {
-        if !self.structs.contains_key(PARAMETER_LIST) {
-            return Err(TypeError::Unsupported(format!(
-                "a value pack read at run time needs the bundled '{VARIADICS_MODULE}' module"
-            )));
+        self.infer_spelled_pack_read(expression, PARAMETER_LIST)
+    }
+
+    /// A type pack read as a value (`var l = Ts`, `len(Ts)` at run time,
+    /// `show(Self.Ts)`): the zero-sized `TypeList[Ts.values]()` the pin
+    /// types the read as, spelled as a value pack read is.
+    pub(super) fn infer_type_pack_read(&self, expression: &Expr) -> Result<Ty, TypeError> {
+        self.infer_spelled_pack_read(expression, TYPE_LIST)
+    }
+
+    /// A run-time read of a `comptime` binding of a `TypeList` value
+    /// (`comptime tl = Ts`, `comptime types = TypeList.of[...]()`): the
+    /// binding's initializer spelled again in the read's place, under
+    /// identities derived from the read's. The pin keeps one parameter
+    /// attribute per declaration and materializes it at each read; for the
+    /// zero-sized `TypeList`, building the construction again at each read
+    /// is the same value. `None` when `name` binds no `TypeList` value.
+    pub(super) fn infer_type_list_binding_read(
+        &self,
+        expression: &Expr,
+        name: &str,
+    ) -> Option<Result<Ty, TypeError>> {
+        let bound = self.local_comptime_value(name)?;
+        if !matches!(self.type_list_operand(bound), Ok(Some(_))) {
+            return None;
         }
-        if !matches!(
-            expression.kind,
-            ExprKind::Member { .. } | ExprKind::Identifier(_)
-        ) {
-            return Err(TypeError::InvariantViolation(
-                "a value pack read names no pack".to_string(),
-            ));
+        let computed = match &bound.kind {
+            ExprKind::MethodCall { .. } => true,
+            ExprKind::Invoke { callee, .. } => {
+                matches!(&callee.kind, ExprKind::Member { field, .. } if field == "_concat")
+            }
+            _ => false,
+        };
+        if computed {
+            return Some(Err(TypeError::Unsupported(format!(
+                "a computed TypeList read at run time ('{name}')"
+            ))));
         }
-        let pack = super::initializer_list::spelled_node(
-            expression,
-            mojito_ast::ast::VALUE_PACK_OPERAND_ORDINAL,
-            expression.kind.clone(),
-            expression.span,
-        );
-        let raw = super::initializer_list::spelled_node(
-            expression,
-            mojito_ast::ast::VALUE_PACK_RAW_LIST_ORDINAL,
-            ExprKind::Member {
-                object: Box::new(pack),
-                field: "values".to_string(),
+        let mut spelled = bound.clone();
+        mojito_ast::visit::walk_expr_mut(
+            &mut mojito_ast::visit::DerivedIdentities {
+                parent: expression.syntax_id,
+                next: 1,
             },
-            expression.span,
+            &mut spelled,
         );
-        let construction = super::initializer_list::spelled_node(
-            expression,
-            mojito_ast::ast::VALUE_PACK_READ_ORDINAL,
-            ExprKind::Call {
-                name: PARAMETER_LIST.to_string(),
-                param_args: vec![ParamArg::Value(raw)],
-                args: Vec::new(),
-                kwargs: Vec::new(),
-            },
-            expression.span,
-        );
-        let ty = self.infer(&construction)?;
-        self.record_spelled_construction(expression, construction, &ty);
-        Ok(ty)
+        Some(
+            self.infer(&spelled)
+                .inspect(|ty| self.record_spelled_construction(expression, spelled, ty)),
+        )
     }
 
     /// The raw parameter list `expr` reads where `len` of it stands for
@@ -3173,6 +3215,54 @@ impl Checker {
     /// Every `Param` operand of a compiled condition must name a parameter,
     /// binding, type, trait, or alias in scope: the constraint compiler
     /// reads any bare identifier as a parameter name.
+    /// A pack read at run time as the construction `<list>[<pack>.values]()`
+    /// of the bundled list struct `list`, spelled in the read's place under
+    /// the read's derived ordinals and checked as any construction is.
+    fn infer_spelled_pack_read(&self, expression: &Expr, list: &str) -> Result<Ty, TypeError> {
+        if !self.structs.contains_key(list) {
+            return Err(TypeError::Unsupported(format!(
+                "a pack read at run time needs the bundled '{VARIADICS_MODULE}' module's '{list}'"
+            )));
+        }
+        if !matches!(
+            expression.kind,
+            ExprKind::Member { .. } | ExprKind::Identifier(_)
+        ) {
+            return Err(TypeError::InvariantViolation(
+                "a pack read names no pack".to_string(),
+            ));
+        }
+        let pack = super::initializer_list::spelled_node(
+            expression,
+            mojito_ast::ast::PACK_READ_OPERAND_ORDINAL,
+            expression.kind.clone(),
+            expression.span,
+        );
+        let raw = super::initializer_list::spelled_node(
+            expression,
+            mojito_ast::ast::PACK_READ_RAW_LIST_ORDINAL,
+            ExprKind::Member {
+                object: Box::new(pack),
+                field: "values".to_string(),
+            },
+            expression.span,
+        );
+        let construction = super::initializer_list::spelled_node(
+            expression,
+            mojito_ast::ast::PACK_READ_ORDINAL,
+            ExprKind::Call {
+                name: list.to_string(),
+                param_args: vec![ParamArg::Value(raw)],
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            },
+            expression.span,
+        );
+        let ty = self.infer(&construction)?;
+        self.record_spelled_construction(expression, construction, &ty);
+        Ok(ty)
+    }
+
     fn constraint_operands_resolve(&self, constraint: &GenericConstraint) -> Result<(), TypeError> {
         Self::each_constraint_parameter(constraint, &|name| self.comptime_name_resolves(name))
     }

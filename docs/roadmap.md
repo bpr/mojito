@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1489**.
+Next free ID: **R1491**.
 
 ## Ordered Work
 
@@ -3646,13 +3646,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a local `comptime a = A[4]()` over `comptime A[k: Int] = W[k]`
     fails with "a compile-time call of 'A' is not evaluated above the
     check", where the pin constructs `W[4]`.
-  - Probe: a run-time construction through a struct's member alias, `var t
-    = TypeList.of[Trait=AnyType, Int, Bool]()` then `print(len(t))`, fails
-    with "Undefined variable 'TypeList'", where the pin prints `2`. The
-    check spells it `TypeList[Trait=..., values=TypeList.of[...].values]()`
-    (`Checker::infer_type_member_construction`), and that construction,
-    written out, fails the same way: a `TypeList` value has no run-time
-    construction.
   - Probe: a construction through a non-generic struct's member alias,
     `S.V(1)` over `comptime V = SIMD[DType.int64, Self.w]`, fails with
     "Undefined variable 'S'", where the pin prints `[1, 1, 1, 1]`.
@@ -5224,6 +5217,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1490 A pack named in a parameter's type through its `.values`
+  is neither inferred nor substituted**
+
+  `def show[*Us: Movable](l: TypeList[Trait=Movable, Us.values]) -> Int`
+  binds `Us` only from closed bracket arguments, where the pin also infers
+  it from the argument's type and substitutes an explicit spread.
+  - Probe: `show(Ts)` in `def go[*Ts: Movable]` reports "expected
+    TypeList[Movable, ()], found TypeList[Movable, Ts]": unifying the
+    argument's raw list with `Us.values` binds nothing. The pin prints
+    `2` for `go[Int, Bool]()`.
+  - Probe: `show[*Ts](TypeList[Ts.values]())` there reports "expected
+    TypeList[Movable, Us], found TypeList[Movable, Ts]": the spread binds
+    `Us` but does not reach the `Us.values` inside the parameter's type.
+    The pin prints `2`.
+  - `show[Int, Bool](TypeList.of[Trait=Movable, Int, Bool]())` runs.
+  - Found while landing R1169 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1199 A trait method's signature cannot read a struct's value
   member**
 
@@ -6098,6 +6110,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A template body's binding over its binders checks its annotation
     (`bind_template_comptime`) and is rejected as at the pin.
   - Probe: `conformance/probes/comptime_int_annotation_bool_value.mojo`.
+  - Probe: `comptime y: Int = vs` in `def go[*vs: Int]` prints `(1, 2)`
+    for `go[1, 2]()`, where the pin rejects it with "cannot implicitly
+    convert 'ParameterList[vs.values]' value to 'Int'". A `TypeList`
+    binding's annotation is checked (`check_type_list_annotation`); a
+    value pack's is not.
   - Found while landing R312 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6394,6 +6411,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A `Variant[*Ts.reverse()]` is unspelled the same way.
   - Probe: a `Holder[*Ts: Movable]` whose method returns
     `Holder[*Self.Ts.reverse()]()`.
+  - Probe: a computed list read at run time, `comptime r = Ts.reverse()`
+    then `var x = r` (or `comptime c = TypeList._concat[Ts.values,
+    Ts.values]()`), stops with "a computed TypeList read at run time",
+    where the pin prints `3` and `6` for `len(x)` over `Int, Bool,
+    String`. The read is `TypeList[Trait=Movable, <the computed list>]()`,
+    which binds the computed list as `TypeList`'s `values`
+    (`Checker::infer_type_list_binding_read`).
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -8407,8 +8431,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   list are answered by checker queries, where the pin applies its library
   `len` to the operand's value at compile time (its `Ts` is a `TypeList`
   value, whose `__len__` the `Sized` overload calls).
-  - `call_inference::compile_time_len_operand` routes a type pack to the
-    builtin `infer_len` ahead of the library lookup.
+  - A run-time `len(Ts)` or `len(tl)` is the library call over the
+    spelled `TypeList` value already; only the compile-time folds remain.
   - The comptime evaluators fold `len` by name: `eval_reflection_expr`,
     `pack_length_binder`, the bound-display arm, and
     `compile_dependent_ct_expr`'s raw-list arm (`checker/constraints.rs`,
@@ -8425,8 +8449,18 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     associated comptime expression", where the pin prints `3`: a member
     has no body to lift the call from, and the check answers `len` of a
     raw list only inside the bundled `ParameterList`.
+  - Blocker: a struct member `comptime count = len(Self.Ts)` becomes an
+    application only once `called_application` applies a function to a
+    struct-valued argument (`TypeList[Self.Ts.values]()`), which is
+    R1483's lever. `comptime count = mylen(Foo())` fails the same way.
+  - Probe: `def f[*Ts: Movable]() where len(Ts) == 2`, called as
+    `f[Int, Bool]()`, prints its body in Mojito, where the pin rejects it
+    for "lacking evidence" of `len[TypeList[Int, Bool]](TypeList[Int,
+    Bool]()) == Int(2)`.
+  - Probe: `Box[len(Ts)]` passed where `Box[Ts.length]` is expected is
+    rejected by both, with the pin naming `len[TypeList[Ts.values]](Ts)`.
   - Found while landing R988 (2026-10-22).
-  - Depends on nothing.
+  - Depends on R1483.
   - Model: Opus, Not Planned.
 
 - [ ] **R857 A built-in scalar conversion is a named builtin `call`, not a
@@ -9239,12 +9273,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Problem: the pin rejects both loops because a `TypeList` has no
   `__iter__`, while Mojito fails somewhere else with its own message.
   - `comptime for T in reflect[P].field_types()` gives "not a compile-time
-    value: type-valued or symbolic comptime values cannot materialize at
-    runtime"; the pin says "'TypeList[Int, String]' does not implement the
-    '__iter__' method".
-  - `comptime for T in Ts` over `*Ts: AnyType` gives "Undefined variable
-    'Ts'"; the pin says "'TypeList[Ts.values]' does not implement the
-    '__iter__' method".
+    Int constant: 'reflect[P].field_types()' is a compile-time list"; the
+    pin says "'TypeList[Int, String]' does not implement the '__iter__'
+    method".
+  - `comptime for T in Ts` over `*Ts: AnyType` gives "'TypeList[AnyType,
+    Ts]' does not implement the '__iter__' method"; the pin says
+    "'TypeList[Ts.values]' …". Only the type's display differs, which is
+    R1489.
   - Add a `type_error` fixture for each once the check gives the pin's
     wording.
   - Found while landing R795 (2026-10-14).
@@ -9340,27 +9375,29 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1169 A type pack is not a `TypeList` value**
+- [ ] **R1489 A pack's list type displays its infer-only parameter and
+  the bare pack**
 
-  `var x = Ts` and `comptime tl: TypeList[Trait=Movable, Ts.values] = Ts`
-  stop with "Undefined variable 'Ts'", where the pin runs them, and
-  `len(Ts)` is a checker rule rather than `TypeList.__len__`.
-  - Read the pack in a runtime position as `TypeList[Ts.values]()`, as
-    `Checker::infer_value_pack_read` (`comptime_validation.rs`) reads a
-    value pack as `ParameterList[vs.values]()`. The bundled `TypeList`
-    already declares `__init__` and `__len__`.
-  - `len(Ts)` then dispatches to `__len__` like any `Sized`; delete
-    `Checker::infer_len`'s pack arm (`builtins.rs`) and
-    `pack_length_binder`'s `len` arm (`constraints.rs`).
-  - Probe: `def go[*Ts: Movable]()` with `var x = Ts`, `print(len(x))`,
-    and `print(tl.length)` prints `3` three times for `go[Int, Bool,
-    String]()` at the pin.
-  - Probe: `comptime y: Int = Ts` should report the pin's "cannot
-    implicitly convert 'TypeList[Ts.values]' value to 'Int'", not
-    "Undefined variable 'y'".
-  - Found while planning R805 (2026-10-19).
+  Mojito spells a pack's list type `TypeList[Movable, Ts]` and
+  `ParameterList[Int, vs]`, where the pin writes `TypeList[Ts.values]`
+  and `ParameterList[vs.values]`, and a closed list `TypeList[Int, Bool]`
+  where Mojito writes `TypeList[AnyType, (Int, Bool)]`.
+  - The pin prints a struct's infer-only parameters (`Trait`, `T`) only
+    when they are not inferable from the rest, and a raw list argument as
+    the pack's `.values` or its elements.
+  - Probe: `comptime y: Int = Ts` and `var y: Int = Ts` in `def go[*Ts:
+    Movable]` report "expected Int, found TypeList[Movable, Ts]", where
+    the pin reports "cannot implicitly convert 'TypeList[Ts.values]' value
+    to 'Int'".
+  - Probe: `var t: Int = TypeList.of[Trait=AnyType, Int, Bool]()` reports
+    "found TypeList[AnyType, (Int, Bool)]"; the pin says
+    'TypeList[Int, Bool]'.
+  - Probe: `var t: Int = vs` in `def go[*vs: Int]` reports "found
+    ParameterList[Int, vs]"; the pin says 'ParameterList[vs.values]'.
+  - Probe: R904's pack loop.
+  - Found while landing R1169 (2026-10-27).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1182 `TypeList`'s list vocabulary is answered by spelling, not by
   the bundled struct's members**

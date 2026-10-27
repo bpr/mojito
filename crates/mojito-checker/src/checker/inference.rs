@@ -862,6 +862,9 @@ impl Checker {
         if self.value_pack_named(expr).is_some() {
             return self.infer_value_pack_read(expr);
         }
+        if self.type_pack_named(expr).is_some() {
+            return self.infer_type_pack_read(expr);
+        }
         if let Some(read) = self.infer_type_alias_read(expr) {
             return read;
         }
@@ -1208,7 +1211,9 @@ impl Checker {
                             Some(raw) => Err(super::comptime_validation::raw_list_runtime_read(
                                 raw.meta(),
                             )),
-                            None => Err(TypeError::UndefinedVariable(name.clone())),
+                            None => self
+                                .infer_type_list_binding_read(expr, name)
+                                .unwrap_or_else(|| Err(TypeError::UndefinedVariable(name.clone()))),
                         },
                         Ok,
                     )
