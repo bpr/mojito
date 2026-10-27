@@ -1158,7 +1158,9 @@ arguments select, and lists the callee's own compile-time arguments, then
 its runtime ones in declared order with a declared default where the call
 omits one, so `d(1)` and `d(1, 3)` are one node. A static method of a
 generic struct is applied first to the instance it is called on
-(`G[n].w()`, `Self.w()`), a type that is still a pattern. The application
+(`G[n].w()`, `Self.w()`), a type that is still a pattern; a builtin one
+whose body folds binds its struct's parameters from that instance instead,
+so `G[1].plus(n)` over `return n + Self.k` is `n + 1`. The application
 names no declaration's binders, so a signature and a struct field type take
 it, a caller that binds the parameters spells the same value (`h(2)` for
 `h(n)`), and inference solves a parameter through it argument by argument,

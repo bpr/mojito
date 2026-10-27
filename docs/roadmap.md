@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1525**.
+Next free ID: **R1528**.
 
 ## Ordered Work
 
@@ -7752,7 +7752,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Matching the pin needs a compile-time diagnostic when a shift's
     constant amount is outside the lane width.
   - Its home is the folded `pop.shr` of a library `SIMD.__rshift__`
-    (R1522).
+    (R1526).
   - Found while landing R846 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7870,6 +7870,24 @@ retained on purpose and re-probed rather than fixed; they are listed in
     host function (`infer_min_max`), not a library `def` the rule sees.
   - Found while landing R1395 (2026-10-27).
   - Depends on R1522.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1527 A run-time call of an `@always_inline("builtin")` callable
+  judges its `comptime assert`**
+
+  `checked[-1](1)` over a builtin `def checked[k: Int](n: Int) -> Int`
+  opening with `comptime assert k > 0, "positive"` prints `2` at the pin,
+  where Mojito fails: "function instantiation of `checked` failed:
+  constraint failed: positive".
+  - The pin folds every call of a builtin callable at the call, and its
+    fold drops the assertion. `builtin_fold.rs` drops it from the
+    parameter-position template only, so a run-time call instantiates the
+    body and the elaborator judges it.
+  - Probe: `G[-1].checked(1)` over a builtin static method of `struct
+    G[k: Int]` asserting `Self.k > 0` behaves the same.
+  - Without the decorator both are rejected, at the pin and here.
+  - Found while landing R1522 (2026-10-27).
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
@@ -9572,35 +9590,57 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1522 A call of an `@always_inline("builtin")` method is not
-  folded in a parameter expression**
+- [ ] **R1525 A builtin `__init__` does not fold to a struct value in a
+  parameter expression**
 
-  `SIMD[DType.int8, G[1].plus(n)]` over a builtin `@staticmethod` of
-  `struct G[k: Int]` returning `n + Self.k` is not `SIMD[DType.int8, n + 1]`
-  to Mojito ("found SIMD[DType.int8, G.plus[G[1]](n)]"), where the pin folds
-  the body and prints `[1, 1]`.
-  - `Checker::fold_builtin_bodies` folds only a callable whose argument
-    slots are its own parameters: a static method of a generic struct
-    (`ApplicableFunction::on_instance`) has its instance as a first slot,
-    and `Self.k` in its body reads that instance's parameter.
-  - A method with `self` is outside `applicable_declarations` altogether.
-    Upstream's `SIMD.__add__`, `SIMDLength.__add__`, and
-    `_simd_construction_checks`' `size.is_power_of_two()` are such methods.
-    Their bodies read `self._mlir_value` and build `Self(mlir_value=…)`, so
-    the fold needs a field read of a struct-valued slot and a construction
-    through a builtin `__init__`.
-  - Probe: `def f[n: Int](x: SIMD[DType.int8, G[1].plus(n)]) ->
-    SIMD[DType.int8, n + 1]: return x`, called as `f[1](SIMD[DType.int8,
-    2](1))`, prints `[1, 1]` at the pin and is rejected by Mojito.
-  - Probe: `L(n).doubled()` over `@fieldwise_init struct
-    L(TrivialRegisterPassable): var v: Int` with a builtin `doubled(self)`
-    returning `self.v + self.v` is rejected by both, but Mojito says "not a
-    compile-time Int constant" where the pin names the folded
-    `Int((mul L(n).v, 2))`.
-  - R851's "could not simplify operator shr" belongs to the folded
-    `pop.shr` once `SIMD.__rshift__` is library code folded here.
-  - Found while landing R1395 (2026-10-27).
-  - Depends on nothing.
+  `L(n).v * 2` over a `TrivialRegisterPassable` `L` with an
+  `@always_inline("builtin")` `__init__(out self, v: Int)` that stores
+  `self.v = v` is `2 * n` at the pin, where Mojito says "a compile-time
+  construction takes no arguments".
+  - `applicable_declarations` (`checker/comptime_validation.rs`) lists no
+    `__init__`, and `builtin_fold.rs` folds only a body ending in `return`.
+  - The pin's folded construction is a struct aggregate displayed as a
+    call: `Tagged[L(n)]` against `Tagged[L(n + 1)]` is rejected as
+    "cannot implicitly convert 'Tagged[L(n)]' value to
+    'Tagged[L((n + Int(1)))]'".
+  - The lever: R1472's aggregate `ParamKind` node, in its struct flavour.
+    An `out self` body that stores each field once folds to it, and
+    `ParamContext::field` reads a field through it.
+  - The construction call in `build_ct` (`L(n)`, `Self(...)`) applies the
+    folded `__init__`, as `called_application` applies a function.
+  - Probe: `def f[n: Int](x: SIMD[DType.int8, L(n).v * 2]) ->
+    SIMD[DType.int8, 2 * n]: return x`, called as `f[1](SIMD[DType.int8,
+    2](1))`, prints `[1, 1]` at the pin.
+  - Found while landing R1522 (2026-10-27).
+  - Depends on R1472.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1526 A call of an `@always_inline("builtin")` method with `self`
+  is not folded in a parameter expression**
+
+  `L(n).doubled()` over a builtin `doubled(self) -> Int` returning
+  `self.v + self.v`, `l.doubled()` over a binder `l: L`, and `(L(n) +
+  L(1)).get()` over a builtin `__add__(self, rhs: Self) -> Self` print
+  `[1, 1]` at the pin in `SIMD[DType.int8, …]` signatures, where Mojito
+  says "not a compile-time Int constant".
+  - `applicable_declarations` skips a method with `self`. The fold needs a
+    `self` slot typed `Self`, `Self`-typed runtime parameters, method
+    dispatch on a struct-valued compile-time receiver in `build_ct`, and a
+    struct operator folded through its builtin dunder.
+  - Upstream's `SIMD.__add__`, `SIMDLength.__add__`, and
+    `SIMDLength.is_power_of_two` (`_simd_construction_checks`) are such
+    methods. R851's "could not simplify operator shr" belongs to the folded
+    `pop.shr` once `SIMD.__rshift__` is library code.
+  - The pin rejects a builtin `self` or `out self` on a struct that is not
+    register-passable: "does not support this argument convention". The
+    bundled `Span` carries builtin members but is not
+    `TrivialRegisterPassable`, where upstream's is, so it changes first.
+  - Probe: `L(n).doubled()` over a `@fieldwise_init` `L` is rejected at
+    the pin naming the folded `Int((mul L(n).v, 2))`, which needs R1483
+    for its message.
+  - `Self(...)` in such a body is R58.
+  - Found while landing R1522 (2026-10-27).
+  - Depends on R1525 and R58.
   - Model: Fable, Not Planned.
 
 - [ ] **R1524 A one-field `RegisterPassable` struct with lifecycle
@@ -9681,7 +9721,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and `reduce_min` off x86) are `llvm_intrinsic` calls of
     `llvm.vector.reduce.*`, which run since R1394. Its subvector and
     shuffle bodies need R1519.
-  - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R1522, R336 (the
+  - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R1522, R1526, R336 (the
     length type), R185 and R186 (so the port is upstream's bodies with no
     leniency), R58, R1516, R1517, R1518, and R1519.
   - Model: Fable, Planned.
@@ -9969,11 +10009,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     conversion from `Int`, so the declaration, not a side table, carries it.
   - Upstream's `SIMDLength` is a struct over `index` ops whose arithmetic
     must fold in a parameter expression, so the `index` ops (R1392) and
-    the builtin fold of a method (R1522) land first.
+    the builtin fold of a method with `self` (R1526) land first.
   - Its `__init__` casts an `index` to its storage with
     `pop.cast_to_builtin` (R1516).
   - Found while landing R259 (2026-10-05).
-  - Depends on R1392, R1395, R1516, and R1522.
+  - Depends on R1392, R1395, R1516, R1522, and R1526.
   - Model: Fable, Not Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string

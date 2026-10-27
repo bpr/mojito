@@ -173,21 +173,19 @@ impl ApplicableFunction {
     }
 
     /// The compile-time parameters and then the runtime ones, each with its
-    /// type, in [`Checker::called_application`]'s argument order; `None`
-    /// for a static method of a generic struct, whose first argument is the
-    /// instance.
-    pub(in crate::checker) fn argument_slots(&self) -> Option<Vec<(&str, &Ty)>> {
-        (!self.on_instance).then(|| {
-            self.binders
-                .iter()
-                .map(|(name, ty)| (name.as_str(), ty))
-                .chain(
-                    self.params
-                        .iter()
-                        .map(|param| (param.name.as_str(), &param.ty)),
-                )
-                .collect()
-        })
+    /// type, in [`Checker::called_application`]'s argument order. A
+    /// method's struct parameters are no slot: its body reads them as its
+    /// struct's own binders, which a call binds from the instance.
+    pub(in crate::checker) fn argument_slots(&self) -> Vec<(&str, &Ty)> {
+        self.binders
+            .iter()
+            .map(|(name, ty)| (name.as_str(), ty))
+            .chain(
+                self.params
+                    .iter()
+                    .map(|param| (param.name.as_str(), &param.ty)),
+            )
+            .collect()
     }
 
     /// Whether it is declared `raises`.
@@ -207,6 +205,9 @@ pub(super) struct ApplicableDeclaration<'a> {
     pub(super) name: String,
     pub(super) function: ApplicableFunction,
     pub(super) body: &'a [Stmt],
+    /// The struct statement declaring a static method; `None` for a module
+    /// `def`.
+    pub(super) owner: Option<&'a Stmt>,
 }
 
 /// The rejection of a raw parameter list (`KGENParamList[T]`, a pack's
@@ -294,6 +295,7 @@ pub(super) fn applicable_declarations<'a>(
                         name: name.clone(),
                         function,
                         body,
+                        owner: None,
                     }
                 }));
             }
@@ -333,6 +335,7 @@ pub(super) fn applicable_declarations<'a>(
                             name: source,
                             function,
                             body: &method.body,
+                            owner: Some(statement),
                         },
                     ));
                 }
@@ -996,11 +999,18 @@ impl Checker {
     /// of an `@always_inline("builtin")` callable whose body folds is that
     /// body's expression over the arguments instead, as upstream's
     /// `foldInlineBuiltinFunction` clones the body with the call's operands
-    /// substituted, so `twice(n)` is `n + n`. `None` for a callee that is
+    /// substituted, so `twice(n)` is `n + n`, and a static method's body
+    /// reads its struct's parameters, which the call binds from the
+    /// instance, so `G[1].plus(n)` over `return n + Self.k` is `n + 1`.
+    /// `None` for a callee that is
     /// no such callable ([`applicable_functions`]), a call that selects no
     /// one overload, or an argument that denotes no parameter expression.
     pub(super) fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
-        let (function, arguments) = self.selected_application(expr)?;
+        let Selected {
+            function,
+            instance,
+            arguments,
+        } = self.selected_application(expr)?;
         let result = self.ty_from_anno(&function.result).ok().filter(|ty| {
             matches!(
                 ty.kind(),
@@ -1017,17 +1027,43 @@ impl Checker {
         }
         if let Some(body) = &function.folded_body {
             let mut bindings = mojito_types::param_expr::ParamBindings::new();
-            for (slot, argument) in arguments.into_iter().enumerate() {
+            for (slot, argument) in arguments.iter().enumerate() {
                 bindings.bind(
                     super::annotations::builtin_body_binder(&function.symbol, slot, "").id,
-                    argument,
+                    argument.clone(),
                 );
             }
-            return self.param_context.replace(body, &bindings).ok();
+            let declared = match instance.as_ref().map(Ty::kind) {
+                Some(TyKind::Struct(owner, instance_args)) => {
+                    let decls = &self.structs.get(template_name(owner))?.decls;
+                    let declared =
+                        mojito_types::types::declared_pack_arguments(owner, decls, instance_args);
+                    self.bind_declared(&mut bindings, decls, &declared).ok()?;
+                    Some((decls, declared))
+                }
+                _ => None,
+            };
+            if let Some(folded) =
+                self.param_context
+                    .replace(body, &bindings)
+                    .ok()
+                    .filter(|folded| {
+                        declared.as_ref().is_none_or(|(decls, instance_args)| {
+                            !reads_rebound_binder(folded, decls, instance_args)
+                        })
+                    })
+            {
+                return Some(folded);
+            }
         }
+        let mut applied = Vec::with_capacity(arguments.len() + 1);
+        if function.on_instance {
+            applied.push(self.param_context.type_shape(instance?));
+        }
+        applied.extend(arguments);
         Some(self.param_context.apply(
             &function.symbol,
-            &arguments,
+            &applied,
             mojito_types::param_expr::MetaTy::value(result),
         ))
     }
@@ -1036,14 +1072,15 @@ impl Checker {
     /// otherwise apply, which the pin rejects in a type or a parameter
     /// argument.
     pub(super) fn calls_raising_application(&self, expr: &Expr) -> Option<&str> {
-        let (function, _) = self.selected_application(expr)?;
+        let function = self.selected_application(expr)?.function;
         function.raises.then_some(function.symbol.as_str())
     }
 
-    /// The callable a compile-time call applies and the parameter
-    /// expressions of its arguments: the one overload under the spelled
-    /// name the arguments bind and type.
-    fn selected_application(&self, expr: &Expr) -> Option<(&ApplicableFunction, Vec<ParamExpr>)> {
+    /// The callable a compile-time call applies, the struct instance a
+    /// static method is called on, and the parameter expressions of its
+    /// arguments: the one overload under the spelled name the arguments
+    /// bind and type.
+    fn selected_application(&self, expr: &Expr) -> Option<Selected<'_>> {
         let (name, instance, param_args, args, kwargs) = match &expr.kind {
             // A local of the name shadows the module function.
             ExprKind::Call {
@@ -1086,12 +1123,14 @@ impl Checker {
             .get(&name)?
             .iter()
             .filter_map(|function| {
-                let mut arguments = Vec::new();
-                if function.on_instance {
-                    arguments.push(self.param_context.type_shape(instance.clone()?));
+                if function.on_instance && instance.is_none() {
+                    return None;
                 }
-                arguments.extend(self.applied_arguments(function, param_args, args, kwargs)?);
-                Some((function, arguments))
+                Some(Selected {
+                    function,
+                    instance: instance.clone(),
+                    arguments: self.applied_arguments(function, param_args, args, kwargs)?,
+                })
             });
         let application = selected.next()?;
         selected.next().is_none().then_some(application)
@@ -1101,7 +1140,7 @@ impl Checker {
     /// (`S.f(n)`, `G[n].f()`, `Self.f()`), with the instance `object`
     /// spells; `None` for a receiver that is a value, or a struct with no
     /// applicable `method`.
-    fn applied_owner(&self, object: &Expr, method: &str) -> Option<(String, Ty)> {
+    pub(super) fn applied_owner(&self, object: &Expr, method: &str) -> Option<(String, Ty)> {
         let applicable = |owner: &str| {
             self.applicable_functions
                 .contains_key(&format!("{owner}.{method}"))
@@ -3650,6 +3689,17 @@ pub(super) fn comptime_for_owner(iter: &Expr) -> String {
     )
 }
 
+/// The overload a compile-time call selects ([`Checker::called_application`]).
+struct Selected<'a> {
+    function: &'a ApplicableFunction,
+    /// The struct instance a static method is called on (`G[1]` in
+    /// `G[1].plus(n)`).
+    instance: Option<Ty>,
+    /// The parameter expressions of its own compile-time arguments, then of
+    /// its runtime ones.
+    arguments: Vec<ParamExpr>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ApplicableParameter {
     name: String,
@@ -3740,6 +3790,36 @@ impl ApplicableShape<'_> {
 
 /// The name a struct was declared under, whichever instance clone `name`
 /// spells.
+/// Whether a folded builtin method body still reads a struct parameter
+/// its instance binds to anything but the parameter itself, by a reference
+/// or by a pack query the replacement did not resolve: such a fold is no
+/// value of the call, which stays its application.
+fn reads_rebound_binder(folded: &ParamExpr, decls: &[ParamDecl], arguments: &[TyArg]) -> bool {
+    let rebound: HashSet<&ParamId> = decls
+        .iter()
+        .zip(arguments)
+        .filter(|(decl, argument)| match argument {
+            TyArg::Val(CtValue::Expr(value)) => {
+                !matches!(value.kind(), ParamKind::DeclRef(reference) if reference.id == *decl.id())
+            }
+            TyArg::Ty(ty) => {
+                !matches!(ty.kind(), TyKind::Param { binder, .. } if binder.id == *decl.id())
+            }
+            TyArg::Val(_) | TyArg::Origin(_) => true,
+        })
+        .map(|(decl, _)| decl.id())
+        .collect();
+    let mut reads = false;
+    folded.visit(&mut |node| {
+        reads |= matches!(
+            node.kind(),
+            ParamKind::DeclRef(reference) | ParamKind::PackQuery { pack: reference, .. }
+                if rebound.contains(&reference.id)
+        );
+    });
+    reads
+}
+
 fn template_name(name: &str) -> &str {
     mojito_symbol::symbol::specialization_template(name).unwrap_or(name)
 }

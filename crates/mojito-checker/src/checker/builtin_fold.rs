@@ -21,9 +21,10 @@ impl Checker {
     /// Fold every `@always_inline("builtin")` body `stmts` declare into its
     /// callable's [`ApplicableFunction`] entry, callee first: a body that
     /// calls a builtin still unfolded waits for it, and one in a cycle, or
-    /// one over a construct outside the fold (a host-implemented callee, a
-    /// static method of a generic struct), keeps the application a call
-    /// denotes. The first body the pin rejects is the error.
+    /// one over a construct outside the fold (a host-implemented callee),
+    /// keeps the application a call denotes. A static method's body is
+    /// folded and judged in its struct's scope. The first body the pin
+    /// rejects is the error.
     ///
     /// [`ApplicableFunction`]: comptime_validation::ApplicableFunction
     pub(super) fn fold_builtin_bodies(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
@@ -32,10 +33,12 @@ impl Checker {
                 .into_iter()
                 .filter(|declaration| declaration.function.inline == InlineLevel::Builtin)
                 .collect();
-        if let Some(error) = declarations
-            .iter()
-            .find_map(|declaration| self.builtin_body_rejection(declaration))
-        {
+        if let Some(error) = declarations.iter().find_map(|declaration| {
+            self.in_owner_scope(declaration, |checker| {
+                checker.builtin_body_rejection(declaration)
+            })
+            .unwrap_or_else(|| self.builtin_body_rejection(declaration))
+        }) {
             return Err(error);
         }
         let mut pending: Vec<&ApplicableDeclaration<'_>> = declarations.iter().collect();
@@ -119,7 +122,7 @@ impl Checker {
 
     /// The first operation of `statement` that calls a callable the pin's
     /// fold cannot inline: an applicable function or static method not
-    /// declared builtin, `//`, `%`, or `**` over a non-literal operand
+    /// declared builtin (`h(n)`, `Self.ok(n)`, `G[1].ok(n)`), `//`, `%`, or `**` over a non-literal operand
     /// (upstream's `SIMD` declares none of the three builtin), or
     /// arithmetic converting a `FloatLiteral` operand.
     fn non_builtin_operation(&self, statement: &Stmt) -> Option<TypeError> {
@@ -147,10 +150,13 @@ impl Checker {
                             != matches!(right.kind, ExprKind::Float(_))
                     }
                     ExprKind::Call { name, .. } => self.checker.calls_ordinary_function(name),
-                    ExprKind::MethodCall { object, method, .. } => match &object.kind {
-                        ExprKind::Identifier(owner) => self
-                            .checker
-                            .calls_ordinary_function(&format!("{owner}.{method}")),
+                    ExprKind::MethodCall { object, method, .. } => {
+                        self.checker.calls_ordinary_static_method(object, method)
+                    }
+                    ExprKind::Invoke { callee, .. } => match &callee.kind {
+                        ExprKind::Member { object, field } => {
+                            self.checker.calls_ordinary_static_method(object, field)
+                        }
                         _ => false,
                     },
                     _ => false,
@@ -163,6 +169,14 @@ impl Checker {
         };
         mojito_ast::visit::walk_stmt(&mut operations, statement);
         operations.found.then(non_builtin_call)
+    }
+
+    /// Whether a call of `method` on `object` applies a static method no
+    /// overload of which is builtin, its struct spelled by name, by
+    /// application, or as `Self`.
+    fn calls_ordinary_static_method(&self, object: &Expr, method: &str) -> bool {
+        self.applied_owner(object, method)
+            .is_some_and(|(owner, _)| self.calls_ordinary_function(&format!("{owner}.{method}")))
     }
 
     /// Whether a call spelled `name` applies a callable no overload of which
@@ -181,15 +195,45 @@ impl Checker {
 
     /// The body of `declaration` as a parameter expression over its argument
     /// slots ([`super::annotations::builtin_body_binder`]): a docstring, a
-    /// `var` or `comptime` binding, and a closed `comptime assert` may stand
-    /// before the final `return`. `None` for any other statement, or an
+    /// `var` or `comptime` binding, and a `comptime assert`, which the fold
+    /// drops, may stand before the final `return`. `None` for any other statement, or an
     /// expression the compile-time builder does not read.
     fn folded_builtin_body(
         &mut self,
         declaration: &ApplicableDeclaration<'_>,
     ) -> Option<ParamExpr> {
+        self.in_owner_scope(declaration, |checker| {
+            checker.folded_declaration_body(declaration)
+        })?
+    }
+
+    /// `f` run in the member scope of the struct declaring `declaration`,
+    /// where `Self` and its parameters are the struct's own binders, as the
+    /// struct's members are checked; `None` when its shell is not yet
+    /// registered.
+    fn in_owner_scope<T>(
+        &mut self,
+        declaration: &ApplicableDeclaration<'_>,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> Option<T> {
+        let Some(owner) = declaration.owner else {
+            return Some(f(self));
+        };
+        let (_, saved) = self
+            .enter_struct_scope(&overload_support::struct_declaration(owner)?)
+            .ok()?;
+        let result = f(self);
+        self.exit_struct_scope(saved);
+        Some(result)
+    }
+
+    /// [`Self::folded_builtin_body`] in its owner's scope.
+    fn folded_declaration_body(
+        &mut self,
+        declaration: &ApplicableDeclaration<'_>,
+    ) -> Option<ParamExpr> {
         let function = &declaration.function;
-        let slots = function.argument_slots()?;
+        let slots = function.argument_slots();
         let result = self.ty_from_anno(function.result()).ok()?;
         let symbol = function.symbol();
         self.push_param_scope(&[]);
@@ -234,12 +278,9 @@ impl Checker {
                         .last_mut()?
                         .insert(name.clone(), (level, bound));
                 }
-                // A closed assertion is the body check's to judge; one over
-                // an argument would be judged per call.
-                StmtKind::ComptimeAssert { cond, .. }
-                    if names_read(cond)
-                        .iter()
-                        .all(|name| self.value_parameter_in_scope(name).is_none()) => {}
+                // The pin's fold drops an assertion; a closed one is the body
+                // check's to judge.
+                StmtKind::ComptimeAssert { .. } => {}
                 _ => return None,
             }
         }

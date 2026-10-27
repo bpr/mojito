@@ -1835,7 +1835,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   before any signature) folds each builtin body of
   `applicable_declarations` callee first over `annotations::builtin_body_binder`
   slots and returns the pin's rejection of a body construct its fold
-  refuses (`builtin_body_rejection`); `build_ct` reads the body's
+  refuses (`builtin_body_rejection`). A static method's body is folded and
+  judged in its struct's scope (`in_owner_scope`, over
+  `ApplicableDeclaration::owner`), so `Self.k` is the struct's own binder,
+  which `called_application` binds from the instance through
+  `Checker::bind_declared` (a `Tuple`'s element-wise arguments regrouped by
+  `types::declared_pack_arguments`), keeping the application when the fold
+  still reads a rebound binder (`reads_rebound_binder`); `build_ct` reads the body's
   ``__mlir_op`` arithmetic through `builtin_fold::mlir_op_operator` (over
   `MlirOp::lowering`), a scalar's `_mlir_value`, and `Int(mlir_value=)`, and
   `constraint_operand` takes a folded call as a `where` operand. `not` and a

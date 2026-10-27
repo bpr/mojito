@@ -1680,6 +1680,49 @@ pub fn canonical_pack_arguments(name: &str, arguments: Vec<TyArg>) -> Vec<TyArg>
     canonical
 }
 
+/// The argument list of an application of the struct `name` aligned with
+/// its declared parameters `decls`.
+///
+/// [`canonical_pack_arguments`] undone: the types a struct that
+/// [`binds_pack_elementwise`] spells element by element regroup into the
+/// one list of types its pack binds, so `Tuple[Int, Bool]` binds `Ts` to
+/// `[Int, Bool]`. A pack spread or computed list stays the one argument it
+/// is, and any other list is returned unchanged.
+pub fn declared_pack_arguments<'a>(
+    name: &str,
+    decls: &[ParamDecl],
+    arguments: &'a [TyArg],
+) -> std::borrow::Cow<'a, [TyArg]> {
+    let pack = decls
+        .iter()
+        .position(|decl| matches!(decl, ParamDecl::Type { variadic: true, .. }));
+    let (Some(position), Some(count)) = (pack, (arguments.len() + 1).checked_sub(decls.len()))
+    else {
+        return arguments.into();
+    };
+    let elements = &arguments[position..position + count];
+    let types: Option<Vec<CtValue>> = elements
+        .iter()
+        .map(|argument| match argument {
+            TyArg::Ty(ty) => Some(CtValue::Type(ty.clone())),
+            TyArg::Val(_) | TyArg::Origin(_) => None,
+        })
+        .collect();
+    match types {
+        Some(types)
+            if binds_pack_elementwise(name)
+                && pack_spread_argument(elements).is_none()
+                && list_spread_argument(elements).is_none() =>
+        {
+            let mut declared = arguments[..position].to_vec();
+            declared.push(TyArg::Val(CtValue::Tuple(types)));
+            declared.extend_from_slice(&arguments[position + count..]);
+            declared.into()
+        }
+        _ => arguments.into(),
+    }
+}
+
 pub fn tuple_elements(ty: &TyKind) -> Option<Vec<&Ty>> {
     let TyKind::Struct(name, arguments) = ty else {
         return None;

@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call of an `@always_inline("builtin")` static method of a generic
+  struct in a parameter expression is now its body's expression at the
+  instance's parameters, as the pin folds it, so `G[1].plus(n)` over
+  `return n + Self.k` is `n + 1` and `Tuple[Int, Bool].__len__()` is `2`
+  (R1522). A builtin static method calling a sibling through `Self` folds
+  too, the fold drops a body's `comptime assert` as the pin's does, and a
+  call of a non-builtin static method through `Self` or an application is
+  rejected with the pin's message.
 - The VM holds a value of a struct declaring `TrivialRegisterPassable` with
   one field as that field, as upstream lowers a one-element
   register-passable struct to its element, so such a value no longer

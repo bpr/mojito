@@ -4356,7 +4356,7 @@ impl Checker {
 
     /// Bind each of `decls` to its argument in `arguments` by binder id: a
     /// type binder to its type, a value binder or a type pack to its value.
-    fn bind_declared(
+    pub(super) fn bind_declared(
         &self,
         bindings: &mut mojito_types::param_expr::ParamBindings,
         decls: &[ParamDecl],
