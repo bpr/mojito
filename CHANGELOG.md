@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `TypeList` pack query (`contains[T]()`, `all[P]()`/`any[P]()`,
+  `length`) now holds the list it asks of as an operand, as upstream's
+  `TypeList` queries take the type list, so a `nodebug` callee testing one
+  over its own pack inlines at a call binding that pack to a concrete
+  list, its query decided in the caller's instance, where the call used to
+  be kept (R1342; MIR text 1.111, package 107). `GenericConstraint`
+  carries no binder-keyed proposition any more, so `try_map` takes one
+  operand closure.
+
 - The elaborator above the check now evaluates nothing and resolves no
   type, as upstream evaluates parameter expressions only in its
   elaborator, after sema (R1388): its compile-time evaluator, its type

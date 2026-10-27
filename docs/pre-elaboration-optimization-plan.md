@@ -288,8 +288,7 @@ folds the operators over it (R840);
    the caller lends its owned temporary through. What still keeps a call:
    a copy- or move-capturing body a sibling captures (R1104), a raising
    `deinit` callee passed a field, which takes a copy of it (R1106),
-   a `TypeList` pack query over a concrete pack
-   (R1342), a `read` argument read through a pointer (R1346), and a
+   a `read` argument read through a pointer (R1346), and a
    reference returned through a local `ref` slot (R1347); a small plain `@always_inline` callee inlines too
    (R923); the pin's refusals Mojito lacks are R924 (shapes it keeps as
    calls) and R925 (a recursive `@always_inline` function, an error on the

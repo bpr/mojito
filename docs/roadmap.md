@@ -377,32 +377,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on R1274.
   - Model: Opus, Not Planned.
 
-- [ ] **R1342 `TypeList` pack queries over a concrete pack keep their
-  inlined call**
-
-  `GenericConstraint::PackPredicate`, `PackContains`, and the
-  `ConstraintOperand::PackLength` operand name a pack binder, so a
-  `nodebug` callee testing one at a concrete pack keeps its call:
-  `replace_constraint_parameters` fails it with "a proposition over `Ts`
-  at a binding that is no parameter".
-  - Upstream's `TypeList` queries take the type list as an attribute
-    operand, so substituting the pack yields the bound list.
-  - Lever: an operand on each, as R1096 gave `ConformsPack` (a pack binder,
-    or the bound list as `operand_value`/`operand_expr`); once none is
-    binder-keyed, `GenericConstraint::try_map`'s `binder` closure goes.
-  - Probe: `has_int[Int, String]()` over a `nodebug`
-    `def has_int[*Ts: AnyType]() -> Int: return 1 if
-    TypeList[Ts.values]().contains[Int]() else 2`.
-  - Probe: `TypeList[Ts.values]().all[IsTriviallyCopyable]()` in the same
-    shape (`pack_predicate`).
-  - Probe: `comptime if TypeList[Ts.values]().length == 2` in the same
-    shape (`operand_pack_length`).
-  - Each prints `1 2` on the pin and in Mojito; done when a pass test
-    under `tests/mir_passes/inline-parametric/` inlines each.
-  - Found while landing R1096 (2026-10-24).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1343 `Conforms` and `ConformsPack` are one proposition upstream**
 
   Upstream's `#kgen.type_conforms_to_trait` takes a type or a type list,

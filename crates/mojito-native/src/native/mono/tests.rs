@@ -1069,7 +1069,7 @@ fn trivial_value_and_pack_clauses_are_decided() {
         }
     };
     let trivially = |all| GenericConstraint::PackPredicate {
-        param: pack.clone(),
+        operand: ConstraintOperand::Param(pack.clone()),
         predicate: mojito_types::types::PackPredicateRef::Trivial(
             mojito_types::types::TrivialLifecycle::Copyable,
         ),
@@ -1078,11 +1078,11 @@ fn trivial_value_and_pack_clauses_are_decided() {
     assert!(decide(trivially(false)), "`Int` copies bitwise");
     assert!(!decide(trivially(true)), "`Tracked` does not");
     assert!(decide(GenericConstraint::PackContains {
-        param: pack.clone(),
+        operand: ConstraintOperand::Param(pack.clone()),
         element: ConstraintOperand::Type(Ty::int()),
     }));
     assert!(decide(GenericConstraint::Eq(
-        ConstraintOperand::PackLength(pack.clone()),
+        ConstraintOperand::PackLength(Box::new(ConstraintOperand::Param(pack.clone()))),
         ConstraintOperand::Value(CtValue::IntLiteral(2.into())),
     )));
     // The variadic `Tuple` template answers by its elements.

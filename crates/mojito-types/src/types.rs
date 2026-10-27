@@ -1761,9 +1761,10 @@ pub enum ConstraintOperand {
     Param(ParamRef),
     Value(CtValue),
     Type(Ty),
-    /// `TypeList[Ts.values]().length` over a symbolic pack parameter,
-    /// resolving to the bound pack's element count.
-    PackLength(ParamRef),
+    /// `TypeList[Ts.values]().length`, upstream's size of a type list: the
+    /// operand is a pack binder, or once inlined at a concrete binding the
+    /// bound element list.
+    PackLength(Box<Self>),
     /// An arithmetic operand over value parameters (`n + 1` in `where n + 1 ==
     /// m`), in canonical form. It is retained symbolically and discharged by
     /// replacement at each application.
@@ -1855,17 +1856,18 @@ pub enum GenericConstraint {
         operand: ConstraintOperand,
         trait_name: String,
     },
-    /// `TypeList[Ts.values]().any[P]()` / `.all[P]()` over a symbolic pack
-    /// parameter: `P` holds for at least one / every element type.
+    /// `TypeList[Ts.values]().any[P]()` / `.all[P]()`: `P` holds for at
+    /// least one / every element type. The operand is a pack binder, or once
+    /// inlined at a concrete binding the bound element list.
     PackPredicate {
-        param: ParamRef,
+        operand: ConstraintOperand,
         predicate: PackPredicateRef,
         all: bool,
     },
-    /// `TypeList[Ts.values]().contains[T]()`: the operand type equals some
-    /// element of the bound pack.
+    /// `TypeList[Ts.values]().contains[T]()`: the element type equals some
+    /// element of the operand, a pack binder or a bound element list.
     PackContains {
-        param: ParamRef,
+        operand: ConstraintOperand,
         element: ConstraintOperand,
     },
     /// `IsTrivially{Movable,Copyable,Deinitable}[operand]`.
@@ -1891,32 +1893,27 @@ impl GenericConstraint {
         binder: &dyn Fn(&ParamRef) -> ParamRef,
         operand: &dyn Fn(&ConstraintOperand) -> ConstraintOperand,
     ) -> Self {
-        let mapped: Result<Self, std::convert::Infallible> =
-            self.try_map(&|param| Ok(binder(param)), &|leaf| {
-                Ok(match leaf {
-                    ConstraintOperand::Param(param) => ConstraintOperand::Param(binder(param)),
-                    ConstraintOperand::PackLength(param) => {
-                        ConstraintOperand::PackLength(binder(param))
-                    }
-                    other => operand(other),
-                })
-            });
+        let mapped: Result<Self, std::convert::Infallible> = self.try_map(&|leaf| {
+            Ok(match leaf {
+                ConstraintOperand::Param(param) => ConstraintOperand::Param(binder(param)),
+                other => operand(other),
+            })
+        });
         match mapped {
             Ok(mapped) => mapped,
             Err(never) => match never {},
         }
     }
 
-    /// This constraint with the binder of every binder-keyed pack proposition
-    /// (`PackPredicate`, `PackContains`) replaced by `binder` and every
-    /// operand, a parameter one included, by `leaf`; the first failure is
-    /// returned.
+    /// This constraint with every operand, a parameter one included, replaced
+    /// by `leaf`; the first failure is returned. A `PackLength` operand is
+    /// not itself a leaf: `leaf` replaces the list it measures.
     pub fn try_map<E>(
         &self,
-        binder: &dyn Fn(&ParamRef) -> Result<ParamRef, E>,
         leaf: &dyn Fn(&ConstraintOperand) -> Result<ConstraintOperand, E>,
     ) -> Result<Self, E> {
-        let recurse = |inner: &Self| inner.try_map(binder, leaf).map(Box::new);
+        let recurse = |inner: &Self| inner.try_map(leaf).map(Box::new);
+        let leaf = |operand: &ConstraintOperand| operand.try_map(leaf);
         Ok(match self {
             Self::WithMessage(inner, message) => {
                 Self::WithMessage(recurse(inner)?, message.clone())
@@ -1936,16 +1933,16 @@ impl GenericConstraint {
                 trait_name: trait_name.clone(),
             },
             Self::PackPredicate {
-                param,
+                operand,
                 predicate,
                 all,
             } => Self::PackPredicate {
-                param: binder(param)?,
+                operand: leaf(operand)?,
                 predicate: predicate.clone(),
                 all: *all,
             },
-            Self::PackContains { param, element } => Self::PackContains {
-                param: binder(param)?,
+            Self::PackContains { operand, element } => Self::PackContains {
+                operand: leaf(operand)?,
                 element: leaf(element)?,
             },
             Self::Trivial(kind, inner) => Self::Trivial(*kind, leaf(inner)?),
@@ -1994,7 +1991,7 @@ impl fmt::Display for GenericConstraint {
                 write!(f, "conforms_to({operand}.values, {trait_name})")
             }
             Self::PackPredicate {
-                param,
+                operand,
                 predicate,
                 all,
             } => {
@@ -2003,10 +2000,10 @@ impl fmt::Display for GenericConstraint {
                     PackPredicateRef::Trivial(kind) => trivial_predicate_spelling(*kind),
                     PackPredicateRef::Alias(name) => name,
                 };
-                write!(f, "TypeList[{param}.values]().{reduction}[{predicate}]()")
+                write!(f, "TypeList[{operand}.values]().{reduction}[{predicate}]()")
             }
-            Self::PackContains { param, element } => {
-                write!(f, "TypeList[{param}.values]().contains[{element}]()")
+            Self::PackContains { operand, element } => {
+                write!(f, "TypeList[{operand}.values]().contains[{element}]()")
             }
             Self::Trivial(kind, operand) => {
                 write!(f, "{}[{operand}]", trivial_predicate_spelling(*kind))
@@ -2023,6 +2020,17 @@ impl fmt::Display for GenericConstraint {
             Self::Bool(value) => {
                 write!(f, "{}", if *value { "True" } else { "False" })
             }
+        }
+    }
+}
+
+impl ConstraintOperand {
+    /// This operand with every leaf replaced by `leaf`: the operand itself,
+    /// or for a `PackLength` the list it measures.
+    pub fn try_map<E>(&self, leaf: &dyn Fn(&Self) -> Result<Self, E>) -> Result<Self, E> {
+        match self {
+            Self::PackLength(list) => Ok(Self::PackLength(Box::new(list.try_map(leaf)?))),
+            other => leaf(other),
         }
     }
 }
@@ -4127,37 +4135,19 @@ pub fn replace_argument_parameters(
 ///
 /// A bound value binder's operand becomes its expression, a closed one its
 /// constant; a bound type binder's becomes its type, and a bound pack
-/// binder's its element list. A binder-keyed pack proposition
-/// (`PackPredicate`, `PackContains`, a `PackLength` operand) whose binder is
-/// bound to anything but another binder has no operand to hold the binding,
-/// and is an error.
+/// binder's its element list, so a pack proposition at a concrete binding
+/// asks of that list.
 pub fn replace_constraint_parameters(
     context: &ParamContext,
     cond: &GenericConstraint,
     bindings: &ParamBindings,
 ) -> Result<GenericConstraint, ParamError> {
-    let binder = |param: &ParamRef| -> Result<ParamRef, ParamError> {
-        let renamed = match (bindings.types().get(&param.id), bindings.lookup(param)) {
-            (None, None) => return Ok(param.clone()),
-            (Some(ty), _) => match ty.kind() {
-                TyKind::Param { binder, .. } => Some(binder.clone()),
-                _ => None,
-            },
-            (None, Some(expr)) => expr.as_decl_ref().cloned(),
-        };
-        renamed.ok_or_else(|| {
-            ParamError::Unsupported(format!(
-                "a proposition over `{}` at a binding that is no parameter",
-                param.name
-            ))
-        })
-    };
     let operand = |expr: ParamExpr| match (expr.as_constant(), expr.as_decl_ref()) {
         (Some(value), _) => ConstraintOperand::Value(value.clone()),
         (None, Some(param)) => ConstraintOperand::Param(param.clone()),
         (None, None) => ConstraintOperand::Expr(expr),
     };
-    cond.try_map(&binder, &|leaf| {
+    cond.try_map(&|leaf| {
         Ok(match leaf {
             ConstraintOperand::Param(param) => {
                 match (bindings.types().get(&param.id), bindings.lookup(param)) {
@@ -4175,7 +4165,8 @@ pub fn replace_constraint_parameters(
                     (None, None) => leaf.clone(),
                 }
             }
-            ConstraintOperand::PackLength(param) => ConstraintOperand::PackLength(binder(param)?),
+            // `try_map` replaces the list a length measures.
+            ConstraintOperand::PackLength(_) => leaf.clone(),
             ConstraintOperand::Value(value) => {
                 ConstraintOperand::Value(replace_value_parameters(context, value, bindings)?)
             }
@@ -5587,6 +5578,44 @@ mod parameter_replacement_tests {
             )
             .expect("bound"),
             conforms(ConstraintOperand::Type(Ty::int()))
+        );
+    }
+
+    /// A pack query at a concrete binding asks of the bound list, as
+    /// upstream's `TypeList` queries take the list as an operand.
+    #[test]
+    fn pack_query_replacement_holds_the_bound_list() {
+        let context = ParamContext::detached();
+        let pack = ParamRef {
+            id: ParamId::new("f", 0),
+            name: Arc::from("Ts"),
+        };
+        let list = CtValue::Tuple(vec![CtValue::Type(Ty::int()), CtValue::Type(Ty::bool())]);
+        let mut bindings = ParamBindings::new();
+        bindings.bind(
+            pack.id.clone(),
+            context.constant(list.clone()).expect("a constant"),
+        );
+        let queries = |operand: ConstraintOperand| {
+            GenericConstraint::And(
+                Box::new(GenericConstraint::PackContains {
+                    operand: operand.clone(),
+                    element: ConstraintOperand::Type(Ty::int()),
+                }),
+                Box::new(GenericConstraint::Eq(
+                    ConstraintOperand::PackLength(Box::new(operand)),
+                    ConstraintOperand::Value(CtValue::Int(2)),
+                )),
+            )
+        };
+        assert_eq!(
+            replace_constraint_parameters(
+                &context,
+                &queries(ConstraintOperand::Param(pack)),
+                &bindings
+            )
+            .expect("bound"),
+            queries(ConstraintOperand::Value(list))
         );
     }
 }

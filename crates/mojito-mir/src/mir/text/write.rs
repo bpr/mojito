@@ -2306,21 +2306,21 @@ fn constraint(value: &GenericConstraint) -> String {
             ],
         ),
         GenericConstraint::PackPredicate {
-            param,
+            operand,
             predicate,
             all,
         } => record(
             "pack_predicate",
             &[
-                ("param", binder_ref(param)),
+                ("operand", constraint_operand(operand)),
                 ("predicate", pack_predicate(predicate)),
                 ("all", all.to_string()),
             ],
         ),
-        GenericConstraint::PackContains { param, element } => record(
+        GenericConstraint::PackContains { operand, element } => record(
             "pack_contains",
             &[
-                ("param", binder_ref(param)),
+                ("operand", constraint_operand(operand)),
                 ("element", constraint_operand(element)),
             ],
         ),
@@ -2367,7 +2367,7 @@ fn constraint_operand(value: &ConstraintOperand) -> String {
         ConstraintOperand::Value(value) => positional("operand_value", &ct_value(value)),
         ConstraintOperand::Type(value) => positional("operand_type", &ty_value(value)),
         ConstraintOperand::PackLength(value) => {
-            positional("operand_pack_length", &binder_ref(value))
+            positional("operand_pack_length", &constraint_operand(value))
         }
         ConstraintOperand::Expr(value) => positional("operand_expr", &param_expr(value)),
     }

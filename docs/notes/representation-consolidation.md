@@ -141,7 +141,7 @@ the entries named. A single command cannot use both.
 8. **Gap I: packs are binder kinds** (slight size, about 20 entries):
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1169 --only R1151 --only R808 --only R1342 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --only R1169 --only R1151 --only R808 -n 0
    ```
 
 9. **The conformance blocks**. These do not shrink generic code. Each is
@@ -373,8 +373,7 @@ missing.
   - Queries: R1284, R800, R904, R1182, R1302, R445, R803, R345, R804,
     R348, R1071.
   - Library ports: R810, R811, R812, R1181, R223.
-  - Pack constraints: R1342 and R1343. R1342 is the size entry: a concrete
-    pack query keeps its generator.
+  - Pack constraints: R1343.
 
 ### Blocks without a size lever
 

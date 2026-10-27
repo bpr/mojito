@@ -442,17 +442,7 @@ impl Decoder {
                     Some(GenericConstraint::WithMessage(condition, message))
                 }
                 "conforms" | "conforms_pack" => {
-                    // Schema 1.102 records the tested operand; an older
-                    // artifact records the binder it tests.
-                    let operand = match self.field(fields, "operand") {
-                        Ok(found) => self.constraint_operand(found)?,
-                        Err(()) => ConstraintOperand::Param(self.req(
-                            value,
-                            fields,
-                            "param",
-                            Self::constraint_binder,
-                        )?),
-                    };
+                    let operand = self.pack_operand(value, fields)?;
                     let trait_name = self.req(value, fields, "trait", Self::symbol)?;
                     self.unknown(fields, &["operand", "param", "trait"]);
                     Some(if tag == "conforms" {
@@ -468,21 +458,21 @@ impl Decoder {
                     })
                 }
                 "pack_predicate" => {
-                    let param = self.req(value, fields, "param", Self::constraint_binder)?;
+                    let operand = self.pack_operand(value, fields)?;
                     let predicate = self.req(value, fields, "predicate", Self::pack_predicate)?;
                     let all = self.req(value, fields, "all", Self::boolean)?;
-                    self.unknown(fields, &["param", "predicate", "all"]);
+                    self.unknown(fields, &["operand", "param", "predicate", "all"]);
                     Some(GenericConstraint::PackPredicate {
-                        param,
+                        operand,
                         predicate,
                         all,
                     })
                 }
                 "pack_contains" => {
-                    let param = self.req(value, fields, "param", Self::constraint_binder)?;
+                    let operand = self.pack_operand(value, fields)?;
                     let element = self.req(value, fields, "element", Self::constraint_operand)?;
-                    self.unknown(fields, &["param", "element"]);
-                    Some(GenericConstraint::PackContains { param, element })
+                    self.unknown(fields, &["operand", "param", "element"]);
+                    Some(GenericConstraint::PackContains { operand, element })
                 }
                 "trivial" => {
                     let kind = self.req(value, fields, "lifecycle", Self::lifecycle)?;
@@ -525,6 +515,18 @@ impl Decoder {
         }
     }
 
+    /// The operand a conformance test or a pack query asks of. Schema 1.102
+    /// (a conformance test) and 1.111 (a pack query) record it; an older
+    /// artifact records the binder it asks of.
+    fn pack_operand(&mut self, value: &Value, fields: &[Field]) -> Option<ConstraintOperand> {
+        match self.field(fields, "operand") {
+            Ok(found) => self.constraint_operand(found),
+            Err(()) => self
+                .req(value, fields, "param", Self::constraint_binder)
+                .map(ConstraintOperand::Param),
+        }
+    }
+
     /// The binder a `where` operand or a callable default names: a `binder`
     /// record, or the bare spelling of an artifact older than schema 1.4.
     fn constraint_binder(&mut self, value: &Value) -> Option<ParamRef> {
@@ -540,9 +542,14 @@ impl Decoder {
             "operand_param" => self.constraint_binder(inner).map(ConstraintOperand::Param),
             "operand_value" => self.ct_value(inner).map(ConstraintOperand::Value),
             "operand_type" => self.ty(inner).map(ConstraintOperand::Type),
-            "operand_pack_length" => self
-                .constraint_binder(inner)
-                .map(ConstraintOperand::PackLength),
+            // Schema 1.111 records the list a length measures; an older
+            // artifact records the pack binder.
+            "operand_pack_length" if matches!(inner.kind, ValueKind::Positional(..)) => self
+                .constraint_operand(inner)
+                .map(|list| ConstraintOperand::PackLength(Box::new(list))),
+            "operand_pack_length" => self.constraint_binder(inner).map(|pack| {
+                ConstraintOperand::PackLength(Box::new(ConstraintOperand::Param(pack)))
+            }),
             "operand_expr" => self.param_expr(inner).map(ConstraintOperand::Expr),
             other => {
                 self.error(value.span, format!("unknown constraint operand `{other}`"));

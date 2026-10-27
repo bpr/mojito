@@ -5,8 +5,11 @@
 # owner carries an origin argument (`Span.unsafe_ptr`), a `read` parameter
 # passed from a place or iterated, a copy read through a reference the body
 # made (`range`'s `__iter__`), and a `conforms_to` test at a concrete
-# binding, of a type or a pack. Each prints what the call computes either
+# binding, of a type or a pack, as is a `TypeList` query (`contains`, `all`,
+# `length`) at a concrete pack. Each prints what the call computes either
 # way.
+
+from std.traits import IsTriviallyCopyable
 
 
 @fieldwise_init
@@ -71,6 +74,24 @@ def all_copy_tag[*Ts: AnyType]() -> Int:
         return 2
 
 
+@always_inline("nodebug")
+def has_int[*Ts: AnyType]() -> Int:
+    return 1 if TypeList[Ts.values]().contains[Int]() else 2
+
+
+@always_inline("nodebug")
+def all_trivial[*Ts: AnyType]() -> Int:
+    return 1 if TypeList[Ts.values]().all[IsTriviallyCopyable]() else 2
+
+
+@always_inline("nodebug")
+def pair_tag[*Ts: AnyType]() -> Int:
+    comptime if TypeList[Ts.values]().length == 2:
+        return 1
+    else:
+        return 2
+
+
 def main():
     print(apply[double](3))
     print(check[2]())
@@ -90,3 +111,6 @@ def main():
     print(acc)
     print(copy_tag[Int](), copy_tag[Solo]())
     print(all_copy_tag[Int, Bool](), all_copy_tag[Int, Solo]())
+    print(has_int[Int, String](), has_int[String, Bool]())
+    print(all_trivial[Int, Bool](), all_trivial[Int, String]())
+    print(pair_tag[Int, String](), pair_tag[Int]())

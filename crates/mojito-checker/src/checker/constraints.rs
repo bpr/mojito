@@ -2603,7 +2603,7 @@ impl Checker {
                 };
                 match receiver {
                     TypeListReceiver::Pack(param) => GenericConstraint::PackPredicate {
-                        param,
+                        operand: ConstraintOperand::Param(param),
                         predicate,
                         all,
                     },
@@ -2624,9 +2624,10 @@ impl Checker {
                 let (element, attribute) = self.predicate_operand(single("contains")?)?;
                 self.record_bracket_attributes(expr.source_span(), vec![attribute]);
                 match receiver {
-                    TypeListReceiver::Pack(param) => {
-                        GenericConstraint::PackContains { param, element }
-                    }
+                    TypeListReceiver::Pack(param) => GenericConstraint::PackContains {
+                        operand: ConstraintOperand::Param(param),
+                        element,
+                    },
                     TypeListReceiver::Concrete(types) => match element {
                         ConstraintOperand::Type(needle) => {
                             GenericConstraint::Bool(types.contains(&needle))
@@ -3145,7 +3146,9 @@ impl Checker {
             && let Some(receiver) = self.typelist_receiver(object)?
         {
             return Ok(match receiver {
-                TypeListReceiver::Pack(param) => ConstraintOperand::PackLength(param),
+                TypeListReceiver::Pack(param) => {
+                    ConstraintOperand::PackLength(Box::new(ConstraintOperand::Param(param)))
+                }
                 TypeListReceiver::Concrete(types) => {
                     ConstraintOperand::Value(CtValue::Int(types.len() as i64))
                 }
@@ -3159,7 +3162,9 @@ impl Checker {
         if matches!(&expr.kind, ExprKind::MethodCall { .. })
             && let Some(pack) = self.pack_length_binder(expr)
         {
-            return Ok(ConstraintOperand::PackLength(pack));
+            return Ok(ConstraintOperand::PackLength(Box::new(
+                ConstraintOperand::Param(pack),
+            )));
         }
         Ok(match &expr.kind {
             // A type operand is the type the one builder reads (`String` the
@@ -3481,14 +3486,25 @@ impl Checker {
             }
             _ => None,
         };
-        let pack = |param: &ParamRef, holds: &dyn Fn(&[Ty]) -> bool| match (
-            bound_pack_types(environment, param),
-            environment.get(param).is_some(),
-        ) {
-            (Some(types), _) => context.boolean(holds(&types)),
-            (None, true) if forwarded(param).is_some() => unknown(),
-            (None, true) => context.boolean(false),
-            (None, false) => unknown(),
+        // A pack query's operand is a pack binder, or an inlined query's
+        // bound element list.
+        let pack = |operand: &ConstraintOperand, holds: &dyn Fn(&[Ty]) -> bool| match operand {
+            ConstraintOperand::Param(param) => match (
+                bound_pack_types(environment, param),
+                environment.get(param).is_some(),
+            ) {
+                (Some(types), _) => context.boolean(holds(&types)),
+                (None, true) if forwarded(param).is_some() => unknown(),
+                (None, true) => context.boolean(false),
+                (None, false) => unknown(),
+            },
+            operand => match self.constraint_value(operand, environment) {
+                Some(TyArg::Val(CtValue::Expr(_))) | None => unknown(),
+                Some(TyArg::Val(list)) => {
+                    context.boolean(type_list(&list).is_some_and(|types| holds(&types)))
+                }
+                Some(TyArg::Ty(_) | TyArg::Origin(_)) => context.boolean(false),
+            },
         };
         Ok(match constraint {
             WithMessage(condition, _) => self.constraint_proposition(condition, environment)?,
@@ -3531,29 +3547,16 @@ impl Checker {
                 context.boolean(true)
             }
             ConformsPack {
-                operand: ConstraintOperand::Param(param),
-                trait_name,
-            } => pack(param, &|types| {
-                types.iter().all(|ty| self.conforms_to(ty, trait_name))
-            }),
-            // An inlined test holds the bound element list itself.
-            ConformsPack {
                 operand,
                 trait_name,
-            } => match self.constraint_value(operand, environment) {
-                Some(TyArg::Val(CtValue::Expr(_))) | None => unknown(),
-                Some(TyArg::Val(list)) => {
-                    context.boolean(type_list(&list).is_some_and(|types| {
-                        types.iter().all(|ty| self.conforms_to(ty, trait_name))
-                    }))
-                }
-                Some(TyArg::Ty(_) | TyArg::Origin(_)) => context.boolean(false),
-            },
+            } => pack(operand, &|types| {
+                types.iter().all(|ty| self.conforms_to(ty, trait_name))
+            }),
             PackPredicate {
-                param,
+                operand,
                 predicate,
                 all,
-            } => pack(param, &|types| {
+            } => pack(operand, &|types| {
                 let mut holds = types
                     .iter()
                     .map(|ty| self.eval_pack_predicate(predicate, ty));
@@ -3563,11 +3566,13 @@ impl Checker {
                     holds.any(|held| held)
                 }
             }),
-            PackContains { param, element } => match self.constraint_value(element, environment) {
-                Some(TyArg::Ty(needle)) => pack(param, &|types| types.contains(&needle)),
-                Some(_) => context.boolean(false),
-                None => unknown(),
-            },
+            PackContains { operand, element } => {
+                match self.constraint_value(element, environment) {
+                    Some(TyArg::Ty(needle)) => pack(operand, &|types| types.contains(&needle)),
+                    Some(_) => context.boolean(false),
+                    None => unknown(),
+                }
+            }
             Eq(left, right) | Ne(left, right) => {
                 let equal = match (
                     self.constraint_value(left, environment),
@@ -3628,8 +3633,13 @@ impl Checker {
             ConstraintOperand::Param(param) => environment.get(param).cloned(),
             ConstraintOperand::Value(value) => Some(TyArg::Val(value.clone())),
             ConstraintOperand::Type(ty) => Some(TyArg::Ty(ty.clone())),
-            ConstraintOperand::PackLength(param) => bound_pack_types(environment, param)
-                .map(|types| TyArg::Val(CtValue::Int(types.len() as i64))),
+            ConstraintOperand::PackLength(list) => {
+                match self.constraint_value(list, environment)? {
+                    TyArg::Val(list) => type_list(&list),
+                    TyArg::Ty(_) | TyArg::Origin(_) => None,
+                }
+                .map(|types| TyArg::Val(CtValue::Int(types.len() as i64)))
+            }
             // Replacement binds the application's values and re-folds; what
             // stays symbolic is returned residual.
             ConstraintOperand::Expr(expression) => {

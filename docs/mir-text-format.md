@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.110
+mojito-mir 1.111
 ```
 
-The writer emits 1.110. The reader accepts 1.0 through 1.110; *Schema 1.0*
+The writer emits 1.111. The reader accepts 1.0 through 1.111; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -616,6 +616,16 @@ parameter attribute (R1383). An older artifact spelling either no longer
 loads. The package format moves to `mojito-package 106`, whose `CtValue`
 records lose the handle's variant.
 
+Schema 1.111 gives `pack_predicate` and `pack_contains` an `operand:
+constraint-operand` in place of their `param` binder, and makes
+`operand_pack_length`'s operand a constraint operand where it was a
+binder, as upstream's `TypeList` queries take the list as an operand, so
+a query `inline-parametric` substitutes at a concrete binding holds the
+bound list (`operand_value` of a type tuple, or `operand_expr` over the
+caller's binders) (R1342). An older artifact's `param`, and a bare binder
+under `operand_pack_length`, read as `operand_param`. The package format
+moves to `mojito-package 107`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1204,11 +1214,13 @@ reference: owner `$unbound:<name>`, slot `0`, identified by its spelling.
 `GenericConstraint` is a prefix tree. Its tags map one-to-one to the public
 variants: `with_message { condition, message }`, `conforms { operand, trait }`,
 `conforms_pack { operand, trait }`,
-`pack_predicate` (whose predicate is `predicate_trivial` or
-`predicate_alias`), `pack_contains`, `trivial`, `eq`, `ne`, `lt`, `le`, `gt`,
-`ge`, `and`, `or`, `not`, `constraint_bool`. Constraint operands are
-`operand_param`, `operand_value`, `operand_type`, `operand_pack_length`, and
-`operand_expr(param-expr)` for an arithmetic operand. A value parameter's
+`pack_predicate { operand, predicate, all }` (whose predicate is
+`predicate_trivial` or `predicate_alias`), `pack_contains { operand,
+element }`, `trivial`, `eq`, `ne`, `lt`, `le`, `gt`, `ge`, `and`, `or`,
+`not`, `constraint_bool`. Constraint operands are `operand_param`,
+`operand_value`, `operand_type`, `operand_pack_length(constraint-operand)`
+over the list it measures, and `operand_expr(param-expr)` for an
+arithmetic operand. A value parameter's
 `default` and a `default_if` condition are parameter expressions.
 
 ### Schema 1.0

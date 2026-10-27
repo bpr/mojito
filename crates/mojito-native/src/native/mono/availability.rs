@@ -112,11 +112,11 @@ impl Specializer<'_> {
             // A predicate alias's body is the checker's; it does not reach
             // MIR.
             PackPredicate {
-                param,
+                operand,
                 predicate: PackPredicateRef::Trivial(kind),
                 all,
             } => {
-                let elements = pack_types(param, bindings)?;
+                let elements = pack_operand_types(operand, bindings)?;
                 let verdicts = elements
                     .iter()
                     .map(|ty| self.trivially(*kind, ty, visiting));
@@ -127,9 +127,9 @@ impl Specializer<'_> {
                 }
             }
             PackPredicate { .. } => None,
-            PackContains { param, element } => match operand_value(element, bindings)? {
+            PackContains { operand, element } => match operand_value(element, bindings)? {
                 TyArg::Ty(needle) => Some(
-                    pack_types(param, bindings)?
+                    pack_operand_types(operand, bindings)?
                         .iter()
                         .any(|ty| same_type_modulo_origins(ty, &needle)),
                 ),
@@ -372,8 +372,8 @@ fn operand_value(operand: &ConstraintOperand, bindings: &Bindings) -> Option<TyA
                 .filter(|ty| !is_symbolic(ty))
                 .map(TyArg::Ty)
         }
-        ConstraintOperand::PackLength(param) => {
-            let length = i64::try_from(pack_types(param, bindings)?.len()).ok()?;
+        ConstraintOperand::PackLength(list) => {
+            let length = i64::try_from(pack_operand_types(list, bindings)?.len()).ok()?;
             Some(TyArg::Val(CtValue::Int(length)))
         }
     }

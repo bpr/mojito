@@ -83,12 +83,13 @@
 //! (`mir::construct_type_parameters`). What still keeps the call: a value
 //! only the elaborator folds (a deferred or marker value), a type that
 //! still names a bound pack after substitution (a pack queried under a
-//! loop binder), a construction the binding leaves open (`T()` at a
-//! symbolic non-binder type, `Ts[i]()` under a loop binder, R445), and a
-//! binding the body's sites cannot hold (a `TypeList` pack query at a
-//! concrete pack, R1342). A `conforms_to` test holds its subject as an
-//! operand, as upstream's `type_conforms_to_trait` does, so a concrete
-//! binding substitutes into it: the bound type, or a pack's bound list.
+//! loop binder), and a construction the binding leaves open (`T()` at a
+//! symbolic non-binder type, `Ts[i]()` under a loop binder, R445). A
+//! `conforms_to` test and a `TypeList` query (`contains`, `all`/`any`,
+//! `length`) hold the type or list they ask of as an operand, as
+//! upstream's `type_conforms_to_trait` and `TypeList` queries do, so a
+//! concrete binding substitutes into it: the bound type, or a pack's bound
+//! list.
 //!
 //! An owned parameter, or a `read` one of a type no destructor tears down,
 //! is a fresh slot the argument initializes, and so is a `read` one passed

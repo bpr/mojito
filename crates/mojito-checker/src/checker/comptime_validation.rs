@@ -3165,10 +3165,8 @@ impl Checker {
             }
         };
         self.bind_constraint(constraint, &[])
-            .try_map(&bound, &|operand| match operand {
-                ConstraintOperand::Param(reference) | ConstraintOperand::PackLength(reference) => {
-                    bound(reference).map(|_| operand.clone())
-                }
+            .try_map(&|operand| match operand {
+                ConstraintOperand::Param(reference) => bound(reference).map(|_| operand.clone()),
                 _ => Ok(operand.clone()),
             })
             .is_err()
@@ -3180,42 +3178,14 @@ impl Checker {
         constraint: &GenericConstraint,
         visit: &dyn Fn(&str) -> Result<(), TypeError>,
     ) -> Result<(), TypeError> {
-        let operand = |operand: &ConstraintOperand| match operand {
-            ConstraintOperand::Param(param) | ConstraintOperand::PackLength(param) => {
-                visit(&param.name)
-            }
-            // An arithmetic operand resolved its names when it was compiled.
-            ConstraintOperand::Value(_)
-            | ConstraintOperand::Type(_)
-            | ConstraintOperand::Expr(_) => Ok(()),
-        };
-        match constraint {
-            GenericConstraint::WithMessage(inner, _) | GenericConstraint::Not(inner) => {
-                Self::each_constraint_parameter(inner, visit)
-            }
-            GenericConstraint::PackPredicate { param, .. } => visit(&param.name),
-            GenericConstraint::PackContains { param, element } => {
-                visit(&param.name)?;
-                operand(element)
-            }
-            GenericConstraint::Trivial(_, value)
-            | GenericConstraint::Conforms { operand: value, .. }
-            | GenericConstraint::ConformsPack { operand: value, .. } => operand(value),
-            GenericConstraint::Eq(a, b)
-            | GenericConstraint::Ne(a, b)
-            | GenericConstraint::Lt(a, b)
-            | GenericConstraint::Le(a, b)
-            | GenericConstraint::Gt(a, b)
-            | GenericConstraint::Ge(a, b) => {
-                operand(a)?;
-                operand(b)
-            }
-            GenericConstraint::And(a, b) | GenericConstraint::Or(a, b) => {
-                Self::each_constraint_parameter(a, visit)?;
-                Self::each_constraint_parameter(b, visit)
-            }
-            GenericConstraint::Bool(_) => Ok(()),
-        }
+        constraint
+            .try_map(&|operand| match operand {
+                ConstraintOperand::Param(param) => visit(&param.name).map(|()| operand.clone()),
+                // An arithmetic operand resolved its names when it was
+                // compiled.
+                _ => Ok(operand.clone()),
+            })
+            .map(|_| ())
     }
 
     fn comptime_name_resolves(&self, name: &str) -> Result<(), TypeError> {
@@ -3337,35 +3307,21 @@ impl Checker {
     }
 }
 
-/// Whether `constraint` names no parameter: every operand is a value or a
-/// concrete type, and no leaf asks a binder or a pack.
+/// Whether `constraint` names no parameter: every operand, the list a pack
+/// query asks of included, is a value or a concrete type.
 fn constraint_is_closed(constraint: &GenericConstraint) -> bool {
-    let operand = |operand: &ConstraintOperand| match operand {
-        ConstraintOperand::Param(_)
-        | ConstraintOperand::PackLength(_)
-        | ConstraintOperand::Expr(_) => false,
-        ConstraintOperand::Value(value) => value_is_closed(value),
-        ConstraintOperand::Type(ty) => !mojito_types::types::is_symbolic(ty),
-    };
-    match constraint {
-        GenericConstraint::Bool(_) => true,
-        GenericConstraint::WithMessage(inner, _) | GenericConstraint::Not(inner) => {
-            constraint_is_closed(inner)
-        }
-        GenericConstraint::And(left, right) | GenericConstraint::Or(left, right) => {
-            constraint_is_closed(left) && constraint_is_closed(right)
-        }
-        GenericConstraint::PackPredicate { .. } | GenericConstraint::PackContains { .. } => false,
-        GenericConstraint::Trivial(_, value)
-        | GenericConstraint::Conforms { operand: value, .. }
-        | GenericConstraint::ConformsPack { operand: value, .. } => operand(value),
-        GenericConstraint::Eq(left, right)
-        | GenericConstraint::Ne(left, right)
-        | GenericConstraint::Lt(left, right)
-        | GenericConstraint::Le(left, right)
-        | GenericConstraint::Gt(left, right)
-        | GenericConstraint::Ge(left, right) => operand(left) && operand(right),
-    }
+    constraint
+        .try_map(&|operand| {
+            let closed = match operand {
+                ConstraintOperand::Param(_)
+                | ConstraintOperand::PackLength(_)
+                | ConstraintOperand::Expr(_) => false,
+                ConstraintOperand::Value(value) => value_is_closed(value),
+                ConstraintOperand::Type(ty) => !mojito_types::types::is_symbolic(ty),
+            };
+            closed.then(|| operand.clone()).ok_or(())
+        })
+        .is_ok()
 }
 
 /// Whether a constant names no parameter: no residual expression, and no

@@ -182,22 +182,24 @@ fn type_families_reprint_byte_identically() {
                         }),
                     ),
                     GenericConstraint::PackPredicate {
-                        param: test_binder("Ts"),
+                        operand: ConstraintOperand::Param(test_binder("Ts")),
                         predicate: PackPredicateRef::Alias("IsNice".into()),
                         all: true,
                     },
                     GenericConstraint::PackPredicate {
-                        param: test_binder("Ts"),
+                        operand: ConstraintOperand::Param(test_binder("Ts")),
                         predicate: PackPredicateRef::Trivial(TrivialLifecycle::Deinitable),
                         all: false,
                     },
                     GenericConstraint::PackContains {
-                        param: test_binder("Ts"),
+                        operand: ConstraintOperand::Param(test_binder("Ts")),
                         element: ConstraintOperand::Type(Ty::int()),
                     },
                     GenericConstraint::Le(
                         ConstraintOperand::Value(CtValue::Int(3)),
-                        ConstraintOperand::PackLength(test_binder("Ts")),
+                        ConstraintOperand::PackLength(Box::new(ConstraintOperand::Param(
+                            test_binder("Ts"),
+                        ))),
                     ),
                     GenericConstraint::Ne(
                         ConstraintOperand::Param(test_binder("T")),
@@ -3482,5 +3484,79 @@ fn conforms_reads_pre_1_102_param_field() {
         );
     assert!(older.contains("param: binder {"));
     assert!(!older.contains("operand: operand_param("));
+    assert_eq!(read(&older), conds);
+}
+
+/// Schema 1.111 records the list a `TypeList` pack query asks of, an inlined
+/// one's bound list included; an older artifact records the pack binder,
+/// which reads as a parameter operand.
+#[test]
+fn pack_queries_read_pre_1_111_binder() {
+    let block = |instrs: Vec<MirInstr>, term: MirTerm| vec![MirBlock { instrs, term }];
+    let predicate = |operand| GenericConstraint::PackPredicate {
+        operand,
+        predicate: PackPredicateRef::Trivial(TrivialLifecycle::Copyable),
+        all: true,
+    };
+    let contains = |operand| GenericConstraint::PackContains {
+        operand,
+        element: ConstraintOperand::Type(Ty::int()),
+    };
+    let length = |operand| {
+        GenericConstraint::Eq(
+            ConstraintOperand::PackLength(Box::new(operand)),
+            ConstraintOperand::Value(CtValue::Int(2)),
+        )
+    };
+    let pack = || ConstraintOperand::Param(test_binder("Ts"));
+    let list = || {
+        ConstraintOperand::Value(CtValue::Tuple(vec![
+            CtValue::Type(Ty::int()),
+            CtValue::Type(Ty::bool()),
+        ]))
+    };
+    let conds = vec![
+        predicate(pack()),
+        contains(pack()),
+        length(pack()),
+        predicate(list()),
+        contains(list()),
+        length(list()),
+    ];
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            Vec::new(),
+            vec![MirInstr::ComptimeIf {
+                results: Vec::new(),
+                conds: conds.clone(),
+                arms: (0..conds.len())
+                    .map(|_| block(Vec::new(), MirTerm::ComptimeYield(Vec::new())))
+                    .collect(),
+                orelse: block(Vec::new(), MirTerm::ComptimeYield(Vec::new())),
+            }],
+        ),
+    )]);
+    assert_reprints(&program);
+    let read = |text: &str| {
+        let parsed = artifact(text.as_bytes(), "unit.mir".to_string()).expect("parse artifact");
+        match &parsed.program.functions[0].1.blocks[0].instrs[0] {
+            MirInstr::ComptimeIf { conds, .. } => conds.clone(),
+            other => panic!("expected a compile-time branch, read {other:?}"),
+        }
+    };
+    let written = write::program(&program);
+    assert_eq!(read(&written), conds);
+    let binder = "binder { owner: \"$test:Ts\", slot: 0, name: Ts }";
+    let older = written
+        .replace(
+            &format!("operand: operand_param({binder})"),
+            &format!("param: {binder}"),
+        )
+        .replace(
+            &format!("operand_pack_length(operand_param({binder}))"),
+            &format!("operand_pack_length({binder})"),
+        );
+    assert!(!older.contains("operand_param("));
     assert_eq!(read(&older), conds);
 }

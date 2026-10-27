@@ -6267,8 +6267,10 @@ point where a slot declared in a loop is uninitialized again.
   naming a bound binder after substitution (`types::names_binder`, which
   counts a pack query), a construction of a binder the binding leaves
   open (a symbolic non-binder type, `Ts[i]()` under a loop binder, R445),
-  a `TypeList` pack query at a concrete pack (R1342), or a value binder's
-  slot used other than as a read. A compile-time application over a bound
+  or a value binder's slot used other than as a read. A `conforms_to` test
+  and a `TypeList` pack query (`contains`, `all`/`any`, `length`) hold the
+  type or list they ask of as a `ConstraintOperand`, so a concrete binding
+  substitutes the bound list into the query. A compile-time application over a bound
   type pack (`Tuple.reverse`'s `comptime for` bound, a thunk applied to
   the owner's `Ts`) is applied to the bound element list, which
   `Specializer::demand_application` binds to the thunk's variadic binder

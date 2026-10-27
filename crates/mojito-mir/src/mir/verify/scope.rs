@@ -507,14 +507,14 @@ impl ScopeCx<'_> {
                 self.constraint(role, left);
                 self.constraint(role, right);
             }
-            PackPredicate { param, .. } => {
-                self.reference(role, &param.id, &param.name, None, &[]);
-            }
-            PackContains { param, element } => {
-                self.reference(role, &param.id, &param.name, None, &[]);
+            PackContains { operand, element } => {
+                self.operand(role, operand);
                 self.operand(role, element);
             }
-            Trivial(_, operand) | Conforms { operand, .. } | ConformsPack { operand, .. } => {
+            Trivial(_, operand)
+            | Conforms { operand, .. }
+            | ConformsPack { operand, .. }
+            | PackPredicate { operand, .. } => {
                 self.operand(role, operand);
             }
             Eq(left, right)
@@ -532,9 +532,10 @@ impl ScopeCx<'_> {
     fn operand(&mut self, role: &str, operand: &ConstraintOperand) {
         let mut nested = Vec::new();
         match operand {
-            ConstraintOperand::Param(param) | ConstraintOperand::PackLength(param) => {
+            ConstraintOperand::Param(param) => {
                 self.reference(role, &param.id, &param.name, None, &nested);
             }
+            ConstraintOperand::PackLength(list) => self.operand(role, list),
             ConstraintOperand::Value(CtValue::Expr(expr)) | ConstraintOperand::Expr(expr) => {
                 self.expr_nodes(role, "compile-time condition", expr, &mut nested);
             }

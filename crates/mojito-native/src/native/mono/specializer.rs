@@ -2012,7 +2012,7 @@ impl<'a> Specializer<'a> {
                 pack,
                 query: PackQuery::Predicate { predicate, all },
             } => Some(GenericConstraint::PackPredicate {
-                param: pack.clone(),
+                operand: ConstraintOperand::Param(pack.clone()),
                 predicate: predicate.clone(),
                 all: *all,
             }),
@@ -2026,7 +2026,7 @@ impl<'a> Specializer<'a> {
                     _ => return Ok(None),
                 };
                 Some(GenericConstraint::PackContains {
-                    param: pack.clone(),
+                    operand: ConstraintOperand::Param(pack.clone()),
                     element: ConstraintOperand::Type(element),
                 })
             }
@@ -4081,39 +4081,16 @@ fn collect_referenced_functions(instructions: &[MirInstr], referenced: &mut Vec<
 
 /// Every expression operand of a constraint, in reading order.
 fn constraint_expressions(constraint: &GenericConstraint) -> Vec<ParamExpr> {
-    use GenericConstraint::{
-        And, Bool, Conforms, ConformsPack, Eq, Ge, Gt, Le, Lt, Ne, Not, Or, PackContains,
-        PackPredicate, Trivial, WithMessage,
-    };
-    let of_operand = |operand: &ConstraintOperand| match operand {
-        ConstraintOperand::Expr(expr) | ConstraintOperand::Value(CtValue::Expr(expr)) => {
-            vec![expr.clone()]
+    let expressions = std::cell::RefCell::new(Vec::new());
+    let Ok(_) = constraint.try_map::<std::convert::Infallible>(&|operand| {
+        if let ConstraintOperand::Expr(expr) | ConstraintOperand::Value(CtValue::Expr(expr)) =
+            operand
+        {
+            expressions.borrow_mut().push(expr.clone());
         }
-        _ => Vec::new(),
-    };
-    match constraint {
-        Bool(_) | PackPredicate { .. } => Vec::new(),
-        WithMessage(inner, _) | Not(inner) => constraint_expressions(inner),
-        And(left, right) | Or(left, right) => {
-            let mut expressions = constraint_expressions(left);
-            expressions.extend(constraint_expressions(right));
-            expressions
-        }
-        PackContains { element, .. } => of_operand(element),
-        Trivial(_, operand) | Conforms { operand, .. } | ConformsPack { operand, .. } => {
-            of_operand(operand)
-        }
-        Eq(left, right)
-        | Ne(left, right)
-        | Lt(left, right)
-        | Le(left, right)
-        | Gt(left, right)
-        | Ge(left, right) => {
-            let mut expressions = of_operand(left);
-            expressions.extend(of_operand(right));
-            expressions
-        }
-    }
+        Ok(operand.clone())
+    });
+    expressions.into_inner()
 }
 
 /// Bind an enclosing instance's solutions in a nested body's call-site

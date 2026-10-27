@@ -1,0 +1,55 @@
+  functions: [
+      fn {
+        name: all_trivial,
+        registers: 4,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 77, end: 78, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 136, end: 137, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 77, end: 137, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 77, end: 137, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              comptime.if { results: [%r2], conditions: [pack_predicate { operand: operand_param(binder { owner: "all_trivial", slot: 0, name: Ts }), predicate: predicate_trivial(copyable), all: true }], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }], terminator: comptime.yield { values: [%r0] } }]], else: [bb0 { instructions: [const { dest: %r1, value: int_literal(2) }], terminator: comptime.yield { values: [%r1] } }] },
+              literal.materialize { dest: %r3, value: %r2, target: Int }
+            ],
+            terminator: return { value: present(%r3) }
+          }
+        ]
+      },
+      fn {
+        name: pack_predicate_concrete,
+        registers: 5,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 189, end: 213, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 189, end: 213, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 189, end: 213, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 189, end: 213, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 189, end: 213, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [comptime.if { results: [%r3], conditions: [pack_predicate { operand: operand_value(ct_tuple([ct_type(Int), ct_type(Bool)])), predicate: predicate_trivial(copyable), all: true }], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }], terminator: comptime.yield { values: [%r1] } }]], else: [bb0 { instructions: [const { dest: %r2, value: int_literal(2) }], terminator: comptime.yield { values: [%r2] } }] }, literal.materialize { dest: %r4, value: %r3, target: Int }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      }
+  ]

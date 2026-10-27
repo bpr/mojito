@@ -1,0 +1,54 @@
+  functions: [
+      fn {
+        name: two,
+        registers: 4,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: IntLiteral }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: IntLiteral }, reg_type { reg: %r3, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 124, end: 125, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 124, end: 125, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 151, end: 152, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 151, end: 152, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              comptime.if { results: [], conditions: [eq { left: operand_pack_length(operand_param(binder { owner: "two", slot: 0, name: Ts })), right: operand_value(ct_int_literal(2)) }], arms: [[bb0 { instructions: [const { dest: %r0, value: int_literal(1) }, literal.materialize { dest: %r1, value: %r0, target: Int }], terminator: return { value: present(%r1) } }]], else: [bb0 { instructions: [const { dest: %r2, value: int_literal(2) }, literal.materialize { dest: %r3, value: %r2, target: Int }], terminator: return { value: present(%r3) } }] }
+            ],
+            terminator: return { value: absent }
+          }
+        ]
+      },
+      fn {
+        name: pack_length_concrete,
+        registers: 5,
+        vars: 0,
+        var_names: [],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [],
+        return_type: present(Int),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: IntLiteral }, reg_type { reg: %r2, type: Int }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: Int }],
+        locations: [reg_loc { reg: %r0, location: present(loc { file: file0, start: 201, end: 217, origin: absent }) }, reg_loc { reg: %r1, location: present(loc { file: file0, start: 201, end: 217, origin: absent }) }, reg_loc { reg: %r2, location: present(loc { file: file0, start: 201, end: 217, origin: absent }) }, reg_loc { reg: %r3, location: present(loc { file: file0, start: 201, end: 217, origin: absent }) }, reg_loc { reg: %r4, location: present(loc { file: file0, start: 201, end: 217, origin: absent }) }],
+        blocks: [
+          bb0 {
+            instructions: [
+              loop { results: [%r0], label: present(loop4294967295), operands: [], arguments: [], body: [bb0 { instructions: [comptime.if { results: [], conditions: [eq { left: operand_pack_length(operand_value(ct_tuple([ct_type(Int), ct_type(Bool)]))), right: operand_value(ct_int_literal(2)) }], arms: [[bb0 { instructions: [const { dest: %r1, value: int_literal(1) }, literal.materialize { dest: %r2, value: %r1, target: Int }], terminator: break { label: present(loop4294967295), values: [%r2] } }]], else: [bb0 { instructions: [const { dest: %r3, value: int_literal(2) }, literal.materialize { dest: %r4, value: %r3, target: Int }], terminator: break { label: present(loop4294967295), values: [%r4] } }] }], terminator: unreachable {} }] }
+            ],
+            terminator: return { value: present(%r0) }
+          }
+        ]
+      }
+  ]
