@@ -312,8 +312,8 @@ impl Checker {
     /// value, which upstream's `IfElseOpNode` lowers as `hlcf.comptime.if`
     /// (`getIfPValue`): a `Bool` literal, a `Bool` compile-time binding, a
     /// `comptime(e)`, a conformance or trivial-type predicate, a `TypeList`
-    /// proposition, `not` of one, or a comparison of compile-time scalars.
-    /// `and`/`or` and a nested conditional are run-time `hlcf.if`s, a call of
+    /// proposition, `not` of one, or a comparison of compile-time scalars or
+    /// of types. `and`/`or` and a nested conditional are run-time `hlcf.if`s, a call of
     /// an ordinary function a run-time value, so none of those is one.
     pub(super) fn parameter_valued_condition(&self, cond: &Expr) -> bool {
         match &cond.kind {
@@ -338,7 +338,12 @@ impl Checker {
                 InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Le | InfixOp::Gt | InfixOp::Ge,
                 left,
                 right,
-            ) => self.parameter_valued_scalar(left) && self.parameter_valued_scalar(right),
+            ) => {
+                (self.parameter_valued_scalar(left) && self.parameter_valued_scalar(right))
+                    || [left, right]
+                        .iter()
+                        .all(|operand| matches!(self.comptime_type_operand(operand), Ok(Some(_))))
+            }
             _ => false,
         }
     }
@@ -1939,117 +1944,35 @@ impl Checker {
         }
     }
 
-    /// The type an expression denotes in a compile-time position: a type
-    /// parameter or local type alias, a nominal or scalar type, `Self.T`,
-    /// or a type application.
+    /// The type an expression denotes in a compile-time position, as the
+    /// one builder reads it ([`Self::type_operand_expression`]); `None` for
+    /// a value, or for an expression that denotes nothing at compile time.
+    /// An unknown type argument (`List[Foo]`) is the diagnostic.
     pub(super) fn comptime_type_operand(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
-        Ok(match &expr.kind {
-            ExprKind::Identifier(name) => {
-                if let Some(ty) = self.lookup_tparam(name) {
-                    Some(ty)
-                } else if scalar_type_name(name).is_some() || self.structs.contains_key(name) {
-                    Some(self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))?)
-                } else {
-                    None
+        match &expr.kind {
+            // A reflection handle is a compile-time value, not a type, and a
+            // `comptime` alias or a trivial predicate applies to a `Bool`.
+            ExprKind::TypeApply { name, .. }
+                if name == "reflect"
+                    || self.comptime_aliases.contains_key(name)
+                    || mojito_types::types::trivial_predicate_name(name).is_some() =>
+            {
+                Ok(None)
+            }
+            _ => match self.type_operand_expression(expr) {
+                Ok(Some(ty)) => Ok(Some(ty)),
+                Err(error)
+                    if matches!(error, TypeError::UnknownType(_))
+                        || matches!(
+                            expr.kind,
+                            ExprKind::TypeValue(_) | ExprKind::TypeApply { .. }
+                        ) =>
+                {
+                    Err(error)
                 }
-            }
-            ExprKind::TypeValue(ty) => Some(self.type_value(expr, ty)?),
-            // A reflection handle is a compile-time value, not a type.
-            ExprKind::TypeApply { name, .. } if name == "reflect" => None,
-            ExprKind::TypeApply { name, args }
-                if !self.comptime_aliases.contains_key(name)
-                    && mojito_types::types::trivial_predicate_name(name).is_none() =>
-            {
-                let (ty, attributes) = self.applied_type(name, args)?;
-                self.record_bracket_attributes(expr.source_span(), attributes);
-                Some(ty)
-            }
-            ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
-                Some(self.ty_from_anno(&SourceType::SelfParam(field.clone()))?)
-            }
-            ExprKind::Index { object, index }
-                if matches!(&object.kind, ExprKind::Member { object, .. }
-                    if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self"))
-                    && self.value_pack_named(object).is_none() =>
-            {
-                let ExprKind::Member { field, .. } = &object.kind else {
-                    unreachable!("guarded above");
-                };
-                Some(self.ty_from_anno(&SourceType::IndexedProjection {
-                    base: Box::new(SourceType::SelfParam(field.clone())),
-                    index: index.clone(),
-                })?)
-            }
-            // `Ts[i]` over a `def`'s or method's own pack.
-            ExprKind::Index { object, index }
-                if matches!(&object.kind, ExprKind::Identifier(_))
-                    && self.type_pack_named(object).is_some() =>
-            {
-                let ExprKind::Identifier(name) = &object.kind else {
-                    unreachable!("guarded above");
-                };
-                Some(self.ty_from_anno(&SourceType::IndexedProjection {
-                    base: Box::new(SourceType::Named(name.clone(), Vec::new())),
-                    index: index.clone(),
-                })?)
-            }
-            // A one-argument struct application over a type name, which
-            // the parser leaves a subscript (`List[String]`).
-            ExprKind::Index { object, index }
-                if matches!(&object.kind, ExprKind::Identifier(name)
-                    if self.structs.contains_key(name))
-                    && matches!(&index.kind, ExprKind::Identifier(argument)
-                        if self.structs.contains_key(argument)
-                            || scalar_type_name(argument).is_some())
-                    && let Some(argument) = index.type_spelling() =>
-            {
-                let ExprKind::Identifier(name) = &object.kind else {
-                    unreachable!("guarded above");
-                };
-                Some(self.ty_from_anno(&SourceType::Named(
-                    name.clone(),
-                    vec![mojito_ast::ast::ParamArg::Type(argument)],
-                ))?)
-            }
-            // A member application through a type
-            // (`TypeList.of[Trait=AnyType, Int]`).
-            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. }
-                if matches!(object.kind, ExprKind::Member { .. })
-                    && let Some(ty) = self.member_type_operand(expr) =>
-            {
-                Some(ty)
-            }
-            // `tl[i]` over a closed or computed list, then `types[i]`,
-            // `r.field_at[i].T`: a reflected field type.
-            _ => match self.type_list_element(expr)? {
-                Some(element) => Some(element),
-                None => self.reflected_type_operand(expr)?,
+                Ok(None) | Err(_) => self.reflected_type_operand(expr),
             },
-        })
-    }
-
-    /// The type `list[index]` denotes over a `TypeList` value or a list
-    /// computed from packs; a pack itself is [`Self::pack_element_type`]'s.
-    fn type_list_element(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
-        let ExprKind::Index { object, index } = &expr.kind else {
-            return Ok(None);
-        };
-        let list = match self.typelist_receiver(object)? {
-            None | Some(super::constraints::TypeListReceiver::Pack(_)) => return Ok(None),
-            Some(receiver) => self.receiver_list(receiver)?,
-        };
-        let index = self
-            .compile_dependent_ct_expr(index)
-            .map_err(|_| TypeError::TypeMismatch {
-                expected: "a compile-time Int index".to_string(),
-                found: "a runtime value".to_string(),
-                context: "TypeList index".to_string(),
-            })?;
-        self.param_context
-            .list_get(&list, &index)
-            .map(mojito_types::types::DependentType::resolve)
-            .map(Some)
-            .map_err(param_error)
+        }
     }
 
     /// Type a pack element's default construction while the pack is still a

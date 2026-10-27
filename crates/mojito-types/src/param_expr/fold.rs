@@ -24,6 +24,7 @@ use super::ParamError;
 use crate::ct::{
     CtLane, CtValue, bool_lane_binop, float_lane_binop, int_lane_binop, lane_compare, wrap_lane,
 };
+use crate::types::same_type;
 use mojito_ast::ast::{Dtype, InfixOp};
 use mojito_common::literal::{FloatLiteral, IntLiteral};
 
@@ -45,8 +46,8 @@ pub fn fold_infix(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValu
         }
         (CtValue::Type(a), CtValue::Type(b)) => {
             return match op {
-                Eq => Ok(CtValue::Bool(a == b)),
-                Ne => Ok(CtValue::Bool(a != b)),
+                Eq => Ok(CtValue::Bool(same_type(a, b))),
+                Ne => Ok(CtValue::Bool(!same_type(a, b))),
                 _ => Err(unsupported(
                     "only == and != are defined for compile-time types",
                 )),

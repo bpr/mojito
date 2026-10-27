@@ -1050,6 +1050,15 @@ fn trivial_value_and_pack_clauses_are_decided() {
             .to_vec(),
         ),
     );
+    // A type parameter bound to a minted instance is the type its template
+    // spelling names.
+    let boxed = |name: &str, element: Ty| -> Ty {
+        TyKind::Struct(name.into(), vec![TyArg::Ty(element)]).into()
+    };
+    let element = test_binder("T");
+    bindings
+        .types
+        .insert(element.clone(), boxed("Box$mono$TInt", Ty::int()));
     let mut declaration = specializer.declarations["Cell.bits"].clone();
     let mut decide = |clause: GenericConstraint| {
         declaration.availability = vec![clause];
@@ -1094,6 +1103,14 @@ fn trivial_value_and_pack_clauses_are_decided() {
     };
     assert!(decide(tuple("Point")));
     assert!(!decide(tuple("Tracked")));
+    let element_is = |ty: Ty| {
+        GenericConstraint::Eq(
+            ConstraintOperand::Param(element.clone()),
+            ConstraintOperand::Type(ty),
+        )
+    };
+    assert!(decide(element_is(boxed("Box", Ty::int()))));
+    assert!(!decide(element_is(boxed("Box", Ty::bool()))));
 }
 
 #[test]

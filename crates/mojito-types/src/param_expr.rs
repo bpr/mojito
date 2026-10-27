@@ -1381,6 +1381,11 @@ impl ParamContext {
         operands: &[ParamExpr],
     ) -> Result<ParamExpr, ParamError> {
         let (left, right) = (operands[0].clone(), operands[1].clone());
+        if op != ParamOp::Eq && [&left, &right].iter().any(|o| *o.meta() == MetaTy::Type) {
+            return Err(ParamError::Unsupported(
+                "only == and != are defined for compile-time types".to_string(),
+            ));
+        }
         if let (Some(a), Some(b)) = (left.as_constant(), right.as_constant()) {
             self.count_fold();
             return fold_primitive(op, &[a, b]).and_then(|value| self.constant(value));

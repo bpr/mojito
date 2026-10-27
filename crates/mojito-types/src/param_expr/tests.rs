@@ -797,3 +797,37 @@ fn frozen_collection_parameter_projection() {
             .is_none()
     );
 }
+
+#[test]
+fn type_comparison_is_a_bool_decided_by_type_identity() {
+    let context = ParamContext::new();
+    let t = context.register(ParamId::new("g", 0), "T", MetaTy::Type);
+    let int = context.type_shape(TyKind::Int.into());
+    let same = infix(&context, InfixOp::Eq, &t, &int);
+    assert_eq!(*same.meta(), MetaTy::bool());
+    let mut bindings = ParamBindings::new();
+    bindings.bind(ParamId::new("g", 0), int.clone());
+    let folded = context.replace(&same, &bindings).expect("replaces");
+    assert_eq!(folded.as_constant(), Some(&CtValue::Bool(true)));
+
+    let boxed = |name: &str, element: TyKind| -> Ty {
+        TyKind::Struct(name.to_string(), vec![TyArg::Ty(element.into())]).into()
+    };
+    let minted = CtValue::Type(boxed("Box$mono$TInt", TyKind::Int));
+    let spelled = CtValue::Type(boxed("Box", TyKind::Int));
+    let other = CtValue::Type(boxed("Box", TyKind::Bool));
+    let fold = |left, right| fold::fold_infix(InfixOp::Eq, left, right).expect("folds");
+    assert_eq!(fold(&minted, &spelled), CtValue::Bool(true));
+    assert_eq!(fold(&minted, &other), CtValue::Bool(false));
+}
+
+#[test]
+fn ordering_is_not_defined_on_types() {
+    let context = ParamContext::new();
+    let t = context.register(ParamId::new("k", 0), "T", MetaTy::Type);
+    let int = context.type_shape(TyKind::Int.into());
+    for op in [InfixOp::Lt, InfixOp::Le, InfixOp::Gt, InfixOp::Ge] {
+        assert!(context.infix(op, &t, &int).is_err(), "{op:?} on types");
+    }
+    assert!(context.infix(InfixOp::Ne, &t, &int).is_ok());
+}

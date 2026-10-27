@@ -131,11 +131,11 @@ the entries named. A single command cannot use both.
      remainder. It moves each kind of site off `Elab::eval` and onto the
      check plus `native::mono`, then deletes `Elab`'s evaluator and type
      resolver (R1388).
-   - R1385–R1387 give the checker one folder for bracket arguments,
+   - R1385–R1387 (landed) give the checker one folder for bracket arguments,
      associated members, and type operands.
 
    ```sh
-   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1388 --task R1387 -n 0
+   scripts/claude_loop.py --model opus --plan-fable-on-opus --task R1388 -n 0
    ```
 
 8. **Gap I: packs are binder kinds** (slight size, about 20 entries):
@@ -310,9 +310,9 @@ missing.
     `associated_value_at`, `apply_generic_alias`, and the `TypeAliases`
     table. It has its own name resolution and no `Self`.
   - The checker's `compile_dependent_ct_expr` (`checker/constraints.rs`),
-    with `eval_associated_ct` its `CtValue` adapter, beside
-    `constraint_operand`, `comptime_type_operand`, and
-    `member_type_operand`.
+    with `eval_associated_ct` its `CtValue` adapter and
+    `constraint_operand` and `comptime_type_operand` its type-operand
+    adapters (R1387), beside `member_type_operand`.
   - The lifted fallback (`Checker::lifted_application`). It serves only
     `Int` and `Bool` results, and mints a `$comptime$$N` function per
     occurrence rather than per expression.
@@ -329,7 +329,10 @@ missing.
   - R1385: associated members that apply a callable.
   - R1386 (landed): the checker's second per-shape folder. Its residue,
     a symbolic aggregate with no parameter expression, is R1472.
-  - R1387: type operands.
+  - R1387 (landed): type operands, and a type comparison as one `Bool`
+    parameter value. Its residues: a condition compiled without its
+    binders in scope (R1474), and a `comptime if` condition kept as a
+    `GenericConstraint` (R1475).
   - R1388: delete what is left of `Elab`'s evaluator and type resolver.
 - **Slices filed earlier**:
   - R386: a value meta for any result type.
@@ -341,7 +344,7 @@ missing.
   - `Elab` arms: R1245, R475, R1170, R1206, R1171, R518, R489, R802,
     R1178, R1208.
   - `Self` and associated reads: R269, R513, R338, R436, R415.
-  - Checker arms: R1194, R1191, R1199, R476, R1180, R461, R332, R462,
+  - Checker arms: R1194, R1191, R1199, R461, R332, R462,
     R1220, R1210, R448, R512.
   - Domain: R480, R893, R396, R397, R901, R481, R1197.
   - Constructions: R135, R853, R1179, R1175.

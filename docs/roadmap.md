@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1474**.
+Next free ID: **R1476**.
 
 ## Ordered Work
 
@@ -165,15 +165,15 @@ which names the upstream pass each one follows. Each is measured by the
   resolves the alias by name lookup to its parameter value.
   - The lever: every local alias goes into the check's `local_type_aliases`,
     as template bodies' aliases already do.
-  - `comptime_type_operand` (`checker/comptime_validation.rs`) learns
-    `Scalar[dt]`, `SIMD[dt, n]`, `Self`, and `Self.<type member>`. A
-    `Self.<value>` goes to R1379's value route.
+  - The one builder (`build_ct`, `checker/constraints.rs`), which
+    `comptime_type_operand` adapts, learns `Scalar[dt]`, `SIMD[dt, n]`, and
+    `Self`. A `Self.<value>` goes to R1379's value route.
   - The block-local `TypeAliases` substitution goes. The pack-element
     spelling stays for the pack entries (R1169).
   - Probe: `comptime S = Scalar[DType.float64]`, then `S(2) * 1.25`. The pin
     prints `2.5`. Mojito fails, in `main` and in `def g[n: Int]` alike.
-  - Closes R475 (a local `Scalar` or `SIMD` alias), R476 (`comptime k =
-    Self.n` read as a type), and R1170's alias half.
+  - Closes R475 (a local `Scalar` or `SIMD` alias) and R1170 (a
+    `Self.<type member>` alias in a method).
   - Depends on R1379, whose value route takes what this route declines.
   - Model: Opus, Not Planned.
 
@@ -272,23 +272,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1387 A type operand in a condition and in a value are built by
-  different evaluators**
-
-  `constraint_operand` reads `T == Int` in a `comptime if`, the value
-  evaluators read `T` as a variable, and `comptime_type_operand` is a third
-  reader, where upstream's type comparison is one parameter operator over
-  type-valued parameter expressions.
-  - The lever: `constraint_operand` and `comptime_type_operand` take their
-    operands from `compile_dependent_ct_expr`, which already returns
-    type-valued expressions (a type shape).
-  - Probe: R1180's `comptime b = T == Int` in `def g[T: Movable]` fails with
-    "Undefined variable 'T'". The pin prints `True`.
-  - Closes R1180 (a type comparison as a `Bool`) and R1170's `comptime if
-    Self.First == Int`. Shrinks R1178 (the `W[U].Get[0] == Int` site).
-  - Depends on R1386.
-  - Model: Fable, Planned.
-
 - [ ] **R1388 `mojito-comptime` still carries a compile-time evaluator and a
   type resolver**
 
@@ -312,6 +295,48 @@ which names the upstream pass each one follows. Each is measured by the
     empty.
   - Depends on R1380, R1382, R1383, R1384, and R603.
   - Model: Opus, Not Planned.
+
+- [ ] **R1474 A predicate alias body or a struct header's condition is
+  compiled without its binders in scope**
+
+  `constraint_operand`, `predicate_operand`, and the `conforms_to` subject
+  arm (`checker/constraints.rs`) read a bare name there as
+  `ParamRef::unbound(name)`, bound by spelling later (`bind_constraint`,
+  `apply_predicate_alias`), where upstream emits the alias body and the
+  conformance condition as parameter expressions with their parameters in
+  scope.
+  - The one builder (`build_ct`) cannot serve these operands: it reports
+    "not a compile-time Int constant: T" or `UnqualifiedStructParam`, so
+    the name fallback stays beside it.
+  - The lever: open the alias's or the header's binders before compiling
+    the condition, so the builder reads them as it reads a body's.
+  - Probe: `assets/ok/bool_alias_predicate_where.mojo` and
+    `std/memory/maybe_uninit.mojo`'s header conditions (about 425 operands
+    in the corpus) reach the fallback.
+  - Done when `constraint_operand`'s bare `Identifier` arm is gone.
+  - Found while landing R1387 (2026-10-26).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1475 A `comptime if` condition is a `GenericConstraint`, not a
+  `Bool` parameter expression**
+
+  A type comparison is now one `ParamOp::Eq` as a value and a
+  `GenericConstraint::Eq` as a condition, where upstream's
+  `hlcf.comptime.if` takes its condition as one `i1` parameter value.
+  - MIR's `comptime if` text, mono's `constraint_holds`
+    (`mono/availability.rs`), and the checker's `compile_generic_constraint`
+    all read the constraint form, so the two forms decide one comparison
+    twice.
+  - The lever, first session: the checker records the condition's `Bool`
+    parameter expression (`build_ct`) on the `comptime if`, and mono
+    decides from it where present; deleting the constraint form follows as
+    its own entries.
+  - Probe: `comptime if T == Box[Int]` needed the same type-identity fix in
+    `fold_infix` and in `constraint_holds` (R1387).
+  - Found while landing R1387 (2026-10-26).
+  - Depends on R1474.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1339 A `ref self` body types a reference reached through `self`
   as `immutable`, so `automatic-inline` keeps a mutable caller's call**
@@ -4425,10 +4450,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: an alias body over a binder-dependent application, `comptime
     Next = Sized[n]` in `def next[n: Int]` or `comptime Next = Sized[Self.n
     + 1]` in a method of `struct Sized[n: Int]`, then `Next()`, prints the
-    size at the pin. The body parses as `Index`, which
-    `comptime_type_operand` (`checker/comptime_validation.rs`) takes for a
-    type only over a type-name operand, so Mojito reports "Undefined
-    variable '__module$$$main$$$Sized'". The call-bracket form
+    size at the pin. The alias binds as a type, but the call does not read
+    a local type alias, so Mojito reports "Undefined variable 'Next'"
+    (R475's probe). The call-bracket form
     `size[Self.n * 2]()` runs (carried from R72).
   - Closes R326 (`f[]()` read as a dereference) and the parse half of
     R490. Shrinks R383 and R512, whose lowercase subscripts still
@@ -4818,45 +4842,19 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R476 `comptime k = Self.n` in a generic struct's method is
-  rejected**
-
-  Problem: `comptime k = Self.n` (a bare member) in a method or static
-  method of `struct S[n: Int]` fails with "type 'S[n]' has no associated
-  type 'n'", where the pin prints `4` for `S[4]`.
-  - `comptime_type_operand`'s `Self.` arm
-    (`checker/comptime_validation.rs`) takes the member for a type.
-  - R312 covers `Self.n + 1` cloning per instance; this is a rejection.
-  - Found while landing R261 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1170 A struct's `comptime` type member read through `Self` in a
-  method's compile-time position is rejected**
+  method's local `comptime` fails in the instance's elaborator run**
 
-  Problem: over `struct Row[T: Movable]` with `comptime First = Self.T`, a
-  static method's `comptime if Self.First == Int:` stops with "Undefined
-  variable 'First'", and `comptime F = Self.First` with "'Self' is not a
-  compile-time type", where the pin prints `10` for both at `Row[Int]`.
-  - `Checker::constraint_operand`'s `Self.` arm takes every `Self.<name>`
-    for one of the struct's own binders, never a member.
-  - The pre-check elaborator's type resolution (`comptime/elab.rs`) has no
-    type for `Self` in a method instance.
-  - `var x: Self.First` in a method resolves.
+  Over `struct Row[T: Movable]` with `comptime First = Self.T`, a static
+  method's `comptime F = Self.First` or `comptime b = Self.First == Int`
+  stops with "function instantiation of `Row.f` failed: … 'Self' is not a
+  compile-time type", where the pin prints `True` and `10` at `Row[Int]`.
+  - The check reads both (R1387): `comptime if Self.First == Int:` and
+    `print(Self.First == Int)` run.
+  - mono's per-instance run of the pre-check elaborator
+    (`comptime/elab.rs:type_from_name`) has no type for `Self` in a method
+    instance.
   - Found while landing R805 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1180 A type comparison is not a compile-time `Bool` value**
-
-  Problem: `comptime b = T == Int` and `materialize[T == Int]()` in `def
-  g[T: Movable]()` stop with "Undefined variable 'T'", where the pin
-  prints `True` for `g[Int]()`.
-  - `comptime if T == Int:` runs, since `Checker::constraint_operand`
-    reads a type operand. The value evaluators read `T` as a variable.
-  - Probe: a local alias, `comptime F = Ts[0]` then `materialize[F ==
-    Int]()` in `def f[*Ts: Movable]()`.
-  - Found while landing R1168 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5131,9 +5129,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   where the pin runs each.
   - Only a type annotation reads the member (`var x: W[Int].Get[0]`),
     through `Checker::resolve_parameterized_member`.
-  - The expression evaluators have no arm for it: `eval_associated_ct`,
-    `compile_dependent_ct_expr`, and `constraint_operand`
-    (`checker/constraints.rs`), and a local `comptime` binding's.
+  - The one compile-time builder has no arm for it (`build_ct`,
+    `checker/constraints.rs`), and every compile-time reader goes through
+    it: `eval_associated_ct`, `constraint_operand`,
+    `comptime_type_operand`, and a local `comptime` binding's.
   - The rejections differ by site: "function types as compile-time
     values", "Undefined variable 'W'", "unsupported dependent parameter
     expression", and "'Self' is not a compile-time type".

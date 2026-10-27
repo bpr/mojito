@@ -86,6 +86,9 @@ impl Elab<'_> {
                     element_aliases.insert(name.clone(), (*value).clone());
                 }
                 source_aliases.insert(name, element);
+                // The check binds the alias too, so a read of it in an
+                // expression (`F == Int`) is the element it names.
+                out.push(stmt.clone());
                 continue;
             }
             let first_new = out.len();

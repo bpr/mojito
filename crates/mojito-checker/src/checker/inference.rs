@@ -856,6 +856,9 @@ impl Checker {
         if let Some(ty) = self.infer_reflection(expr)? {
             return Ok(ty);
         }
+        if let Some(ty) = self.infer_type_comparison(expr)? {
+            return Ok(ty);
+        }
         if self.value_pack_named(expr).is_some() {
             return self.infer_value_pack_read(expr);
         }

@@ -735,7 +735,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   lowers as `Const::Param`; `eval_reflection_expr` serves
   `constraints.rs:eval_associated_ct` and `compile_dependent_ct_expr`, and
   `reflected_type_operand` / `reflected_type_annotation` resolve `types[i]`,
-  `r.field_at[i].T`, and `r.field["x"].T` in `comptime_type_operand` and
+  `r.field_at[i].T`, and `r.field["x"].T` behind `comptime_type_operand` and
   `type_resolution.rs:ty_from_anno` to the dependent element (a `ListGet`
   over the `field_types()` node, viewed through `opaque_element`).
   Type-level pack algebra lives beside it: `constraints.rs:typelist_receiver`
@@ -868,7 +868,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   its `CtValue` adapter: build, `ParamContext::fold`, then `ct_transport`,
   recording member reads and type applications at their spans
   (`Recording`), with `aggregate_value` carrying a tuple, list, or
-  fieldwise construction whose elements are symbolic. It builds a
+  fieldwise construction whose elements are symbolic. A type operand has
+  that one reader too: `type_operand_expression` is the builder filtered
+  to a type, `comptime_type_operand` (`comptime_validation.rs`) and
+  `constraint_operand` adapt it (the latter keeping a bare-name
+  `ParamRef::unbound` fallback for conditions compiled without their
+  binders, R1474), and `infer_type_comparison` (hooked at the top of
+  `inference.rs:infer_impl`) types a type comparison read as a value as a
+  `Bool` and records its parameter expression as
+  `SemanticAdjustment::ParamValue`, which MIR's `call_family` lowers as
+  `Const::Param`; `reject_type_parameter_comparison` is its one
+  diagnostic for ordering a type or comparing one with a value. A type
+  comparison decides by `types::same_type` (`template_spelled`: a
+  monomorphized instance is its template's spelling), in
+  `param_expr::fold::fold_infix` and in mono's `constraint_holds`. It builds a
   `ParamExpr` through the compilation's `ParamContext`
   (`Checker::param_context`, the compilation's `CheckContext::param_context`),
   and `value_parameter_in_scope`/`push_param_scope` resolve a bare value

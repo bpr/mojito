@@ -1152,6 +1152,21 @@ pub fn struct_template(name: &str) -> &str {
         .map_or(name, |(template, _)| template)
 }
 
+/// `ty` with every struct named by the template it instantiates.
+///
+/// A backend-monomorphized instance (`Box$mono$TInt[Int]`) is the type its
+/// source spelling (`Box[Int]`) names; a type comparison decides over this
+/// form.
+pub fn template_spelled(ty: &Ty) -> Ty {
+    rewrite_ty(ty, &mut TemplateSpelling).unwrap_or_else(|_| ty.clone())
+}
+
+/// Whether two compile-time types are one type, as a type comparison
+/// (`T == Int`) decides it.
+pub fn same_type(left: &Ty, right: &Ty) -> bool {
+    template_spelled(left) == template_spelled(right)
+}
+
 /// Whether the struct symbol `name` is the bundled `nominal` struct, by its
 /// bare or module-qualified spelling, a backend-monomorphized instance
 /// included.
@@ -4639,6 +4654,31 @@ impl TyRewrite for Replacer<'_> {
     fn exit_signature(&mut self) {
         self.scopes.pop();
         self.depth -= 1;
+    }
+}
+
+/// The [`TyRewrite`] behind [`template_spelled`]: a monomorphized struct
+/// instance is respelled by its template, its arguments rewritten alike.
+struct TemplateSpelling;
+
+impl TyRewrite for TemplateSpelling {
+    fn whole(&mut self, ty: &Ty) -> Option<Ty> {
+        let TyKind::Struct(name, arguments) = ty.kind() else {
+            return None;
+        };
+        let template = struct_template(name);
+        (template != name).then(|| {
+            let arguments = rewrite_tyargs(arguments, self).unwrap_or_else(|_| arguments.clone());
+            ty.reusing(TyKind::Struct(template.to_string(), arguments))
+        })
+    }
+
+    fn expr(&mut self, expr: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        Ok(expr.clone())
+    }
+
+    fn visits_closed(&self) -> bool {
+        true
     }
 }
 

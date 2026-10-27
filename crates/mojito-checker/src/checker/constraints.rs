@@ -701,6 +701,47 @@ impl Checker {
         self.build_ct(expr, Recording::Silent)
     }
 
+    /// The type `expr` denotes in a compile-time position, read by the one
+    /// builder: `None` when it builds to a value. A type records what it
+    /// denotes at its span (a type operand's fact, its bracket attributes).
+    pub(super) fn type_operand_expression(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
+        if *self.build_ct(expr, Recording::Silent)?.meta() != MetaTy::Type {
+            return Ok(None);
+        }
+        self.build_ct(expr, Recording::Record)
+            .map(|built| Some(mojito_types::types::DependentType::resolve(built)))
+    }
+
+    /// A type comparison read as a value (`print(T == Int)`, `comptime b =
+    /// T == Int`, `show[T == Int]()`): one compile-time `Bool` parameter
+    /// value over type-valued operands, recorded at its span for MIR to
+    /// read, as upstream's comparison of two types is. `None` when `expr`
+    /// compares no type.
+    pub(super) fn infer_type_comparison(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
+        let ExprKind::Infix(
+            op
+            @ (InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Le | InfixOp::Gt | InfixOp::Ge),
+            left,
+            right,
+        ) = &expr.kind
+        else {
+            return Ok(None);
+        };
+        let denotes_type = |operand: &Expr| {
+            self.may_denote_type(operand)
+                && self
+                    .build_ct(operand, Recording::Silent)
+                    .is_ok_and(|built| *built.meta() == MetaTy::Type)
+        };
+        if !denotes_type(left) && !denotes_type(right) {
+            return Ok(None);
+        }
+        self.reject_type_parameter_comparison(*op, left, right)?;
+        let value = self.build_ct(expr, Recording::Record)?;
+        self.record_member_value(expr.source_span(), value);
+        Ok(Some(Ty::bool()))
+    }
+
     /// The member `field` the enclosing struct's shell holds, as resolved
     /// so far.
     fn self_struct_member(&self, field: &str) -> Option<&CtValue> {
@@ -1167,7 +1208,8 @@ impl Checker {
         }
         match self.applied_type(name, args) {
             Ok((ty, attributes)) => Ok(Some((CtValue::Type(ty), attributes))),
-            Err(TypeError::UnknownType(_)) => Ok(None),
+            // An unknown argument (`List[Foo]`) is the diagnostic.
+            Err(TypeError::UnknownType(unknown)) if unknown == name => Ok(None),
             Err(error) => Err(error),
         }
     }
@@ -1377,6 +1419,14 @@ impl Checker {
             {
                 context.list_get(&list, &build(index)?).map_err(param_error)
             }
+            // A member application through a type (`TypeList.of[Trait=
+            // AnyType, Int]`, `ParameterList.of[...]`).
+            ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. }
+                if matches!(object.kind, ExprKind::Member { .. })
+                    && let Some(ty) = self.member_type_operand(expr) =>
+            {
+                Ok(context.type_shape(ty))
+            }
             // `DType.int`: a compile-time element-type value, as it appears
             // in a `dtype: DType` argument (`_StridedRange[DType.int]`).
             ExprKind::Member { object, field }
@@ -1510,46 +1560,7 @@ impl Checker {
                     _ => context.infix(*op, &left, &right).map_err(param_error),
                 }
             }
-            // `reflect[T].field_count()`: a constant for a struct subject, a
-            // query node for a symbolic one.
-            _ => {
-                if let Some(value) = self.eval_reflection_expr(expr)? {
-                    return self.ct_param(value);
-                }
-                if let ExprKind::Member { object, field } = &expr.kind {
-                    if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType") {
-                        return Err(TypeError::Unsupported(format!(
-                            "unknown DType member '{field}'"
-                        )));
-                    }
-                    // A type application whose own resolution fails reports
-                    // why (`Box[Self.B].w` over a type member `B`).
-                    if !matches!(&object.kind, ExprKind::Identifier(_))
-                        && let Some(Err(error)) = self.member_type_operand_resolution(object)
-                    {
-                        return Err(error);
-                    }
-                }
-                self.positioned_application(expr).ok_or_else(|| {
-                    match (self.calls_raising_application(expr), &expr.kind) {
-                        (Some(function), _) => TypeError::BadCall {
-                            func: function.to_string(),
-                            reason: "cannot call raising function in type parameter".to_string(),
-                        },
-                        (None, ExprKind::Member { .. }) => TypeError::NotComptime(
-                            "unsupported associated comptime member access".to_string(),
-                        ),
-                        (None, ExprKind::Index { object, .. })
-                            if let ExprKind::Identifier(name) = &object.kind =>
-                        {
-                            TypeError::NotComptime(name.clone())
-                        }
-                        (None, _) => TypeError::NotComptime(
-                            "not an associated comptime expression".to_string(),
-                        ),
-                    }
-                })
-            }
+            _ => self.build_ct_rest(expr, recording),
         }
     }
 
@@ -1563,6 +1574,16 @@ impl Checker {
         // module constant.
         if let Some(reference) = self.value_parameter_in_scope(name) {
             return Ok(reference);
+        }
+        // A local type alias (`comptime F = Ts[0]`) is the type it names.
+        if let Some(ty) = self
+            .local_type_aliases
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name))
+            .or_else(|| self.installed_type_alias(name))
+        {
+            return Ok(self.param_context.type_shape(ty.clone()));
         }
         // A local `comptime` binding of a string literal's KGEN string
         // (`comptime v = "None".value`) or of a closed raw list is inlined.
@@ -1597,6 +1618,113 @@ impl Checker {
         self.ty_value_from_name(name, &[])?
             .ok_or_else(|| TypeError::NotComptime(name.to_string()))
             .and_then(|ty| self.ct_param(ty))
+    }
+
+    /// [`Self::build_ct`] for a shape no direct arm reads: a `TypeList`
+    /// read, a reflection query (`reflect[T].field_count()`, a constant for
+    /// a struct subject and a query node for a symbolic one), or a
+    /// positioned application, else the shape's rejection.
+    fn build_ct_rest(&self, expr: &Expr, recording: Recording) -> Result<ParamExpr, TypeError> {
+        // An element or the length of a `TypeList` value (`r[0]`,
+        // `Self.Ts.reverse()[0]`, `TypeList[Ts.values]().length`).
+        if let Some(read) = self.type_list_read(expr, recording) {
+            return read;
+        }
+        if let Some(value) = self.eval_reflection_expr(expr)? {
+            return self.ct_param(value);
+        }
+        if let ExprKind::Member { object, field } = &expr.kind {
+            if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType") {
+                return Err(TypeError::Unsupported(format!(
+                    "unknown DType member '{field}'"
+                )));
+            }
+            // A type application whose own resolution fails reports
+            // why (`Box[Self.B].w` over a type member `B`).
+            if !matches!(&object.kind, ExprKind::Identifier(_))
+                && let Some(Err(error)) = self.member_type_operand_resolution(object)
+            {
+                return Err(error);
+            }
+        }
+        self.positioned_application(expr).ok_or_else(|| {
+            match (self.calls_raising_application(expr), &expr.kind) {
+                (Some(function), _) => TypeError::BadCall {
+                    func: function.to_string(),
+                    reason: "cannot call raising function in type parameter".to_string(),
+                },
+                (None, ExprKind::Member { .. }) => TypeError::NotComptime(
+                    "unsupported associated comptime member access".to_string(),
+                ),
+                (None, ExprKind::Index { object, .. })
+                    if let ExprKind::Identifier(name) = &object.kind =>
+                {
+                    TypeError::NotComptime(name.clone())
+                }
+                (None, _) => {
+                    TypeError::NotComptime("not an associated comptime expression".to_string())
+                }
+            }
+        })
+    }
+
+    /// An element (`r[0]`, `Self.Ts.reverse()[0]`) or the length
+    /// (`TypeList[Ts.values]().length`, `len(...)` of the same list) of a
+    /// `TypeList` value. `None` when `expr` reads no `TypeList` value.
+    fn type_list_read(
+        &self,
+        expr: &Expr,
+        recording: Recording,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let receiver = |object: &Expr| self.typelist_receiver(object).transpose();
+        match &expr.kind {
+            ExprKind::Index { object, index } => {
+                let receiver = match receiver(object)? {
+                    Ok(TypeListReceiver::Pack(_)) => return None,
+                    receiver => receiver,
+                };
+                Some(receiver.and_then(|receiver| {
+                    let list = self.receiver_list(receiver)?;
+                    let index =
+                        self.build_ct(index, recording)
+                            .map_err(|_| TypeError::TypeMismatch {
+                                expected: "a compile-time Int index".to_string(),
+                                found: "a runtime value".to_string(),
+                                context: "TypeList index".to_string(),
+                            })?;
+                    self.param_context
+                        .list_get(&list, &index)
+                        .map_err(param_error)
+                }))
+            }
+            ExprKind::Member { object, field } if field == "length" => {
+                Some(receiver(object)?.and_then(|receiver| self.type_list_length(receiver)))
+            }
+            ExprKind::Call { name, args, .. } if name == "len" && args.len() == 1 => {
+                Some(receiver(&args[0])?.and_then(|receiver| self.type_list_length(receiver)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The length of a `TypeList` value.
+    fn type_list_length(&self, receiver: TypeListReceiver) -> Result<ParamExpr, TypeError> {
+        let list = self.receiver_list(receiver)?;
+        self.param_context.list_length(&list).map_err(param_error)
+    }
+
+    /// Whether `expr` is spelled as something that may denote a type: a
+    /// name, an application, a type value, or a member or subscript rooted
+    /// at a name, none of them a runtime binding.
+    fn may_denote_type(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Identifier(name) => self.lookup(name).is_none(),
+            ExprKind::TypeApply { .. } | ExprKind::TypeValue(_) => true,
+            ExprKind::Member { object, .. }
+            | ExprKind::Index { object, .. }
+            | ExprKind::MultiIndex { object, .. } => self.may_denote_type(object),
+            _ => false,
+        }
     }
 
     /// A tuple, list, or fieldwise struct construction's value over its
@@ -2916,17 +3044,13 @@ impl Checker {
             return Ok(ConstraintOperand::PackLength(pack));
         }
         Ok(match &expr.kind {
-            // A type name is the type it resolves to — `String` the nominal
-            // struct, as a `T == String` comparison means it; any other
-            // identifier names a parameter.
-            ExprKind::Identifier(name)
-                if self.lookup_tparam(name).is_none()
-                    && (scalar_type_name(name).is_some() || self.structs.contains_key(name)) =>
-            {
-                ConstraintOperand::Type(
-                    self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))?,
-                )
-            }
+            // A type operand is the type the one builder reads (`String` the
+            // nominal struct, as a `T == String` comparison means it), a type
+            // parameter its binder.
+            _ if let Some(ty) = self.comptime_type_operand(expr)? => match ty.kind() {
+                TyKind::Param { binder, .. } => ConstraintOperand::Param(binder.clone()),
+                _ => ConstraintOperand::Type(ty),
+            },
             // A local `comptime` over the binders (`comptime k = n + 1`) is
             // the parameter expression it names.
             ExprKind::Identifier(name)
@@ -2940,21 +3064,6 @@ impl Checker {
                     None => ConstraintOperand::Expr(expression),
                 }
             }
-            // A local type alias (`comptime U = Self.T`) is the binder or
-            // the type it names.
-            ExprKind::Identifier(name)
-                if let Some(ty) = self
-                    .local_type_aliases
-                    .iter()
-                    .rev()
-                    .find_map(|scope| scope.get(name))
-                    .or_else(|| self.installed_type_alias(name)) =>
-            {
-                match ty.kind() {
-                    TyKind::Param { binder, .. } => ConstraintOperand::Param(binder.clone()),
-                    _ => ConstraintOperand::Type(ty.clone()),
-                }
-            }
             ExprKind::Identifier(name) => ConstraintOperand::Param(ParamRef::unbound(name)),
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") => {
                 ConstraintOperand::Param(self.self_binder(field))
@@ -2962,16 +3071,6 @@ impl Checker {
             ExprKind::Int(value) => ConstraintOperand::Value(CtValue::IntLiteral(value.clone())),
             ExprKind::Bool(value) => ConstraintOperand::Value(CtValue::Bool(*value)),
             ExprKind::Str(value) => ConstraintOperand::Value(CtValue::Str(value.clone())),
-            ExprKind::TypeValue(ty) => ConstraintOperand::Type(self.type_value(expr, ty)?),
-            ExprKind::TypeApply { name, args } => {
-                let (ty, attributes) = self.applied_type(name, args)?;
-                self.record_bracket_attributes(expr.source_span(), attributes);
-                ConstraintOperand::Type(ty)
-            }
-            // A pack element (`Self.Ts[i]`) is a type operand.
-            ExprKind::Index { .. } if let Some(ty) = self.comptime_type_operand(expr)? => {
-                ConstraintOperand::Type(ty)
-            }
             // Arithmetic over value parameters (`n + 1`), an element of a
             // compile-time list (`XS[0]`), through the same builder a
             // dependent type argument uses. A name it cannot type — a
@@ -3752,11 +3851,12 @@ impl Checker {
         }
     }
 
-    /// Reject a type compared with a value (`T == 1`, a `case 1` over a
-    /// type subject) as the pin does: the comparison calls the operator's
-    /// method on the type's metatype, which a parameter's bound does not
-    /// implement and a struct's metatype does not convert to.
-    fn reject_type_parameter_comparison(
+    /// Reject a comparison the pin's types do not define: a type compared
+    /// with a value (`T == 1`, `3 == T`), or a type ordered (`T < Int`). The
+    /// comparison calls the operator's method on the type's metatype, which
+    /// a parameter's bound does not implement and a struct's metatype does
+    /// not convert to; only `==` and `!=` are defined between two types.
+    pub(super) fn reject_type_parameter_comparison(
         &self,
         op: InfixOp,
         left: &Expr,
@@ -3771,13 +3871,28 @@ impl Checker {
             InfixOp::Ge => "__ge__",
             _ => return Ok(()),
         };
-        let operand = |expr: &Expr| self.comptime_type_operand(expr).ok().flatten();
-        let Some(left) = operand(left) else {
-            return Ok(());
+        let builds_value = |operand: &Expr| {
+            self.build_ct(operand, Recording::Silent)
+                .is_ok_and(|built| *built.meta() != MetaTy::Type)
         };
-        if operand(right).is_some() {
-            return Ok(());
-        }
+        let left_value = builds_value(left);
+        let (left, right) = (
+            self.comptime_type_operand(left)?,
+            self.comptime_type_operand(right)?,
+        );
+        let left = match (left, right) {
+            (None, None) => return Ok(()),
+            (Some(_), Some(_)) if matches!(op, InfixOp::Eq | InfixOp::Ne) => return Ok(()),
+            // An operand the builder cannot read is the operand compiler's
+            // diagnostic.
+            (None, Some(_)) if !left_value => return Ok(()),
+            (None, Some(_)) => {
+                return Err(TypeError::MatchPattern(format!(
+                    "no matching method in call to '{method}'"
+                )));
+            }
+            (Some(left), _) => left,
+        };
         Err(TypeError::MatchPattern(match left.kind() {
             TyKind::Param { bounds, .. } => format!(
                 "'{}' does not implement the '{method}' method",

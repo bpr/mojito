@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A type comparison (`T == Int`, `Self.First == Int`, `F == Int` over a
+  local alias of a pack element) is now one compile-time `Bool` wherever it
+  is written: a `comptime` binding, a bracket argument, a runtime argument,
+  a runtime `if`, or a `comptime if`, as at the pin (R1387, R1180, R476's
+  `comptime k = Self.n`). Its operands come from the one compile-time
+  builder, so `constraint_operand` and `comptime_type_operand` no longer
+  read types per shape. `T == Box[Int]` now holds at `Box[Int]`, and
+  `T < Int`, `T == 3`, and `T == List[Foo]` report the pin's errors.
+
 - A module string, float, or `Bool` constant is now its literal's value in
   a bracket argument (`bind[lit]()`, `bind[lit + "me"]()`,
   `kbind[lit.value]()`, `gf[F]()`), and a compile-time member read through

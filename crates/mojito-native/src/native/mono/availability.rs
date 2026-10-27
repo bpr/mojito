@@ -16,7 +16,7 @@ use mojito_types::param_expr::fold::comparison_holds;
 use mojito_types::types::TyKind;
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, PackPredicateRef, TrivialLifecycle,
-    is_uninit_storage_name, trivial_predicate_spelling, uninit_storage_element,
+    is_uninit_storage_name, template_spelled, trivial_predicate_spelling, uninit_storage_element,
 };
 
 /// The verdict of a member's availability clauses under an instance's
@@ -131,7 +131,7 @@ impl Specializer<'_> {
                 TyArg::Ty(needle) => Some(
                     pack_types(param, bindings)?
                         .iter()
-                        .any(|ty| ty_equal_modulo_origins(ty, &needle)),
+                        .any(|ty| same_type_modulo_origins(ty, &needle)),
                 ),
                 TyArg::Val(_) | TyArg::Origin(_) => Some(false),
             },
@@ -149,7 +149,7 @@ impl Specializer<'_> {
                     (TyArg::Val(left), TyArg::Val(right)) => {
                         comparison_holds(InfixOp::Eq, &left, &right).unwrap_or(left == right)
                     }
-                    (TyArg::Ty(left), TyArg::Ty(right)) => ty_equal_modulo_origins(&left, &right),
+                    (TyArg::Ty(left), TyArg::Ty(right)) => same_type_modulo_origins(&left, &right),
                     _ => false,
                 };
                 Some(equal == matches!(constraint, Eq(..)))
@@ -335,6 +335,12 @@ fn every(verdicts: impl IntoIterator<Item = Option<bool>>) -> Option<bool> {
         }
     }
     all
+}
+
+/// Whether two clause operands are one type: a bound parameter's minted
+/// instance is the type its template spelling names.
+fn same_type_modulo_origins(left: &Ty, right: &Ty) -> bool {
+    ty_equal_modulo_origins(&template_spelled(left), &template_spelled(right))
 }
 
 /// The concrete type or value a clause operand denotes under `bindings`, or
