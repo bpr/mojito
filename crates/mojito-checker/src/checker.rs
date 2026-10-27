@@ -3230,6 +3230,8 @@ type SplitCallableSpecialization = (
 
 mod places;
 
+mod builtin_fold;
+
 mod comptime_validation;
 
 mod comptime_requests;

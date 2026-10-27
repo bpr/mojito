@@ -157,6 +157,56 @@ pub(in crate::checker) struct ApplicableFunction {
     /// Whether it is declared `raises`, which no type or parameter argument
     /// may call.
     raises: bool,
+    /// The inline level its decorators name.
+    pub(in crate::checker) inline: mojito_checked::declaration::InlineLevel,
+    /// An `@always_inline("builtin")` body's parameter expression over
+    /// [`super::annotations::builtin_body_binder`] slots, one per argument
+    /// in [`Checker::called_application`]'s order, which a call substitutes
+    /// its arguments into ([`Checker::fold_builtin_bodies`]).
+    pub(in crate::checker) folded_body: Option<ParamExpr>,
+}
+
+impl ApplicableFunction {
+    /// The MIR declaration the elaborator runs.
+    pub(in crate::checker) fn symbol(&self) -> &str {
+        &self.symbol
+    }
+
+    /// The compile-time parameters and then the runtime ones, each with its
+    /// type, in [`Checker::called_application`]'s argument order; `None`
+    /// for a static method of a generic struct, whose first argument is the
+    /// instance.
+    pub(in crate::checker) fn argument_slots(&self) -> Option<Vec<(&str, &Ty)>> {
+        (!self.on_instance).then(|| {
+            self.binders
+                .iter()
+                .map(|(name, ty)| (name.as_str(), ty))
+                .chain(
+                    self.params
+                        .iter()
+                        .map(|param| (param.name.as_str(), &param.ty)),
+                )
+                .collect()
+        })
+    }
+
+    /// Whether it is declared `raises`.
+    pub(in crate::checker) const fn raises(&self) -> bool {
+        self.raises
+    }
+
+    /// The declared result.
+    pub(in crate::checker) const fn result(&self) -> &SourceType {
+        &self.result
+    }
+}
+
+/// A callable [`applicable_functions`] lists, with the name a call spells
+/// and the body it declares.
+pub(super) struct ApplicableDeclaration<'a> {
+    pub(super) name: String,
+    pub(super) function: ApplicableFunction,
+    pub(super) body: &'a [Stmt],
 }
 
 /// The rejection of a raw parameter list (`KGENParamList[T]`, a pack's
@@ -191,10 +241,27 @@ pub(super) fn applicable_functions(
     constants: &dyn mojito_symbol::symbol::ModuleNames,
 ) -> HashMap<String, Vec<ApplicableFunction>> {
     let mut functions = HashMap::<String, Vec<ApplicableFunction>>::new();
+    for declaration in applicable_declarations(stmts, overloads, constants) {
+        functions
+            .entry(declaration.name)
+            .or_default()
+            .push(declaration.function);
+    }
+    functions
+}
+
+/// [`applicable_functions`]' callables in source order, each with its body.
+pub(super) fn applicable_declarations<'a>(
+    stmts: &'a [Stmt],
+    overloads: &impl mojito_symbol::symbol::OverloadLookup,
+    constants: &dyn mojito_symbol::symbol::ModuleNames,
+) -> Vec<ApplicableDeclaration<'a>> {
+    let mut declarations = Vec::new();
     for statement in stmts {
         match &statement.kind {
             StmtKind::Def {
                 name,
+                decorators,
                 type_params,
                 params,
                 positional_only,
@@ -203,9 +270,11 @@ pub(super) fn applicable_functions(
                 raises,
                 ret: Some(ret),
                 where_clauses,
+                body,
                 ..
             } if where_clauses.is_empty() => {
                 let shape = ApplicableShape {
+                    decorators,
                     type_params,
                     params,
                     positional_only: *positional_only,
@@ -220,10 +289,13 @@ pub(super) fn applicable_functions(
                     overloads,
                     constants,
                 );
-                functions
-                    .entry(name.clone())
-                    .or_default()
-                    .extend(shape.applicable(symbol, false));
+                declarations.extend(shape.applicable(symbol, false).map(|function| {
+                    ApplicableDeclaration {
+                        name: name.clone(),
+                        function,
+                        body,
+                    }
+                }));
             }
             StmtKind::Struct {
                 name,
@@ -240,6 +312,7 @@ pub(super) fn applicable_functions(
                         continue;
                     };
                     let shape = ApplicableShape {
+                        decorators: &method.decorators,
                         type_params: &method.type_params,
                         params: &method.params,
                         positional_only: method.positional_only,
@@ -255,16 +328,19 @@ pub(super) fn applicable_functions(
                         overloads,
                         constants,
                     );
-                    functions
-                        .entry(source)
-                        .or_default()
-                        .extend(shape.applicable(symbol, !type_params.is_empty()));
+                    declarations.extend(shape.applicable(symbol, !type_params.is_empty()).map(
+                        |function| ApplicableDeclaration {
+                            name: source,
+                            function,
+                            body: &method.body,
+                        },
+                    ));
                 }
             }
             _ => {}
         }
     }
-    functions
+    declarations
 }
 
 impl Checker {
@@ -807,7 +883,8 @@ impl Checker {
     ///
     /// A call of a module function is the application of that function to
     /// what its arguments denote ([`Self::called_application`]), wherever
-    /// it is spelled: a signature, a field type, or a body. Any other
+    /// it is spelled: a signature, a field type, or a body. A call of a
+    /// builtin function is its body's expression instead. Any other
     /// expression of a body is the application of the function MIR lifts
     /// for it, named here, to the binders it reads
     /// (`SemanticAdjustment::ComptimeApplication`, [`Self::binders_read`]).
@@ -817,8 +894,8 @@ impl Checker {
     ///
     /// Two occurrences of one lifted expression over the same bindings
     /// denote one application, as the pin identifies them by structure, and
-    /// it is not the value it computes: `h(n)` is not `n * 2`. `None` for
-    /// any other expression.
+    /// it is not the value it computes: `h(n)` is not `n * 2`, unless `h`
+    /// is builtin. `None` for any other expression.
     pub(super) fn lifted_application(&self, expr: &Expr) -> Option<ParamExpr> {
         let called = self.called_application(expr);
         // A signature or a field type has no body to lift a function from,
@@ -915,11 +992,14 @@ impl Checker {
     /// standing where the call omits one, as the pin's call node is. It
     /// names no declaration's binders, so a caller that binds them spells
     /// the same value (`h(2)` for `h(n)` at `n = 2`, `d(1, 3)` for `d(1)`),
-    /// and the elaborator runs the callable on the argument values. `None`
-    /// for a callee that is no such callable ([`applicable_functions`]), a
-    /// call that selects no one overload, or an argument that denotes no
-    /// parameter expression.
-    fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
+    /// and the elaborator runs the callable on the argument values. A call
+    /// of an `@always_inline("builtin")` callable whose body folds is that
+    /// body's expression over the arguments instead, as upstream's
+    /// `foldInlineBuiltinFunction` clones the body with the call's operands
+    /// substituted, so `twice(n)` is `n + n`. `None` for a callee that is
+    /// no such callable ([`applicable_functions`]), a call that selects no
+    /// one overload, or an argument that denotes no parameter expression.
+    pub(super) fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
         let (function, arguments) = self.selected_application(expr)?;
         let result = self.ty_from_anno(&function.result).ok().filter(|ty| {
             matches!(
@@ -932,13 +1012,24 @@ impl Checker {
                     | TyKind::Struct(..)
             )
         })?;
-        (!function.raises).then(|| {
-            self.param_context.apply(
-                &function.symbol,
-                &arguments,
-                mojito_types::param_expr::MetaTy::value(result),
-            )
-        })
+        if function.raises {
+            return None;
+        }
+        if let Some(body) = &function.folded_body {
+            let mut bindings = mojito_types::param_expr::ParamBindings::new();
+            for (slot, argument) in arguments.into_iter().enumerate() {
+                bindings.bind(
+                    super::annotations::builtin_body_binder(&function.symbol, slot, "").id,
+                    argument,
+                );
+            }
+            return self.param_context.replace(body, &bindings).ok();
+        }
+        Some(self.param_context.apply(
+            &function.symbol,
+            &arguments,
+            mojito_types::param_expr::MetaTy::value(result),
+        ))
     }
 
     /// Whether `expr` calls a `raises` callable a compile-time call would
@@ -3569,6 +3660,7 @@ struct ApplicableParameter {
 /// The signature of a `def` or a static method, as its declaration spells
 /// it.
 struct ApplicableShape<'a> {
+    decorators: &'a [mojito_ast::ast::Decorator],
     type_params: &'a [mojito_ast::ast::TypeParam],
     params: &'a [mojito_ast::ast::FnParam],
     positional_only: Option<usize>,
@@ -3639,6 +3731,9 @@ impl ApplicableShape<'_> {
                 _ => return None,
             },
             raises: self.raises,
+            inline: mojito_checked::declaration::InlineLevel::of(self.decorators)
+                .unwrap_or_default(),
+            folded_body: None,
         })
     }
 }

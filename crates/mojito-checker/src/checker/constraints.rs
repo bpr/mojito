@@ -1766,6 +1766,49 @@ impl Checker {
         }
     }
 
+    /// The parameter expression of a compile-time scalar's storage read, as
+    /// an `@always_inline("builtin")` body spells its arithmetic: a scalar's
+    /// `_mlir_value` is the scalar, since a width-one vector's storage is its
+    /// value, `Int(mlir_value=s)` the scalar its storage `s` holds, and
+    /// ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
+    /// ([`super::builtin_fold::mlir_op_operator`]). `None` for any other
+    /// expression.
+    fn scalar_storage_expression(
+        &self,
+        expr: &Expr,
+        recording: Recording,
+    ) -> Option<Result<ParamExpr, TypeError>> {
+        let scalar = |operand: &Expr| {
+            self.build_ct(operand, recording)
+                .ok()
+                .filter(is_scalar_value)
+        };
+        match &expr.kind {
+            _ if let Some(operator) = super::builtin_fold::mlir_op_operator(expr) => {
+                Some(self.build_ct(&operator, recording))
+            }
+            ExprKind::Member { object, field } if field == mojito_types::ct::MLIR_VALUE_FIELD => {
+                scalar(object).map(Ok)
+            }
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if param_args.is_empty()
+                && args.is_empty()
+                && let [storage] = kwargs.as_slice()
+                && storage.name == "mlir_value" =>
+            {
+                let target = scalar_type_name(name)?;
+                scalar(&storage.value)
+                    .filter(|value| value.meta().as_value() == Some(&target))
+                    .map(Ok)
+            }
+            _ => None,
+        }
+    }
+
     /// The `StringLiteral` whose `value` parameter `object.value` reads: a
     /// closed literal, or a `StringLiteral` value parameter.
     fn string_literal_operand(&self, object: &Expr, recording: Recording) -> Option<ParamExpr> {
@@ -1862,6 +1905,11 @@ impl Checker {
     /// a struct subject and a query node for a symbolic one), or a
     /// positioned application, else the shape's rejection.
     fn build_ct_rest(&self, expr: &Expr, recording: Recording) -> Result<ParamExpr, TypeError> {
+        // A scalar's storage: `n._mlir_value`, `Int(mlir_value=s)`, and the
+        // `__mlir_op` arithmetic over it.
+        if let Some(storage) = self.scalar_storage_expression(expr, recording) {
+            return storage;
+        }
         if let ExprKind::Call {
             name,
             param_args,
@@ -3517,6 +3565,20 @@ impl Checker {
                 }
                 Err(error) => return Err(error),
             },
+            // A call of a builtin callable is its body's expression.
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+                if let Some(expression) = self.called_application(expr).filter(|expression| {
+                    !matches!(
+                        expression.kind(),
+                        mojito_types::param_expr::ParamKind::Apply { .. }
+                    )
+                }) =>
+            {
+                match expression.as_constant() {
+                    Some(value) => ConstraintOperand::Value(value.clone()),
+                    None => ConstraintOperand::Expr(expression),
+                }
+            }
             _ => {
                 return Err(TypeError::Unsupported(
                     "unsupported generic constraint operand".to_string(),
@@ -4424,6 +4486,17 @@ enum ModuleConstant<'a> {
     Int(&'a mojito_common::literal::IntLiteral),
     Value(&'a CtValue),
     Literal(&'a Expr),
+}
+
+/// Whether `value` is an `Int`, `UInt`, `Bool`, or `Float64` value: a
+/// width-one vector, whose `_mlir_value` storage is the value itself.
+fn is_scalar_value(value: &ParamExpr) -> bool {
+    value.meta().as_value().is_some_and(|ty| {
+        matches!(
+            ty.kind(),
+            TyKind::INT | TyKind::UINT | TyKind::Bool | TyKind::FLOAT64
+        )
+    })
 }
 
 fn conjuncts(proposition: &ParamExpr) -> Vec<ParamExpr> {

@@ -11,6 +11,7 @@ assets/ok/abstract_dispatch_effect_free_conformers.mojo	main	exe-differential	sa
 assets/ok/access_beside_live_ref_binding.mojo	main	exe-differential	sanitized
 assets/ok/add.mojo	main	exe-differential	sanitized
 assets/ok/allocation_tracked_unsafe_ptr.mojo	main	exe-differential	sanitized
+assets/ok/always_inline_builtin_parameter_fold.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_nodebug_binders.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_nodebug_calls.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_nodebug_collectors.mojo	main	exe-differential	sanitized

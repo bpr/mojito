@@ -2310,7 +2310,9 @@ pub enum ParamKind {
     /// `args`, in argument order. It is never folded: two applications are
     /// one node by structure, as the pin keeps `f(Int(7))` symbolic through
     /// the check, so a type over one never matches the folded value. A
-    /// layout query is the application of `size_of` to one type. Only the
+    /// call of an `@always_inline("builtin")` callable whose body folds is
+    /// never one: the check builds it as that body's expression. A layout
+    /// query is the application of `size_of` to one type. Only the
     /// elaborator below MIR evaluates one, on first demand.
     Apply {
         #[serde(serialize_with = "crate::symbol_ref::serialize")]

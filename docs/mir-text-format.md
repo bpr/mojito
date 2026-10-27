@@ -724,6 +724,12 @@ no spread, and types the registers as a signature the intrinsic takes. The
 checked `LlvmIntrinsic` adjustment records the call, and the package format
 moves to `mojito-package 119`.
 
+The package format moves to `mojito-package 120` when a package's
+compile-time-applicable callables carry their inline level and an
+`@always_inline("builtin")` callable's folded body, the parameter
+expression a call in an importer's type substitutes its arguments into
+(R1395). The MIR schema is unchanged.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

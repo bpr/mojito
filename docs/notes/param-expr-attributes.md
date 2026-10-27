@@ -595,7 +595,12 @@ compile-time route established for it, which concrete uses read
 (`SimdWidth::known`, `require_constant`) while type identity stays the
 application — an evaluated node and an unevaluated one are two nodes,
 built in two passes that never meet. A layout query is `Apply { function:
-"size_of", args: [type] }` of kind `Int` (`ParamContext::size_of`).
+"size_of", args: [type] }` of kind `Int` (`ParamContext::size_of`). A call
+of an `@always_inline("builtin")` callable is the exception, as at the pin
+(`foldInlineBuiltinFunction`): the check folds its body once, at the
+declaration, over binders of its own (`builtin_body_binder`), and a call
+is that body with its arguments replaced, so `twice(n)` over `return n + n`
+is `2 * n`, never an `Apply` (`Checker::fold_builtin_bodies`, R1395).
 
 **An applied module constant** (decision D3,
 `docs/notes/ctfe-request-path.md`): source validation builds the

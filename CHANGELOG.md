@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call of an `@always_inline("builtin")` function or static method in a
+  parameter expression is now its body's expression, as the pin folds it,
+  so `SIMD[DType.int8, twice(n)]` over `return n + n` and `SIMD[DType.int8,
+  n + n]` are one type, in a signature, a field type, a body's `comptime`,
+  and a `where` clause (R1395). The body is folded once at its
+  declaration, through nested builtin calls, single-assignment `var`s,
+  conditional expressions, and `__mlir_op` `pop` and `index` arithmetic
+  over `_mlir_value`. A builtin body the pin rejects is rejected at its
+  declaration with the pin's message: `raises`, an early `return`, a
+  statement `if`, a loop, a reassigned `var`, or a call of a non-builtin
+  callable, `Int`'s `//`, `%`, and `**` among them. The package format
+  moves to `mojito-package 120`.
 - `std.sys.intrinsics.llvm_intrinsic`, re-exported from `std.sys`, and the
   `pop.call_llvm_intrinsic` op it is spelled over now call an LLVM
   intrinsic by name, on the VM and natively and at compile time (R1394).

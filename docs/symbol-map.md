@@ -1822,7 +1822,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   backs the raising-callee rejection in `eval_associated_ct`,
   `solve_applied_args` (`checker/generics.rs`, from `solve_value_args`)
   solves a value parameter through one, and
-  `ComptimeThunks::request_applications` lifts nothing for it. `not` and a
+  `ComptimeThunks::request_applications` lifts nothing for it. A call of an
+  `@always_inline("builtin")` callable whose body folds is that body instead
+  (`ApplicableFunction::folded_body`, replaced over the call's arguments):
+  `Checker::fold_builtin_bodies` (`checker/builtin_fold.rs`, run by
+  `check_program` as `declarations.builtin_folds`, after the shells and
+  before any signature) folds each builtin body of
+  `applicable_declarations` callee first over `annotations::builtin_body_binder`
+  slots and returns the pin's rejection of a body construct its fold
+  refuses (`builtin_body_rejection`); `build_ct` reads the body's
+  ``__mlir_op`` arithmetic through `builtin_fold::mlir_op_operator` (over
+  `MlirOp::lowering`), a scalar's `_mlir_value`, and `Int(mlir_value=)`, and
+  `constraint_operand` takes a folded call as a `where` operand. `not` and a
   conditional are compiled by `build_ct`'s arms
   (`checker/constraints.rs`). A static call through `Self` in a body is
   typed by `infer_type_receiver_call`

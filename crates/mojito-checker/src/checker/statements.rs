@@ -140,6 +140,10 @@ impl Checker {
             }
         }
         drop(phase);
+        // A builtin body folds before any signature or field type calls it.
+        let phase = timing::span("declarations.builtin_folds");
+        self.fold_builtin_bodies(stmts)?;
+        drop(phase);
         let phase = timing::span("declarations.traits");
         // A trait requirement's default folds against the module's constants,
         // which a trait may name wherever they are declared. A constant

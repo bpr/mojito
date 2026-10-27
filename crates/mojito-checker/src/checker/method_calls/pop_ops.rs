@@ -135,15 +135,8 @@ impl Checker {
     }
 }
 
-/// Why a `pop` op's operands do not type: upstream's verifier rejects them,
-/// or the pin accepts them and Mojito does not compute them.
-enum PopTypeError {
-    Verifier(String),
-    Subset(String),
-}
-
 /// The text of an ``__mlir_attr.`#…` `` attribute argument.
-fn mlir_attribute(value: &mojito_ast::ast::ParamArg) -> Option<&str> {
+pub(in crate::checker) fn mlir_attribute(value: &mojito_ast::ast::ParamArg) -> Option<&str> {
     let mojito_ast::ast::ParamArg::Value(Expr {
         kind: ExprKind::Member { object, field },
         ..
@@ -153,6 +146,13 @@ fn mlir_attribute(value: &mojito_ast::ast::ParamArg) -> Option<&str> {
     };
     matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_attr")
         .then_some(field.as_str())
+}
+
+/// Why a `pop` op's operands do not type: upstream's verifier rejects them,
+/// or the pin accepts them and Mojito does not compute them.
+enum PopTypeError {
+    Verifier(String),
+    Subset(String),
 }
 
 /// The result of an `index` op: every operand is an `index` (`Int`); the

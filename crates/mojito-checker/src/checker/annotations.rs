@@ -262,6 +262,17 @@ pub(super) fn member_binder(owner: &str, slot: usize, name: &str) -> ParamRef {
     }
 }
 
+/// The binder of argument `slot` of the `@always_inline("builtin")`
+/// callable `symbol`, over which its folded body is stated
+/// ([`super::Checker::fold_builtin_bodies`]): one owner per callable, apart
+/// from its declared binders' own.
+pub(super) fn builtin_body_binder(symbol: &str, slot: usize, name: &str) -> ParamRef {
+    ParamRef {
+        id: ParamId::new(&format!("{BUILTIN_BODY_PREFIX}{symbol}"), slot),
+        name: name.into(),
+    }
+}
+
 /// The type-parameter scope a parameterized associated member's own
 /// `[params]` open while its body is lowered ([`member_binder`] numbering).
 pub(super) fn member_type_scope(
@@ -389,3 +400,6 @@ pub(super) fn struct_subst(decls: &[ParamDecl], targs: &[TyArg]) -> TySubst {
 
 /// The owner spelling every [`synthetic_binder`] starts with.
 const SYNTHETIC_BINDER_PREFIX: &str = "$synthetic:";
+
+/// The owner spelling every [`builtin_body_binder`] starts with.
+const BUILTIN_BODY_PREFIX: &str = "$builtin:";

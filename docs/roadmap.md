@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1522**.
+Next free ID: **R1524**.
 
 ## Ordered Work
 
@@ -7736,6 +7736,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - `param_expr::fold` refuses the shift, so `sccp` leaves it to the VM.
   - Matching the pin needs a compile-time diagnostic when a shift's
     constant amount is outside the lane width.
+  - Its home is the folded `pop.shr` of a library `SIMD.__rshift__`
+    (R1522).
   - Found while landing R846 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7831,6 +7833,28 @@ retained on purpose and re-probed rather than fixed; they are listed in
     node.
   - Found while landing R1369 (2026-10-27).
   - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1523 An `@always_inline("builtin")` body the pin rejects is
+  accepted outside the fold's domain**
+
+  The pin judges every builtin body by its fold, where Mojito judges only a
+  body in the compile-time call domain (`applicable_declarations`: scalar
+  parameters by value, a declared result) and only the constructs
+  `builtin_body_rejection` lists.
+  - A body the fold cannot read (a host-implemented callee, a `Bool`
+    conversion) keeps its call an application instead of being rejected.
+  - Probe: `def g(mut n: Int): n += 1` under the decorator runs, where the
+    pin says "does not support this argument convention"; so does `def
+    g(n: Int, s: String) -> Int: return n + n`.
+  - Probe: `print(n)` before `return n + n` runs, where the pin says "does
+    not support MLIR operation lit.ref.immut"; so does `return Int(b)` over
+    a `b: Bool`.
+  - Probe: `return min(n, 3)` runs, where the pin says "only supports calls
+    to other '@always_inline("builtin")' functions": Mojito's `min` is a
+    host function (`infer_min_max`), not a library `def` the rule sees.
+  - Found while landing R1395 (2026-10-27).
+  - Depends on R1522.
   - Model: Opus, Not Planned.
 
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
@@ -9527,26 +9551,36 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1395 A call of an `@always_inline("builtin")` function is not
+- [ ] **R1522 A call of an `@always_inline("builtin")` method is not
   folded in a parameter expression**
 
-  `SIMD[DType.int8, twice(n)]` and `SIMD[DType.int8, n + n]` are different
-  types to Mojito ("expected SIMD[DType.int8, 2 * n], found SIMD[DType.int8,
-  twice(n)]"), where the pin folds the builtin body
-  (`SharedState::foldInlineBuiltinFunction`, called from
-  `UncheckedCallEmission.cpp`).
-  - `InlineLevel::Builtin` is read only by `inline_parametric` today.
-  - The lever: in `Checker::lifted_application`, substitute parameter
-    operands into the body's `pop` and `index` ops and fold the result to a
-    `ParamExpr`. Reject a body that does not fold, as upstream does.
-  - Every type-level `n + 1` becomes such a call once `Int` and `SIMDLength`
-    arithmetic are library code, so this lands before them. It also gives
-    R851's "could not simplify operator shr" diagnostic a home.
-  - Probe: `f[n](x: SIMD[DType.int8, twice(n)]) -> SIMD[DType.int8, n + n]`
-    over the `twice` above prints `[1, 1, 1, 1]` at the pin and is rejected
-    by Mojito.
+  `SIMD[DType.int8, G[1].plus(n)]` over a builtin `@staticmethod` of
+  `struct G[k: Int]` returning `n + Self.k` is not `SIMD[DType.int8, n + 1]`
+  to Mojito ("found SIMD[DType.int8, G.plus[G[1]](n)]"), where the pin folds
+  the body and prints `[1, 1]`.
+  - `Checker::fold_builtin_bodies` folds only a callable whose argument
+    slots are its own parameters: a static method of a generic struct
+    (`ApplicableFunction::on_instance`) has its instance as a first slot,
+    and `Self.k` in its body reads that instance's parameter.
+  - A method with `self` is outside `applicable_declarations` altogether.
+    Upstream's `SIMD.__add__`, `SIMDLength.__add__`, and
+    `_simd_construction_checks`' `size.is_power_of_two()` are such methods.
+    Their bodies read `self._mlir_value` and build `Self(mlir_value=…)`, so
+    the fold needs a field read of a struct-valued slot and a construction
+    through a builtin `__init__`.
+  - Probe: `def f[n: Int](x: SIMD[DType.int8, G[1].plus(n)]) ->
+    SIMD[DType.int8, n + 1]: return x`, called as `f[1](SIMD[DType.int8,
+    2](1))`, prints `[1, 1]` at the pin and is rejected by Mojito.
+  - Probe: `L(n).doubled()` over `@fieldwise_init struct
+    L(TrivialRegisterPassable): var v: Int` with a builtin `doubled(self)`
+    returning `self.v + self.v` is rejected by both, but Mojito says "not a
+    compile-time Int constant" where the pin names the folded
+    `Int((mul L(n).v, 2))`.
+  - R851's "could not simplify operator shr" belongs to the folded
+    `pop.shr` once `SIMD.__rshift__` is library code folded here.
+  - Found while landing R1395 (2026-10-27).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1396 A one-field register-passable struct is a boxed struct value
   in the VM**
@@ -9619,8 +9653,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and `reduce_min` off x86) are `llvm_intrinsic` calls of
     `llvm.vector.reduce.*`, which run since R1394. Its subvector and
     shuffle bodies need R1519.
-  - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R336 (the length
-    type), R185 and R186 (so the port is upstream's bodies with no
+  - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R1522, R336 (the
+    length type), R185 and R186 (so the port is upstream's bodies with no
     leniency), R58, R1516, R1517, R1518, and R1519.
   - Model: Fable, Planned.
 
@@ -9907,11 +9941,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     conversion from `Int`, so the declaration, not a side table, carries it.
   - Upstream's `SIMDLength` is a struct over `index` ops whose arithmetic
     must fold in a parameter expression, so the `index` ops (R1392) and
-    the builtin fold (R1395) land first.
+    the builtin fold of a method (R1522) land first.
   - Its `__init__` casts an `index` to its storage with
     `pop.cast_to_builtin` (R1516).
   - Found while landing R259 (2026-10-05).
-  - Depends on R1392, R1395, and R1516.
+  - Depends on R1392, R1395, R1516, and R1522.
   - Model: Fable, Not Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string

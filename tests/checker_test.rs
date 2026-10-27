@@ -4235,6 +4235,59 @@ fn inline_decorator_operands_match_the_pin() {
 }
 
 #[test]
+fn builtin_body_rules_match_the_pin() {
+    let rejected = |body: &str| match err(&format!(
+        "@always_inline(\"builtin\")\ndef f(n: Int) -> Int:\n{body}\n"
+    )) {
+        TypeError::InvalidDecorator(message) => message,
+        other => panic!("expected a builtin body rejection, found {other:?}"),
+    };
+    let reason = |reason: &str| format!("'@always_inline(\"builtin\")' {reason}");
+    let calls = reason("only supports calls to other '@always_inline(\"builtin\")' functions");
+    assert_eq!(
+        rejected("    if n > 3:\n        return 1\n    return n"),
+        reason("does not support MLIR operation lit.return")
+    );
+    assert_eq!(
+        rejected("    var m = n\n    if m > 3:\n        m = 3\n    return m"),
+        reason("can only handle single-result if")
+    );
+    assert_eq!(
+        rejected("    var m = n\n    while m > 3:\n        m -= 1\n    return m"),
+        reason("does not support MLIR operation lit.loop")
+    );
+    assert_eq!(
+        rejected("    var m = n\n    m += 2\n    return m"),
+        reason("could not resolve operand value")
+    );
+    assert_eq!(rejected("    return n // 2"), calls);
+    assert_eq!(rejected("    return n % 2"), calls);
+    assert_eq!(
+        err(
+            "def g(n: Int) -> Int:\n    return n\n@always_inline(\"builtin\")\ndef f(n: Int) -> Int:\n    return g(n)\n"
+        ),
+        TypeError::InvalidDecorator(calls)
+    );
+    assert_eq!(
+        err("@always_inline(\"builtin\")\ndef f(n: Int) raises -> Int:\n    return n\n"),
+        TypeError::InvalidDecorator(reason("does not support this argument convention"))
+    );
+    // A folded body is its expression, so the call and the spelled
+    // arithmetic are one type; an undecorated callee stays an application.
+    let signature = |decorator: &str| {
+        format!(
+            "{decorator}\ndef twice(n: Int) -> Int:\n    var m = n + 1\n    return m + n - 1\n\
+             def f[n: Int](x: SIMD[DType.int8, twice(n)]) -> SIMD[DType.int8, n + n]:\n    return x\n"
+        )
+    };
+    ok(&signature("@always_inline(\"builtin\")"));
+    assert!(matches!(
+        err(&signature("@always_inline")),
+        TypeError::TypeMismatch { .. }
+    ));
+}
+
+#[test]
 fn trait_method_inline_decorators_match_the_pin() {
     let trait_method = |decorator: &str, body: &str| {
         format!("trait Tr:\n    {decorator}\n    def m(self) -> Int:\n        {body}\n")
