@@ -1712,10 +1712,14 @@ impl<'a> Flatten<'a> {
     /// argument temporaries; a raising call's drops after them. A `^`
     /// transfer's storage is forwarded to a slot of its own (the check
     /// records the discard as its consumer), so the slot destroys the source
-    /// where it lies, before the next statement.
+    /// where it lies, before the next statement. A trivial register value's
+    /// `^` is a copy the check decided, which stays in its register.
     pub(super) fn discard_result(&mut self, expression: &'a mojito_hir::hir::HirExpr) {
         let handle = self.handle(expression);
-        if handle.transfer_operand().is_none() {
+        if handle.transfer_operand().is_none()
+            || handle.transfer_verdict()
+                == Some(mojito_checked::checked::TransferVerdict::TrivialCopy)
+        {
             self.with_statement_loans(|this| {
                 this.expr_c(handle);
             });

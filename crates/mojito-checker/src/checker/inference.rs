@@ -1337,10 +1337,11 @@ impl Checker {
                 self.infer_index(expr.source_span(), object, index)
             }
             // `^` takes its source by one ordered rule
-            // ([`Self::transfer_verdict`]).
+            // ([`Self::transfer_verdict`]), whose verdict lowering applies.
             ExprKind::Transfer(inner) => {
                 let ty = self.infer(inner)?;
-                self.transfer_verdict(inner, &ty)?;
+                let verdict = self.transfer_verdict(inner, &ty)?;
+                self.record_at(expr.source_span()).transfer_verdict = Some(verdict);
                 Ok(ty)
             }
             // An empty list literal needs a contextual element type; the

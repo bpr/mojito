@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1502**.
+Next free ID: **R1503**.
 
 ## Ordered Work
 
@@ -1672,26 +1672,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1367 MIR lowering re-decides whether a transfer copies or moves**
-
-  MIR `transfer` (`mir/lower_expr/expr.rs`) and the temporary binders in
-  `mir/calls.rs` choose copy or move by `owns_droppable_storage`, where
-  every struct counts as owning, while upstream decides once, in
-  `emitTransfer`, from the type's triviality.
-  - The lever: record the verdict `transfer_verdict`
-    (`checker/places.rs`) already returns (`TransferVerdict`: pass-through,
-    trivial copy, or place move) as a node fact, and lowering reads it.
-  - The temporary binders read the same fact, so a register-passable struct
-    stays in a register.
-  - Probe: `conformance/probes/trivial_struct_mut_parameter_transfer.mojo`.
-    The pin prints `3 3`. Mojito says "'v' is uninitialized at return from
-    this function".
-  - Closes R121 (a trivial struct transferred out of a `mut` parameter).
-    Shrinks R750 (a field transfer lowered as a move before the discard fact
-    is read).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R32 Owned iteration of a variadic pack moves elements the pin copies**
 
   Problem: `for var value in values^` over `var *values: Self.T` moves each
@@ -2039,26 +2019,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     ordinary value read.
   - Workaround: bind the container to a local first.
   - Probe: `conformance/probes/temporary_element_read_argument.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R121 A `TrivialRegisterPassable` struct cannot be transferred out of
-  a `mut` parameter**
-
-  Problem: `def take(mut v: V) -> V: return v^` for a
-  `struct V(TrivialRegisterPassable)` prints `3 3` at the pin and is rejected
-  in Mojito with "'v' is uninitialized at return from this function".
-  - The pin transfers a trivial register value as a copy and only warns that
-    the `^` has no effect.
-  - MIR lowering copies only values whose type owns no storage
-    (`owns_droppable_storage`), and every struct counts as owning.
-  - Lowering has no conformance facts. The checker knows
-    (`is_trivial_register_passable`) and would have to record it on the
-    transfer.
-  - Probe: `conformance/probes/trivial_struct_mut_parameter_transfer.mojo`.
-  - The checker already records a call result's register passability
-    for MIR (`IndirectResult`, `Checker::record_result_conventions`); a
-    transfer could carry the same fact.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2649,6 +2609,28 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: the bundled `Allocation` and `ThinAllocation` spell
     `Deinitable where False`, where upstream's declare `not Deinitable`.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1502 `Pointer` and `StringLiteral` are not `TrivialRegisterPassable`**
+
+  Upstream declares both `TrivialRegisterPassable`, but the modelled
+  conformance (`modelled_trivial_register_passable`, `mojito-types`) and
+  the checker's `is_trivial_register_passable` answer no for
+  `TyKind::Pointer` and `TyKind::StringLiteral`.
+  - Probe: `conformance/probes/builtin_trivial_register_passable.mojo`.
+    The pin prints `7 a`. Mojito says "type 'Pointer[Int, ...]' for
+    parameter 'T' does not conform to trait 'TrivialRegisterPassable'", and
+    infers `keep("a")` at `String`.
+  - So `transfer_verdict` (`checker/places.rs`) judges `p^` of a pointer a
+    place move, and MIR `transfer` (`mir/lower_expr/expr.rs`) still copies
+    one out of a `mut` parameter by `owns_droppable_storage`. Once the
+    predicate answers yes, delete that fallback so lowering reads the
+    verdict alone.
+  - Check the predicate's other callers: `fieldwise_conventions` (a pointer
+    field's fieldwise parameter becomes `read`), `origins/sig.rs`'s
+    `NoMemoryOrigin`, and `patterns.rs`'s `ref` binding.
+  - Found while landing R1367 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

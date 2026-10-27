@@ -861,10 +861,14 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   so the checker rejects one over a non-`Deinitable` referent at the store
   (`places.rs`'s `check_overwritten_referent`)). A `^` source is judged where the
   transfer is inferred by upstream's ordered `emitTransfer` rule
-  (`places.rs`'s `transfer_verdict`, returning a `TransferVerdict`; its
-  rejections are `TypeError::ParameterTransfer`, `UntrackedTransfer`,
-  `ImmutableTransfer`, and `IndirectTransfer`, the last naming a capture
-  `scopes.rs`'s `capture_kind` reports held by reference).
+  (`places.rs`'s `transfer_verdict`, returning `mojito-checked`'s
+  `TransferVerdict`; its rejections are `TypeError::ParameterTransfer`,
+  `UntrackedTransfer`, `ImmutableTransfer`, and `IndirectTransfer`, the last
+  naming a capture `scopes.rs`'s `capture_kind` reports held by reference).
+  The verdict is the transfer node's `transfer_verdict` fact, handed over as
+  `SemanticAdjustment::Transfer`; MIR's `Node::transfer_verdict` reads it, so
+  `transfer` (`lower_expr/expr.rs`) and `discard_result` (`calls.rs`) copy a
+  `TrivialCopy` source rather than move it.
 - `mojito-types`' `types::is_symbolic`/`ct_value_is_symbolic` answer whether a
   type still mentions something only an instantiation can resolve. MIR's
   `lower_expr/expr.rs` uses it to turn `size_of` of an unspecialized type into

@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_checked::checked::TransferVerdict;
 use mojito_types::types::TyKind;
 
 #[allow(
@@ -357,18 +358,6 @@ impl Checker {
                 .is_some_and(|call| call.reference_result.is_none())
         })
     }
-}
-
-/// How a `^` transfer takes its source, as upstream's `emitTransfer`
-/// decides it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TransferVerdict {
-    /// An owned rvalue: the `^` has no effect.
-    PassThrough,
-    /// A trivial register value, copied: the `^` has no effect.
-    TrivialCopy,
-    /// A move out of tracked storage.
-    PlaceMove,
 }
 
 /// The argument positions a call's positional `*args` collector gathers,

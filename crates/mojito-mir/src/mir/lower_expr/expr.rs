@@ -175,13 +175,20 @@ impl<'a> Flatten<'a> {
     }
 
     pub(in crate::mir) fn transfer(&mut self, e: Node<'a>, inner: Node<'a>) -> Reg {
+        // A trivial register value is copied, and its source stays
+        // initialized, as upstream's `emitTransfer` decides it.
+        if e.transfer_verdict() == Some(mojito_checked::checked::TransferVerdict::TrivialCopy) {
+            return self.expr(inner);
+        }
         if let Some(name) = self.name_spelled(inner) {
             let var = self.expression_var(&name, inner);
             // A `mut` parameter's slot, or a capture's reference slot,
             // holds the handle to the caller's storage, so the transfer
             // takes the referent out through it. A value that owns no
-            // storage transfers as a copy and leaves the caller's value in
-            // place; a captured pack owns its elements.
+            // storage, whose triviality the check's predicate does not
+            // model (a pointer, a literal), transfers as a copy and leaves
+            // the caller's value in place; a captured pack owns its
+            // elements.
             let slot_ty = self.var_types.get(&var).cloned();
             let reference_slot = matches!(slot_ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)));
             if ((var as usize) < self.f.n_params || reference_slot)

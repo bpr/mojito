@@ -116,6 +116,17 @@ impl<'a> Node<'a> {
         self.sole_operand(|op| matches!(op, CheckedOp::Transfer(_)))
     }
 
+    /// How this `^` takes its source, as the check decided it: `None` when
+    /// this is no transfer, or one the check bound to a read parameter.
+    pub(super) fn transfer_verdict(self) -> Option<mojito_checked::checked::TransferVerdict> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::Transfer(verdict) => Some(*verdict),
+                _ => None,
+            })
+    }
+
     /// The receiver method call `self` evaluates for `object`: an explicit
     /// destroy (`x^.finish()`) names the transfer's operand, whose place
     /// its `deinit` receiver consumes, as upstream's call consumes a

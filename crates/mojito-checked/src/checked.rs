@@ -550,6 +550,19 @@ pub struct CheckedCompareLink {
     pub instantiated_args: Vec<mojito_types::types::TyArg>,
 }
 
+/// How a `^` transfer takes its source, as upstream's `emitTransfer`
+/// decides it once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TransferVerdict {
+    /// An owned rvalue: the `^` has no effect.
+    PassThrough,
+    /// A trivial register value, copied: the `^` has no effect, and the
+    /// source stays initialized.
+    TrivialCopy,
+    /// A move out of tracked storage.
+    PlaceMove,
+}
+
 /// Checker decisions which lowering must apply explicitly.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[non_exhaustive]
@@ -902,7 +915,9 @@ pub enum SemanticAdjustment {
         operation: Option<Box<Self>>,
         application: mojito_types::param_expr::ParamExpr,
     },
-    Move,
+    /// A `^` the check did not bind to a read parameter or receiver: how
+    /// it takes its source, by the check's one verdict.
+    Transfer(TransferVerdict),
     ExplicitDestroy,
     Iterate(IterationProtocol),
     /// `SIMD[dt, width](elems)`, a `Scalar[dt](x)`, or a scalar alias:
@@ -6391,7 +6406,9 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
     // A `^` the checker bound to a read parameter or receiver lends
     // its place and does not move it.
     if matches!(expression.kind, ExprKind::Transfer(_)) && !facts.borrowed_read_call_place {
-        adjustments.push(SemanticAdjustment::Move);
+        adjustments.push(SemanticAdjustment::Transfer(
+            facts.transfer_verdict.unwrap_or(TransferVerdict::PlaceMove),
+        ));
     }
     if facts.explicit_destroy_call {
         adjustments.push(SemanticAdjustment::ExplicitDestroy);
@@ -6742,6 +6759,8 @@ node_facts! {
         /// abstract, which decides its result convention
         /// ([`SemanticAdjustment::IndirectResult`]).
         declared_result: Ty,
+        /// How a `^` takes its source ([`SemanticAdjustment::Transfer`]).
+        transfer_verdict: TransferVerdict,
     }
     flags {
         explicit_destroy_call,

@@ -870,6 +870,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- MIR lowering now applies the check's transfer verdict instead of deciding
+  copy or move again by whether the type owns storage (R1367, R121). A
+  `^` over a `TrivialRegisterPassable` struct, or a type parameter bounded
+  by it, copies it as upstream's `emitTransfer` does, so the source stays
+  initialized: `def take(mut v: V) -> V: return v^` now runs and prints
+  `3 3` as at the pin, where Mojito rejected it with "'v' is uninitialized
+  at return from this function". The checked node's `Move` adjustment is now
+  `Transfer(TransferVerdict)` (`mojito-package 111`). `Pointer` and
+  `StringLiteral` are not yet modelled as trivial, which is filed as R1502.
 - A `^` source is judged by upstream's one ordered rule
   (`UnaryOpNode::emitTransfer`), in the checker's `transfer_verdict`, in
   place of per-shape tests (R1366, R31, R116, R120): an owned rvalue passes
