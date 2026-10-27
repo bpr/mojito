@@ -228,6 +228,7 @@ fn concrete_blocks(
             }
             concrete_instruction(&head, instruction, errors);
             reference_read(&head, function, instruction, errors);
+            concrete_llvm_intrinsic(&head, function, instruction, errors);
         }
         if matches!(
             block.term,
@@ -647,5 +648,54 @@ mod tests {
             Ty::bool(),
         );
         assert!(concrete_function_findings("f", &function).is_empty());
+    }
+}
+
+/// An LLVM intrinsic call as elaborated MIR carries it: its name and
+/// side-effect flag closed, the name in the table, no pack spread, and its
+/// register types a signature the intrinsic takes, as LLVM translation
+/// checks a reached call.
+fn concrete_llvm_intrinsic(
+    head: &str,
+    function: &MirFunction,
+    instruction: &MirInstr,
+    errors: &mut Vec<String>,
+) {
+    let MirInstr::CallLlvmIntrinsic {
+        dest,
+        intrinsic,
+        has_side_effect,
+        args,
+        spread,
+    } = instruction
+    else {
+        return;
+    };
+    if spread.is_some() {
+        errors.push(format!(
+            "{head} keeps an LLVM intrinsic call's pack spread in elaborated MIR"
+        ));
+    }
+    if !matches!(
+        has_side_effect,
+        Const::Value(mojito_types::ct::CtValue::Bool(_))
+    ) {
+        errors.push(format!(
+            "{head} keeps the side-effect flag `{has_side_effect:?}` of an LLVM intrinsic call in \
+             elaborated MIR"
+        ));
+    }
+    let Some(called) = intrinsic.llvm_intrinsic() else {
+        errors.push(format!(
+            "{head} calls `{intrinsic:?}`, which is no LLVM intrinsic Mojito computes"
+        ));
+        return;
+    };
+    let ty = |reg: &Reg| function.reg_types.get(&reg.0).cloned();
+    if let Some(result) = ty(dest)
+        && let Some(operands) = args.iter().map(ty).collect::<Option<Vec<_>>>()
+        && let Some(reason) = called.signature_error(&result, &operands)
+    {
+        errors.push(format!("{head}: {reason}"));
     }
 }

@@ -452,6 +452,9 @@ impl<'a> Flatten<'a> {
         if let Some(op) = Self::checked_mlir_op(call) {
             return self.lower_mlir_op(call, op, args);
         }
+        if let Some(called) = Self::checked_llvm_intrinsic(call) {
+            return self.lower_llvm_intrinsic(call, called, args);
+        }
         // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
         // runtime value is the receiver, unchanged, and the origin
         // parameter argument never lowers (origins erase).

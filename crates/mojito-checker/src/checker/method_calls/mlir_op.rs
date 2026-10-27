@@ -1,8 +1,9 @@
 //! The `__mlir_op` forms Mojito admits: upstream's
 //! `lit.ownership.mark_initialized` and `lit.ownership.mark_destroyed` over a
 //! place, which the bundled standard library spells before writing a value's
-//! storage through pointers and after moving it out through them, and the
-//! `pop` and `index` ops of `pop_ops.rs`.
+//! storage through pointers and after moving it out through them, the `pop`
+//! and `index` ops of `pop_ops.rs`, and the LLVM intrinsic call of
+//! `llvm_intrinsic.rs`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -15,7 +16,8 @@ impl Checker {
     /// value without destroying it, after its storage was moved out through
     /// pointers (`Tuple.consume_elements`). Each is accepted only in the
     /// bundled modules that reach compiler-private storage. Every other
-    /// spelling is a `pop` or `index` op ([`Self::infer_pop_op`]). The
+    /// spelling is an LLVM intrinsic call ([`Self::infer_llvm_intrinsic_op`])
+    /// or a `pop` or `index` op ([`Self::infer_pop_op`]). The
     /// statement's checked record is `SemanticAdjustment::MarkInitialized`
     /// or `SemanticAdjustment::MarkDestroyed`.
     pub(super) fn infer_mlir_op(
@@ -26,6 +28,10 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         const INITIALIZED: &str = "lit.ownership.mark_initialized";
         const DESTROYED: &str = "lit.ownership.mark_destroyed";
+        const LLVM_INTRINSIC: &str = "pop.call_llvm_intrinsic";
+        if method == LLVM_INTRINSIC {
+            return self.infer_llvm_intrinsic_op(span, method, call);
+        }
         if !matches!(method, INITIALIZED | DESTROYED) {
             return self.infer_pop_op(span, method, call);
         }

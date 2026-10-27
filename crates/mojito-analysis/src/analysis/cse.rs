@@ -298,6 +298,14 @@ impl Table<'_> {
             | MirInstr::SimdExtract { .. }
             | MirInstr::SimdInsert { .. }
             | MirInstr::SimdReduce { .. } => true,
+            // An intrinsic declared without side effects, as MLIR reads
+            // `pop.call_llvm_intrinsic`'s `hasSideEffects`.
+            MirInstr::CallLlvmIntrinsic {
+                has_side_effect, ..
+            } => matches!(
+                has_side_effect,
+                Const::Value(mojito_types::ct::CtValue::Bool(false))
+            ),
             MirInstr::GetField { base, .. } => self
                 .reg_types
                 .get(&base.0)

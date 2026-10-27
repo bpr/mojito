@@ -1208,39 +1208,68 @@ pub fn pop_op(op: mojito_types::mlir::PopOp, operands: &[Value]) -> Result<Value
         None => return Err(mismatch()),
     };
     let lanes = if dtype.is_float() {
-        SimdLanes::Float(
-            (0..width)
-                .map(|index| {
-                    let lane = parts
-                        .iter()
-                        .map(|(_, lanes)| match lanes {
-                            SimdLanes::Float(values) => values.get(index).copied(),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<f64>>>()
-                        .ok_or_else(mismatch)?;
-                    mojito_types::mlir::pop_float_lane(op, dtype, &lane).ok_or_else(mismatch)
-                })
-                .collect::<Result<_, _>>()?,
-        )
+        SimdLanes::Float(zip_lanes(&parts, width, float_lanes, mismatch, |lane| {
+            mojito_types::mlir::pop_float_lane(op, dtype, lane).ok_or_else(mismatch)
+        })?)
     } else {
-        SimdLanes::Int(
-            (0..width)
-                .map(|index| {
-                    let lane = parts
-                        .iter()
-                        .map(|(_, lanes)| match lanes {
-                            SimdLanes::Int(values) => values.get(index).copied(),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<i128>>>()
-                        .ok_or_else(mismatch)?;
-                    mojito_types::mlir::pop_int_lane(op, dtype, &lane).ok_or_else(|| {
-                        RuntimeError::TypeError("integer division or modulo by zero".to_string())
-                    })
-                })
-                .collect::<Result<_, _>>()?,
-        )
+        SimdLanes::Int(zip_lanes(&parts, width, int_lanes, mismatch, |lane| {
+            mojito_types::mlir::pop_int_lane(op, dtype, lane).ok_or_else(|| {
+                RuntimeError::TypeError("integer division or modulo by zero".to_string())
+            })
+        })?)
+    };
+    Ok(simd_value(dtype, lanes))
+}
+
+/// Call the LLVM intrinsic `intrinsic` over `operands`.
+///
+/// Lanes are computed as `mojito_types::llvm_intrinsic` computes them: an
+/// elementwise intrinsic gives its first operand's type, a reduction one
+/// lane of it, and `llvm.donothing` `None`.
+pub fn llvm_intrinsic(
+    intrinsic: mojito_types::llvm_intrinsic::LlvmIntrinsic,
+    operands: &[Value],
+) -> Result<Value, RuntimeError> {
+    use mojito_types::llvm_intrinsic::{self as llvm, LlvmIntrinsic};
+    let mismatch = || {
+        RuntimeError::TypeError(format!(
+            "'{}' does not take these operands",
+            intrinsic.name()
+        ))
+    };
+    if intrinsic == LlvmIntrinsic::Donothing {
+        return Ok(Value::None);
+    }
+    let parts = operands
+        .iter()
+        .enumerate()
+        .filter(|(position, _)| !intrinsic.is_flag(*position))
+        .map(|(_, operand)| simd_parts(operand).ok_or_else(mismatch))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (dtype, width) = match parts.first() {
+        Some((dtype, lanes)) => (*dtype, lanes.width()),
+        None => return Err(mismatch()),
+    };
+    let lanes = match (intrinsic, &parts[0].1) {
+        (LlvmIntrinsic::VectorReduce(reduction), SimdLanes::Int(lanes)) => SimdLanes::Int(vec![
+            llvm::reduce_ints(reduction, dtype, lanes).ok_or_else(mismatch)?,
+        ]),
+        (LlvmIntrinsic::VectorReduce(reduction), SimdLanes::Float(lanes)) => {
+            SimdLanes::Float(vec![
+                llvm::reduce_floats(reduction, lanes).ok_or_else(mismatch)?,
+            ])
+        }
+        (_, SimdLanes::Int(_)) => {
+            SimdLanes::Int(zip_lanes(&parts, width, int_lanes, mismatch, |lane| {
+                llvm::int_lane(intrinsic, dtype, lane).ok_or_else(mismatch)
+            })?)
+        }
+        (_, SimdLanes::Float(_)) => {
+            SimdLanes::Float(zip_lanes(&parts, width, float_lanes, mismatch, |lane| {
+                llvm::float_lane(intrinsic, dtype, lane).ok_or_else(mismatch)
+            })?)
+        }
+        (_, SimdLanes::Bool(_)) => return Err(mismatch()),
     };
     Ok(simd_value(dtype, lanes))
 }
@@ -1547,6 +1576,42 @@ fn host_scalar_parts(value: &Value) -> Option<(Dtype, SimdLanes)> {
         Value::Int(n) => Some((Dtype::Int, SimdLanes::Int(vec![i128::from(*n)]))),
         Value::UInt(n) => Some((Dtype::UInt, SimdLanes::Int(vec![i128::from(*n)]))),
         Value::Float64(x) => Some((Dtype::Float64, SimdLanes::Float(vec![*x]))),
+        _ => None,
+    }
+}
+
+/// Lane `index` of each operand's lanes, which `pick` reads, computed by
+/// `lane` over them in operand order, for each of `width` lanes; an operand
+/// `pick` refuses or a short one is `mismatch`.
+fn zip_lanes<T: Copy>(
+    parts: &[(Dtype, SimdLanes)],
+    width: usize,
+    pick: fn(&SimdLanes) -> Option<&[T]>,
+    mismatch: impl Fn() -> RuntimeError,
+    lane: impl Fn(&[T]) -> Result<T, RuntimeError>,
+) -> Result<Vec<T>, RuntimeError> {
+    (0..width)
+        .map(|index| {
+            let operands = parts
+                .iter()
+                .map(|(_, lanes)| pick(lanes).and_then(|values| values.get(index).copied()))
+                .collect::<Option<Vec<T>>>()
+                .ok_or_else(&mismatch)?;
+            lane(&operands)
+        })
+        .collect()
+}
+
+fn int_lanes(lanes: &SimdLanes) -> Option<&[i128]> {
+    match lanes {
+        SimdLanes::Int(values) => Some(values),
+        _ => None,
+    }
+}
+
+fn float_lanes(lanes: &SimdLanes) -> Option<&[f64]> {
+    match lanes {
+        SimdLanes::Float(values) => Some(values),
         _ => None,
     }
 }

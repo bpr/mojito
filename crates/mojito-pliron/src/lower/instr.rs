@@ -273,6 +273,18 @@ impl FnLowering<'_> {
                 target,
             } => self.lower_convert(ctx, *dest, *target, *value),
             MirInstr::Pop { dest, op, operands } => self.lower_pop(ctx, *dest, *op, operands),
+            MirInstr::CallLlvmIntrinsic {
+                dest,
+                intrinsic,
+                args,
+                ..
+            } => match intrinsic.llvm_intrinsic() {
+                Some(called) => self.lower_llvm_intrinsic(ctx, *dest, called, args),
+                None => Err(self.unsupported_reg(
+                    format!("the LLVM intrinsic `{intrinsic:?}` outside the subset"),
+                    *dest,
+                )),
+            },
             MirInstr::UnOp { op, dest, a, .. } => self.lower_unop(ctx, *op, *dest, *a),
             MirInstr::BinOp {
                 op,

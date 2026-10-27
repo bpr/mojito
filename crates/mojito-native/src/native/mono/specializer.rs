@@ -1942,6 +1942,15 @@ impl<'a> Specializer<'a> {
                         Err(_) => {}
                     }
                 }
+                if let MirInstr::CallLlvmIntrinsic { .. } = &instruction {
+                    self.close_llvm_intrinsic(
+                        template,
+                        &mut instruction,
+                        bindings,
+                        frame.reg_types,
+                        reached,
+                    )?;
+                }
                 let MirInstr::Const {
                     dest,
                     k: Const::Param(value),
@@ -1990,6 +1999,72 @@ impl<'a> Specializer<'a> {
                 }
             }
             block.instrs = instrs;
+        }
+        Ok(())
+    }
+
+    /// Close an LLVM intrinsic call's name and side-effect flag for the
+    /// instance, and, once it is reached, reject a name outside the table
+    /// or a signature the intrinsic does not take, as LLVM translation
+    /// rejects the reached call.
+    fn close_llvm_intrinsic(
+        &mut self,
+        template: &str,
+        instruction: &mut MirInstr,
+        bindings: &Bindings,
+        reg_types: &HashMap<u32, Ty>,
+        reached: bool,
+    ) -> Result<(), MonoError> {
+        let MirInstr::CallLlvmIntrinsic {
+            dest,
+            intrinsic,
+            has_side_effect,
+            args,
+            spread,
+        } = instruction
+        else {
+            return Ok(());
+        };
+        for constant in [&mut *intrinsic, &mut *has_side_effect] {
+            if let Const::Param(value) = constant {
+                let value = self.applied(template, value, bindings)?;
+                match symbolic::eval_reached_ct(&value, bindings) {
+                    Ok(closed) => *constant = Const::Value(closed),
+                    Err(error) if error.kind == MonoErrorKind::Instantiation => {
+                        return Err(error);
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        if !reached || spread.is_some() {
+            return Ok(());
+        }
+        let Some(called) = intrinsic.llvm_intrinsic() else {
+            let name = match intrinsic {
+                Const::Value(CtValue::KgenString(name)) => name.clone(),
+                other => format!("{other:?}"),
+            };
+            return Err(MonoError {
+                kind: MonoErrorKind::Instantiation,
+                ..self.error(
+                    Some(template),
+                    format!(
+                        "the LLVM intrinsic '{name}' is outside the subset: Mojito computes {}",
+                        mojito_types::llvm_intrinsic::LlvmIntrinsic::admitted_names()
+                    ),
+                )
+            });
+        };
+        let ty = |reg: &Reg| reg_types.get(&reg.0).cloned();
+        if let Some(result) = ty(dest)
+            && let Some(operands) = args.iter().map(ty).collect::<Option<Vec<_>>>()
+            && let Some(reason) = called.signature_error(&result, &operands)
+        {
+            return Err(MonoError {
+                kind: MonoErrorKind::Instantiation,
+                ..self.error(Some(template), reason)
+            });
         }
         Ok(())
     }

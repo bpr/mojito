@@ -1123,6 +1123,19 @@ pub enum SemanticAdjustment {
     /// reductions. A scalar or literal case of `select` splats to the
     /// result type first, as upstream's implicit `SIMD` constructor does.
     SimdReceiverOp(mojito_types::mlir::MlirOp),
+    /// ``__mlir_op.`pop.call_llvm_intrinsic`[intrin=…, _type=…,
+    /// hasSideEffects=…](operands)``: a call of the LLVM intrinsic
+    /// `intrinsic` names (a `!kgen.string`), with the `Bool` side-effect
+    /// flag. Either may be a template's parameter expression, which the
+    /// elaborator closes per instance. `spread` is the position of an
+    /// operand that is a heterogeneous collector (upstream's loaded
+    /// `!kgen.pack`), whose elements the instance passes in its place.
+    /// MIR keeps it as `MirInstr::CallLlvmIntrinsic`.
+    LlvmIntrinsic {
+        intrinsic: mojito_types::param_expr::ParamExpr,
+        has_side_effect: mojito_types::param_expr::ParamExpr,
+        spread: Option<usize>,
+    },
     /// A sugar written as the construction it stands for: an initializer
     /// list `{}` / `{a, b}` at the type its context expects (upstream's
     /// set-initializer literal, emitted as the construction `T(a, b)` of that

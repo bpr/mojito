@@ -342,6 +342,23 @@ impl VmBackend {
                     .collect();
                 regs[dest.0 as usize] = crate::runtime::pop_op(*op, &operands)?;
             }
+            MirInstr::CallLlvmIntrinsic {
+                dest,
+                intrinsic,
+                args,
+                ..
+            } => {
+                let called = intrinsic.llvm_intrinsic().ok_or_else(|| {
+                    RuntimeError::Unsupported(format!(
+                        "the LLVM intrinsic `{intrinsic:?}` is outside the subset"
+                    ))
+                })?;
+                let operands: Vec<Value> = args
+                    .iter()
+                    .map(|operand| regs[operand.0 as usize].clone())
+                    .collect();
+                regs[dest.0 as usize] = crate::runtime::llvm_intrinsic(called, &operands)?;
+            }
             MirInstr::UseVar {
                 dest,
                 var,

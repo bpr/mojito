@@ -116,9 +116,12 @@ mlir_ownership_op: '`lit.ownership.mark_initialized`' | '`lit.ownership.mark_des
 # simd.select simd.extractelement simd.insertelement simd.reduce_and
 # simd.reduce_or`) and `index` ops (`add sub mul divs and shrs cmp`), with
 # the attributes `pred`,
-# `fastmathFlags`, and `_type`; every other name is rejected.
+# `fastmathFlags`, and `_type`, and `pop.call_llvm_intrinsic`, with the
+# compile-time expression attributes `intrin` (`"llvm.ctpop".value`),
+# `_type`, and `hasSideEffects` (`False.__mlir_i1__()`); every other name is
+# rejected.
 mlir_op_expr: '__mlir_op' '.' NAME ['[' mlir_op_attr (',' mlir_op_attr)* ']'] '(' [expression (',' expression)*] ')'
-mlir_op_attr: NAME '=' (mlir_attr | type)
+mlir_op_attr: NAME '=' (mlir_attr | type | expression)
 mlir_attr: '__mlir_attr' '.' NAME
 
 compound_stmt:

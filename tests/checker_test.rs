@@ -8353,6 +8353,45 @@ fn pop_simd_lane_ops_type_as_their_verifiers_do() {
 }
 
 #[test]
+fn pop_call_llvm_intrinsic_types_as_its_verifier_does() {
+    // `intrin` is a `!kgen.string`, `_type` names the result, and
+    // `hasSideEffects` is a `Bool`'s `__mlir_i1__()`; plain operands pass.
+    ok(
+        "def main():\n    var x = Int32(7)\n    var y: Int32 = __mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.ctlz\".value, _type=Int32, hasSideEffects=False.__mlir_i1__()](x, False.__mlir_i1__())\n    print(y)\n",
+    );
+    // A symbolic `StringLiteral` binder's `value` is the name an instance
+    // closes.
+    ok(
+        "def f[s: StringLiteral, T: Copyable](x: T) -> T:\n    return __mlir_op.`pop.call_llvm_intrinsic`[intrin=s.value, _type=T, hasSideEffects=False.__mlir_i1__()](x)\n\ndef main():\n    print(f[\"llvm.ctpop\"](Int32(7)))\n",
+    );
+    for (source, message) in [
+        (
+            "def main():\n    var x = Int32(7)\n    print(__mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.ctpop\".value, hasSideEffects=False.__mlir_i1__()](x))\n",
+            "unable to infer result type",
+        ),
+        (
+            "def main():\n    var x = Int32(7)\n    print(__mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.sin\".value, _type=Int32, hasSideEffects=False.__mlir_i1__()](x))\n",
+            "the LLVM intrinsic 'llvm.sin' is outside the subset",
+        ),
+        (
+            "def main():\n    var x = Int32(7)\n    print(__mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.ctpop\".value, _type=Int64, hasSideEffects=False.__mlir_i1__()](x))\n",
+            "the intrinsic signature of 'llvm.ctpop' does not match",
+        ),
+        (
+            "def main():\n    var x = Int32(7)\n    print(__mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.ctpop\".value, _type=Int32, hasSideEffects=False](x))\n",
+            "attribute 'hasSideEffects' takes",
+        ),
+        (
+            "def main():\n    print(Int(1).__mlir_i1__())\n",
+            "__mlir_i1__",
+        ),
+    ] {
+        let error = err(source);
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+
+#[test]
 fn param_list_address_outside_the_bundled_variadics_is_rejected() {
     // The static address of a parameter list's elements is the bundled
     // `ParameterList.get_span`'s private stand-in for upstream's

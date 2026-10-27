@@ -1646,14 +1646,15 @@ impl Checker {
                 Ok(context.type_shape(ty))
             }
             // A compile-time `StringLiteral`'s `value` parameter
-            // (`comptime none = "None".value`).
+            // (`comptime none = "None".value`), or a `StringLiteral` value
+            // parameter's (`s.value`), which each instance closes.
             ExprKind::Member { object, field }
                 if field == mojito_types::ct::LITERAL_VALUE_MEMBER
-                    && let Ok(literal) = build(object)
-                    && let Some(parameter) =
-                        literal.as_constant().and_then(CtValue::literal_value) =>
+                    && let Some(literal) = self.string_literal_operand(object, recording) =>
             {
-                self.ct_param(parameter)
+                context
+                    .field(&literal, field, MetaTy::Value(TyKind::KgenString.into()))
+                    .map_err(param_error)
             }
             ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self") =>
             {
@@ -1763,6 +1764,17 @@ impl Checker {
             }
             _ => self.build_ct_rest(expr, recording),
         }
+    }
+
+    /// The `StringLiteral` whose `value` parameter `object.value` reads: a
+    /// closed literal, or a `StringLiteral` value parameter.
+    fn string_literal_operand(&self, object: &Expr, recording: Recording) -> Option<ParamExpr> {
+        let literal = self.build_ct(object, recording).ok()?;
+        let closed = literal
+            .as_constant()
+            .is_some_and(|value| value.literal_value().is_some());
+        let parameter = matches!(literal.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::StringLiteral));
+        (closed || parameter).then_some(literal)
     }
 
     /// The parameter expression a bare name denotes in a compile-time
@@ -2942,13 +2954,14 @@ impl Checker {
     }
 
     /// Whether `expr` reads a compile-time `StringLiteral`'s `value`
-    /// parameter (`"None".value`), a KGEN string with no run-time form.
+    /// parameter (`"None".value`, or `s.value` over a value parameter `s`),
+    /// a KGEN string with no run-time form.
     pub(super) fn reads_literal_value(&self, expr: &Expr) -> bool {
         matches!(&expr.kind, ExprKind::Member { field, .. }
             if field == mojito_types::ct::LITERAL_VALUE_MEMBER)
-            && self
-                .eval_associated_ct(expr)
-                .is_ok_and(|value| matches!(value, CtValue::KgenString(_)))
+            && self.compile_dependent_ct_expr(expr).is_ok_and(|value| {
+                matches!(value.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::KgenString))
+            })
     }
 
     /// Whether `expr` reads a closed raw list off a struct's parameter

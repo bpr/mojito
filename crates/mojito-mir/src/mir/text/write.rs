@@ -912,6 +912,25 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("operands", regs(operands)),
             ],
         ),
+        MirInstr::CallLlvmIntrinsic {
+            dest,
+            intrinsic,
+            has_side_effect,
+            args,
+            spread,
+        } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("intrinsic", const_value(intrinsic)),
+                ("has_side_effect", const_value(has_side_effect)),
+                ("args", regs(args)),
+                (
+                    "spread",
+                    option(spread.map(|position| position.to_string())),
+                ),
+            ],
+        ),
         MirInstr::UseVar {
             dest,
             var,

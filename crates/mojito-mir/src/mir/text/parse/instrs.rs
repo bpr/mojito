@@ -405,6 +405,16 @@ impl Decoder {
                 op: self.req(value, fields, "op", Self::pop_op)?,
                 operands: self.req(value, fields, "operands", |d, v| Some(d.regs(v)))?,
             }),
+            "llvm.intrinsic" => Some(MirInstr::CallLlvmIntrinsic {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                intrinsic: self.req(value, fields, "intrinsic", Self::constant)?,
+                has_side_effect: self.req(value, fields, "has_side_effect", Self::constant)?,
+                args: self.req(value, fields, "args", |d, v| Some(d.regs(v)))?,
+                spread: self
+                    .field(fields, "spread")
+                    .ok()
+                    .and_then(|found| self.option_uint(found)),
+            }),
             "var.use" => Some(MirInstr::UseVar {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 var: self.req(value, fields, "var", Self::var)?,

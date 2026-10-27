@@ -294,6 +294,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::MaterializeLiteral { .. } => "MaterializeLiteral",
         MirInstr::ScalarCast { .. } => "ScalarCast",
         MirInstr::Pop { .. } => "Pop",
+        MirInstr::CallLlvmIntrinsic { .. } => "CallLlvmIntrinsic",
         MirInstr::UseVar { .. } => "UseVar",
         MirInstr::MovePlace { .. } => "MovePlace",
         MirInstr::DefVar { .. } => "DefVar",

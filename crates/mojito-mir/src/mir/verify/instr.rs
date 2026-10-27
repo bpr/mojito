@@ -87,6 +87,9 @@ pub(super) fn verify_instruction(
             target,
         } => verify_scalar_cast(&cx, *dest, *value, *target, errors),
         MirInstr::Pop { dest, op, operands } => verify_pop(&cx, *dest, *op, operands, errors),
+        MirInstr::CallLlvmIntrinsic { args, spread, .. } => {
+            verify_llvm_intrinsic(&cx, args, *spread, errors);
+        }
         MirInstr::MaterializeLiteral { .. }
         | MirInstr::ConstructTypeParam { .. }
         | MirInstr::ConstructType { .. }
@@ -671,10 +674,17 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             );
         }
         // Two closed types a rebind names must already agree; the
-        // elaborator judges one over a parameter per instance.
+        // elaborator judges one over a parameter per instance, and one in a
+        // `comptime if` arm, which an instance may never take (an inlined
+        // `comptime if type == NoneType: return rebind[type](None)`).
         MirInstr::Rebind { dest, value } => {
             if let (Some(found), Some(expected)) = (cx.reg_ty(*value), cx.reg_ty(*dest))
                 && !types_compatible(found, expected)
+                && !cx
+                    .context
+                    .regions
+                    .iter()
+                    .any(|kind| matches!(kind, RegionKind::ComptimeIfArm(_)))
             {
                 errors.push(format!(
                     "{prefix}: rebinds {found} to {expected}, which never agree"
@@ -1235,6 +1245,35 @@ fn verify_pop(
                 op.mnemonic()
             ));
         }
+    }
+}
+
+/// An LLVM intrinsic call's spread names one of its operands, and that
+/// operand is a heterogeneous collector (a tuple once the pack is bound).
+fn verify_llvm_intrinsic(
+    cx: &InstrCx<'_>,
+    args: &[Reg],
+    spread: Option<usize>,
+    errors: &mut Vec<String>,
+) {
+    let prefix = cx.prefix;
+    let Some(position) = spread else {
+        return;
+    };
+    let Some(pack) = args.get(position) else {
+        errors.push(format!(
+            "{prefix}: llvm.intrinsic spreads operand {position} of {}",
+            args.len()
+        ));
+        return;
+    };
+    if let Some(found) = cx.reg_ty(*pack)
+        && !mojito_types::types::is_heterogeneous_collector(found)
+        && !matches!(found.kind(), mojito_types::types::TyKind::Tuple(_))
+    {
+        errors.push(format!(
+            "{prefix}: llvm.intrinsic spreads the non-pack {found}"
+        ));
     }
 }
 

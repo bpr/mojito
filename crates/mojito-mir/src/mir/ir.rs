@@ -995,6 +995,9 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             operands: elems,
             ..
         }
+        | MirInstr::CallLlvmIntrinsic {
+            dest, args: elems, ..
+        }
         | MirInstr::MakeArray { dest, elems }
         | MirInstr::MakeStruct {
             dest,
@@ -1583,6 +1586,17 @@ pub enum Const {
 }
 
 impl Const {
+    /// The LLVM intrinsic a closed `llvm.intrinsic` name constant names,
+    /// when it is one in the table.
+    pub fn llvm_intrinsic(&self) -> Option<mojito_types::llvm_intrinsic::LlvmIntrinsic> {
+        match self {
+            Self::Value(mojito_types::ct::CtValue::KgenString(name)) => {
+                mojito_types::llvm_intrinsic::LlvmIntrinsic::parse(name)
+            }
+            _ => None,
+        }
+    }
+
     /// Whether this is a scalar constant `sccp` tracks: a built-in scalar or
     /// literal, a `UInt` value, or a one-lane SIMD value.
     pub const fn is_folded_scalar(&self) -> bool {
@@ -2130,6 +2144,21 @@ pub enum MirInstr {
         dest: Reg,
         op: PopOp,
         operands: Vec<Reg>,
+    },
+    /// `pop.call_llvm_intrinsic`: a call of the LLVM intrinsic `intrinsic`
+    /// names (a `!kgen.string`) over `args`, with the `Bool` side-effect
+    /// flag `has_side_effect`; the destination is typed by the call's
+    /// `_type` (`NoneType` for no result). In a template either constant
+    /// may be a parameter, and `spread` the position of a heterogeneous
+    /// collector the call passes as its elements. In concrete MIR both are
+    /// closed, the name is one `llvm_intrinsic::LlvmIntrinsic` parses,
+    /// nothing spreads, and the register types are a signature it takes.
+    CallLlvmIntrinsic {
+        dest: Reg,
+        intrinsic: Const,
+        has_side_effect: Const,
+        args: Vec<Reg>,
+        spread: Option<usize>,
     },
     /// `x`, `x^`, `borrow x`, … — a use of a variable, tagged with how (`mode`).
     /// `constructor` names the `__copyinit__` a copy runs or the
@@ -3052,6 +3081,11 @@ impl MirInstr {
             | Self::SimdReduce { .. } => true,
             // An integer division by zero traps.
             Self::Pop { op, .. } => !matches!(op, PopOp::Div | PopOp::Rem),
+            // An intrinsic declared without side effects computes its
+            // result from its operands alone.
+            Self::CallLlvmIntrinsic {
+                has_side_effect, ..
+            } => matches!(has_side_effect, Const::Value(CtValue::Bool(false))),
             // A closure of reference captures is a struct of pointers to
             // the captured places, as upstream's trivially register-passable
             // closure is; a moved capture runs its constructor.

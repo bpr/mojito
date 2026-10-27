@@ -10,6 +10,7 @@ use super::*;
 mod builtin_types;
 mod call_contract;
 mod intrinsic_receivers;
+mod llvm_intrinsic;
 mod mc_infer;
 mod mlir_op;
 mod pop_ops;

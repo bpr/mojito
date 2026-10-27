@@ -1731,6 +1731,81 @@ fn method_call_spread_passes_the_bound_pack_itself() {
 }
 
 #[test]
+fn llvm_intrinsic_spread_passes_the_moved_pack_elements() {
+    let int32 = Ty::new(TyKind::Simd {
+        dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
+        width: mojito_types::types::SimdWidth::Known(1),
+    });
+    let pack = Ty::new(TyKind::Tuple(vec![int32.clone(), Ty::bool()]));
+    let mut function = MirFunction {
+        blocks: vec![MirBlock {
+            instrs: vec![
+                MirInstr::UseVar {
+                    dest: Reg(0),
+                    var: 0,
+                    mode: mojito_mir::mir::UseMode::Move,
+                    constructor: None,
+                },
+                MirInstr::CallLlvmIntrinsic {
+                    dest: Reg(1),
+                    intrinsic: Const::Value(CtValue::KgenString("llvm.ctlz".into())),
+                    has_side_effect: Const::Value(CtValue::Bool(false)),
+                    args: vec![Reg(0)],
+                    spread: Some(0),
+                },
+                MirInstr::Drop {
+                    reg: Reg(0),
+                    destructor: None,
+                },
+            ],
+            term: MirTerm::Return(Some(Reg(1))),
+        }],
+        n_regs: 2,
+        n_vars: 1,
+        var_names: vec!["loaded_pack".into()],
+        n_params: 0,
+        param_types: Vec::new(),
+        owned_params: Vec::new(),
+        deinit_params: Vec::new(),
+        ref_params: Vec::new(),
+        returns_reference: false,
+        var_tys: HashMap::from([(0, pack.clone())]),
+        ret_ty: Some(int32.clone()),
+        raises: false,
+        error_ty: None,
+        error_slot: None,
+        spans: mojito_mir::mir::SpanTable::default(),
+        reg_types: HashMap::from([(0, pack), (1, int32)]),
+        removed_params: Vec::new(),
+        callee_removed_params: Vec::new(),
+        callee_removed_args: Vec::new(),
+        removed_args: Vec::new(),
+        lowered_calls: Vec::new(),
+    };
+    expand_pack_spreads("llvm_intrinsic", &mut function).expect("expand the intrinsic's spread");
+    let instrs = &function.blocks[0].instrs;
+    assert!(
+        matches!(
+            instrs.as_slice(),
+            [
+                MirInstr::MovePlace { dest: first, .. },
+                MirInstr::MovePlace { dest: second, .. },
+                MirInstr::CallLlvmIntrinsic { args, spread: None, .. },
+                MirInstr::Drop { reg: drop_first, .. },
+                MirInstr::Drop { reg: drop_second, .. },
+            ] if *args == vec![*first, *second]
+                && *drop_first == *first
+                && *drop_second == *second
+        ),
+        "the call passes the moved pack's elements, which it then drops: {instrs:?}"
+    );
+    assert!(
+        !function.reg_types.contains_key(&0),
+        "the pack's read is gone"
+    );
+}
+
+#[test]
 fn spread_of_an_unbound_pack_is_the_instance_boundary() {
     let pack = Ty::new(TyKind::VariadicPack(Ty::int()));
     let collector = MirPlace::root(0, Some(pack.clone()));

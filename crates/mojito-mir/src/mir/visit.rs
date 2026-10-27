@@ -104,7 +104,8 @@ pub trait MutTypeVisitor {
         site: ParamDeclSite,
     ) -> Result<(), Self::Error>;
     /// A constant an instruction reads or addresses: a `Const`'s and a
-    /// parameter list address's values.
+    /// parameter list address's values, and an LLVM intrinsic call's name
+    /// and side-effect flag.
     fn visit_constant(&mut self, constant: &mut Const) -> Result<(), Self::Error>;
     /// A parameter an instruction names: a constructed type
     /// parameter, a `comptime for` binder.
@@ -361,6 +362,14 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         | I::ParamListAddress {
             values: constant, ..
         } => visitor.visit_constant(constant),
+        I::CallLlvmIntrinsic {
+            intrinsic,
+            has_side_effect,
+            ..
+        } => {
+            visitor.visit_constant(intrinsic)?;
+            visitor.visit_constant(has_side_effect)
+        }
         I::ComptimeIf { conds, .. } => conds
             .iter_mut()
             .try_for_each(|cond| visitor.visit_constraint(cond)),

@@ -2,7 +2,8 @@
 //! `def`'s call that spreads the caller's collector (`show(*args)`,
 //! `Sink().take(*args)`, `count(*args^)`) passes that pack itself once the
 //! bindings close it, as upstream's call passes the `VariadicPack`; the
-//! builtin `print` takes the bound pack's elements instead. A value pack
+//! builtin `print` and an LLVM intrinsic call (upstream's loaded
+//! `!kgen.pack` operand) take the bound pack's elements instead. A value pack
 //! spread into a bracket (`f[*vs]()`) retires once the call names its
 //! instance. The collector a call builds (`tuple.make`, wrapped in a
 //! homogeneous collector's `VariadicList`) stays the one operand it passes.
@@ -155,8 +156,15 @@ fn expand_in_block(
             Some(TyKind::Tuple(elements)) => elements.clone(),
             _ => return Err(tables.error("a spread's pack is still a parameter")),
         };
-        // Any callee but the builtin `print` takes the caller's pack itself.
-        if !matches!(&blocks[at].instrs[index], MirInstr::Call { func, .. } if func.0 == "print") {
+        // Any callee but the builtin `print` takes the caller's pack itself;
+        // an LLVM intrinsic call passes the loaded pack's elements.
+        if !matches!(&blocks[at].instrs[index],
+            MirInstr::Call { func, .. } if func.0 == "print")
+            && !matches!(
+                &blocks[at].instrs[index],
+                MirInstr::CallLlvmIntrinsic { .. }
+            )
+        {
             index += 1;
             continue;
         }
@@ -185,12 +193,29 @@ fn expand_in_block(
         let call =
             spread_operands(&mut block.instrs[index]).expect("the spread call was matched above");
         let count = registers.len();
-        call.args.splice(position..=position, registers);
-        call.arg_places
-            .splice(position..=position, std::iter::repeat_n(None, count));
+        call.args
+            .splice(position..=position, registers.iter().copied());
+        if let Some(arg_places) = call.arg_places {
+            arg_places.splice(position..=position, std::iter::repeat_n(None, count));
+        }
         *call.spread = None;
         tables.reg_types.remove(&pack.0);
         tables.spans.0.remove(&pack.0);
+        // A moved pack's drop once the call returns becomes its elements',
+        // first to last, as a `Tuple`'s destroys them.
+        if collector.moved
+            && let Some(drop) = block.instrs[index..].iter().position(
+                |instruction| matches!(instruction, MirInstr::Drop { reg, .. } if *reg == pack),
+            )
+        {
+            block.instrs.splice(
+                index + drop..=index + drop,
+                registers.into_iter().map(|reg| MirInstr::Drop {
+                    reg,
+                    destructor: None,
+                }),
+            );
+        }
         let inserted = loads.len();
         block.instrs.splice(index..index, loads);
         // The collector's whole read is dead once the elements are read.
@@ -204,12 +229,13 @@ fn expand_in_block(
 }
 
 /// The operands a whole-pack spread rewrites on a direct call, a method
-/// call, or an indirect call of a nested `def`: its position, the positional
-/// arguments, and their places.
+/// call, an indirect call of a nested `def`, or an LLVM intrinsic call: its
+/// position, the positional arguments, and their places (an intrinsic's
+/// operands have none).
 struct SpreadOperands<'a> {
     spread: &'a mut Option<usize>,
     args: &'a mut Vec<Reg>,
-    arg_places: &'a mut Vec<Option<MirPlace>>,
+    arg_places: Option<&'a mut Vec<Option<MirPlace>>>,
 }
 
 const fn spread_operands(instruction: &mut MirInstr) -> Option<SpreadOperands<'_>> {
@@ -234,7 +260,12 @@ const fn spread_operands(instruction: &mut MirInstr) -> Option<SpreadOperands<'_
         } => Some(SpreadOperands {
             spread,
             args,
-            arg_places,
+            arg_places: Some(arg_places),
+        }),
+        MirInstr::CallLlvmIntrinsic { spread, args, .. } => Some(SpreadOperands {
+            spread,
+            args,
+            arg_places: None,
         }),
         _ => None,
     }
@@ -359,8 +390,9 @@ fn unpack_in_blocks(blocks: &mut [MirBlock], reg_types: &HashMap<u32, Ty>, retir
             if let Some(call) = spread_operands(&mut block.instrs[index - 1]) {
                 let count = elems.len();
                 call.args.splice(position..=position, elems);
-                call.arg_places
-                    .splice(position..=position, std::iter::repeat_n(None, count));
+                if let Some(arg_places) = call.arg_places {
+                    arg_places.splice(position..=position, std::iter::repeat_n(None, count));
+                }
                 *call.spread = None;
             }
             retired.push(register.0);

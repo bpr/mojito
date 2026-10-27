@@ -1308,6 +1308,17 @@ pub fn variadic_collector_type(element: Ty, convention: Option<ArgConvention>) -
     }
 }
 
+/// Whether `ty` is a heterogeneous collector's type while its pack is
+/// still a parameter (`*args: *Ts`), upstream's `VariadicPack`.
+pub fn is_heterogeneous_collector(ty: &Ty) -> bool {
+    match ty.kind() {
+        TyKind::RuntimePack(_) => true,
+        TyKind::VariadicPack(element) => pack_spread(std::slice::from_ref(element)).is_some(),
+        TyKind::Tuple(elements) => pack_spread(elements).is_some(),
+        _ => false,
+    }
+}
+
 /// The element type of a `VariadicList[T, is_owned]`, an elaborated
 /// instance included.
 pub fn variadic_list_element(ty: &TyKind) -> Option<&Ty> {

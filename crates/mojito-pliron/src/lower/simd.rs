@@ -15,6 +15,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::llvm_intrinsic::{LlvmIntrinsic, OverloadSlot};
 use mojito_types::mlir::PopOp;
 use mojito_types::types::TyKind;
 
@@ -854,6 +855,102 @@ impl FnLowering<'_> {
             }
         }
         Ok(())
+    }
+
+    /// `llvm.intrinsic` — a call of the LLVM intrinsic itself, its name
+    /// mangled by the types [`LlvmIntrinsic::overloads`] names: a
+    /// multi-lane operand or result is a vector, a width-one one the lane.
+    /// The `ctlz`/`cttz` flag is the `immarg` constant `false`, whose
+    /// defined result for a zero lane the VM computes, and
+    /// `llvm.donothing` returns nothing.
+    pub(super) fn lower_llvm_intrinsic(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        intrinsic: LlvmIntrinsic,
+        args: &[Reg],
+    ) -> Result<(), PlironError> {
+        if intrinsic == LlvmIntrinsic::Donothing {
+            let void = VoidType::get(ctx).to_handle();
+            let fn_ty = FuncType::get(ctx, void, Vec::new(), false);
+            let call = CallIntrinsicOp::new(
+                ctx,
+                StringAttr::new(intrinsic.name().to_string()),
+                fn_ty,
+                Vec::new(),
+            );
+            self.append(ctx, call.get_operation(), Some(dest));
+            return Ok(());
+        }
+        let dims = |reg: &Reg| self.func.reg_types.get(&reg.0).and_then(simd_dims);
+        let (Some(result), Some(operand)) = (dims(&dest), args.first().and_then(dims)) else {
+            return Err(self.unsupported_reg(
+                format!("`{}` over non-SIMD registers", intrinsic.name()),
+                dest,
+            ));
+        };
+        let shaped = |(dtype, width): (Dtype, i64)| {
+            (
+                dtype,
+                usize::try_from(width).ok().filter(|width| *width > 1),
+            )
+        };
+        let (result, operand) = (shaped(result), shaped(operand));
+        let mut values = Vec::with_capacity(args.len());
+        let mut types = Vec::with_capacity(args.len());
+        for (position, arg) in args.iter().enumerate() {
+            if intrinsic.is_flag(position) {
+                values.push(self.bool_constant(ctx, false));
+                types.push(IntegerType::get(ctx, 1, Signedness::Signless).into());
+                continue;
+            }
+            let (dtype, shape) = dims(arg).map(shaped).unwrap_or(operand);
+            values.push(match shape {
+                Some(width) => self.simd_load_vector(ctx, *arg, dtype, width, dest)?,
+                None => self.reg_value(ctx, *arg, ScalarTy::of_dtype(dtype))?,
+            });
+            types.push(self.llvm_intrinsic_ty(ctx, dtype, shape));
+        }
+        let result_ty = self.llvm_intrinsic_ty(ctx, result.0, result.1);
+        let suffix = |(dtype, shape): (Dtype, Option<usize>)| match shape {
+            Some(width) => simd_mangle(dtype, width),
+            None => lane_suffix(dtype),
+        };
+        let mut name = intrinsic.name().to_string();
+        for slot in intrinsic.overloads() {
+            name.push('.');
+            name.push_str(&match slot {
+                OverloadSlot::Result => suffix(result),
+                OverloadSlot::Operand(position) => {
+                    suffix(args.get(*position).and_then(dims).map_or(operand, shaped))
+                }
+            });
+        }
+        let fn_ty = FuncType::get(ctx, result_ty, types, false);
+        let call = CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, values);
+        self.append(ctx, call.get_operation(), Some(dest));
+        let value = call.get_result(ctx);
+        match result.1 {
+            Some(width) => self.simd_store_vector(ctx, dest, result.0, width, value),
+            None => {
+                self.reg_values.insert(dest.0, value);
+            }
+        }
+        Ok(())
+    }
+
+    /// The LLVM type of an intrinsic's operand or result: a vector of
+    /// `width` lanes, or the lane.
+    fn llvm_intrinsic_ty(
+        &mut self,
+        ctx: &mut Context,
+        dtype: Dtype,
+        width: Option<usize>,
+    ) -> TypeHandle {
+        match width {
+            Some(width) => self.simd_vector_ty(ctx, dtype, width),
+            None => ScalarTy::of_dtype(dtype).handle(ctx),
+        }
     }
 
     /// A store into one lane of a multi-lane SIMD place — the lane read's

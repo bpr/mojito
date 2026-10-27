@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.sys.intrinsics.llvm_intrinsic`, re-exported from `std.sys`, and the
+  `pop.call_llvm_intrinsic` op it is spelled over now call an LLVM
+  intrinsic by name, on the VM and natively and at compile time (R1394).
+  The intrinsics computed are `llvm.ctlz`, `cttz`, `ctpop`, `bitreverse`,
+  `bswap`, `fshl`, `fshr`, `copysign`, `sqrt`, `donothing`, and the
+  `llvm.vector.reduce` `and`/`or`/`smax`/`smin`/`umax`/`umin`/`fmax`/`fmin`
+  reductions. A reached call of any other intrinsic, or one of a signature
+  LLVM rejects, fails its instance, as LLVM translation fails it at the
+  pin. `std.bit` gains upstream's `count_leading_zeros`,
+  `count_trailing_zeros`, `bit_reverse`, and `pop_count`. A `StringLiteral`
+  binder's `s.value` is now a symbolic `!kgen.string` an instance closes,
+  `Bool.__mlir_i1__()` and a collector's `get_loaded_kgen_pack()` are
+  served, and a `rebind` in a `comptime if` arm an inlined call substitutes
+  is left for the elaborator to judge. MIR schema 1.121 adds
+  `llvm.intrinsic`, and the package format moves to `mojito-package 119`.
 - `__mlir_op` now admits upstream's `pop.simd` lane ops, `select`,
   `extractelement`, `insertelement`, `reduce_and`, and `reduce_or`, typed as
   the pin's verifier types them, so upstream's `SIMD.__getitem__`,

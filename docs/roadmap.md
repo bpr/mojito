@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1519**.
+Next free ID: **R1522**.
 
 ## Ordered Work
 
@@ -8473,6 +8473,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `mojito_types::types::variadic_collector_type` decides the body type;
     its heterogeneous arms are the ones to make nominal.
   - The homogeneous collector took upstream's `VariadicList` in R743.
+  - Probe: `args.get_loaded_kgen_pack()`, which the bundled `llvm_intrinsic`
+    calls, is a compiler rule typed as the collector itself
+    (`mc_infer.rs`), where upstream's `VariadicPack` method loads its
+    elements into a `!kgen.pack`.
   - Found while planning R743 (2026-10-23).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -9373,6 +9377,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     between `i1` and `!kgen.scalar<bool>`, and typed attribute constants
     (``__mlir_attr.`#kgen.simd<true> : !kgen.scalar<bool>` ``). Today `i1`
     is the `Bool` itself, read by the stand-in `Bool(value=b)`.
+  - Probe: `b.__mlir_i1__()` is a compiler identity on `Bool`
+    (`mc_infer.rs`), where upstream's body is `pop.cast_to_builtin`.
   - The planning session splits it into chained one-session entries if
     one session cannot land it.
   - Found while planning R1132 (2026-10-20).
@@ -9409,9 +9415,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     ports `Bool`, so a literal's type is the application its text keys.
   - Probe: `StringLiteral[v]().byte_length()` over `comptime v =
     "None".value`, which prints `4` at the pin.
-  - Probe: a symbolic read `def f[s: StringLiteral](): g[s.value]()`,
-    which the pin runs, fails with "unsupported associated comptime member
-    access".
   - Converting a KGEN string to a runtime string (`StaticString(names[i])`)
     then follows with R432.
   - Probe: `"x" + s` and `"ab" == s` over a `String` `s` convert the
@@ -9472,20 +9475,57 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1392.
   - Model: Opus, Not Planned.
 
-- [ ] **R1394 `llvm_intrinsic` is undefined**
+- [ ] **R1519 The subvector and shuffle LLVM intrinsics are outside
+  Mojito's intrinsic table**
 
-  Upstream's `SIMD` reaches `llvm.vector.reduce.*`, `fma`, and the bit ops
-  through `std.sys.intrinsics.llvm_intrinsic[name, T]`
-  (`pop.call_llvm_intrinsic`), and Mojito has no such call.
-  - Lower it to a MIR call that names the intrinsic. Pliron emits the LLVM
-    call. The VM serves a table by name and rejects an unknown name
-    explicitly.
-  - Probe: `masked_gather` and `masked_scatter` (`std/sys/intrinsics.mojo`)
-    pass their base pointers as ``__mlir_type[`!kgen.simd<`,
-    size._mlir_value, `, address>`]``, which `mlir_applied_type` rejects:
-    `TyKind::Simd` lanes are `Dtype`s, with no pointer lane.
+  `llvm_intrinsic` rejects `llvm.vector.extract`, `llvm.vector.insert`,
+  `llvm.vector.splice.left`/`right`, `llvm.vector.interleave2`,
+  `llvm.vector.deinterleave2`, and `llvm.stepvector`, which the pin calls.
+  - The table (`mojito_types::llvm_intrinsic::LlvmIntrinsic`) types an
+    intrinsic as elementwise or a reduction over one overloaded type.
+  - These take `immarg` index operands, overload on two types (a result
+    width that differs from the operand's), and `deinterleave2` returns a
+    struct of two vectors.
+  - The VM lane rule and Pliron's `lower_llvm_intrinsic` mangling both need
+    those shapes.
+  - Probe: upstream's `SIMD.slice`, `insert`, `interleave`, `deinterleave`,
+    `rotate_left`/`right`, and `shift_left`/`right` (`std/simd.mojo`), and
+    `math.iota` (`stepvector`).
+  - Found while landing R1394 (2026-10-27).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1520 `!kgen.simd<n, address>` has no pointer lane**
+
+  ``__mlir_type[`!kgen.simd<`, size._mlir_value, `, address>`]`` is
+  rejected by `mlir_applied_type`, where the pin types a vector of pointers.
+  - `TyKind::Simd` lanes are `Dtype`s, and no `Dtype` is an address.
+  - Probe: upstream's `masked_gather` and `masked_scatter`
+    (`std/sys/intrinsics.mojo`) pass their base pointers in that type to
+    `llvm.masked.gather`/`scatter`.
+  - Found while planning R1394 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1521 An LLVM intrinsic outside Mojito's table is rejected, where
+  the pin calls it**
+
+  A reached `llvm_intrinsic` call of any intrinsic the table does not list
+  fails elaboration ("the LLVM intrinsic '…' is outside the subset"), where
+  the pin calls any intrinsic LLVM knows.
+  - The VM computes each intrinsic itself (`runtime::llvm_intrinsic`), so
+    each one needs a lane rule in `mojito_types::llvm_intrinsic` before
+    either backend admits it.
+  - Probe: `llvm_intrinsic["llvm.sin", Float64, has_side_effect=False](x)`
+    and the rest of `math`'s `_llvm_unary_fn` family (`cos`, `asin`,
+    `acos`), `llvm.umulh`/`smulh`, `llvm.usub.sat`, and `llvm.is.fpclass`.
+  - Probe: `std.sys.intrinsics`' `assume`, `expect` (`likely`/`unlikely`),
+    `prefetch`, and the `llvm.memcpy`/`memmove` calls of `std.memory`.
+  - Target- and GPU-specific intrinsics (`llvm.x86.*`, `llvm.nvvm.*`,
+    `llvm.amdgcn.*`) stay outside: the VM has no target to read.
+  - Found while landing R1394 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1395 A call of an `@always_inline("builtin")` function is not
   folded in a parameter expression**
@@ -9575,9 +9615,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `_update_with_simd` from the value's type
     (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores;
     upstream's `SIMD.__hash__` calls `_update_with_simd` in library code.
+  - Upstream's method `reduce_and`/`reduce_or` bodies (and `reduce_max`
+    and `reduce_min` off x86) are `llvm_intrinsic` calls of
+    `llvm.vector.reduce.*`, which run since R1394. Its subvector and
+    shuffle bodies need R1519.
   - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R336 (the length
     type), R185 and R186 (so the port is upstream's bodies with no
-    leniency), R58, R1516, R1517, and R1518.
+    leniency), R58, R1516, R1517, R1518, and R1519.
   - Model: Fable, Planned.
 
 - [ ] **R1398 The checker, VM, and Pliron keep `SIMD` member rules no
@@ -11157,6 +11201,10 @@ residue found inside a task moves to the task that owns its fix.
   Problem: a parameter typed `StaticString` compiles at the pin, while
   Mojito reports "unknown type 'StaticString'".
   - Upstream's `StaticString` is `StringSlice[StaticConstantOrigin]`.
+  - Probe: the bundled `std/sys/intrinsics.mojo` declares `llvm_intrinsic`'s
+    `intrin` as a `StringLiteral` and reads its `!kgen.string` as
+    `intrin.value`, where upstream's is a `StaticString` read through
+    `_get_kgen_string[intrin]()`.
   - Found while landing R421 (2026-10-06).
   - Depends on nothing.
   - Model: Opus, Not Planned.

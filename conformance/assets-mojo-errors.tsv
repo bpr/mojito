@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	802
+# swept-count	807
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -479,6 +479,9 @@ assets/type_error/list_anytype_append_requires_movable.mojo	compile-reject	agree
 assets/type_error/list_element_not_hashable.mojo	compile-reject	agree	error: no matching function in call to 'hash'
 assets/type_error/list_explicit_params_with_elements.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/list_slice_assigned_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'rebuild' call
+assets/type_error/llvm_intrinsic_bswap_odd_bytes.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
+assets/type_error/llvm_intrinsic_reduce_scalar.mojo	compile-reject	agree	error: call intrinsic signature i32 (i32) to overloaded intrinsic "llvm.vector.reduce.smax" : !kgen.string does not match any of the overloads: intrinsic argument 0 type (overload type 0) expected any integer vector, but got i32
+assets/type_error/llvm_intrinsic_unknown_name.mojo	compile-reject	agree	error: could not find LLVM intrinsic: "llvm.no.such.thing" : !kgen.string
 assets/type_error/loop_binding_consuming_non_implicit.mojo	compile-reject	agree	error: failed to infer parameter 'origin', specify the parameter or use '_' or '...' to unbind the parameter explicitly
 assets/type_error/loop_immutable_binding_mutation.mojo	compile-reject	agree	error: expression must be mutable for in-place operator destination
 assets/type_error/mapping_key_ref_write.mojo	runs	subset	the pin runs it;Mojito rejects: must be mutable
@@ -530,6 +533,8 @@ assets/type_error/maybe_uninitialized.mojo	compile-reject	agree	error: use of un
 assets/type_error/maybe_uninit_write_nontrivial.mojo	compile-reject	agree	error: invalid call to 'write': violated constraint
 assets/type_error/method_result_pointer_field_read_self_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/method_two_named_results.mojo	compile-reject	agree	error: function may not have multiple 'out' arguments
+assets/type_error/mlir_call_llvm_intrinsic_literal_name.mojo	compile-reject	agree	error: 'pop.call_llvm_intrinsic' op attribute 'intrin' failed to satisfy constraint: TypedAttr instance String type for parameters
+assets/type_error/mlir_call_llvm_intrinsic_without_side_effects.mojo	compile-reject	agree	error: 'pop.call_llvm_intrinsic' op requires attribute 'hasSideEffects'
 assets/type_error/mlir_op_cmp_without_predicate.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cmp' op requires attribute 'pred'
 assets/type_error/mlir_op_operand_types_differ.mojo	compile-reject	agree	error: MLIR verification error: 'pop.add' op requires the same type for all operands and results
 assets/type_error/mlir_op_select_mask_not_bool.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.select' op operand #0 must be !kgen.simd<N, bool>, but got '!kgen.simd<4, si32>'

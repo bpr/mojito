@@ -1,6 +1,7 @@
 //! The `pop` and `index` `__mlir_op` expressions, and the `SIMD` methods
 //! whose upstream bodies are one `pop.simd` lane op, lowered to the
-//! instruction that computes each (`mojito_types::mlir::MlirOp::lowering`).
+//! instruction that computes each (`mojito_types::mlir::MlirOp::lowering`),
+//! and `pop.call_llvm_intrinsic`, lowered to `llvm.intrinsic`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -16,6 +17,53 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::SemanticAdjustment::MlirOp(op) => Some(*op),
                 _ => None,
             })
+    }
+
+    /// The LLVM intrinsic call the checker recorded on `call`, if it is a
+    /// `pop.call_llvm_intrinsic` `__mlir_op`: the intrinsic's name, its
+    /// side-effect flag, and the position of a spread collector.
+    pub(super) fn checked_llvm_intrinsic(call: Node<'a>) -> Option<CheckedLlvmIntrinsic> {
+        call.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::LlvmIntrinsic {
+                    intrinsic,
+                    has_side_effect,
+                    spread,
+                } => Some(CheckedLlvmIntrinsic {
+                    intrinsic: intrinsic.clone(),
+                    has_side_effect: has_side_effect.clone(),
+                    spread: *spread,
+                }),
+                _ => None,
+            })
+    }
+
+    /// Lower the checked LLVM intrinsic call `call` over `args` to
+    /// `llvm.intrinsic`, its destination typed by the call's `_type`. A
+    /// closed name or flag is a value constant; a template's stays a
+    /// parameter constant the elaborator closes.
+    pub(super) fn lower_llvm_intrinsic(
+        &mut self,
+        call: Node<'a>,
+        called: CheckedLlvmIntrinsic,
+        args: &[Node<'a>],
+    ) -> Reg {
+        let operands: Vec<Reg> = args.iter().map(|argument| self.expr(*argument)).collect();
+        let ty = call.ty().expect("a checked `__mlir_op` has a type");
+        let dest = self.fresh_typed(call.location(), None, ty);
+        let constant = |value: ParamExpr| match value.as_constant() {
+            Some(closed) => Const::Value(closed.clone()),
+            None => Const::Param(value),
+        };
+        self.emit(MirInstr::CallLlvmIntrinsic {
+            dest,
+            intrinsic: constant(called.intrinsic),
+            has_side_effect: constant(called.has_side_effect),
+            args: operands,
+            spread: called.spread,
+        });
+        dest
     }
 
     /// The lane op the checker recorded on `call`, if it is a `SIMD` method
@@ -160,4 +208,13 @@ impl<'a> Flatten<'a> {
         });
         dest
     }
+}
+
+/// A `pop.call_llvm_intrinsic` the checker recorded: the name and
+/// side-effect flag, closed or parameter expressions, and the position of
+/// the collector whose elements the call passes.
+pub(super) struct CheckedLlvmIntrinsic {
+    intrinsic: ParamExpr,
+    has_side_effect: ParamExpr,
+    spread: Option<usize>,
 }

@@ -51,6 +51,9 @@ impl<'a> Flatten<'a> {
         if let Some(op) = Self::checked_mlir_op(call) {
             return self.lower_mlir_op(call, op, args);
         }
+        if let Some(called) = Self::checked_llvm_intrinsic(call) {
+            return self.lower_llvm_intrinsic(call, called, args);
+        }
         if let Some(op) = Self::checked_simd_receiver_op(call) {
             return self.lower_simd_receiver_op(call, op, object, args);
         }
@@ -268,6 +271,19 @@ impl<'a> Flatten<'a> {
                         | mojito_types::types::TyKind::IntLiteral
                         | mojito_types::types::TyKind::UINT
                 )
+            })
+        {
+            return Some(self.expr(object));
+        }
+        // `b.__mlir_i1__()` on a `Bool` is the identity conversion to the
+        // builtin `i1` (`Bool`), and a heterogeneous collector's
+        // `get_loaded_kgen_pack()` the collector itself.
+        if args.is_empty()
+            && kwargs.is_empty()
+            && object.ty().is_some_and(|ty| match method {
+                "__mlir_i1__" => matches!(ty.kind(), mojito_types::types::TyKind::Bool),
+                "get_loaded_kgen_pack" => mojito_types::types::is_heterogeneous_collector(&ty),
+                _ => false,
             })
         {
             return Some(self.expr(object));

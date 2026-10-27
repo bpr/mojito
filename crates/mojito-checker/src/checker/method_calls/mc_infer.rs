@@ -118,6 +118,27 @@ impl Checker {
         {
             return Ok(Ty::int());
         }
+        // `Bool.__mlir_i1__()` is upstream's conversion to the builtin `i1`,
+        // which is `Bool` while `Bool` is a compiler type.
+        if method == "__mlir_i1__"
+            && args.is_empty()
+            && kwargs.is_empty()
+            && param_args.is_empty()
+            && matches!(obj_ty.kind(), TyKind::Bool)
+        {
+            return Ok(Ty::bool());
+        }
+        // A heterogeneous collector's `get_loaded_kgen_pack()` is upstream's
+        // `VariadicPack` loading its elements into a `!kgen.pack`, which is
+        // the collector itself while the collector is compiler storage.
+        if method == "get_loaded_kgen_pack"
+            && args.is_empty()
+            && kwargs.is_empty()
+            && param_args.is_empty()
+            && mojito_types::types::is_heterogeneous_collector(&obj_ty)
+        {
+            return Ok(obj_ty);
+        }
         // A scalar's conversion dunders are the methods upstream's `SIMD`,
         // `Bool`, and numeric literals declare for `Boolable`, `Intable`,
         // and `Floatable`; the backends answer them through the conversion

@@ -816,6 +816,63 @@ fn verifier_types_simd_lane_instructions() {
 }
 
 #[test]
+fn verifier_checks_llvm_intrinsic_calls() {
+    let lowered = || {
+        lower_source(
+            "def main():\n    var x = Int32(7)\n    print(__mlir_op.`pop.call_llvm_intrinsic`[intrin=\"llvm.ctpop\".value, _type=Int32, hasSideEffects=False.__mlir_i1__()](x))\n",
+        )
+    };
+    let with_call = |edit: &dyn Fn(&mut MirInstr)| {
+        let mut mir = lowered();
+        let call = mir
+            .functions
+            .iter_mut()
+            .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+            .find(|instruction| matches!(instruction, MirInstr::CallLlvmIntrinsic { .. }))
+            .expect("LLVM intrinsic call lowered");
+        edit(call);
+        mir
+    };
+    let concrete_finding = |mir: &MirProgram, needle: &str| {
+        let errors = mojito::mir::verify::verify_concrete(mir);
+        assert!(
+            errors.iter().any(|error| error.contains(needle)),
+            "expected a finding containing '{needle}', got {errors:?}"
+        );
+    };
+    assert!(
+        !mojito::mir::verify::verify_concrete(&lowered())
+            .iter()
+            .any(|error| error.contains("intrinsic")),
+        "a closed call in the table is concrete"
+    );
+    concrete_finding(
+        &with_call(&|call| {
+            if let MirInstr::CallLlvmIntrinsic { intrinsic, .. } = call {
+                *intrinsic = Const::Value(CtValue::KgenString("llvm.sin".to_string()));
+            }
+        }),
+        "which is no LLVM intrinsic Mojito computes",
+    );
+    concrete_finding(
+        &with_call(&|call| {
+            if let MirInstr::CallLlvmIntrinsic { spread, .. } = call {
+                *spread = Some(0);
+            }
+        }),
+        "keeps an LLVM intrinsic call's pack spread",
+    );
+    expect_finding(
+        &with_call(&|call| {
+            if let MirInstr::CallLlvmIntrinsic { spread, .. } = call {
+                *spread = Some(0);
+            }
+        }),
+        "llvm.intrinsic spreads the non-pack Int32",
+    );
+}
+
+#[test]
 fn verifier_rejects_cross_receiver_and_fabricated_reference_subscript_contracts() {
     let source = "@fieldwise_init\nstruct Item:\n    var value: Int\n\n@fieldwise_init\nstruct Box:\n    var item: Item\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.item)] Item:\n        return self.item\n\n@fieldwise_init\nstruct Other:\n    var item: Item\n    def __getitem__(ref self, index: Int) -> ref[origin_of(self.item)] Item:\n        return self.item\n\ndef main():\n    var box = Box(Item(1))\n    print(box[0].value)\n";
 

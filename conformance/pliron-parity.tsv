@@ -42,6 +42,7 @@ assets/ok/associated_type_return.mojo	main	exe-differential	sanitized
 assets/ok/associated_value_self_read.mojo	main	exe-differential	sanitized
 assets/ok/augmented_bitwise_assignment.mojo	main	exe-differential	sanitized
 assets/ok/augmented_store_copies_nothing.mojo	main	exe-differential	sanitized
+assets/ok/bit_count_ops.mojo	main	exe-differential	sanitized
 assets/ok/bitwise_shift_precedence.mojo	main	exe-differential	sanitized
 assets/ok/bool_alias_predicate_where.mojo	main	exe-differential	sanitized
 assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
@@ -446,6 +447,7 @@ assets/ok/list_to_span_conversion_borrows.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_ptr_multi_element.mojo	main	exe-differential	sanitized
 assets/ok/list_unsafe_uninit_length.mojo	main	exe-differential	sanitized
 assets/ok/live_pointer_ref_argument.mojo	main	exe-differential	sanitized
+assets/ok/llvm_intrinsic.mojo	main	exe-differential	sanitized
 assets/ok/loan_carrying_instance_clone.mojo	main	exe-differential	sanitized
 assets/ok/local_comptime_closed_binding.mojo	main	exe-differential	sanitized
 assets/ok/local_comptime_float.mojo	main	exe-differential	sanitized

@@ -121,7 +121,10 @@ impl Checker {
 
     /// The type a `_type` attribute names: a type annotation, or an
     /// expression denoting one (`Lanes[target, Self.length]._mlir_type`).
-    fn mlir_result_type(&self, value: &mojito_ast::ast::ParamArg) -> Result<Ty, TypeError> {
+    pub(super) fn mlir_result_type(
+        &self,
+        value: &mojito_ast::ast::ParamArg,
+    ) -> Result<Ty, TypeError> {
         match value {
             mojito_ast::ast::ParamArg::Type(annotation) => self.ty_from_anno(annotation),
             mojito_ast::ast::ParamArg::Value(expression) => {
