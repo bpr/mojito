@@ -8,6 +8,25 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- The elaborator above the check now evaluates nothing and resolves no
+  type, as upstream evaluates parameter expressions only in its
+  elaborator, after sema (R1388): its compile-time evaluator, its type
+  resolver, its runtime-crossing folds, its compile-time environment, and
+  the checker's pre-check `ConformanceOracle` built for it are deleted,
+  and every `comptime` declaration is the check's as written. The check
+  now types `conforms_to(T, Tr)` as a `Bool` parameter value in any
+  position, a run-time `print(conforms_to(Tuple[Int, Int], Comparable))`
+  and a binding over a binder included (R1465, R1460: an unknown trait now
+  rejects where it answered `False`); an invoked lambda in a `comptime`
+  initializer is the lifted function's nested declaration (R1476); a
+  construction through a struct's parameterized type member, directly or
+  through a local alias, constructs the type the member names; `len` of a
+  compile-time `TypeList` value is its length; and a vector-annotated
+  scalar binding splats at module scope and in a body. A struct header's
+  `where` over its own pack no longer stops at the oracle but at the check
+  (R1179 is now R1474's probe), and `TypeList[S[Int, Bool]._types].length`,
+  `ParameterList[c].size`, and a user struct's `of` alias now run (R1175).
+
 - A `reflect[T]` query is now answered by the check alone (and, over a
   parameter, by the elaborator below MIR), never above the check, as
   upstream's `Reflected[T]` methods return parameter attributes (R1383).

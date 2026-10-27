@@ -122,18 +122,6 @@ pub(super) fn elaborated_binder(
     )
 }
 
-pub(super) fn decode_ct_origin_marker(value: &CtValue) -> Option<mojito_types::origin::RefTy> {
-    let &CtValue::Marker(CtMarker::TupleOrigin { id, mutability }) = value else {
-        return None;
-    };
-    Some(mojito_types::origin::RefTy {
-        // Filled by `type_from_anno` after the marker establishes provenance.
-        referent: Ty::none(),
-        origin: mojito_types::origin::Origin::Param(id),
-        mutability,
-    })
-}
-
 pub(super) fn ct_value_param_type(name: &str) -> Option<Ty> {
     Some(match name {
         "Int" => Ty::int(),

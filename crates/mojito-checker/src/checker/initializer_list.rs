@@ -206,6 +206,28 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Expr, TypeError> {
+        // The alias's application is read again under identities derived
+        // from the call's, as a receiver through the alias is.
+        let mut applied = value.clone();
+        applied.source.clone_from(&expression.source);
+        mojito_ast::visit::walk_expr_mut(
+            &mut mojito_ast::visit::DerivedIdentities {
+                parent: expression.syntax_id,
+                next: 2,
+            },
+            &mut applied,
+        );
+        if let Some((name, param_args)) = self.raw_list_spelling(&applied, ty) {
+            return Ok(derived_construction(
+                expression,
+                ExprKind::Call {
+                    name,
+                    param_args,
+                    args: args.to_vec(),
+                    kwargs: kwargs.to_vec(),
+                },
+            ));
+        }
         let Some((callee, param_args)) = alias_application(value) else {
             return self
                 .initializer_list_construction(expression, args, ty)
@@ -231,6 +253,118 @@ impl Checker {
                 kwargs: kwargs.to_vec(),
             },
         ))
+    }
+
+    /// Type a construction through a struct's parameterized type member
+    /// (`S[Int].Of[Bool](3, 4)`, `ParameterList.of[4, 5]()`) as the
+    /// construction of the type the member names, as upstream reads the
+    /// member as its value: the type's spelling applied to the call's
+    /// arguments. A struct over a raw parameter list, which has no source
+    /// spelling, spells each parameter by keyword, a type as itself and a
+    /// value read off the member's application (`ParameterList[type=Int,
+    /// values=ParameterList.of[4, 5].values]`). `None` when the callee
+    /// names no parameterized type member.
+    pub(super) fn infer_type_member_construction(
+        &self,
+        expression: &Expr,
+        callee: &Expr,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let ExprKind::Member { object, field } = &callee.kind else {
+            return None;
+        };
+        let base = object.type_spelling()?;
+        let SourceType::Named(owner, _) = &base else {
+            return None;
+        };
+        let owner = self.structs.get(owner)?;
+        if !owner.parameterized_associated.contains_key(field) || owner.methods.contains_key(field)
+        {
+            return None;
+        }
+        let member = SourceType::Assoc {
+            base: Box::new(base),
+            name: field.clone(),
+            args: param_args.to_vec(),
+        };
+        let construction = self.ty_from_anno(&member).and_then(|ty| {
+            let (name, param_args) = member_application(callee, param_args)
+                .and_then(|applied| self.raw_list_spelling(&applied, &ty))
+                .or_else(
+                    || match mojito_types::ct::source_type(&ty, expression.span) {
+                        Some(SourceType::Named(name, param_args)) => Some((name, param_args)),
+                        _ => None,
+                    },
+                )
+                .ok_or_else(|| {
+                    TypeError::Unsupported(format!(
+                        "a construction through '{field}': '{ty}' has no construction to spell"
+                    ))
+                })?;
+            Ok(derived_construction(
+                expression,
+                ExprKind::Call {
+                    name,
+                    param_args,
+                    args: args.to_vec(),
+                    kwargs: kwargs.to_vec(),
+                },
+            ))
+        });
+        Some(construction.and_then(|construction| self.infer_spelled(expression, construction)))
+    }
+
+    /// The keyword spelling of `ty`, a struct over a raw parameter list
+    /// that the type member application `applied` names
+    /// (`ParameterList.of[4, 5]`): a type parameter as its type, a value
+    /// parameter read off the application. `None` for any other type.
+    fn raw_list_spelling(
+        &self,
+        applied: &Expr,
+        ty: &Ty,
+    ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
+        use mojito_ast::ast::ParamArg;
+        let TyKind::Struct(target, arguments) = ty.kind() else {
+            return None;
+        };
+        let decls = &self.structs.get(target)?.decls;
+        let raw = decls.iter().any(|decl| {
+            matches!(decl, ParamDecl::Value { ty, .. } if matches!(ty.kind(), TyKind::ParamList(_)))
+        });
+        if !raw || decls.len() != arguments.len() {
+            return None;
+        }
+        let spelled = decls
+            .iter()
+            .zip(arguments)
+            .map(|(decl, argument)| {
+                let value = match (decl, argument) {
+                    (_, TyArg::Origin(_))
+                    | (
+                        ParamDecl::Type { variadic: true, .. }
+                        | ParamDecl::Value { variadic: true, .. },
+                        _,
+                    ) => return None,
+                    (ParamDecl::Type { .. }, TyArg::Ty(ty)) => {
+                        ParamArg::Type(mojito_types::ct::source_type(ty, applied.span)?)
+                    }
+                    _ => ParamArg::Value(Expr::new(
+                        ExprKind::Member {
+                            object: Box::new(applied.clone()),
+                            field: decl.name().to_string(),
+                        },
+                        applied.span,
+                    )),
+                };
+                Some(ParamArg::Named {
+                    name: decl.name().to_string(),
+                    value: Box::new(value),
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some((target.clone(), spelled))
     }
 
     /// Type `spelled`, the expression the checker spelled for `expression`,
@@ -407,6 +541,36 @@ fn alias_application(value: &Expr) -> Option<(String, Vec<mojito_ast::ast::Param
         },
         _ => None,
     }
+}
+
+/// The member application an invocation's callee and bracket list spell
+/// (`ParameterList.of[4, 5]` of `ParameterList.of[4, 5]()`), as a
+/// compile-time expression. `None` when a bracket argument is a keyword
+/// whose value is itself named.
+fn member_application(callee: &Expr, param_args: &[mojito_ast::ast::ParamArg]) -> Option<Expr> {
+    use mojito_ast::ast::{ParamArg, SubscriptArg};
+    let value = |argument: &ParamArg| match argument {
+        ParamArg::Value(value) => Some(value.clone()),
+        ParamArg::Type(ty) => Some(Expr::new(ExprKind::TypeValue(ty.clone()), callee.span)),
+        ParamArg::Named { .. } => None,
+    };
+    let args = param_args
+        .iter()
+        .map(|argument| match argument {
+            ParamArg::Named { name, value: named } => Some(SubscriptArg::Keyword {
+                name: name.clone(),
+                value: value(named)?,
+            }),
+            positional => value(positional).map(SubscriptArg::Index),
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(Expr::new(
+        ExprKind::MultiIndex {
+            object: Box::new(callee.clone()),
+            args,
+        },
+        callee.span,
+    ))
 }
 
 /// The source spelling of a pack element's index that is still a parameter

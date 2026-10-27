@@ -258,10 +258,10 @@ import (every compilation that links the bundled library):
   a compile-time call reads. A table key belongs to the declaration it
   names, an overload's signature-qualified key or a member's
   `Owner.member` included. A module value constant's residue also holds
-  the constant as the build's comptime elaboration folded it
-  (`checker::ElaboratedConstant`: a folded value or `Applied` marker;
-  `comptime::elaborate_exporting`, `CheckContext::record_elaborated`). A
-  module alias, generic or not, travels only as the check's `Aliases` row,
+  an `Elaborated` row (`checker::ElaboratedConstant`), which the build
+  fills only from the check's integer constants since the elaborator
+  folds nothing (`CheckContext::record_elaborated` has no caller) and no
+  importer reads (roadmap R1480 deletes it). A module alias, generic or not, travels only as the check's `Aliases` row,
   as upstream holds an alias only as its declaration: an importer's check
   reads it there, and the elaborator's prepare-time folds read a type
   alias's type through `InstalledInterfaces::type_alias`. A declaration's
@@ -278,8 +278,7 @@ import (every compilation that links the bundled library):
   each module integer constant once, first, before any declaration's
   symbol is spelled (`Checker::fold_module_constants`), and records each
   module type alias's spelling there too, and every symbol speller — the
-  checker's binder owners, the conformance oracle, and MIR's name lowering
-  — reads them (`checked::package::ProgramConstants`, a
+  checker's binder owners and MIR's name lowering — reads them (`checked::package::ProgramConstants`, a
   `symbol::ModuleNames`; `CheckedProgram::constants`), so a parameter
   annotated by an alias spells as the type it names; the overload scan
   folds nothing. It holds no overload set: as
@@ -314,7 +313,7 @@ import (every compilation that links the bundled library):
   `DeclarationSet`) hold the program's own entries over that handle: a
   lookup the own entries miss finds its key's declaration in the
   directory and decodes that residue the first time, once per compilation,
-  for every checker pass and the conformance oracle alike; a key list or a
+  for every checker pass alike; a key list or a
   name-set membership answers from the directory alone. A module-scope
   compile-time fact the checker's own scopes miss is the installed
   declaration's of that name (`Checker::installed_comptime_parameter` and
@@ -346,18 +345,10 @@ import (every compilation that links the bundled library):
   conformer inherits defaults from, and its SIMD, `!kgen.type`, and `!kgen.string` aliases
   as its build's check resolved them (`InstalledInterfaces::type_alias`).
   `comptime::elaborate_importing` elaborates them alone
-  (`comptime::ImportedScope`), substituting no package alias: a name its
-  module environment (`comptime::ConstEnv`) misses is the reached
-  package's value constant of that name, decoded with its
-  declaration's record on first lookup
-  (`checker::InstalledInterfaces::elaborated`), and its conformance oracle
-  attaches the interfaces and registers the own statements over them
-  (`ConformanceOracle::importing`). Its struct and
-  function indexes hold the own declarations; a package struct or `def`
-  is read from the oracle as the package's check resolved it
-  (`ConformanceOracle::{package_struct, package_associated_value}`), as
-  upstream's emitters
-  read a package declaration resolved, never its syntax.
+  (`comptime::ImportedScope`), reading no package declaration but its
+  struct names (`InstalledInterfaces::declares_struct`), which mark a
+  subscript-shaped projection, as upstream's emitters read a package
+  declaration resolved, never its syntax.
   The check is given the program's own statements alone: each transfer
   pass attaches the declaration records of the modules the link reached
   to its fresh `Checker` (`Checker::attach_interfaces`), copying nothing
@@ -962,7 +953,6 @@ comptime::prepare(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
 comptime::prepare_importing(own: Vec<Stmt>, traits: &[&Stmt], installed: Option<&InstalledInterfaces>) -> Result<Vec<Stmt>, ComptimeError>
 comptime::elaborate_prepared(prepared: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError>
 comptime::elaborate_importing(own: &[Stmt], imported: ImportedScope) -> Result<Vec<Stmt>, ComptimeError>
-comptime::elaborate_exporting(prepared: &[Stmt]) -> Result<(Vec<Stmt>, ElaboratedConstants), ComptimeError>
 comptime::elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError>
 ```
 
@@ -1016,8 +1006,8 @@ so an `elif` past a taken arm, or an enum payload read guarded by its tag,
 never runs.
 A `comptime match` is that same conditional chain, as upstream emits its
 cases as one `hlcf.comptime.if` (`emitComptimeCases`): the elaborator above
-the check keeps it with each case body elaborated over its pattern's
-bindings as binders (`comptime/elab.rs::keep_template_comptime_match`), the
+the check keeps it with each case body elaborated
+(`comptime/elab.rs::elaborated_stmt`), the
 checker compiles each case's pattern with the runtime `match`'s builder in
 compile-time mode (`Checker::check_comptime_match`, `checker/patterns.rs`)
 — its tests conjoined with its guard into one compile-time condition that
@@ -1027,8 +1017,7 @@ handoff carries `CheckedStmtOp::ComptimeMatch` with each case's
 `CheckedMatchCase::condition`, and HIR lowers it to `HirInstr::ComptimeIf`
 (`hir::Lower::comptime_match`), so MIR and below see only the existing op.
 The template keeps every `comptime for` in a generic body, as upstream keeps its
-parameter `for` (`comptime/elab.rs::keep_template_comptime_for`, which
-forces a pending module constant the loop iterates): the checker types the body
+parameter `for` (`comptime/elab.rs::elaborated_stmt`): the checker types the body
 once and records how the loop iterates
 (`SemanticAdjustment::ComptimeIteration`). Every iterable — a collection
 display, a display binding, a module constant, an application, `range(...)`,
@@ -1317,8 +1306,7 @@ clone (pack qualification, the synthesized `copy`/`__hash__` methods, the
 `SIMD[_, _]` parameter desugar into an infer-only dtype and `SIMDLength`
 binder pair, SIMD alias-bound folding). The elaborator keeps every
 `comptime if` and `comptime for` of every function body, plain or generic
-(`Elab::def_body` pushes a binder set for every body, empty for a plain
-one), and the one check types every body once with its declaration's
+(`comptime/elab.rs:def_body`), and the one check types every body once with its declaration's
 parameters left symbolic (`checker/comptime_validation.rs`): each condition
 typed as a compile-time `Bool` (a generic constraint over the parameters
 in scope, a concrete conformance, or a `Bool` value; a closed condition
@@ -1493,13 +1481,13 @@ read while they resolve, is the `Reflect` node mono folds, as upstream's
 member is lazy. A reflected field type in a bracket argument is an
 `AnyType` value, which binds only a binder asking nothing more of it.
 
-**Module constants are parameter expressions.** The elaborator folds no
-module value constant into a statement. A closed scalar or string constant
-is kept as written, with no value in the elaborator; one whose initializer
-applies a callable, asks a layout, reads such a constant, or is refused by
-`Elab::eval` (`Int32(4)`, `max(3, 4)`) is marked (`CtMarker::Applied`) and
-kept as written; no crossing or default reads either, nor a package's
-closed scalar (`ConstEnv::crossing`). The check builds every module constant
+**Module constants are parameter expressions.** The elaborator above the
+check evaluates nothing: every `comptime` declaration, module or local, is
+kept as written. A vector annotation converts a scalar initializer by
+splatting it (`comptime ONES: SIMD[DType.int32, 4] = 1`): the check folds
+a module constant at its annotation (`Checker::splat_at_annotation`), and
+a local binding is its slot materialized at the annotation, as a `var`'s
+is. The check builds every module constant
 with the one parameter-expression builder — ahead of every declaration
 (`Checker::fold_module_constants`), or in its declaration pass when the
 initializer reads a declaration — and records a body's read as a
@@ -1708,24 +1696,20 @@ instance, a static, a generic constructor (a construction the elaborator
 respells to the constructor's instance), a method keyed on its own `DType`
 or lane binder (the checker closes the binder in the call's result type),
 and a body whose `comptime if` or `comptime for` reads only its own binders,
-which the elaborator keeps in the template (`Elab::def_body`) and decides per
-call. `native::mono` finds what such a body reaches from its MIR.
+which the elaborator keeps in the template (`comptime/elab.rs:def_body`)
+and decides per call. `native::mono` finds what such a body reaches from its MIR.
 
 A method keyed on a type pack of its own is served the same way: its
-template body opens the pack (`Elab::def_body`), and the call's solved pack
+template body keeps the pack (`comptime/elab.rs:def_body`), and the call's solved pack
 binds it below MIR. No method mints an AST clone, per call or per
 instance: every `comptime for` a method's body holds is kept in its template
-(`keep_template_comptime_for`), its sequence and the bindings its body
+(`comptime/elab.rs:elaborated_stmt`), its sequence and the bindings its body
 declares evaluated per instance below MIR (the iterable's `__iter__()`
-thunk for a loop, an R7 request for a binding). A method body that still fails to elaborate
-over its own binders or its struct's becomes, on its template, the one
-compiler-private call `_mojito_instantiation_failed("…")`
-(`instantiation_failure_stub`): the failure is the pin's `function
-instantiation failed`, reported only where the program reaches an instance. `native::mono`
-reports it per reached instance after branch selection
-(`discharge_instantiation_failures`, `mono/failure.rs`) as a
-`MonoErrorKind::Instantiation` error. A template-served body fails the
-same way where a parameter constant its instance reaches cannot be
+thunk for a loop, an R7 request for a binding). The elaborator above the
+check evaluates nothing, so no method body fails there. A template-served
+body fails as the pin's `function instantiation failed`, a
+`MonoErrorKind::Instantiation` error reported only where the program
+reaches an instance, where a parameter constant its instance reaches cannot be
 computed (`comptime q = [1, 2][i]` past the display): an unrolled
 iteration's failure waits in `unreached_failures` until branch selection
 has pruned the arms the instance never takes (`reached_failure`,
@@ -1821,10 +1805,9 @@ on the call as its spelled receiver type (`MirInstr::Call::receiver`,
 `Pair[Self.U].count()`).
 
 A `comptime if` or a `comptime for` over the struct's parameters stays in
-the template, as a generic `def`'s does: the elaborator's struct walk opens
-the struct's parameters as binders of each method's body (`Elab::def_body`),
-as `Self.`-qualified names only, with a collector of the struct's pack
-(`*b: *Self.Ts`) a binder as a method's own collector is, so
+the template, as a generic `def`'s does: the elaborator's struct walk keeps
+every method body's `comptime` constructs as written, reading the
+struct's type packs as `Self.`-qualified names (`comptime/elab.rs:def_body`), so
 `native::mono` decides the branch and
 unrolls the loop per instance; a `rebind`, a nested `def`, and a lambda stay
 too. No method mints a per-instantiation clone, whatever its body holds or
@@ -1869,30 +1852,34 @@ abstract-`__next__` adapter symmetry, `CallIndirect`'s callable-contract
 validation, and the direct-`Call` undeclared-callee tolerance — the set the
 backend-ready MIR checkpoint re-confirms before freezing the schema.
 
-The important distinction is that the elaborator still owns compile-time AST
-rewriting, while function-body execution now goes through the MIR/VM path. The
-remaining expression evaluator in `crates/mojito-comptime/src/comptime.rs` is not a second function
-runtime; it exists to decide `comptime if`, enumerate `comptime for`, resolve
-type-valued compile-time facts, and fold those facts before a CTFE helper is
-lowered to MIR.
+The important distinction is that the elaborator above the check owns only
+declaration normalization and AST spelling, while every compile-time
+evaluation goes through the check's parameter expressions and the MIR/VM
+path below it: `crates/mojito-comptime` holds no expression evaluator.
 
 ### Compile-Time Calls
 
-No call is evaluated above the check. A compile-time position that applies
+Nothing is evaluated above the check: the elaborator there holds no
+evaluator and no type resolver, as upstream evaluates parameter expressions
+only in its elaborator, after sema. A compile-time position that applies
 a callable — a local `comptime` binding, a `comptime if` condition, a
 `comptime for` bound or sequence, a `comptime(e)` or `materialize[...]()`
-operand, a module constant's initializer — is kept for the check
-(`applies_callable`, one predicate the elaborator and the checker share),
-bound there as a parameter expression (an `Apply` of the callee, or of a
+operand, a module constant's initializer — is bound by the check as a
+parameter expression (an `Apply` of the callee, or of a
 function the check names for a general expression, which MIR lifts,
 `ComptimeThunks::request_applications`), and served by
 the elaborator below MIR, which runs the instance's reference closure as
 concrete MIR on the VM (`Specializer::demand_application`,
-`VmBackend::call_concrete`). The elaborator above the check
-(`comptime/eval.rs`) folds closed values only and refuses a call
-(`not_evaluated_here`); a module constant whose initializer it refuses (a
-generic `comptime` alias applying a callable, `comptime z = Twice[6]`) is
-the check's to bind as a request.
+`VmBackend::call_concrete`). A closed value is the check's too: a
+crossing (`materialize[X]()`, `comptime(e)`) is the parameter value of its
+operand, `conforms_to(T, Tr)` a `Bool` parameter value
+(`Checker::conformance_query`, a `Conforms` node mono decides per
+instance), `len` of a compile-time `TypeList` value its length query, and a
+construction through a struct's type member (`S.Of[Int]()`,
+`ParameterList.of[4, 5]()`) the construction of the type the member names
+(`Checker::infer_type_member_construction`, a spelled construction). An
+invoked lambda in a lifted initializer is the lifted thunk's nested
+declaration (`analyze_root_children` over the returned expression).
 
 ### Fuel
 
@@ -1914,16 +1901,16 @@ mechanism small and fixed for now.
 The checker owns compile-time typing: value-parameter positions such as
 SIMD widths, the constant folder for closed `Int` expressions
 (`eval_ct`), the constraint compiler, and the parameter expressions every
-compile-time read denotes. The elaborator runs before it and folds closed
-values into literals (`comptime T = Int`, `comptime L = [1, 2]`); every
-other compile-time fact crosses the check as a parameter expression.
+compile-time read denotes. The elaborator runs before it and folds no
+value: every `comptime` declaration reaches the check as written, and
+every compile-time fact crosses the check as a parameter expression, as
+upstream's sema hands its elaborator parameter expressions alone.
 
 `ParamDecl::Value` retains its declared checked type and optional compile-time
 default, a `ParamExpr`. The shared `CtValue` model carries integers, booleans,
 strings, tuples/lists, types, residual parameter expressions, and zero-sized
-reflection handles. Both phases fold through `param_expr::fold`.
-Only literal-shaped values materialize into runtime AST; type and reflection
-handles are consumed and erased during elaboration.
+reflection handles. The check and the elaborator below MIR fold through
+`param_expr::fold`.
 
 ### Exact Numeric Literals
 
@@ -3063,14 +3050,9 @@ and pack length queries without confusing a public tuple with the private
 `TyKind::Tuple` carrier. Specialization infers literal
 and directly constructed call-argument types, binds the pack's type tuple into
 the compile-time environment, and unrolls `args.__len__()`-driven loops.
-Because specialization consumes this generic call before whole-program checking,
-it queries a declaration-only checker conformance oracle first. Every inferred
-element is tested against every declared pack bound at the requesting call site;
-a failure names the one-based element number, concrete type, pack, and trait.
-The oracle reuses the authoritative conformance rules and records trait
-refinement, nominal/conditional conformances, field types, and lifecycle-method
-presence without checking method bodies early. Full conformance verification
-still runs on the elaborated program.
+The check tests every inferred element against every declared pack bound at
+the requesting call site; a failure names the one-based element number,
+concrete type, pack, and trait.
 A homogeneous collector (`*args: T`) is never specialized by arity: the
 elaborator unifies each overflow argument against the element type only, so
 one instance per element type takes every call's pack at run time. In the

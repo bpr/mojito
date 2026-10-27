@@ -1070,7 +1070,6 @@ impl<'a> Specializer<'a> {
             kind: MonoErrorKind::Instantiation,
             ..self.error(Some(&key.template), construct)
         })?;
-        self.discharge_instantiation_failures(&key.template, &function)?;
         self.discharge_rebinds(&key.template, &mut function)?;
         let mut blocks = std::mem::take(&mut function.blocks);
         let answered = self.answer_param_constants(
@@ -2033,6 +2032,9 @@ impl<'a> Specializer<'a> {
             }
             _ => None,
         };
+        if let Some(conforms) = self.decided_conformance(value, bindings) {
+            return Ok(Some(Const::Bool(conforms)));
+        }
         match proposition {
             Some(proposition) => Ok(self
                 .constraint_holds(&proposition, bindings, &mut HashSet::new())
@@ -2049,6 +2051,31 @@ impl<'a> Specializer<'a> {
                 Err(error) if error.kind == MonoErrorKind::Instantiation => Err(error),
                 Err(_) => Ok(None),
             },
+        }
+    }
+
+    /// The answer to a `conforms_to` query the instance closes: one
+    /// `Conforms` proposition, or a conjunction of them
+    /// (`conforms_to(T, A & B)`). `None` for any other expression, or a
+    /// subject the instance leaves open.
+    fn decided_conformance(&self, value: &ParamExpr, bindings: &Bindings) -> Option<bool> {
+        match value.kind() {
+            ParamKind::Conforms {
+                subject,
+                trait_name,
+            } => {
+                let Ok(CtValue::Type(ty)) = eval_ct(subject, bindings) else {
+                    return None;
+                };
+                self.type_conforms(&ty, trait_name, &mut HashSet::new())
+            }
+            ParamKind::Op {
+                op: mojito_types::param_expr::ParamOp::BoolAnd,
+                operands,
+            } => operands.iter().try_fold(true, |all, operand| {
+                Some(all && self.decided_conformance(operand, bindings)?)
+            }),
+            _ => None,
         }
     }
 

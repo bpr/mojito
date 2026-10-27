@@ -2082,12 +2082,16 @@ impl Checker {
             }
             _ => match self.type_operand_expression(expr) {
                 Ok(Some(ty)) => Ok(Some(ty)),
+                // An element of a compile-time `TypeList` value past its
+                // end is the read's own failure.
                 Err(error)
                     if matches!(error, TypeError::UnknownType(_))
                         || matches!(
                             expr.kind,
                             ExprKind::TypeValue(_) | ExprKind::TypeApply { .. }
-                        ) =>
+                        )
+                        || matches!(&expr.kind, ExprKind::Index { object, .. }
+                            if matches!(self.type_list_operand(object), Ok(Some(_)))) =>
                 {
                     Err(error)
                 }

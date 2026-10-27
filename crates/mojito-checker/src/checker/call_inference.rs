@@ -24,11 +24,13 @@ type InferredCall = (
 
 impl Checker {
     /// Whether `len(args)` measures an operand only a compile-time position
-    /// holds, a type pack, which the library `len` cannot bind: upstream
-    /// applies `len` to the pack's `TypeList` value at compile time, and
-    /// the check answers it with the pack's length query.
+    /// holds, a type pack or a compile-time `TypeList` value, which the
+    /// library `len` cannot bind: upstream applies `len` to the `TypeList`
+    /// value at compile time, and the check answers it with the list's
+    /// length query.
     pub(super) fn compile_time_len_operand(&self, args: &[Expr]) -> bool {
-        matches!(args, [operand] if self.type_pack_named(operand).is_some())
+        matches!(args, [operand] if self.type_pack_named(operand).is_some()
+            || matches!(self.type_list_operand(operand), Ok(Some(_))))
     }
 
     /// Reject a reference to the module function `name` as a value when
@@ -185,6 +187,20 @@ impl Checker {
             "comptime" if args.len() == 1 && param_args.is_empty() && kwargs.is_empty() => {
                 self.infer_template_comptime(&args[0])
             }
+            // `conforms_to(T, Tr)`: a compile-time `Bool` read as a
+            // runtime value, the parameter constant of its query.
+            "conforms_to" if param_args.is_empty() && kwargs.is_empty() => {
+                let [subject, traits] = args else {
+                    return Err(TypeError::ArityMismatch {
+                        name: "conforms_to".to_string(),
+                        expected: 2,
+                        got: args.len(),
+                    });
+                };
+                let value = self.conformance_query(subject, traits)?;
+                self.record_member_value(span, value);
+                Ok(Ty::bool())
+            }
             // `Int(copy=x)`: a built-in value type's `Copyable`
             // initializer.
             _ if args.is_empty()
@@ -305,20 +321,6 @@ impl Checker {
                         context: "argument to '_mojito_abort'".to_string(),
                     }),
                 }
-            }
-            // The body of a method clone whose instantiation failed: the
-            // elaborator reports the literal message if a reachable call
-            // instantiates it.
-            "_mojito_instantiation_failed" => {
-                let tys = self.builtin_args("_mojito_instantiation_failed", 1, args)?;
-                if tys[0] != TyKind::StringLiteral {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "StringLiteral".to_string(),
-                        found: tys[0].to_string(),
-                        context: "argument to '_mojito_instantiation_failed'".to_string(),
-                    });
-                }
-                Ok(Ty::none())
             }
             // Positional `String(x)` is the stringify intrinsic; the
             // zero-argument form is the nominal empty constructor

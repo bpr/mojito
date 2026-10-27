@@ -336,9 +336,9 @@ impl Collectors {
 }
 
 /// Whether the call `name` is a compiler-private intrinsic that never
-/// returns: the runtime trap, or a method clone's failed instantiation.
+/// returns: the runtime trap.
 fn is_diverging_intrinsic(name: &str) -> bool {
-    matches!(name, "_mojito_abort" | "_mojito_instantiation_failed")
+    name == "_mojito_abort"
 }
 
 /// Why a construction selected no constructor: the availability clause of a
@@ -3362,87 +3362,6 @@ impl Checker {
                     })
                     .collect()
             })
-    }
-
-    /// Bind a bracket list whose arguments are already compile-time values
-    /// (the elaborator's, keyword names beside them) to `decls`, slotted as
-    /// [`Self::resolve_use_params`] slots a source list: a pack's arguments
-    /// as its list, a trait argument checked against its binder's bound, and
-    /// an open trait binder solved as there.
-    pub(super) fn bind_closed_bracket_list(
-        &self,
-        name: &str,
-        decls: &[ParamDecl],
-        arguments: &[(Option<String>, CtValue)],
-    ) -> Result<Vec<TyArg>, TypeError> {
-        let keywords: Vec<Option<&str>> = arguments
-            .iter()
-            .map(|(keyword, _)| keyword.as_deref())
-            .collect();
-        let slots = mojito_ast::call::match_parameter_slots(decls, &keywords)
-            .map_err(|error| error.into_type_error(name))?;
-        let mut bound: Vec<Vec<&CtValue>> = vec![Vec::new(); decls.len()];
-        for ((_, value), slot) in arguments.iter().zip(slots) {
-            bound[slot].push(value);
-        }
-        let trait_solutions = self.solve_trait_binders_from_lists(
-            decls,
-            |index| bound[index].is_empty(),
-            |_, _| None,
-        )?;
-        let mut subst = TySubst::new();
-        self.solve_binders_from_values(decls, &mut subst, |index, declared| {
-            bound[index]
-                .first()
-                .and_then(|value| self.ct_value_ty(value, declared))
-        })?;
-        decls
-            .iter()
-            .zip(&bound)
-            .map(|(decl, values)| match (decl, values.as_slice()) {
-                (
-                    ParamDecl::Type { variadic: true, .. }
-                    | ParamDecl::Value { variadic: true, .. },
-                    _,
-                ) => Ok(TyArg::Val(CtValue::Tuple(
-                    values.iter().map(|value| (*value).clone()).collect(),
-                ))),
-                (ParamDecl::Type { .. }, [CtValue::Type(ty)]) => Ok(TyArg::Ty(ty.clone())),
-                (ParamDecl::Value { ty, .. }, [CtValue::Trait(traits)]) => {
-                    let traits = self.canonical_trait_set(traits);
-                    match ty.kind() {
-                        TyKind::AnyTrait(bound) if self.traits_satisfy(&traits, bound) => {
-                            Ok(TyArg::Val(CtValue::Trait(traits)))
-                        }
-                        _ => Err(TypeError::ParamValueType {
-                            callee: name.to_string(),
-                            param: decl.name().to_string(),
-                            expected: ty.to_string(),
-                            found: TyKind::AnyTrait(traits).to_string(),
-                        }),
-                    }
-                }
-                (ParamDecl::Value { ty, .. }, [value]) => Ok(TyArg::Val(
-                    (*value)
-                        .clone()
-                        .materialize_as(ty)
-                        .unwrap_or_else(|| (*value).clone()),
-                )),
-                (_, []) => trait_solutions
-                    .get(decl.id())
-                    .map(|solved| TyArg::Val(solved.clone()))
-                    .or_else(|| subst.get(decl.id()).map(|ty| TyArg::Ty(ty.clone())))
-                    .ok_or_else(|| TypeError::CannotInferTypeParam {
-                        name: name.to_string(),
-                        param: decl.name().to_string(),
-                    }),
-                (_, _) => Err(TypeError::TypeMismatch {
-                    expected: "a type".to_string(),
-                    found: "a value".to_string(),
-                    context: format!("parameter '{}' of '{name}'", decl.name()),
-                }),
-            })
-            .collect()
     }
 
     /// Resolve a generic use site's parameters, returning a type-parameter

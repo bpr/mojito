@@ -30,7 +30,6 @@ use declarations::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use generics::*;
 use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
-use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet, VariantIndex};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
@@ -353,29 +352,7 @@ fn check_program_carrying(
     Ok(checker.into_carry(expanded, explicit_destroy_types, conformances))
 }
 
-/// A declaration-only view of the checker's conformance registry for phases
-/// that necessarily run before whole-program type checking.
-///
-/// Compile-time specialization uses this to validate an inferred heterogeneous
-/// type pack at its call site; it must not grow a second, subtly different
-/// implementation of trait conformance.
-///
-/// The oracle records trait refinement, nominal struct conformances,
-/// conformance conditions, field types, and lifecycle method presence.  Method
-/// bodies and full requirement signatures remain the ordinary checker's job
-/// after elaboration.
-pub struct ConformanceOracle {
-    checker: Checker,
-}
-
-/// Evidence retained when a pre-check conformance query fails.
-pub struct ConformanceFailure {
-    pub reason: Option<String>,
-}
-
 mod body_carry;
-mod conformance;
-pub use conformance::PackageStruct;
 mod declaration_table;
 pub(crate) use declaration_table::DeclarationTable;
 mod interface;

@@ -453,12 +453,6 @@ impl VmBackend {
                 };
                 Err(RuntimeError::Abort(message))
             }
-            // A method whose elaboration failed: the elaborator reports it
-            // where a call instantiates the method, before concrete MIR runs.
-            "_mojito_instantiation_failed" => Err(RuntimeError::Unsupported(match args.first() {
-                Some(Value::Str(message)) => format!("function instantiation failed: {message}"),
-                _ => "function instantiation failed".to_string(),
-            })),
             // The stringify conversion: a nominal `String` result owns a
             // fresh buffer, as upstream's `String.__init__[T: Writable]`
             // builds; the unlinked seam keeps the builtin string.

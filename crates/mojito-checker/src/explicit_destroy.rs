@@ -600,11 +600,9 @@ impl Var {
     }
 }
 
-/// Whether `expr` is the compiler's diverging runtime trap call, or a
-/// method clone's failed instantiation.
+/// Whether `expr` is the compiler's diverging runtime trap call.
 fn is_runtime_trap(expr: &Expr) -> bool {
-    matches!(&expr.kind, ExprKind::Call { name, .. }
-        if matches!(name.as_str(), "_mojito_abort" | "_mojito_instantiation_failed"))
+    matches!(&expr.kind, ExprKind::Call { name, .. } if name == "_mojito_abort")
 }
 
 fn obligation_place(expr: &Expr, env: &Env) -> Option<(usize, Vec<String>)> {

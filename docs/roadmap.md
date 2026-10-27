@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1484**.
+Next free ID: **R1485**.
 
 ## Ordered Work
 
@@ -134,46 +134,25 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1476 An immediately invoked lambda in a local `comptime` binding is
-  folded by the elaborator**
+- [ ] **R1480 A package's declaration residue keeps an `Elaborated` table
+  no importer reads**
 
-  `comptime whole = (lambda (x: Int) {} -> Int: x * 2)(21)` in `main` is
-  evaluated by `Elab::eval`, where upstream builds it as the binding's
-  parameter expression like any other local `comptime`.
-  - `check_binds_value` (`comptime/elab.rs`) keeps that fold, because the
-    check's route fails in two places.
-  - The check's `comptime` arm registers no lambda in its value, so
-    inference meets the lambda before `Checker::check_lambda` has run
-    ("lambda reached inference before scoped checking", R1231's cause).
-  - With the lambda registered, the lifted compile-time function
-    `$comptime$main$c0` loses the lambda's checked nested declaration
-    ("lambda expression lost its checked nested declaration").
-  - Probe: `assets/ok/comptime_lambda_initializer.mojo` with the binding
-    kept for the check. The pin prints `42`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1480 A package exports its module value constants as the
-  elaborator folded them**
-
-  `elaborate_exporting` exports an `ElaboratedConstant::Value` for every
-  non-type module constant (dtypes, vectors, frozen structs, reflection
-  handles, `Applied` markers) beside the check's own rows, where upstream's
-  package holds a constant once, as its declaration.
-  - The check already holds each in `module_values`, `comptime_dtypes`, or
-    `comptime_applied`.
-  - Its only readers are the importer elaborator's `ConstEnv::get` and
-    `Elab::module_constant` (`installed_value`), which R1388 deletes.
-  - The lever: once R1388 lands, delete `ElaboratedConstant`,
-    `ElaboratedConstants`, `elaborate_exporting` (a package build calls
-    `elaborate_importing`), `CheckContext::record_elaborated`,
-    `Table::Elaborated` with `DeclarationInterface::elaborated` and its
-    `project`/`join` projection (`elaborated_constant`) and the interface
-    unit tests that pin it, and `declaring_modules`' `elaborated`
-    parameter.
+  A module value constant's residue holds an `ElaboratedConstant` row
+  beside the check's own rows, where upstream's package holds a constant
+  once, as its declaration.
+  - Since R1388 the elaborator folds nothing and nothing calls
+    `CheckContext::record_elaborated`, so the rows only mirror the check's
+    integer constants (`elaborated_constant`), and
+    `InstalledInterfaces::elaborated` has no caller.
+  - The lever: delete `ElaboratedConstant`, `ElaboratedConstants`,
+    `CheckContext::record_elaborated` with its field, `Table::Elaborated`
+    with `DeclarationInterface::elaborated` and its `project`/`join`
+    projection (`elaborated_constant`) and the interface unit tests that
+    pin it, `InstalledInterfaces::elaborated`, and `declaring_modules`'
+    `elaborated` parameter.
   - Bump `PACKAGE_FORMAT`.
   - Done when `rg ElaboratedConstant crates` is empty.
-  - Depends on R1388.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1483 A struct construction in a parameter position is frozen
@@ -227,32 +206,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1388 `mojito-comptime` still carries a compile-time evaluator and a
-  type resolver**
-
-  Once every site is the check's, the elaborator above the check still holds
-  `comptime/eval.rs`, `type_from_name`, `type_from_anno`, `resolve_ct_arg`,
-  `param_arg_type`, `associated_value_at`, `generator_member`, and the
-  remaining closed-literal crossing folds, where upstream evaluates
-  parameter expressions only in its elaborator, after sema.
-  - Delete them. The elaborator's `ConformanceOracle`, built only for
-    `Elab`, goes too.
-  - The type-member construction rewrite (`S.Of[Int]()`) goes: the check
-    resolves every alias receiver.
-  - Update `docs/architecture.md`'s compile-time-call and
-    checker-interaction sections.
-  - Probe: R1179's `struct P[*Ts: Movable] where Ts.length == 2` stops while
-    the oracle is built. The pin prints `2`.
-  - Closes R1179 (the oracle stops the elaborator). Shrinks R1175
-    (`type_from_name` and `bind_subscript_arguments`) and R207's elaborator
-    bullet.
-  - `ConstEnv`'s package lookups are the last readers of
-    `ElaboratedConstant`, which R1480 then deletes.
-  - Done when `rg 'fn eval\b|type_from_name' crates/mojito-comptime` is
-    empty.
-  - Depends on R1380, R1382, R1383, and R603.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1474 A predicate alias body or a struct header's condition is
   compiled without its binders in scope**
 
@@ -270,6 +223,13 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: `assets/ok/bool_alias_predicate_where.mojo` and
     `std/memory/maybe_uninit.mojo`'s header conditions (about 425 operands
     in the corpus) reach the fallback.
+  - Probe: `struct P[*Ts: Movable] where Ts.length == 2` used as
+    `P[Int, Bool].two()` stops with "unsupported generic constraint
+    operand" (`constraint_operand`), and `where
+    Ts.all_conforms_to[Copyable]()` in the same place with "unsupported
+    generic where proposition" (`compile_generic_constraint`). The pin
+    prints `2` for each, and a method's own `where Self.Ts.length == 2`
+    runs.
   - Done when `constraint_operand`'s bare `Identifier` arm is gone.
   - Found while landing R1387 (2026-10-26).
   - Depends on nothing.
@@ -3715,10 +3675,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a run-time construction through a struct's member alias, `var t
     = TypeList.of[Trait=AnyType, Int, Bool]()` then `print(len(t))`, fails
     with "Undefined variable 'TypeList'", where the pin prints `2`. The
-    elaborator expands it to `TypeList[Trait=..., values=TypeList.of[...]
-    .values]()` (`Elab::type_construction`), whose closed type list
-    `resolve_param_arg` does not record as an attribute: recorded, MIR
-    emits it as an untyped constant.
+    check spells it `TypeList[Trait=..., values=TypeList.of[...].values]()`
+    (`Checker::infer_type_member_construction`), and that construction,
+    written out, fails the same way: a `TypeList` value has no run-time
+    construction.
   - Probe: a construction through a non-generic struct's member alias,
     `S.V(1)` over `comptime V = SIMD[DType.int64, Self.w]`, fails with
     "Undefined variable 'S'", where the pin prints `[1, 1, 1, 1]`.
@@ -4392,7 +4352,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     types, `ref`, and `*Ts`.
   - R1369's resolver turns the expression into a type wherever a type
     parameter takes it.
-  - Pre-check consumers (`mojito-comptime`'s `params.rs` and `eval.rs`,
+  - Pre-check consumers (`mojito-comptime`'s `params.rs`,
     `simd_width.rs`) read a value operand's type spelling where they read
     `ParamArg::Type` today.
   - Update `docs/grammar.md` first (`param_arg`, the lowercase-name notes).
@@ -4781,42 +4741,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1464 A compile-time operator over a name bound to a tuple display
-  is folded above the check, not called**
+- [ ] **R1484 A struct application's type member is no operand of a
+  compile-time value**
 
-  Problem: `comptime P = (4, 5)`, `comptime Q = (4, 6)`, then `comptime F
-  = P != Q` stops with "not a compile-time value: numeric comparison
-  expects numeric operands", where the pin runs `Tuple.__ne__` and prints
-  `True`.
-  - A tuple display is a closed value, so the pre-check evaluator folds
-    `P` and `Q` to tuples and hands the operator to
-    `param_expr::fold::fold_infix`, which has no tuple arm
-    (`comptime/eval.rs:eval_infix`).
-  - The request predicate `applies_callable`
-    (`checker/comptime_requests.rs`) decides by syntax. It lifts an
-    operator over a tuple display as `Tuple`'s dunder call, but cannot
-    see that a name binds one.
-  - Upstream evaluates every compile-time operator as the operand type's
-    dunder call.
-  - `comptime D = P < (4, 6)` already runs, since the display lifts it,
-    and so does the run-time `print(P < Q)`.
-  - Found while landing R1359 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1465 `conforms_to` is not a run-time `Bool` expression**
-
-  Problem: `print(conforms_to(Tuple[Int, Int], Comparable))` stops with
-  "Undefined variable 'conforms_to'", where the pin prints `True`.
-  - Only compile-time positions fold it: a `comptime` binding, a `where`
-    clause, and a `comptime if` (`comptime/eval.rs`,
-    `checker/constraints.rs`). Call inference has no callee for it.
-  - The workaround binds it first: `comptime c = conforms_to(...)`.
-  - Probe: that closed local binding is the elaborator's fold, since the
-    check cannot type it (`check_binds_value`, `comptime/elab.rs`), and
-    `comptime c = conforms_to(T, Comparable)` in `def g[T: AnyType]`
-    reports "Undefined variable 'conforms_to'". The pin prints `True`.
-  - Found while landing R1359 (2026-10-26).
+  `comptime b = S[Int].A == Int` over `struct S[T: Movable]` with
+  `comptime A = Int` fails with "unsupported associated comptime member
+  access", where the pin prints `True`.
+  - The one builder (`build_ct`, `checker/constraints.rs`) reads a
+    type-valued operand only as a name, an application, or a type value;
+    its `Member` arms read a value member, and `build_ct_rest` reports the
+    rest.
+  - Reading the member through `comptime_type_operand` there recurses
+    back into `build_ct`; the type member's read needs the type position's
+    resolver (`member_type_operand`) without the builder.
+  - Probe: `materialize[S[Int].A == Int]()`, and over `struct S[*Ts:
+    Movable]` `materialize[S[Int, Bool].A == Int]()` (R207's probe).
+  - Found while landing R1388 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5229,22 +5169,18 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1218 The pre-check conformance oracle registers traits without
-  their `comptime` requirements**
+- [ ] **R1218 A bound's value member in a struct parameter's type is not
+  answered at the instance**
 
   Problem: `struct W[T: Tr]` with `var b: Box[Self.T.K]` and an initializer
-  taking one, used as `W[S](Box[3]())`, stops with "could not build the
-  specialization conformance oracle: 'Tr' value has no attribute 'K'",
-  where the pin prints `ok`.
-  - `ConformanceOracle::importing` (`checker/conformance.rs`) registers
-    every trait with empty `comptime_members`, then resolves struct field
-    types, so a field reading a bound's value member finds no requirement.
-  - The same type as an instance method's parameter runs; R1179 stops at
-    the same site for a different cause (a header `where` over a pack).
-  - Once the oracle builds, a field read at `W[S]` types through
-    `substitute_at` alone (`checker/indexing.rs`), which leaves `S.K`
-    unanswered; it needs `resolve_assoc_ty`, as the method parameter paths
-    in `method_calls/` now take.
+  taking one, used as `W[S](Box[3]())`, fails with "type mismatch for
+  argument 1 to 'W.__init__': expected Box[S.K], found Box[3]", where the
+  pin prints `ok`.
+  - The initializer's parameter type at `W[S]` substitutes `T` alone
+    (`substitute_at`, `checker/indexing.rs`), which leaves `S.K`
+    unanswered; it needs `resolve_assoc_ty`, as the instance method
+    parameter paths in `method_calls/` take.
+  - The same type as an instance method's parameter runs.
   - Probe: `trait Tr` with `comptime K: Int`, `struct S(Tr)` with `comptime
     K: Int = 3`, and `struct Box[n: Int]`.
   - Found while landing R1201 (2026-10-20).
@@ -5620,7 +5556,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 
 - [ ] **R1175 Compile-time bracket binding is re-implemented outside `call.rs`**
 
-  Problem: five sites bind a bracket list to a declaration's parameters by
+  Problem: four sites bind a bracket list to a declaration's parameters by
   their own rule instead of `mojito_ast::call::match_parameter_slots`, the
   pin's rule the checker's `bracket_bindings` uses.
   - `callable_value_argument` (`checker/origins/subst.rs`) binds positional
@@ -5630,23 +5566,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `mir::supplied_parameter_arguments` (`mir/ir.rs`) is a separate copy.
   - `verify_param_arguments` (`mir/verify/subscripts.rs`) lets a
     positional argument skip a keyword-filled slot, which the pin rejects.
-  - `Elab::type_from_name` (`comptime/elab.rs`) binds a list positionally
-    without skipping infer-only binders. Probe: `comptime n =
-    TypeList[S[Int, Bool]._types].length` in `main` stops with "type
-    'TypeList' expects 2 compile-time argument(s), got 1", where the pin
-    prints `2`; so does `comptime n = ParameterList[c].size` over a
-    module `comptime c = ParameterList.of[1, 2].values` ("type
-    'ParameterList' expects 2 compile-time argument(s), got 1"). R207 is
-    the variadic half of the same function.
-  - `Elab::bind_subscript_arguments` (`comptime/eval.rs`) binds a user
-    struct's member application positionally, with no infer-only binder
-    or pack. Probe: over `struct PL` declaring upstream's `comptime
-    of[type: AnyType, //, *values: type] = ParameterList[type=type,
-    values.values]`, `comptime Ints = PL.of[4, 5, 6]` stops with "a
-    compile-time parameter bound twice or past the last", and
-    `PL.of[4, 5, 6]()` with "Undefined variable 'PL'", where the pin
-    prints `(4, 5, 6)`; the bundled `ParameterList.of` binds through
-    `Checker::bind_closed_bracket_list`.
   - MIR lists carry erased origin arguments with no value, which the MIR
     adapters must keep aligned.
   - Found while landing R449 (2026-10-20).
@@ -6036,20 +5955,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R1460 `conforms_to` over an undeclared trait name answers `False`**
-
-  `comptime c = conforms_to(Int, Nope)` prints `False`, where the pin
-  reports "use of unknown declaration 'Nope'".
-  - Cause: the compile-time evaluator's `conforms_to` arm
-    (`mojito-comptime`'s `eval.rs`) asks the conformance oracle with the
-    bare name and never resolves it, so an unknown name conforms nowhere.
-  - Probe: `comptime if conforms_to(T, Ceilable)` in a generic `def`
-    without `from std.math import Ceilable` reports "Undefined variable
-    'conforms_to'", where the pin asks for the import.
-  - Found while landing R1361 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1147 A type proposition over a type parameter is not a runtime
   value**
 
@@ -6258,22 +6163,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1179 A struct header's `where` clause over the struct's own type
-  pack stops the pre-check elaborator**
-
-  Problem: `struct P[*Ts: Movable] where Ts.length == 2` used as
-  `P[Int, Bool].two()` stops with "could not build the specialization
-  conformance oracle: unsupported dependent parameter expression", where
-  the pin prints `2`.
-  - `where Ts.all_conforms_to[Copyable]()` in the same place stops with
-    "unsupported generic where proposition", where the pin prints `2`.
-  - Both stop while `ConformanceOracle::importing`
-    (`checker/conformance.rs`) builds the oracle, before any check runs.
-  - A method's own `where Self.Ts.length == 2` runs.
-  - Found while landing R1168 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R134 `type_of(x)` of a value is not accepted as a type**
 
   Problem: `var y: type_of(x) = 3` stops with "'type_of' of a value or a
@@ -6342,9 +6231,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   `StringSpan[ImmStaticOrigin]` at the pin, so the crossing diagnostic
   spells `Array[String, Int(2)]` where the pin spells
   `Array[StringSpan[ImmStaticOrigin], Int(2)]`.
-  - The elaborator answers `field_names()` with a list of plain compile-time
-    strings (`comptime/eval.rs::eval_reflection_method`), which materialize
-    as `String` literals.
+  - The check answers `field_names()` with a list of plain compile-time
+    strings (`ReflectQuery::answer`), which materialize as `String`
+    literals.
   - A program that annotates the element as a `StringSpan` is rejected where
     the pin runs it.
   - Depends on nothing.
@@ -9437,7 +9326,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The checker answers them in `Checker::typelist_receiver` and
     `compile_typelist_proposition` (`checker/constraints.rs`).
   - The pre-check elaborator folds them by spelling in
-    `comptime/rewrite.rs:fold_pack_typelist_use` and `comptime/eval.rs`.
+    `comptime/rewrite.rs:fold_pack_typelist_use`.
   - Upstream builds each from `tabulate` or `reduce` with a generator, or
     as an alias (`reverse = TypeList.tabulate[...]`).
   - Port them to `stdlib/std/builtin/variadics.mojo` and delete the rules.
@@ -10830,17 +10719,6 @@ residue found inside a task moves to the task that owns its fix.
   - Its erased shell has no sound nominal form.
   - The public `Tuple` is the one compiler-known template whose `*Ts`
     absorbs every argument.
-  - The pre-check elaborator's `Elab::type_from_name` (`comptime/elab.rs`)
-    applies any other variadic struct at fixed arity, so over `struct
-    S[*Ts: Movable]` a `comptime F = S[Int, Bool].n` stops with "type 'S'
-    expects 1 compile-time argument(s), got 2", and `materialize[S[Int,
-    Bool].A == Int]()` with "a parameterized type is not a value", where
-    the pin runs both (found while landing R805, 2026-10-20).
-  - Probe: a module alias of a variadic struct application, `comptime
-    Alias = W[Bool, Int, String]` over `struct W[*Ts: AnyType]`, stops
-    with "type 'W' expects 1 compile-time argument(s), got 3" at
-    `Alias.n`, where the pin reads the member (found while landing R1202,
-    2026-10-20).
   - Depends on nothing.
   - Model: Fable, Planned.
 

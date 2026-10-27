@@ -148,6 +148,7 @@ impl Checker {
             let StmtKind::Comptime {
                 name,
                 type_params,
+                ty,
                 value,
                 ..
             } = &statement.kind
@@ -158,8 +159,16 @@ impl Checker {
                 continue;
             }
             // The constant is bound ahead of its statement, so a body
-            // declared before it reads it; the statement binds it again.
-            let predeclared = if self.program_constants.own(name).is_some() {
+            // declared before it reads it; the statement binds it again. A
+            // vector-annotated scalar is its splat, which
+            // `fold_module_constants` folded at the annotation.
+            let vector = ty
+                .as_ref()
+                .filter(|_| matches!(self.module_values.get(name), Some(CtValue::Simd { .. })))
+                .and_then(|annotation| self.ty_from_anno(annotation).ok());
+            let predeclared = if vector.is_some() {
+                vector
+            } else if self.program_constants.own(name).is_some() {
                 Some(Ty::int_literal())
             } else if let Some(applied) = self.applied_constant_expr(value) {
                 let ty = applied.meta().as_value().cloned();
@@ -1974,6 +1983,11 @@ impl Checker {
                 where_clauses,
                 value,
             } => {
+                // A lambda the value spells is declared before inference
+                // meets it, as in any statement's value.
+                if type_params.is_empty() {
+                    self.register_named_bindings(value)?;
+                }
                 let _position = self.comptime_position();
                 if type_params.is_empty()
                     && self.bind_template_comptime(stmt, name, ty.as_ref(), value)?
@@ -2076,8 +2090,15 @@ impl Checker {
                 };
                 if let Some(expected) = annotated {
                     // An annotation other than `Int` is the binding's type: the
-                    // literal converts to it as a `var` initializer does.
-                    if let Ok(v) = folded {
+                    // literal converts to it as a `var` initializer does. A
+                    // vector's splat is the binding's value, never the
+                    // literal.
+                    if let Ok(v) = folded
+                        && ty
+                            .as_ref()
+                            .and_then(|annotation| self.vector_annotation(annotation))
+                            .is_none()
+                    {
                         self.comptimes.insert(name.clone(), v);
                     }
                     let found = self.infer_with_expected(value, &expected, true)?;

@@ -687,6 +687,15 @@ impl Checker {
             self.record_pack_query_value(span, &pack, mojito_types::param_expr::PackQuery::Length);
             return Ok(Ty::int());
         }
+        // `len(l)` of a compile-time `TypeList` value: its length, as
+        // `l.length` reads it.
+        if let [list] = args
+            && let Some(list) = self.type_list_operand(list)?
+        {
+            let value = self.param_context.list_length(&list).map_err(param_error)?;
+            self.record_member_value(span, value);
+            return Ok(Ty::int());
+        }
         let tys = self.builtin_args("len", 1, args)?;
         self.borrow_nominal_place_argument(&args[0], &tys[0]);
         self.borrow_storage_place_argument(&args[0], &tys[0]);

@@ -1,6 +1,4 @@
-//! Compile-time elaboration: `comptime` blocks, specialization, and CTFE.
-//! Sits ABOVE the VM in the crate DAG even though elaboration runs before
-//! checking in the pipeline — CTFE compiles and executes sub-programs
-//! through `VmBackend`.
+//! Compile-time elaboration above the check: declaration normalization and
+//! the walk that keeps every `comptime` construct for the check.
 
 pub mod comptime;

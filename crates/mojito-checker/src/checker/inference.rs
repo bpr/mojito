@@ -934,6 +934,11 @@ impl Checker {
                 {
                     return element;
                 }
+                if let Some(construction) =
+                    self.infer_type_member_construction(expr, callee, param_args, args, kwargs)
+                {
+                    return construction;
+                }
                 if let Some(query) = self.dtype_float_query(callee, param_args, args, kwargs) {
                     let (value, attributes) = query?;
                     self.record_bracket_attributes(expr.source_span(), attributes);

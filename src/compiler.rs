@@ -3,9 +3,7 @@
 use crate::backend::BackendKind;
 use crate::checked::CheckedProgram;
 use crate::checker::{CheckContext, InstalledInterfaces};
-use crate::comptime::{
-    ComptimeError, ImportedScope, elaborate_exporting, elaborate_importing, prepare_importing,
-};
+use crate::comptime::{ComptimeError, ImportedScope, elaborate_importing, prepare_importing};
 use crate::error::{OwnershipError, ParseError, TypeError};
 use crate::mir::MirProgram;
 use crate::mir::text::{DisassembleError, disassemble};
@@ -464,7 +462,7 @@ impl Compiler {
     /// source: only a link that read the package's module records
     /// ([`Self::compile_path`] and its siblings) imports it.
     pub fn compile_linked(&self, linked: &[Stmt]) -> Result<CompiledProgram, CompilerError> {
-        self.compile_importing(linked, None, &mut CheckContext::new(), false)
+        self.compile_importing(linked, None, &mut CheckContext::new())
     }
 
     /// Compile `linked` from source, with what a package built from it
@@ -475,7 +473,7 @@ impl Compiler {
     ) -> Result<(CompiledProgram, crate::checker::InterfaceExport), CompilerError> {
         let mut context = CheckContext::new();
         context.record_interfaces();
-        let program = self.compile_importing(linked, None, &mut context, true)?;
+        let program = self.compile_importing(linked, None, &mut context)?;
         let interfaces = context
             .take_interfaces()
             .map_err(|error| CompilerError::Verify(vec![error]))?;
@@ -523,22 +521,18 @@ impl Compiler {
             &linked.statements,
             package.map(|package| importing(package, &linked.packaged)),
             &mut CheckContext::new(),
-            false,
         )
     }
 
     /// Compile `linked`, importing `package` when there is one: the
     /// package's installed declaration interfaces are read beside the
     /// program's own statements, which are all `linked` holds, and only the
-    /// program's own are prepared, elaborated, and checked. A package build's
-    /// (`exporting`) check exports its module constants as its elaboration
-    /// resolved them.
+    /// program's own are prepared, elaborated, and checked.
     fn compile_importing(
         &self,
         linked: &[Stmt],
         package: Option<(Arc<ImportedPackage>, InstalledInterfaces)>,
         context: &mut CheckContext,
-        exporting: bool,
     ) -> Result<CompiledProgram, CompilerError> {
         let _compile = timing::span("compile");
         if let Some((_, installed)) = &package {
@@ -561,20 +555,13 @@ impl Compiler {
         // and finds the instances the entries reach.
         let own = {
             let _elaborate = timing::span("elaborate");
-            if exporting {
-                let (elaborated, constants) =
-                    elaborate_exporting(&prepared).map_err(CompilerError::Comptime)?;
-                context.record_elaborated(constants);
-                elaborated
-            } else {
-                elaborate_importing(
-                    &prepared,
-                    ImportedScope {
-                        installed: package.as_ref().map(|(_, installed)| installed),
-                    },
-                )
-                .map_err(CompilerError::Comptime)?
-            }
+            elaborate_importing(
+                &prepared,
+                ImportedScope {
+                    installed: package.as_ref().map(|(_, installed)| installed),
+                },
+            )
+            .map_err(CompilerError::Comptime)?
         };
         if !self.allow_executable_module_scope {
             validate_module_scope(&own).map_err(CompilerError::Type)?;

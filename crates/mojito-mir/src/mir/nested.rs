@@ -73,7 +73,7 @@ pub(super) fn lower_fn_nested(
         structs: declarations.structs.len(),
     };
     let closure_types = std::cell::RefCell::new(HashMap::new());
-    let children = analyze_root_children(checked, name, statements);
+    let children = analyze_root_children(checked, name, statements, returned);
     let registry = scope_registry(
         checked,
         &children,
@@ -477,19 +477,29 @@ fn lambda_defs(
     tables: &mojito_checked::checked::CheckedTables,
     node: &mojito_checked::checked::CheckedStmt,
 ) -> Vec<CheckedStmtId> {
+    statement_lambda_operands(&node.op)
+        .into_iter()
+        .flat_map(|expression| expression_lambda_defs(tables, expression))
+        .collect()
+}
+
+/// The hidden `def` of each lambda in `expression`; a lambda inside a
+/// lambda is the inner scope's.
+fn expression_lambda_defs(
+    tables: &mojito_checked::checked::CheckedTables,
+    expression: CheckedNodeId,
+) -> Vec<CheckedStmtId> {
     let mut defs = Vec::new();
-    for expression in statement_lambda_operands(&node.op) {
-        tables.walk_expression(expression, &mut |walked| match walked {
-            Walked::Expression(mojito_checked::checked::CheckedExpr {
-                op: CheckedOp::Lambda { def },
-                ..
-            }) => {
-                defs.push(*def);
-                WalkResult::SkipBodies
-            }
-            _ => WalkResult::Advance,
-        });
-    }
+    tables.walk_expression(expression, &mut |walked| match walked {
+        Walked::Expression(mojito_checked::checked::CheckedExpr {
+            op: CheckedOp::Lambda { def },
+            ..
+        }) => {
+            defs.push(*def);
+            WalkResult::SkipBodies
+        }
+        _ => WalkResult::Advance,
+    });
     defs
 }
 
@@ -582,7 +592,7 @@ fn analyze_node(
     };
     let captures = analyze_captures(def);
 
-    let children = analyze_root_children(checked, &mangled, &def.body);
+    let children = analyze_root_children(checked, &mangled, &def.body, None);
 
     NestedNode {
         node,
@@ -1933,9 +1943,23 @@ fn analyze_root_children(
     checked: &mojito_checked::checked::CheckedProgram,
     parent_mangled: &str,
     ids: &[CheckedStmtId],
+    returned: Option<CheckedNodeId>,
 ) -> Vec<NestedNode> {
     let mut direct = Vec::new();
     find_nested_defs(checked.tables(), ids, &mut Vec::new(), &mut direct);
+    // A thunk's returned expression (an invoked lambda in a lifted
+    // `comptime` initializer) declares its lambdas in the thunk's scope.
+    if let Some(returned) = returned {
+        direct.extend(
+            expression_lambda_defs(checked.tables(), returned)
+                .into_iter()
+                .map(|node| NestedSite {
+                    node,
+                    loops: Vec::new(),
+                    lambda: true,
+                }),
+        );
+    }
     let mut totals = HashMap::<&str, usize>::new();
     for site in &direct {
         *totals

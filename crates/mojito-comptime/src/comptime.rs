@@ -1,139 +1,44 @@
 //! Stage 2: compile-time elaboration above the check.
 //!
-//! A pass between linking and the check that normalizes declarations and
-//! folds closed compile-time values in the AST, per `docs/notes/comptime.md`.
-//! It evaluates no call: every compile-time application runs once, below MIR,
-//! where `native::mono` runs it on the register VM
-//! (`docs/notes/ctfe-request-path.md`).
+//! A pass between linking and the check that normalizes declarations, per
+//! `docs/notes/comptime.md`. It evaluates nothing: the check binds every
+//! parameter expression, and `native::mono` evaluates each one below MIR,
+//! running a compile-time application once on the register VM
+//! (`docs/notes/ctfe-request-path.md`), as upstream evaluates parameter
+//! expressions only in its elaborator, after sema.
 //!
 //! - **Preparation** ([`prepare`]) — qualifies struct packs, synthesizes the
 //!   derived `copy` and `__hash__`, desugars `SIMD[_, _]` parameters, and
 //!   folds SIMD alias bounds and `!kgen.type` parameters. It selects no arm
 //!   and unrolls no loop.
-//! - **`comptime NAME = expr`** — a closed value folds here
-//!   (`comptime/eval.rs`, which refuses every call) and the declaration keeps
-//!   it as a literal; a type or reflection handle stays in the environment
-//!   only. A constant that applies a callable, asks a layout, or reads one is
-//!   kept as written (`CtMarker::Applied`) for the check to lift.
-//! - **`comptime if`, `comptime for`, and `comptime match`** in a function
-//!   body are kept for the check, their bodies elaborated with the loop
-//!   variable and pattern bindings as binders. HIR and MIR lower them as
-//!   region ops, and `native::mono` selects each arm and unrolls each loop
-//!   per instance. At module scope the parser rejects a `comptime if` or
-//!   `comptime match`, and `compiler::validate_module_scope` a `comptime
+//! - **Elaboration** ([`elaborate_importing`]) — every `comptime`
+//!   declaration, `comptime if`, `comptime for`, and `comptime match` is
+//!   kept as written. A body's alias of an element of its own type pack
+//!   (`comptime T = Ts[i]`) is spelled as that element in the statements
+//!   after it, a leading-dot `comptime` initializer is spelled at its
+//!   annotated type, and declared struct names are marked for the check's
+//!   projection reading. At module scope the parser rejects a `comptime if`
+//!   or `comptime match`, and `compiler::validate_module_scope` a `comptime
 //!   for`.
-//! - **Runtime crossings** (`comptime/crossing.rs`) — `materialize[X]()`,
-//!   `comptime(e)`, and a reflection query over a closed handle become
-//!   literals.
-//!
-//! Compile-time values are the shared [`CtValue`](mojito_types::ct::CtValue) universe:
-//! runtime-materializable `Int`/`Bool`/`String`/`Tuple`/`List`, plus
-//! compile-time-only `Type` and symbolic `Param` facts.
 
 use mojito_ast::ast::{
-    Expr, ExprKind, FnParam, InfixOp, ParamArg, ParamKind, PrefixOp, Stmt, StmtKind,
-    StructComptime, TStringPart, Type, TypeParam, WithItem,
+    Expr, ExprKind, InfixOp, ParamArg, PrefixOp, Stmt, StmtKind, Type, TypeParam, WithItem,
 };
 pub use mojito_symbol::symbol::mangle;
 use mojito_types::types::TyKind;
 
-use mojito_checker::checker::{ElaboratedConstant, ElaboratedConstants, InstalledInterfaces};
+use mojito_checker::checker::InstalledInterfaces;
 use mojito_common::token::Span;
 use mojito_types::ct::{CtMarker, CtValue};
-use mojito_types::param_expr::{ParamContext, ParamError, ParamExpr};
+use mojito_types::param_expr::{ParamContext, ParamExpr};
 use mojito_types::types::{ParamDecl, Ty, TyArg, list_type, tuple_type};
-use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-
-/// Comptime-specific accessors on the shared [`CtValue`], reporting a
-/// [`ComptimeError`] when a value is not of the required kind.
-///
-/// An extension trait: `CtValue` lives in the types layer below this phase, so
-/// an inherent impl cannot.
-pub trait CtValueExt {
-    fn as_bool(&self, ctx: &str) -> Result<bool, ComptimeError>;
-    fn as_int(&self, ctx: &str) -> Result<i64, ComptimeError>;
-    fn as_sequence(&self, ctx: &str) -> Result<Vec<CtValue>, ComptimeError>;
-    fn typelist_elements(&self) -> Option<&[CtValue]>;
-}
-
-impl CtValueExt for CtValue {
-    fn as_bool(&self, ctx: &str) -> Result<bool, ComptimeError> {
-        match self {
-            Self::Bool(b) => Ok(*b),
-            _ => Err(ComptimeError::NotBool(ctx.to_string())),
-        }
-    }
-    fn as_int(&self, ctx: &str) -> Result<i64, ComptimeError> {
-        match self {
-            Self::Int(n) => Ok(*n),
-            Self::IntLiteral(n) => n.wrapping_signed(64).ok_or_else(|| {
-                ComptimeError::BadArithmetic(format!(
-                    "integer literal cannot materialize as Int in {ctx}"
-                ))
-            }),
-            _ => Err(ComptimeError::NotInt(ctx.to_string())),
-        }
-    }
-    /// The elements of a compile-time collection (`Tuple`/`List`), for
-    /// indexing, `len`, and dictionary literals. A `TypeList` value (`Sized` and iterable
-    /// upstream) yields its element types.
-    fn as_sequence(&self, ctx: &str) -> Result<Vec<CtValue>, ComptimeError> {
-        // A dictionary iterates (and counts) its keys, as at runtime.
-        self.comptime_iteration_elements()
-            .or_else(|| self.typelist_elements().map(<[Self]>::to_vec))
-            .ok_or_else(|| ComptimeError::NotCollection(ctx.to_string()))
-    }
-
-    /// The element types carried by a compile-time `TypeList` value, or
-    /// `None` for any other value.
-    fn typelist_elements(&self) -> Option<&[CtValue]> {
-        match self {
-            Self::Struct { name, fields } if name == "TypeList" => match fields.as_slice() {
-                [(field, Self::Tuple(values))] if field == "values" => Some(values),
-                _ => None,
-            },
-            // A bound type pack (`*Ts` specialized to concrete types) is
-            // upstream's `TypeList` in every compile-time position, so
-            // `Ts.length`, `Ts[i]`, `Ts.all_conforms_to[..]()`, and
-            // `Ts.contains[T]()` read it directly.
-            Self::Tuple(values) if values.iter().all(|value| matches!(value, Self::Type(_))) => {
-                Some(values)
-            }
-            _ => None,
-        }
-    }
-}
 
 /// An error from compile-time elaboration.
 #[derive(Debug)]
 pub enum ComptimeError {
-    /// An expression is not compile-time evaluable (or names an unknown comptime).
-    NotComptime(String),
-    /// A compile-time value used at runtime without an explicit crossing;
-    /// the message is upstream's diagnostic verbatim.
-    Crossing(String),
-    /// A condition did not evaluate to `Bool`.
-    NotBool(String),
-    /// A context required a compile-time `Int`.
-    NotInt(String),
-    /// Integer `//`/`%` by zero, or a negative `**` exponent, at compile time.
-    BadArithmetic(String),
-    /// A compile-time collection read (an index, a `len`, a dictionary
-    /// literal) over a value that is no collection.
-    NotCollection(String),
-    /// A CTFE call had the wrong number of arguments.
-    Arity(String),
-    /// An inferred type-pack element failed one of the pack's trait bounds at
-    /// the call that requested specialization.
-    PackBound(Box<PackBoundError>),
-    /// An explicit type argument failed its type parameter's trait bound at
-    /// the call that requested specialization.
-    GenericBound(Box<GenericBoundError>),
-    /// A fully specialized declaration's trailing `where` predicate was false.
-    Constraint(String),
-    /// Source validation rejected a compile-time control-flow construct
-    /// before any arm was selected: a checker diagnostic, reported verbatim.
+    /// A checker diagnostic, reported verbatim: an undeclared trait a
+    /// `!kgen.type` parameter is bounded by.
     Type(mojito_common::error::TypeError),
     /// A variadic struct member spelled the struct's own pack bare, where
     /// upstream requires `Self.Ts`; the message is upstream's diagnostic, the
@@ -141,97 +46,13 @@ pub enum ComptimeError {
     UnqualifiedStructParam(String),
 }
 
-impl From<mojito_symbol::symbol::NonConstantSpecialization> for ComptimeError {
-    fn from(error: mojito_symbol::symbol::NonConstantSpecialization) -> Self {
-        Self::NotComptime(error.to_string())
-    }
-}
-
-impl From<ParamError> for ComptimeError {
-    fn from(error: ParamError) -> Self {
-        match error {
-            ParamError::Arithmetic(message) => Self::BadArithmetic(message),
-            other => Self::NotComptime(other.to_string()),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct PackBoundError {
-    function: String,
-    pack: String,
-    index: usize,
-    ty: String,
-    trait_name: String,
-    site: String,
-    reason: Option<String>,
-}
-
-#[derive(Debug)]
-pub struct GenericBoundError {
-    function: String,
-    param: String,
-    ty: String,
-    trait_name: String,
-    site: String,
-    reason: Option<String>,
-}
-
 impl std::fmt::Display for ComptimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::NotComptime(s) => write!(f, "not a compile-time value: {s}"),
-            Self::Crossing(s) => write!(f, "{s}"),
-            Self::NotBool(s) => write!(f, "expected a compile-time Bool ({s})"),
-            Self::NotInt(s) => write!(f, "expected a compile-time Int ({s})"),
-            Self::BadArithmetic(s) => write!(f, "compile-time arithmetic error: {s}"),
-            Self::NotCollection(s) => write!(f, "not a compile-time collection: {s}"),
-            Self::Arity(s) => write!(f, "compile-time call arity: {s}"),
             Self::UnqualifiedStructParam(name) => write!(
                 f,
                 "unqualified access to struct parameter '{name}'; use 'Self.{name}' instead"
             ),
-            Self::PackBound(error) => {
-                let PackBoundError {
-                    function,
-                    pack,
-                    index,
-                    ty,
-                    trait_name,
-                    site,
-                    reason,
-                } = error.as_ref();
-                write!(
-                    f,
-                    "type-pack bound failed at '{function}' instantiation {site}: element {} of type pack '{pack}' has type '{ty}', which does not conform to trait '{trait_name}'",
-                    index + 1
-                )?;
-                if let Some(reason) = reason {
-                    write!(f, " ({reason})")?;
-                }
-                Ok(())
-            }
-            Self::GenericBound(error) => {
-                let GenericBoundError {
-                    function,
-                    param,
-                    ty,
-                    trait_name,
-                    site,
-                    reason,
-                } = error.as_ref();
-                write!(
-                    f,
-                    "generic bound failed at '{function}' instantiation {site}: type parameter '{param}' received type '{ty}', which does not conform to trait '{trait_name}'"
-                )?;
-                if let Some(reason) = reason {
-                    write!(f, " ({reason})")?;
-                }
-                Ok(())
-            }
-            Self::Constraint(message) => {
-                write!(f, "compile-time constraint failed: {message}")
-            }
             Self::Type(error) => write!(f, "{error}"),
         }
     }
@@ -250,9 +71,8 @@ pub fn elaborate(program: Vec<Stmt>) -> Result<Vec<Stmt>, ComptimeError> {
 /// beside its own statements. The default is a program that imports none.
 #[derive(Clone, Copy, Default)]
 pub struct ImportedScope<'a> {
-    /// The declaration interfaces of the modules the link reached: the
-    /// package's resolved declarations, and its module constants as the
-    /// build's elaboration folded them, each read on first lookup.
+    /// The declaration interfaces of the modules the link reached, whose
+    /// struct names a subscript-shaped projection is told apart by.
     pub installed: Option<&'a InstalledInterfaces>,
 }
 
@@ -305,48 +125,43 @@ pub fn elaborate_prepared(program: &[Stmt]) -> Result<Vec<Stmt>, ComptimeError> 
 /// Elaborate a program's own [`prepare_importing`]d statements, `own`,
 /// beside the package `imported` holds.
 ///
-/// The package's module constants are read as its build folded them, and
-/// its structs and functions as its check resolved them, so only `own` is
+/// Every `comptime` declaration, `comptime if`, `comptime for`, and
+/// `comptime match` is kept as written: the check binds each parameter
+/// expression, and `native::mono` evaluates it, as upstream evaluates
+/// parameter expressions only in its elaborator, after sema. Only `own` is
 /// elaborated and returned, as upstream's importer takes a package
 /// declaration already resolved.
+///
+/// # Errors
+///
+/// None today; the signature keeps the stage's seam.
 pub fn elaborate_importing(
     own: &[Stmt],
     imported: ImportedScope<'_>,
 ) -> Result<Vec<Stmt>, ComptimeError> {
-    elaborate_in(own, imported).map(|(elaborated, _)| elaborated)
-}
-
-/// Elaborate a [`prepare`]d program as [`elaborate_prepared`] does, and
-/// export the module constants it resolved, each beside the module whose
-/// `comptime` declaration names it, for a package built from it.
-pub fn elaborate_exporting(
-    program: &[Stmt],
-) -> Result<(Vec<Stmt>, ElaboratedConstants), ComptimeError> {
-    let (elaborated, elab) = elaborate_in(program, ImportedScope::default())?;
-    let values = elab.top_consts.into_inner();
-    let mut constants = Vec::new();
-    for statement in program {
-        let (StmtKind::Comptime { name, .. }, Some(module)) = (&statement.kind, &statement.module)
-        else {
-            continue;
-        };
-        // A type alias travels as the check's `Aliases` row alone.
-        let Some(value) = values
-            .get(name)
-            .filter(|value| !matches!(value, CtValue::Type(_)))
-        else {
-            continue;
-        };
-        constants.push((
-            module.clone(),
-            name.clone(),
-            ElaboratedConstant::Value(value.clone()),
-        ));
+    let elaborated = elab::block(own, None);
+    let own_structs: HashSet<&str> = own
+        .iter()
+        .filter_map(|statement| match &statement.kind {
+            StmtKind::Struct { name, .. } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect();
+    let mut result = mark_struct_names(elaborated, &|name| {
+        own_structs.contains(name)
+            || imported
+                .installed
+                .is_some_and(|installed| installed.declares_struct(name))
+    });
+    for statement in &mut result {
+        if let Some(source) = statement.module.clone() {
+            mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
+        }
     }
-    Ok((elaborated, constants))
+    stamp_enum_storage_writes(&mut result);
+    Ok(result)
 }
 
-mod crossing;
 mod elab;
 mod pack_qualification;
 mod params;
@@ -356,47 +171,6 @@ mod synth;
 use params::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use synth::*;
-
-/// Elaborate `program` beside `imported`, returning the elaboration and the
-/// engine that ran it, whose module environment a package build exports.
-fn elaborate_in<'a>(
-    program: &'a [Stmt],
-    imported: ImportedScope<'a>,
-) -> Result<(Vec<Stmt>, Elab<'a>), ComptimeError> {
-    let indexes = mojito_common::timing::span("indexes");
-    let conformance =
-        mojito_checker::checker::ConformanceOracle::importing(program, imported.installed)
-            .map_err(|error| {
-                ComptimeError::NotComptime(format!(
-                    "could not build the specialization conformance oracle: {error}"
-                ))
-            })?;
-    let elab = Elab {
-        fns: collect_fns(program),
-        structs: collect_structs(program, &conformance),
-        conformance,
-        template_binders: RefCell::new(Vec::new()),
-        crossing_templates: Cell::new(0),
-        top_consts: RefCell::new(HashMap::new()),
-        installed: imported.installed,
-    };
-    drop(indexes);
-    let mut env = ConstEnv::over(HashMap::new(), imported.installed);
-    let mut elaborated = elab.block_statements(program, &mut env, false)?;
-    // A module constant declared after its use crosses here.
-    let consts = ConstEnv::crossing(elab.top_consts.borrow().clone(), imported.installed);
-    elab.fold_runtime_crossings(&mut elaborated, &consts)?;
-    // A body's read of a module constant stays a name: the check binds it as
-    // the parameter value its declaration denotes (decision D3).
-    let mut result = mark_struct_names(elaborated, &|name| elab.declares_struct(name));
-    for statement in &mut result {
-        if let Some(source) = statement.module.clone() {
-            mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
-        }
-    }
-    stamp_enum_storage_writes(&mut result);
-    Ok((result, elab))
-}
 
 /// A statement elaboration rebuilt from `source` with new contents. It keeps
 /// the source's syntax identity: that is the occurrence-level expansion trace
@@ -410,56 +184,12 @@ const fn rebuilt(source: &Stmt, kind: StmtKind) -> Stmt {
     }
 }
 
-/// The value of the imported package's module constant `name`.
-fn installed_value<'a>(
-    installed: Option<&'a InstalledInterfaces>,
-    name: &str,
-) -> Option<&'a CtValue> {
-    let ElaboratedConstant::Value(value) = installed?.elaborated(name)?;
-    Some(value)
-}
-
-/// Whether `value` is a scalar or a string: a value a local or module
-/// `comptime` binding names as its parameter expression.
-const fn is_closed_scalar(value: &CtValue) -> bool {
-    matches!(
-        value,
-        CtValue::Int(_)
-            | CtValue::UInt(_)
-            | CtValue::Float(_)
-            | CtValue::IntLiteral(_)
-            | CtValue::FloatLiteral(_)
-            | CtValue::Bool(_)
-            | CtValue::Str(_)
-    )
-}
-
 fn mk(kind: StmtKind, span: Span) -> Stmt {
     Stmt {
         kind,
         span,
         module: None,
         syntax_id: mojito_common::token::SyntaxId::fresh(),
-    }
-}
-
-/// The pack an expression names, bare (`Ts`, a `def`'s own pack) or through
-/// `Self` (`Self.Ts`, a struct's pack inside its members).
-fn pack_name(expression: &Expr) -> Option<&str> {
-    match &expression.kind {
-        ExprKind::Identifier(name) => Some(name),
-        ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") => {
-            Some(field)
-        }
-        _ => None,
-    }
-}
-
-/// The pack a `.values` projection names: `Ts.values` or `Self.Ts.values`.
-fn pack_values_projection(expression: &Expr) -> Option<&str> {
-    match &expression.kind {
-        ExprKind::Member { object, field } if field == "values" => pack_name(object),
-        _ => None,
     }
 }
 
@@ -507,27 +237,6 @@ pub(super) fn pack_element_alias(
         }
         _ => None,
     }
-}
-
-/// The names a `def`'s type packs go by in its body: each `*Ts` binder,
-/// bare, and each collector that spreads one (`*args: *Ts`).
-pub(super) fn def_pack_names(type_params: &[TypeParam], params: &[FnParam]) -> HashSet<String> {
-    let binders: HashSet<&str> = type_params
-        .iter()
-        .filter_map(|parameter| parameter.name.strip_prefix('*'))
-        .collect();
-    let collectors = params.iter().filter_map(|parameter| {
-        let Type::Named(spread, _) = &parameter.ty else {
-            return None;
-        };
-        (parameter.kind == ParamKind::Variadic && binders.contains(spread.trim_start_matches('*')))
-            .then(|| parameter.name.clone())
-    });
-    binders
-        .iter()
-        .map(|binder| (*binder).to_string())
-        .chain(collectors)
-        .collect()
 }
 
 /// The trait metatype `type_of(operand)` denotes when the operand is a
@@ -860,178 +569,6 @@ fn source_type_from_ty_with_origins(
     })
 }
 
-/// Compile-time metadata for one of the program's own top-level structs,
-/// enough to read associated facts such as `T.size`.
-struct CtStruct<'a> {
-    decls: Vec<ParamDecl>,
-    /// The source parameters `decls` classified from — the fallback for
-    /// declared defaults classification cannot resolve without evaluation
-    /// (`H: Hasher = default_hasher` names a module alias).
-    source_params: &'a [TypeParam],
-    /// Its own `comptime` members, then the defaults of the conformed
-    /// traits' requirements it omits.
-    associated: std::borrow::Cow<'a, [StructComptime]>,
-}
-
-/// A struct the elaborator reads: one of the program's own, from its
-/// declaration, or one of the imported package's, as the package's check
-/// resolved it.
-#[derive(Clone, Copy)]
-enum StructView<'e> {
-    Own(&'e CtStruct<'e>),
-    Package(mojito_checker::checker::PackageStruct<'e>),
-}
-
-impl<'e> StructView<'e> {
-    fn decls(self) -> &'e [ParamDecl] {
-        match self {
-            Self::Own(info) => &info.decls,
-            Self::Package(info) => info.decls(),
-        }
-    }
-
-    fn source_params(self) -> &'e [TypeParam] {
-        match self {
-            Self::Own(info) => info.source_params,
-            Self::Package(info) => info.source_params(),
-        }
-    }
-}
-
-/// The compile-time elaboration engine: the program's own functions, structs,
-/// and module constants, and the imported package's interfaces.
-struct Elab<'a> {
-    /// The program's own `def` names; the package's are the oracle's.
-    fns: HashSet<String>,
-    /// The program's own structs; the package's are the oracle's.
-    structs: HashMap<String, CtStruct<'a>>,
-    /// Checker-owned declaration facts used to validate inferred pack bounds
-    /// before specialization consumes the source generic call, and the
-    /// imported package's resolved structs and functions.
-    conformance: mojito_checker::checker::ConformanceOracle,
-    /// The compile-time parameter names of each generic `def` whose body is
-    /// being elaborated as a template, innermost last. A `comptime if`
-    /// whose condition names one is kept for the check: its arms are the
-    /// template's, and the elaborator below MIR selects.
-    template_binders: RefCell<Vec<HashSet<String>>>,
-    /// How many function bodies the runtime-crossing pass has descended into.
-    crossing_templates: Cell<usize>,
-    /// The program's own module constants; an imported package's are
-    /// `installed`'s ([`Self::module_constant`]).
-    top_consts: RefCell<HashMap<String, CtValue>>,
-    /// The declaration interfaces of the package the program imports, whose
-    /// module constants a lookup the program's own miss reads, each decoded
-    /// on first lookup.
-    installed: Option<&'a InstalledInterfaces>,
-}
-
-/// The compile-time values an elaboration reads by name: its own frame,
-/// and under it the module constants of the package the program imports,
-/// each decoded the first time a lookup the frame misses names it, as
-/// upstream resolves a package declaration on first lookup.
-#[derive(Clone, Default)]
-struct ConstEnv<'a> {
-    frame: HashMap<String, CtValue>,
-    /// The names a local binding of the frame's scope shadows without a
-    /// value, which no package constant answers.
-    shadowed: HashSet<String>,
-    installed: Option<&'a InstalledInterfaces>,
-    /// Whether a package's closed scalar and string constants, which the
-    /// check binds, answer no lookup ([`Self::crossing`]).
-    checked_hidden: bool,
-}
-
-impl<'a> ConstEnv<'a> {
-    /// `frame` over the module constants of the package `installed` holds.
-    fn over(frame: HashMap<String, CtValue>, installed: Option<&'a InstalledInterfaces>) -> Self {
-        Self {
-            frame,
-            shadowed: HashSet::new(),
-            installed,
-            checked_hidden: false,
-        }
-    }
-
-    /// `frame` over the module constants of the package `installed` holds
-    /// other than its closed scalars and strings: the constants a runtime
-    /// crossing folds, which leaves every constant the check binds to it.
-    fn crossing(
-        frame: HashMap<String, CtValue>,
-        installed: Option<&'a InstalledInterfaces>,
-    ) -> Self {
-        Self {
-            checked_hidden: true,
-            ..Self::over(frame, installed)
-        }
-    }
-
-    /// The value bound to `name`: the frame's, or a package constant's.
-    fn get(&self, name: &str) -> Option<&CtValue> {
-        self.frame.get(name).or_else(|| {
-            if self.shadowed.contains(name) {
-                None
-            } else {
-                installed_value(self.installed, name)
-                    .filter(|value| !(self.checked_hidden && is_closed_scalar(value)))
-            }
-        })
-    }
-
-    /// Bind `name` in the frame.
-    fn insert(&mut self, name: String, value: CtValue) -> Option<CtValue> {
-        self.frame.insert(name, value)
-    }
-
-    /// Shadow `name` with a binding of no compile-time value.
-    fn shadow(&mut self, name: &str) {
-        self.frame.remove(name);
-        self.shadowed.insert(name.to_string());
-    }
-}
-
-impl Elab<'_> {
-    /// The module constant `name`: the program's own, or the imported
-    /// package's.
-    fn module_constant(&self, name: &str) -> Option<CtValue> {
-        self.top_consts
-            .borrow()
-            .get(name)
-            .cloned()
-            .or_else(|| installed_value(self.installed, name).cloned())
-    }
-
-    /// Struct `name`, the program's own or the imported package's.
-    fn ct_struct(&self, name: &str) -> Option<StructView<'_>> {
-        self.structs.get(name).map(StructView::Own).or_else(|| {
-            self.conformance
-                .package_struct(name)
-                .map(StructView::Package)
-        })
-    }
-
-    /// Whether `name` is a struct, the program's own or the imported
-    /// package's, decoding no package declaration.
-    fn declares_struct(&self, name: &str) -> bool {
-        self.structs.contains_key(name) || self.conformance.names_package_struct(name)
-    }
-
-    /// Whether `name` is a `def`, the program's own or the imported
-    /// package's, decoding no package declaration.
-    fn declares_function(&self, name: &str) -> bool {
-        self.fns.contains(name) || self.conformance.names_package_function(name)
-    }
-}
-
-fn classify_ct_params(tps: &[TypeParam], owner: &str) -> Vec<ParamDecl> {
-    tps.iter()
-        .filter_map(|tp| classify_ct_param(tp, tps, owner))
-        .collect()
-}
-
-fn materialize_ct_value(value: CtValue, ty: &Ty) -> Option<CtValue> {
-    value.materialize_as(ty)
-}
-
 fn substitute_source_param_arg_bindings(argument: &mut ParamArg, subs: rewrite::TypeSubs) {
     match argument {
         ParamArg::Type(ty) => substitute_source_type_bindings(ty, subs),
@@ -1077,51 +614,6 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
     }
 }
 
-/// The names of the module's `def`s, which an application names.
-fn collect_fns(program: &[Stmt]) -> HashSet<String> {
-    program
-        .iter()
-        .filter_map(|s| match &s.kind {
-            StmtKind::Def { name, .. } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-fn collect_structs<'a>(
-    program: &'a [Stmt],
-    conformance: &mojito_checker::checker::ConformanceOracle,
-) -> HashMap<String, CtStruct<'a>> {
-    let mut structs = HashMap::new();
-    for s in program {
-        if let StmtKind::Struct {
-            name,
-            type_params,
-            conforms,
-            associated,
-            ..
-        } = &s.kind
-        {
-            let mut defaults = conformance.comptime_defaults(conforms);
-            defaults.retain(|default| associated.iter().all(|member| member.name != default.name));
-            let associated = if defaults.is_empty() {
-                std::borrow::Cow::Borrowed(associated.as_slice())
-            } else {
-                std::borrow::Cow::Owned([associated.as_slice(), &defaults].concat())
-            };
-            structs.insert(
-                name.clone(),
-                CtStruct {
-                    decls: classify_ct_params(type_params, name),
-                    source_params: type_params,
-                    associated,
-                },
-            );
-        }
-    }
-    structs
-}
-
 /// The source spelling of upstream's `!kgen.string` type,
 /// `` __mlir_type.`!kgen.string` ``.
 fn kgen_string_source_type() -> Type {
@@ -1135,16 +627,6 @@ fn kgen_string_source_type() -> Type {
 fn source_type_from_ty(ty: &Ty) -> Option<Type> {
     source_type_from_ty_with_origins(ty, &HashMap::new())
 }
-
-fn lit_result(val: &CtValue, span: Span) -> Result<Expr, ComptimeError> {
-    val.materialize(span).ok_or_else(|| {
-        ComptimeError::NotComptime(
-            "type-valued or symbolic comptime values cannot materialize at runtime".to_string(),
-        )
-    })
-}
-
-mod eval;
 
 mod rewrite;
 

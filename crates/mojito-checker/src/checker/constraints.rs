@@ -67,6 +67,7 @@ impl Checker {
             let StmtKind::Comptime {
                 name,
                 type_params,
+                ty,
                 value,
                 ..
             } = &statement.kind
@@ -74,6 +75,17 @@ impl Checker {
                 continue;
             };
             if !type_params.is_empty() {
+                continue;
+            }
+            // A vector annotation converts a scalar initializer by
+            // splatting it across the lanes, as `SIMD`'s implicit scalar
+            // constructor does.
+            if let Some(annotation) = ty
+                && let Some(vector) = self
+                    .closed_module_constant(value)
+                    .and_then(|scalar| self.splat_at_annotation(&scalar, annotation))
+            {
+                self.module_values.insert(name.clone(), vector);
                 continue;
             }
             // A module type alias spells, in every declaration symbol, as
@@ -97,6 +109,29 @@ impl Checker {
                 None => {}
             }
         }
+    }
+
+    /// `scalar` splat across the lanes of `annotation`, a vector type of
+    /// more than one lane. `None` for any other annotation or value.
+    fn splat_at_annotation(&self, scalar: &CtValue, annotation: &SourceType) -> Option<CtValue> {
+        let (dtype, width) = self.vector_annotation(annotation)?;
+        mojito_types::ct::simd_construction_lanes(dtype, width, std::slice::from_ref(scalar))
+            .ok()
+            .map(|lanes| CtValue::Simd { dtype, lanes })
+    }
+
+    /// The dtype and width of `annotation` when it names a vector of more
+    /// than one lane.
+    pub(super) fn vector_annotation(
+        &self,
+        annotation: &SourceType,
+    ) -> Option<(mojito_ast::ast::Dtype, usize)> {
+        let ty = self.ty_from_anno(annotation).ok()?;
+        let (dtype, width) = mojito_types::types::simd_shape(ty.kind())?;
+        usize::try_from(width)
+            .ok()
+            .filter(|width| *width > 1)
+            .map(|width| (dtype, width))
     }
 
     /// The attribute a closed module constant's initializer folds to
@@ -653,46 +688,6 @@ impl Checker {
             &arguments,
             mojito_types::param_expr::MetaTy::value(result.clone()),
         ))
-    }
-
-    /// A struct's parameterized value member at the struct's `arguments`
-    /// and the member's own bound `member_arguments`, folded; its `where`
-    /// clauses are checked against both. `None` for a type member.
-    pub(super) fn member_template_at(
-        &self,
-        label: &str,
-        info: &StructInfo,
-        arguments: &[TyArg],
-        member: &ParameterizedMember,
-        member_arguments: &[TyArg],
-    ) -> Option<Result<ParamExpr, TypeError>> {
-        let MemberTemplate::Value { decls, body } = &member.template else {
-            return None;
-        };
-        Some((|| {
-            if member_arguments.len() != decls.len() {
-                return Err(TypeError::WrongTypeArgCount {
-                    name: label.to_string(),
-                    expected: decls.len(),
-                    got: member_arguments.len(),
-                });
-            }
-            let mut bindings = mojito_types::param_expr::ParamBindings::new();
-            self.bind_declared(&mut bindings, &info.decls, arguments)?;
-            self.bind_declared(&mut bindings, decls, member_arguments)?;
-            self.validate_member_availability(
-                label,
-                &member.availability,
-                &info.decls,
-                arguments,
-                decls.iter().map(ParamDecl::name).zip(member_arguments),
-            )?;
-            let context = &self.param_context;
-            context
-                .replace(body, &bindings)
-                .and_then(|replaced| context.fold(&replaced))
-                .map_err(param_error)
-        })())
     }
 
     /// Check a parameterized member's own `where` clauses at an
@@ -1680,6 +1675,25 @@ impl Checker {
     /// a struct subject and a query node for a symbolic one), or a
     /// positioned application, else the shape's rejection.
     fn build_ct_rest(&self, expr: &Expr, recording: Recording) -> Result<ParamExpr, TypeError> {
+        if let ExprKind::Call {
+            name,
+            param_args,
+            args,
+            kwargs,
+        } = &expr.kind
+            && name == "conforms_to"
+            && param_args.is_empty()
+            && kwargs.is_empty()
+        {
+            return match args.as_slice() {
+                [subject, traits] => self.conformance_query(subject, traits),
+                _ => Err(TypeError::ArityMismatch {
+                    name: "conforms_to".to_string(),
+                    expected: 2,
+                    got: args.len(),
+                }),
+            };
+        }
         // An element or the length of a `TypeList` value (`r[0]`,
         // `Self.Ts.reverse()[0]`, `TypeList[Ts.values]().length`).
         if let Some(read) = self.type_list_read(expr, recording) {
@@ -1846,6 +1860,55 @@ impl Checker {
 
     /// `value` as a parameter expression: a type as its shape, closed or
     /// not, and any other value as its constant.
+    /// `conforms_to(subject, Tr)`, upstream's compile-time conformance
+    /// query, as a `Bool` parameter expression: a closed type's answer, or
+    /// the conjunction of `Conforms` propositions over a type the instance
+    /// closes, which `native::mono` decides.
+    pub(super) fn conformance_query(
+        &self,
+        subject: &Expr,
+        traits: &Expr,
+    ) -> Result<ParamExpr, TypeError> {
+        let trait_names = mojito_ast::ast::trait_conjunction_names(traits).ok_or_else(|| {
+            TypeError::Unsupported(
+                "conforms_to takes a trait name, or a '&' conjunction of trait names, as its \
+                 second argument"
+                    .to_string(),
+            )
+        })?;
+        trait_names
+            .iter()
+            .try_for_each(|trait_name| self.check_trait_name(trait_name))?;
+        let operand = self.comptime_type_operand(subject)?.ok_or_else(|| {
+            TypeError::NotComptime("conforms_to takes a type as its first argument".to_string())
+        })?;
+        let context = &self.param_context;
+        let subject = match operand.kind() {
+            TyKind::Dependent(dependent) => dependent.expr().clone(),
+            _ if mojito_types::types::has_free_parameters(&operand) => {
+                context.type_shape(operand.clone())
+            }
+            _ => {
+                let conforms = !mojito_types::conformance::reflects_no_conformance(&operand)
+                    && trait_names
+                        .iter()
+                        .all(|trait_name| self.conforms_to(&operand, trait_name));
+                return self.ct_param(CtValue::Bool(conforms));
+            }
+        };
+        let mut propositions = trait_names
+            .iter()
+            .map(|trait_name| context.conforms(&subject, trait_name).map_err(param_error));
+        let first = propositions.next().ok_or_else(|| {
+            TypeError::Unsupported("conforms_to takes at least one trait".to_string())
+        })??;
+        propositions.try_fold(first, |all, proposition| {
+            context
+                .infix(InfixOp::And, &all, &proposition?)
+                .map_err(param_error)
+        })
+    }
+
     fn ct_param(&self, value: CtValue) -> Result<ParamExpr, TypeError> {
         match value {
             CtValue::Type(ty) => Ok(self.param_context.type_shape(ty)),

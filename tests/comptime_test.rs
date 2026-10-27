@@ -746,10 +746,11 @@ fn comptime_for_variable_does_not_index_a_runtime_tuple() {
 }
 
 #[test]
-fn non_comptime_binding_is_rejected_by_elaboration() {
-    // `comptime NAME = <runtime value>` is rejected at compile-time elaboration.
-    let program = parse("var x: Int = 3\ncomptime N = x\n").unwrap();
-    assert!(elaborate(program).is_err());
+fn non_comptime_binding_is_rejected_by_the_check() {
+    // `comptime NAME = <runtime value>` is kept by elaboration and rejected
+    // by the check, which binds every compile-time declaration.
+    let src = "def main():\n    var x: Int = 3\n    comptime N = x\n    print(N)\n";
+    assert!(run(src).is_err());
 }
 
 #[test]

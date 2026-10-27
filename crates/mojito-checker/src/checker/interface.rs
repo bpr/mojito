@@ -215,8 +215,8 @@ impl InterfaceExport {
 }
 
 /// The declaration interfaces of the package modules a compilation's link
-/// reached, attached to every checker pass and to the elaborator's
-/// conformance oracle.
+/// reached, attached to every checker pass, whose struct names the
+/// elaborator reads too.
 ///
 /// A declaration's record decodes the first time a lookup asks for one of
 /// its keys, once per compilation, since the expressions it holds are
@@ -282,6 +282,11 @@ impl InstalledInterfaces {
             .binary_search_by(|(constant, _)| constant.as_str().cmp(name))
             .ok()
             .map(|position| &constants[position].1)
+    }
+
+    /// Whether a reached module declares struct `name`, decoding nothing.
+    pub fn declares_struct(&self, name: &str) -> bool {
+        self.has_key(Table::Structs, name)
     }
 
     /// The type the reached module's zero-parameter type alias `name`

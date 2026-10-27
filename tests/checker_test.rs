@@ -2041,10 +2041,9 @@ fn rejects_wrong_parameter_count() {
 
 #[test]
 fn rejects_non_comptime_constant_definition() {
-    // A `comptime NAME = <runtime value>` is now rejected by the compile-time
-    // elaborator (the comptime validator), not the checker directly.
-    let program = mojito::parse("var x: Int = 1\ncomptime N = x\n").unwrap();
-    assert!(mojito::elaborate(program).is_err());
+    // A `comptime NAME = <runtime value>` is the check's to reject: it binds
+    // every compile-time declaration, which the elaborator keeps as written.
+    err("def main():\n    var x: Int = 1\n    comptime N = x\n    print(N)\n");
 }
 
 #[test]

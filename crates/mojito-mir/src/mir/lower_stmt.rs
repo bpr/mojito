@@ -3246,6 +3246,14 @@ impl<'a> Flatten<'a> {
             return;
         }
         let materialized = value.literal_materialization();
+        // A literal a vector annotation splats (`comptime v: SIMD[DType.int32,
+        // 4] = 1`) is its materialized slot, never the scalar it spells.
+        if materialized.as_ref().is_some_and(|ty| {
+            mojito_types::types::simd_slots(ty)
+                .is_some_and(|(_, width)| width.known().is_none_or(|width| width > 1))
+        }) {
+            denoted = None;
+        }
         // An `Int` or a `Bool` read off a display binding (`comptime e =
         // L[1]`), or one the check lifted (`comptime b = n > 2`), is the
         // application of its thunk, which later thunks read as well.
@@ -3309,6 +3317,12 @@ impl<'a> Flatten<'a> {
             .or(converted)
             .or_else(|| value.ty())
             .or_else(|| self.f.reg_types.get(&src.0).cloned());
+        // A literal binds as its materialization at the binding's type, as a
+        // `var` initializer does: a vector annotation splats it.
+        let src = match &binding_ty {
+            Some(target) => self.materialize_register(src, target, value.location()),
+            None => src,
+        };
         // A lifted evaluation's binding is a parameter-domain value, which
         // lives in compile-time memory a borrow of it may outlast.
         if self.enclosing_binders.lifted
