@@ -229,35 +229,64 @@ impl Checker {
         })
     }
 
-    /// Reject `source^` out of a place rooted at an immutable value binding
-    /// (a parameter or `self` with no owning convention), as upstream: the
-    /// callee does not own the storage, so moving out of it would destroy
-    /// the caller's value. A trivial register value transfers as a copy. A
-    /// compile-time binding, or a field chain off one, is a parameter
-    /// expression, which holds no storage to move out of, whatever its type.
-    /// A closure's declaration owns its storage, which moves out of it.
-    pub(super) fn check_transfer_source(&self, source: &Expr, ty: &Ty) -> Result<(), TypeError> {
+    /// How `source^` transfers, by upstream's one ordered rule
+    /// (`UnaryOpNode::emitTransfer`): a compile-time binding, or a field
+    /// chain off one, is a parameter expression and is rejected; an owned
+    /// rvalue passes through; a trivial register value is copied; any other
+    /// source moves out of the root its field projections reach, which must
+    /// be tracked storage (`findUnderlyingValueFromField`) and mutable. A
+    /// capture held by a mutable reference is indirect, and cannot be
+    /// consumed (`checkConsume`).
+    pub(super) fn transfer_verdict(
+        &self,
+        source: &Expr,
+        ty: &Ty,
+    ) -> Result<TransferVerdict, TypeError> {
+        use mojito_ast::ast::CaptureKind;
         if self.is_parameter_read(source) {
             return Err(TypeError::ParameterTransfer);
         }
-        let Some(root) = field_chain_root(source) else {
-            return Ok(());
+        if !self.designates_place(source) {
+            return Ok(TransferVerdict::PassThrough);
+        }
+        if self.is_trivial_register_passable(ty) {
+            return Ok(TransferVerdict::TrivialCopy);
+        }
+        let root = match self.transfer_root(source)? {
+            TransferRoot::Temporary => return Ok(TransferVerdict::PlaceMove),
+            TransferRoot::Binding(root) => root,
         };
+        // A closure's declaration owns its storage, which moves out of it.
         let closure_storage = matches!(
             ty.callable().map(|func| &func.environment),
             Some(mojito_types::origin::CallableEnvironment::Storage(_))
         );
-        if closure_storage
-            || self.is_binding_mutable(root)
-            || self.is_compile_time_binding(root)
-            || self
-                .lookup(root)
-                .is_none_or(|binding| matches!(binding.kind(), TyKind::Ref(_)))
-            || self.is_trivial_register_passable(ty)
-        {
-            return Ok(());
+        if closure_storage || self.is_compile_time_binding(root) {
+            return Ok(TransferVerdict::PlaceMove);
         }
-        Err(TypeError::ImmutableTransfer(root.to_string()))
+        let Some(binding) = self.lookup(root) else {
+            return Ok(TransferVerdict::PassThrough);
+        };
+        if matches!(binding.kind(), TyKind::Ref(_))
+            || self
+                .lookup_owner(root)
+                .is_some_and(|owner| self.reference_binders.contains(&owner))
+        {
+            return Err(TypeError::UntrackedTransfer);
+        }
+        let (mutable, indirect) = match self.capture_kind(root) {
+            Some(CaptureKind::Copy | CaptureKind::Move) => (true, false),
+            Some(CaptureKind::Imm) => (false, true),
+            Some(CaptureKind::Mut | CaptureKind::Ref) => (self.is_binding_mutable(root), true),
+            None => (self.is_binding_mutable(root), false),
+        };
+        if !mutable {
+            return Err(TypeError::ImmutableTransfer(root.to_string()));
+        }
+        if indirect {
+            return Err(TypeError::IndirectTransfer);
+        }
+        Ok(TransferVerdict::PlaceMove)
     }
 
     /// Whether `expr` reads a compile-time binding (a value parameter, a
@@ -290,6 +319,32 @@ impl Checker {
         })
     }
 
+    /// What `source`'s field projections reach: a named binding, or a
+    /// temporary (a call result, a by-value subscript, an element of the
+    /// private `Tuple` storage, which is a tracked owned slot until R341).
+    /// Any other subscript yields a reference, which reaches no tracked
+    /// root.
+    fn transfer_root<'e>(&self, source: &'e Expr) -> Result<TransferRoot<'e>, TypeError> {
+        match &source.kind {
+            ExprKind::Identifier(name) => Ok(TransferRoot::Binding(name)),
+            ExprKind::Member { object, .. } => self.transfer_root(object),
+            ExprKind::Index { object, .. }
+                if matches!(
+                    self.infer(object).as_ref().map(Ty::kind),
+                    Ok(TyKind::Tuple(_))
+                ) =>
+            {
+                Ok(TransferRoot::Temporary)
+            }
+            _ if self.designates_place(source)
+                && !matches!(source.kind, ExprKind::TypeApply { .. }) =>
+            {
+                Err(TypeError::UntrackedTransfer)
+            }
+            _ => Ok(TransferRoot::Temporary),
+        }
+    }
+
     /// Whether `expr` is a subscript whose selected getter returns by value.
     fn is_owned_subscript(&self, expr: &Expr) -> bool {
         matches!(
@@ -302,6 +357,18 @@ impl Checker {
                 .is_some_and(|call| call.reference_result.is_none())
         })
     }
+}
+
+/// How a `^` transfer takes its source, as upstream's `emitTransfer`
+/// decides it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TransferVerdict {
+    /// An owned rvalue: the `^` has no effect.
+    PassThrough,
+    /// A trivial register value, copied: the `^` has no effect.
+    TrivialCopy,
+    /// A move out of tracked storage.
+    PlaceMove,
 }
 
 /// The argument positions a call's positional `*args` collector gathers,
@@ -771,6 +838,12 @@ fn read_temporary_receiver(
                 && !matches!(receiver.kind, ExprKind::Transfer(_))
         })
         .map(|(receiver, _)| receiver.source_span())
+}
+
+/// The root a transfer's field projections reach.
+enum TransferRoot<'e> {
+    Binding(&'e str),
+    Temporary,
 }
 
 /// The binding a plain place expression (a name, or a field chain over one)

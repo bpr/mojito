@@ -870,6 +870,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `^` source is judged by upstream's one ordered rule
+  (`UnaryOpNode::emitTransfer`), in the checker's `transfer_verdict`, in
+  place of per-shape tests (R1366, R31, R116, R120): an owned rvalue passes
+  through and a trivial register value is copied, and any other source must
+  reach a tracked root through field projections alone. A subscript
+  element, a `ref` binding, and a loop binder not declared `var` are now
+  rejected with "expression does not designate a value with an origin",
+  where an implicitly copyable element was copied and a `ref` binding
+  failed at run time; an `imm` capture is an immutable root, and a `mut`,
+  `ref`, or `@__parameter` capture "cannot consume indirect references to
+  values". Owned captures (R1500) and a field moved out of a call's
+  temporary (R1501) remain.
 - A conformance query answers proven, refuted, or unknown, as upstream's
   `doesConformTo` does (R1364). A trait a type parameter's or associated
   projection's bounds do not provide is unknown, not false, so a call

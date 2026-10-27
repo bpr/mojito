@@ -682,6 +682,10 @@ pub struct Checker {
     /// runtime slot but denotes a compile-time value, so a nested function
     /// or lambda reads it through an implicit `imm` capture.
     value_parameter_owners: HashSet<mojito_types::origin::OwnerId>,
+    /// The loop and comprehension binders not declared `var`: each binds
+    /// the yielded element by reference, as upstream, so it is no tracked
+    /// root a `^` may move out of.
+    reference_binders: HashSet<mojito_types::origin::OwnerId>,
     /// Whether each function's positional collector is `var`, by name, for
     /// the ownership a forwarded pack must match (`TyKind::GenericFunc` carries
     /// the regular conventions only). A name whose overloads disagree is
@@ -1053,6 +1057,7 @@ impl Checker {
             rebind_targets: RebindTargets::default(),
             owned_packs: HashSet::new(),
             value_parameter_owners: HashSet::new(),
+            reference_binders: HashSet::new(),
             owned_collectors: declaration_table::DeclarationTable::default(),
             collector_names: declaration_table::DeclarationTable::default(),
             compile_time_bindings: vec![HashSet::new()],

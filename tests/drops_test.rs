@@ -258,7 +258,7 @@ fn noncopyable_nominal_tuple_element_transfer_is_rejected() {
     );
     let error = compile_error(&src);
     assert!(
-        error.contains("non-implicitly-copyable indexed value"),
+        error.contains("does not designate a value with an origin"),
         "got {error}"
     );
 }
@@ -270,7 +270,7 @@ fn noncopyable_field_below_nominal_tuple_index_is_rejected() {
     );
     let error = compile_error(&src);
     assert!(
-        error.contains("non-implicitly-copyable indexed value"),
+        error.contains("does not designate a value with an origin"),
         "got {error}"
     );
 }

@@ -1,4 +1,4 @@
-# expect: cannot transfer a non-implicitly-copyable indexed value
+# expect: expression does not designate a value with an origin
 # An element of an owned pack collector cannot be transferred out by
 # subscript: `a[i]^` is rejected, as the pinned Mojo rejects it ("expression
 # does not designate a value with an origin"). The `def` is served by its

@@ -184,6 +184,12 @@ pub enum TypeError {
     /// A `^` transfer out of a place rooted at an immutable binding, such as
     /// a parameter with no owning convention.
     ImmutableTransfer(String),
+    /// A `^` transfer whose source reaches no tracked root through field
+    /// projections: a subscript element, a `ref` binding, or a loop binder.
+    UntrackedTransfer,
+    /// A `^` transfer out of a capture a closure holds by reference (`mut`,
+    /// `ref`, or an `@__parameter` environment's implicit capture).
+    IndirectTransfer,
     /// A `^` transfer out of a compile-time binding (a value parameter, a
     /// `comptime for` variable): a parameter is a value, not storage.
     ParameterTransfer,
@@ -695,6 +701,12 @@ impl fmt::Display for TypeError {
             }
             Self::ImmutableTransfer(name) => {
                 write!(f, "cannot transfer out of immutable reference ('{name}')")
+            }
+            Self::UntrackedTransfer => {
+                write!(f, "expression does not designate a value with an origin")
+            }
+            Self::IndirectTransfer => {
+                write!(f, "cannot consume indirect references to values")
             }
             Self::DynamicParameterValue => {
                 write!(f, "cannot use a dynamic value in a parameter list")

@@ -2379,7 +2379,7 @@ impl Checker {
                         .push((baseline, false));
                 }
                 let result = (|| {
-                    self.declare_with_mutability(var, binding_ty, binding_plan.mutable)?;
+                    self.declare_loop_binder(var, &binding_plan)?;
                     self.record_statement_binding(stmt, var);
                     if unpack {
                         self.check_loop_target(target, var, ret, false)?;

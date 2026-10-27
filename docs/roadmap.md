@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1500**.
+Next free ID: **R1502**.
 
 ## Ordered Work
 
@@ -1631,35 +1631,44 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on R792, R669.
   - Model: Opus, Not Planned.
 
-- [ ] **R1366 A `^` source is admitted per shape, not by upstream's origin
-  rule**
+- [ ] **R1500 An owned capture is a closure-local snapshot, where
+  upstream's is a field of the storage its body takes**
 
-  `check_transfer_source` (`checker/places.rs`) and the `Transfer` arm of
-  `infer` (`checker/inference.rs`) admit `^` by special cases, where
-  upstream's `UnaryOpNode::emitTransfer` (`ExprNodes.cpp`) applies one
-  ordered rule.
-  - The rule, in upstream's order:
-    - An owned rvalue is passed through, with "no effect".
-    - A trivial register type is copied, with "no effect".
-    - Otherwise the source must reach a tracked root through field
-      projections only (`OriginTrackable::findUnderlyingValueFromField`), or
-      the error is "expression does not designate a value with an origin".
-    - An immutable root is rejected: "cannot transfer out of immutable
-      reference".
-  - A subscript result, a `ref` binding, and a borrowed loop binder have no
-    tracked root. Today `check_transfer_source` lets a `ref` binding
-    through.
-  - A capture is an indirect reference: "cannot consume indirect references
-    to values" (`checkConsume` in `CheckLifetimes.cpp`).
-  - Replace the per-shape tests: the `is_implicitly_copyable` indexed
-    element and the `ref`-binding skip.
-  - Keep the private `Tuple` storage element as a place until R341 lands.
-  - Probe: `conformance/probes/reference_binding_transfer.mojo`. The pin
-    says "does not designate a value with an origin". Mojito fails at run
-    time with "vm: use of a value after it was moved".
-  - Closes R31 (an implicitly copyable indexed element is transferred), R116
-    (a `ref` binding transfer fails late), and R120 (a `mut` capture is
-    transferred and refilled).
+  A `{var s}` or `{s^}` capture is a field of the closure's storage, which
+  upstream's body takes as its first argument: the body may write it, and a
+  `^` out of it must be refilled before return ("'(positional-only argument
+  # 0).s' is uninitialized at return from this function").
+  - Mojito binds an owned capture as an immutable local of the body
+    (`check_capture_access`, `checker/scopes.rs`), so a write is rejected.
+  - `transfer_verdict` admits `s^` out of an owned capture as a place
+    move, as upstream does, but MIR then fails to verify ("drop.var of slot
+    ... that some path reaching it does not hold").
+  - Probe: `def inner() {var s} -> String:` whose body runs `var r = s^`,
+    `s = String("b")`, `return r^` prints `a` at the pin; Mojito says
+    "expression must be mutable in assignment".
+  - Probe: the same body with `return s^` alone (also under `{s^}`): the
+    pin reports the uninitialized storage field, Mojito fails MIR
+    verification.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1501 A field moved out of an expression temporary leaves a hole no
+  pass sees**
+
+  `mk().s^` over `def mk() -> Q` reaches the call's temporary through a
+  field projection, which upstream's `emitTransfer` admits; its
+  `CheckLifetimes` then rejects the hole the temporary is destroyed with
+  ("field '(expression temporary).s' destroyed out of the middle of a
+  value").
+  - Mojito admits the transfer too (`transfer_verdict`, `TransferRoot::
+    Temporary`), but the temporary is no slot the move analysis
+    (`analysis/moves.rs`) tracks, so the VM traps ("use after Pointer
+    deallocation").
+  - A named local reports the hole already (`var t = q.s^`).
+  - The lever is materializing the temporary in a slot, as upstream's
+    expression temporary is, so `FieldDestroyedOutOfTheMiddle` reaches it.
+  - Probe: `var t = mk().s^` over `@fieldwise_init struct Q(Movable): var
+    s: String`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -1669,8 +1678,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   `mir/calls.rs` choose copy or move by `owns_droppable_storage`, where
   every struct counts as owning, while upstream decides once, in
   `emitTransfer`, from the type's triviality.
-  - The lever: R1366 records its verdict as a node fact (pass-through,
-    trivial copy, or place move), and lowering reads it.
+  - The lever: record the verdict `transfer_verdict`
+    (`checker/places.rs`) already returns (`TransferVerdict`: pass-through,
+    trivial copy, or place move) as a node fact, and lowering reads it.
   - The temporary binders read the same fact, so a register-passable struct
     stays in a register.
   - Probe: `conformance/probes/trivial_struct_mut_parameter_transfer.mojo`.
@@ -1679,21 +1689,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Closes R121 (a trivial struct transferred out of a `mut` parameter).
     Shrinks R750 (a field transfer lowered as a move before the discard fact
     is read).
-  - Depends on R1366, which records the verdict.
-  - Model: Opus, Not Planned.
-
-- [ ] **R31 An indexed element that is implicitly copyable may be
-  transferred**
-
-  Problem: `return x[0]^` over a `List[P]` with an `ImplicitlyCopyable`
-  struct `P` runs on Mojito and copies the element, where the pin reports
-  "expression does not designate a value with an origin".
-  - The pin admits the transfer only for a trivial register value such as
-    `Int`, and warns that it has no effect.
-  - Mojito's `Transfer` inference (`checker/inference.rs`) admits every
-    implicitly copyable indexed element.
-  - Narrowing the test to trivial register values is the lever.
-  - Probe: `conformance/probes/indexed_copyable_element_transfer.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2033,24 +2028,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R116 A `^` transfer of a `ref` binding fails in MIR verification, not
-  in the checker**
-
-  Problem: `ref r = s` then `var t = r^` is rejected with "unsupported
-  specialized MIR that does not verify: ... binding of ref String to a slot
-  of type String", where the pin reports "expression does not designate a
-  value with an origin".
-  - A borrowed loop binder (`for x in xs: var y = x^`) fails the same way.
-  - The program is rejected on both sides, so only the diagnostic and the
-    phase that owns it are wrong.
-  - `check_transfer_source` (`checker/places.rs`) skips a binding of
-    reference type, and is where the rejection belongs.
-  - Whether a `ref` parameter over a mutable origin may be transferred is
-    still to be observed on the pin.
-  - Probe: `conformance/probes/reference_binding_transfer.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R118 An element of a temporary container cannot be passed to a read
   parameter**
 
@@ -2062,19 +2039,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     ordinary value read.
   - Workaround: bind the container to a local first.
   - Probe: `conformance/probes/temporary_element_read_argument.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R120 A `mut` capture may be transferred away and written back**
-
-  Problem: `def inner() {mut s} -> String:` whose body runs `var r = s^`,
-  `s = String("b")`, `return r^` prints `ab` in Mojito, where the pin reports
-  "cannot consume indirect references to values".
-  - The pin refuses any `^` out of a capture, written back or not.
-  - Mojito treats a capture like a `mut` parameter: left empty it reports
-    "'s' is uninitialized at return from this function", written back it runs.
-  - The rule belongs in the checker beside `check_transfer_source`.
-  - Probe: `conformance/probes/mut_capture_transfer_refilled.mojo`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

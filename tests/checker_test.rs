@@ -1438,6 +1438,33 @@ fn rejects_transfer_out_of_read_parameter_but_allows_owned_and_trivial() {
 }
 
 #[test]
+fn transfer_needs_a_tracked_root_and_no_indirect_capture() {
+    for source in [
+        "def f(mut s: String) -> String:\n    ref r = s\n    return r^\n",
+        "def f(xs: List[String]) -> String:\n    for x in xs:\n        return x^\n    return \"\"\n",
+        "def f(mut xs: List[String]) -> String:\n    return xs[0]^\n",
+    ] {
+        assert_eq!(err_std(source), TypeError::UntrackedTransfer, "{source}");
+    }
+    let e = err_std(
+        "def f() -> String:\n    var s = String(\"a\")\n    def inner() {mut s} -> String:\n        \
+         var r = s^\n        s = String(\"b\")\n        return r^\n    return inner()\n",
+    );
+    assert_eq!(e, TypeError::IndirectTransfer);
+
+    // A `var` loop binder, a trivial element, a `ref` parameter over a
+    // mutable origin, and a by-value subscript all transfer.
+    ok_std(
+        "def f(xs: List[String]) -> String:\n    for var x in xs:\n        return x^\n    return \"\"\n",
+    );
+    ok_std("def f(mut xs: List[Int]) -> Int:\n    return xs[0]^\n");
+    ok_std(
+        "def f[o: MutOrigin](ref[o] s: String) -> String:\n    var r = s^\n    \
+         s = String(\"z\")\n    return r^\n",
+    );
+}
+
+#[test]
 fn static_var_parameter_demands_implicit_copy_of_a_place() {
     let declarations = "struct P:\n    @staticmethod\n    def take(var xs: List[Int]) -> Int:\n        return len(xs)\n\n";
     let rejected = err_std(&format!(

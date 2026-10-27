@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	791
+# swept-count	796
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -216,6 +216,7 @@ assets/type_error/bare_reference_list_parameter.mojo	compile-reject	agree	error:
 assets/type_error/boolable_required_for_bool.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/bool_conversion_undeclared_boolable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/bool_dtype_rejected.mojo	compile-reject	agree	error: 'Bool' value has no attribute 'dtype'
+assets/type_error/borrowed_loop_binder_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/callable_struct_def_typed_argument.mojo	compile-reject	agree	error: invalid call to 'keep': value passed to 'callback' cannot be converted from 'Scale' to 'def(Int) -> Int'
 assets/type_error/call_result_pointer_field_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/captured_origin_specialization_rejected.mojo	compile-reject	agree	error: member method closures are not supported; add '()' to call '__call__'
@@ -404,6 +405,7 @@ assets/type_error/hasher_without_import.mojo	compile-reject	agree	error: use of 
 assets/type_error/hasher_wrong_finish_type.mojo	compile-reject	agree	error: no matching function in call to 'hash'
 assets/type_error/if_case_binding_not_after.mojo	compile-reject	agree	error: use of unknown declaration 'y'
 assets/type_error/if_case_binding_not_in_else.mojo	compile-reject	agree	error: use of unknown declaration 'y'
+assets/type_error/imm_capture_transfer.mojo	compile-reject	agree	error: cannot transfer out of immutable reference
 assets/type_error/imm_origin_binder_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/imm_origin_mut_binder.mojo	compile-reject	agree	error: value passed to 'o' cannot be converted from 'ImmOrigin' to 'MutOrigin'
 assets/type_error/imm_origin_pointer_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -426,6 +428,7 @@ assets/type_error/implicit_copy_variadic_var_collector_method.mojo	compile-rejec
 assets/type_error/implicit_copy_variadic_var_collector_static.mojo	compile-reject	agree	error: value of type 'List[Int]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/implicitly_copyable_rejects_explicit_copy.mojo	compile-reject	agree	error: invalid call to 'duplicate_implicit': value passed to 'x' cannot be converted from 'ExplicitBox' to 'T', argument type 'ExplicitBox' does not conform to trait 'ImplicitlyCopyable'
 assets/type_error/implicit_two_param_ref_rejected.mojo	compile-reject	agree	error: '@implicit' initializers must accept a single positional argument value
+assets/type_error/indexed_copyable_element_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/indexer_int_return.mojo	compile-reject	agree	error: 'Offset' does not implement all requirements for 'Indexer'
 assets/type_error/indexer_missing_conversion.mojo	compile-reject	agree	error: 'BadIndex' does not implement all requirements for 'Indexer'
 assets/type_error/indexer_undeclared_subscript.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
@@ -531,6 +534,7 @@ assets/type_error/mlir_type_unsupported.mojo	compile-reject	agree	error: cannot 
 assets/type_error/movable_where_false_transfer.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'Pinned' doesn't conform to 'Movable'
 assets/type_error/mut_argument_aliases_variadic_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'a' argument and passed immutably to 'b' argument in 'both' call
 assets/type_error/mut_argument_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'xs' argument and passed mutably to 'b' argument in 'f' call
+assets/type_error/mut_capture_transfer.mojo	compile-reject	agree	error: cannot consume indirect references to values
 assets/type_error/mut_origin_binder_rejects_immutable_pointer.mojo	compile-reject	agree	error: invalid call to 'bump': value passed to 'p' cannot be converted from 'Pointer[Int, origin_of(x)]' to 'Pointer[Int, o]'
 assets/type_error/mut_origin_constructor_rejects_immutable_pointer.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/mut_receiver_aliases_method_variadic_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'rest' argument in 'm' call
@@ -651,6 +655,7 @@ assets/type_error/rebind_register_passable_inplace_destination.mojo	compile-reje
 assets/type_error/rebound_view_origin_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'P[origin_of(ys)]' value to 'P[origin_of(xs)]'
 assets/type_error/receiver_carried_origin_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed mutably to 'sink' argument in 'stash' call
 assets/type_error/ref_argument_aliases_pack_element.mojo	compile-reject	agree	error: aliasing values passed mutably to 'b' argument and passed immutably to 'rest' argument in 'r' call
+assets/type_error/reference_binding_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/reference_binding_write_linear_parameter.mojo	compile-reject	agree	error: value abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'
 assets/type_error/reference_call_immutable_assignment_target.mojo	compile-reject	agree	error: expression must be mutable in assignment
 assets/type_error/reference_call_write_linear_parameter.mojo	compile-reject	agree	error: value abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'AnyType'

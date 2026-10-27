@@ -73,6 +73,22 @@ impl Checker {
         Ok(())
     }
 
+    /// Bind a loop or comprehension target `name` as `plan` declares it. A
+    /// target not declared `var` binds the element by reference.
+    pub(super) fn declare_loop_binder(
+        &mut self,
+        name: &str,
+        plan: &mojito_checked::checked::CheckedIterationBinding,
+    ) -> Result<(), TypeError> {
+        self.declare_with_mutability(name, plan.binding_ty.clone(), plan.mutable)?;
+        if plan.mode != mojito_ast::ast::BindingMode::Var
+            && let Some(owner) = self.lookup_owner(name)
+        {
+            self.reference_binders.insert(owner);
+        }
+        Ok(())
+    }
+
     /// Bind every value parameter among `decls`, a variadic one as its pack.
     pub(super) fn declare_value_parameters(
         &mut self,
@@ -438,20 +454,7 @@ impl Checker {
             .iter()
             .filter(|policy| scope < policy.base && name != policy.function_name)
         {
-            let kind = policy
-                .entries
-                .get(name)
-                .copied()
-                .or(policy.default)
-                .or_else(|| {
-                    policy.implicit_by_binding.then(|| {
-                        if self.is_binding_mutable(name) {
-                            mojito_ast::ast::CaptureKind::Mut
-                        } else {
-                            mojito_ast::ast::CaptureKind::Imm
-                        }
-                    })
-                });
+            let kind = self.policy_capture_kind(policy, name);
             if let Some(kind) = kind {
                 self.check_capture_capability(name, kind)?;
                 let binding = self.lookup_owner(name).ok_or_else(|| {
@@ -501,6 +504,26 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// How the innermost enclosing nested function captures `name`, when
+    /// `name` crosses its boundary: `None` for its own local, a global, a
+    /// compile-time binding, or a value parameter, none of which is a
+    /// capture.
+    pub(super) fn capture_kind(&self, name: &str) -> Option<mojito_ast::ast::CaptureKind> {
+        let scope = self.binding_scope(name)?;
+        if scope == 0
+            || self.is_compile_time_binding(name)
+            || self.is_value_parameter(name)
+            || self.local_comptime_application(name).is_some()
+        {
+            return None;
+        }
+        let contexts = self.capture_contexts.borrow();
+        let policy = contexts.last()?;
+        (scope < policy.base && name != policy.function_name)
+            .then(|| self.policy_capture_kind(policy, name))
+            .flatten()
     }
 
     /// Record a name-based call as a capture when an enclosing policy permits
@@ -641,6 +664,30 @@ impl Checker {
         self.installed_binding(name)
             .filter(|(found, _)| *found == owner)
             .map(|(_, binding)| (name, binding))
+    }
+
+    /// How `policy` captures `name`: its list entry, the list's default, or
+    /// an `@__parameter` environment's implicit capture by the binding's
+    /// mutability.
+    fn policy_capture_kind(
+        &self,
+        policy: &CapturePolicy,
+        name: &str,
+    ) -> Option<mojito_ast::ast::CaptureKind> {
+        policy
+            .entries
+            .get(name)
+            .copied()
+            .or(policy.default)
+            .or_else(|| {
+                policy.implicit_by_binding.then(|| {
+                    if self.is_binding_mutable(name) {
+                        mojito_ast::ast::CaptureKind::Mut
+                    } else {
+                        mojito_ast::ast::CaptureKind::Imm
+                    }
+                })
+            })
     }
 }
 

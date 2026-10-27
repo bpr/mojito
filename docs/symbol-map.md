@@ -859,9 +859,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `join_try` joins the arm with the normal exits. A write through a reference (a
   `ref` binding, a reference-returning call) owns no obligation of its own,
   so the checker rejects one over a non-`Deinitable` referent at the store
-  (`places.rs`'s `check_overwritten_referent`)). A `^` whose source is rooted at an
-  immutable value binding is rejected where the transfer is inferred
-  (`places.rs`'s `check_transfer_source`, `TypeError::ImmutableTransfer`).
+  (`places.rs`'s `check_overwritten_referent`)). A `^` source is judged where the
+  transfer is inferred by upstream's ordered `emitTransfer` rule
+  (`places.rs`'s `transfer_verdict`, returning a `TransferVerdict`; its
+  rejections are `TypeError::ParameterTransfer`, `UntrackedTransfer`,
+  `ImmutableTransfer`, and `IndirectTransfer`, the last naming a capture
+  `scopes.rs`'s `capture_kind` reports held by reference).
 - `mojito-types`' `types::is_symbolic`/`ct_value_is_symbolic` answer whether a
   type still mentions something only an instantiation can resolve. MIR's
   `lower_expr/expr.rs` uses it to turn `size_of` of an unspecialized type into

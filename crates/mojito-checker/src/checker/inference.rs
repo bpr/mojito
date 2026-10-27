@@ -98,7 +98,7 @@ impl Checker {
                         // scope also permits a later generator to shadow the same
                         // spelling without changing an outer local.
                         self.push_scope();
-                        self.declare_with_mutability(var, binding_ty, binding_plan.mutable)?;
+                        self.declare_loop_binder(var, &binding_plan)?;
                         let owner = self.lookup_owner(var).ok_or_else(|| {
                             TypeError::InvariantViolation(format!(
                                 "comprehension binder '{var}' has no stable owner"
@@ -1336,40 +1336,11 @@ impl Checker {
                 }
                 self.infer_index(expr.source_span(), object, index)
             }
-            // A dynamic/indexed expression does not designate independently
-            // movable storage. Current Mojo permits `^` there only when the
-            // result is implicitly copyable (the transfer is effectively a
-            // copy); accepting a linear element would duplicate its destructor.
-            // Compiler-private Tuple storage is the exception: each indexed
-            // element is a tracked owned slot, which is how whole heterogeneous
-            // packs and public Tuple's private backing field transfer linear
-            // elements exactly once.
+            // `^` takes its source by one ordered rule
+            // ([`Self::transfer_verdict`]).
             ExprKind::Transfer(inner) => {
                 let ty = self.infer(inner)?;
-                // A by-value subscript is already an owned temporary: the
-                // `^` has nothing to move, as upstream.
-                if is_place_expr(inner) && !self.designates_place(inner) {
-                    return Ok(ty);
-                }
-                let private_tuple_element = match &inner.kind {
-                    ExprKind::Index { object, .. } => {
-                        matches!(
-                            self.infer(object).as_ref().map(Ty::kind),
-                            Ok(TyKind::Tuple(_))
-                        )
-                    }
-                    _ => false,
-                };
-                if place_has_index(inner)
-                    && !self.is_implicitly_copyable(&ty)
-                    && !private_tuple_element
-                {
-                    return Err(TypeError::Unsupported(
-                        "cannot transfer a non-implicitly-copyable indexed value; the expression does not designate independently movable storage"
-                            .to_string(),
-                    ));
-                }
-                self.check_transfer_source(inner, &ty)?;
+                self.transfer_verdict(inner, &ty)?;
                 Ok(ty)
             }
             // An empty list literal needs a contextual element type; the

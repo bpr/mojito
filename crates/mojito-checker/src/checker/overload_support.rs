@@ -332,14 +332,6 @@ pub(super) fn argument_is_owned(argument: &Expr) -> bool {
     matches!(argument.kind, ExprKind::Transfer(_)) || place_root_name(argument).is_none()
 }
 
-pub(super) fn place_has_index(expr: &Expr) -> bool {
-    match &expr.kind {
-        ExprKind::Index { .. } | ExprKind::Slice { .. } | ExprKind::MultiIndex { .. } => true,
-        ExprKind::Member { object, .. } => place_has_index(object),
-        _ => false,
-    }
-}
-
 /// The lowered symbol the checker records as the resolved callee of an
 /// overloaded free-function call — formatted by the canonical symbol module so
 /// it names exactly the `MirFunction` the MIR emits for that definition.
