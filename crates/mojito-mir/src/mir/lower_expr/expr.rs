@@ -612,8 +612,12 @@ impl<'a> Flatten<'a> {
             // checker marked `BorrowReadArgument` (`lower_call_argument`), and
             // `x^` lowers as `Move`.
             CheckedOp::Identifier(name) => self.identifier_read(node, name),
-            CheckedOp::Named { value, name } => {
-                self.walrus(node.operand_of(*value)?, checked, name)
+            CheckedOp::Named { target, value } => {
+                let (target, value) = (node.operand_of(*target)?, node.operand_of(*value)?);
+                match target.op() {
+                    CheckedOp::Identifier(name) => self.walrus(value, target.checked, name),
+                    _ => self.lower_walrus_store(node, target, value),
+                }
             }
             _ => return None,
         })
@@ -877,8 +881,8 @@ impl<'a> Flatten<'a> {
         self.call_expr(node, name)
     }
 
-    /// Walrus node `node`, `name := value`: bind the value's slot and yield
-    /// the value.
+    /// Walrus `name := value`, its name node `node`: bind the name's slot
+    /// and yield the value.
     fn walrus(&mut self, value: Node<'a>, node: &CheckedExpr, name: &str) -> Reg {
         let value = self.expr(value);
         let var = self.var(&self.spelling(node, name));

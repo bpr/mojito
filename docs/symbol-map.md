@@ -143,6 +143,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   leaf's receiver and indices before the value (`lower_subscript_setter`,
   shared with `lower_subscript_set`) and its `MultiSet` after
   (`emit_subscript_set`).
+- A walrus (`CheckedOp::Named { target, value }`) takes any expression as
+  its target, as an assignment does. The checker's `register_named_bindings`
+  (`checker/inference.rs`) updates a name in scope or checks a place target
+  through `check_set_place`, caching the store's type at the walrus. MIR's
+  `lower_walrus_store` (`mir/lower_stmt.rs`) lowers the same store as the
+  `SetPlace` statement (`lower_set_place`), yielding a copy of the stored
+  value that `yield_stored_value` takes once the store lowers it.
 - `checker/patterns.rs` owns the `match` statement (`check_match`): it
   synthesizes the hidden `$match<id>` anchor over the subject (`Synth`;
   `anchor_subject`, which sequence destructuring shares with
@@ -358,8 +365,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   is no effect, and its result is the element type; the value name is the
   first declared setter's last argument, `setter_value_name`), the one store
   through it (`store_through_subscript`, the setter call taking the indices
-  and `<value name>=value`, which `check_nominal_subscript_assignment` (the
-  `SetPlace` arm), the `AugAssign` arm, and nothing else call; a right-hand
+  and `<value name>=value`, which `check_nominal_subscript_assignment` (from
+  `check_set_place`, the store of a `SetPlace` statement and of a walrus over
+  a place, `checker/statements.rs`), the `AugAssign` arm, and nothing else
+  call; a right-hand
   side not already of the element type is converted to it and the setter is
   selected over a `synthetic_store_value`, whose facts
   `release_synthetic_store_value` forgets, keying the setter's value

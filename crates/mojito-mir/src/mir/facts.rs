@@ -151,7 +151,10 @@ impl<'a> Node<'a> {
 
     /// The value of a walrus: `None` when this is not one.
     pub(super) fn named_value(self) -> Option<Self> {
-        self.sole_operand(|op| matches!(op, CheckedOp::Named { .. }))
+        match self.op() {
+            CheckedOp::Named { value, .. } => self.operand_of(*value),
+            _ => None,
+        }
     }
 
     pub(super) fn ty(self) -> Option<Ty> {

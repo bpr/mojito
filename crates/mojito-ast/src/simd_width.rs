@@ -251,7 +251,7 @@ fn expr_uses_param_simd_width(e: &Expr, names: &[&str]) -> bool {
         ExprKind::BraceLit(entries) => entries
             .iter()
             .any(|(key, value)| expr(key) || value.as_ref().is_some_and(&expr)),
-        ExprKind::Named { value, .. } => expr(value),
+        ExprKind::Named { target, value } => expr(target) || expr(value),
         ExprKind::IfExpr {
             cond,
             then_branch,

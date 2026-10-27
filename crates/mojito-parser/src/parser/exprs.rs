@@ -491,20 +491,14 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             return Ok(self.node(kind, start));
         }
 
-        // Walrus / named expression: `name := value`. The target must be a bare
-        // name. MIR preserves this as an explicit unsupported operation.
+        // Walrus / named expression `target := value` over any target
+        // expression; the checker decides whether it is an lvalue.
         if matches!(self.peek_token()?, Some(Token::ColonEq)) {
             self.next_token()?; // consume ':='
-            let ExprKind::Identifier(name) = left.kind else {
-                return Err(ParseError::UnexpectedToken(
-                    Token::ColonEq,
-                    format!("the walrus ':=' target must be a name, got {:?}", left.kind),
-                ));
-            };
             let value = self.parse_expression(Precedence::Lowest)?;
             return Ok(self.node(
                 ExprKind::Named {
-                    name,
+                    target: Box::new(left),
                     value: Box::new(value),
                 },
                 start,

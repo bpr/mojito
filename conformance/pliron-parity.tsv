@@ -1275,6 +1275,7 @@ assets/ok/view_temporaries.mojo	main	exe-differential	sanitized
 assets/ok/view_temporary_origins.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_ternary.mojo	main	exe-differential	sanitized
+assets/ok/walrus_place_targets.mojo	main	exe-differential	sanitized
 assets/ok/waypoints.mojo	main	exe-differential	sanitized
 assets/ok/where_conformance_disjunction_assumed.mojo	main	exe-differential	sanitized
 assets/ok/where_message_satisfied.mojo	main	exe-differential	sanitized

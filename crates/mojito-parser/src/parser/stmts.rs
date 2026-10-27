@@ -198,54 +198,20 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             }
             self.next_token()?; // consume '='
             let value = self.parse_tuple_display()?;
-            let stmt = if let ExprKind::Identifier(name) = expr.kind {
-                StmtKind::Assign { name, value }
-            } else if matches!(
-                &expr.kind,
-                ExprKind::Member { .. }
-                    | ExprKind::Index { .. }
-                    | ExprKind::Slice { .. }
-                    | ExprKind::MultiIndex { .. }
-                    | ExprKind::TypeApply { .. }
-                    | ExprKind::Call { .. }
-                    | ExprKind::MethodCall { .. }
-            ) {
-                // A field/index chain, `rebind[Dest](place)`, which the
-                // checker erases to its operand, or any other call, which the
-                // checker requires to return a mutable reference — the checker
-                // verifies the root is writable and that the write is valid.
-                StmtKind::SetPlace { place: expr, value }
-            } else {
-                return Err(ParseError::UnexpectedToken(
-                    Token::Assign,
-                    format!("invalid assignment target: {:?}", expr.kind),
-                ));
+            // Any other expression is a place to write: the checker decides
+            // whether it is an lvalue, as upstream's `emitExprLValue` does.
+            let stmt = match expr.kind {
+                ExprKind::Identifier(name) => StmtKind::Assign { name, value },
+                _ => StmtKind::SetPlace { place: expr, value },
             };
             self.expect_stmt_end()?;
             return Ok(stmt);
         }
 
-        // Augmented assignment `target OP= value` (target is a NAME, a place, or
-        // a call: `rebind[Dest](place)`, which the checker erases to its
-        // operand, or one the checker requires to return a mutable reference).
+        // Augmented assignment `target OP= value` over any target expression;
+        // the checker decides whether it is an lvalue.
         if let Some(op) = self.peek_token()?.and_then(aug_assign_op) {
             self.next_token()?; // consume the `OP=` token
-            if !matches!(
-                &expr.kind,
-                ExprKind::Identifier(_)
-                    | ExprKind::Member { .. }
-                    | ExprKind::Index { .. }
-                    | ExprKind::Slice { .. }
-                    | ExprKind::MultiIndex { .. }
-                    | ExprKind::TypeApply { .. }
-                    | ExprKind::Call { .. }
-                    | ExprKind::MethodCall { .. }
-            ) {
-                return Err(ParseError::UnexpectedToken(
-                    Token::Assign,
-                    format!("invalid augmented-assignment target: {:?}", expr.kind),
-                ));
-            }
             let value = self.parse_expression(Precedence::Lowest)?;
             self.expect_stmt_end()?;
             return Ok(StmtKind::AugAssign {

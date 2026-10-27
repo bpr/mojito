@@ -258,7 +258,23 @@ impl Checker {
         if matches!(expression.kind, ExprKind::Lambda { .. }) {
             return self.check_lambda(expression);
         }
-        if let ExprKind::Named { name, value } = &expression.kind {
+        if let ExprKind::Named { target, value } = &expression.kind {
+            // A target other than a name is stored as `target = value` is,
+            // its subexpressions first; the walrus yields the stored value at
+            // the type the store records.
+            let ExprKind::Identifier(name) = &target.kind else {
+                self.register_named_bindings(target)?;
+                self.register_named_bindings(value)?;
+                let ty = self.check_set_place(target, value)?;
+                if !self.is_copyable(&ty) {
+                    return Err(TypeError::Unsupported(format!(
+                        "a walrus over a place of non-Copyable '{ty}': its result is an \
+                         owned copy of the stored value, not the destination (R1506)"
+                    )));
+                }
+                self.record_at(expression.source_span()).ty = Some(ty);
+                return Ok(());
+            };
             self.register_named_bindings(value)?;
             let found = self.infer(value)?;
             let base = self
@@ -1398,10 +1414,11 @@ impl Checker {
                 self.record_display_construction(expr, &result, true)?;
                 Ok(result)
             }
-            // Walrus `name := value` types as `value`; MIR marks execution as
-            // unsupported. The name is not bound here — `infer` is read-only — so
-            // a program that *uses* the walrus-bound name later won't type-check.
-            ExprKind::Named { value, .. } => self.infer(value),
+            // A walrus over a place types as the store `register_named_bindings`
+            // checked; over a name, as its value.
+            ExprKind::Named { value, .. } => self
+                .fact(&expr.source_span(), |facts| facts.ty.as_ref())
+                .map_or_else(|| self.infer(value), Ok),
             // Ternary `a if cond else b`: `cond` must be `Bool`; the branches must
             // have a common type (the result type). A parameter-valued
             // condition is checked as a `comptime if` condition is, and its

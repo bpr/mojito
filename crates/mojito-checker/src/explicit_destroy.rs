@@ -270,8 +270,15 @@ fn check_operands(
                 check_expr(&arg.value, env, node_facts, types)?;
             }
         }
-        ExprKind::Prefix(_, value) | ExprKind::Named { value, .. } => {
+        ExprKind::Prefix(_, value) => check_expr(value, env, node_facts, types)?,
+        // A walrus writes its target as `=` does: a name is not read, a
+        // place's subexpressions are.
+        ExprKind::Named { target, value } => {
+            if !matches!(target.kind, ExprKind::Identifier(_)) {
+                check_expr(target, env, node_facts, types)?;
+            }
             check_expr(value, env, node_facts, types)?;
+            reinitialize_place(target, env, types)?;
         }
         ExprKind::Infix(_, left, right) => {
             check_expr(left, env, node_facts, types)?;

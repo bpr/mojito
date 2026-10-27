@@ -583,10 +583,8 @@ impl<'a> Flatten<'a> {
             return self.name_place_root(&name, e);
         }
         // A call returning a mutable reference: its result is the place.
-        if matches!(
-            e.op(),
-            CheckedOp::Call { .. } | CheckedOp::MethodCall { .. }
-        ) && let Some(place) = self.materialize_reference_result_place(e)
+        if e.is_call()
+            && let Some(place) = self.materialize_reference_result_place(e)
         {
             return place;
         }
@@ -771,6 +769,7 @@ impl<'a> Flatten<'a> {
         });
         let handle = self.peel_reference_handle_to(handle, &plan.operand_ty, &target.location());
         let rhs = self.expr(rhs_expression);
+        self.yield_stored_value(rhs_expression, rhs);
         self.emit_interior_invalidations(target, None);
         self.emit(MirInstr::WriteRef {
             reference: handle,
@@ -1469,6 +1468,91 @@ impl<'a> Flatten<'a> {
         )
     }
 
+    /// Lower the store `place = value`, a statement's or a walrus's: a
+    /// nominal subscript through its getter's reference or its setter, a
+    /// pointer through its address, any other place by a store.
+    pub(in crate::mir) fn lower_set_place(&mut self, place: Node<'a>, value: Node<'a>) {
+        if self.lower_subscript_reference_set(place, value) {
+            return;
+        }
+        if self.lower_subscript_set(place, value) {
+            return;
+        }
+        let (src, _) = self.lower_assignment_value(place, value);
+        self.flush_argument_anchors();
+        // A store through an origin-bearing pointer writes its
+        // address; the checker fixed the offset to 0 and required
+        // mutable provenance. A stably bound pointer substitutes its
+        // statically known address; otherwise the store goes through the handle —
+        // loaded before the invalidation boundary, so a first write
+        // through a subtree pointer uses its still-live generation and
+        // only later uses observe the self-invalidation.
+        if let Some((object, _)) = place.pointer_offset_subscript() {
+            if let Some(target) = self.pointer_deref_place(object) {
+                self.emit_interior_invalidations(place, None);
+                self.emit(MirInstr::Store { place: target, src });
+                return;
+            }
+            if object.is_origin_bearing_pointer() {
+                let reference = self.expr(object);
+                self.emit_interior_invalidations(place, None);
+                self.emit(MirInstr::WriteRef {
+                    reference,
+                    value: src,
+                });
+                return;
+            }
+        }
+        self.emit_interior_invalidations(place, None);
+        // A projection below a nominal reference-returning accessor
+        // (`xs[i].field`) is rooted in that accessor's materialized
+        // handle, never in raw nominal storage.
+        let p = self
+            .lower_projected_reference_place(place)
+            .unwrap_or_else(|| self.place(place));
+        let stores_reference = matches!(p.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+            && value.adjustments().iter().any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::BorrowShared
+                        | mojito_checked::checked::SemanticAdjustment::BorrowMutable
+                )
+            });
+        if stores_reference {
+            self.emit(MirInstr::StoreRef {
+                place: p,
+                reference: src,
+            });
+        } else {
+            // A checked Copyable write-through runs the referent's
+            // copy lifecycle before the store, so the written value
+            // owns its storage instead of sharing the source's.
+            let src = if matches!(p.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+                && value.adjustments().iter().any(|adjustment| {
+                    matches!(
+                        adjustment,
+                        mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
+                    )
+                }) {
+                let copied = self.fresh(place.location(), None);
+                self.emit(MirInstr::CopyValue {
+                    dest: copied,
+                    value: src,
+                    constructor: None,
+                });
+                copied
+            } else {
+                src
+            };
+            let pointee_root =
+                (!p.is_whole_root() && self.pointer_valued_slot(p.root)).then_some(p.root);
+            self.emit(MirInstr::Store { place: p, src });
+            if let Some(pointer) = pointee_root {
+                self.retain_pointee_loans(pointer, value);
+            }
+        }
+    }
+
     /// Lower a nominal subscript assignment through the checker-selected
     /// `__setitem__` implementation. Unlike an ordinary `MirPlace`
     /// projection, every slice remains a first-class descriptor argument and
@@ -1536,7 +1620,59 @@ impl<'a> Flatten<'a> {
         if let Some(target_ty) = target.ty() {
             value = self.materialize_register(value, &target_ty, value_expression.location());
         }
+        self.yield_stored_value(value_expression, value);
         (value, value_place)
+    }
+
+    /// Lower the walrus `target := value` over a place: the store
+    /// `target = value`, yielding a copy of the stored value taken before
+    /// the store consumes it, as upstream's `emitWalrus` yields its
+    /// right-hand side.
+    pub(in crate::mir) fn lower_walrus_store(
+        &mut self,
+        walrus: Node<'a>,
+        target: Node<'a>,
+        value: Node<'a>,
+    ) -> Reg {
+        let enclosing = self.walrus_yield.replace(WalrusYield {
+            value: value.id(),
+            ty: walrus.ty(),
+            copy: None,
+        });
+        self.lower_set_place(target, value);
+        let yielded =
+            std::mem::replace(&mut self.walrus_yield, enclosing).and_then(|walrus| walrus.copy);
+        yielded.unwrap_or_else(|| {
+            self.unsupported_value(
+                target.location(),
+                "a walrus over a place its store lowers without a value",
+            )
+        })
+    }
+
+    /// Record a copy of the lowered stored value `value` when
+    /// `value_expression` is the walrus's being stored.
+    fn yield_stored_value(&mut self, value_expression: Node<'a>, value: Reg) {
+        let Some(ty) = self
+            .walrus_yield
+            .as_ref()
+            .filter(|walrus| walrus.value == value_expression.id() && walrus.copy.is_none())
+            .map(|walrus| walrus.ty.clone())
+        else {
+            return;
+        };
+        let copied = match ty {
+            Some(ty) => self.fresh_typed(value_expression.location(), None, ty),
+            None => self.fresh(value_expression.location(), None),
+        };
+        self.emit(MirInstr::CopyValue {
+            dest: copied,
+            value,
+            constructor: None,
+        });
+        if let Some(walrus) = &mut self.walrus_yield {
+            walrus.copy = Some(copied);
+        }
     }
 
     /// Lower the receiver and index arguments of the nominal subscript
@@ -2444,87 +2580,7 @@ impl<'a> Flatten<'a> {
                 self.aggregate_loans.insert(reference, loans);
             }
             // --- Writes through a place (any nesting) --------------------------
-            (CheckedStmtOp::SetPlace { .. }, &[place, value]) => {
-                if self.lower_subscript_reference_set(place, value) {
-                    return;
-                }
-                if self.lower_subscript_set(place, value) {
-                    return;
-                }
-                let (src, _) = self.lower_assignment_value(place, value);
-                self.flush_argument_anchors();
-                // A store through an origin-bearing pointer writes its
-                // address; the checker fixed the offset to 0 and required
-                // mutable provenance. A stably bound pointer substitutes its
-                // statically known address; otherwise the store goes through the handle —
-                // loaded before the invalidation boundary, so a first write
-                // through a subtree pointer uses its still-live generation and
-                // only later uses observe the self-invalidation.
-                if let Some((object, _)) = place.pointer_offset_subscript() {
-                    if let Some(target) = self.pointer_deref_place(object) {
-                        self.emit_interior_invalidations(place, None);
-                        self.emit(MirInstr::Store { place: target, src });
-                        return;
-                    }
-                    if object.is_origin_bearing_pointer() {
-                        let reference = self.expr(object);
-                        self.emit_interior_invalidations(place, None);
-                        self.emit(MirInstr::WriteRef {
-                            reference,
-                            value: src,
-                        });
-                        return;
-                    }
-                }
-                self.emit_interior_invalidations(place, None);
-                // A projection below a nominal reference-returning accessor
-                // (`xs[i].field`) is rooted in that accessor's materialized
-                // handle, never in raw nominal storage.
-                let p = self
-                    .lower_projected_reference_place(place)
-                    .unwrap_or_else(|| self.place(place));
-                let stores_reference = matches!(p.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                    && value.adjustments().iter().any(|adjustment| {
-                        matches!(
-                            adjustment,
-                            mojito_checked::checked::SemanticAdjustment::BorrowShared
-                                | mojito_checked::checked::SemanticAdjustment::BorrowMutable
-                        )
-                    });
-                if stores_reference {
-                    self.emit(MirInstr::StoreRef {
-                        place: p,
-                        reference: src,
-                    });
-                } else {
-                    // A checked Copyable write-through runs the referent's
-                    // copy lifecycle before the store, so the written value
-                    // owns its storage instead of sharing the source's.
-                    let src = if matches!(p.ty.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                        && value.adjustments().iter().any(|adjustment| {
-                            matches!(
-                                adjustment,
-                                mojito_checked::checked::SemanticAdjustment::CopyPlaceValue
-                            )
-                        }) {
-                        let copied = self.fresh(place.location(), None);
-                        self.emit(MirInstr::CopyValue {
-                            dest: copied,
-                            value: src,
-                            constructor: None,
-                        });
-                        copied
-                    } else {
-                        src
-                    };
-                    let pointee_root =
-                        (!p.is_whole_root() && self.pointer_valued_slot(p.root)).then_some(p.root);
-                    self.emit(MirInstr::Store { place: p, src });
-                    if let Some(pointer) = pointee_root {
-                        self.retain_pointee_loans(pointer, value);
-                    }
-                }
-            }
+            (CheckedStmtOp::SetPlace { .. }, &[place, value]) => self.lower_set_place(place, value),
             (CheckedStmtOp::AugAssign { op, .. }, &[place, value]) => {
                 if self.lower_augmented_subscript(place, *op, value) {
                     return;

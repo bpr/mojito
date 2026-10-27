@@ -315,7 +315,10 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
         // this flat comptime substitution could replace a shadowed target.
         ExprKind::Comprehension { .. } => {}
         ExprKind::Uninitialized => {}
-        ExprKind::Named { value, .. } => rewrite_expr(value, subs),
+        ExprKind::Named { target, value } => {
+            rewrite_expr(target, subs);
+            rewrite_expr(value, subs);
+        }
         ExprKind::IfExpr {
             cond,
             then_branch,
@@ -1873,7 +1876,10 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
             }
         }
         ExprKind::Uninitialized => {}
-        ExprKind::Named { value, .. } => retype_expr(value, subs),
+        ExprKind::Named { target, value } => {
+            retype_expr(target, subs);
+            retype_expr(value, subs);
+        }
         ExprKind::IfExpr {
             cond,
             then_branch,

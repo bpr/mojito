@@ -637,12 +637,6 @@ fn parses_assignment() {
 }
 
 #[test]
-fn rejects_non_identifier_assignment_target() {
-    let mut parser = Parser::new(Lexer::new("1 = 2\n"));
-    assert!(parser.parse_program().is_err());
-}
-
-#[test]
 fn parses_break_and_continue() {
     let stmts = parse("while a:\n    break\n    continue\n");
     assert_eq!(
@@ -2309,9 +2303,25 @@ fn parses_field_and_nested_place_assignment() {
 }
 
 #[test]
-fn rejects_non_place_assignment_target() {
-    let mut parser = Parser::new(Lexer::new("a + b = 1\n"));
-    assert!(parser.parse_program().is_err());
+fn parses_any_expression_as_assignment_target() {
+    // As upstream, the parser takes any expression as a target; the checker
+    // rejects one that is not an lvalue.
+    assert!(matches!(
+        &parse("1 = 2\n")[0].kind,
+        StmtKind::SetPlace { place, .. } if matches!(place.kind, ExprKind::Int(_))
+    ));
+    assert!(matches!(
+        &parse("a + b = 1\n")[0].kind,
+        StmtKind::SetPlace { place, .. } if matches!(place.kind, ExprKind::Infix(..))
+    ));
+    assert!(matches!(
+        &parse("a + b += 1\n")[0].kind,
+        StmtKind::AugAssign { place, .. } if matches!(place.kind, ExprKind::Infix(..))
+    ));
+    assert!(matches!(
+        &parse("w.at[0]() = 5\n")[0].kind,
+        StmtKind::SetPlace { place, .. } if matches!(place.kind, ExprKind::Invoke { .. })
+    ));
 }
 
 #[test]
@@ -2973,12 +2983,6 @@ fn parses_augmented_assignment() {
 }
 
 #[test]
-fn rejects_augmented_assignment_to_non_place() {
-    let mut parser = Parser::new(Lexer::new("a + b += 1\n"));
-    assert!(parser.parse_program().is_err());
-}
-
-#[test]
 fn parses_rebind_as_augmented_assignment_target() {
     assert!(matches!(
         &parse("rebind[Int](x) += 1\n")[0].kind,
@@ -3014,7 +3018,7 @@ fn parses_walrus_as_named_expression() {
     assert_eq!(
         parse_expr("(n := 5)"),
         Expr::from(ExprKind::Named {
-            name: "n".into(),
+            target: ident("n"),
             value: int(5)
         })
     );
@@ -3026,16 +3030,28 @@ fn walrus_binds_looser_than_comparison() {
     assert_eq!(
         parse_expr("(n := a > b)"),
         Expr::from(ExprKind::Named {
-            name: "n".into(),
+            target: ident("n"),
             value: bx(ExprKind::Infix(InfixOp::Gt, ident("a"), ident("b"))),
         })
     );
 }
 
 #[test]
-fn rejects_walrus_with_non_name_target() {
-    let mut parser = Parser::new(Lexer::new("var y: Int = (1 := 5)\n"));
-    assert!(parser.parse_program().is_err());
+fn parses_walrus_over_any_target() {
+    assert_eq!(
+        parse_expr("(xs[0] := 5)"),
+        Expr::from(ExprKind::Named {
+            target: bx(ExprKind::Index {
+                object: ident("xs"),
+                index: int(0),
+            }),
+            value: int(5),
+        })
+    );
+    assert!(matches!(
+        parse_expr("(1 := 5)").kind,
+        ExprKind::Named { target, .. } if matches!(target.kind, ExprKind::Int(_))
+    ));
 }
 
 // --- Inferred `var` (no annotation) ---

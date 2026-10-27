@@ -150,10 +150,8 @@ declared_display: display_target                           # leaves are NAME | '
 declared_item: NAME | '_' | declared_display
 augmented_assignment: assign_target aug_op expression
 aug_op: '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**=' | '&=' | '|=' | '^='
-assign_target: target | call | 'rebind' '[' type ']' '(' target ')'   # checker erases rebind to its operand
-target: NAME | place
-place: primary ('.' NAME | '[' expression ']')      # a field/index chain (checker: rooted at a variable or a call)
-call: primary '(' [args] ')'                       # a function or method call; checker: returns a mutable reference
+assign_target: conditional                         # any expression; the checker rejects a non-lvalue
+target: assign_target                              # a destructuring leaf, likewise any expression
 comptime_stmt: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression
 return_stmt: 'return' [expression]
 raise_stmt: 'raise' expression
@@ -164,7 +162,10 @@ raise_stmt: 'raise' expression
 kind — `var x = 5` is `Int`, `var f = 3.5` is `Float64`); an inferred `var` of a value
 that can't be stored in a binding — a closure or the non-first-class `range` — is a
 checker error. `x = e` **re-assigns** an already-declared variable (the value must keep
-the declared type — a checker rule, not expressible in the grammar). The target is a `NAME` or a **place** — a field
+the declared type — a checker rule, not expressible in the grammar). The parser takes any expression as the
+target, as upstream does, and the checker rejects one that is not an lvalue
+("expression must be mutable": `1 = 2`, `a + b += 1`). An lvalue is a `NAME`,
+`rebind[Dest](place)` (erased to its operand), or a **place** — a field
 (`p.x = e`) or index (`xs[i] = e`) chain, nested freely (`p.items[i].x = e`). The
 checker requires the place's root to be a mutable location: any variable, or
 `self` inside a `mut self` method (writing a field of a read-only `self` is an
@@ -866,7 +867,7 @@ rules (`comparison`, `bitwise_or`, `bitwise_xor`, `bitwise_and`, `shift`, `sum`,
 
 ```
 expression:
-    | NAME ':=' expression        # named expression (walrus) — parsed, deferred
+    | conditional ':=' expression # named expression (walrus); the checker requires an lvalue target
     | lambda_expr
     | conditional
 lambda_expr:
@@ -1029,10 +1030,13 @@ Notes:
   convention (or a lambda-owned `[params]` list) makes the lambda a closure.
   The parser lowers each lambda to a hidden nested `def` whose body is
   `return <expr>`, so checking and lowering reuse the nested-closure pipeline.
-- **The walrus / named expression `NAME := e`** binds looser than every operator (so
-  `(n := a + b)` is `n := (a + b)`); the target must be a bare `NAME` that is
-  already in scope — a walrus updates a binding, it never introduces one. It
-  evaluates the right side once, assigns it, and yields the assigned value.
+- **The walrus / named expression `target := e`** binds looser than every operator (so
+  `(n := a + b)` is `n := (a + b)`). Its target is any lvalue an assignment
+  takes — a `NAME` already in scope (a walrus updates a binding, it never
+  introduces one), a field, a subscript, or a call returning a mutable
+  reference — and a non-lvalue is a checker error. It evaluates the target's
+  subexpressions, then the right side once, stores it as `=` does (a nominal
+  subscript through its `__setitem__`), and yields the stored value.
 - **`primary` is left-recursive over `.NAME` (field access) and `.NAME(args)` (method
   call)**, which chain (`a.b.c`, `p.m().n`). The plain call form `atom '(' [args] ')'`
   is a *free* call whose callee must be a `NAME` — a free function, a built-in, or a

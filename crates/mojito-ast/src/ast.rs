@@ -2054,10 +2054,10 @@ pub enum ExprKind {
     /// A tuple literal `(a, b, …)` — a fixed-size, heterogeneous `Tuple`. `()` is
     /// the empty tuple and `(a,)` a 1-tuple; a plain `(e)` is grouping, not a tuple.
     TupleLit(Vec<Expr>),
-    /// A named expression (walrus) `name := value`. It is parsed and typed as the
-    /// value, but MIR deliberately emits an unsupported operation.
+    /// A named expression (walrus) `target := value`: stores the value
+    /// through the lvalue `target`, as `target = value` does, and yields it.
     Named {
-        name: String,
+        target: Box<Expr>,
         value: Box<Expr>,
     },
     /// A conditional expression (ternary) `then_branch if cond else else_branch`.
@@ -2283,11 +2283,14 @@ impl InfixOp {
 pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
     match &expr.kind {
         ExprKind::Lambda { .. } => out.push(expr),
-        ExprKind::Prefix(_, value)
-        | ExprKind::Transfer(value)
-        | ExprKind::Spread(value)
-        | ExprKind::Named { value, .. } => lambdas_in_expr(value, out),
+        ExprKind::Prefix(_, value) | ExprKind::Transfer(value) | ExprKind::Spread(value) => {
+            lambdas_in_expr(value, out);
+        }
         ExprKind::Infix(_, left, right)
+        | ExprKind::Named {
+            target: left,
+            value: right,
+        }
         | ExprKind::Index {
             object: left,
             index: right,
@@ -2745,7 +2748,10 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                         }
                     }
                 }
-                ExprKind::Named { value, .. } => self.expr(value),
+                ExprKind::Named { target, value } => {
+                    self.expr(target);
+                    self.expr(value);
+                }
                 ExprKind::IfExpr {
                     cond,
                     then_branch,

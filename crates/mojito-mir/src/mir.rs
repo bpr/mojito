@@ -2961,6 +2961,15 @@ fn mir_place_handle_ty(
     )
 }
 
+/// A walrus over a place whose stored value is being lowered: its value
+/// node, the walrus's type, and the copy of the value it yields, taken once
+/// the store lowers that value.
+struct WalrusYield {
+    value: mojito_checked::checked::CheckedNodeId,
+    ty: Option<Ty>,
+    copy: Option<Reg>,
+}
+
 /// Flattens nested `Expr`s into a block's instruction list. `cur` is the block
 /// currently being appended to.
 struct Flatten<'a> {
@@ -3067,6 +3076,8 @@ struct Flatten<'a> {
     /// whole live range, so deref sites may substitute that place.
     reassigned_names: std::collections::HashSet<String>,
     returns_reference: bool,
+    /// The walrus over a place whose stored value is being lowered.
+    walrus_yield: Option<WalrusYield>,
     /// The number of the next `try` this function lowers, its label:
     /// `LowerSemanticCF`'s `tryCounter`.
     next_try: u32,
@@ -4664,6 +4675,7 @@ fn lower_cfg_nested(
             transfer_domain_loans: HashMap::new(),
             reassigned_names: reassigned_names(cfg, nested),
             returns_reference,
+            walrus_yield: None,
             next_try: 0,
             raise_target: None,
         };

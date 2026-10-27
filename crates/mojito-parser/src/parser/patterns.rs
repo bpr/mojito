@@ -832,22 +832,6 @@ pub(super) fn expr_to_target(value: Expr) -> Result<DestructureTarget, ParseErro
     if matches!(&value.kind, ExprKind::Identifier(name) if name == "_") {
         return Ok(DestructureTarget::new(DestructureTargetKind::Discard, span));
     }
-    if matches!(
-        value.kind,
-        ExprKind::Identifier(_)
-            | ExprKind::Member { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::Slice { .. }
-            | ExprKind::MultiIndex { .. }
-            | ExprKind::TypeApply { .. }
-            | ExprKind::Call { .. }
-            | ExprKind::MethodCall { .. }
-    ) {
-        return Ok(DestructureTarget::new(
-            DestructureTargetKind::Place(value),
-            span,
-        ));
-    }
     let kind = match value.kind {
         ExprKind::TupleLit(items) => DestructureTargetKind::Tuple(
             items
@@ -861,12 +845,12 @@ pub(super) fn expr_to_target(value: Expr) -> Result<DestructureTarget, ParseErro
                 .map(|item| expr_to_target(item).map(SequenceTarget::Element))
                 .collect::<Result<Vec<_>, _>>()?,
         ),
-        other => {
-            return Err(ParseError::UnexpectedToken(
-                Token::Assign,
-                format!("invalid assignment target: {other:?}"),
-            ));
-        }
+        // Any other leaf is a place to write; the checker decides whether it
+        // is an lvalue, as upstream's `TupleDLValue` emits each element.
+        other => DestructureTargetKind::Place(Expr {
+            kind: other,
+            ..value
+        }),
     };
     Ok(DestructureTarget::new(kind, span))
 }

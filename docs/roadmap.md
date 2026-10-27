@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1506**.
+Next free ID: **R1507**.
 
 ## Ordered Work
 
@@ -2503,6 +2503,30 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R1506 A walrus yields an owned value where upstream yields its
+  destination borrowed**
+
+  Upstream's `BinOpNode::emitWalrus` yields a memory lvalue's destination as
+  a borrowed value after the store, and a setter-stored target's right-hand
+  side. Mojito's checker types every walrus result as an owned value, and
+  MIR yields a register.
+  - Over a name, the walrus binds the value's register to the slot and
+    yields the same register. `print(s := String("b"))` over a `String`
+    fails MIR verification ("call reads owned register … which some path
+    reaching it has ended"), where the pin prints `b`.
+  - Over a place, MIR yields a copy of the stored value taken before the
+    store (`Flatten::lower_walrus_store`). A copy constructor runs once more
+    than at the pin.
+  - So the check rejects a walrus over a place of a non-`Copyable` type
+    (`(h.n := N(5)).v` over a `Movable` `N`), which the pin runs.
+  - `var d = (h.c := C(6))` over a `Copyable`, non-`ImplicitlyCopyable` `C`
+    runs, where the pin rejects the implicit copy of the borrowed result.
+  - The lever: the walrus result is read as its target is, a place the
+    consumer copies or borrows, rather than a fresh temporary.
+  - Found while landing R1375 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
 Track: `calls`.
@@ -2572,26 +2596,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     reference.
   - Found while landing R1373 (2026-10-27).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1375 An assignment target must match a list of shapes in the
-  parser**
-
-  `parse_expr_or_assign` (`parser/stmts.rs`) accepts only listed kinds as
-  plain and augmented targets, and the walrus accepts only a name
-  (`parser/exprs.rs`), where upstream parses an assignment over any
-  expression and rejects a non-lvalue in `IREmitter::emitLValue` with
-  "expression must be mutable", using `emitExprLValue` for `=`, `+=`, and
-  `:=` alike.
-  - The lever: the parser takes any expression as a target.
-    `check_place_impl` gains an `Invoke` arm, and the walrus stores through
-    the same lvalue (`subscript_lvalue`, `store_through_subscript`).
-  - Update `docs/grammar.md` first (`assign_target`, `NAME ':='`).
-  - Probe: `print(xs[0] := 5)` then `print(xs[0])` prints `5` twice at the
-    pin. Mojito stops parsing at "walrus ':=' target must be a name". Also
-    `conformance/probes/invoke_assignment_target.mojo`.
-  - Closes R1233 (a call with explicit parameters as a target).
-  - Depends on R1373, so a walrus over a setter stores as `=` does.
   - Model: Opus, Not Planned.
 
 - [ ] **R1294 A temporary iterable takes the borrowed `__iter__` where
@@ -2695,21 +2699,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`Checker::check_lambda`) has run over it.
   - Probe: `conformance/probes/augmented_lambda_value.mojo`.
   - Found while planning R1138 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1233 A call with explicit parameters is not an assignment target**
-
-  Problem: `w.at[0]() = 5` and `w.at[0]() += 1`, over `def at[k: Int](mut
-  self) -> ref[self.x] Int`, are parse errors ("invalid assignment target:
-  Invoke"), where the pin prints `6`.
-  - The same call without a bracket (`w.at() = 5`) runs.
-  - `Parser::parse_expr_or_assign`'s plain and augmented target lists
-    (`crates/mojito-parser/src/parser/stmts.rs`) omit `ExprKind::Invoke`.
-  - With the parser admitting it, the checker's place check
-    (`checker/indexing.rs`) has no `Invoke` arm and rejects it the same way.
-  - Probe: `conformance/probes/invoke_assignment_target.mojo`.
-  - Found while landing R1132 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5899,8 +5888,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a generic `total[T](x: T)` summing `rebind[Int](r.field_ref[i](x))`
     under `comptime if types[i] == Int` in a `comptime for` reports
     "Undefined variable 'r'" (pin: the sum).
-  - Probe: `reflect[P].field_ref[0](p) = 42` also needs R1233's call
-    assignment target.
+  - Probe: `reflect[P].field_ref[0](p) = 42` then `print(p.x)` (pin:
+    `42`), now rejected at the same query.
   - Depends on nothing.
   - Model: Fable, Planned.
 

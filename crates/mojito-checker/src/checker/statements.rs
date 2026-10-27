@@ -1786,126 +1786,7 @@ impl Checker {
             // The context-manager protocol is a checked desugar (`with_stmt.rs`).
             StmtKind::With { items, body } => self.check_with(stmt, items, body, ret, in_loop),
 
-            StmtKind::SetPlace { place, value } => {
-                if let Some(root) = place_root_name(place) {
-                    self.check_capture_access(root, true)?;
-                }
-                // Nominal subscript assignment is a method call, not a raw
-                // storage projection. Resolve it with the RHS present so
-                // overloads, conversions, ownership conventions, origins,
-                // aliases, captures, and raising behavior all use the same
-                // machinery as explicit `.__setitem__(...)` syntax.
-                if self
-                    .check_nominal_subscript_assignment(place, value)?
-                    .is_some()
-                {
-                    if let ExprKind::Index { object, .. }
-                    | ExprKind::Slice { object, .. }
-                    | ExprKind::MultiIndex { object, .. } = &place.kind
-                        && let Ok(container) = self.origin_place(object)
-                    {
-                        self.check_result_carries_container_interior(&container, value)?;
-                    }
-                    self.record_place_write_invalidation(place.source_span(), place);
-                    return Ok(());
-                }
-                // The place must be a writable location (a field/index chain
-                // rooted at a mutable variable or `mut self`); the value must
-                // keep the place's type. A width-1 SIMD target (a lane write, or
-                // a scalar-alias field) additionally accepts a splatting literal.
-                let target = self.check_place(place)?;
-                if let ExprKind::Call { name, .. } | ExprKind::MethodCall { method: name, .. } =
-                    &place.kind
-                {
-                    self.check_overwritten_referent(&format!("{name}(...)"), &target)?;
-                }
-                self.record_place_write_invalidation(place.source_span(), place);
-                let storage = self.place_storage_ty(place);
-                // The place's type is the assignment's expected context, so a
-                // collection display materializes against it (`self.items =
-                // [7, 8, 9]` stays `List[Int]` for a List-typed field).
-                let found = self.infer_with_expected(value, &target, true)?;
-                if let Ok(destination) = self.origin_place(place) {
-                    self.check_result_aliases_destination(&destination, value)?;
-                }
-                // A store into storage that outlives this frame (a parameter
-                // or `self` root) must not smuggle a frame-local loan outward
-                // — the symmetric twin of the Return escape check. Rebinding a
-                // `ref` field counts even when the value type carries no loan:
-                // the destination handle itself becomes the loan. Nominal
-                // subscript assignment (early-returned above) needs no twin:
-                // a `List[ref T]` subscript reaches the referent only
-                // (augmented writes), and handle replacement or ref-append is
-                // not offered by any overload, so no collection store can
-                // install a frame-local handle.
-                self.check_outward_store(place, value, &found, &storage)?;
-                if let Some(TyKind::Ref(expected_reference)) = storage.as_ref().map(Ty::kind) {
-                    let initializes_reference =
-                        self.self_initializing && place_root_name(place) == Some("self");
-                    if initializes_reference {
-                        let actual = self.infer_reference_value(value).ok_or_else(|| {
-                            TypeError::TypeMismatch {
-                                expected: format!("ref {}", expected_reference.referent),
-                                found: found.to_string(),
-                                context: "reference field initialization".to_string(),
-                            }
-                        })?;
-                        if !coerces(&actual.referent, &expected_reference.referent)
-                            || (expected_reference.mutability
-                                == mojito_types::origin::Mutability::Mutable
-                                && actual.mutability != mojito_types::origin::Mutability::Mutable)
-                        {
-                            return Err(TypeError::TypeMismatch {
-                                expected: format!("ref {}", expected_reference.referent),
-                                found: format!("ref {}", actual.referent),
-                                context: "reference field initialization".to_string(),
-                            });
-                        }
-                        self.record_at(value.source_span()).reference_value_use = Some(
-                            expected_reference.mutability
-                                == mojito_types::origin::Mutability::Mutable,
-                        );
-                    } else if expected_reference.mutability
-                        != mojito_types::origin::Mutability::Mutable
-                    {
-                        return Err(TypeError::ImmutableBinding(
-                            "immutable reference field".to_string(),
-                        ));
-                    } else {
-                        // A write-through replaces the referent's value: run
-                        // the referent's consuming/copy analysis, which
-                        // out-self initialization deliberately skips — a `^`
-                        // transfer stays a move, and a Copyable place read
-                        // records its copy so the lowering runs the lifecycle
-                        // instead of sharing the source's storage.
-                        if !self.storage_conversion_borrows_source(&found, Some(&target)) {
-                            self.check_consuming(value, &found, "assignment target")?;
-                        }
-                    }
-                }
-                let ok = self.record_implicit_conversion(value, &found, &target)?;
-                if !ok {
-                    if let Some(mismatch) = self.struct_origin_mismatch(&found, &target) {
-                        return Err(mismatch);
-                    }
-                    return Err(TypeError::TypeMismatch {
-                        expected: target.to_string(),
-                        found: found.to_string(),
-                        context: "assignment target".to_string(),
-                    });
-                }
-                // Existing out-self initialization permits a non-Copyable
-                // generic parameter to be installed without spelling a second
-                // source-level transfer. Preserve that constructor convention;
-                // this marker is needed only for an actual Copyable place read.
-                if !matches!(storage.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
-                    && self.is_copyable(&found)
-                    && !self.storage_conversion_borrows_source(&found, Some(&target))
-                {
-                    self.check_consuming(value, &found, "assignment target")?;
-                }
-                Ok(())
-            }
+            StmtKind::SetPlace { place, value } => self.check_set_place(place, value).map(drop),
 
             // `raises` is parsed but its effect is not analyzed (deferred).
             StmtKind::Def { .. } => self.check_def(stmt, false),
@@ -2538,6 +2419,122 @@ impl Checker {
                 Ok(())
             }
         }
+    }
+
+    /// Check the store `place = value`, as statement or walrus, and return
+    /// the type the store yields: the getter's element for a nominal
+    /// subscript, else the place's.
+    pub(super) fn check_set_place(&self, place: &Expr, value: &Expr) -> Result<Ty, TypeError> {
+        if let Some(root) = place_root_name(place) {
+            self.check_capture_access(root, true)?;
+        }
+        // Nominal subscript assignment is a method call, not a raw
+        // storage projection. Resolve it with the RHS present so
+        // overloads, conversions, ownership conventions, origins,
+        // aliases, captures, and raising behavior all use the same
+        // machinery as explicit `.__setitem__(...)` syntax.
+        if let Some(element) = self.check_nominal_subscript_assignment(place, value)? {
+            if let ExprKind::Index { object, .. }
+            | ExprKind::Slice { object, .. }
+            | ExprKind::MultiIndex { object, .. } = &place.kind
+                && let Ok(container) = self.origin_place(object)
+            {
+                self.check_result_carries_container_interior(&container, value)?;
+            }
+            self.record_place_write_invalidation(place.source_span(), place);
+            return Ok(element);
+        }
+        // The place must be a writable location (a field/index chain
+        // rooted at a mutable variable or `mut self`); the value must
+        // keep the place's type. A width-1 SIMD target (a lane write, or
+        // a scalar-alias field) additionally accepts a splatting literal.
+        let target = self.check_place(place)?;
+        if let ExprKind::Call { name, .. } | ExprKind::MethodCall { method: name, .. } = &place.kind
+        {
+            self.check_overwritten_referent(&format!("{name}(...)"), &target)?;
+        }
+        self.record_place_write_invalidation(place.source_span(), place);
+        let storage = self.place_storage_ty(place);
+        // The place's type is the assignment's expected context, so a
+        // collection display materializes against it (`self.items =
+        // [7, 8, 9]` stays `List[Int]` for a List-typed field).
+        let found = self.infer_with_expected(value, &target, true)?;
+        if let Ok(destination) = self.origin_place(place) {
+            self.check_result_aliases_destination(&destination, value)?;
+        }
+        // A store into storage that outlives this frame (a parameter
+        // or `self` root) must not smuggle a frame-local loan outward
+        // — the symmetric twin of the Return escape check. Rebinding a
+        // `ref` field counts even when the value type carries no loan:
+        // the destination handle itself becomes the loan. Nominal
+        // subscript assignment (early-returned above) needs no twin:
+        // a `List[ref T]` subscript reaches the referent only
+        // (augmented writes), and handle replacement or ref-append is
+        // not offered by any overload, so no collection store can
+        // install a frame-local handle.
+        self.check_outward_store(place, value, &found, &storage)?;
+        if let Some(TyKind::Ref(expected_reference)) = storage.as_ref().map(Ty::kind) {
+            let initializes_reference =
+                self.self_initializing && place_root_name(place) == Some("self");
+            if initializes_reference {
+                let actual =
+                    self.infer_reference_value(value)
+                        .ok_or_else(|| TypeError::TypeMismatch {
+                            expected: format!("ref {}", expected_reference.referent),
+                            found: found.to_string(),
+                            context: "reference field initialization".to_string(),
+                        })?;
+                if !coerces(&actual.referent, &expected_reference.referent)
+                    || (expected_reference.mutability == mojito_types::origin::Mutability::Mutable
+                        && actual.mutability != mojito_types::origin::Mutability::Mutable)
+                {
+                    return Err(TypeError::TypeMismatch {
+                        expected: format!("ref {}", expected_reference.referent),
+                        found: format!("ref {}", actual.referent),
+                        context: "reference field initialization".to_string(),
+                    });
+                }
+                self.record_at(value.source_span()).reference_value_use = Some(
+                    expected_reference.mutability == mojito_types::origin::Mutability::Mutable,
+                );
+            } else if expected_reference.mutability != mojito_types::origin::Mutability::Mutable {
+                return Err(TypeError::ImmutableBinding(
+                    "immutable reference field".to_string(),
+                ));
+            } else {
+                // A write-through replaces the referent's value: run
+                // the referent's consuming/copy analysis, which
+                // out-self initialization deliberately skips — a `^`
+                // transfer stays a move, and a Copyable place read
+                // records its copy so the lowering runs the lifecycle
+                // instead of sharing the source's storage.
+                if !self.storage_conversion_borrows_source(&found, Some(&target)) {
+                    self.check_consuming(value, &found, "assignment target")?;
+                }
+            }
+        }
+        let ok = self.record_implicit_conversion(value, &found, &target)?;
+        if !ok {
+            if let Some(mismatch) = self.struct_origin_mismatch(&found, &target) {
+                return Err(mismatch);
+            }
+            return Err(TypeError::TypeMismatch {
+                expected: target.to_string(),
+                found: found.to_string(),
+                context: "assignment target".to_string(),
+            });
+        }
+        // Existing out-self initialization permits a non-Copyable
+        // generic parameter to be installed without spelling a second
+        // source-level transfer. Preserve that constructor convention;
+        // this marker is needed only for an actual Copyable place read.
+        if !matches!(storage.as_ref().map(Ty::kind), Some(TyKind::Ref(_)))
+            && self.is_copyable(&found)
+            && !self.storage_conversion_borrows_source(&found, Some(&target))
+        {
+            self.check_consuming(value, &found, "assignment target")?;
+        }
+        Ok(target)
     }
 
     /// Check one function declaration: an ordinary (possibly nested) `def`

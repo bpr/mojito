@@ -375,7 +375,7 @@ pub struct Cfg {
     /// copied) with every other function's lowering. Kept by stable node id;
     /// a CFG is handed its body's statement ids and finds no node by location.
     pub checked: Arc<CheckedTables>,
-    /// The slot each local-name node (an `Identifier`, a walrus `Named`) of
+    /// The slot each local-name node (each `Identifier`) of
     /// this CFG's expressions reads, as resolved in its lexical scope: the
     /// value an upstream operand names.
     pub slots: HashMap<CheckedNodeId, VarId>,
@@ -836,9 +836,7 @@ impl Lower {
             return;
         };
         let name = match &node.op {
-            CheckedOp::Identifier(name) | CheckedOp::Named { name, .. }
-                if name != mojito_ast::ast::CONTEXTUAL_SENTINEL =>
-            {
+            CheckedOp::Identifier(name) if name != mojito_ast::ast::CONTEXTUAL_SENTINEL => {
                 Some(name)
             }
             _ => None,

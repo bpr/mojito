@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An assignment target is any expression, as upstream parses it (R1375,
+  R1233): `=`, augmented assignment, the walrus, and destructuring leaves
+  no longer match a list of shapes in the parser, and the checker rejects a
+  non-lvalue with "expression must be mutable in assignment", so a call
+  with explicit parameters returning a mutable reference (`w.at[0]() = 5`)
+  is a target. The walrus stores through any lvalue as `=` does, a nominal
+  subscript through its `__setitem__`, and yields the stored value
+  (`print(xs[0] := 5)`). Its result is an owned copy where upstream yields
+  the destination borrowed, so a walrus over a place of a non-`Copyable`
+  type is rejected (R1506).
 - A nominal subscript is a destructuring leaf, stored as upstream's
   `TupleDLValue` stores each element through its `SubscriptDLValue`
   (R1374, R1247): `(xs[0], xs[1]) = pair` evaluates each leaf's receiver

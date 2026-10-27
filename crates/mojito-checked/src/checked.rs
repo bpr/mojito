@@ -1413,8 +1413,10 @@ pub enum CheckedOp {
         def: CheckedStmtId,
     },
     TupleLit(Vec<CheckedNodeId>),
+    /// A walrus `target := value`, its target an lvalue as an
+    /// assignment's is.
     Named {
-        name: String,
+        target: CheckedNodeId,
         value: CheckedNodeId,
     },
     IfExpr {
@@ -1465,9 +1467,12 @@ impl CheckedOp {
             Self::Prefix(_, value)
             | Self::Transfer(value)
             | Self::Spread(value)
-            | Self::Named { value, .. }
             | Self::Member { object: value, .. } => operands.push(*value),
             Self::Infix(_, left, right)
+            | Self::Named {
+                target: left,
+                value: right,
+            }
             | Self::Index {
                 object: left,
                 index: right,
@@ -1662,10 +1667,13 @@ impl CheckedOp {
             Self::Prefix(op, value) => Self::Prefix(*op, map.expression(*value)),
             Self::Transfer(value) => Self::Transfer(map.expression(*value)),
             Self::Spread(value) => Self::Spread(map.expression(*value)),
-            Self::Named { name, value } => Self::Named {
-                name: name.clone(),
-                value: map.expression(*value),
-            },
+            Self::Named { target, value } => {
+                let target = map.expression(*target);
+                Self::Named {
+                    target,
+                    value: map.expression(*value),
+                }
+            }
             Self::Infix(op, left, right) => {
                 let left = map.expression(*left);
                 Self::Infix(*op, left, map.expression(*right))
@@ -5505,10 +5513,13 @@ impl<'a> ArenaBuilder<'a> {
             ExprKind::Prefix(op, value) => CheckedOp::Prefix(*op, self.expr(value)),
             ExprKind::Transfer(value) => CheckedOp::Transfer(self.expr(value)),
             ExprKind::Spread(value) => CheckedOp::Spread(self.expr(value)),
-            ExprKind::Named { name, value } => CheckedOp::Named {
-                name: name.clone(),
-                value: self.expr(value),
-            },
+            ExprKind::Named { target, value } => {
+                let target = self.expr(target);
+                CheckedOp::Named {
+                    target,
+                    value: self.expr(value),
+                }
+            }
             ExprKind::Infix(op, left, right) => {
                 let left = self.expr(left);
                 CheckedOp::Infix(*op, left, self.expr(right))

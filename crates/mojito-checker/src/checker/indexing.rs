@@ -353,16 +353,15 @@ impl Checker {
                 Ok(alternative)
             }
             // A call returning a mutable reference (`bump(k) = 9`,
-            // `bump(k) += 1`): its result handle is the place, written
-            // through and never read out as a value.
-            ExprKind::MethodCall { method: name, .. } | ExprKind::Call { name, .. } => {
+            // `bump(k) += 1`, `w.at[0]() = 5`): its result handle is the
+            // place, written through and never read out as a value.
+            ExprKind::MethodCall { .. } | ExprKind::Call { .. } | ExprKind::Invoke { .. } => {
                 let found = self.infer(place)?;
-                let kind = if matches!(place.kind, ExprKind::MethodCall { .. }) {
-                    "method call"
-                } else {
-                    "call"
+                let callee = match &place.kind {
+                    ExprKind::MethodCall { method, .. } => format!("method call '{method}()'"),
+                    ExprKind::Call { name, .. } => format!("call '{name}()'"),
+                    _ => "the call".to_string(),
                 };
-                let callee = format!("{kind} '{name}()'");
                 let span = place.source_span();
                 let reference = match found.kind() {
                     TyKind::Ref(reference) => Some(reference.clone()),
@@ -403,7 +402,10 @@ impl Checker {
                     ))),
                 }
             }
-            other => Err(TypeError::InvalidAssignTarget(format!("{other:?}"))),
+            // Upstream's `emitLValue` rejects any other expression.
+            _ => Err(TypeError::InvalidAssignTarget(
+                "expression must be mutable in assignment".to_string(),
+            )),
         }
     }
 

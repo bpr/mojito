@@ -441,7 +441,10 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
             walk_expr(visitor, value);
         }
         ExprKind::Lambda { def } => walk_stmt(visitor, def),
-        ExprKind::Named { value, .. } => walk_expr(visitor, value),
+        ExprKind::Named { target, value } => {
+            walk_expr(visitor, target);
+            walk_expr(visitor, value);
+        }
         ExprKind::IfExpr {
             cond,
             then_branch,
@@ -1284,7 +1287,10 @@ pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
                 }
             }
         }
-        ExprKind::Named { value, .. } => walk_expr_mut(visitor, value),
+        ExprKind::Named { target, value } => {
+            walk_expr_mut(visitor, target);
+            walk_expr_mut(visitor, value);
+        }
         ExprKind::IfExpr {
             cond,
             then_branch,
