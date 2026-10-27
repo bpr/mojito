@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A module `comptime` value constant is now bound by the check, which
+  builds every one with the one parameter-expression builder, as the pin
+  resolves every module `comptime` (R1381), where the elaborator folded it
+  above the check or refused it. A sized-scalar constant (`comptime K =
+  Int32(4)`, `UInt8(250)`, `Float32(1.5)`, R135), a conditional (`comptime
+  C = 3 + 1 if 3 > 2 else 0`), a builtin call (`comptime M = max(3, 4)`),
+  an alias of another constant (`comptime B = A`), and a generic alias
+  applying a `def` (`comptime z = Twice[6]`, R518) now run, read in a body,
+  a bracket argument, a `comptime if`/`comptime for`, `materialize`,
+  `comptime(e)`, and a default, from the program or a package. A local
+  `comptime k = A + 1` over a module constant no longer fails MIR
+  verification, and an annotation that cannot convert the value
+  (`comptime K: Bool = Int32(4)`) is the check's type error.
+
 - A local `comptime` type alias is now bound by the check in every body and
   read by name, as at the pin (R1380), where the elaborator substituted a
   closed one into the statements after it. A call of the alias constructs

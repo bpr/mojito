@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1479**.
+Next free ID: **R1480**.
 
 ## Ordered Work
 
@@ -153,27 +153,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1381 A closed module constant is folded by `Elab::eval`, not by the
-  check's parameter-expression folder**
-
-  Closed module constants are folded before the check by `Elab::eval`, with
-  its own name resolution, where upstream emits a module `comptime` through
-  `IREmitter` in `AliasASTDecl::resolveSignature` (`DeclResolution.cpp`).
-  - The lever: `Elab` hands every module value constant to the check. The
-    check's pre-pass builds each one with `compile_dependent_ct_expr` and
-    folds it with `param_expr::fold`, and anything left over becomes the
-    `ParamKind::Apply` request applied constants already use.
-  - The elaborator's `top_consts` values, `fold_default_bindings`' constant
-    reads, and the crossing folds over constants go.
-  - Merge `program_constants`, `comptimes`, `module_values`, and
-    `comptime_literals` into one table.
-  - Probe: R135's module `comptime K = Int32(4)` is refused. The pin prints
-    `4`.
-  - Closes R135 (a sized-scalar module constant) and R518's constant half.
-    Shrinks R1171.
-  - Depends on R1379.
-  - Model: Fable, Planned.
-
 - [ ] **R1382 Module type aliases and generic aliases live in an elaborator
   table the package exports**
 
@@ -188,11 +167,38 @@ which names the upstream pass each one follows. Each is measured by the
     `keyword_application_params`, the alias `check_where_clauses` path,
     `elaborate_exporting`'s constants, and the `ElaboratedConstants` type
     go.
+  - `Elab.checked_constants`, the closed scalar and string module constants
+    the check binds, kept only for these alias folds, goes, and with it its
+    reads in `eval_at_module_scope`, `apply_generic_alias_values`,
+    `freeze_struct_value_arguments`, and `elaborate_exporting`.
   - Probe: `comptime MyTr = Copyable & Movable`, then `g[MyTr]()`, stops at
-    "'Copyable' is not a compile-time type". The pin prints `1`.
+    "Undefined variable 'Copyable'": the elaborator hands the constant to
+    the check, which reads it as a value. The pin prints `1`.
   - Shrinks R1171 to its checker half (a trait-valued constant).
   - Depends on R1380 and R1381.
   - Model: Fable, Planned.
+
+- [ ] **R1479 A module constant is kept in five checker tables**
+
+  The check holds a module constant in `comptimes`, `comptime_literals`,
+  `module_values`, `comptime_applied`, and `program_constants`, read in
+  that order through `Checker::module_constant_entry`, where upstream holds
+  one alias declaration whose value is one parameter expression.
+  - The lever: one `DeclarationTable<ParamExpr>` holds every module
+    constant, a folded one as `ParamKind::Constant` and an application as
+    itself. `module_constant_entry`, `build_ct_name`,
+    `module_constant_value`, `module_comptime`, `applied_constant_expr`,
+    and the trait-default reader (`folded_constant`) read it.
+  - `comptimes` keeps only body constants, or goes in favour of
+    `local_comptime_parameters`.
+  - `ProgramConstants` stays the checked handoff to symbol spelling and
+    MIR, derived from the table's integer entries.
+  - `DeclarationInterface` exports one row, `project` and `join` follow,
+    and `PACKAGE_FORMAT` goes up one.
+  - No behaviour changes: the CLI differential over every corpus file shows
+    no diff.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1383 A reflection query is answered by the elaborator above the
   check**
@@ -4637,23 +4643,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R518 A module constant applying a generic `comptime` alias whose
-  body applies a callable is refused**
-
-  Problem: `comptime Twice[n: Int] = f(n)` bound by a module constant
-  (`comptime z = Twice[6]`) reports "a compile-time call of 'f' is not
-  evaluated above the check", where the pin prints `12`.
-  - A runtime read (`Twice[3]`, `Twice[k]`), a parameter argument
-    (`Arr[Twice[k]]()`), and a local binding (`comptime z = Twice[6]` in
-    `main`) already run: the check binds the alias's template, which
-    applies `f`, and `native::mono` evaluates it.
-  - A module constant is still folded above the check by
-    `Elab::apply_generic_alias`, which folds no call. The lever is the one
-    the module constants took: `Elab::applied_initializer` leaves an
-    initializer applying such an alias to the check.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R519 A method of an unbound pack other than `__len__` has no
   symbolic rule**
 
@@ -5442,8 +5431,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   a compile-time type", where the pin binds each and passes it to a
   trait-valued parameter (`g[MyTr]()` over `g[Tr: type_of(Movable)]`).
   - The elaborator's alias table (`TypeAliases` in `comptime/elab.rs`)
-    holds only types, and `Elab::eval` reads a trait name as an unknown
-    type.
+    holds only types. A local binding stops at `Elab::eval`, which reads a
+    trait name as an unknown type; a module one reaches the check, which
+    reads `Copyable & Movable` as a value expression ("Undefined variable
+    'Copyable'").
   - The checker's side needs a module or local constant whose value is
     `CtValue::Trait`, read by `Checker::trait_value` wherever a trait is
     spelled.
@@ -6426,21 +6417,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     Upstream's `Writable` defaults open with it (R1461).
   - Found while fixing a pointer dereference through a generic struct's
     field (2026-10-03).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R135 A `comptime` constant built by a sized scalar constructor is
-  rejected**
-
-  Problem: `comptime K = Int32(4)`, at module scope or in a function, stops
-  with "'Int32' is not a compile-time-callable function"; the pin binds it
-  and prints `4`.
-  - The elaborator folds a scalar construction only for `Int`, `UInt`,
-    `Float64`, and `Bool` (`scalar_type_name` in `comptime/eval.rs`); any
-    other call falls through to CTFE of a user function by that name.
-  - `Int64`, `UInt8`, `Float32`, and the other `Scalar[dt]` aliases reject
-    the same way.
-  - Found while probing a scalar splat into a vector default (2026-10-03).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

@@ -322,7 +322,9 @@ missing.
   of site per entry:
   - R1379 (landed): local value bindings.
   - R1380: local type aliases.
-  - R1381: module constants.
+  - R1381 (landed): module constants. Its residues: the elaborator's
+    `checked_constants`, kept for the module alias folds (R1382), and the
+    check's five constant tables (R1479).
   - R1382: module and generic aliases.
   - R1383: reflection.
   - R1384: struct-valued bracket arguments.
@@ -343,13 +345,13 @@ missing.
   - R849: every condition is decided by `param_expr::fold`.
   - R603: one static receiver for `Self.X`, `Alias.X`, and `Type.X`.
 - **Members**:
-  - `Elab` arms: R475, R1170, R1206, R1171, R518, R489, R802,
+  - `Elab` arms: R475, R1170, R1206, R1171, R489, R802,
     R1178, R1208.
   - `Self` and associated reads: R269, R513, R338, R436, R415.
   - Checker arms: R1194, R1199, R332, R462,
     R1220, R1210, R448, R512.
   - Domain: R480, R893, R396, R397, R901, R481, R1197.
-  - Constructions: R135, R1179, R1175.
+  - Constructions: R1179, R1175.
   - Spelling: R388 and R398.
   - Library-side folds: R217, R231, R197, and R198.
 - Gap H also unblocks most of the reflection block below.

@@ -741,14 +741,14 @@ pub struct Checker {
     /// trait requirement's default folds to (`Float`, `Bool`, string).
     comptime_literals: declaration_table::DeclarationTable<Expr>,
     /// Module constants whose initializer folds to a closed attribute
-    /// (`comptime D = DType.int16`, `comptime T = (1, 2)`, a vector of
-    /// literal lanes): the value a body's read denotes (decision D3).
+    /// (`comptime D = DType.int16`, `comptime T = (1, 2)`, `comptime K =
+    /// Int32(4)`, a string, a vector of literal lanes): the value a body's
+    /// read denotes (decision D3).
     module_values: declaration_table::DeclarationTable<CtValue>,
     /// Module constants whose initializer applies a function (`comptime B =
     /// f(A)`, `comptime S = size_of[T]()`), as the symbolic application the
     /// pin keeps through the check (decision D3,
-    /// `docs/notes/ctfe-request-path.md`). Only source validation builds one:
-    /// the executable check sees the elaborator's folded literal.
+    /// `docs/notes/ctfe-request-path.md`).
     comptime_applied: declaration_table::DeclarationTable<ParamExpr>,
     /// Dtypes declared by `comptime NAME = <dtype>`, for SIMD element-type
     /// arguments, one map per lexical scope: a binding is visible to the

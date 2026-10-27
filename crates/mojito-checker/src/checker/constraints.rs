@@ -9,6 +9,12 @@ use mojito_types::ct::SimdConstructionError;
 use mojito_types::param_expr::fold::comparison_holds;
 use mojito_types::types::TyKind;
 
+/// Whether a module constant folded to `value` is that attribute wherever
+/// a body reads it: a closed parameter argument, or a string.
+pub(super) fn is_module_constant_attribute(value: &CtValue) -> bool {
+    value.is_folded_parameter_argument() || matches!(value, CtValue::Str(_))
+}
+
 impl Checker {
     /// Evaluate a compile-time `Int` expression: literals, `comptime` constants,
     /// and `+ - * // % **` / unary `-`. Rejects anything non-comptime (a value
@@ -50,25 +56,51 @@ impl Checker {
         }
     }
 
-    /// Fold every top-level integer constant of `stmts` once, in source
-    /// order, into the module's constants and the program's table every
-    /// symbol speller reads.
+    /// Fold every closed top-level constant of `stmts` once, in source
+    /// order, with the one parameter-expression builder: an integer into the
+    /// module's constants and the program's table every symbol speller
+    /// reads, any other attribute into the module's values, and a literal
+    /// as its initializer. One that reads a declaration not yet registered
+    /// builds in the declaration pass instead.
     pub(super) fn fold_module_constants(&mut self, stmts: &[Stmt]) {
         for statement in stmts {
-            if let StmtKind::Comptime {
+            let StmtKind::Comptime {
                 name,
                 type_params,
                 value,
                 ..
             } = &statement.kind
-                && type_params.is_empty()
-                && let Ok(constant) = self.eval_ct(value)
-            {
-                self.comptimes.insert(name.clone(), constant.clone());
-                std::sync::Arc::make_mut(&mut self.program_constants)
-                    .declare(name.clone(), constant);
+            else {
+                continue;
+            };
+            if !type_params.is_empty() {
+                continue;
+            }
+            match self.closed_module_constant(value) {
+                Some(CtValue::IntLiteral(constant)) => {
+                    self.comptimes.insert(name.clone(), constant.clone());
+                    std::sync::Arc::make_mut(&mut self.program_constants)
+                        .declare(name.clone(), constant);
+                }
+                _ if super::traits::literal_default(value) => {
+                    self.comptime_literals.insert(name.clone(), value.clone());
+                }
+                Some(folded) => {
+                    self.module_values.insert(name.clone(), folded);
+                }
+                None => {}
             }
         }
+    }
+
+    /// The attribute a closed module constant's initializer folds to
+    /// (`3 + 1 if 3 > 2 else 0`, `Int32(4)`, `(1, 2)`, `"buf" + "fer"`), by
+    /// the one builder. `None` for an initializer that applies a callable,
+    /// reads a declaration not yet registered, or names a type.
+    pub(super) fn closed_module_constant(&self, value: &Expr) -> Option<CtValue> {
+        self.ct_value(value, Recording::Silent)
+            .ok()
+            .filter(is_module_constant_attribute)
     }
 
     /// Classify a comptime-member annotation. In Mojo terms, `comptime
@@ -959,6 +991,12 @@ impl Checker {
                     .get(name)
                     .map(ModuleConstant::Literal)
             })
+    }
+
+    /// Whether a module constant `name` has a table entry no nearer
+    /// binding shadows.
+    pub(super) fn has_module_constant_entry(&self, name: &str) -> bool {
+        self.module_constant_entry(name).is_some()
     }
 
     /// Whether a binding nearer than the module scope (a local, a

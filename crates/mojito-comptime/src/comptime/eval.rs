@@ -951,7 +951,9 @@ impl Elab<'_> {
                 alias.params.len()
             )));
         }
-        let mut env = ConstEnv::over(self.top_consts.borrow().clone(), self.installed);
+        let mut frame = self.top_consts.borrow().clone();
+        frame.extend(self.checked_constants.borrow().clone());
+        let mut env = ConstEnv::over(frame, self.installed);
         for (param, value) in alias.params.iter().zip(values) {
             env.insert(param.name.clone(), value);
         }

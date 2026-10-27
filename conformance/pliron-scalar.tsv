@@ -176,6 +176,7 @@ assets/ok/comptime_match_coverage_warnings.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/comptime_match_forms.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_match_patterns.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_module_constant_parameter_values.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_module_sized_scalar_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_shadowed_locals.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_sized_scalar_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_string_value.mojo	-	ineligible	no-scalar-entry-shape

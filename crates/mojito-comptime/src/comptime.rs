@@ -323,7 +323,10 @@ pub fn elaborate_exporting(
     program: &[Stmt],
 ) -> Result<(Vec<Stmt>, ElaboratedConstants), ComptimeError> {
     let (elaborated, elab) = elaborate_in(program, ImportedScope::default())?;
-    let values = elab.top_consts.into_inner();
+    let mut values = elab.top_consts.into_inner();
+    // A constant the check binds still exports its value, which an
+    // importer's alias folds read.
+    values.extend(elab.checked_constants.into_inner());
     let aliases = elab.generic_aliases.into_inner();
     let mut constants = Vec::new();
     for statement in program {
@@ -378,6 +381,7 @@ fn elaborate_in<'a>(
         template_binders: RefCell::new(Vec::new()),
         crossing_templates: Cell::new(0),
         top_consts: RefCell::new(HashMap::new()),
+        checked_constants: RefCell::new(HashMap::new()),
         generic_aliases: RefCell::new(HashMap::new()),
         installed: imported.installed,
     };
@@ -386,12 +390,14 @@ fn elaborate_in<'a>(
     let aliases = elab::TypeAliases::importing(imported.installed);
     let mut elaborated = elab.block_statements(program, &mut env, false, aliases)?;
     // A module constant declared after its use crosses here.
-    let consts = ConstEnv::over(elab.top_consts.borrow().clone(), imported.installed);
+    let consts = ConstEnv::crossing(elab.top_consts.borrow().clone(), imported.installed);
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
     // A body's read of a module constant stays a name: the check binds it as
     // the parameter value its declaration denotes (decision D3).
     let mut result = mark_struct_names(elaborated, &|name| elab.declares_struct(name));
-    elab.freeze_struct_value_arguments(&mut result, &consts);
+    let mut frozen = elab.top_consts.borrow().clone();
+    frozen.extend(elab.checked_constants.borrow().clone());
+    elab.freeze_struct_value_arguments(&mut result, &ConstEnv::over(frozen, imported.installed));
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
             mojito_ast::ast::stamp_source(std::slice::from_mut(statement), &source);
@@ -422,6 +428,21 @@ fn installed_value<'a>(
         ElaboratedConstant::Value(value) => Some(value),
         ElaboratedConstant::Alias(..) => None,
     }
+}
+
+/// Whether `value` is a scalar or a string: a value a local or module
+/// `comptime` binding names as its parameter expression.
+const fn is_closed_scalar(value: &CtValue) -> bool {
+    matches!(
+        value,
+        CtValue::Int(_)
+            | CtValue::UInt(_)
+            | CtValue::Float(_)
+            | CtValue::IntLiteral(_)
+            | CtValue::FloatLiteral(_)
+            | CtValue::Bool(_)
+            | CtValue::Str(_)
+    )
 }
 
 fn mk(kind: StmtKind, span: Span) -> Stmt {
@@ -922,6 +943,11 @@ struct Elab<'a> {
     /// The program's own module constants; an imported package's are
     /// `installed`'s ([`Self::module_constant`]).
     top_consts: RefCell<HashMap<String, CtValue>>,
+    /// The program's own closed scalar and string module constants, which
+    /// the check binds as parameter expressions: their values are read only
+    /// by the module alias folds this evaluator still owns (R1382 deletes
+    /// them), never by a body, a crossing, or a default.
+    checked_constants: RefCell<HashMap<String, CtValue>>,
     /// The program's own module-scope generic `comptime` aliases in
     /// declaration order; an imported package's are `installed`'s
     /// ([`Self::generic_alias`]). The declarations pass
@@ -955,6 +981,9 @@ struct ConstEnv<'a> {
     /// value, which no package constant answers.
     shadowed: HashSet<String>,
     installed: Option<&'a InstalledInterfaces>,
+    /// Whether a package's closed scalar and string constants, which the
+    /// check binds, answer no lookup ([`Self::crossing`]).
+    checked_hidden: bool,
 }
 
 impl<'a> ConstEnv<'a> {
@@ -964,6 +993,20 @@ impl<'a> ConstEnv<'a> {
             frame,
             shadowed: HashSet::new(),
             installed,
+            checked_hidden: false,
+        }
+    }
+
+    /// `frame` over the module constants of the package `installed` holds
+    /// other than its closed scalars and strings: the constants a runtime
+    /// crossing folds, which leaves every constant the check binds to it.
+    fn crossing(
+        frame: HashMap<String, CtValue>,
+        installed: Option<&'a InstalledInterfaces>,
+    ) -> Self {
+        Self {
+            checked_hidden: true,
+            ..Self::over(frame, installed)
         }
     }
 
@@ -974,6 +1017,7 @@ impl<'a> ConstEnv<'a> {
                 None
             } else {
                 installed_value(self.installed, name)
+                    .filter(|value| !(self.checked_hidden && is_closed_scalar(value)))
             }
         })
     }

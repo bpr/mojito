@@ -152,137 +152,8 @@ impl Elab<'_> {
         in_fn: bool,
         out: &mut Vec<Stmt>,
     ) -> Result<(), ComptimeError> {
-        let span = stmt.span;
         match &stmt.kind {
-            StmtKind::Comptime {
-                name,
-                type_params,
-                ty,
-                where_clauses,
-                value,
-            } => {
-                if !type_params.is_empty() {
-                    // A generic alias registers for the checker; record the
-                    // module-scope declaration here too so an application in a
-                    // later `comptime if` condition can evaluate before the
-                    // branches are pruned.
-                    if !in_fn {
-                        self.generic_aliases.borrow_mut().insert(
-                            name.clone(),
-                            super::GenericAlias {
-                                params: type_params.clone(),
-                                where_clauses: where_clauses.clone(),
-                                body: (*value).clone(),
-                            },
-                        );
-                    }
-                    out.push(stmt.clone());
-                    return Ok(());
-                }
-                if self.keep_template_comptime_binding(stmt, value, env, in_fn, out) {
-                    return Ok(());
-                }
-                // A closed field-name list (`reflect[P].field_names()`) is a
-                // static method's result the check binds, module or local.
-                let field_names = super::crossing::lists_field_names(value, env);
-                if field_names && in_fn {
-                    if let Some(binders) = self.template_binders.borrow_mut().last_mut() {
-                        binders.insert(name.clone());
-                    }
-                    out.push(stmt.clone());
-                    return Ok(());
-                }
-                // A module constant whose initializer applies a callable,
-                // asks a layout, or reads such a constant is the parameter
-                // expression the check binds (decision D3): it has no value
-                // here, and the elaborator below MIR evaluates it on first
-                // demand. So is a collection display or constructor
-                // ([`mojito_checker::checker::lifts_comptime_value`]) and a
-                // field-name list.
-                if !in_fn
-                    && (field_names
-                        || mojito_checker::checker::lifts_comptime_value(value, self)
-                        || self.applied_initializer(value, env))
-                {
-                    let marker = CtValue::Marker(CtMarker::Applied);
-                    self.top_consts
-                        .borrow_mut()
-                        .insert(name.clone(), marker.clone());
-                    env.insert(name.clone(), marker);
-                    out.push(stmt.clone());
-                    return Ok(());
-                }
-                let mut v = self.eval(value, env)?;
-                // Every collection-valued binding is the check's to bind: a
-                // display or constructor is an application, a field-name
-                // list a static method's result. None folds here.
-                if v.is_runtime_collection() {
-                    return Err(ComptimeError::NotComptime(format!(
-                        "comptime '{name}' folds to the collection {v}, which only the check binds"
-                    )));
-                }
-                if let Some(annotation) = ty {
-                    v = self.typed_by_annotation(v, annotation, env);
-                }
-                if !in_fn {
-                    self.top_consts.borrow_mut().insert(name.clone(), v.clone());
-                }
-                // A closed scalar or string binding of a body is the check's
-                // to bind as its parameter expression.
-                if in_fn && is_closed_scalar(&v) && check_binds_value(value) {
-                    env.shadow(name);
-                    out.push(stmt.clone());
-                    return Ok(());
-                }
-                // Fold the definition to its literal value, so the checker and
-                // runtime see a constant (and a CTFE-computed `Int`, which the
-                // checker's own folder can't evaluate, becomes usable as a value
-                // parameter and materializes cleanly).
-                env.insert(name.clone(), v);
-                // A raw list read off a struct's parameter
-                // (`ParameterList.of[4, 5].values`) has no literal form: the
-                // binding stays for the check.
-                if self.reads_raw_list(value, env) {
-                    out.push(stmt.clone());
-                    return Ok(());
-                }
-                // A body's type alias is the check's to bind, as upstream
-                // resolves the alias by name lookup to its parameter value; so
-                // is a reflection handle, and a `TypeList` value, whose
-                // proposition a kept condition reads (`tl.contains[Int]()`).
-                // At module scope, so is a struct application no source
-                // spelling names (over `TypeList.of[Trait=AnyType, Int]`,
-                // whose raw list has none, or `ParameterList.of[4, 5]`,
-                // whose list materializes as a tuple).
-                let kept = |value: &CtValue| match value {
-                    CtValue::Type(ty) if !in_fn => {
-                        matches!(ty.kind(), TyKind::Struct(..))
-                            && (mojito_types::ct::source_type(ty, span).is_none()
-                                || self.binds_raw_list(ty))
-                    }
-                    CtValue::Type(_) | CtValue::Reflected(_) => in_fn,
-                    value => in_fn && value.typelist_elements().is_some(),
-                };
-                if env.get(name).is_some_and(kept) {
-                    out.push(stmt.clone());
-                    return Ok(());
-                }
-                // Type and reflection handles have no runtime representation.
-                // Keep those only in the elaboration environment; subsequent
-                // comptime expressions consume them before checking/lowering.
-                if let Some(value) = env.get(name).and_then(|value| value.materialize(span)) {
-                    out.push(rebuilt(
-                        stmt,
-                        StmtKind::Comptime {
-                            name: name.clone(),
-                            type_params: type_params.clone(),
-                            ty: ty.clone(),
-                            where_clauses: where_clauses.clone(),
-                            value,
-                        },
-                    ));
-                }
-            }
+            StmtKind::Comptime { .. } => self.comptime_stmt(stmt, env, in_fn, out)?,
             // A module-scope `comptime if` or `comptime for` has no
             // declaration form: it passes through for `validate_module_scope`
             // to reject.
@@ -498,6 +369,179 @@ impl Elab<'_> {
                 out.push(stmt);
             }
             _ => out.push(stmt.clone()),
+        }
+        Ok(())
+    }
+
+    /// Elaborate a `comptime` declaration: a generic alias registers, a
+    /// binding the check binds is kept as written, and a type or reflection
+    /// handle stays in the environment alone.
+    fn comptime_stmt(
+        &self,
+        stmt: &Stmt,
+        env: &mut ConstEnv<'_>,
+        in_fn: bool,
+        out: &mut Vec<Stmt>,
+    ) -> Result<(), ComptimeError> {
+        let span = stmt.span;
+        let StmtKind::Comptime {
+            name,
+            type_params,
+            ty,
+            where_clauses,
+            value,
+        } = &stmt.kind
+        else {
+            return Ok(());
+        };
+        if !type_params.is_empty() {
+            // A generic alias registers for the checker; record the
+            // module-scope declaration here too so an application in a
+            // later `comptime if` condition can evaluate before the
+            // branches are pruned.
+            if !in_fn {
+                self.generic_aliases.borrow_mut().insert(
+                    name.clone(),
+                    super::GenericAlias {
+                        params: type_params.clone(),
+                        where_clauses: where_clauses.clone(),
+                        body: (*value).clone(),
+                    },
+                );
+            }
+            out.push(stmt.clone());
+            return Ok(());
+        }
+        if self.keep_template_comptime_binding(stmt, value, env, in_fn, out) {
+            return Ok(());
+        }
+        // A closed field-name list (`reflect[P].field_names()`) is a
+        // static method's result the check binds, module or local.
+        let field_names = super::crossing::lists_field_names(value, env);
+        if field_names && in_fn {
+            if let Some(binders) = self.template_binders.borrow_mut().last_mut() {
+                binders.insert(name.clone());
+            }
+            out.push(stmt.clone());
+            return Ok(());
+        }
+        // A module constant whose initializer applies a callable,
+        // asks a layout, or reads such a constant is the parameter
+        // expression the check binds (decision D3): it has no value
+        // here, and the elaborator below MIR evaluates it on first
+        // demand. So is a collection display or constructor
+        // ([`mojito_checker::checker::lifts_comptime_value`]) and a
+        // field-name list.
+        if !in_fn
+            && (field_names
+                || mojito_checker::checker::lifts_comptime_value(value, self)
+                || self.applied_initializer(value, env))
+        {
+            let marker = CtValue::Marker(CtMarker::Applied);
+            self.top_consts
+                .borrow_mut()
+                .insert(name.clone(), marker.clone());
+            env.insert(name.clone(), marker);
+            out.push(stmt.clone());
+            return Ok(());
+        }
+        let evaluated = if in_fn {
+            self.eval(value, env)
+        } else {
+            self.eval_at_module_scope(value, env)
+        };
+        // A module constant this evaluator does not fold
+        // (`Int32(4)`, `max(3, 4)`) is the parameter expression the
+        // check binds, as upstream resolves every module `comptime`.
+        if !in_fn
+            && check_binds_value(value)
+            && matches!(evaluated, Err(ComptimeError::NotComptime(_)))
+        {
+            let marker = CtValue::Marker(CtMarker::Applied);
+            self.top_consts
+                .borrow_mut()
+                .insert(name.clone(), marker.clone());
+            env.insert(name.clone(), marker);
+            out.push(stmt.clone());
+            return Ok(());
+        }
+        let mut v = evaluated?;
+        // Every collection-valued binding is the check's to bind: a
+        // display or constructor is an application, a field-name
+        // list a static method's result. None folds here.
+        if v.is_runtime_collection() {
+            return Err(ComptimeError::NotComptime(format!(
+                "comptime '{name}' folds to the collection {v}, which only the check binds"
+            )));
+        }
+        if let Some(annotation) = ty {
+            v = self.typed_by_annotation(v, annotation, env);
+        }
+        // A closed scalar or string module constant is the check's
+        // to bind as its parameter expression too; its value stays
+        // only for the alias folds this evaluator still owns.
+        if !in_fn && is_closed_scalar(&v) && check_binds_value(value) {
+            self.checked_constants.borrow_mut().insert(name.clone(), v);
+            out.push(stmt.clone());
+            return Ok(());
+        }
+        if !in_fn {
+            self.top_consts.borrow_mut().insert(name.clone(), v.clone());
+        }
+        // A closed scalar or string binding of a body is the check's
+        // to bind as its parameter expression.
+        if in_fn && is_closed_scalar(&v) && check_binds_value(value) {
+            env.shadow(name);
+            out.push(stmt.clone());
+            return Ok(());
+        }
+        // Fold the definition to its literal value, so the checker and
+        // runtime see a constant (and a CTFE-computed `Int`, which the
+        // checker's own folder can't evaluate, becomes usable as a value
+        // parameter and materializes cleanly).
+        env.insert(name.clone(), v);
+        // A raw list read off a struct's parameter
+        // (`ParameterList.of[4, 5].values`) has no literal form: the
+        // binding stays for the check.
+        if self.reads_raw_list(value, env) {
+            out.push(stmt.clone());
+            return Ok(());
+        }
+        // A body's type alias is the check's to bind, as upstream
+        // resolves the alias by name lookup to its parameter value; so
+        // is a reflection handle, and a `TypeList` value, whose
+        // proposition a kept condition reads (`tl.contains[Int]()`).
+        // At module scope, so is a struct application no source
+        // spelling names (over `TypeList.of[Trait=AnyType, Int]`,
+        // whose raw list has none, or `ParameterList.of[4, 5]`,
+        // whose list materializes as a tuple).
+        let kept = |value: &CtValue| match value {
+            CtValue::Type(ty) if !in_fn => {
+                matches!(ty.kind(), TyKind::Struct(..))
+                    && (mojito_types::ct::source_type(ty, span).is_none()
+                        || self.binds_raw_list(ty))
+            }
+            CtValue::Type(_) | CtValue::Reflected(_) => in_fn,
+            value => in_fn && value.typelist_elements().is_some(),
+        };
+        if env.get(name).is_some_and(kept) {
+            out.push(stmt.clone());
+            return Ok(());
+        }
+        // Type and reflection handles have no runtime representation.
+        // Keep those only in the elaboration environment; subsequent
+        // comptime expressions consume them before checking/lowering.
+        if let Some(value) = env.get(name).and_then(|value| value.materialize(span)) {
+            out.push(rebuilt(
+                stmt,
+                StmtKind::Comptime {
+                    name: name.clone(),
+                    type_params: type_params.clone(),
+                    ty: ty.clone(),
+                    where_clauses: where_clauses.clone(),
+                    value,
+                },
+            ));
         }
         Ok(())
     }
@@ -1454,6 +1498,25 @@ impl Elab<'_> {
             })
             .unwrap_or(value)
     }
+
+    /// `value` evaluated at module scope, where the constants the check
+    /// binds ([`Elab::checked_constants`]) are in scope for the alias folds
+    /// this evaluator still owns, and for the constants built over them.
+    fn eval_at_module_scope(
+        &self,
+        value: &Expr,
+        env: &mut ConstEnv<'_>,
+    ) -> Result<CtValue, ComptimeError> {
+        let checked = self.checked_constants.borrow();
+        for (name, constant) in checked.iter() {
+            env.frame.insert(name.clone(), constant.clone());
+        }
+        let evaluated = self.eval(value, env);
+        for name in checked.keys() {
+            env.frame.remove(name);
+        }
+        evaluated
+    }
 }
 
 /// `params` with each default reading an enclosing body's compile-time
@@ -2213,19 +2276,4 @@ fn check_binds_value(value: &Expr) -> bool {
     let mut lambdas = Vec::new();
     mojito_ast::ast::lambdas_in_expr(value, &mut lambdas);
     lambdas.is_empty() && !expression_names_any(value, &|name| name == "conforms_to")
-}
-
-/// Whether `value` is a scalar or a string: a value a local `comptime`
-/// binding names as its parameter expression.
-const fn is_closed_scalar(value: &CtValue) -> bool {
-    matches!(
-        value,
-        CtValue::Int(_)
-            | CtValue::UInt(_)
-            | CtValue::Float(_)
-            | CtValue::IntLiteral(_)
-            | CtValue::FloatLiteral(_)
-            | CtValue::Bool(_)
-            | CtValue::Str(_)
-    )
 }

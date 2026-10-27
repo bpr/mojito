@@ -1375,6 +1375,17 @@ impl Checker {
         value: &Expr,
         scope: ConstantScope<'_>,
     ) -> Result<Option<ParamExpr>, TypeError> {
+        // A closed module constant is the attribute its declaration folded
+        // to, which every read denotes, and a type-valued one is an alias:
+        // neither requests anything.
+        if matches!(scope, ConstantScope::Module(_))
+            && (self.closed_module_attribute(value).is_some()
+                || self
+                    .compile_dependent_ct_expr(value)
+                    .is_ok_and(|built| *built.meta() == mojito_types::param_expr::MetaTy::Type))
+        {
+            return Ok(None);
+        }
         if let Some(expression) = self.comptime_value_expression(value) {
             return Ok(Some(expression));
         }
@@ -1418,6 +1429,14 @@ impl Checker {
             // position are the application, and the rest of the statement
             // is typed as any binding is.
             let scope = if self.function_bases.is_empty() {
+                // A closed constant folds to its attribute where its
+                // initializer first builds, which may read a constant bound
+                // only by its own statement (`NAMES[1]`).
+                if let Some(folded) = self.closed_module_attribute(value)
+                    && !self.has_module_constant_entry(name)
+                {
+                    self.module_values.insert(name.to_string(), folded);
+                }
                 ConstantScope::Module(annotation)
             } else {
                 ConstantScope::Local
@@ -1590,9 +1609,14 @@ impl Checker {
         scope: ConstantScope<'_>,
     ) -> Result<Option<ParamExpr>, TypeError> {
         let (lifted, annotation) = match scope {
-            ConstantScope::Module(annotation) => {
-                (super::lifts_comptime_value(value, self), annotation)
-            }
+            // A module constant the one builder does not fold closed
+            // (`max(3, 4)`) is the application its initializer computes.
+            ConstantScope::Module(annotation) => (
+                super::lifts_comptime_value(value, self)
+                    || (self.calls_builtin_function(value)
+                        && self.closed_module_constant(value).is_none()),
+                annotation,
+            ),
             // A local display keeps its display route
             // (`evaluated_display_binding`); a constructor call is lifted.
             ConstantScope::Local => (
@@ -1652,6 +1676,45 @@ impl Checker {
         Ok(Some(application))
     }
 
+    /// The attribute a closed module constant other than a collection
+    /// display folds to ([`Self::closed_module_constant`]); a display is
+    /// the application the check lifts.
+    fn closed_module_attribute(&self, value: &Expr) -> Option<CtValue> {
+        if super::lifts_comptime_value(value, self) {
+            return None;
+        }
+        self.closed_module_constant(value)
+    }
+
+    /// Whether `value` calls a builtin function the check types itself
+    /// (`max(3, 4)`, `abs(n)`): an application the elaborator does not
+    /// fold, as upstream's interpreter runs the library function. The
+    /// queries the elaborator folds (`len`, `range`, `reflect`,
+    /// `conforms_to`, `materialize`) are not.
+    fn calls_builtin_function(&self, value: &Expr) -> bool {
+        struct Finder<'c> {
+            checker: &'c Checker,
+            found: bool,
+        }
+        impl mojito_ast::visit::Visitor for Finder<'_> {
+            fn visit_expr(&mut self, expr: &Expr) {
+                if let ExprKind::Call { name, .. } = &expr.kind {
+                    self.found |= !matches!(
+                        name.as_str(),
+                        "len" | "range" | "reflect" | "conforms_to" | "materialize"
+                    ) && self.checker.binding_scope(name).is_none()
+                        && super::CalleeOracle::callee(self.checker, name) == super::Callee::Other;
+                }
+            }
+        }
+        let mut finder = Finder {
+            checker: self,
+            found: false,
+        };
+        mojito_ast::visit::walk_expr(&mut finder, value);
+        finder.found
+    }
+
     /// Run `check`, reporting whether it typed a raising operation that no
     /// `try` inside it handles.
     fn observing_raises<T>(&self, check: impl FnOnce() -> T) -> (T, bool) {
@@ -1669,11 +1732,16 @@ impl Checker {
 
     /// Whether `value` applies a callable ([`super::applies_callable`]), as
     /// the elaborator keeps a binding of one for the check, or reads a
-    /// module constant or a local display binding that does.
+    /// module constant or a local display binding that does. A module
+    /// constant folded to a scalar or a string is an attribute, which
+    /// applies nothing.
     fn applies_callable(&self, value: &Expr) -> bool {
         super::applies_callable(value, self)
             || names_read(value).iter().any(|name| {
-                (self.binding_scope(name) == Some(0) && self.module_constant_value(name).is_some())
+                (self.binding_scope(name) == Some(0)
+                    && self.module_constant_value(name).is_some_and(|expression| {
+                        !expression.as_constant().is_some_and(is_scalar_attribute)
+                    }))
                     || self.display_named(name).is_some()
             })
     }
@@ -3665,6 +3733,20 @@ pub(super) fn names_read(expr: &Expr) -> Vec<String> {
     let mut names = Names(Vec::new());
     mojito_ast::visit::walk_expr(&mut names, expr);
     names.0
+}
+
+/// Whether `value` is a scalar or a string attribute.
+const fn is_scalar_attribute(value: &CtValue) -> bool {
+    matches!(
+        value,
+        CtValue::Int(_)
+            | CtValue::UInt(_)
+            | CtValue::Float(_)
+            | CtValue::IntLiteral(_)
+            | CtValue::FloatLiteral(_)
+            | CtValue::Bool(_)
+            | CtValue::Str(_)
+    )
 }
 
 /// The predicate name a bracket application spells (`IsTriviallyCopyable`

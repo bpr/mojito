@@ -176,6 +176,7 @@ assets/ok/comptime_match_coverage_warnings.mojo	main	exe-differential	sanitized
 assets/ok/comptime_match_forms.mojo	main	exe-differential	sanitized
 assets/ok/comptime_match_patterns.mojo	main	exe-differential	sanitized
 assets/ok/comptime_module_constant_parameter_values.mojo	main	exe-differential	sanitized
+assets/ok/comptime_module_sized_scalar_constant.mojo	main	exe-differential	sanitized
 assets/ok/comptime_shadowed_locals.mojo	main	exe-differential	sanitized
 assets/ok/comptime_sized_scalar_constant.mojo	main	exe-differential	sanitized
 assets/ok/comptime_string_value.mojo	main	exe-differential	sanitized

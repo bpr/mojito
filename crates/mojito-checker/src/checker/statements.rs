@@ -150,7 +150,7 @@ impl Checker {
             } else if let Some(folded) = self
                 .eval_associated_ct(value)
                 .ok()
-                .filter(CtValue::is_folded_parameter_argument)
+                .filter(super::constraints::is_module_constant_attribute)
             {
                 self.module_values.insert(name.clone(), folded);
                 self.infer(value).ok()
@@ -407,13 +407,14 @@ impl Checker {
                 .is_some_and(|info| info.parameterized_associated.contains_key(field))
     }
 
-    /// Whether `value` names a module constant whose initializer applies a
-    /// callable (`comptime E = A` over `comptime A = f(1)`): a parameter
-    /// alias of that constant, which takes its parameter expression, not a
-    /// type alias.
-    fn names_applied_module_constant(&self, value: &Expr) -> bool {
+    /// Whether `value` names a module value constant (`comptime B = A` over
+    /// `comptime A = 3`, or over `comptime A = f(1)`): a parameter alias of
+    /// that constant, which takes its parameter expression, not a type
+    /// alias.
+    fn names_module_value_constant(&self, value: &Expr) -> bool {
         matches!(&value.kind, ExprKind::Identifier(source)
-            if self.applied_module_constants.contains(source)
+            if (self.applied_module_constants.contains(source)
+                || self.module_constant_value(source).is_some())
                 && !self.module_constant_shadowed(source))
     }
 
@@ -566,7 +567,7 @@ impl Checker {
                     if matches!(&object.kind, ExprKind::Identifier(base)
                         if self.declared_structs.contains(base)
                             || self.structs.contains_key(base))));
-        if type_params.is_empty() && self.names_applied_module_constant(value) {
+        if type_params.is_empty() && self.names_module_value_constant(value) {
             return Ok(());
         }
         if type_params.is_empty()
@@ -1948,12 +1949,12 @@ impl Checker {
                 // A type name takes the alias route; an alias of a value
                 // binder (`comptime lane = dt`), of a local compile-time
                 // value (`comptime k = $match<id>`, a `comptime match`
-                // binding), of an applied module constant (`comptime E =
-                // D`), or of a value alias's application (`comptime n =
+                // binding), of a module value constant (`comptime E = D`),
+                // or of a value alias's application (`comptime n =
                 // First[5, 6]`) is the ordinary path below.
                 let value_alias = self.names_value_binder(value)
                     || (type_params.is_empty()
-                        && (self.names_applied_module_constant(value)
+                        && (self.names_module_value_constant(value)
                             || self.applies_value_alias(value)
                             || matches!(&value.kind, ExprKind::Identifier(source)
                                 if self.lookup_tparam(source).is_none()

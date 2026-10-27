@@ -97,7 +97,7 @@ compiler build (`src/package.rs`):
 build (once per compiler build, then cached):
   every std module -> link (recording each module) -> prepare
     -> elaborate (exporting
-    the module constants it folded) -> check (exporting each library
+    the module constant values its alias folds read) -> check (exporting each library
     declaration's rows) -> MIR -> ownership
     -> std package: interface + one record per library declaration
        (its MIR declarations and effect summaries, then the checker
@@ -1478,11 +1478,17 @@ fields (`eval_ct` through `ParamContext::answer_reflections`), by the one
 policy the checker applies to a closed subject (`ReflectQuery::answer`), and
 a query with no answer fails the instantiation. A field type never crosses.
 
-**Module constants are parameter expressions.** The elaborator folds a
-closed module constant and keeps its declaration; one whose initializer
-applies a callable, asks a layout, or reads such a constant is marked
-(`CtMarker::Applied`) and kept as written. The check classifies every
-module constant in its declaration pass and records a body's read as a
+**Module constants are parameter expressions.** The elaborator folds no
+module value constant into a statement. A closed scalar or string constant
+is kept as written, its value held only in `Elab.checked_constants` for the
+module alias folds the elaborator still owns (R1382); one whose initializer
+applies a callable, asks a layout, reads such a constant, or is refused by
+`Elab::eval` (`Int32(4)`, `max(3, 4)`) is marked (`CtMarker::Applied`) and
+kept as written; no crossing or default reads either, nor a package's
+closed scalar (`ConstEnv::crossing`). The check builds every module constant
+with the one parameter-expression builder — ahead of every declaration
+(`Checker::fold_module_constants`), or in its declaration pass when the
+initializer reads a declaration — and records a body's read as a
 `SemanticAdjustment::ParamValue` (`Checker::module_constant_value`), as
 is a read of a local `comptime` binding of an application
 (`Checker::local_comptime_application`), which MIR lowers as
@@ -1501,10 +1507,12 @@ holds it, the same in every compilation (MIR names none of its own), so the bund
 is such an application, closed or not
 (`mojito_checker::checker::lifts_comptime_value`), since the pin constructs
 one by running its initializer; so is a `Dict[...]`/`Set[...]` constructor
-call, and a local binding of either is kept for the check the same way. Any other closed constant — a scalar, a
-`DType`, a vector, a closed tuple or struct — is a folded attribute
-(`Checker.module_values`), its read a `ParamKind::Constant` at the declared
-type. The toplevel lowers no `comptime` declaration, and the elaborator
+call, and a local binding of either is kept for the check the same way, and
+so is a call of a builtin function the check types itself (`max(3, 4)`). Any
+other closed constant — a scalar, a string, a `DType`, a vector, a closed
+tuple or struct — is a folded attribute (`Checker.module_values`, or the
+integer tables symbol spelling reads), its read a `ParamKind::Constant` at
+the declared type, and a read of one applies nothing. The toplevel lowers no `comptime` declaration, and the elaborator
 spells no module constant into a body (`mark_struct_names` only marks
 struct names).
 
@@ -1868,8 +1876,9 @@ the elaborator below MIR, which runs the instance's reference closure as
 concrete MIR on the VM (`Specializer::demand_application`,
 `VmBackend::call_concrete`). The elaborator above the check
 (`comptime/eval.rs`) folds closed values only and refuses a call
-(`not_evaluated_here`); a generic `comptime` alias body that applies one
-is the shape this refuses that the pin evaluates (R518).
+(`not_evaluated_here`); a module constant whose initializer it refuses (a
+generic `comptime` alias applying a callable, `comptime z = Twice[6]`) is
+the check's to bind as a request.
 
 ### Fuel
 

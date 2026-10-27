@@ -60,9 +60,11 @@ values only — literals, operators, displays, type and reflection facts, a
 generic alias body that applies no callable — and refuses every call
 (`eval.rs:not_evaluated_here`). The AST route, `VmBackend::run_function_value`,
 the pending/forced constants, and the `mojito-vm → mojito-checker` and
-`mojito-comptime → mojito-vm` edges are gone. A generic `comptime` alias
-body that applies a callable is the one shape the pin evaluates that
-Mojito now refuses (R518).
+`mojito-comptime → mojito-vm` edges are gone. A module constant whose
+initializer the elaborator refuses — a sized-scalar construction, a builtin
+call, a generic `comptime` alias body that applies a callable — is the
+check's to bind, closed as a folded attribute and otherwise as a request
+(R1381).
 
 ## Upstream
 
