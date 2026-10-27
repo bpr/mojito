@@ -831,6 +831,70 @@ impl Checker {
             .map(|built| Some(mojito_types::types::DependentType::resolve(built)))
     }
 
+    /// The type `expr` denotes where only a type is accepted (an annotation,
+    /// a type parameter's bracket argument), built by the one builder, as
+    /// upstream's `emitExprType` emits the expression and `emitType` rejects
+    /// a value ("expected a type, not a value"). Builds silently: the caller
+    /// records once the type is accepted.
+    pub(super) fn denoted_type(&self, expr: &Expr, context: &str) -> Result<Ty, TypeError> {
+        let built = self.build_ct(expr, Recording::Silent)?;
+        if *built.meta() != MetaTy::Type {
+            return Err(TypeError::TypeMismatch {
+                expected: "a type".to_string(),
+                found: "a value".to_string(),
+                context: context.to_string(),
+            });
+        }
+        Ok(mojito_types::types::DependentType::resolve(built))
+    }
+
+    /// `type_of(operand)`, upstream's `MagicFunctionNode::emitTypeOf`: the
+    /// type of the operand, which is typed without being evaluated (inside a
+    /// probe, as upstream emits it into a block it then erases). A trait or a
+    /// trait composition gives the trait metatype. A type operand's metatype
+    /// and a literal value's value-parameterized literal type have no `Ty`,
+    /// and a signature types no earlier parameter, so each is rejected.
+    pub(super) fn type_of_operand(&self, operand: &Expr) -> Result<Ty, TypeError> {
+        if let Some(traits) = self.trait_value(operand) {
+            return Ok(TyKind::AnyTrait(traits?).into());
+        }
+        if self.may_denote_type(operand)
+            && self
+                .build_ct(operand, Recording::Silent)
+                .is_ok_and(|built| *built.meta() == MetaTy::Type)
+        {
+            return Err(TypeError::Unsupported(
+                "'type_of' of a type is not supported yet".to_string(),
+            ));
+        }
+        let depth = self.annotation_depth.replace(0);
+        let typed = self.probe(|| {
+            self.infer(operand)
+                .map(|ty| (ty, self.exact_literal_value(operand).is_some()))
+        });
+        self.annotation_depth.set(depth);
+        match typed {
+            Ok((ty, literal))
+                if literal
+                    || matches!(
+                        ty.kind(),
+                        TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral
+                    ) =>
+            {
+                Err(TypeError::Unsupported(
+                    "'type_of' of a literal value is not supported yet".to_string(),
+                ))
+            }
+            Ok((ty, _)) => Ok(ty),
+            Err(TypeError::UndefinedVariable(_)) if self.function_bases.is_empty() => {
+                Err(TypeError::Unsupported(
+                    "'type_of' of a parameter in a signature is not supported yet".to_string(),
+                ))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     /// A type comparison read as a value (`print(T == Int)`, `comptime b =
     /// T == Int`, `show[T == Int]()`): one compile-time `Bool` parameter
     /// value over type-valued operands, recorded at its span for MIR to
@@ -1745,8 +1809,9 @@ impl Checker {
             };
         }
         // The enclosing struct's own parameter is spelled `Self.<name>`
-        // inside the body; the bare spelling is upstream's error.
-        if self.is_enclosing_struct_param(name) {
+        // inside the body; the bare spelling is upstream's error. Its
+        // parameter list reads an earlier type parameter bare.
+        if self.is_enclosing_struct_param(name) && self.lookup_tparam(name).is_none() {
             return Err(TypeError::UnqualifiedStructParam(name.to_string()));
         }
         if let Some(generator) = self.alias_generator(name) {
@@ -1768,26 +1833,59 @@ impl Checker {
             args,
             kwargs,
         } = &expr.kind
-            && name == "conforms_to"
             && param_args.is_empty()
             && kwargs.is_empty()
         {
-            return match args.as_slice() {
-                [subject, traits] => self.conformance_query(subject, traits),
-                _ => Err(TypeError::ArityMismatch {
-                    name: "conforms_to".to_string(),
-                    expected: 2,
-                    got: args.len(),
-                }),
-            };
+            match (name.as_str(), args.as_slice()) {
+                ("conforms_to", [subject, traits]) => {
+                    return self.conformance_query(subject, traits);
+                }
+                ("type_of", [operand]) => {
+                    return Ok(self
+                        .param_context
+                        .type_shape(self.type_of_operand(operand)?));
+                }
+                ("conforms_to" | "type_of", _) => {
+                    return Err(TypeError::ArityMismatch {
+                        name: name.clone(),
+                        expected: if name == "type_of" { 1 } else { 2 },
+                        got: args.len(),
+                    });
+                }
+                _ => {}
+            }
         }
         // An element or the length of a `TypeList` value (`r[0]`,
         // `Self.Ts.reverse()[0]`, `TypeList[Ts.values]().length`).
         if let Some(read) = self.type_list_read(expr, recording) {
             return read;
         }
+        // A compile-time struct value's subscript is its `__getitem_param__`
+        // application, as upstream's `SubscriptNode` over a value is.
+        if let ExprKind::Index { object, index } = &expr.kind
+            && let Some(value_ty) = self.compile_time_struct_value(object)
+        {
+            let value_ty = value_ty?;
+            return self
+                .parameterized_assoc_application(
+                    &value_ty,
+                    "__getitem_param__",
+                    &[mojito_ast::ast::ParamArg::Value(index.as_ref().clone())],
+                )?
+                .map(|ty| self.param_context.type_shape(ty))
+                .ok_or_else(|| TypeError::NotIndexable(value_ty.to_string()));
+        }
         if let Some(value) = self.eval_reflection_expr(expr)? {
             return self.ct_param(value);
+        }
+        // A type's type member (`Meta.KGENTypeType`, `S[Int].Of[Bool]`) is
+        // the type it names.
+        if matches!(expr.kind, ExprKind::Member { .. })
+            && let Some(member) = member_source_type(expr)
+                .filter(|member| !matches!(member, SourceType::SelfParam(_)))
+            && let Ok(ty) = self.ty_from_anno(&member)
+        {
+            return Ok(self.param_context.type_shape(ty));
         }
         if let ExprKind::Member { object, field } = &expr.kind {
             if matches!(&object.kind, ExprKind::Identifier(name) if name == "DType") {
@@ -1863,6 +1961,33 @@ impl Checker {
         }
     }
 
+    /// The type of the compile-time struct value `expr` denotes: a
+    /// construction ([`Self::compile_time_value_type`]), or a name bound to
+    /// one or to any compile-time value of a struct type. `None` for any
+    /// other expression.
+    fn compile_time_struct_value(&self, expr: &Expr) -> Option<Result<Ty, TypeError>> {
+        match &expr.kind {
+            ExprKind::Identifier(name) => match self.local_comptime_value(name) {
+                Some(bound) => self.compile_time_struct_value(bound),
+                None => self
+                    .build_ct_name(name, Recording::Silent)
+                    .ok()?
+                    .meta()
+                    .as_value()
+                    .filter(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+                    .cloned()
+                    .map(Ok),
+            },
+            ExprKind::Call { name, .. }
+                if self.structs.contains_key(name) || self.comptime_aliases.contains_key(name) =>
+            {
+                Some(self.compile_time_value_type(expr))
+            }
+            ExprKind::Invoke { .. } => Some(self.compile_time_value_type(expr)),
+            _ => None,
+        }
+    }
+
     /// The length of a `TypeList` value.
     fn type_list_length(&self, receiver: TypeListReceiver) -> Result<ParamExpr, TypeError> {
         let list = self.receiver_list(receiver)?;
@@ -1876,6 +2001,7 @@ impl Checker {
         match &expr.kind {
             ExprKind::Identifier(name) => self.lookup(name).is_none(),
             ExprKind::TypeApply { .. } | ExprKind::TypeValue(_) => true,
+            ExprKind::Call { name, .. } => name == "type_of",
             ExprKind::Member { object, .. }
             | ExprKind::Index { object, .. }
             | ExprKind::MultiIndex { object, .. } => self.may_denote_type(object),

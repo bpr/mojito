@@ -8699,9 +8699,37 @@ fn trait_valued_parameters_reject_what_their_bound_does_not_accept() {
         err_std("def g[Tr: type_of(AnyType)]():\n    var x = Tr\ndef main():\n    g[Copyable]()\n"),
         TypeError::DynamicTypeValue(_)
     ));
+    ok_std("def main():\n    var x = 3\n    var y: type_of(x) = 4\n");
+}
+
+#[test]
+fn type_of_is_the_value_type_and_rejects_what_has_no_type_yet() {
+    ok_std(
+        "def main():\n    var x = 3\n    comptime T = type_of(x)\n    var y: List[type_of(x)] = [x]\n\
+         \x20   var z: T = 4\n    print(T == Int, len(y), z)\n",
+    );
+    let unsupported = |source: &str, gap: &str| {
+        let error = err_std(source);
+        assert!(
+            matches!(&error, TypeError::Unsupported(message) if message.contains(gap)),
+            "{error:?}"
+        );
+    };
+    unsupported(
+        "def main():\n    var y: type_of(3) = 3\n",
+        "'type_of' of a literal value",
+    );
+    unsupported(
+        "def main():\n    comptime T = type_of(Int)\n",
+        "'type_of' of a type",
+    );
+    unsupported(
+        "def f(x: Int, y: type_of(x)) -> Int:\n    return x\ndef main():\n    print(f(1, 2))\n",
+        "'type_of' of a parameter in a signature",
+    );
     assert!(matches!(
-        err_std("def main():\n    var x = 3\n    var y: type_of(x) = 4\n"),
-        TypeError::Unsupported(_)
+        err_std("comptime N = 4\ndef main():\n    var x: N = 4\n"),
+        TypeError::TypeMismatch { expected, found, .. } if expected == "a type" && found == "a value"
     ));
 }
 

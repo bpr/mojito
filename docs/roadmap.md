@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1507**.
+Next free ID: **R1511**.
 
 ## Ordered Work
 
@@ -4105,29 +4105,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1369 A type expression resolves by its spelling, not by what its
-  names denote**
+- [ ] **R1508 A signature's `type_of` of an earlier parameter is rejected**
 
-  The checker builds a type from a `Type` spelling (`ty_from_anno`) and
-  turns only a lone identifier from a value argument into a type
-  (`resolve_param_arg`), where upstream parses every annotation as an
-  expression and resolves it by what it denotes (`parseType` in
-  `DeclResolution.cpp`, then `IREmitter::emitExprType`).
-  - The lever: one checker resolver that types an expression as a type
-    through scope lookup.
-    - A struct or alias gives its type, and a subscript of a type gives its
-      application.
-    - A local `comptime` value with `__getitem_param__` gives its element.
-    - `type_of(value)` gives the value's type.
-  - Sites: `ty_from_anno` (`Type::Named`, `Type::TypeOf`) and
-    `resolve_param_arg` (`checker/type_resolution.rs`), and the receiver
-    reinterpretation in `method_calls/type_receivers.rs`.
-  - Probe: `var y: type_of(x) = 3` prints `3` at the pin. Mojito says
-    "'type_of' of a value ... not supported yet".
-  - Closes R134 (`type_of` of a value as a type) and R1203 (a `comptime`
-    `TypeList` name subscripted in an annotation).
+  Problem: `def f(x: Int, y: type_of(x)) -> type_of(x)` and a method's `->
+  type_of(self.v)` stop with "'type_of' of a parameter in a signature is
+  not supported yet", where the pin prints `3` and `4`.
+  - Upstream resolves each signature type with the earlier arguments in
+    scope (`Signatures.cpp` emits each through `emitExprType`).
+  - Mojito resolves a signature with no value scope: `method_sig`
+    (`checker/declarations.rs`) takes pre-resolved types, and parameters
+    are bound only when the body is checked (`bind_and_check_method`).
+  - The lever: a signature value scope declaring each parameter as it is
+    resolved, for `method_sig` and the free-function registration.
+    `Checker::type_of_operand` (`checker/constraints.rs`) then needs no
+    signature rejection.
+  - Found while landing R1369 (2026-10-27).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1370 A bracket argument is a type or a value by its
   capitalization**
@@ -4140,8 +4134,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The lever: parse every name-led operand as an expression. Only spellings
     that just the type grammar can write stay `ParamArg::Type`: `def(...)`
     types, `ref`, and `*Ts`.
-  - R1369's resolver turns the expression into a type wherever a type
-    parameter takes it.
+  - `Checker::denoted_type` (`checker/constraints.rs`) turns the
+    expression into a type wherever a type parameter takes it.
   - Pre-check consumers (`mojito-comptime`'s `params.rs`,
     `simd_width.rs`) read a value operand's type spelling where they read
     `ParamArg::Type` today.
@@ -4169,6 +4163,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     denotes a type or a generic function to the existing application check.
   - The `reflect`, `origin_of`, spread, and `None` special cases in
     `suffix.rs` go away.
+  - `infer_type_receiver_call`'s `Index { Identifier(struct), .. }`
+    reinterpretation (`method_calls/type_receivers.rs`) exists only for
+    the capitalization split and goes too.
   - Merging the four AST kinds into one node can follow in `mojo-shape`.
   - Probe: `var f = twice[4]` over `def twice[n: Int]() -> Int` prints `8`
     at the pin. Mojito says "cannot be indexed here".
@@ -4178,6 +4175,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     need compile-time `__getitem__` folding.
   - Depends on R1370, so operands are already expressions.
   - Model: Fable, Planned.
+
+- [ ] **R1509 A `type_of(...)` receiver of a static call is not a type
+  receiver**
+
+  Problem: `type_of(t).__len__()` over a tuple `t` stops with "Undefined
+  variable 'type_of'", where the pin prints `3`.
+  - A static call's receiver is classified by spelling
+    (`infer_type_receiver_call`, `method_calls/type_receivers.rs`), and the
+    static path (`infer_struct_static_method`) takes a struct name and its
+    bracket arguments, not a resolved type.
+  - Upstream's `Tuple.reverse` and `Tuple.concat` read
+    `type_of(result).__len__()` (R343).
+  - Found while landing R1369 (2026-10-27).
+  - Depends on R1371, which classifies the receiver by what it denotes.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1372 A parameter binder is a value parameter only for a fixed list
   of type names**
@@ -4998,23 +5010,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1203 A `comptime` name bound to a `TypeList` value is not
-  subscripted in type position**
-
-  Problem: `comptime tl = TypeList.of[Trait=AnyType, Bool, Int]()` then
-  `var x: tl[1] = 3` fails with "unknown type 'tl'", where the pin prints
-  `3`.
-  - A type subscript reads a value's `__getitem_param__` only when the
-    value is a construction written in place
-    (`Checker::compile_time_value_type`, `checker/type_resolution.rs`).
-  - A named value parses as `Type::Named`, so the checker never asks
-    whether the name is a local `comptime` value. `typelist_receiver`
-    follows `local_comptime_value` for the same question in a constraint.
-  - The interplay with R1194's lifted local `comptime` needs settling here.
-  - Found while landing R1185 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1200 A raw-list value parameter does not bind as a `TypeList`'s
   `values`**
 
@@ -5109,6 +5104,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Mojito has no trait value for a struct metatype (upstream's
     `StructMetaType` converting to `AnyTrait`, `ExprConversions.cpp`), and
     no conformance join over the known traits.
+  - Probe: `comptime T = type_of(Int)` runs at the pin (`AnyStruct[Int]`).
+    Mojito says "'type_of' of a type is not supported yet"
+    (`Checker::type_of_operand`, `checker/constraints.rs`).
   - Upstream's stdlib relies on it in `TypeList.of[...]` without `Trait=`
     (`std/builtin/bool.mojo`, `std/collections/optional.mojo`).
   - Probe: `TypeList.of[Bool, Int]()[1]` as a local annotation stops with
@@ -5256,7 +5254,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The result of `GT` is itself a generator type, applied in a later
     parameter's type: R1486's type-position application, over a
     `type_of(...)` of a generator type, which `type_of` rejects as "of a
-    value or a struct type".
+    type" (R1176's metatype).
   - No bundled library use needs it yet.
   - Found while landing R808 (2026-10-27).
   - Depends on R1486.
@@ -6048,27 +6046,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R134 `type_of(x)` of a value is not accepted as a type**
+- [ ] **R1507 A literal's type does not carry its value**
 
-  Problem: `var y: type_of(x) = 3` stops with "'type_of' of a value or a
-  struct type is not supported yet", and `unsafe_alloc[type_of(px)](1)` with
-  "expected a type, found a value", where the pin runs both.
-  - The parser reads `type_of(...)` as `Type::TypeOf`, and the checker
-    (`ty_from_anno`) accepts only a trait operand, whose type is the trait
-    metatype.
-  - `type_of(Int)`, the metatype of a struct type, is the same gap.
-  - A bracket argument spelled `type_of(px)` parses as a call expression,
-    not a type.
-  - Spelling the type out (`unsafe_alloc[Pointer[Int, origin_of(x)]]`)
-    runs.
-  - Probe: a body's `comptime WriterType = type_of(writer)` in `def
-    show[W: Writer](mut writer: W)` stops with "a compile-time call of
-    'type_of' is not evaluated above the check", where the pin runs it.
-    Upstream's `Writable` defaults open with it (R1461).
-  - Found while fixing a pointer dereference through a generic struct's
-    field (2026-10-03).
+  Problem: `TyKind::IntLiteral`, `FloatLiteral`, and `StringLiteral` hold no
+  value, and a `comptime N = 4` binding is typed `Int`, where upstream's
+  literal types are value-parameterized (`IntLiteral[4]`).
+  - Probe: `var y: type_of(N) = 4` over `comptime N = 4` prints `4` at the
+    pin, `= {}` prints `4`, and `= 7` is "cannot implicitly convert
+    'IntLiteral[7]' value to 'IntLiteral[4]'". Mojito rejects every
+    `type_of` of a literal value as unsupported (`type_of(3)`, a module
+    `FloatLiteral` constant in a field's type).
+  - Probe: `comptime M: Int = 4` then `var z: type_of(M) = 9` prints `9` at
+    the pin. Mojito cannot tell the annotated binding from `comptime N = 4`
+    and rejects it too.
+  - R1397's `#pop.int_literal_convert` needs the same parametric
+    `IntLiteral[value]`.
+  - Found while landing R1369 (2026-10-27).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R137 Checking a deeply nested generic struct type takes time
   exponential in its depth**
@@ -7832,6 +7827,22 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1510 `type_of`, `origin_of`, and `conforms_to` are names, where
+  upstream lexes them as keywords**
+
+  Problem: `def type_of(x: Int) -> Int` runs in Mojito, where the pin says
+  "'type_of' cannot be used as a function name in this context".
+  - Upstream: `kw_type_of`, `kw_origin_of`, and `kw_conforms_to` reach
+    `ExprParser::parseMagicFunction`, which builds a `MagicFunctionNode`.
+  - Mojito parses each as an `ExprKind::Call` (or `Type::TypeOf`) and
+    matches the name: `build_ct`'s `type_of` arm, `build_ct_rest`'s
+    `conforms_to`, and the parser's `origin_of`.
+  - The lever: lex the three as keywords and give the AST one magic-call
+    node.
+  - Found while landing R1369 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -9566,8 +9577,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `__floordiv__`, and `__mod__`. `TyKind::Simd` stays only as the storage
     type.
   - A literal still converts by the checker's coercion. Upstream's
-    `#pop.int_literal_convert` needs a parametric `IntLiteral[value]`, a
-    residue to file.
+    `#pop.int_literal_convert` needs a parametric `IntLiteral[value]`
+    (R1507).
   - This is the one step that cannot be split. The entries before and after
     it take everything that can be.
   - Closes R330 (lane gathers become library methods), R331 (shuffle's `2 *
@@ -9901,8 +9912,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `_reflection_write_to` (and `_enum_reflection_write_to` for an
   `EnumLike`).
   - The bundled trait's requirements stay `...` until upstream's body
-    checks: its `comptime WriterType = type_of(writer)` binding (R134) and
-    `r.field_ref[i](this)` (R77).
+    checks: `r.field_ref[i](this)` (R77).
   - Each bundled module hosting a defaulted conformer imports
     `_reflection_write_field_to` (`std/span.mojo`, `std/string.mojo`, and
     five more), since the synthesized call names it by its linked name.
@@ -9913,7 +9923,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     not implement Writable"). The helper's assert message must be a
     literal (R1210).
   - Probe: a user trait whose default is upstream's body text stops at
-    `comptime WriterType = type_of(writer)`.
+    `r.field_ref[i](this)`; its `comptime WriterType = type_of(writer)`
+    checks.
   - Done when the trait declares upstream's bodies and the synthesis, the
     helper, and its imports are gone; R1409's generated enum members go
     next.
@@ -10769,8 +10780,9 @@ residue found inside a task moves to the task that owns its fix.
     upstream reads `type_of(result).__len__()` and
     `type_of(other).__len__()`.
   - Pinned by `assets/ok/tuple_reverse_concat.mojo`.
-  - Depends on R341 (the storage model and `unsafe_write_move_from`), R134
-    (`type_of`), R340 (`Self.__len__()` in a header), and R344.
+  - Depends on R341 (the storage model and `unsafe_write_move_from`), R1509
+    (a `type_of(...)` receiver), R340 (`Self.__len__()` in a header), and
+    R344.
   - Model: Fable, Planned.
 
 - [ ] **R210 A lambda parameter annotated `String` reports an unknown

@@ -419,15 +419,7 @@ impl Checker {
             SourceType::Bool => Ty::bool(),
             SourceType::StringLiteral => self.bare_string_literal()?,
             SourceType::ClosedStringLiteral => Ty::string_literal(),
-            // The trait metatype; `type_of` of anything else waits on R134.
-            SourceType::TypeOf(operand) => match self.trait_value(operand) {
-                Some(traits) => TyKind::AnyTrait(traits?).into(),
-                None => {
-                    return Err(TypeError::Unsupported(
-                        "'type_of' of a value or a struct type is not supported yet".to_string(),
-                    ));
-                }
-            },
+            SourceType::TypeOf(operand) => self.type_of_operand(operand)?,
             SourceType::Float64 => Ty::float64(),
             SourceType::None => Ty::none(),
             SourceType::Generator { params, result } => self.generator_type(params, result)?,
@@ -595,8 +587,15 @@ impl Checker {
             }
             // A bare name may be an in-scope type parameter (a generic `def`'s
             // `T`) or a struct type, optionally applied to parameter arguments.
+            // A head that names no type may name a compile-time value, whose
+            // subscript is a type (`tl[1]` over a `TypeList` value).
             SourceType::Named(name, args) => {
-                return self.applied_type_at_depth(name, args).map(|(ty, _)| ty);
+                return match self.applied_type_at_depth(name, args) {
+                    Err(TypeError::UnknownType(unknown)) if unknown == *name => {
+                        self.value_headed_type(name, args)
+                    }
+                    resolved => resolved.map(|(ty, _)| ty),
+                };
             }
             // `Self.T` — one of the enclosing struct's *type* parameters (a value
             // parameter is not a type, so `Self.n` in type position is an error).
@@ -775,7 +774,7 @@ impl Checker {
     /// `base` (so the caller falls back to dependent sequence indexing). The
     /// result is a symbolic associated type; concrete resolution happens once the
     /// base is a conforming struct (a later iteration subtask).
-    fn parameterized_assoc_application(
+    pub(super) fn parameterized_assoc_application(
         &self,
         base_ty: &Ty,
         name: &str,
@@ -1117,6 +1116,58 @@ impl Checker {
                 .map(|ty| (ty, vec![None]));
         }
         Err(TypeError::UnknownType(name.to_string()))
+    }
+
+    /// The type a `Named` annotation denotes when its head names no type:
+    /// the expression it spells (the head, or its subscript by the bracket
+    /// arguments), built as upstream's `emitExprType` builds any annotation,
+    /// so a compile-time value's subscript is its `__getitem_param__`
+    /// element and a value alone is "expected a type". The spelling is asked
+    /// first, so a local value never shadows a type of its name here. A head
+    /// that names nothing at all stays an unknown type.
+    fn value_headed_type(
+        &self,
+        name: &str,
+        args: &[mojito_ast::ast::ParamArg],
+    ) -> Result<Ty, TypeError> {
+        use mojito_ast::ast::{ParamArg, SubscriptArg};
+        let unknown = || TypeError::UnknownType(name.to_string());
+        let operand = |arg: &ParamArg| match arg {
+            ParamArg::Value(value) => Some(value.clone()),
+            ParamArg::Type(ty) => ty.expression_spelling(mojito_common::token::Span::default()),
+            ParamArg::Named { .. } => None,
+        };
+        let operands = args
+            .iter()
+            .map(operand)
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(unknown)?;
+        let span = operands
+            .first()
+            .map_or_else(mojito_common::token::Span::default, |first| first.span);
+        let head = Expr::new(ExprKind::Identifier(name.to_string()), span);
+        let expr = match <[Expr; 1]>::try_from(operands) {
+            Ok([index]) => Expr::new(
+                ExprKind::Index {
+                    object: Box::new(head),
+                    index: Box::new(index),
+                },
+                span,
+            ),
+            Err(operands) if operands.is_empty() => head,
+            Err(operands) => Expr::new(
+                ExprKind::MultiIndex {
+                    object: Box::new(head),
+                    args: operands.into_iter().map(SubscriptArg::Index).collect(),
+                },
+                span,
+            ),
+        };
+        self.denoted_type(&expr, "type annotation")
+            .map_err(|error| match error {
+                TypeError::NotComptime(unbound) if unbound == name => unknown(),
+                error => error,
+            })
     }
 
     /// Upstream's `_MLIR.KGENParamListType[T]` body,
@@ -2579,9 +2630,9 @@ impl Checker {
     /// Resolve one supplied parameter argument against its declared parameter: a
     /// type parameter takes a type (bound-checked); a value parameter takes a
     /// comptime `Int` or the enclosing struct's own value parameter spelled
-    /// `Self.n` (upstream's required spelling inside a struct body). A
-    /// lone-identifier value argument is reinterpreted as a type when the
-    /// parameter is a type parameter.
+    /// `Self.n` (upstream's required spelling inside a struct body). A value
+    /// argument of a type parameter is the type its expression denotes
+    /// ([`Self::denoted_type`]).
     pub(super) fn resolve_param_arg(
         &self,
         decl: &ParamDecl,
@@ -2629,62 +2680,13 @@ impl Checker {
                         }
                         (reflected?, Some(expression.source_span()))
                     }
-                    ParamArg::Value(
-                        expression @ Expr {
-                            kind: ExprKind::Identifier(id),
-                            ..
-                        },
-                    ) => {
-                        // Once it resolves as a type, it is the call's
-                        // parameter attribute, never a runtime value.
-                        let ty = self.ty_from_anno(&SourceType::Named(id.clone(), vec![]))?;
-                        (ty, Some(expression.source_span()))
-                    }
-                    // A parameterized type argument (`Dict[Variant[Int, String],
-                    // Int]()`): specialization has already rewritten a variadic
-                    // instance to its concrete name. Like the bare-identifier
-                    // form, it resolves as a type and never as a runtime value.
-                    ParamArg::Value(
-                        expression @ Expr {
-                            kind:
-                                ExprKind::TypeApply {
-                                    name: applied,
-                                    args,
-                                },
-                            ..
-                        },
-                    ) => (
-                        self.ty_from_anno(&SourceType::Named(applied.clone(), args.clone()))?,
+                    // Any other expression is the type it denotes, built by
+                    // the one builder; once it resolves it is the call's
+                    // parameter attribute, never a runtime value.
+                    ParamArg::Value(expression) => (
+                        self.denoted_type(expression, &format!("type parameter '{name}'"))?,
                         Some(expression.source_span()),
                     ),
-                    ParamArg::Value(
-                        expression @ Expr {
-                            kind: ExprKind::Index { object, .. },
-                            ..
-                        },
-                    ) if matches!(object.kind, ExprKind::Call { .. }) => (
-                        self.ty_from_anno(&super::constraints::assoc_body_source_type(
-                            expression,
-                        )?)?,
-                        Some(expression.source_span()),
-                    ),
-                    // A struct's type member (`g[M.E]()`,
-                    // `k[_MLIR.KGENTypeType]()`) or its application
-                    // (`size[S[Int].Of[Bool]]()`).
-                    ParamArg::Value(expression)
-                        if let Some(member) =
-                            super::constraints::member_source_type(expression)
-                                .filter(|member| !matches!(member, SourceType::SelfParam(_))) =>
-                    {
-                        (self.ty_from_anno(&member)?, Some(expression.source_span()))
-                    }
-                    ParamArg::Value(_) => {
-                        return Err(TypeError::TypeMismatch {
-                            expected: "a type".to_string(),
-                            found: "a value".to_string(),
-                            context: format!("type parameter '{name}'"),
-                        });
-                    }
                     ParamArg::Named { value, .. } => {
                         return self.resolve_param_arg(decl, value);
                     }
@@ -2976,15 +2978,9 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         let resolved = match argument {
             mojito_ast::ast::ParamArg::Type(ty) => self.ty_from_anno(ty),
-            mojito_ast::ast::ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(name),
-                ..
-            }) => self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new())),
-            mojito_ast::ast::ParamArg::Value(_) => Err(TypeError::TypeMismatch {
-                expected: "a type".to_string(),
-                found: "a value".to_string(),
-                context: format!("{collection} type argument"),
-            }),
+            mojito_ast::ast::ParamArg::Value(expression) => {
+                self.denoted_type(expression, &format!("{collection} type argument"))
+            }
             mojito_ast::ast::ParamArg::Named { .. } => Err(TypeError::TypeMismatch {
                 expected: "a positional type argument".to_string(),
                 found: "a named argument".to_string(),

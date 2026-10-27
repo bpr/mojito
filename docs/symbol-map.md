@@ -725,9 +725,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `IndexedProjection`, which `resolve_ty_from_anno_at_depth`'s value-base
   arm reads through `compile_time_value_type` and
   `parameterized_assoc_application`, the explicit
-  `.__getitem_param__[i]` spelling's own path; as a bracket argument or a
-  member body it reaches that arm through `assoc_body_source_type`'s
-  construction arm (`constraints.rs`). `opaque_element` is the element's
+  `.__getitem_param__[i]` spelling's own path; as a member body it
+  reaches that arm through `assoc_body_source_type`'s construction arm
+  (`constraints.rs`), and as a bracket argument the builder reads it
+  (`denoted_type`). `opaque_element` is the element's
   bounded `TyKind::Param` view and `restore_pack_elements` the way back,
   `infer_pack_element_construction` types an element's `Ts[i]()` and, over
   a symbolic pack, records `SemanticAdjustment::ConstructPackElement`, which
@@ -948,7 +949,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`Recording`), with `aggregate_value` carrying a tuple, list, or
   fieldwise construction whose elements are symbolic. A type operand has
   that one reader too: `type_operand_expression` is the builder filtered
-  to a type, `comptime_type_operand` (`comptime_validation.rs`) and
+  to a type (`None` for a value), `denoted_type` the same filter with
+  upstream's `emitType` rejection ("expected a type"), which reads a type
+  parameter's value-spelled bracket argument (`resolve_param_arg`), a
+  collection's type argument, and a `Named` annotation whose head names a
+  compile-time value (`value_headed_type`, `type_resolution.rs`), and
+  `type_of_operand` is the magic function `type_of` that both the builder
+  and `Type::TypeOf` reach, typing its operand inside a probe; a
+  compile-time struct value's subscript is its `__getitem_param__`
+  (`build_ct_rest`, through `compile_time_struct_value`), `comptime_type_operand` (`comptime_validation.rs`) and
   `constraint_operand` adapt it (the latter keeping a bare-name
   `ParamRef::unbound` fallback for conditions compiled without their
   binders, R1474), and `infer_type_comparison` (hooked at the top of

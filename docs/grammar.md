@@ -1163,12 +1163,19 @@ indirect-call checking, and are preserved in checked HIR and the MIR call ABI.
 Own `def[...]` binders form a nested generic scope for a callable constraint or
 compile-time callable value; a parametric function type is not an ordinary
 runtime-parameter annotation.
-`type_of(expression)` is upstream's type of a compile-time expression and
-parses into `Type::TypeOf` with its operand retained, whatever the operand.
-The checker accepts a trait or a `&` composition of traits, whose type is
-the trait metatype (displayed `AnyTrait[Copyable]`, which has no source
-spelling). `type_of` of a value or of a struct type (`var y: type_of(x) =
-3`) is a checker error.
+`type_of(expression)` is upstream's magic function and parses into
+`Type::TypeOf` in a type, and into a call expression in a bracket argument
+or a `comptime` binding, with its operand retained, whatever the operand.
+The checker reads every spelling alike: the operand's type, typed without
+being evaluated (`var y: type_of(x) = 3`, `List[type_of(x)]()`, `comptime
+T = type_of(x)`, `type_of(x) == Int`). A trait or a `&` composition of
+traits gives the trait metatype (displayed `AnyTrait[Copyable]`, which has
+no source spelling). A literal value (`type_of(3)`, R1507), a type
+(`type_of(Int)`, R1176), and an earlier parameter in a signature (`y:
+type_of(x)`, R1508) are checker errors.
+A named type whose head is a compile-time value rather than a type is the
+value's subscript (`var x: tl[1]` over `comptime tl = TypeList.of[...]()`),
+upstream's `__getitem_param__`; the value alone is "expected a type".
 `generator_type` is upstream's `__generator_type[params] Result`
 (`ParserExprs.cpp`'s `parseGeneratorType`): the type of a parameterized
 `comptime` declaration read unapplied, its parameter list and the type its

@@ -2178,6 +2178,7 @@ impl Checker {
                             expr.kind,
                             ExprKind::TypeValue(_) | ExprKind::TypeApply { .. }
                         )
+                        || matches!(&expr.kind, ExprKind::Call { name, .. } if name == "type_of")
                         || matches!(&expr.kind, ExprKind::Index { object, .. }
                             if matches!(self.type_list_operand(object), Ok(Some(_)))) =>
                 {

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A type expression resolves by what its names denote (R1369, R134,
+  R1203): `type_of(value)` is the value's type, typed without being
+  evaluated, in an annotation, a bracket argument, a `comptime` binding,
+  and a type comparison (`var y: type_of(x) = 3`, `List[type_of(p)]()`,
+  `comptime WriterType = type_of(writer)`), and an annotation whose head
+  names a compile-time value is that value's `__getitem_param__` subscript
+  (`var x: tl[1]` over a `TypeList` value, local or module-scope). A type
+  parameter's value-spelled bracket argument is built by the one
+  compile-time builder rather than re-spelled as a type. `type_of` of a
+  literal value (R1507), of a type (R1176), and of an earlier parameter in
+  a signature (R1508) is rejected explicitly.
 - An assignment target is any expression, as upstream parses it (R1375,
   R1233): `=`, augmented assignment, the walrus, and destructuring leaves
   no longer match a list of shapes in the parser, and the checker rejects a
