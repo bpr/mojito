@@ -2713,6 +2713,10 @@ enum AssumedSubject {
 struct ComptimeAlias {
     decls: Vec<ParamDecl>,
     body: AliasBody,
+    /// The declaration's parameter expression as written: the value a read
+    /// through a zero-parameter type alias is spelled over
+    /// ([`Checker::infer_type_alias_read`]).
+    value: Expr,
 }
 
 /// The `@implicit` converting constructor selected for one conversion.

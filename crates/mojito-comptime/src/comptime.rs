@@ -323,27 +323,25 @@ pub fn elaborate_exporting(
     program: &[Stmt],
 ) -> Result<(Vec<Stmt>, ElaboratedConstants), ComptimeError> {
     let (elaborated, elab) = elaborate_in(program, ImportedScope::default())?;
-    let mut values = elab.top_consts.into_inner();
-    // A constant the check binds still exports its value, which an
-    // importer's alias folds read.
-    values.extend(elab.checked_constants.into_inner());
-    let aliases = elab.generic_aliases.into_inner();
+    let values = elab.top_consts.into_inner();
     let mut constants = Vec::new();
     for statement in program {
         let (StmtKind::Comptime { name, .. }, Some(module)) = (&statement.kind, &statement.module)
         else {
             continue;
         };
-        let constant = match (values.get(name), aliases.get(name)) {
-            (Some(value), _) => ElaboratedConstant::Value(value.clone()),
-            (None, Some(alias)) => ElaboratedConstant::Alias(
-                alias.params.clone(),
-                alias.where_clauses.clone(),
-                alias.body.clone(),
-            ),
-            (None, None) => continue,
+        // A type alias travels as the check's `Aliases` row alone.
+        let Some(value) = values
+            .get(name)
+            .filter(|value| !matches!(value, CtValue::Type(_)))
+        else {
+            continue;
         };
-        constants.push((module.clone(), name.clone(), constant));
+        constants.push((
+            module.clone(),
+            name.clone(),
+            ElaboratedConstant::Value(value.clone()),
+        ));
     }
     Ok((elaborated, constants))
 }
@@ -381,22 +379,18 @@ fn elaborate_in<'a>(
         template_binders: RefCell::new(Vec::new()),
         crossing_templates: Cell::new(0),
         top_consts: RefCell::new(HashMap::new()),
-        checked_constants: RefCell::new(HashMap::new()),
-        generic_aliases: RefCell::new(HashMap::new()),
         installed: imported.installed,
     };
     drop(indexes);
     let mut env = ConstEnv::over(HashMap::new(), imported.installed);
-    let aliases = elab::TypeAliases::importing(imported.installed);
-    let mut elaborated = elab.block_statements(program, &mut env, false, aliases)?;
+    let mut elaborated = elab.block_statements(program, &mut env, false)?;
     // A module constant declared after its use crosses here.
     let consts = ConstEnv::crossing(elab.top_consts.borrow().clone(), imported.installed);
     elab.fold_runtime_crossings(&mut elaborated, &consts)?;
     // A body's read of a module constant stays a name: the check binds it as
     // the parameter value its declaration denotes (decision D3).
     let mut result = mark_struct_names(elaborated, &|name| elab.declares_struct(name));
-    let mut frozen = elab.top_consts.borrow().clone();
-    frozen.extend(elab.checked_constants.borrow().clone());
+    let frozen = elab.top_consts.borrow().clone();
     elab.freeze_struct_value_arguments(&mut result, &ConstEnv::over(frozen, imported.installed));
     for statement in &mut result {
         if let Some(source) = statement.module.clone() {
@@ -424,10 +418,8 @@ fn installed_value<'a>(
     installed: Option<&'a InstalledInterfaces>,
     name: &str,
 ) -> Option<&'a CtValue> {
-    match installed?.elaborated(name)? {
-        ElaboratedConstant::Value(value) => Some(value),
-        ElaboratedConstant::Alias(..) => None,
-    }
+    let ElaboratedConstant::Value(value) = installed?.elaborated(name)?;
+    Some(value)
 }
 
 /// Whether `value` is a scalar or a string: a value a local or module
@@ -943,31 +935,10 @@ struct Elab<'a> {
     /// The program's own module constants; an imported package's are
     /// `installed`'s ([`Self::module_constant`]).
     top_consts: RefCell<HashMap<String, CtValue>>,
-    /// The program's own closed scalar and string module constants, which
-    /// the check binds as parameter expressions: their values are read only
-    /// by the module alias folds this evaluator still owns (R1382 deletes
-    /// them), never by a body, a crossing, or a default.
-    checked_constants: RefCell<HashMap<String, CtValue>>,
-    /// The program's own module-scope generic `comptime` aliases in
-    /// declaration order; an imported package's are `installed`'s
-    /// ([`Self::generic_alias`]). The declarations pass
-    /// through elaboration for the checker's alias registry, but an
-    /// application inside a `comptime if` condition must already evaluate
-    /// here — the branches are pruned before checking.
-    generic_aliases: RefCell<HashMap<String, GenericAlias>>,
     /// The declaration interfaces of the package the program imports, whose
     /// module constants a lookup the program's own miss reads, each decoded
     /// on first lookup.
     installed: Option<&'a InstalledInterfaces>,
-}
-
-/// A module-scope generic `comptime` alias as a compile-time application
-/// evaluates it: its parameters, its `where` clauses, and its body.
-#[derive(Clone)]
-struct GenericAlias {
-    params: Vec<TypeParam>,
-    where_clauses: Vec<Expr>,
-    body: Expr,
 }
 
 /// The compile-time values an elaboration reads by name: its own frame,
@@ -1043,33 +1014,6 @@ impl Elab<'_> {
             .get(name)
             .cloned()
             .or_else(|| installed_value(self.installed, name).cloned())
-    }
-
-    /// Whether `name` is a module-scope generic alias, the program's own or
-    /// the imported package's.
-    fn is_generic_alias(&self, name: &str) -> bool {
-        self.generic_aliases.borrow().contains_key(name)
-            || matches!(
-                self.installed
-                    .and_then(|installed| installed.elaborated(name)),
-                Some(ElaboratedConstant::Alias(..))
-            )
-    }
-
-    /// The module-scope generic alias `name`.
-    fn generic_alias(&self, name: &str) -> Option<GenericAlias> {
-        self.generic_aliases
-            .borrow()
-            .get(name)
-            .cloned()
-            .or_else(|| match self.installed?.elaborated(name)? {
-                ElaboratedConstant::Alias(params, where_clauses, body) => Some(GenericAlias {
-                    params: params.clone(),
-                    where_clauses: where_clauses.clone(),
-                    body: body.clone(),
-                }),
-                ElaboratedConstant::Value(_) => None,
-            })
     }
 
     /// Struct `name`, the program's own or the imported package's.

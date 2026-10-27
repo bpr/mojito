@@ -89,13 +89,20 @@ impl Checker {
         }))
     }
 
-    /// The dtype a bare name denotes: a `comptime` binding of one, or a `[dt:
-    /// DType]` parameter in scope — symbolic while its declaration is still a
-    /// template. The binding table and the parameter scope agree here, so a
-    /// `comptime d = dt` binding names the same lane its parameter does.
+    /// The dtype a bare name denotes: a `comptime` binding of one, a module
+    /// constant the declarations pass folded to one ahead of its statement,
+    /// or a `[dt: DType]` parameter in scope — symbolic while its
+    /// declaration is still a template. The binding table and the parameter
+    /// scope agree here, so a `comptime d = dt` binding names the same lane
+    /// its parameter does.
     pub(super) fn dtype_named(&self, name: &str) -> Option<SimdDtype> {
         if let Some(dtype) = self.comptime_dtype(name) {
             return Some(dtype.clone());
+        }
+        if self.lookup_tparam(name).is_none()
+            && let Some(CtValue::Dtype(dtype)) = self.module_values.get(name)
+        {
+            return Some(SimdDtype::Known(*dtype));
         }
         self.value_parameter_in_scope(name)
             .filter(|expr| expr.meta().as_value() == Some(&Ty::dtype()))

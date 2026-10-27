@@ -606,16 +606,15 @@ pub(super) fn fold_simd_alias_bounds(
     program: &mut [Stmt],
     installed: Option<&InstalledInterfaces>,
 ) {
-    let imported = |name: &str| match installed?.elaborated(name)? {
-        ElaboratedConstant::Value(CtValue::Type(ty))
-            if matches!(*ty.kind(), TyKind::Simd { .. }) =>
-        {
-            match source_type_from_ty(ty)? {
-                Type::Named(_, args) => Some(args),
-                _ => None,
-            }
+    let imported = |name: &str| {
+        let ty = installed?.type_alias(name)?;
+        if !matches!(*ty.kind(), TyKind::Simd { .. }) {
+            return None;
         }
-        _ => None,
+        match source_type_from_ty(ty)? {
+            Type::Named(_, args) => Some(args),
+            _ => None,
+        }
     };
     let own: HashMap<String, Vec<ParamArg>> = program
         .iter()
@@ -782,14 +781,10 @@ impl KgenTypeFold<'_> {
             Some(_) => None,
             None => match parameter.bounds.as_slice() {
                 [only] => self.module_aliases.get(only).cloned().or_else(|| {
-                    match self.installed?.elaborated(only)? {
-                        ElaboratedConstant::Value(CtValue::Type(ty))
-                            if matches!(ty.kind(), TyKind::TypeType | TyKind::KgenString) =>
-                        {
-                            Some(ty.clone())
-                        }
-                        _ => None,
-                    }
+                    self.installed?
+                        .type_alias(only)
+                        .filter(|ty| matches!(ty.kind(), TyKind::TypeType | TyKind::KgenString))
+                        .cloned()
                 }),
                 _ => None,
             },

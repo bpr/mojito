@@ -97,7 +97,7 @@ compiler build (`src/package.rs`):
 build (once per compiler build, then cached):
   every std module -> link (recording each module) -> prepare
     -> elaborate (exporting
-    the module constant values its alias folds read) -> check (exporting each library
+    the module value constants it folded) -> check (exporting each library
     declaration's rows) -> MIR -> ownership
     -> std package: interface + one record per library declaration
        (its MIR declarations and effect summaries, then the checker
@@ -257,25 +257,32 @@ import (every compilation that links the bundled library):
   callable origin facts, and the applicable functions and declared results
   a compile-time call reads. A table key belongs to the declaration it
   names, an overload's signature-qualified key or a member's
-  `Owner.member` included. A module constant's residue also holds the
-  constant as the build's comptime elaboration resolved it
-  (`checker::ElaboratedConstant`: a folded value or `Applied` marker, or a
-  generic alias's parameters and body; `comptime::elaborate_exporting`,
-  `CheckContext::record_elaborated`), and a declaration's residue holds the
-  module-scope compile-time facts its names bind (a bound dtype, a lifted
-  constant's application, a kept compile-time value, a type alias, its
-  `SIMDLength` binders). Its lowered part holds its integer constant's
-  one exact value (`package::LoweredDeclaration::constants`), which the
+  `Owner.member` included. A module value constant's residue also holds
+  the constant as the build's comptime elaboration folded it
+  (`checker::ElaboratedConstant`: a folded value or `Applied` marker;
+  `comptime::elaborate_exporting`, `CheckContext::record_elaborated`). A
+  module alias, generic or not, travels only as the check's `Aliases` row,
+  as upstream holds an alias only as its declaration: an importer's check
+  reads it there, and the elaborator's prepare-time folds read a type
+  alias's type through `InstalledInterfaces::type_alias`. A declaration's
+  residue holds the module-scope compile-time facts its names bind (a
+  bound dtype, a lifted constant's application, a kept compile-time value,
+  its `SIMDLength` binders). Its lowered part holds its integer constant's
+  one exact value (`package::LoweredDeclaration::constant`), and its type
+  alias's spelling (`LoweredDeclaration::type_alias`), which the
   residue's integer row and elaborated value are joined back from, as
   upstream holds a constant once in its declaration's op; the build
   refuses a library whose check and elaboration fold a constant to other
   values (`InterfaceExport::checked_constants`,
   `DeclarationInterface::project`). In every compilation the check folds
   each module integer constant once, first, before any declaration's
-  symbol is spelled (`Checker::fold_module_constants`), and every symbol
-  speller — the checker's binder owners, the conformance oracle, and MIR's
-  name lowering — reads that value (`checked::package::ProgramConstants`,
-  `CheckedProgram::constants`); the overload scan folds nothing. It holds no overload set: as
+  symbol is spelled (`Checker::fold_module_constants`), and records each
+  module type alias's spelling there too, and every symbol speller — the
+  checker's binder owners, the conformance oracle, and MIR's name lowering
+  — reads them (`checked::package::ProgramConstants`, a
+  `symbol::ModuleNames`; `CheckedProgram::constants`), so a parameter
+  annotated by an alias spells as the type it names; the overload scan
+  folds nothing. It holds no overload set: as
   upstream's package holds none, an importer's name's overload set is the
   reached declarations a lookup finds under it, the plain name and its
   `$ov$` run of the by-name function table (`PackageScope`'s
@@ -337,10 +344,11 @@ import (every compilation that links the bundled library):
   (`Compiler::compile_importing`). `comptime::prepare_importing` rewrites
   the own statements alone, reading the package's traits, which a
   conformer inherits defaults from, and its SIMD, `!kgen.type`, and `!kgen.string` aliases
-  as its build elaborated them. `comptime::elaborate_importing` elaborates them alone
-  (`comptime::ImportedScope`): a name its module environment
-  (`comptime::ConstEnv`), generic aliases, or module type aliases miss is
-  the reached package's constant of that name, decoded with its
+  as its build's check resolved them (`InstalledInterfaces::type_alias`).
+  `comptime::elaborate_importing` elaborates them alone
+  (`comptime::ImportedScope`), substituting no package alias: a name its
+  module environment (`comptime::ConstEnv`) misses is the reached
+  package's value constant of that name, decoded with its
   declaration's record on first lookup
   (`checker::InstalledInterfaces::elaborated`), and its conformance oracle
   attaches the interfaces and registers the own statements over them
@@ -1480,8 +1488,7 @@ a query with no answer fails the instantiation. A field type never crosses.
 
 **Module constants are parameter expressions.** The elaborator folds no
 module value constant into a statement. A closed scalar or string constant
-is kept as written, its value held only in `Elab.checked_constants` for the
-module alias folds the elaborator still owns (R1382); one whose initializer
+is kept as written, with no value in the elaborator; one whose initializer
 applies a callable, asks a layout, reads such a constant, or is refused by
 `Elab::eval` (`Int32(4)`, `max(3, 4)`) is marked (`CtMarker::Applied`) and
 kept as written; no crossing or default reads either, nor a package's
@@ -3022,12 +3029,20 @@ declaration's own `where` assumes the same canonical proposition, and is
 otherwise reported as lacking evidence rather than as false. A selecting
 consumer (an overload, a conditional conformance, method availability) reads
 `eval_generic_constraint`, which is `is_proven()`.
-Generic top-level comptime aliases lower once into the checker's alias
-registry (classified `ParamDecl`s plus a symbolic template shared with
-parameterized associated members) and expand per application in type
+Top-level comptime aliases, generic or not, lower once into the checker's
+alias registry (`Checker::comptime_aliases`: classified `ParamDecl`s plus a
+symbolic template shared with parameterized associated members, and the
+declaration's parameter expression) and expand per application in type
 resolution through the same `resolve_use_params` contract as a struct
-application; an alias is a pure type declaration with no runtime form, skipped
-at MIR program assembly like a struct or trait.
+application; the elaborator neither substitutes nor applies one. A
+zero-parameter module alias whose parameter expression spells a type
+(`comptime A = Q`, ``comptime KS = __mlir_type.`!kgen.string` ``) is a type
+alias, and an expression it heads (`A.make()`, `F(1.5)`) is checked as the
+same expression over that parameter expression, as a body's local alias is
+(`Checker::infer_type_alias_read`); one over a module value constant
+(`comptime V4 = SIMD[D, 4]`) registers after the constants pass folds it.
+An alias is a pure type declaration with no runtime form, skipped at MIR
+program assembly like a struct or trait.
 
 A variadic type parameter retains a leading `*` in the checked parameter name.
 Generic-call inference recognizes the matching `*args: *Pack` element type and

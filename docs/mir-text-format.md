@@ -1541,11 +1541,13 @@ mojito-package 82
   the module by, so a compilation decodes it, and joins it with the
   lowered part, the first time a lookup names one of its keys. One that
   does not decode fails the compilation. A module constant's residue
-  holds the constant as the build's comptime elaboration resolved it, and
+  holds the constant as the build's comptime elaboration folded it (a
+  module alias is only its `Aliases` row, and its type's spelling sits in
+  its lowered part beside an integer constant's value, format 105), and
   a declaration's residue holds the module-scope compile-time facts its
   names bind (tables `Elaborated`, `ComptimeDtypes`, `ComptimeParameters`,
-  `ComptimeValues`, `TypeAliases`, and `SimdLengthBinders`, the last keyed
-  by the binders' owner); no module has a checker record of its own.
+  `ComptimeValues`, and `SimdLengthBinders`, the last keyed by the
+  binders' owner); no module has a checker record of its own.
 - The importer maps the file (`PackageBytes`, `memmap2`) and decodes only
   the header eagerly. A cached package is written to
   a private partial file and renamed over its path, and removed only by

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1480**.
+Next free ID: **R1481**.
 
 ## Ordered Work
 
@@ -153,51 +153,27 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1382 Module type aliases and generic aliases live in an elaborator
-  table the package exports**
+- [ ] **R1480 A package exports its module value constants as the
+  elaborator folded them**
 
-  `TypeAliases`, `generic_aliases`, and `apply_generic_alias` resolve module
-  aliases above the check, and a package build exports them as
-  `ElaboratedConstant`, where upstream holds an alias only as its
-  `AliasDeclOp`.
-  - The lever: the check's `comptime_aliases` is the only table, and an
-    importer reads a package's aliases from the check's installed
-    interfaces.
-  - `apply_generic_alias`, `apply_generic_alias_values`,
-    `keyword_application_params`, the alias `check_where_clauses` path,
-    `elaborate_exporting`'s constants, and the `ElaboratedConstants` type
-    go.
-  - `Elab.checked_constants`, the closed scalar and string module constants
-    the check binds, kept only for these alias folds, goes, and with it its
-    reads in `eval_at_module_scope`, `apply_generic_alias_values`,
-    `freeze_struct_value_arguments`, and `elaborate_exporting`.
-  - Probe: `comptime MyTr = Copyable & Movable`, then `g[MyTr]()`, stops at
-    "Undefined variable 'Copyable'": the elaborator hands the constant to
-    the check, which reads it as a value. The pin prints `1`.
-  - Shrinks R1171 to its checker half (a trait-valued constant).
-  - Depends on R1380 and R1381.
-  - Model: Fable, Planned.
-
-- [ ] **R1479 A module constant is kept in five checker tables**
-
-  The check holds a module constant in `comptimes`, `comptime_literals`,
-  `module_values`, `comptime_applied`, and `program_constants`, read in
-  that order through `Checker::module_constant_entry`, where upstream holds
-  one alias declaration whose value is one parameter expression.
-  - The lever: one `DeclarationTable<ParamExpr>` holds every module
-    constant, a folded one as `ParamKind::Constant` and an application as
-    itself. `module_constant_entry`, `build_ct_name`,
-    `module_constant_value`, `module_comptime`, `applied_constant_expr`,
-    and the trait-default reader (`folded_constant`) read it.
-  - `comptimes` keeps only body constants, or goes in favour of
-    `local_comptime_parameters`.
-  - `ProgramConstants` stays the checked handoff to symbol spelling and
-    MIR, derived from the table's integer entries.
-  - `DeclarationInterface` exports one row, `project` and `join` follow,
-    and `PACKAGE_FORMAT` goes up one.
-  - No behaviour changes: the CLI differential over every corpus file shows
-    no diff.
-  - Depends on nothing.
+  `elaborate_exporting` exports an `ElaboratedConstant::Value` for every
+  non-type module constant (dtypes, vectors, frozen structs, reflection
+  handles, `Applied` markers) beside the check's own rows, where upstream's
+  package holds a constant once, as its declaration.
+  - The check already holds each in `module_values`, `comptime_dtypes`, or
+    `comptime_applied`.
+  - Its only readers are the importer elaborator's `ConstEnv::get` and
+    `Elab::module_constant` (`installed_value`), which R1388 deletes.
+  - The lever: once R1388 lands, delete `ElaboratedConstant`,
+    `ElaboratedConstants`, `elaborate_exporting` (a package build calls
+    `elaborate_importing`), `CheckContext::record_elaborated`,
+    `Table::Elaborated` with `DeclarationInterface::elaborated` and its
+    `project`/`join` projection (`elaborated_constant`) and the interface
+    unit tests that pin it, and `declaring_modules`' `elaborated`
+    parameter.
+  - Bump `PACKAGE_FORMAT`.
+  - Done when `rg ElaboratedConstant crates` is empty.
+  - Depends on R1388.
   - Model: Opus, Not Planned.
 
 - [ ] **R1383 A reflection query is answered by the elaborator above the
@@ -268,7 +244,7 @@ which names the upstream pass each one follows. Each is measured by the
   parameter expressions only in its elaborator, after sema.
   - Delete them. The elaborator's `ConformanceOracle`, built only for
     `Elab`, goes too.
-  - The type-member construction rewrite (`S.Of[Int]()`) goes once R603
+  - The type-member construction rewrite (`S.Of[Int]()`) goes: the check
     resolves every alias receiver.
   - Update `docs/architecture.md`'s compile-time-call and
     checker-interaction sections.
@@ -277,6 +253,8 @@ which names the upstream pass each one follows. Each is measured by the
   - Closes R1179 (the oracle stops the elaborator). Shrinks R1175
     (`type_from_name` and `bind_subscript_arguments`) and R207's elaborator
     bullet.
+  - `ConstEnv`'s package lookups are the last readers of
+    `ElaboratedConstant`, which R1480 then deletes.
   - Done when `rg 'fn eval\b|type_from_name' crates/mojito-comptime` is
     empty.
   - Depends on R1380, R1382, R1383, R1384, and R603.
@@ -5430,14 +5408,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   and `comptime U: type_of(AnyType) = Movable` stop with "'Copyable' is not
   a compile-time type", where the pin binds each and passes it to a
   trait-valued parameter (`g[MyTr]()` over `g[Tr: type_of(Movable)]`).
-  - The elaborator's alias table (`TypeAliases` in `comptime/elab.rs`)
-    holds only types. A local binding stops at `Elab::eval`, which reads a
-    trait name as an unknown type; a module one reaches the check, which
-    reads `Copyable & Movable` as a value expression ("Undefined variable
+  - Every form reaches the check, module or local: it reads `Copyable &
+    Movable` as a value expression ("Undefined variable 'Copyable'") and a
+    module `comptime T = Copyable` as an unknown type ("unknown type
     'Copyable'").
-  - The checker's side needs a module or local constant whose value is
-    `CtValue::Trait`, read by `Checker::trait_value` wherever a trait is
-    spelled.
+  - The lever: a trait-valued alias in `Checker::comptime_aliases` (an
+    `AliasBody::Trait`, or a `CtValue::Trait` value), module or local, read
+    by `Checker::trait_value` wherever a trait is spelled.
   - Using such an alias as a bound (`T: MyTr`) is R1167's bound form, not
     this entry's.
   - Probe: `comptime MyTr = Copyable & Movable`, then `print(g[MyTr]())`,
@@ -5900,36 +5877,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R338 A static call through a `comptime` alias of a generic struct is
-  rejected**
-
-  Problem: `comptime W3 = W[3]` then `W3.total()`, a `@staticmethod` of
-  `struct W[n: Int]`, prints `3` at the pin, while Mojito reports "function
-  types as compile-time values".
-  - The receiver reaches `infer` as a `TypeValue`, which has no
-    expression type; a construction through the alias (`W3()`) works.
-  - Found while landing R4's vector-keyed half (2026-10-05).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R603 A static call through a `comptime` alias of any type is
-  rejected, not just a generic struct's**
-
-  Problem: `comptime A = S` then `A.k()`, a `@staticmethod` of a
-  non-generic `struct S`, prints `7` at the pin, while Mojito reports
-  "function types as compile-time values".
-  - A closed `Tuple` alias fails the same way: `comptime T = Tuple[Int,
-    String]` then `T.__len__()` (pin: `2`), at local or module scope.
-  - In a pack def, `comptime T = Tuple[*Ts]` then `T.__len__()` stops
-    earlier, with "Undefined variable 'T'" (pin: the length); the same call
-    spelled `Tuple[*Ts].__len__()` runs.
-  - The aliased receiver reaches `Checker::infer_impl` as
-    `ExprKind::TypeValue`, as R338 describes for a generic struct; the fix
-    is to resolve an alias receiver as a static receiver for every type.
-  - Found while landing R347 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R66 Small SIMD surface gaps the symbolic-lane probes found on concrete
   types**
 
@@ -5938,6 +5885,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - `len(v)` on a vector (`len_result_for_type` has no `Ty::Simd` arm),
     `abs`/`max`/`min` over a scalar alias (`is_numeric` excludes it),
     `Scalar[dt].MAX`/`.MIN`, and `**` on a lane.
+  - Probe: `print(Int.MAX)`, `print(UInt8.MAX)`, and `T.MAX` over a module
+    `comptime T = Int` stop at "Undefined variable 'Int'" (or 'UInt8'),
+    a scalar type read as a value. The pin prints the maximum.
   - `Float64.cast[...]()`: the canonical width-one `float64` is `Ty::Float64`
     and has no SIMD methods.
   - Natively only, `String(v)` of a multi-lane vector is an unsupported

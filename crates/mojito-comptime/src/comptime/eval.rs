@@ -50,12 +50,6 @@ impl Elab<'_> {
                 }
                 Ok(CtValue::Reflected(self.param_arg_type(&args[0], scope)?))
             }
-            // A module-scope generic comptime alias applied in a compile-time
-            // position (typically a `comptime if` condition, pruned before the
-            // checker's own alias registry could expand it).
-            ExprKind::TypeApply { name, args } if self.is_generic_alias(name) => {
-                self.apply_generic_alias(name, args, scope)
-            }
             ExprKind::TypeApply { name, args } => self.type_value(name, args, scope),
             ExprKind::TupleLit(elems) => Ok(CtValue::Tuple(self.eval_all(elems, scope)?)),
             ExprKind::ListLit(elems) => Ok(CtValue::List(self.eval_all(elems, scope)?)),
@@ -149,20 +143,6 @@ impl Elab<'_> {
                 {
                     let ty = self.param_arg_type(&ParamArg::Value((**index).clone()), scope)?;
                     return Ok(CtValue::Bool(self.conformance.trivially(kind, &ty)));
-                }
-                // A generic-alias application whose single non-scalar bracket
-                // argument parses as indexing (`MyPred[Plain]`), or a
-                // multi-argument application (`MyPred[A, B]`, a tuple index).
-                if let ExprKind::Identifier(name) = &object.kind
-                    && self.is_generic_alias(name)
-                {
-                    let args: Vec<ParamArg> = match &index.kind {
-                        ExprKind::TupleLit(elements) => {
-                            elements.iter().cloned().map(ParamArg::Value).collect()
-                        }
-                        _ => vec![ParamArg::Value((**index).clone())],
-                    };
-                    return self.apply_generic_alias(name, &args, scope);
                 }
                 // A struct application whose single non-scalar bracket
                 // argument parses as indexing (`AHasher[SIMD[DType.uint64,
@@ -725,31 +705,22 @@ impl Elab<'_> {
                     .map(CtValue::Type)
             }
             ExprKind::MultiIndex { object, args }
-                if let Some(params) = self.keyword_application_params(object, scope) =>
-            {
-                let values = self.bind_subscript_arguments(&params, args, scope)?;
-                let unapplied = || {
-                    ComptimeError::NotComptime(
-                        "a keyword application of no parameterized declaration".to_string(),
-                    )
-                };
                 if let ExprKind::Member {
                     object: base,
                     field,
                 } = &object.kind
-                {
-                    if let Some(name) = self.generator_base(base, scope) {
-                        return self.generator_member(name, field, &values);
-                    }
-                    let CtValue::Type(ty) = self.eval(base, scope)? else {
-                        return Err(unapplied());
-                    };
-                    return self.associated_value_at(&ty, field, &values);
+                    && let Some(params) = self.member_application_params(base, field, scope) =>
+            {
+                let values = self.bind_subscript_arguments(&params, args, scope)?;
+                if let Some(name) = self.generator_base(base, scope) {
+                    return self.generator_member(name, field, &values);
                 }
-                let ExprKind::Identifier(name) = &object.kind else {
-                    return Err(unapplied());
+                let CtValue::Type(ty) = self.eval(base, scope)? else {
+                    return Err(ComptimeError::NotComptime(
+                        "a keyword application of no parameterized declaration".to_string(),
+                    ));
                 };
-                self.apply_generic_alias_values(name, values)
+                self.associated_value_at(&ty, field, &values)
             }
             _ => Err(ComptimeError::NotComptime(
                 "unsupported compile-time expression".to_string(),
@@ -799,82 +770,32 @@ impl Elab<'_> {
         }
     }
 
-    /// Evaluate arguments and materialize each back to a scope-free literal
-    /// expression (the body of a synthesized CTFE entry).
-    /// Apply a module-scope generic comptime alias: bind each argument by
-    /// position and evaluate the body against the module-constant environment
-    /// (the alias sees module scope, not the applier's locals). Arguments
-    /// evaluate as compile-time values, falling back to type resolution for a
-    /// bare type argument.
-    fn apply_generic_alias(
+    /// The parameters of the parameterized value member `base.field` of
+    /// one of the program's own structs, which a multi-argument subscript
+    /// applies. `None` for any other member.
+    fn member_application_params(
         &self,
-        name: &str,
-        args: &[ParamArg],
-        scope: &ConstEnv<'_>,
-    ) -> Result<CtValue, ComptimeError> {
-        let mut values = Vec::with_capacity(args.len());
-        for argument in args {
-            values.push(match argument {
-                // A nested application of a generic alias (`Twice[Twice[5]]`)
-                // parses as a type argument but evaluates as the alias.
-                ParamArg::Type(mojito_ast::ast::Type::Named(alias, alias_args))
-                    if self.is_generic_alias(alias) =>
-                {
-                    self.apply_generic_alias(alias, alias_args, scope)?
-                }
-                ParamArg::Type(annotation) => {
-                    CtValue::Type(self.type_from_anno(annotation, scope)?)
-                }
-                ParamArg::Value(expr) => match self.eval(expr, scope) {
-                    Ok(value) => value,
-                    Err(_) => CtValue::Type(self.param_arg_type(argument, scope)?),
-                },
-                ParamArg::Named { .. } => {
-                    return Err(ComptimeError::NotComptime(
-                        "a generic comptime alias takes positional arguments".to_string(),
-                    ));
-                }
-            });
-        }
-        self.apply_generic_alias_values(name, values)
-    }
-
-    /// The parameters of the declaration a multi-argument subscript
-    /// applies: a generic alias, or one of the program's own structs'
-    /// parameterized value members. `None` for any other subscript.
-    fn keyword_application_params(
-        &self,
-        object: &Expr,
+        base: &Expr,
+        field: &str,
         scope: &ConstEnv<'_>,
     ) -> Option<Vec<TypeParam>> {
-        match &object.kind {
-            ExprKind::Identifier(name) if self.is_generic_alias(name) => {
-                self.generic_alias(name).map(|alias| alias.params)
-            }
-            ExprKind::Member {
-                object: base,
-                field,
-            } => {
-                let ty = match self.generator_base(base, scope) {
-                    Some(name) => Self::generator(name),
-                    None => match self.eval(base, scope).ok()? {
-                        CtValue::Type(ty) => ty,
-                        _ => return None,
-                    },
-                };
-                let TyKind::Struct(name, _) = ty.kind() else {
-                    return None;
-                };
-                let Some(StructView::Own(info)) = self.ct_struct(name) else {
-                    return None;
-                };
-                info.associated
-                    .iter()
-                    .find(|member| member.name == *field && !member.params.is_empty())
-                    .map(|member| member.params.clone())
-            }
-            _ => None,
-        }
+        let ty = match self.generator_base(base, scope) {
+            Some(name) => Self::generator(name),
+            None => match self.eval(base, scope).ok()? {
+                CtValue::Type(ty) => ty,
+                _ => return None,
+            },
+        };
+        let TyKind::Struct(name, _) = ty.kind() else {
+            return None;
+        };
+        let Some(StructView::Own(info)) = self.ct_struct(name) else {
+            return None;
+        };
+        info.associated
+            .iter()
+            .find(|member| member.name == *field && !member.params.is_empty())
+            .map(|member| member.params.clone())
     }
 
     /// The values `args` bind to `params`, positional arguments in order
@@ -928,39 +849,6 @@ impl Elab<'_> {
             })
     }
 
-    /// The value-level core of [`Self::apply_generic_alias`], shared with the
-    /// `TypeList` `any`/`all` per-element predicate evaluation.
-    fn apply_generic_alias_values(
-        &self,
-        name: &str,
-        values: Vec<CtValue>,
-    ) -> Result<CtValue, ComptimeError> {
-        let alias = self.generic_alias(name).ok_or_else(|| {
-            ComptimeError::NotComptime(format!("`{name}` is not a generic comptime alias"))
-        })?;
-        // A pack binds as the list the check builds; the elaborator folds
-        // the application.
-        if alias.params.iter().any(|param| param.name.starts_with('*')) {
-            return Err(not_evaluated_here(&format!(
-                "an application of the variadic alias '{name}'"
-            )));
-        }
-        if values.len() != alias.params.len() {
-            return Err(ComptimeError::Arity(format!(
-                "{name}[...] takes exactly {} argument(s)",
-                alias.params.len()
-            )));
-        }
-        let mut frame = self.top_consts.borrow().clone();
-        frame.extend(self.checked_constants.borrow().clone());
-        let mut env = ConstEnv::over(frame, self.installed);
-        for (param, value) in alias.params.iter().zip(values) {
-            env.insert(param.name.clone(), value);
-        }
-        self.check_where_clauses(name, &alias.where_clauses, &env)?;
-        self.eval(&alias.body, &env)
-    }
-
     /// Require each `where` clause of the parameterized declaration `name`
     /// to hold under its application's bindings `env`, as the check
     /// requires of a runtime application: `cond` or `(cond, "message")`.
@@ -997,8 +885,8 @@ impl Elab<'_> {
     }
 
     /// Evaluate a member call on a compile-time `TypeList` value:
-    /// `any`/`all` (per-element predicates: `IsTrivially`* or a one-parameter
-    /// Bool-bodied comptime alias), `all_conforms_to`, and `contains`.
+    /// `any`/`all` (per-element `IsTrivially`* predicates; an alias
+    /// predicate is the check's), `all_conforms_to`, and `contains`.
     pub(super) fn eval_typelist_method(
         &self,
         receiver: &CtValue,
@@ -1049,12 +937,6 @@ impl Elab<'_> {
                         mojito_types::types::trivial_predicate_name(&predicate)
                     {
                         self.conformance.trivially(kind, ty)
-                    } else if self.is_generic_alias(&predicate) {
-                        self.apply_generic_alias_values(
-                            &predicate,
-                            vec![CtValue::Type(ty.clone())],
-                        )?
-                        .as_bool("TypeList predicate")?
                     } else {
                         return Err(ComptimeError::NotComptime(format!(
                             "TypeList.{field} requires an IsTrivially* predicate or a \

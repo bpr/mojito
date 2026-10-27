@@ -29,7 +29,7 @@ impl Checker {
 
     /// Bind the local `comptime name = value` as a type alias of `ty`: the
     /// name denotes the type wherever a type is read, and a call of it
-    /// constructs `value` ([`Self::infer_local_alias_read`]).
+    /// constructs `value` ([`Self::infer_type_alias_read`]).
     pub(super) fn bind_local_type_alias(
         &mut self,
         name: &str,
@@ -48,7 +48,7 @@ impl Checker {
         Ok(())
     }
 
-    /// Type an expression headed by a local type alias as the same
+    /// Type an expression headed by a local or module type alias as the same
     /// expression over the alias's parameter expression, as upstream's name
     /// lookup reads the alias as its value. A call constructs the type: the
     /// alias's own application applied to the call's arguments (`S(2)` over
@@ -57,16 +57,13 @@ impl Checker {
     /// of the type it names. A static call, a member read, or an applied
     /// member through the alias is the type's (`Q.make()` over `comptime Q =
     /// P` is `P.make()`). The checked arena hands HIR the spelling in the
-    /// expression's place. `None` when no local type alias heads `expression`.
-    pub(super) fn infer_local_alias_read(
-        &self,
-        expression: &Expr,
-    ) -> Option<Result<Ty, TypeError>> {
+    /// expression's place. `None` when no type alias heads `expression`.
+    pub(super) fn infer_type_alias_read(&self, expression: &Expr) -> Option<Result<Ty, TypeError>> {
         let receiver = |object: &Expr| {
             let ExprKind::Identifier(name) = &object.kind else {
                 return None;
             };
-            let value = self.local_type_alias(name)?.1;
+            let value = self.type_alias_read(name)?.1;
             let mut receiver = value.clone();
             receiver.source.clone_from(&expression.source);
             // Ordinal 0 is the spelled expression, 1 an applied member's
@@ -87,7 +84,7 @@ impl Checker {
                 args,
                 kwargs,
             } if param_args.is_empty() => {
-                return self.local_type_alias(name).map(|(ty, value)| {
+                return self.type_alias_read(name).map(|(ty, value)| {
                     self.alias_construction(expression, ty, value, args, kwargs)
                         .and_then(|construction| self.infer_spelled(expression, construction))
                 });
@@ -171,26 +168,36 @@ impl Checker {
         }
     }
 
-    /// The type the local type alias `name` names, and the parameter
-    /// expression it was bound to; `None` when `name` names no local type
-    /// alias or a binding shadows it.
-    fn local_type_alias(&self, name: &str) -> Option<(&Ty, &Expr)> {
+    /// The type the type alias `name` names, and the parameter expression
+    /// it was bound to: a local alias, or else a zero-parameter module
+    /// alias of a type. `None` when `name` names neither, or a binding or a
+    /// type parameter shadows it.
+    fn type_alias_read(&self, name: &str) -> Option<(&Ty, &Expr)> {
         if self.lookup(name).is_some() {
             return None;
         }
-        let scope = self
+        let Some(scope) = self
             .local_type_aliases
             .iter()
-            .rposition(|scope| scope.contains_key(name))?;
+            .rposition(|scope| scope.contains_key(name))
+        else {
+            return self
+                .comptime_aliases
+                .get(name)
+                .filter(|alias| alias.decls.is_empty())
+                .and_then(|alias| match &alias.body {
+                    AliasBody::Type(ty) => Some((ty, &alias.value)),
+                    AliasBody::Predicate(_) | AliasBody::Value(_) => None,
+                });
+        };
         Some((
             self.local_type_aliases[scope].get(name)?,
             self.local_type_alias_values[scope].get(name)?,
         ))
     }
 
-    /// The construction a call of a local type alias of `ty`, bound to
-    /// `value`, spells with the call's arguments
-    /// ([`Self::infer_local_alias_read`]).
+    /// The construction a call of a type alias of `ty`, bound to `value`,
+    /// spells with the call's arguments ([`Self::infer_type_alias_read`]).
     fn alias_construction(
         &self,
         expression: &Expr,

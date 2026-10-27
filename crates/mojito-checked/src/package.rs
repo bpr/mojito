@@ -235,12 +235,11 @@ pub enum InterfaceTable {
     /// A module constant as the build's comptime elaboration resolved it.
     Elaborated,
     /// The module scope's compile-time facts, each under its binding's
-    /// name: a bound dtype, a lifted constant's application, a kept
-    /// compile-time value, and a type alias.
+    /// name: a bound dtype, a lifted constant's application, and a kept
+    /// compile-time value.
     ComptimeDtypes,
     ComptimeParameters,
     ComptimeValues,
-    TypeAliases,
     /// The `SIMDLength` binders a declaration owns, under the owner.
     SimdLengthBinders,
 }
@@ -268,7 +267,6 @@ impl InterfaceTable {
         Self::ComptimeDtypes,
         Self::ComptimeParameters,
         Self::ComptimeValues,
-        Self::TypeAliases,
         Self::SimdLengthBinders,
     ];
 
@@ -312,6 +310,10 @@ pub struct LoweredDeclaration {
     /// when it is one: the constant's one value, which the check's integer
     /// row and the elaboration's value join back from.
     pub constant: Option<IntLiteral>,
+    /// The source spelling of the type the declaration's own module type
+    /// alias names, when it is one, which an importer's declaration
+    /// symbols spell the alias as.
+    pub type_alias: Option<mojito_ast::ast::Type>,
     /// The declaration's name, restored from its row.
     #[serde(skip)]
     pub name: String,
@@ -340,6 +342,11 @@ impl LoweredDeclaration {
     /// The exact value of the module integer constant `name`.
     pub fn constant(&self, name: &str) -> Option<&IntLiteral> {
         self.constant.as_ref().filter(|_| name == self.name)
+    }
+
+    /// The spelling of the type the module type alias `name` names.
+    pub fn type_alias(&self, name: &str) -> Option<&mojito_ast::ast::Type> {
+        self.type_alias.as_ref().filter(|_| name == self.name)
     }
 
     /// Refuse a record of the declaration `name` whose names and masks
@@ -1179,6 +1186,16 @@ impl PackageScope {
         self.lowered(entry)?.constant(name).cloned()
     }
 
+    /// The spelling of the type the reached library type alias `name`
+    /// names, held once in its declaration's lowered part.
+    pub fn type_alias(&self, name: &str) -> Option<mojito_ast::ast::Type> {
+        let entry = self.package.owning(name)?;
+        if !self.reaches(entry) {
+            return None;
+        }
+        self.lowered(entry)?.type_alias(name).cloned()
+    }
+
     /// The lowered part of the declaration at `entry`, noting a record
     /// that does not decode.
     fn lowered(&self, entry: usize) -> Option<&LoweredDeclaration> {
@@ -1373,6 +1390,9 @@ impl OverloadLookup for ProgramOverloads {
 #[derive(Debug, Clone, Default)]
 pub struct ProgramConstants {
     own: HashMap<String, IntLiteral>,
+    /// The source spelling of the type each of the program's own module
+    /// type aliases names.
+    type_aliases: HashMap<String, mojito_ast::ast::Type>,
     package: Option<PackageScope>,
 }
 
@@ -1382,6 +1402,7 @@ impl ProgramConstants {
     pub fn importing(package: Option<PackageScope>) -> Self {
         Self {
             own: HashMap::new(),
+            type_aliases: HashMap::new(),
             package,
         }
     }
@@ -1403,6 +1424,36 @@ impl ProgramConstants {
             .get(name)
             .cloned()
             .or_else(|| self.package.as_ref()?.constant(name))
+    }
+
+    /// Record the source spelling of the type the own module type alias
+    /// `name` names.
+    pub fn declare_type_alias(&mut self, name: String, spelling: mojito_ast::ast::Type) {
+        self.type_aliases.insert(name, spelling);
+    }
+
+    /// The own module type aliases' spellings, sorted by name.
+    pub fn own_type_aliases(&self) -> Vec<(String, mojito_ast::ast::Type)> {
+        let mut aliases: Vec<_> = self
+            .type_aliases
+            .iter()
+            .map(|(name, spelling)| (name.clone(), spelling.clone()))
+            .collect();
+        aliases.sort_by(|left, right| left.0.cmp(&right.0));
+        aliases
+    }
+}
+
+impl mojito_symbol::symbol::ModuleNames for ProgramConstants {
+    fn constant(&self, name: &str) -> Option<IntLiteral> {
+        self.get(name)
+    }
+
+    fn type_alias(&self, name: &str) -> Option<mojito_ast::ast::Type> {
+        self.type_aliases
+            .get(name)
+            .cloned()
+            .or_else(|| self.package.as_ref()?.type_alias(name))
     }
 }
 
@@ -1545,6 +1596,28 @@ impl DeclarationRecords {
         }
         if lowered.constant.replace(value).is_some() {
             return Err(format!("constant `{name}` is placed twice"));
+        }
+        Ok(())
+    }
+
+    /// Put the spelling of the type the module type alias `name` names in
+    /// the record of the declaration it is.
+    ///
+    /// # Errors
+    ///
+    /// No library declaration owns `name`, the declaration owning it is
+    /// not `name` itself, or its record already holds an alias.
+    pub fn place_type_alias(
+        &mut self,
+        name: &str,
+        spelling: mojito_ast::ast::Type,
+    ) -> Result<(), String> {
+        let lowered = &mut self.record_of(name)?.lowered;
+        if lowered.name != name {
+            return Err(format!("type alias `{name}` is not its declaration's own"));
+        }
+        if lowered.type_alias.replace(spelling).is_some() {
+            return Err(format!("type alias `{name}` is placed twice"));
         }
         Ok(())
     }

@@ -3530,10 +3530,6 @@ impl Checker {
             self.local_type_aliases
                 .iter()
                 .rposition(|scope| scope.contains_key(name))
-                .or_else(|| {
-                    self.installs(interface::Table::TypeAliases, name)
-                        .then_some(0)
-                })
                 .map(|scope| (1u8, scope))
                 .or_else(|| {
                     self.tparams
@@ -4040,7 +4036,6 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
-            .or_else(|| self.installed_type_alias(name))
             .or_else(|| self.tparams.iter().rev().find_map(|scope| scope.get(name)))
             .cloned()
     }

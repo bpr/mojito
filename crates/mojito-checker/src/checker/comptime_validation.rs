@@ -187,7 +187,7 @@ pub(super) fn kgen_string_runtime_read() -> TypeError {
 pub(super) fn applicable_functions(
     stmts: &[Stmt],
     overloads: &impl mojito_symbol::symbol::OverloadLookup,
-    constants: &dyn Fn(&str) -> Option<mojito_common::literal::IntLiteral>,
+    constants: &dyn mojito_symbol::symbol::ModuleNames,
 ) -> HashMap<String, Vec<ApplicableFunction>> {
     let mut functions = HashMap::<String, Vec<ApplicableFunction>>::new();
     for statement in stmts {

@@ -76,6 +76,12 @@ impl Checker {
             if !type_params.is_empty() {
                 continue;
             }
+            // A module type alias spells, in every declaration symbol, as
+            // the type it names.
+            if let Some(spelling) = module_alias_spelling(value) {
+                std::sync::Arc::make_mut(&mut self.program_constants)
+                    .declare_type_alias(name.clone(), spelling);
+            }
             match self.closed_module_constant(value) {
                 Some(CtValue::IntLiteral(constant)) => {
                     self.comptimes.insert(name.clone(), constant.clone());
@@ -1619,7 +1625,6 @@ impl Checker {
             .iter()
             .rev()
             .find_map(|scope| scope.get(name))
-            .or_else(|| self.installed_type_alias(name))
         {
             return Ok(self.param_context.type_shape(ty.clone()));
         }
@@ -4467,4 +4472,16 @@ fn simd_construction(
             })
         })?;
     Ok(CtValue::Simd { dtype, lanes })
+}
+
+/// The type a module `comptime` bound to `value` spells, when `value` is
+/// written as a type (`Int`, `SIMD[DType.uint64, 4]`, `AHasher[U256(0)]`, a
+/// KGEN type): the spelling a declaration symbol reads the alias as.
+fn module_alias_spelling(value: &Expr) -> Option<SourceType> {
+    match assoc_body_source_type(value).ok()? {
+        SourceType::SelfType | SourceType::SelfParam(_) | SourceType::IndexedProjection { .. } => {
+            None
+        }
+        spelling => Some(spelling),
+    }
 }

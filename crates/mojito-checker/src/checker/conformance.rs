@@ -64,7 +64,7 @@ impl ConformanceOracle {
         let applicable = super::comptime_validation::applicable_functions(
             stmts,
             &mojito_symbol::symbol::OverloadSets::scan(stmts),
-            &|name| checker.program_constants.get(name),
+            &*checker.program_constants,
         );
         checker.applicable_functions.extend(applicable);
 

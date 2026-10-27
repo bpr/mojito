@@ -20,14 +20,15 @@ impl Checker {
         // they miss falls through to the package's.
         std::sync::Arc::make_mut(&mut self.overload_sets).scan_more(stmts);
         self.default_wrappers = self.plan_default_wrappers(stmts)?;
-        self.method_binder_owners =
-            mojito_symbol::symbol::MethodBinderOwners::scan(stmts, &*self.overload_sets, &|name| {
-                self.program_constants.get(name)
-            });
+        self.method_binder_owners = mojito_symbol::symbol::MethodBinderOwners::scan(
+            stmts,
+            &*self.overload_sets,
+            &*self.program_constants,
+        );
         let applicable = super::comptime_validation::applicable_functions(
             stmts,
             &*self.overload_sets,
-            &|name| self.program_constants.get(name),
+            &*self.program_constants,
         );
         self.applicable_functions.extend(applicable);
         for statement in stmts {
@@ -95,7 +96,27 @@ impl Checker {
         // member types, and registers as soon as they resolve.
         let mut deferred_shells = Vec::new();
         let mut waiting_aliases = Vec::new();
+        let module_constants: HashSet<&str> = stmts
+            .iter()
+            .filter_map(|statement| match &statement.kind {
+                StmtKind::Comptime {
+                    name, type_params, ..
+                } if type_params.is_empty() => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
         for (index, statement) in stmts.iter().enumerate() {
+            // An alias over a module constant that is not itself an alias
+            // (`comptime V4 = SIMD[D, 4]` over `comptime D = DType.int16`)
+            // registers after the constants pass below folds it.
+            if let StmtKind::Comptime { value, .. } = &statement.kind
+                && names_read(value).iter().any(|read| {
+                    module_constants.contains(read.as_str())
+                        && !self.comptime_aliases.contains_key(read)
+                })
+            {
+                continue;
+            }
             // A type-parameter default may still spell the alias it names
             // (`H: Hasher = default_hasher`): registering module-level
             // aliases in source order beside the shells lets a shell resolve
@@ -577,10 +598,20 @@ impl Checker {
                 value.kind,
                 ExprKind::Identifier(_) | ExprKind::TypeApply { .. } | ExprKind::TypeValue(_)
             )
+            && !self.denotes_type(value)
         {
             return Ok(());
         }
         self.check_generic_comptime_alias(name, type_params, ty.as_ref(), where_clauses, value)
+    }
+
+    /// Whether the parameter expression `value` spells a type the check
+    /// resolves (a KGEN type, `S.Assoc`, `List[T]`): a
+    /// module `comptime` bound to it is a type alias. A value spelled the
+    /// same way (`DType.int16`) is not.
+    fn denotes_type(&self, value: &Expr) -> bool {
+        super::constraints::assoc_body_source_type(value)
+            .is_ok_and(|source| self.ty_from_anno(&source).is_ok())
     }
 
     /// Check the statements of a block in the current scope. `ret` is the
@@ -2658,7 +2689,7 @@ impl Checker {
                 type_params,
                 params,
                 &*self.overload_sets,
-                &|name| self.program_constants.get(name),
+                &*self.program_constants,
             )
         } else {
             name.clone()
@@ -3624,8 +3655,14 @@ impl Checker {
                 },
             },
         };
-        self.comptime_aliases
-            .insert(name.to_string(), ComptimeAlias { decls, body });
+        self.comptime_aliases.insert(
+            name.to_string(),
+            ComptimeAlias {
+                decls,
+                body,
+                value: value.clone(),
+            },
+        );
         Ok(())
     }
 }

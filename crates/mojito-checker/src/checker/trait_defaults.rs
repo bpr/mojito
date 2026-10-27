@@ -16,7 +16,6 @@ use mojito_ast::ast::{
 use mojito_ast::visit::{MutVisitor, walk_block_mut, walk_stmt_mut};
 use mojito_checked::checked::{CheckedDefaultWrapper, CheckedTraitMember, SignatureParam};
 use mojito_common::error::TypeError;
-use mojito_common::literal::IntLiteral;
 use mojito_common::token::{Span, SyntaxId};
 use mojito_symbol::symbol::OverloadLookup;
 use mojito_symbol::symbol::SignatureKey;
@@ -206,7 +205,7 @@ pub(super) fn default_shapes(
     trait_name: &str,
     methods: &[TraitMethod],
     sets: &impl OverloadLookup,
-    constants: &dyn Fn(&str) -> Option<IntLiteral>,
+    constants: &dyn mojito_symbol::symbol::ModuleNames,
 ) -> Vec<DefaultShape> {
     methods
         .iter()
@@ -400,9 +399,12 @@ impl Checker {
                     name.as_str(),
                     (
                         refines.clone(),
-                        default_shapes(name, methods, &*self.overload_sets, &|name| {
-                            self.program_constants.get(name)
-                        }),
+                        default_shapes(
+                            name,
+                            methods,
+                            &*self.overload_sets,
+                            &*self.program_constants,
+                        ),
                     ),
                 )),
                 _ => None,
@@ -497,9 +499,8 @@ impl Checker {
                 continue;
             };
             for (index, method) in methods.iter().enumerate() {
-                let symbol = member_symbol(name, method, &*self.overload_sets, &|name| {
-                    self.program_constants.get(name)
-                });
+                let symbol =
+                    member_symbol(name, method, &*self.overload_sets, &*self.program_constants);
                 let Some(declaration) = trait_member_declaration(stmt, index, symbol.clone())
                 else {
                     continue;
@@ -871,7 +872,7 @@ fn member_symbol(
     trait_name: &str,
     method: &TraitMethod,
     sets: &impl OverloadLookup,
-    constants: &dyn Fn(&str) -> Option<IntLiteral>,
+    constants: &dyn mojito_symbol::symbol::ModuleNames,
 ) -> String {
     mojito_symbol::symbol::lowered_method_name(
         &format!(

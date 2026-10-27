@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A module `comptime` type alias and a generic alias are now held only by
+  the check's alias table, as the pin holds an alias only as its
+  declaration (R1382), where the elaborator substituted a module type
+  alias into every later statement, applied a generic alias itself, and
+  exported both in a package build. A static call or member read through a
+  module type alias (`A.make()` over `comptime A = Q`, `W3.total()` over
+  `comptime W3 = W[3]`, `T.__len__()` over a `Tuple` alias) now runs
+  (R603, R338), an
+  importer reads a package's aliases from the check's rows, and a
+  declaration symbol spells an alias-typed parameter as the type it names,
+  so overloads over `U256` or `c_int` resolve. The package format is 105.
+
 - A module `comptime` value constant is now bound by the check, which
   builds every one with the one parameter-expression builder, as the pin
   resolves every module `comptime` (R1381), where the elaborator folded it

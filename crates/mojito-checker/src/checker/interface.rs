@@ -15,7 +15,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_ast::ast::TypeParam;
 use mojito_checked::checked::CheckedConst;
 use mojito_checked::declaration::{FunctionDeclaration, StructDeclaration};
 pub(super) use mojito_checked::package::InterfaceTable as Table;
@@ -73,6 +72,9 @@ pub struct InterfaceExport {
     transfer_effects: Vec<(String, Vec<mojito_checked::checked::TransferEffect>)>,
     /// Their call-through effects, likewise.
     call_through_effects: Vec<(String, Vec<mojito_checked::checked::CallThroughEffect>)>,
+    /// The spelling of the type each library module type alias names,
+    /// which its lowered part holds for an importer's symbols to spell.
+    type_aliases: Vec<(String, SourceType)>,
 }
 
 impl std::fmt::Debug for InterfaceExport {
@@ -148,6 +150,11 @@ impl InterfaceExport {
             constants
                 .into_iter()
                 .filter_map(|(name, value)| records.place_constant(&name, value).err()),
+        );
+        unplaced.extend(
+            self.type_aliases
+                .into_iter()
+                .filter_map(|(name, spelling)| records.place_type_alias(&name, spelling).err()),
         );
         unplaced.extend(
             self.call_through_effects
@@ -275,6 +282,21 @@ impl InstalledInterfaces {
             .binary_search_by(|(constant, _)| constant.as_str().cmp(name))
             .ok()
             .map(|position| &constants[position].1)
+    }
+
+    /// The type the reached module's zero-parameter type alias `name`
+    /// names, read off the check's `Aliases` row, decoding its
+    /// declaration's record on first use.
+    pub fn type_alias(&self, name: &str) -> Option<&Ty> {
+        let aliases = &self.declaration(Table::Aliases, name)?.aliases;
+        let position = aliases
+            .binary_search_by(|(alias, _)| alias.as_str().cmp(name))
+            .ok()?;
+        let alias = &aliases[position].1;
+        match &alias.body {
+            AliasBody::Type(ty) if alias.decls.is_empty() => Some(ty),
+            _ => None,
+        }
     }
 
     /// The parents the reached trait `name` declares, decoding its
@@ -477,16 +499,15 @@ impl InstalledInterfaces {
     }
 }
 
-/// A module `comptime` declaration as the build's comptime elaboration
-/// resolved it, which an importer's elaboration reads instead of folding the
-/// declaration again.
+/// A module `comptime` value constant as the build's comptime elaboration
+/// folded it, which an importer's elaboration reads instead of folding it.
+///
+/// It is a closed constant's folded value, or the marker of one the check
+/// binds. A module alias, generic or not, travels only as the check's
+/// `Aliases` row.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub enum ElaboratedConstant {
-    /// A closed constant's folded value, or the marker of one the check
-    /// binds.
     Value(CtValue),
-    /// A generic alias: its parameters, its `where` clauses, and its body.
-    Alias(Vec<TypeParam>, Vec<Expr>, Expr),
 }
 
 /// The elaborated module constants of a package's program, each beside its
@@ -547,8 +568,6 @@ pub(super) struct DeclarationInterface {
     comptime_parameters: Vec<(String, (usize, ParamExpr))>,
     #[serde(with = "keyless")]
     comptime_values: Vec<(String, Expr)>,
-    #[serde(with = "keyless")]
-    type_aliases: Vec<(String, Ty)>,
     /// The `SIMDLength` binders it owns.
     simd_length_binders: Vec<ParamId>,
     /// The structs whose declared parameters, fields, fieldwise
@@ -782,12 +801,6 @@ impl Checker {
             Table::ComptimeValues,
             comptime_values
         );
-        export_module_scope!(
-            self.local_type_aliases,
-            builtin.local_type_aliases,
-            Table::TypeAliases,
-            type_aliases
-        );
         for binder in &self.simd_length_binders {
             if let Some(declaration) =
                 place(&binder.owner, builtin.simd_length_binders.contains(binder))
@@ -842,6 +855,7 @@ impl Checker {
             declaring: modules,
             transfer_effects,
             call_through_effects,
+            type_aliases: self.program_constants.own_type_aliases(),
         })
     }
 
@@ -941,11 +955,6 @@ impl Checker {
         self.installed_fact(Table::ComptimeValues, name, |record| {
             &record.comptime_values
         })
-    }
-
-    /// The type an installed module type alias names.
-    pub(super) fn installed_type_alias(&self, name: &str) -> Option<&Ty> {
-        self.installed_fact(Table::TypeAliases, name, |record| &record.type_aliases)
     }
 
     /// Whether an installed module holds `table`'s `name`, decoding
@@ -1303,7 +1312,7 @@ impl DeclarationInterface {
     }
 
     /// Each column of names the encoded residue leaves to the directory.
-    fn key_columns(&mut self) -> [(KeyColumn, Vec<&mut String>); 20] {
+    fn key_columns(&mut self) -> [(KeyColumn, Vec<&mut String>); 19] {
         fn keys<V>(entries: &mut [(String, V)]) -> Vec<&mut String> {
             entries.iter_mut().map(|(key, _)| key).collect()
         }
@@ -1371,10 +1380,6 @@ impl DeclarationInterface {
                 keys(&mut self.comptime_values),
             ),
             (
-                KeyColumn::Table(Table::TypeAliases),
-                keys(&mut self.type_aliases),
-            ),
-            (
                 KeyColumn::ProjectedStructs,
                 self.projected_structs
                     .iter_mut()
@@ -1408,7 +1413,6 @@ impl DeclarationInterface {
         by_name(&mut self.comptime_dtypes);
         by_name(&mut self.comptime_parameters);
         by_name(&mut self.comptime_values);
-        by_name(&mut self.type_aliases);
         self.simd_length_binders.sort();
         self.bindings
             .sort_by(|left, right| left.name.cmp(&right.name));

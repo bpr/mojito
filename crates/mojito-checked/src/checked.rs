@@ -6271,7 +6271,7 @@ impl<'a> ArenaBuilder<'a> {
             type_params,
             params,
             signatures.overloads,
-            &|name| signatures.constants.get(name),
+            signatures.constants,
         )
     }
 
@@ -6290,7 +6290,7 @@ impl<'a> ArenaBuilder<'a> {
             type_params,
             mojito_symbol::symbol::MethodShape::of(method),
             signatures.overloads,
-            &|name| signatures.constants.get(name),
+            signatures.constants,
         )
     }
 }

@@ -34,6 +34,28 @@ use mojito_types::ct::{CtLane, CtValue};
 use mojito_types::types::{FuncTy, Ty, TyArg, canonical_simd_ty, default_literal};
 use sha2::{Digest, Sha256};
 
+/// The module names a declaration's parameter annotations read, which its
+/// lowered symbol spells as what they name: an integer constant as its
+/// value, and a type alias as the type it names.
+pub trait ModuleNames {
+    /// The value of the module integer constant `name`.
+    fn constant(&self, name: &str) -> Option<IntLiteral>;
+
+    /// The source spelling of the type the module type alias `name` names.
+    fn type_alias(&self, _name: &str) -> Option<Type> {
+        None
+    }
+}
+
+/// The [`ModuleNames`] of a scope that declares none.
+pub struct NoModuleNames;
+
+impl ModuleNames for NoModuleNames {
+    fn constant(&self, _name: &str) -> Option<IntLiteral> {
+        None
+    }
+}
+
 /// The lowered symbol of `std._intrinsics._pow_int`.
 ///
 /// It is the Mojo body both backends call for `**` on `Int`/`UInt`.
@@ -311,7 +333,12 @@ pub struct TypeKey(String);
 impl TypeKey {
     /// Mangle a declared parameter annotation (the MIR/VM definition side).
     pub fn from_ast(ty: &Type) -> Self {
-        Self(sanitize(&ast_raw(ty, &|_| None, &HashMap::new(), None)))
+        Self(sanitize(&ast_raw(
+            ty,
+            &NoModuleNames,
+            &HashMap::new(),
+            None,
+        )))
     }
 
     /// Mangle a declared parameter annotation in the scope of the
@@ -323,7 +350,7 @@ impl TypeKey {
     pub fn from_ast_in_scope(ty: &Type, type_params: &[TypeParam]) -> Self {
         Self(sanitize(&ast_raw(
             ty,
-            &|_| None,
+            &NoModuleNames,
             &binder_spellings(type_params),
             None,
         )))
@@ -962,7 +989,7 @@ pub fn lowered_def_name<P: AnnotatedParam>(
     type_params: &[TypeParam],
     params: &[P],
     sets: &impl OverloadLookup,
-    constants: &dyn Fn(&str) -> Option<IntLiteral>,
+    constants: &dyn ModuleNames,
 ) -> String {
     if sets.function_is_overloaded(name, params.len()) {
         function_symbol(
@@ -1031,7 +1058,7 @@ pub fn lowered_method_name<P: AnnotatedParam>(
     type_params: &[TypeParam],
     method: MethodShape<'_, P>,
     sets: &impl OverloadLookup,
-    constants: &dyn Fn(&str) -> Option<IntLiteral>,
+    constants: &dyn ModuleNames,
 ) -> String {
     let MethodShape {
         type_params: method_type_params,
@@ -1141,11 +1168,7 @@ pub struct MethodBinderOwners {
 }
 
 impl MethodBinderOwners {
-    pub fn scan(
-        program: &[Stmt],
-        sets: &impl OverloadLookup,
-        constants: &dyn Fn(&str) -> Option<IntLiteral>,
-    ) -> Self {
+    pub fn scan(program: &[Stmt], sets: &impl OverloadLookup, constants: &dyn ModuleNames) -> Self {
         let overloaded = program
             .iter()
             .filter_map(|statement| match &statement.kind {
@@ -1606,11 +1629,20 @@ fn encode_identifier(name: &str) -> String {
 
 fn ast_raw(
     ty: &Type,
-    comptimes: &dyn Fn(&str) -> Option<IntLiteral>,
+    comptimes: &dyn ModuleNames,
     type_bounds: &HashMap<String, BinderSpelling>,
     self_spelling: Option<&str>,
 ) -> String {
     let raw = match ty {
+        // A module type alias spells as the type it names, as the checker's
+        // resolved type does; a binder of the same name shadows it.
+        Type::Named(name, args)
+            if args.is_empty()
+                && !type_bounds.contains_key(name)
+                && let Some(aliased) = comptimes.type_alias(name) =>
+        {
+            return ast_raw(&aliased, comptimes, type_bounds, self_spelling);
+        }
         Type::Int => "Int".to_string(),
         Type::UInt => "UInt".to_string(),
         Type::Bool => "Bool".to_string(),
@@ -1931,10 +1963,7 @@ fn expr_dtype(expr: &Expr) -> Option<mojito_ast::ast::Dtype> {
 }
 
 /// A comptime-evaluable SIMD width annotation argument.
-fn param_arg_width(
-    argument: &ParamArg,
-    comptimes: &dyn Fn(&str) -> Option<IntLiteral>,
-) -> Option<i64> {
+fn param_arg_width(argument: &ParamArg, comptimes: &dyn ModuleNames) -> Option<i64> {
     let ParamArg::Value(expr) = argument else {
         return None;
     };
@@ -1952,15 +1981,12 @@ fn simd_annotation_raw(dtype: mojito_ast::ast::Dtype, width: i64) -> String {
 /// folds it (`fold_infix` over `IntLiteral`s) over the module constants'
 /// values the check's fold gave them; `None` for anything the check would
 /// not fold to an integer.
-fn eval_comptime_int(
-    expr: &Expr,
-    comptimes: &dyn Fn(&str) -> Option<IntLiteral>,
-) -> Option<IntLiteral> {
+fn eval_comptime_int(expr: &Expr, comptimes: &dyn ModuleNames) -> Option<IntLiteral> {
     use mojito_ast::ast::PrefixOp;
     use mojito_types::param_expr::fold::fold_infix;
     match &expr.kind {
         ExprKind::Int(value) => Some(value.clone()),
-        ExprKind::Identifier(name) => comptimes(name),
+        ExprKind::Identifier(name) => comptimes.constant(name),
         ExprKind::Prefix(PrefixOp::Neg, value) => Some(eval_comptime_int(value, comptimes)?.neg()),
         ExprKind::Infix(op, left, right) => {
             let (left, right) = (
@@ -2125,7 +2151,7 @@ fn syntactic_origin_argument(
 /// as a checked `CtValue` displays). A non-literal expression degrades to a
 /// stable placeholder — good enough because the name only needs to be
 /// deterministic.
-fn value_expr_raw(expr: &Expr, comptimes: &dyn Fn(&str) -> Option<IntLiteral>) -> String {
+fn value_expr_raw(expr: &Expr, comptimes: &dyn ModuleNames) -> String {
     if let Some(value) = eval_comptime_int(expr, comptimes) {
         return value.to_string();
     }
@@ -2193,7 +2219,7 @@ fn keep_overloaded(counts: HashMap<String, Vec<usize>>) -> HashMap<String, HashS
 fn signature_from_ast<P: AnnotatedParam>(
     params: &[P],
     type_params: &[TypeParam],
-    comptimes: &dyn Fn(&str) -> Option<IntLiteral>,
+    comptimes: &dyn ModuleNames,
     self_spelling: Option<&str>,
 ) -> SignatureKey {
     let type_bounds = binder_spellings(type_params);

@@ -7,27 +7,6 @@ use mojito_ast::visit::{MutVisitor, walk_block_mut};
 use mojito_common::error::TypeError;
 use mojito_types::types::TyKind;
 
-/// The type handles a module block's `comptime T = ...` statements bound
-/// so far: each handle, and its source spelling. A module block also reads
-/// the type handles of the package its program imports, on first lookup. A
-/// body's type alias is the check's to bind.
-#[derive(Default)]
-pub(super) struct TypeAliases<'a> {
-    values: HashMap<String, CtValue>,
-    sources: HashMap<String, Type>,
-    installed: Option<&'a InstalledInterfaces>,
-}
-
-impl<'a> TypeAliases<'a> {
-    /// A module block's aliases, over the package `installed` holds.
-    pub(super) fn importing(installed: Option<&'a InstalledInterfaces>) -> Self {
-        Self {
-            installed,
-            ..Self::default()
-        }
-    }
-}
-
 impl Elab<'_> {
     /// Elaborate a block, resolving `comptime` constructs. `in_fn` is true inside a
     /// function/method body (so a comptime constant there is *not* module-level).
@@ -41,36 +20,25 @@ impl Elab<'_> {
         // block alone ([`Self::keep_template_comptime_binding`]).
         let binders = self.template_binders.borrow().last().cloned();
         let Some(binders) = binders else {
-            return self.block_statements(stmts, env, in_fn, TypeAliases::default());
+            return self.block_statements(stmts, env, in_fn);
         };
         self.template_binders.borrow_mut().push(binders);
-        let block = self.block_statements(stmts, env, in_fn, TypeAliases::default());
+        let block = self.block_statements(stmts, env, in_fn);
         self.template_binders.borrow_mut().pop();
         block
     }
 
-    /// Elaborate the statements of a block, whose type handles `aliases`
-    /// holds already: an importing program's module block starts with its
-    /// package's.
+    /// Elaborate the statements of a block.
     pub(super) fn block_statements(
         &self,
         stmts: &[Stmt],
         env: &mut ConstEnv<'_>,
         in_fn: bool,
-        aliases: TypeAliases<'_>,
     ) -> Result<Vec<Stmt>, ComptimeError> {
         let mut out = Vec::new();
-        // Type handles bound by a module's `comptime T = ...` have no
-        // runtime representation, so every later statement of the block
-        // materializes its uses of the alias — `isa[T]()`, `x: T`, `T()` —
-        // as the bound type.
-        let TypeAliases {
-            values: mut type_aliases,
-            sources: mut source_aliases,
-            installed,
-        } = aliases;
-        let installed_alias = |name: &str| installed_value(installed, name).and_then(type_alias);
-        // The pack elements the template's aliases denote, as written.
+        // The pack elements the template's aliases denote: their source
+        // spellings, and their parameter expressions as written.
+        let mut element_sources: HashMap<String, Type> = HashMap::new();
         let mut element_aliases: HashMap<String, Expr> = HashMap::new();
         for stmt in stmts {
             // `comptime T = Ts[i]` over a template's own type pack is the
@@ -85,7 +53,7 @@ impl Elab<'_> {
                 if let StmtKind::Comptime { value, .. } = &stmt.kind {
                     element_aliases.insert(name.clone(), (*value).clone());
                 }
-                source_aliases.insert(name, element);
+                element_sources.insert(name, element);
                 // The check binds the alias too, so a read of it in an
                 // expression (`F == Int`) is the element it names.
                 out.push(stmt.clone());
@@ -97,38 +65,13 @@ impl Elab<'_> {
             // Runtime uses of the bindings elaborated so far cross explicitly
             // (`materialize[X]()`, `comptime(e)`) or are rejected.
             self.fold_runtime_crossings(&mut out[first_new..], env)?;
-            if !type_aliases.is_empty() || installed.is_some() {
-                let subs: Subs = &|name| {
-                    type_aliases
-                        .get(name)
-                        .cloned()
-                        .or_else(|| installed_alias(name).map(|(value, _)| value))
-                };
-                for statement in &mut out[first_new..] {
-                    *statement = rewrite_stmt_cloned(statement, subs, true);
-                }
-            }
-            if !source_aliases.is_empty() || installed.is_some() {
+            if !element_sources.is_empty() {
                 substitute_type_bindings_in_block(&mut out[first_new..], &|name| {
-                    source_aliases
-                        .get(name)
-                        .cloned()
-                        .or_else(|| installed_alias(name).map(|(_, source)| source))
+                    element_sources.get(name).cloned()
                 });
             }
             if !element_aliases.is_empty() {
                 spell_aliases_in_conditions(&mut out[first_new..], &element_aliases);
-            }
-            if let StmtKind::Comptime {
-                name, type_params, ..
-            } = &stmt.kind
-                && !in_fn
-                && type_params.is_empty()
-                && let Some((value, source)) = env.get(name).and_then(type_alias)
-                && !matches!(&value, CtValue::Type(ty) if self.binds_raw_list(ty))
-            {
-                type_aliases.insert(name.clone(), value);
-                source_aliases.insert(name.clone(), source);
             }
             if let Some(source) = stmt.module.as_deref() {
                 mojito_ast::ast::stamp_source(&mut out[first_new..], source);
@@ -373,9 +316,9 @@ impl Elab<'_> {
         Ok(())
     }
 
-    /// Elaborate a `comptime` declaration: a generic alias registers, a
-    /// binding the check binds is kept as written, and a type or reflection
-    /// handle stays in the environment alone.
+    /// Elaborate a `comptime` declaration: a generic alias, a type alias,
+    /// and a binding the check binds are kept as written, and a body's
+    /// reflection handle stays in the environment alone.
     fn comptime_stmt(
         &self,
         stmt: &Stmt,
@@ -394,21 +337,8 @@ impl Elab<'_> {
         else {
             return Ok(());
         };
+        // A generic alias is the check's alone.
         if !type_params.is_empty() {
-            // A generic alias registers for the checker; record the
-            // module-scope declaration here too so an application in a
-            // later `comptime if` condition can evaluate before the
-            // branches are pruned.
-            if !in_fn {
-                self.generic_aliases.borrow_mut().insert(
-                    name.clone(),
-                    super::GenericAlias {
-                        params: type_params.clone(),
-                        where_clauses: where_clauses.clone(),
-                        body: (*value).clone(),
-                    },
-                );
-            }
             out.push(stmt.clone());
             return Ok(());
         }
@@ -445,11 +375,7 @@ impl Elab<'_> {
             out.push(stmt.clone());
             return Ok(());
         }
-        let evaluated = if in_fn {
-            self.eval(value, env)
-        } else {
-            self.eval_at_module_scope(value, env)
-        };
+        let evaluated = self.eval(value, env);
         // A module constant this evaluator does not fold
         // (`Int32(4)`, `max(3, 4)`) is the parameter expression the
         // check binds, as upstream resolves every module `comptime`.
@@ -478,10 +404,8 @@ impl Elab<'_> {
             v = self.typed_by_annotation(v, annotation, env);
         }
         // A closed scalar or string module constant is the check's
-        // to bind as its parameter expression too; its value stays
-        // only for the alias folds this evaluator still owns.
+        // to bind as its parameter expression too.
         if !in_fn && is_closed_scalar(&v) && check_binds_value(value) {
-            self.checked_constants.borrow_mut().insert(name.clone(), v);
             out.push(stmt.clone());
             return Ok(());
         }
@@ -507,21 +431,14 @@ impl Elab<'_> {
             out.push(stmt.clone());
             return Ok(());
         }
-        // A body's type alias is the check's to bind, as upstream
-        // resolves the alias by name lookup to its parameter value; so
-        // is a reflection handle, and a `TypeList` value, whose
-        // proposition a kept condition reads (`tl.contains[Int]()`).
-        // At module scope, so is a struct application no source
-        // spelling names (over `TypeList.of[Trait=AnyType, Int]`,
-        // whose raw list has none, or `ParameterList.of[4, 5]`,
-        // whose list materializes as a tuple).
+        // A type alias, module or body, is the check's to bind, as
+        // upstream resolves the alias by name lookup to its parameter
+        // value; so is a body's reflection handle, and a body's
+        // `TypeList` value, whose proposition a kept condition reads
+        // (`tl.contains[Int]()`).
         let kept = |value: &CtValue| match value {
-            CtValue::Type(ty) if !in_fn => {
-                matches!(ty.kind(), TyKind::Struct(..))
-                    && (mojito_types::ct::source_type(ty, span).is_none()
-                        || self.binds_raw_list(ty))
-            }
-            CtValue::Type(_) | CtValue::Reflected(_) => in_fn,
+            CtValue::Type(_) => true,
+            CtValue::Reflected(_) => in_fn,
             value => in_fn && value.typelist_elements().is_some(),
         };
         if env.get(name).is_some_and(kept) {
@@ -1293,9 +1210,7 @@ impl Elab<'_> {
     /// Whether a module constant's initializer is an application the check
     /// binds ([`CtMarker::Applied`]): it applies a callable, asks a layout
     /// (`size_of[T]()`), reads an applied constant, or calls a method of a
-    /// value binding (`s.byte_length()`), which the pin's interpreter runs,
-    /// or applies a generic alias over a pack, whose list only the check
-    /// binds.
+    /// value binding (`s.byte_length()`), which the pin's interpreter runs.
     fn applied_initializer(&self, expression: &Expr, env: &ConstEnv<'_>) -> bool {
         self.applies_callable(expression)
             || asks_layout(expression)
@@ -1304,11 +1219,6 @@ impl Elab<'_> {
                 matches!(env.get(name), Some(CtValue::Marker(CtMarker::Applied)))
             })
             || calls_value_method(expression, env)
-            || applies_alias(expression, &|name| {
-                self.generic_alias(name).is_some_and(|alias| {
-                    alias.params.iter().any(|param| param.name.starts_with('*'))
-                })
-            })
     }
 
     /// Whether `expression` reads a `comptime` member of one of the
@@ -1497,25 +1407,6 @@ impl Elab<'_> {
                 .map(|lanes| CtValue::Simd { dtype, lanes })
             })
             .unwrap_or(value)
-    }
-
-    /// `value` evaluated at module scope, where the constants the check
-    /// binds ([`Elab::checked_constants`]) are in scope for the alias folds
-    /// this evaluator still owns, and for the constants built over them.
-    fn eval_at_module_scope(
-        &self,
-        value: &Expr,
-        env: &mut ConstEnv<'_>,
-    ) -> Result<CtValue, ComptimeError> {
-        let checked = self.checked_constants.borrow();
-        for (name, constant) in checked.iter() {
-            env.frame.insert(name.clone(), constant.clone());
-        }
-        let evaluated = self.eval(value, env);
-        for name in checked.keys() {
-            env.frame.remove(name);
-        }
-        evaluated
     }
 }
 
@@ -1869,36 +1760,6 @@ pub(super) fn expression_names_any(expression: &Expr, names: &dyn Fn(&str) -> bo
     finder.found
 }
 
-/// Whether `expression` applies a generic alias `aliases` accepts, in
-/// either spelling the parser gives an application (`A[x]`, `A[x, y]`).
-fn applies_alias(expression: &Expr, aliases: &dyn Fn(&str) -> bool) -> bool {
-    struct Finder<'a> {
-        aliases: &'a dyn Fn(&str) -> bool,
-        found: bool,
-    }
-
-    impl mojito_ast::visit::Visitor for Finder<'_> {
-        fn visit_expr(&mut self, expr: &Expr) {
-            match &expr.kind {
-                ExprKind::TypeApply { name, .. } => self.found |= (self.aliases)(name),
-                ExprKind::Index { object, .. } | ExprKind::MultiIndex { object, .. } => {
-                    if let ExprKind::Identifier(name) = &object.kind {
-                        self.found |= (self.aliases)(name);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    let mut finder = Finder {
-        aliases,
-        found: false,
-    };
-    mojito_ast::visit::walk_expr(&mut finder, expression);
-    finder.found
-}
-
 /// Spell each pack-element alias a kept `comptime if` condition names
 /// (`comptime if T == Int` under `comptime T = Self.Ts[i]`) as the element
 /// it denotes, which the check types with the pack symbolic.
@@ -2172,15 +2033,6 @@ impl Elab<'_> {
                 .collect(),
         )
     }
-}
-
-/// The type alias a `comptime` binding to `value` is: the handle, and its
-/// source spelling, when `value` is a type that has one.
-fn type_alias(value: &CtValue) -> Option<(CtValue, Type)> {
-    let CtValue::Type(ty) = value else {
-        return None;
-    };
-    Some((value.clone(), source_type_from_ty(ty)?))
 }
 
 /// The body of a method of `owner` whose elaboration failed with `error`:
