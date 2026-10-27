@@ -187,7 +187,7 @@ impl<'a> Flatten<'a> {
                 self.expr(
                     kwargs
                         .first()
-                        .expect("checked built-in copy construction has a 'copy=' argument")
+                        .expect("checked built-in copy construction has a keyword argument")
                         .1,
                 ),
             );

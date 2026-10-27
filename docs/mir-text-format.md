@@ -675,6 +675,10 @@ Schema 1.117 adds the dtype `uint`, upstream's `DType.uint`: `UInt` is
 spellings. No older artifact holds the dtype. The package format moves to
 `mojito-package 114`.
 
+The MIR schema is unchanged by the checked `SimdStorage` adjustment, upstream's
+`v._mlir_value` read of a SIMD value's `!kgen.simd` storage, which a packaged
+body may hold (R1391). The package format moves to `mojito-package 115`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

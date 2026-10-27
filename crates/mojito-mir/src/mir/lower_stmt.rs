@@ -591,11 +591,7 @@ impl<'a> Flatten<'a> {
         match (e.op(), e.object()) {
             (CheckedOp::Member { field, .. }, Some(object)) => {
                 let mut p = self.place(object);
-                if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
-                    p.project(Proj::Field(field.clone()), ty);
-                } else {
-                    p.proj.push(Proj::Field(field.clone()));
-                }
+                e.project_member(&mut p, field);
                 p
             }
             // `p[unsafe_offset=i]`: the pointer element place, as `p[i]`.
@@ -1984,11 +1980,7 @@ impl<'a> Flatten<'a> {
                     return None;
                 }
                 let mut p = self.simple_place(object)?;
-                if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
-                    p.project(Proj::Field(field.clone()), ty);
-                } else {
-                    p.proj.push(Proj::Field(field.clone()));
-                }
+                e.project_member(&mut p, field);
                 Some(p)
             }
             (CheckedOp::TypeApply { name, .. }, _) => {
@@ -2028,11 +2020,7 @@ impl<'a> Flatten<'a> {
                     return None;
                 }
                 let mut p = self.pure_field_place(object)?;
-                if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
-                    p.project(Proj::Field(field.clone()), ty);
-                } else {
-                    p.proj.push(Proj::Field(field.clone()));
-                }
+                e.project_member(&mut p, field);
                 Some(p)
             }
             _ => None,
@@ -2067,11 +2055,7 @@ impl<'a> Flatten<'a> {
                     return None;
                 }
                 let mut p = self.try_place(object)?;
-                if let Some(ty) = e.place_ty().or_else(|| e.ty()) {
-                    p.project(Proj::Field(field.clone()), ty);
-                } else {
-                    p.proj.push(Proj::Field(field.clone()));
-                }
+                e.project_member(&mut p, field);
                 Some(p)
             }
             (CheckedOp::Index { .. }, Some(object)) if let Some(index) = e.index() => {

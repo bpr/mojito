@@ -71,6 +71,9 @@ impl<'a> Flatten<'a> {
     /// Read member node `e`, `object.field`.
     pub(super) fn member_expr(&mut self, e: Node<'a>, object: Node<'a>, field: &str) -> Reg {
         let node = e.checked;
+        if e.is_simd_storage() {
+            return self.expr(object);
+        }
         // `v.length` and `v.dtype` on a SIMD value (or `DType.<name>`) are
         // the lane slots: a known one is a constant, and one a generator
         // names is the evaluation of its parameter expression.

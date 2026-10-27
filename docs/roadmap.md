@@ -8490,7 +8490,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: adding upstream's `POPArrayType` member to `_MLIR`
     (`stdlib/std/builtin/variadics.mojo`) is rejected with "only ...
     '__mlir_type[`!kgen.param_list<`, T, `>`]' are accepted"
-    (`checker/type_resolution.rs::mlir_param_list_type`).
+    (`checker/type_resolution.rs::mlir_applied_type`).
+  - Add a `!pop.array<{},{}>` arm to `mlir_applied_type`. Its size slot is
+    `Checker::index_slot`, which `!kgen.simd`'s length shares through
+    `mlir_index_operand`; a `size: __mlir_type.index` binder is read bare,
+    not through `_mlir_value`.
   - The size needs the `Known`/`Expr` shape `SimdWidth` has, substituted
     by the elaborator and refused symbolic by the concrete verifier.
   - Found while landing R1304 (2026-10-23).
@@ -9420,20 +9424,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1391 `__mlir_type` cannot spell `!kgen.simd`, so `SIMD`'s storage
-  field cannot be declared**
-
-  ``__mlir_type[`!kgen.simd<`, Self.length._mlir_value, `, `,
-  Self.dtype._mlir_value, `>`]``, the type of upstream's `SIMD._mlir_value`,
-  is rejected by the accepted-spellings list in `checker/type_resolution.rs`
-  (`mlir_param_list_type`).
-  - Resolve it to `TyKind::Simd`, whose known and expression slots already
-    have this shape. Share the slot resolver R1315 needs for `!pop.array`.
-  - Read `_mlir_value` of a `DType` or width parameter as the parameter
-    itself until R160 and R336 land, as `__mlir_index__` is read today.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1392 `__mlir_op` admits no `pop` or `index` op, so no `SIMD`
   operator body can be written**
 
@@ -9472,6 +9462,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Lower it to a MIR call that names the intrinsic. Pliron emits the LLVM
     call. The VM serves a table by name and rejects an unknown name
     explicitly.
+  - Probe: `masked_gather` and `masked_scatter` (`std/sys/intrinsics.mojo`)
+    pass their base pointers as ``__mlir_type[`!kgen.simd<`,
+    size._mlir_value, `, address>`]``, which `mlir_applied_type` rejects:
+    `TyKind::Simd` lanes are `Dtype`s, with no pointer lane.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -9548,6 +9542,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `modelled_declares` (`mojito-types::conformance`) answers `Intable` for
     a scalar and `Indexer` for an integral scalar only, since the builtin
     conversion has no such constraint, so the bound rejects both instead.
+  - Probe: ``__mlir_type[`!kgen.simd<`, ...]`` resolves to `TyKind::Simd`,
+    the vector itself, so `show(v._mlir_value)` over `def show(x:
+    SIMD[DType.int32, 2])` and `Int(mlir_value=n)` over an `Int` `n` run,
+    where the pin rejects a `!kgen.simd` passed as `SIMD` and `SIMD` passed
+    as storage. The port's distinct struct type closes both.
   - Probe (from R1109): the hash leaf reaches `__hash__` and a hasher's
     `_update_with_simd` from the value's type
     (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores;

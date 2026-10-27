@@ -2247,7 +2247,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   raw list (`_ParameterListIter[*ParameterList[Self.values]()]`,
   `Checker::parameter_list_spread`, `resolve_use_params`). The checker
   resolves upstream's `__mlir_type[`!kgen.param_list<`, T, `>`]` body
-  (`Checker::mlir_param_list_type`, `type_resolution.rs`).
+  (`Checker::mlir_applied_type`, which reads a bracketed spelling as text
+  with operand holes, then `mlir_param_list_type`, `type_resolution.rs`).
+  The same reader resolves `SIMD`'s ``!kgen.simd<length, dtype>`` storage
+  type to `TyKind::Simd` (`mlir_index_operand` for the length slot over
+  `Checker::index_slot`), and the check's `SemanticAdjustment::SimdStorage`
+  makes `v._mlir_value` the vector's own value or place
+  (`Node::project_member`, `mir/facts.rs`).
   The bundled struct conforms to `Writable` where its element type does
   (`_write_elements`, `write_to`, `write_repr_to`, upstream's members).
   `ParameterList.get_span` takes the elements' static address from the

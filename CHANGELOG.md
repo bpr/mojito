@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- ``__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value,
+  `>`]``, upstream's `SIMD` storage type, now declares a field or parameter
+  over a `SIMDLength` and a `DType` parameter, and `v._mlir_value` and
+  `SIMD[dt, n](mlir_value=s)` read, store, and rebuild a vector through it,
+  on the VM and natively (R1391). An `Int` parameter's `_mlir_value` in the
+  length slot is rejected as at the pin. The package format moves to
+  `mojito-package 115`.
 - `Int`, `UInt`, and `Float64` take every compiler-known `SIMD` method and
   lane subscript, as upstream's width-one `SIMD` does (R1390, R143, R335):
   `x.ne(y)` and the other lane comparisons, `reduce_add` and the other

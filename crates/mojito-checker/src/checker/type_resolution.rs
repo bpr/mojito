@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::ct::MLIR_VALUE_FIELD;
 use mojito_types::origin::CallableEnvironment;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
@@ -1170,23 +1171,29 @@ impl Checker {
             })
     }
 
-    /// Upstream's `_MLIR.KGENParamListType[T]` body,
-    /// ``__mlir_type[`!kgen.param_list<`, T, `>`]``: the raw parameter list
-    /// of `T`. Every other bracketed MLIR type spelling is outside the subset.
-    fn mlir_param_list_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
-        use mojito_ast::ast::ParamArg;
-        let delimiter = |arg: &ParamArg, text: &str| {
-            matches!(arg, ParamArg::Value(Expr { kind: ExprKind::Identifier(spelled), .. })
-                if spelled == text)
-        };
-        let element = match args {
-            [open, element, close]
-                if delimiter(open, "!kgen.param_list<") && delimiter(close, ">") =>
-            {
-                element
+    /// The type a bracketed `__mlir_type[...]` spelling denotes, read as
+    /// KGEN reads it: the text pieces joined, each operand a `{}` hole.
+    /// `!kgen.param_list<T>` is upstream's `_MLIR.KGENParamListType[T]`
+    /// body, the raw parameter list of `T`, and `!kgen.simd<length, dtype>`
+    /// the type of `SIMD._mlir_value`, which is the vector itself while
+    /// `SIMD` is a compiler type. Every other spelling is outside the subset.
+    fn mlir_applied_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
+        let (text, operands) = mlir_spelling(args);
+        match (text.as_str(), operands.as_slice()) {
+            ("!kgen.param_list<{}>", [element]) => self.mlir_param_list_type(element),
+            ("!kgen.simd<{},{}>", [length, dtype]) => {
+                let width = self.mlir_index_operand(length)?;
+                let dtype = mlir_value_operand(dtype)
+                    .ok_or_else(|| mlir_operand_mismatch("!kgen.dtype", "DType"))?;
+                simd_of(self.dtype_from_arg(&dtype)?, power_of_two_width(width)?)
             }
-            _ => return Err(unsupported_mlir_type()),
-        };
+            _ => Err(unsupported_mlir_type()),
+        }
+    }
+
+    /// The raw parameter list `!kgen.param_list<element>` holds.
+    fn mlir_param_list_type(&self, element: &mojito_ast::ast::ParamArg) -> Result<Ty, TypeError> {
+        use mojito_ast::ast::ParamArg;
         let element = match self.trait_type_arg(element) {
             Some(element) => element?,
             None => match element {
@@ -1199,6 +1206,26 @@ impl Checker {
             },
         };
         Ok(TyKind::ParamList(element).into())
+    }
+
+    /// An `index` operand of an MLIR type spelling: a `SIMDLength`'s
+    /// `_mlir_value`, the length itself while `SIMDLength` is `Int` (R336).
+    /// An `Int`'s `_mlir_value` is a scalar `!kgen.simd`, never an index, as
+    /// at the pin, so a symbolic operand must read a `SIMDLength` binder.
+    fn mlir_index_operand(&self, arg: &mojito_ast::ast::ParamArg) -> Result<SimdWidth, TypeError> {
+        let not_index = || mlir_operand_mismatch("index", "SIMDLength");
+        let operand = mlir_value_operand(arg).ok_or_else(not_index)?;
+        let (width, _) = self.index_slot(&operand)?;
+        match &width {
+            SimdWidth::Expr(expr)
+                if !expr
+                    .as_decl_ref()
+                    .is_some_and(|reference| self.is_simd_length_binder(&reference.id)) =>
+            {
+                Err(not_index())
+            }
+            _ => Ok(width),
+        }
     }
 
     /// The type a bracket argument denotes where a trait is a type (a raw
@@ -1274,7 +1301,7 @@ impl Checker {
         });
         if name == "__mlir_type" {
             return self
-                .mlir_param_list_type(args)
+                .mlir_applied_type(args)
                 .map(|ty| Some((ty, vec![None; args.len()])));
         }
         if name == "Some"
@@ -4073,6 +4100,18 @@ impl Checker {
         &self,
         arg: &mojito_ast::ast::ParamArg,
     ) -> Result<(SimdWidth, Option<TyArg>), TypeError> {
+        let (width, attribute) = self.index_slot(arg)?;
+        Ok((power_of_two_width(width)?, attribute))
+    }
+
+    /// Evaluate an index-valued bracket argument (a width, an array size):
+    /// a comptime `Int`, or — while its declaration is a template — an
+    /// `Int` expression over value parameters in scope, beside its bracket
+    /// attribute.
+    pub(super) fn index_slot(
+        &self,
+        arg: &mojito_ast::ast::ParamArg,
+    ) -> Result<(SimdWidth, Option<TyArg>), TypeError> {
         let value = match arg {
             mojito_ast::ast::ParamArg::Value(expr) => {
                 let _lifting = self.lifting_position();
@@ -4123,11 +4162,7 @@ impl Checker {
         let w = mojito_types::param_expr::fold::integer_value(&value)
             .and_then(|width| width.to_i64())
             .ok_or_else(|| TypeError::BadSimdWidth(value.to_string()))?;
-        if w >= 1 && (w & (w - 1)) == 0 {
-            Ok((SimdWidth::Known(w), attribute))
-        } else {
-            Err(TypeError::BadSimdWidth(w.to_string()))
-        }
+        Ok((SimdWidth::Known(w), attribute))
     }
 
     /// The read a type-spelled bracket argument denotes in a value slot,
@@ -4328,10 +4363,78 @@ fn unsupported_mlir_type() -> TypeError {
     TypeError::Unsupported(
         "this MLIR type spelling is outside the supported subset; only \
          '__mlir_type.index', '__mlir_type.`!kgen.type`', \
-         '__mlir_type.`!kgen.string`', and \
-         '__mlir_type[`!kgen.param_list<`, T, `>`]' are accepted"
+         '__mlir_type.`!kgen.string`', \
+         '__mlir_type[`!kgen.param_list<`, T, `>`]', and \
+         '__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value, `>`]' \
+         are accepted"
             .to_string(),
     )
+}
+
+/// A bracketed MLIR type spelling as KGEN concatenates it: its text pieces
+/// (the backtick-stropped arguments no plain identifier spells) joined
+/// without whitespace, each other argument a `{}` hole, beside those
+/// operands in order.
+fn mlir_spelling(args: &[mojito_ast::ast::ParamArg]) -> (String, Vec<&mojito_ast::ast::ParamArg>) {
+    let mut operands = Vec::new();
+    let text = args
+        .iter()
+        .map(|arg| match arg {
+            mojito_ast::ast::ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(text),
+                ..
+            }) if !text.chars().all(|c| c == '_' || c.is_alphanumeric()) => {
+                text.split_whitespace().collect::<String>()
+            }
+            operand => {
+                operands.push(operand);
+                "{}".to_string()
+            }
+        })
+        .collect();
+    (text, operands)
+}
+
+/// The parameter an MLIR type operand reads the `_mlir_value` of
+/// (`n._mlir_value`, `Self.dtype._mlir_value`), which is the parameter
+/// itself while `DType` and `SIMDLength` are compiler types (R160, R336).
+/// `None` for an operand that reads no `_mlir_value`.
+fn mlir_value_operand(arg: &mojito_ast::ast::ParamArg) -> Option<mojito_ast::ast::ParamArg> {
+    match arg {
+        mojito_ast::ast::ParamArg::Value(Expr {
+            kind: ExprKind::Member { object, field },
+            ..
+        }) if field == MLIR_VALUE_FIELD => {
+            Some(mojito_ast::ast::ParamArg::Value((**object).clone()))
+        }
+        mojito_ast::ast::ParamArg::Type(SourceType::Assoc { base, name, args })
+            if name == MLIR_VALUE_FIELD && args.is_empty() =>
+        {
+            Some(mojito_ast::ast::ParamArg::Type((**base).clone()))
+        }
+        _ => None,
+    }
+}
+
+/// An MLIR type operand of the wrong attribute type: `expected` holds only
+/// the `_mlir_value` of a `holder`.
+fn mlir_operand_mismatch(expected: &str, holder: &str) -> TypeError {
+    TypeError::TypeMismatch {
+        expected: format!("'{expected}' (a {holder}'s '_mlir_value')"),
+        found: "another operand".to_string(),
+        context: "MLIR type operand".to_string(),
+    }
+}
+
+/// `width` as a SIMD length, which must be a power of two; a symbolic one
+/// is its instantiation's to check.
+fn power_of_two_width(width: SimdWidth) -> Result<SimdWidth, TypeError> {
+    match width {
+        SimdWidth::Known(w) if w < 1 || (w & (w - 1)) != 0 => {
+            Err(TypeError::BadSimdWidth(w.to_string()))
+        }
+        width => Ok(width),
+    }
 }
 
 fn subtree_is_terminal_error() -> TypeError {

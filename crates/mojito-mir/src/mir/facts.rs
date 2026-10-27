@@ -227,6 +227,29 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// Whether this is `v._mlir_value` on a SIMD value, whose storage is
+    /// the value itself.
+    pub(super) fn is_simd_storage(self) -> bool {
+        self.adjustments().iter().any(|adjustment| {
+            matches!(
+                adjustment,
+                mojito_checked::checked::SemanticAdjustment::SimdStorage
+            )
+        })
+    }
+
+    /// Project `place`, the place of this member node's object, to the
+    /// member `field`; a SIMD value's storage is the value's own place.
+    pub(super) fn project_member(self, place: &mut MirPlace, field: &str) {
+        if self.is_simd_storage() {
+            return;
+        }
+        match self.place_ty().or_else(|| self.ty()) {
+            Some(ty) => place.project(Proj::Field(field.to_string()), ty),
+            None => place.proj.push(Proj::Field(field.to_string())),
+        }
+    }
+
     pub(super) fn tuple_unpack_plan(
         self,
     ) -> Option<Vec<mojito_checked::checked::CheckedTupleUnpackElement>> {

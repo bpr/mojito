@@ -28,6 +28,10 @@ use std::fmt;
 /// literal's KGEN string ([`CtValue::literal_value`]).
 pub const LITERAL_VALUE_MEMBER: &str = "value";
 
+/// The storage member of upstream's `SIMD`, `DType`, and `SIMDLength`, whose
+/// type is the MLIR type a `__mlir_type[...]` operand reads.
+pub const MLIR_VALUE_FIELD: &str = "_mlir_value";
+
 /// One lane of a compile-time SIMD value: integer lanes hold the post-wrap
 /// mathematical value (an unsigned lane is non-negative), float lanes their
 /// IEEE bits (so equality is structural).

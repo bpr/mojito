@@ -593,9 +593,10 @@ pub enum SemanticAdjustment {
     ConstructType {
         ty: Ty,
     },
-    /// `Int(copy=x)`: the `Copyable` initializer of a built-in value type,
-    /// whose copy is the read of its source, so MIR lowers the call as its
-    /// one keyword argument's value.
+    /// `Int(copy=x)`, the `Copyable` initializer of a built-in value type,
+    /// whose copy is the read of its source, or `SIMD[dt, n](mlir_value=v)`,
+    /// the storage initializer over a storage that is the vector itself: MIR
+    /// lowers the call as its one keyword argument's value.
     BuiltinCopyConstruction,
     /// `UInt(7)`, `Float64(2.5)`: a built-in scalar constructed from a
     /// literal, upstream's builtin-inline `SIMD.__init__(IntLiteral)`, which
@@ -970,6 +971,10 @@ pub enum SemanticAdjustment {
     SimdLength {
         width: SimdWidth,
     },
+    /// `v._mlir_value` on a SIMD value — its `!kgen.simd` storage, which is
+    /// the value itself while `SIMD` is a compiler type: the read, borrow,
+    /// or store of `v`.
+    SimdStorage,
     /// `DType.<name>` read as a runtime value, or the `dtype` of a `SIMD` type
     /// or value (`Int32.dtype`, `v.dtype`) — the dtype, lowered as a dtype
     /// constant when known and as a read of its binder in a generator. A

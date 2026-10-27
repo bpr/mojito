@@ -1259,11 +1259,7 @@ impl<'a> Flatten<'a> {
         match (expression.op(), expression.object()) {
             (CheckedOp::Member { field, .. }, Some(object)) => {
                 let mut place = base_place(self, object)?;
-                if let Some(ty) = expression.place_ty().or_else(|| expression.ty()) {
-                    place.project(Proj::Field(field.clone()), ty);
-                } else {
-                    place.proj.push(Proj::Field(field.clone()));
-                }
+                expression.project_member(&mut place, field);
                 Some(place)
             }
             (CheckedOp::Index { .. }, Some(object))

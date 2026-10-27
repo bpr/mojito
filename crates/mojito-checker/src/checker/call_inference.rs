@@ -201,6 +201,15 @@ impl Checker {
                 self.record_bracket_attributes(span.clone(), attributes);
                 self.infer_builtin_copy_construction(span, name, &ty, &kwargs[0])
             }
+            // `SIMD[dt, n](mlir_value=v)`: upstream's storage initializer.
+            _ if args.is_empty()
+                && matches!(kwargs, [keyword] if keyword.name == "mlir_value")
+                && let Some((ty, attributes)) = self.builtin_copy_constructed(name, param_args)
+                && simd_slots(&ty).is_some() =>
+            {
+                self.record_bracket_attributes(span.clone(), attributes);
+                self.infer_simd_storage_construction(span, name, &ty, &kwargs[0])
+            }
             // `SIMD[DType.bool, N](fill=b)`: a mask's splat takes its one
             // lane by keyword.
             "SIMD" if !kwargs.is_empty() => self.infer_simd_fill(&span, param_args, args, kwargs),
@@ -691,6 +700,35 @@ impl Checker {
                 expected: ty.to_string(),
                 found: found.to_string(),
                 context: format!("argument 'copy' of '{name}'"),
+            });
+        }
+        self.record_at(span).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction,
+        ));
+        Ok(ty.clone())
+    }
+
+    /// `Name(mlir_value=v)` on a SIMD type: upstream's initializer from the
+    /// `!kgen.simd` storage, which is the vector itself, so the argument
+    /// must already be a value of the type, never a literal or another
+    /// width or dtype converted to it.
+    fn infer_simd_storage_construction(
+        &self,
+        span: SourceSpan,
+        name: &str,
+        ty: &Ty,
+        storage: &mojito_ast::ast::KwArg,
+    ) -> Result<Ty, TypeError> {
+        let found = self.infer(&storage.value)?;
+        if found != *ty {
+            return Err(TypeError::TypeMismatch {
+                expected: ty.to_string(),
+                found: if mojito_types::types::default_literal(&found) == found {
+                    found.to_string()
+                } else {
+                    "a literal".to_string()
+                },
+                context: format!("argument 'mlir_value' of '{name}'"),
             });
         }
         self.record_at(span).adjustment = Some(Box::new(
