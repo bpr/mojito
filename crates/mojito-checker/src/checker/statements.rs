@@ -143,6 +143,7 @@ impl Checker {
         // A builtin body folds before any signature or field type calls it.
         let phase = timing::span("declarations.builtin_folds");
         self.fold_builtin_bodies(stmts)?;
+        self.compile_application_constraints(stmts);
         drop(phase);
         let phase = timing::span("declarations.traits");
         // A trait requirement's default folds against the module's constants,

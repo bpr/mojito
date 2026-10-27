@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1528**.
+Next free ID: **R1531**.
 
 ## Ordered Work
 
@@ -174,38 +174,71 @@ which names the upstream pass each one follows. Each is measured by the
     Tagged[$comptime$E$module()], found Tagged[Extent(4, 4)]": the
     constant is lifted to a thunk, the bracket argument frozen. The pin
     prints `16`.
-  - Shrinks R1472 (its struct half). Related to R218 (the synthesized
-    `__init__` as an overload).
+  - Shrinks R1529: a tuple display is `Tuple.__init__`'s application
+    at the pin. Related to R218 (the synthesized `__init__` as an
+    overload).
   - Found while landing R1384 (2026-10-26).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1472 A symbolic tuple, list, or struct parameter value has no
-  parameter expression**
+- [ ] **R1528 An application takes only scalar parameters**
 
-  `ParamKind` has no aggregate construction node, so `(n, 1)` over a binder
-  `n` cannot be built as a parameter expression, where upstream's
-  parameter-level struct and list constructions take parameter operands.
-  - `eval_associated_ct` carries such an aggregate in its `CtValue`
-    transport form instead (`aggregate_value`, `checker/constraints.rs`).
-  - `ParamContext::constant` rejects it, so a bracket argument cannot record
-    it as an open expression.
-  - The lever: a `ParamKind` aggregate node with replacement, folding,
-    display, MIR text, and a package version bump. `aggregate_value`'s
-    symbolic case goes.
+  `ApplicableShape::applicable` (`checker/comptime_validation.rs`) admits
+  only by-value `Int`, `UInt`, `Bool`, and `Float64` runtime parameters, so
+  a call over a `String`, a struct, or a `*xs: T` collector denotes nothing
+  in a type, where the pin keeps each as its callee's application.
+  - Probe: `f[1](SIMD[DType.int8, total(1, 1)](1))` over `def f[n:
+    Int](x: SIMD[DType.int8, total(n, 1)]) -> SIMD[DType.int8, total(n,
+    1)]` and `def total(*xs: Int) -> Int` stops with "not a compile-time
+    Int constant: not an associated comptime expression". The pin prints
+    `[1, 1]`.
+  - Probe: `SIMD[DType.int8, ln(String("ab"))]` over `def ln(s: String) ->
+    Int` fails the same way. The pin prints `[2, 2]` for it in a
+    signature.
+  - Probe: `SIMD[DType.int8, total(n, 1)]` against `SIMD[DType.int8, n +
+    1]` is rejected at the pin naming `total(n, Int(1))`.
+  - The lever: accept any resolved parameter type and a homogeneous or
+    type-pack collector, bound through `mojito-ast`'s call binder.
+    `Specializer::demand_application` regroups a collector's run into the
+    one value its MIR parameter takes (read the VM's `thaw` first).
+  - Plan: `R1472-a-symbolic-tuple-list-or-struct-plan.md`, Slice 1.
+  - Related to R397 (a callee's own type parameters).
+  - Found while landing R1472 (2026-10-27).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1529 A tuple or list display in a parameter position is frozen
+  element by element, not applied**
+
+  `aggregate_value` (`checker/constraints.rs`) reads `(n, 1)` and `[n, 1]`
+  as `CtValue` aggregates, where the pin keeps each as its literal
+  constructor's application (`Tuple(n, Int(1))`, `List(n, Int(1),
+  __list_literal__=NoneType(None))`), unfolded through the check even when
+  closed.
+  - A symbolic aggregate has no type (`ct_value_ty`), and contextual typing
+    is tried only for a closed value (`Checker::converts_to_parameter`).
   - Probe: `g[(n, 1)]()` in `def f[n: Int]` over `def g[t: Tuple[Int,
     Int]]()` fails with "type mismatch for value parameter 't': expected
     Tuple[Int, Int], found (n, 1)". The pin prints `5 1` for `f[5]()`.
   - Probe: `g[(1, String("a"))]()` over `def g[p: Tuple[Int, String]]()`
     fails with "expected Tuple[Int, String], found (1,
-    $comptime$main$c0())": the `String` element is an application. The pin
-    prints `1 a`.
-  - Its struct half is an application of `__init__` at the pin, not an
-    aggregate node: R1483.
+    $comptime$main$c0())". The pin prints `1 a`.
+  - Probe: `g[[n, 1]]()` over `def g[l: List[Int]]()` reading `comptime
+    len(l)` and `comptime l[0]` fails with "expected List[Int], found [n,
+    1]"; closed, `g[[5, 1]]()` fails the MIR verifier ("register type
+    Array[Int, 2], declared List[Int]"). The pin prints `2 5` for both.
+  - Probe: `var a: Tag[(n, 1)] = Tag[(n, 1)]()` and `Tag[(1 + n, 1)]`
+    against `Tag[(n + 1, 1)]` are rejected; the pin runs both.
+  - Probe: closed `Tag[(5, 1)]` against `Tag[(5, 2)]` must stay rejected, as
+    the pin rejects it naming `Tag[Tuple(Int(5), Int(2))]`.
+  - The lever: `build_ct` builds a display as the `Apply` of the
+    constructor `record_display_construction` selects for its contextual
+    type, through the R1483 route. No new `ParamKind` node.
+    `aggregate_value` goes.
+  - Plan: `R1472-a-symbolic-tuple-list-or-struct-plan.md`, Slice 3.
   - Found while landing R1386 (2026-10-26).
-  - Depends on nothing.
+  - Depends on R1483, R1528.
   - Model: Fable, Planned.
-
 - [ ] **R1474 A predicate alias body or a struct header's condition is
   compiled without its binders in scope**
 
@@ -4737,9 +4770,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The pin identifies the two reads by structure. It still tells `L[0]`
     from `n`, which `assets/type_error/comptime_display_element_identity.mojo`
     pins for `L[0] * 2` against `L[1]`.
+  - The lever once R1529 lands: bind each local display binding as its
+    literal constructor's application, which identifies by structure.
   - Found while landing a display binding read in a type or a parameter
     argument (2026-10-06).
-  - Depends on nothing.
+  - Depends on R1529.
   - Model: Opus, Not Planned.
 
 - [ ] **R390 Two spellings of an application are one value only when
@@ -4777,6 +4812,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `CtValue::List`.
   - The bound value is the frozen `Array` a display's CTFE builds, which
     `native::mono` already materializes as one `Const::Value` per read.
+  - Shrunk by R1529, which binds a closed list display as its
+    constructor's application rather than a frozen `CtValue::List`.
   - Found while landing R789 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5546,20 +5583,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The alias path evaluates the right-hand side as a type application.
   - With a type argument (`f[Int, 7]`) it fails with "unknown type 'f'".
   - Found while landing R446 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R462 A tuple argument over an enclosing binder is rejected**
-
-  Problem: `g[(n, 2)]()` inside `def f[n: Int]()`, against `def g[p:
-  Tuple[Int, Int]]()`, fails with "type mismatch for value parameter 'p':
-  expected Tuple[Int, Int], found (n, 2)", where the pin prints `5 2` for
-  `f[5]()`.
-  - The argument stays a symbolic `CtValue::Expr`, which `ct_value_ty` has
-    no tuple type for, and contextual typing is tried only for a closed
-    value (`Checker::converts_to_parameter`).
-  - A scalar argument over the binder (`h[n + 1]`) runs.
-  - Found while landing R455 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6428,6 +6451,23 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1530 A closed list display's element folds in a type**
+
+  `SIMD[DType.int8, [2, 1][0]]` is `SIMD[DType.int8, 2]` in Mojito, so `def
+  f(x: SIMD[DType.int8, [2, 1][0]]) -> SIMD[DType.int8, 2]: return x` runs,
+  where the pin rejects it, naming the unfolded `(load_from_mem
+  Array[__literal_size__=Int(2)](Int(2), Int(1),
+  __list_literal__=NoneType(None)).__getitem_param__[Int(0)]())`.
+  - `build_ct`'s `Index { object: ListLit }` arm (`checker/constraints.rs`)
+    folds `param_list.get` over the closed display.
+  - The lever: delete that arm once a display is its constructor's
+    application (R1529), so the read is the display's `__getitem_param__`.
+    Withdrawing it may need upstream's `load_from_mem` reading of
+    `__getitem_param__` over an application; the session that takes it
+    decides.
+  - Found while planning R1472 (2026-10-27).
+  - Depends on R1529.
+  - Model: Opus, Not Planned.
 - [ ] **R1499 `@explicit_destroy` on a `trait` does not parse**
 
   Problem: `@explicit_destroy("baz must be closed") trait Baz: pass`
@@ -9603,8 +9643,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     call: `Tagged[L(n)]` against `Tagged[L(n + 1)]` is rejected as
     "cannot implicitly convert 'Tagged[L(n)]' value to
     'Tagged[L((n + Int(1)))]'".
-  - The lever: R1472's aggregate `ParamKind` node, in its struct flavour.
-    An `out self` body that stores each field once folds to it, and
+  - The lever: a struct-value node of R1525's own, if the folded builtin
+    `__init__` needs one (upstream's `foldInlineBuiltinFunction`). An `out
+    self` body that stores each field once folds to it, and
     `ParamContext::field` reads a field through it.
   - The construction call in `build_ct` (`L(n)`, `Self(...)`) applies the
     folded `__init__`, as `called_application` applies a function.
@@ -9612,7 +9653,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     SIMD[DType.int8, 2 * n]: return x`, called as `f[1](SIMD[DType.int8,
     2](1))`, prints `[1, 1]` at the pin.
   - Found while landing R1522 (2026-10-27).
-  - Depends on R1472.
+  - Depends on R1483.
   - Model: Fable, Not Planned.
 
 - [ ] **R1526 A call of an `@always_inline("builtin")` method with `self`

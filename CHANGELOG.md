@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call of a function or static method with a `where` clause in a type or
+  a parameter argument is now its application, as at the pin, so
+  `SIMD[DType.int8, h[1](n)]` over `def h[k: Int](x: Int) -> Int where k >
+  0` compiles (R1472, its `where` half). The call binds the clause to its
+  arguments as a runtime call does: `h[0](n)` reports `violated
+  constraint`, and `h[m](n)` lacks evidence unless the enclosing
+  declaration's own `where` proves `m > 0`. The package format moves to
+  `mojito-package 121`. Tuple and list displays over a binder in a
+  parameter position remain open (R1528, R1529).
 - A call of an `@always_inline("builtin")` static method of a generic
   struct in a parameter expression is now its body's expression at the
   instance's parameters, as the pin folds it, so `G[1].plus(n)` over

@@ -1985,6 +1985,9 @@ impl Checker {
             }
         }
         self.positioned_application(expr).ok_or_else(|| {
+            if let Some(violated) = self.violated_application_constraint(expr) {
+                return violated;
+            }
             match (self.calls_raising_application(expr), &expr.kind) {
                 (Some(function), _) => TypeError::BadCall {
                     func: function.to_string(),

@@ -730,6 +730,12 @@ compile-time-applicable callables carry their inline level and an
 expression a call in an importer's type substitutes its arguments into
 (R1395). The MIR schema is unchanged.
 
+The package format moves to `mojito-package 121` when a package's
+compile-time-applicable callables carry their `where` clauses, spelled and
+compiled over the callable's argument slots, which a call in an
+importer's type checks as a runtime call does (R1472). The MIR schema is
+unchanged.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

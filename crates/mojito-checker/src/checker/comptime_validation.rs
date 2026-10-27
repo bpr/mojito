@@ -137,7 +137,8 @@ pub(super) struct ForwardedPack {
 /// ([`Checker::called_application`]): a module `def` or a static method of a
 /// struct, whose own compile-time parameters and runtime parameters are each
 /// an `Int`, a `UInt`, a `Bool`, or a `Float64`, and which returns one or a
-/// named struct.
+/// named struct. A `where` clause it declares binds a call as a runtime
+/// call's does.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
     /// The MIR declaration the elaborator runs.
@@ -164,6 +165,13 @@ pub(in crate::checker) struct ApplicableFunction {
     /// in [`Checker::called_application`]'s order, which a call substitutes
     /// its arguments into ([`Checker::fold_builtin_bodies`]).
     pub(in crate::checker) folded_body: Option<ParamExpr>,
+    /// Its `where` clauses as the declaration spells them.
+    where_clauses: Vec<Expr>,
+    /// Those clauses compiled over the same argument slots and its struct's
+    /// binders ([`Checker::compile_application_constraints`]); `None` until
+    /// they compile, and a callable whose clauses do not is applied by no
+    /// call.
+    pub(in crate::checker) constraints: Option<Vec<GenericConstraint>>,
 }
 
 impl ApplicableFunction {
@@ -196,6 +204,11 @@ impl ApplicableFunction {
     /// The declared result.
     pub(in crate::checker) const fn result(&self) -> &SourceType {
         &self.result
+    }
+
+    /// Its `where` clauses as the declaration spells them.
+    pub(in crate::checker) fn where_clauses(&self) -> &[Expr] {
+        &self.where_clauses
     }
 }
 
@@ -273,7 +286,7 @@ pub(super) fn applicable_declarations<'a>(
                 where_clauses,
                 body,
                 ..
-            } if where_clauses.is_empty() => {
+            } => {
                 let shape = ApplicableShape {
                     decorators,
                     type_params,
@@ -282,6 +295,7 @@ pub(super) fn applicable_declarations<'a>(
                     keyword_only: *keyword_only,
                     raises: *raises,
                     ret,
+                    where_clauses,
                 };
                 let symbol = mojito_symbol::symbol::lowered_def_name(
                     name,
@@ -306,11 +320,7 @@ pub(super) fn applicable_declarations<'a>(
                 ..
             } => {
                 for method in methods {
-                    let Some(ret) = method
-                        .ret
-                        .as_ref()
-                        .filter(|_| !method.has_self && method.where_clauses.is_empty())
-                    else {
+                    let Some(ret) = method.ret.as_ref().filter(|_| !method.has_self) else {
                         continue;
                     };
                     let shape = ApplicableShape {
@@ -321,6 +331,7 @@ pub(super) fn applicable_declarations<'a>(
                         keyword_only: method.keyword_only,
                         raises: method.raises,
                         ret,
+                        where_clauses: &method.where_clauses,
                     };
                     let source = format!("{name}.{}", method.name);
                     let symbol = mojito_symbol::symbol::lowered_method_name(
@@ -1006,11 +1017,16 @@ impl Checker {
     /// no such callable ([`applicable_functions`]), a call that selects no
     /// one overload, or an argument that denotes no parameter expression.
     pub(super) fn called_application(&self, expr: &Expr) -> Option<ParamExpr> {
+        let selected = self.selected_application(expr)?;
+        if self.application_constraint_failure(&selected).is_some() {
+            return None;
+        }
         let Selected {
             function,
             instance,
             arguments,
-        } = self.selected_application(expr)?;
+            ..
+        } = selected;
         let result = self.ty_from_anno(&function.result).ok().filter(|ty| {
             matches!(
                 ty.kind(),
@@ -1076,10 +1092,57 @@ impl Checker {
         function.raises.then_some(function.symbol.as_str())
     }
 
+    /// Compile the `where` clauses of each callable `stmts` declare that a
+    /// compile-time call applies, over its argument slots and its struct's
+    /// binders, as [`Self::fold_builtin_bodies`] folds a builtin body. A
+    /// callable whose clauses do not compile is applied by no call.
+    pub(super) fn compile_application_constraints(&mut self, stmts: &[Stmt]) {
+        let declarations =
+            applicable_declarations(stmts, &*self.overload_sets, &*self.program_constants);
+        for declaration in declarations {
+            let clauses = declaration.function.where_clauses();
+            if clauses.is_empty() {
+                continue;
+            }
+            let compiled = self
+                .in_argument_scope(&declaration, |checker, _| {
+                    clauses
+                        .iter()
+                        .map(|clause| {
+                            checker
+                                .compile_where_clause(clause)
+                                .map(|constraint| checker.bind_constraint(&constraint, &[]))
+                        })
+                        .collect::<Result<Vec<_>, _>>()
+                        .ok()
+                })
+                .flatten();
+            if let Some(entry) = self
+                .applicable_functions
+                .get_mut(&declaration.name)
+                .and_then(|overloads| {
+                    overloads
+                        .iter_mut()
+                        .find(|function| function.symbol() == declaration.function.symbol())
+                })
+            {
+                entry.constraints = compiled;
+            }
+        }
+    }
+
+    /// The rejection of a compile-time call whose callee's `where` clause
+    /// its arguments violate, or which they leave unproven where the
+    /// enclosing declaration's own clauses do not prove it, as a runtime
+    /// call's are judged (`h[0](n)` over `where k > 0`).
+    pub(super) fn violated_application_constraint(&self, expr: &Expr) -> Option<TypeError> {
+        self.application_constraint_failure(&self.selected_application(expr)?)
+    }
+
     /// The callable a compile-time call applies, the struct instance a
     /// static method is called on, and the parameter expressions of its
     /// arguments: the one overload under the spelled name the arguments
-    /// bind and type.
+    /// bind and type, whose `where` clauses have compiled.
     fn selected_application(&self, expr: &Expr) -> Option<Selected<'_>> {
         let (name, instance, param_args, args, kwargs) = match &expr.kind {
             // A local of the name shadows the module function.
@@ -1123,10 +1186,11 @@ impl Checker {
             .get(&name)?
             .iter()
             .filter_map(|function| {
-                if function.on_instance && instance.is_none() {
+                if (function.on_instance && instance.is_none()) || function.constraints.is_none() {
                     return None;
                 }
                 Some(Selected {
+                    name: name.clone(),
                     function,
                     instance: instance.clone(),
                     arguments: self.applied_arguments(function, param_args, args, kwargs)?,
@@ -1134,6 +1198,59 @@ impl Checker {
             });
         let application = selected.next()?;
         selected.next().is_none().then_some(application)
+    }
+
+    /// The rejection of `selected`'s call by a `where` clause of its
+    /// callee, its own compile-time and runtime parameters bound to the
+    /// call's arguments and its struct's to the instance it is called on.
+    fn application_constraint_failure(&self, selected: &Selected<'_>) -> Option<TypeError> {
+        let constraints = selected.function.constraints.as_deref()?;
+        if constraints.is_empty() {
+            return None;
+        }
+        let symbol = &selected.function.symbol;
+        let slots: Vec<ParamDecl> = selected
+            .function
+            .argument_slots()
+            .into_iter()
+            .enumerate()
+            .map(|(slot, (name, ty))| ParamDecl::Value {
+                id: super::annotations::builtin_body_binder(symbol, slot, name).id,
+                name: name.to_string(),
+                ty: ty.clone(),
+                default: None,
+                callable_default: None,
+                infer_only: false,
+                variadic: false,
+                constraints: Vec::new(),
+            })
+            .collect();
+        let arguments: Vec<TyArg> = selected
+            .arguments
+            .iter()
+            .map(|argument| TyArg::Val(argument.clone().into_value()))
+            .collect();
+        let instance = match selected.instance.as_ref().map(Ty::kind) {
+            Some(TyKind::Struct(owner, instance_args)) => {
+                let decls = &self.structs.get(template_name(owner))?.decls;
+                let declared =
+                    mojito_types::types::declared_pack_arguments(owner, decls, instance_args);
+                Some((decls, declared))
+            }
+            _ => None,
+        };
+        let mut environment = ConstraintEnvironment::declared(&slots, &arguments);
+        if let Some((decls, declared)) = &instance {
+            environment.bind_declared(decls, declared);
+        }
+        let callee = selected
+            .name
+            .rsplit_once('.')
+            .map_or(selected.name.as_str(), |(_, method)| method);
+        constraints.iter().find_map(|constraint| {
+            self.validate_constraint_in_environment(callee, constraint, &environment)
+                .err()
+        })
     }
 
     /// The struct whose static method `method` a call on `object` names
@@ -3691,6 +3808,8 @@ pub(super) fn comptime_for_owner(iter: &Expr) -> String {
 
 /// The overload a compile-time call selects ([`Checker::called_application`]).
 struct Selected<'a> {
+    /// The name the call spells (`h`, `G.plus`).
+    name: String,
     function: &'a ApplicableFunction,
     /// The struct instance a static method is called on (`G[1]` in
     /// `G[1].plus(n)`).
@@ -3717,6 +3836,7 @@ struct ApplicableShape<'a> {
     keyword_only: Option<usize>,
     raises: bool,
     ret: &'a SourceType,
+    where_clauses: &'a [Expr],
 }
 
 impl ApplicableShape<'_> {
@@ -3784,6 +3904,8 @@ impl ApplicableShape<'_> {
             inline: mojito_checked::declaration::InlineLevel::of(self.decorators)
                 .unwrap_or_default(),
             folded_body: None,
+            where_clauses: self.where_clauses.to_vec(),
+            constraints: self.where_clauses.is_empty().then(Vec::new),
         })
     }
 }

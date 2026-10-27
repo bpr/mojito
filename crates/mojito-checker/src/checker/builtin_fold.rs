@@ -74,6 +74,39 @@ impl Checker {
         }
     }
 
+    /// `f` run where each argument slot of `declaration` is a binder of its
+    /// own ([`super::annotations::builtin_body_binder`]) under the slot's
+    /// name, in a parameter scope opened at the level `f` receives, within
+    /// its struct's member scope ([`Self::in_owner_scope`]).
+    pub(super) fn in_argument_scope<T>(
+        &mut self,
+        declaration: &ApplicableDeclaration<'_>,
+        f: impl FnOnce(&mut Self, usize) -> T,
+    ) -> Option<T> {
+        self.in_owner_scope(declaration, |checker| {
+            let function = &declaration.function;
+            let symbol = function.symbol();
+            checker.push_param_scope(&[]);
+            let level = checker.tparams.len() - 1;
+            if let Some(scope) = checker.vparams.last_mut() {
+                scope.extend(function.argument_slots().iter().enumerate().map(
+                    |(slot, (name, ty))| {
+                        let binder = super::annotations::builtin_body_binder(symbol, slot, name);
+                        (
+                            (*name).to_string(),
+                            super::annotations::value_binder_expr(binder.id, name, ty),
+                        )
+                    },
+                ));
+            }
+            checker.local_comptime_parameters.push(HashMap::new());
+            let result = f(checker, level);
+            checker.local_comptime_parameters.pop();
+            checker.tparams.pop();
+            result
+        })
+    }
+
     /// The pin's rejection of a builtin body: a `raises` declaration, an
     /// early `return`, a statement `if` or a loop, a `var` reassigned after
     /// its initializer, or a call of a callable that is not itself builtin
@@ -202,9 +235,11 @@ impl Checker {
         &mut self,
         declaration: &ApplicableDeclaration<'_>,
     ) -> Option<ParamExpr> {
-        self.in_owner_scope(declaration, |checker| {
-            checker.folded_declaration_body(declaration)
-        })?
+        self.in_argument_scope(declaration, |checker, level| {
+            let result = checker.ty_from_anno(declaration.function.result()).ok()?;
+            checker.folded_statements(declaration.body, level, &result)
+        })
+        .flatten()
     }
 
     /// `f` run in the member scope of the struct declaring `declaration`,
@@ -225,33 +260,6 @@ impl Checker {
         let result = f(self);
         self.exit_struct_scope(saved);
         Some(result)
-    }
-
-    /// [`Self::folded_builtin_body`] in its owner's scope.
-    fn folded_declaration_body(
-        &mut self,
-        declaration: &ApplicableDeclaration<'_>,
-    ) -> Option<ParamExpr> {
-        let function = &declaration.function;
-        let slots = function.argument_slots();
-        let result = self.ty_from_anno(function.result()).ok()?;
-        let symbol = function.symbol();
-        self.push_param_scope(&[]);
-        let level = self.tparams.len() - 1;
-        if let Some(scope) = self.vparams.last_mut() {
-            scope.extend(slots.iter().enumerate().map(|(slot, (name, ty))| {
-                let binder = super::annotations::builtin_body_binder(symbol, slot, name);
-                (
-                    (*name).to_string(),
-                    super::annotations::value_binder_expr(binder.id, name, ty),
-                )
-            }));
-        }
-        self.local_comptime_parameters.push(HashMap::new());
-        let folded = self.folded_statements(declaration.body, level, &result);
-        self.local_comptime_parameters.pop();
-        self.tparams.pop();
-        folded
     }
 
     /// [`Self::folded_builtin_body`] over `body`, its bindings bound at

@@ -1844,7 +1844,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   still reads a rebound binder (`reads_rebound_binder`); `build_ct` reads the body's
   ``__mlir_op`` arithmetic through `builtin_fold::mlir_op_operator` (over
   `MlirOp::lowering`), a scalar's `_mlir_value`, and `Int(mlir_value=)`, and
-  `constraint_operand` takes a folded call as a `where` operand. `not` and a
+  `constraint_operand` takes a folded call as a `where` operand. A
+  callable's `where` clauses (`ApplicableFunction::constraints`) are
+  compiled once over the same slots by
+  `Checker::compile_application_constraints`, right after the folds, in
+  `Checker::in_argument_scope` (`checker/builtin_fold.rs`); a call binds
+  them to its arguments and instance in `application_constraint_failure`,
+  judged by `validate_constraint_in_environment`, and
+  `violated_application_constraint` reports the failure in
+  `eval_associated_ct`. `not` and a
   conditional are compiled by `build_ct`'s arms
   (`checker/constraints.rs`). A static call through `Self` in a body is
   typed by `infer_type_receiver_call`
