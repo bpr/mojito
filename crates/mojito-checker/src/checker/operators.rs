@@ -1001,8 +1001,15 @@ fn is_bound_archetype(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Param { .. } | TyKind::Assoc { .. })
 }
 
-/// The error an infix operator its operands do not define reports.
+/// The error an infix operator its operands do not define reports. A KGEN
+/// string is an attribute that implements no operator method.
 fn bad_infix_operator(op: InfixOp, lt: &Ty, rt: &Ty) -> TypeError {
+    if let (TyKind::KgenString, Some(method)) = (lt.kind(), op.dunder()) {
+        return TypeError::MatchPattern(format!(
+            "'{}' does not implement the '{method}' method",
+            mojito_types::types::KGEN_STRING_TYPE_SPELLING
+        ));
+    }
     TypeError::BadOperator {
         op: infix_symbol(op).to_string(),
         operands: format!("{lt} and {rt}"),

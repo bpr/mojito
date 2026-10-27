@@ -435,6 +435,7 @@ assets/ok/list_unsafe_ptr_multi_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/list_unsafe_uninit_length.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/live_pointer_ref_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loan_carrying_instance_clone.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/local_comptime_closed_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/local_comptime_float.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loop_binding_consuming_copy.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/loop_result_two_breaks.mojo	-	ineligible	no-scalar-entry-shape

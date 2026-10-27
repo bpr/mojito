@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A closed local `comptime` value binding is now bound by the check to its
+  parameter expression, as every local `comptime` is at the pin (R1379),
+  where the elaborator folded it above the check or refused it. A
+  conditional over closed bindings (`comptime x = t[1] if c else t[0]`,
+  R1245), a sized-scalar construction (`comptime d = UInt8(250)`, R853), a
+  local string constant in a bracket (`bind[local]()`,
+  `kbind[local.value]()`, R1191), and a local binding of a generic alias
+  that applies a `def` (R518's local form) now run. An operator on a KGEN
+  string now reports the pin's "does not implement the '__eq__' method".
+
 - A parameter argument that computes a `String`, a `Float64`, or a `UInt`
   from a parameter (`label[pick(n)]()`, `scale[half(n)]()`,
   `label[String(n)]()`, `label[pick(n) + "!"]()`) is now the application

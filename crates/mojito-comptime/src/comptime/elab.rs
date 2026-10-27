@@ -226,6 +226,14 @@ impl Elab<'_> {
                 if !in_fn {
                     self.top_consts.borrow_mut().insert(name.clone(), v.clone());
                 }
+                // A closed scalar or string binding of a body is the check's
+                // to bind as its parameter expression; its value stays here
+                // for a type alias this evaluator still folds over it.
+                if in_fn && is_closed_scalar(&v) && check_binds_value(value) {
+                    env.insert(name.clone(), v);
+                    out.push(stmt.clone());
+                    return Ok(());
+                }
                 // Fold the definition to its literal value, so the checker and
                 // runtime see a constant (and a CTFE-computed `Int`, which the
                 // checker's own folder can't evaluate, becomes usable as a value
@@ -1526,8 +1534,9 @@ impl Elab<'_> {
     /// generic `def` being elaborated as a template (`comptime m = N + 1`),
     /// or applies a callable or constructs a collection in any body
     /// (`comptime x = f(1)`, `comptime l = [1, 2]`,
-    /// [`mojito_checker::checker::lifts_comptime_value`]): the check
-    /// binds it with the binders symbolic, the elaborator below MIR
+    /// [`mojito_checker::checker::lifts_comptime_value`]), or is a closed
+    /// value this evaluator does not fold ([`Self::unfolded_value_binding`]):
+    /// the check binds it with the binders symbolic, the elaborator below MIR
     /// evaluates an application on demand, and the binding is a binder of
     /// the rest of its block, so a `comptime if` over it stays too.
     /// Whether the statement was kept.
@@ -1545,19 +1554,35 @@ impl Elab<'_> {
         if !in_fn {
             return false;
         }
-        let mut binders = self.template_binders.borrow_mut();
-        let Some(binders) = binders.last_mut() else {
+        let Some(names_binder) = self
+            .template_binders
+            .borrow()
+            .last()
+            .map(|binders| expression_names_any(value, &|name| binders.contains(name)))
+        else {
             return false;
         };
-        if !(expression_names_any(value, &|name| binders.contains(name))
+        if !(names_binder
             || self.applied_initializer(value, env)
-            || mojito_checker::checker::lifts_comptime_value(value, self))
+            || mojito_checker::checker::lifts_comptime_value(value, self)
+            || self.unfolded_value_binding(value, env))
         {
             return false;
         }
-        binders.insert(name.clone());
+        if let Some(binders) = self.template_binders.borrow_mut().last_mut() {
+            binders.insert(name.clone());
+        }
         out.push(stmt.clone());
         true
+    }
+
+    /// Whether a local `comptime` binding over no binder is an expression
+    /// this evaluator does not fold (`t[1] if c else t[0]`, `UInt8(250)`),
+    /// which the check binds as its parameter expression, as upstream
+    /// builds every local `comptime` (`emitExprPValue`).
+    fn unfolded_value_binding(&self, value: &Expr, env: &ConstEnv<'_>) -> bool {
+        check_binds_value(value)
+            && matches!(self.eval(value, env), Err(ComptimeError::NotComptime(_)))
     }
 
     /// Keep every `comptime if` of a function body, as upstream keeps its
@@ -2179,4 +2204,29 @@ fn with_contextual_base(expression: &Expr, base: &str, args: &[ParamArg]) -> Opt
     };
     let mut resolved = expression.clone();
     replace(&mut resolved, &root).then_some(resolved)
+}
+
+/// Whether the check binds a local `comptime` value spelled `value`: not
+/// one it types only as a condition (`conforms_to(T, Trait)`), nor an
+/// invoked lambda, whose nested declaration a lifted function does not
+/// carry. Either keeps this evaluator's folding.
+fn check_binds_value(value: &Expr) -> bool {
+    let mut lambdas = Vec::new();
+    mojito_ast::ast::lambdas_in_expr(value, &mut lambdas);
+    lambdas.is_empty() && !expression_names_any(value, &|name| name == "conforms_to")
+}
+
+/// Whether `value` is a scalar or a string: a value a local `comptime`
+/// binding names as its parameter expression.
+const fn is_closed_scalar(value: &CtValue) -> bool {
+    matches!(
+        value,
+        CtValue::Int(_)
+            | CtValue::UInt(_)
+            | CtValue::Float(_)
+            | CtValue::IntLiteral(_)
+            | CtValue::FloatLiteral(_)
+            | CtValue::Bool(_)
+            | CtValue::Str(_)
+    )
 }

@@ -1476,8 +1476,12 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   a closed field-name list (`crossing::lists_field_names`), a method call of
   a value binding (`calls_value_method`) — and spells none of them into a
   read; a binding that still folds to a collection is an error
-  (`Elab::stmt`). `comptime/eval.rs` folds closed values only
-  and refuses every call (`not_evaluated_here`): no call is evaluated
+  (`Elab::stmt`). It keeps every closed local scalar or string binding
+  for the check too, and one `Elab::eval` does not fold
+  (`Elab::unfolded_value_binding`, `check_binds_value`); the check binds it
+  to its parameter expression, a constant one through
+  `Checker::closed_constant_expression`. `comptime/eval.rs` folds closed
+  values only and refuses every call (`not_evaluated_here`): no call is evaluated
   above the check.
 - `comptime/crossing.rs` owns the compile-time → runtime crossing fold
   (`fold_runtime_crossings`: `materialize[X]()` and `comptime(e)` become

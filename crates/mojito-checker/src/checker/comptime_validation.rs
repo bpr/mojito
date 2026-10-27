@@ -1506,8 +1506,21 @@ impl Checker {
         if self.bind_compile_time_only_value(name, value)? {
             return Ok(true);
         }
-        if denoted.is_none()
-            && let Some(expression) = self.requested_binding(value, ConstantScope::Local)?
+        // A closed binding is the application it requests, else the
+        // constant it builds to (`comptime s = "Lo"`), which an annotation
+        // would convert.
+        let expression = match denoted {
+            Some(_) => None,
+            None => self
+                .requested_binding(value, ConstantScope::Local)?
+                .or_else(|| {
+                    annotation
+                        .is_none()
+                        .then(|| self.closed_constant_expression(value))
+                        .flatten()
+                }),
+        };
+        if let Some(expression) = expression
             && let Some(scope) = self.local_comptime_parameters.last_mut()
         {
             scope.insert(name.to_string(), (level, expression));
@@ -1731,6 +1744,17 @@ impl Checker {
             .filter(|expression| expression.as_constant().is_none())?;
         self.record_compiled_expression(value, &expression);
         Some(expression)
+    }
+
+    /// The constant value a closed local `comptime` binding builds to
+    /// (`"Lo"`, `2.5`, `n > 2` over a closed `n`). `None` for a type, and
+    /// for an expression the builder does not fold.
+    fn closed_constant_expression(&self, value: &Expr) -> Option<ParamExpr> {
+        self.compile_dependent_ct_expr(value)
+            .ok()
+            .filter(|expression| {
+                expression.as_constant().is_some() && expression.meta().as_value().is_some()
+            })
     }
 
     /// Type the display a local `comptime` binding of a template body holds

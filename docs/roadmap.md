@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1476**.
+Next free ID: **R1477**.
 
 ## Ordered Work
 
@@ -134,29 +134,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1379 A closed local `comptime` value binding is folded by the
-  elaborator above the check**
-
-  `Elab::stmt` folds a local `comptime` binding that names no binder and
-  applies no callable through `Elab::eval` (`comptime/eval.rs`), where
-  upstream builds every local `comptime` as a typed parameter expression
-  (`StmtParser::parseAliasDeclStmtBody`,
-  `getParamEmitter(EC_AliasValue).emitExprPValue`).
-  - The lever: `keep_template_comptime_binding` keeps every value binding of
-    a function body. The check binds it through `bind_template_comptime`,
-    and `lifted_application` stops leaving a closed expression to the
-    elaborator.
-  - The template route already serves these shapes: `comptime x = n + 1 if c
-    else n` and `comptime d = UInt8(n)` inside `def g[n: Int]` both run.
-  - Probe: R1245's `t[1] if c else t[0]` and R853's `comptime d =
-    UInt8(250)` in `main` are rejected. The pin prints `5` and `250`.
-  - Closes R1245 (a closed conditional is rejected), R853 (a sized-scalar
-    local binding is refused), and R1191 (a local string constant in a
-    bracket). Shrinks R518 (its local form).
-  - Depends on R386, so a closed `String` or float binding is lifted instead
-    of regressing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1380 A local `comptime` type alias is substituted by the
   elaborator's alias table**
 
@@ -170,11 +147,35 @@ which names the upstream pass each one follows. Each is measured by the
     `Self`. A `Self.<value>` goes to R1379's value route.
   - The block-local `TypeAliases` substitution goes. The pack-element
     spelling stays for the pack entries (R1169).
+  - `Elab::stmt` still records a closed local value binding's folded value
+    for the aliases it folds over one (`comptime N = 2`, then `comptime V =
+    SIMD[DType.int32, N]` and `V(7)`). That record goes with the table.
+    `V(7)` also needs R475's call half: with `comptime N = k + 1` in `def
+    g[k: Int]`, it reports "Undefined variable 'V'".
   - Probe: `comptime S = Scalar[DType.float64]`, then `S(2) * 1.25`. The pin
     prints `2.5`. Mojito fails, in `main` and in `def g[n: Int]` alike.
   - Closes R475 (a local `Scalar` or `SIMD` alias) and R1170 (a
     `Self.<type member>` alias in a method).
   - Depends on R1379, whose value route takes what this route declines.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1476 An immediately invoked lambda in a local `comptime` binding is
+  folded by the elaborator**
+
+  `comptime whole = (lambda (x: Int) {} -> Int: x * 2)(21)` in `main` is
+  evaluated by `Elab::eval`, where upstream builds it as the binding's
+  parameter expression like any other local `comptime`.
+  - `check_binds_value` (`comptime/elab.rs`) keeps that fold, because the
+    check's route fails in two places.
+  - The check's `comptime` arm registers no lambda in its value, so
+    inference meets the lambda before `Checker::check_lambda` has run
+    ("lambda reached inference before scoped checking", R1231's cause).
+  - With the lambda registered, the lifted compile-time function
+    `$comptime$main$c0` loses the lambda's checked nested declaration
+    ("lambda expression lost its checked nested declaration").
+  - Probe: `assets/ok/comptime_lambda_initializer.mojo` with the binding
+    kept for the check. The pin prints `42`.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1381 A closed module constant is folded by `Elab::eval`, not by the
@@ -4649,16 +4650,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R518 A generic `comptime` alias whose body applies a callable is
-  refused**
+- [ ] **R518 A module constant applying a generic `comptime` alias whose
+  body applies a callable is refused**
 
-  Problem: `comptime Twice[n: Int] = f(n)` bound by a compile-time constant
-  (`comptime z = Twice[6]`, local or module) reports "a compile-time call
-  of 'f' is not evaluated above the check", where the pin prints `12`.
-  - A runtime read (`Twice[3]`, `Twice[k]`) and a parameter argument
-    (`Arr[Twice[k]]()`) already run: the check binds the alias's template,
-    which applies `f`, and `native::mono` evaluates it.
-  - A compile-time constant is still folded above the check by
+  Problem: `comptime Twice[n: Int] = f(n)` bound by a module constant
+  (`comptime z = Twice[6]`) reports "a compile-time call of 'f' is not
+  evaluated above the check", where the pin prints `12`.
+  - A runtime read (`Twice[3]`, `Twice[k]`), a parameter argument
+    (`Arr[Twice[k]]()`), and a local binding (`comptime z = Twice[6]` in
+    `main`) already run: the check binds the alias's template, which
+    applies `f`, and `native::mono` evaluates it.
+  - A module constant is still folded above the check by
     `Elab::apply_generic_alias`, which folds no call. The lever is the one
     the module constants took: `Elab::applied_initializer` leaves an
     initializer applying such an alias to the check.
@@ -4776,20 +4778,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on R482.
   - Model: Opus, Not Planned.
 
-- [ ] **R1245 A local `comptime` conditional expression in a plain body
-  is rejected**
-
-  Problem: `comptime x = t[1] if c else t[0]` over `comptime t = (5, 1)`
-  and `comptime c = t[0] == 1` fails with "not a compile-time value:
-  unsupported compile-time expression", where the pin prints `5`.
-  - The elaborator's evaluator (`crates/mojito-comptime/src/comptime/eval.rs`)
-    has no arm for `ExprKind::IfExpr`, so a closed conditional cannot
-    fold before the check.
-  - Lever: evaluate the condition, then the selected arm only.
-  - Found while planning R1139 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R483 A method's explicit value parameter supplied from the caller's
   own binder fails MIR typing**
 
@@ -4899,6 +4887,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     clause, and a `comptime if` (`comptime/eval.rs`,
     `checker/constraints.rs`). Call inference has no callee for it.
   - The workaround binds it first: `comptime c = conforms_to(...)`.
+  - Probe: that closed local binding is the elaborator's fold, since the
+    check cannot type it (`check_binds_value`, `comptime/elab.rs`), and
+    `comptime c = conforms_to(T, Comparable)` in `def g[T: AnyType]`
+    reports "Undefined variable 'conforms_to'". The pin prints `True`.
   - Found while landing R1359 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5214,24 +5206,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A sibling of R1149's raw-list runtime form.
   - Found while landing R1183 (2026-10-20).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1191 A local `comptime` string constant is not read in a bracket
-  argument**
-
-  Problem: `comptime local = "Lo"` in `main`, then `bind[local]()` over
-  `def bind[s: StringLiteral]()`, fails with "not a compile-time Int
-  constant: local", where the pin prints `Lo`.
-  - The elaborator folds the closed local binding above the check, so the
-    check never records it as a compile-time value.
-  - `bind_compile_time_only_value` (`checker/comptime_validation.rs`) keeps
-    only reflection handles, type lists, `.value` reads, and raw lists.
-  - A module string constant is read in a bracket since R1386.
-  - Probe: `kbind[local.value]()` over `def kbind[s: KGENString]()`, which
-    prints at the pin.
-  - Found while landing R1183 (2026-10-20).
-  - Depends on R1379, which binds every local value binding through the
-    check.
   - Model: Opus, Not Planned.
 
 - [ ] **R1193 A member read on a struct applied to a forwarded pack names
@@ -6765,21 +6739,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Done when the member's value parameter keys by a binder identity and
     the elaborator binds it from the application's `TyArg::Val`.
   - Found while landing R661 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R853 A function-body `comptime` binding of a sized-scalar
-  construction is refused**
-
-  Problem: `comptime d = UInt8(250)` in a function body fails with "a
-  compile-time call of 'UInt8' is not evaluated above the check", while the
-  pin prints `250`.
-  - `comptime d = UInt8(250) + 10` and `comptime c = UInt8(7) // UInt8(0)`
-    fail the same way.
-  - A `comptime a: UInt8 = 250` binding already works, and its operators
-    now fold.
-  - R518 is a different shape (a generic alias body).
-  - Found while landing R846 (2026-10-14).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

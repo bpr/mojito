@@ -198,7 +198,7 @@ are conformance only.
 | E. Compile-time values are slots | `kgen.param.constant` of the decl ref, no storage | R662, R663 (landed), R1449, R1451 | R788, R378, R472, R508, R602, R1194 | yes |
 | F. Members reached by name from the value's type | every operator and protocol step is a call of the requirement, folded at substitution; traits are library declarations | R1363, R424, R705, R578, R1360, R1361, and R1362 (landed); R1461; R1357 and R1358 (landed); R1359; R1348 and R1281 (landed) | about 30 (below) | yes, the largest |
 | G. A capture-list closure is a capture list | a capture-list closure is a `__storage` struct of its captures, and its body a method of it | R1376, R1377, R1427, R1428, R1378 (landed) → R1436; R1433 → R176 → R1434; R533, R1344 → R1345 (landed) for the other closure forms | R1104, R100, R1230, R1333, R172, R980, R983 (closed), R534, R176 | yes |
-| H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389 and R849 (landed), R603; R1379–R1388 | about 45 (below) | partial |
+| H. Three compile-time evaluators | sema checks each expression once into a typed parameter expression; the elaborator alone evaluates it | R386, R389, R849, and R1379 (landed), R603; R1380–R1388 | about 45 (below) | partial |
 | I. Packs are binder kinds | a pack is a `!kgen.param_list` value whose library members CTFE applies | R1169, R1151, R808 | about 20 (below) | slight |
 
 ### D′. Memory-only values live in registers
@@ -320,7 +320,7 @@ missing.
   expression. One elaborator evaluates it by CTFE, over any result type.
 - **Core chain**, `docs/parametric-mir-plan.md` P4's remainder, one kind
   of site per entry:
-  - R1379: local value bindings.
+  - R1379 (landed): local value bindings.
   - R1380: local type aliases.
   - R1381: module constants.
   - R1382: module and generic aliases.
@@ -343,13 +343,13 @@ missing.
   - R849: every condition is decided by `param_expr::fold`.
   - R603: one static receiver for `Self.X`, `Alias.X`, and `Type.X`.
 - **Members**:
-  - `Elab` arms: R1245, R475, R1170, R1206, R1171, R518, R489, R802,
+  - `Elab` arms: R475, R1170, R1206, R1171, R518, R489, R802,
     R1178, R1208.
   - `Self` and associated reads: R269, R513, R338, R436, R415.
-  - Checker arms: R1194, R1191, R1199, R332, R462,
+  - Checker arms: R1194, R1199, R332, R462,
     R1220, R1210, R448, R512.
   - Domain: R480, R893, R396, R397, R901, R481, R1197.
-  - Constructions: R135, R853, R1179, R1175.
+  - Constructions: R135, R1179, R1175.
   - Spelling: R388 and R398.
   - Library-side folds: R217, R231, R197, and R198.
 - Gap H also unblocks most of the reflection block below.
