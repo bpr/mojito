@@ -160,6 +160,7 @@ assets/ok/comptime_if_overload_pack_plain_triple.mojo	main	exe-differential	sani
 assets/ok/comptime_if_overload_pack_zero_arity.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_overloaded_def.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_overloaded_def_explicit.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_scalar_value_param.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_struct_equality.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_lambda_initializer.mojo	main	exe-differential	sanitized

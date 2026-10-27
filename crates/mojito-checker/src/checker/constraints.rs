@@ -6,6 +6,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::ct::SimdConstructionError;
+use mojito_types::param_expr::fold::comparison_holds;
 use mojito_types::types::TyKind;
 
 impl Checker {
@@ -3484,7 +3485,7 @@ impl Checker {
                         context.infix(op, &context.constant(left)?, &context.constant(right)?)?
                     }
                     (Some(TyArg::Val(left)), Some(TyArg::Val(right))) => {
-                        context.boolean(compare_ct_integers(op, &left, &right).unwrap_or(false))
+                        context.boolean(comparison_holds(op, &left, &right).unwrap_or(false))
                     }
                     (Some(_), Some(_)) => context.boolean(false),
                     _ => unknown(),

@@ -160,6 +160,7 @@ assets/ok/comptime_if_overload_pack_plain_triple.mojo	-	ineligible	no-scalar-ent
 assets/ok/comptime_if_overload_pack_zero_arity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_overloaded_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_overloaded_def_explicit.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_if_scalar_value_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_struct_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_lambda_initializer.mojo	-	ineligible	no-scalar-entry-shape

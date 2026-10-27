@@ -9,9 +9,10 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_ast::ast::InfixOp;
 use mojito_checked::checked::StructConformance;
 use mojito_types::conformance::{StructTraitRule, struct_trait_rule};
-use mojito_types::param_expr::fold::integer_value;
+use mojito_types::param_expr::fold::comparison_holds;
 use mojito_types::types::TyKind;
 use mojito_types::types::{
     ConstraintOperand, GenericConstraint, PackPredicateRef, TrivialLifecycle,
@@ -143,11 +144,10 @@ impl Specializer<'_> {
                     operand_value(left, bindings)?,
                     operand_value(right, bindings)?,
                 ) {
+                    // A value the folder does not compare (a tuple, a frozen
+                    // struct) compares structurally.
                     (TyArg::Val(left), TyArg::Val(right)) => {
-                        match (integer_value(&left), integer_value(&right)) {
-                            (Some(left), Some(right)) => left == right,
-                            _ => left == right,
-                        }
+                        comparison_holds(InfixOp::Eq, &left, &right).unwrap_or(left == right)
                     }
                     (TyArg::Ty(left), TyArg::Ty(right)) => ty_equal_modulo_origins(&left, &right),
                     _ => false,
@@ -161,16 +161,13 @@ impl Specializer<'_> {
                 ) else {
                     return Some(false);
                 };
-                let (Some(left), Some(right)) = (integer_value(&left), integer_value(&right))
-                else {
-                    return Some(false);
+                let op = match constraint {
+                    Lt(..) => InfixOp::Lt,
+                    Le(..) => InfixOp::Le,
+                    Gt(..) => InfixOp::Gt,
+                    _ => InfixOp::Ge,
                 };
-                Some(match constraint {
-                    Lt(..) => left < right,
-                    Le(..) => left <= right,
-                    Gt(..) => left > right,
-                    _ => left >= right,
-                })
+                comparison_holds(op, &left, &right)
             }
         }
     }

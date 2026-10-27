@@ -700,6 +700,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `comptime if` or `where` clause comparing a scalar `SIMD` value
+  parameter now decides as at the pin (R849): `comptime if x < 10` and
+  `comptime if x == 3` over `x: Scalar[DType.uint8]` take the then arm for
+  `g[3]()`, `comptime if y >= 1.5` over a `Float32` scalar does too, and
+  `where x > 0` admits `h[5]()`. The elaborator's `constraint_holds` and
+  the checker's constraint leaves compared only integers; both now compare
+  through the one folder, reading a one-lane `bool` mask as `__bool__`
+  does.
+
 - `Writable` is now upstream's library trait, declared beside `Writer` in
   the bundled `std/format/__init__.mojo` and exported by the prelude
   (R424), where the compiler knew it by name and each backend formatted a

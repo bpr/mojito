@@ -100,15 +100,6 @@ pub(super) struct CallableOverloadMatch {
     pub(super) simd_erasures: usize,
 }
 
-pub(super) fn ct_integer(value: &CtValue) -> Option<mojito_common::literal::IntLiteral> {
-    match value {
-        CtValue::Int(value) => Some((*value).into()),
-        CtValue::UInt(value) => Some((*value).into()),
-        CtValue::IntLiteral(value) => Some(value.clone()),
-        _ => None,
-    }
-}
-
 /// A deliberately small implication relation for declaration availability,
 /// where `implies` answers whether conformance to one trait proves
 /// conformance to another, as a checker knowing the declared refinements
@@ -363,13 +354,6 @@ pub(super) fn seeded_transfer_effects()
         ("List.insert".to_string(), effect(1)),
         ("List.__setitem__".to_string(), effect(1)),
     ])
-}
-
-pub(super) fn ct_values_equal(left: &CtValue, right: &CtValue) -> bool {
-    match (ct_integer(left), ct_integer(right)) {
-        (Some(left), Some(right)) => left == right,
-        _ => left == right,
-    }
 }
 
 pub(super) fn place_root_name(expr: &Expr) -> Option<&str> {

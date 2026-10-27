@@ -3,6 +3,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::param_expr::fold::comparison_holds;
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, TransferSet};
 
@@ -98,22 +99,14 @@ pub(super) fn same_generator_signature(left: &[ParamDecl], right: &[ParamDecl]) 
         })
 }
 
-pub(super) fn compare_ct_integers(op: InfixOp, left: &CtValue, right: &CtValue) -> Option<bool> {
-    let (left, right) = (ct_integer(left)?, ct_integer(right)?);
-    Some(match op {
-        InfixOp::Eq => left == right,
-        InfixOp::Ne => left != right,
-        InfixOp::Lt => left < right,
-        InfixOp::Le => left <= right,
-        InfixOp::Gt => left > right,
-        InfixOp::Ge => left >= right,
-        _ => return None,
-    })
-}
-
+/// Whether two compile-time arguments are equal: values as the one folder
+/// compares them, and a value it does not compare (a tuple, a frozen struct)
+/// structurally.
 pub(super) fn ty_args_equal(left: &TyArg, right: &TyArg) -> bool {
     match (left, right) {
-        (TyArg::Val(left), TyArg::Val(right)) => ct_values_equal(left, right),
+        (TyArg::Val(left), TyArg::Val(right)) => {
+            comparison_holds(InfixOp::Eq, left, right).unwrap_or(left == right)
+        }
         _ => left == right,
     }
 }

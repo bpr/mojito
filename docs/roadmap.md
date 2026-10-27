@@ -4469,22 +4469,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R849 A `comptime if` over a scalar SIMD value parameter takes the
-  wrong arm**
-
-  Problem: `def g[x: Scalar[DType.uint8]](): comptime if x < 10: ...` takes
-  the `else` arm for `g[3]()`, and so does `comptime if x == 3`; the pin
-  takes the `then` arm.
-  - The elaborator's `constraint_holds`
-    (`crates/mojito-native/src/native/mono/availability.rs`) compares
-    through `integer_value`, which reads only `Int`, `UInt`, and
-    `IntLiteral` and answers `false` for anything else.
-  - It should decide through `param_expr::fold`, the one folder, which now
-    folds lane comparisons to a `bool` mask, or fail.
-  - Found while landing R846 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1244 A compile-time arm does not assume that the earlier
   conditions failed**
 
@@ -7822,6 +7806,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `Comparable`.
   - The pin's vectors conform too, with `==` reducing the lanes.
   - Ledger name: `simd-infix-comparison`.
+  - Probe: `comptime if v < 3` over a `v: SIMD[DType.int32, 4]` value
+    parameter bound to `(1, 2, 3, 4)` prints `lt` at the pin, and
+    `comptime if v == w` reduces the lanes. Mojito's elaborator folds a
+    four-lane mask, which `fold::comparison_holds` leaves undecided, so the
+    instance fails with "the instance does not decide".
   - Depends on R143, the scalar comparison methods: once the infix spelling
     goes, `x.ne(y)` is the only ordered comparison left on a scalar, and it
     does not resolve there yet.

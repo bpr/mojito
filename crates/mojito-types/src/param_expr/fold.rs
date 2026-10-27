@@ -191,6 +191,23 @@ pub fn compare(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<bool, Par
     })
 }
 
+/// Whether the comparison `left op right` holds, as [`fold_infix`] folds it.
+///
+/// A scalar comparison gives its `Bool`, and a one-lane SIMD comparison its
+/// mask as `SIMD.__bool__` reads it. `None` when the folder refuses the
+/// operands or the mask has more than one lane, an elementwise vector
+/// comparison the pin does not spell infix.
+pub fn comparison_holds(op: InfixOp, left: &CtValue, right: &CtValue) -> Option<bool> {
+    match fold_infix(op, left, right).ok()? {
+        CtValue::Bool(value) => Some(value),
+        CtValue::Simd { lanes, .. } => match lanes.as_slice() {
+            [CtLane::Bool(value)] => Some(*value),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The integer a concrete value denotes, across the three integer kinds.
 pub fn integer_value(value: &CtValue) -> Option<IntLiteral> {
     match value {
@@ -201,9 +218,12 @@ pub fn integer_value(value: &CtValue) -> Option<IntLiteral> {
     }
 }
 
-/// `value` as `width` lanes of `dtype`: a SIMD value of that shape, a
-/// width-1 SIMD value or a literal splatted, as the VM splats them (upstream's
-/// splat `SIMD.__init__`); `None` for any other value.
+/// `value` as `width` lanes of `dtype`, or `None` for a value that is none
+/// of these.
+///
+/// A SIMD value of that shape is its lanes; a width-1 SIMD value, a literal,
+/// or a `Bool` into `bool` lanes splats, as the VM splats them (upstream's
+/// splat `SIMD.__init__`).
 pub fn splat_lanes(value: &CtValue, dtype: Dtype, width: usize) -> Option<Vec<CtLane>> {
     let lane = match value {
         CtValue::Simd { dtype: own, lanes } if *own == dtype && lanes.len() == width => {
@@ -214,6 +234,7 @@ pub fn splat_lanes(value: &CtValue, dtype: Dtype, width: usize) -> Option<Vec<Ct
         }
         CtValue::IntLiteral(literal) => CtLane::of_int_literal(literal, dtype)?,
         CtValue::FloatLiteral(literal) => CtLane::of_float_literal(literal, dtype)?,
+        CtValue::Bool(value) if dtype == Dtype::Bool => CtLane::Bool(*value),
         _ => return None,
     };
     Some(vec![lane; width])
