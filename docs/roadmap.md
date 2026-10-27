@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1513**.
+Next free ID: **R1516**.
 
 ## Ordered Work
 
@@ -3378,7 +3378,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     operands ("'Add$mono$V1.__call__$REMOVED$ARG' expects 0 argument(s),
     got 1" once `__call__` leaves `mir::TYPE_REACHED_MEMBERS`); a
     `call.method` reduces through `Specializer::reduce_method_call`.
+  - Upstream's `SubscriptNode` also binds a bracket over such a value to
+    `__call__`'s parameters when the struct declares no `__getitem__`,
+    `__setitem__`, or `__getattr__`; Mojito has no such path.
   - Found while landing R1031 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1515 A bracket followed by a call is fused into the call's
+  parameter list**
+
+  `x[args](...)` parses as one `Call { name, param_args }` or `Invoke {
+  callee, param_args }` (`parse_bracket_suffix`, `parser/suffix.rs`),
+  where upstream builds a `CallNode` over a `SubscriptNode` and the
+  subscript is classified by its base before the call.
+  - Probe: `print(t[1](4))` over `var t = (inc, inc)` prints `5` at the
+    pin; Mojito reports "'t' has type Tuple and is not callable".
+  - The checker re-dispatches a fused bracket as an element call only over
+    a struct declaring `__getitem__` (`infer_call`,
+    `checker/call_inference.rs`, and the `Invoke` arm of
+    `checker/inference.rs`).
+  - The lever: the parser keeps the subscript as the callee, and a callee
+    that `Checker::bracket_callable` answers is the parameter application
+    it is already spelled as; any other is the subscript's value, called.
+  - Found while landing R1371 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4123,33 +4146,69 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1371 A bracket after an expression is an index, an application, or
-  a dereference by its shape**
+- [ ] **R1513 Compile-time consumers read a bracket application only as
+  `TypeApply`**
 
-  `parse_bracket_suffix` picks `Index`, `MultiIndex`, `TypeApply`, or an
-  `EmptySubscript` dereference from the base's capitalization and the
-  operand shape, where upstream builds one `SubscriptNode` and
-  `SubscriptNode::emitLCVIR` (`ExprNodes.cpp`) classifies it by what the
-  base denotes.
-  - Upstream: an overload set binds parameters, a type is applied, and a
-    value calls `__getitem_param__` or `__getitem__`.
-  - The lever: the parser always emits `Index` or `MultiIndex`, empty
-    brackets included. The checker's subscript arms route a base that
-    denotes a type or a generic function to the existing application check.
-  - The `reflect`, `origin_of`, spread, and `None` special cases in
-    `suffix.rs` go away.
-  - `infer_type_receiver_call`'s `Index { Identifier(struct), .. }`
-    reinterpretation (`method_calls/type_receivers.rs`) exists only for
-    the capitalization split and goes too.
-  - Merging the four AST kinds into one node can follow in `mojo-shape`.
-  - Probe: `var f = twice[4]` over `def twice[n: Int]() -> Int` prints `8`
-    at the pin. Mojito says "cannot be indexed here".
-  - The call-bracket form `size[Self.n * 2]()` runs (carried from R72).
-  - Closes R326 (`f[]()` read as a dereference) and the parse half of
-    R490. Shrinks R383, whose lowercase subscripts still need
-    compile-time `__getitem__` folding.
-  - Depends on R1370, so operands are already expressions.
-  - Model: Fable, Planned.
+  About two dozen checker and comptime sites match `ExprKind::TypeApply`
+  alone, where upstream's sema reads one `SubscriptNode` whatever its
+  operands, so the parser cannot yet emit `Index`/`MultiIndex` for a
+  capitalized, keyword, or type-operand bracket (R1514).
+  - The lever: each site reads `Expr::bracket_application`
+    (`crates/mojito-ast/src/ast.rs`) and keeps its own check of what the
+    name denotes. It is additive: the parser still emits `TypeApply`.
+  - Sites that match only `TypeApply`: `infer_reference_value` and
+    `infer_variant_storage_method` (`checker/inference.rs`),
+    `check_ct_bool` and `comptime_type_operand`
+    (`checker/comptime_validation.rs`), `lower_parameterized_member`
+    (`checker/constraints.rs`), `places.rs` `transfer_root`,
+    `statements.rs`'s comptime type-alias route, `applied_member_root`
+    (`checker/indexing.rs`), `origins/actuals.rs` and `origins/sig.rs`,
+    the type-parameter and callable defaults (`checker/declarations.rs`),
+    `fold_simd_alias_bounds` (`comptime/synth.rs`), `retype_head`
+    (`comptime/rewrite.rs`), `simd_width.rs`, and the pattern heads in
+    `checker/patterns.rs`.
+  - Sites that read `Index` but not `MultiIndex`, so `Name[a, b]` and
+    `Name[k=v]` escape them: `type_spelling` (`ast.rs`),
+    `symbol::spelled_type_argument`, `comptime_validation.rs`,
+    `constraints.rs`, and `comptime.rs`.
+  - Sites that build `ParamArg::Value(index)` by hand, so neither unwrap a
+    `TypeValue` nor split a tuple: `comptime_validation.rs`,
+    `type_resolution.rs`, `indexing.rs`, `ast.rs` `type_spelling`,
+    `comptime.rs`, and `variant_projection_type_argument`
+    (`inference.rs`). They switch to `subscript_param_args`.
+  - `Checker::bracket_callable` (`checker/generics.rs`) treats a local
+    holding a function value as an overload set; upstream binds only a
+    declared `def`. The lever: test `lookup_callable_origins`.
+  - Found while landing R1371 (2026-10-27).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1514 A capitalized, keyword, or type-operand bracket is parsed as a
+  parameter application**
+
+  `parse_bracket_suffix` (`parser/suffix.rs`) still builds `TypeApply` for
+  a bracket with several operands or a keyword operand over a capitalized
+  base, or with an operand that parses as a type, where upstream builds one
+  `SubscriptNode` and sema classifies it by its base.
+  - The lever: the tail of `parse_bracket_suffix` becomes one conversion.
+    Positional operands are `SubscriptArg::Index`, keyword operands
+    `SubscriptArg::Keyword`, and a type operand `TypeValue(ty)`; the
+    result is `Index` for one positional operand, else `MultiIndex`.
+  - `Type::None` becomes `ExprKind::None`, which `subscript_param_arg` reads
+    back as `ParamArg::Type(Type::None)`. The `None` and `Self`-chain cases,
+    `parameter_application`, `call_name`, `expression_name_starts_lowercase`,
+    and `self_param_rooted_expression` go.
+  - Also: the value category of a type-denoting subscript
+    (`crates/mojito-checked/src/checked.rs`), `rewrite_spelled_param_args`'
+    re-keying for the bracket shapes (`comptime/rewrite.rs`), the parser
+    tests' `TypeApply` assertions, and `docs/grammar.md`'s `subscript_arg`
+    "value bases only" note.
+  - Probe: `comptime U256 = SIMD[DType.uint64, 4]`
+    (`stdlib/std/hash/_ahash.mojo`) must stay a type alias; an
+    unconverted parser flip stops the bundled std packaging there.
+  - Found while landing R1371 (2026-10-27).
+  - Depends on R1513.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1509 A `type_of(...)` receiver of a static call is not a type
   receiver**
@@ -4201,7 +4260,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     members (measured 0 corpus diffs while planning R1370); R600's
     resolved-signature mangling is the full fix.
   - Found while landing R1370 (2026-10-27).
-  - Depends on R1371, for the single-operand `Index` forms.
+  - Depends on R1514, for the single-operand `Index` forms.
   - Model: Opus, Not Planned.
 
 - [ ] **R1512 `Self`, `Self.T`, and `None` in a bracket are types by their
@@ -5471,10 +5530,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
 
   Problem: `total()` and `total[]()` over `def total[*values: Int]() ->
   Int` fail with "cannot infer type parameter '*values' of 'total' from the
-  arguments" and "an empty subscript ('value[]') is the pointer
-  dereference", where the pin binds the empty list and prints `0`.
-  - The parser reads `total[]` as the pointer dereference `p[]`, so the
-    call must tell a generic callee's empty brackets from it.
+  arguments", where the pin binds the empty list and prints `0`.
+  - Probe: `none[]()` over `def none[*vals: Int]() -> Int` prints `0` at
+    the pin.
   - The checker's generic call binding has no empty list for an unsupplied
     variadic value parameter.
   - A clone of such a `def` would spell its runtime reads as
@@ -5534,20 +5592,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `self.f` in a method of `struct T[s: String, f: Float64]`, and
     `t.s` on an instance (pin: `2.5` and `a` for `T["a", 2.5]`).
   - Found while landing R1401 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R326 An empty explicit application `f[]()` is a pointer dereference**
-
-  Problem: `none[]()` over `def none[*vals: Int]() -> Int` fails with "an
-  empty subscript ('value[]') is the pointer dereference", where the pin
-  binds the pack empty and prints `0`.
-  - The parser reads `name[]` as `EmptySubscript` whatever `name` denotes;
-    the checker would type it as an application when the callee is a
-    generic `def`.
-  - Probe: `g[]()` over `def g[Tr: type_of(AnyType), //, *Ts: Tr]()`,
-    which the pin rejects with "failed to infer parameter 'Tr'" (R1176).
-  - Found while landing R318 (2026-10-05).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8180,7 +8224,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Slice` was a library struct; they go with it.
   - `CheckedSliceLiteral::indirect_result` goes with it too: the literal's
     node then records its own `IndirectResult`.
-  - Depends on R1371, which makes every bracket an index of expressions.
+  - Depends on R1514, which makes every bracket an index of expressions.
   - Model: Fable, Not Planned.
 
 - [ ] **R1423 MIR wraps each subscript argument in a one-variant

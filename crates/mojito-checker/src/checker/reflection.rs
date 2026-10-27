@@ -341,8 +341,8 @@ impl Checker {
     /// bound handle name, or a `field_at[i]` / `field[name]` selection on one.
     pub(super) fn reflection_handle(&self, expr: &Expr) -> Result<Option<Ty>, TypeError> {
         match &expr.kind {
-            ExprKind::TypeApply { name, args } if name == "reflect" => {
-                self.reflection_subject(expr, args).map(Some)
+            _ if let Some(("reflect", args)) = expr.bracket_application() => {
+                self.reflection_subject(expr, &args).map(Some)
             }
             ExprKind::Call {
                 name,
@@ -631,8 +631,11 @@ impl Checker {
 /// `field[name]` / `field_at[i]` selection on one. A `comptime` binding of
 /// one is the handle the check reads at each use, never a type alias.
 pub(super) fn spells_reflection_handle(expr: &Expr) -> bool {
+    if let Some((name, _)) = expr.bracket_application() {
+        return name == "reflect";
+    }
     match &expr.kind {
-        ExprKind::TypeApply { name, .. } | ExprKind::Call { name, .. } => name == "reflect",
+        ExprKind::Call { name, .. } => name == "reflect",
         ExprKind::Index { object, .. } => matches!(&object.kind,
             ExprKind::Member { object, field }
                 if matches!(field.as_str(), "field" | "field_at" | "field_type")

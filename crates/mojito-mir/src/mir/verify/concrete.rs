@@ -337,6 +337,12 @@ fn concrete_instruction(head: &str, instruction: &MirInstr, errors: &mut Vec<Str
         } => errors.push(format!(
             "{head} keeps the parameter constant `{value}` in elaborated MIR"
         )),
+        MirInstr::Const {
+            k: Const::FunctionInstance { function, .. },
+            ..
+        } => errors.push(format!(
+            "{head} keeps the unelaborated instance of `{function}` in elaborated MIR"
+        )),
         MirInstr::MakeSimd { dtype, width, .. }
         | MirInstr::SimdCast { dtype, width, .. }
         | MirInstr::SimdBitcast { dtype, width, .. }

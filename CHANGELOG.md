@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A bracket after a name is classified by what the name denotes, as
+  upstream's `SubscriptNode::emitLCVIR` classifies it (R1371, R326): over a
+  function its operands bind the function's parameters, positionally or by
+  keyword, so `var f = twice[4]`, `pair[b=3, a=4]`, `ident[Point]`, and
+  `total[1, 2, 3]` are function values, and `f[]()` binds nothing rather
+  than reading a pointer dereference. The parser's `reflect`, `origin_of`,
+  and spread cases are gone, and a static call's receiver is one arm over
+  the bracket whatever shape it parsed as. A generic function's value now
+  names its instance at those bindings (MIR `function_instance`, schema
+  1.116, `mojito-package 113`), so a value parameter no runtime argument
+  spells reaches the body and the native backend compiles generic function
+  values. The capitalized, keyword, and type-operand brackets that still
+  parse as `TypeApply` are R1513 and R1514; a bracket fused into a
+  following call is R1515.
 - A bracket operand is one expression whatever its capitalization, as
   upstream's `parseSubscriptSuffix` parses it, and the check classifies it
   as a type or a value by what it denotes (R1370, R377, R381, R512): a

@@ -407,7 +407,7 @@ fn nested_bodies<'a>(
             MirInstr::Call { func, .. } => (Some(func.0.as_str()), true),
             MirInstr::MakeClosure { function, .. }
             | MirInstr::Const {
-                k: Const::Function(function),
+                k: Const::Function(function) | Const::FunctionInstance { function, .. },
                 ..
             } => (Some(function.as_str()), false),
             _ => (None, false),

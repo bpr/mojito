@@ -897,7 +897,7 @@ impl Checker {
         arguments: &[mojito_ast::ast::ParamArg],
         callable: Ty,
         signature: Option<&CallableOriginSignature>,
-    ) -> Result<Ty, TypeError> {
+    ) -> Result<(Ty, Vec<TyArg>), TypeError> {
         let (callable, ordinary, _) =
             self.prepare_callable_specialization(name, arguments, callable, signature)?;
         // The pinned compiler accepts explicit Origin specialization of a
@@ -913,10 +913,10 @@ impl Checker {
             )));
         }
         match callable.kind() {
-            TyKind::GenericFunc(_) => self
-                .instantiate_generic_callable_value(name, callable, &ordinary)
-                .map(|(contract, _)| contract),
-            TyKind::Func(_) if ordinary.is_empty() => Ok(callable),
+            TyKind::GenericFunc(_) => {
+                self.instantiate_generic_callable_value(name, callable, &ordinary)
+            }
+            TyKind::Func(_) if ordinary.is_empty() => Ok((callable, Vec::new())),
             TyKind::Func(_) => Err(TypeError::WrongTypeArgCount {
                 name: name.to_string(),
                 expected: 0,
@@ -927,6 +927,36 @@ impl Checker {
                 ty: other.to_string(),
             }),
         }
+    }
+
+    /// The function a bracket after a name binds and the operands it binds,
+    /// when the name denotes a function: upstream's `SubscriptNode` over an
+    /// overload set, whose operands are parameter bindings (`twice[4]`,
+    /// `pair[a=3, b=4]`, `total[]`). `None` for any other base.
+    pub(super) fn bracket_callable(
+        &self,
+        expr: &Expr,
+    ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
+        let (name, args) = expr.bracket_application()?;
+        self.lookup(name)
+            .is_some_and(|ty| {
+                matches!(
+                    ty.kind(),
+                    TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_)
+                )
+            })
+            .then(|| (name.to_string(), args.into_owned()))
+    }
+
+    /// Whether `value` reads a function its bracket specialized
+    /// (`borrow[origin_of(v)]`, `twice[4]`) as a value.
+    pub(super) fn specializes_callable_value(&self, value: &Expr) -> bool {
+        let spelled = self.spelled_construction(value);
+        let applied = spelled.as_ref().unwrap_or(value);
+        matches!(applied.kind, ExprKind::TypeApply { .. })
+            && self.has_fact(&applied.source_span(), |facts| {
+                facts.overload_target.is_some()
+            })
     }
 
     pub(super) fn infer_specialized_callable_value(
@@ -951,67 +981,82 @@ impl Checker {
             self.record_at(span.clone()).binding = Some(owner);
         }
         let signatures = self.lookup_callable_origins(name).unwrap_or_default();
-        let (selected, target) = if let TyKind::Overload(candidates) = callable.kind() {
-            let expected = expected.ok_or_else(|| TypeError::BadCall {
-                func: name.to_string(),
-                reason: "an overloaded function value requires a contextual callable type"
-                    .to_string(),
-            })?;
-            // Each candidate is specialized inside a probe; the one that
-            // fits is specialized again below, which alone keeps its facts.
-            let mut matches = candidates
-                .iter()
-                .enumerate()
-                .filter_map(|(index, candidate)| {
-                    self.probe(|| {
-                        self.specialize_callable_value_candidate(
-                            name,
-                            arguments,
-                            candidate.clone(),
-                            signatures.get(index),
-                        )
-                        .ok()
-                        .filter(|specialized| self.value_coerces(specialized, expected))
+        let ((selected, instance_arguments), target) =
+            if let TyKind::Overload(candidates) = callable.kind() {
+                let expected = expected.ok_or_else(|| TypeError::BadCall {
+                    func: name.to_string(),
+                    reason: "an overloaded function value requires a contextual callable type"
+                        .to_string(),
+                })?;
+                // Each candidate is specialized inside a probe; the one that
+                // fits is specialized again below, which alone keeps its facts.
+                let mut matches = candidates
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, candidate)| {
+                        self.probe(|| {
+                            self.specialize_callable_value_candidate(
+                                name,
+                                arguments,
+                                candidate.clone(),
+                                signatures.get(index),
+                            )
+                            .ok()
+                            .filter(|(specialized, _)| self.value_coerces(specialized, expected))
+                        })
+                        .and_then(|_| callable_lowered_name(name, candidate))
+                        .map(|target| (index, target))
                     })
-                    .and_then(|_| callable_lowered_name(name, candidate))
-                    .map(|target| (index, target))
-                })
-                .collect::<Vec<_>>();
-            let (index, target) = match matches.len() {
-                0 => {
-                    return Err(TypeError::TypeMismatch {
-                        expected: expected.to_string(),
-                        found: format!("specialization of overload({name})"),
-                        context: "overloaded callable value".to_string(),
-                    });
-                }
-                1 => matches.pop().expect("one callable-value candidate"),
-                _ => {
-                    return Err(TypeError::BadCall {
-                        func: name.to_string(),
-                        reason: format!(
-                            "multiple specialized overloads fit expected type '{expected}'"
-                        ),
-                    });
-                }
+                    .collect::<Vec<_>>();
+                let (index, target) = match matches.len() {
+                    0 => {
+                        return Err(TypeError::TypeMismatch {
+                            expected: expected.to_string(),
+                            found: format!("specialization of overload({name})"),
+                            context: "overloaded callable value".to_string(),
+                        });
+                    }
+                    1 => matches.pop().expect("one callable-value candidate"),
+                    _ => {
+                        return Err(TypeError::BadCall {
+                            func: name.to_string(),
+                            reason: format!(
+                                "multiple specialized overloads fit expected type '{expected}'"
+                            ),
+                        });
+                    }
+                };
+                let specialized = self.specialize_callable_value_candidate(
+                    name,
+                    arguments,
+                    candidates[index].clone(),
+                    signatures.get(index),
+                )?;
+                (specialized, target)
+            } else {
+                let specialized = self.specialize_callable_value_candidate(
+                    name,
+                    arguments,
+                    callable,
+                    signatures.first(),
+                )?;
+                (specialized, name.to_string())
             };
-            let specialized = self.specialize_callable_value_candidate(
-                name,
-                arguments,
-                candidates[index].clone(),
-                signatures.get(index),
-            )?;
-            (specialized, target)
-        } else {
-            let specialized = self.specialize_callable_value_candidate(
-                name,
-                arguments,
-                callable,
-                signatures.first(),
-            )?;
-            (specialized, name.to_string())
-        };
         if record {
+            // A generic function's value names its instance at the
+            // arguments the bracket bound, as upstream's symbol reference
+            // names a specialization; MIR carries them to the elaborator.
+            if !instance_arguments.is_empty() {
+                self.record_at(span.clone()).generic_instantiation =
+                    Some(mojito_checked::checked::GenericInstantiation {
+                        callee: target.clone(),
+                        parameter_names: Vec::new(),
+                        parameter_types: Vec::new(),
+                        variadic: None,
+                        arguments: instance_arguments,
+                        folded_arguments: Vec::new(),
+                    });
+            }
             self.record_at(span.clone()).overload_target = Some(target);
             self.record_at(span).ty = Some(selected.clone());
         }

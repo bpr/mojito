@@ -656,9 +656,18 @@ impl<'a> Flatten<'a> {
                 {
                     self.nested_type_apply(node, name)
                 } else {
+                    let function = callable_target(&checked.adjustments)?;
+                    let arguments = node.instantiated_args();
                     self.literal(
                         checked,
-                        Const::Function(callable_target(&checked.adjustments)?),
+                        if arguments.is_empty() {
+                            Const::Function(function)
+                        } else {
+                            Const::FunctionInstance {
+                                function,
+                                arguments,
+                            }
+                        },
                     )
                 }
             }

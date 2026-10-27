@@ -4444,6 +4444,37 @@ fn explicitly_specializes_callable_origin_values() {
 }
 
 #[test]
+fn a_bracket_over_a_function_binds_its_parameters() {
+    // A subscript is classified by what its base denotes: over a generic
+    // `def` its operands bind the parameters, positional or by keyword,
+    // and the value is the instance's function type.
+    let declarations = "def twice[n: Int]() -> Int:\n    return n * 2\n\ndef pair[a: Int, b: Int]() -> Int:\n    return a + b\n\ndef inc(x: Int) -> Int:\n    return x + 1\n\n";
+    ok(&format!(
+        "{declarations}def main():\n    var f: def() thin -> Int = twice[4]\n    var g = pair[a=3, b=4]\n    var h = pair[1, 2]\n    print(f() + g() + h())\n"
+    ));
+    let error = err(&format!(
+        "{declarations}def main():\n    var f: def() thin -> Bool = twice[4]\n"
+    ));
+    assert!(
+        matches!(error, TypeError::TypeMismatch { .. }),
+        "got {error:?}"
+    );
+    // A non-generic function binds no parameter.
+    let error = err(&format!("{declarations}def main():\n    var f = inc[0]\n"));
+    assert!(
+        matches!(
+            error,
+            TypeError::WrongTypeArgCount {
+                expected: 0,
+                got: 1,
+                ..
+            }
+        ),
+        "got {error:?}"
+    );
+}
+
+#[test]
 fn explicitly_specializes_nested_callable_origin_values() {
     ok(include_str!(
         "../conformance/fixtures/nested_origin_specialized_function_value.mojo"

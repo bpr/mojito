@@ -217,9 +217,7 @@ impl Checker {
         else {
             return;
         };
-        if matches!(object.kind, ExprKind::TypeApply { .. }) {
-            self.record_bracket_attributes(object.source_span(), brackets.scatter(attributes));
-        }
+        self.record_bracket_attributes(object.source_span(), brackets.scatter(attributes));
         if !arguments.is_empty() {
             self.record_at(object.source_span()).ty =
                 Some(TyKind::Struct(sname.to_string(), arguments).into());

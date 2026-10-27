@@ -758,7 +758,7 @@ impl Specializer<'_> {
     /// callee's own binders first: a parameter no runtime parameter or
     /// result spells has no other source. One still symbolic here belongs
     /// to a parametric caller, which unification leaves as it stands.
-    fn bind_instantiated_arguments(
+    pub(super) fn bind_instantiated_arguments(
         &self,
         owner: &str,
         target: &str,

@@ -4913,7 +4913,7 @@ fn close_register_types(
                             Const::Dtype(_) => Some(Ty::dtype()),
                             // A callable constant's type needs the checked
                             // expression; report rather than reconstruct.
-                            Const::Function(_) => None,
+                            Const::Function(_) | Const::FunctionInstance { .. } => None,
                             Const::Param(value) => value.meta().as_value().cloned(),
                             Const::Value(value) => {
                                 mojito_types::param_expr::MetaTy::of_value(value)

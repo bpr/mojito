@@ -128,27 +128,6 @@ fn call_name(callee: Expr) -> Result<String, ParseError> {
     }
 }
 
-/// Whether a value-shaped bracket argument is unambiguously an Origin
-/// specialization rather than a runtime subscript. Most compile-time values
-/// cannot be distinguished syntactically from indices; `origin_of(...)` can,
-/// because it is a compiler-known operation that never has a runtime value.
-fn is_explicit_origin_argument(expression: &Expr) -> bool {
-    match &expression.kind {
-        ExprKind::Call {
-            name,
-            param_args,
-            kwargs,
-            args,
-        } => match name.as_str() {
-            "origin_of" => param_args.is_empty() && kwargs.is_empty() && !args.is_empty(),
-            // The origin capability casts `ImmOrigin(o)` / `Origin[mut=False](o)`.
-            "ImmOrigin" | "MutOrigin" | "Origin" => kwargs.is_empty() && args.len() == 1,
-            _ => false,
-        },
-        _ => false,
-    }
-}
-
 /// The parsed body of an `if`/`elif`/`else` chain: the `(condition, body)`
 /// branches plus the optional `else` body. Shared by `if` and `comptime if`.
 type IfChain = (Vec<(Condition, Vec<Stmt>)>, Option<Vec<Stmt>>);

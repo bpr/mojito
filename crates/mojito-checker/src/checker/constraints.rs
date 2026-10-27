@@ -5,6 +5,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_ast::ast::{multi_subscript_param_args, subscript_param_args};
 use mojito_symbol::symbol::OverloadLookup;
 use mojito_types::conformance::Conformance;
 use mojito_types::ct::SimdConstructionError;
@@ -4610,39 +4611,6 @@ pub(super) fn member_source_type(expr: &Expr) -> Option<SourceType> {
         ExprKind::Index { object, index } => applied(object, subscript_param_args(index)),
         ExprKind::MultiIndex { object, args } => applied(object, multi_subscript_param_args(args)?),
         _ => None,
-    }
-}
-
-/// The compile-time arguments a subscript's index spells: one per element
-/// of a tuple index, else the index itself.
-pub(super) fn subscript_param_args(index: &Expr) -> Vec<mojito_ast::ast::ParamArg> {
-    match &index.kind {
-        ExprKind::TupleLit(elements) => elements.iter().map(subscript_param_arg).collect(),
-        _ => vec![subscript_param_arg(index)],
-    }
-}
-
-/// The compile-time arguments a multi-argument subscript spells, a keyword
-/// argument (`plus_one[n=3]`) as a named one. `None` when one is a slice.
-fn multi_subscript_param_args(args: &[SubscriptArg]) -> Option<Vec<mojito_ast::ast::ParamArg>> {
-    args.iter()
-        .map(|argument| match argument {
-            SubscriptArg::Index(value) => Some(subscript_param_arg(value)),
-            SubscriptArg::Keyword { name, value } => Some(mojito_ast::ast::ParamArg::Named {
-                name: name.clone(),
-                value: Box::new(subscript_param_arg(value)),
-            }),
-            SubscriptArg::Slice { .. } | SubscriptArg::KeywordSlice { .. } => None,
-        })
-        .collect()
-}
-
-/// One subscript index as a compile-time argument: a type the subscript
-/// spells (`P.sz[Int]`) is a type argument.
-fn subscript_param_arg(index: &Expr) -> mojito_ast::ast::ParamArg {
-    match &index.kind {
-        ExprKind::TypeValue(ty) => mojito_ast::ast::ParamArg::Type(ty.clone()),
-        _ => mojito_ast::ast::ParamArg::Value(index.clone()),
     }
 }
 

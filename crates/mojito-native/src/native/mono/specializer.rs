@@ -2291,6 +2291,37 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
+    /// The instance a generic function's value names: `target`'s
+    /// parameters bound to `arguments`, closed under the instance being
+    /// specialized, and defaulted past them. It removes no argument, as a
+    /// call through the value passes the whole signature.
+    fn function_value_instance(
+        &mut self,
+        owner: &str,
+        target: &str,
+        arguments: &[TyArg],
+    ) -> Result<String, MonoError> {
+        let decls = self
+            .declarations
+            .get(target)
+            .map(|declaration| declaration.param_decls.clone())
+            .ok_or_else(|| {
+                self.error(
+                    Some(owner),
+                    format!("function value `{target}` lacks declaration facts"),
+                )
+            })?;
+        let arguments = arguments
+            .iter()
+            .map(|argument| substitute_arg(argument, &self.enclosing))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut bindings = self.base_bindings();
+        self.bind_instantiated_arguments(owner, target, &decls, &arguments, &mut bindings)?;
+        apply_defaults(&decls, &mut bindings)?;
+        let instance_arguments = ordered_arguments(&decls, &bindings, target)?;
+        self.enqueue(target, bindings, instance_arguments)
+    }
+
     /// Whether `target` is a closure's body as its storage's method
     /// without parameters of its own.
     fn is_storage_bound_closure_method(&self, target: &str) -> bool {
@@ -3167,6 +3198,22 @@ impl<'a> Specializer<'a> {
                             instantiated_args: Vec::new(),
                             spread: spread.take(),
                             refined_bound: None,
+                        };
+                    }
+                    // A generic function's value names its instance at the
+                    // arguments its bracket bound.
+                    MirInstr::Const {
+                        dest,
+                        k:
+                            Const::FunctionInstance {
+                                function,
+                                arguments,
+                            },
+                    } => {
+                        let instance = self.function_value_instance(owner, function, arguments)?;
+                        *instruction = MirInstr::Const {
+                            dest: *dest,
+                            k: Const::Function(instance),
                         };
                     }
                     // A retained callable names its lifted body on the

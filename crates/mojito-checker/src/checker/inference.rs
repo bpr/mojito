@@ -923,6 +923,27 @@ impl Checker {
             ExprKind::Spread(_) => Err(TypeError::Unsupported(
                 "call spread outside a specialized type pack".to_string(),
             )),
+            // `f[]()`: the empty bracket binds no parameter of the function,
+            // and the call binds the rest by inference.
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } if param_args.is_empty()
+                && let Some((name, param_args)) = self.bracket_callable(callee) =>
+            {
+                let spelled = super::initializer_list::derived_construction(
+                    expr,
+                    ExprKind::Call {
+                        name,
+                        param_args,
+                        args: args.clone(),
+                        kwargs: kwargs.clone(),
+                    },
+                );
+                self.infer_spelled(expr, spelled)
+            }
             ExprKind::Invoke {
                 callee,
                 param_args,
@@ -1274,6 +1295,18 @@ impl Checker {
                 if let Some(read) = self.read_parametric_value(expr) =>
             {
                 read
+            }
+            // A bracket over a function binds its parameters, as upstream's
+            // `SubscriptNode` binds an overload set's: the application is
+            // spelled as the parameter application it is.
+            ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
+                if let Some((name, args)) = self.bracket_callable(expr) =>
+            {
+                let spelled = super::initializer_list::derived_construction(
+                    expr,
+                    ExprKind::TypeApply { name, args },
+                );
+                self.infer_spelled(expr, spelled)
             }
             ExprKind::Index { object, index }
                 if let Some(element) = self.comptime_display_subscript(expr, object, index) =>
@@ -2152,6 +2185,23 @@ impl Checker {
             )?
         {
             return Ok(specialized);
+        }
+        if matches!(expected.kind(), TyKind::Func(_))
+            && matches!(
+                expression.kind,
+                ExprKind::Index { .. } | ExprKind::MultiIndex { .. }
+            )
+            && let Some((name, args)) = self.bracket_callable(expression)
+        {
+            let spelled = super::initializer_list::derived_construction(
+                expression,
+                ExprKind::TypeApply { name, args },
+            );
+            let ty = self.infer_with_expected(&spelled, expected, record)?;
+            if record {
+                self.record_spelled_construction(expression, spelled, &ty);
+            }
+            return Ok(ty);
         }
         // Reference-typed values normally read through to their referents in
         // expression position.  A reference-typed parameter is a storage

@@ -105,81 +105,47 @@ impl Checker {
                 });
             return Ok(Some(ty));
         }
-        // A **static** method on a parameterized type — the receiver is a type,
-        // not a value (`Dict[Int, Int].fromkeys(...)`). Handled before inferring
-        // the object (which would reject a bare `TypeApply`). The pointer family
-        // keeps its dedicated builtin path (including the removed-`alloc`
-        // diagnostic); a registered struct with a matching static dispatches
-        // through the struct-parameter-aware path.
-        if let ExprKind::TypeApply { name, args: targs } = &object.kind {
-            if !matches!(name.as_str(), "UnsafePointer" | "Pointer")
-                && let Some(info) = self.structs.get(name)
-                && info
-                    .methods
-                    .get(method)
-                    .is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self))
-            {
+        // A method on a bracket over a type name: the receiver is the type
+        // its operands apply, not a value (`Dict[Int, Int].fromkeys(...)`,
+        // `Box[String].filled(...)`), as upstream's `SubscriptNode` over a
+        // struct type substitutes its parameters whatever the bracket's
+        // shape. A struct name is never a binding. The pointer family keeps
+        // its dedicated builtin path (including the removed-`alloc`
+        // diagnostic); a registered struct with a matching static
+        // dispatches through the struct-parameter-aware path.
+        if let Some((name, targs)) = object.bracket_application()
+            && self.lookup(name).is_none()
+        {
+            let pointer = matches!(name, "UnsafePointer" | "Pointer");
+            let signatures = self
+                .structs
+                .get(name)
+                .filter(|_| !pointer)
+                .and_then(|info| info.methods.get(method));
+            if signatures.is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self)) {
                 let ty =
-                    self.infer_struct_static_method(span.clone(), name, targs, method, call)?;
-                self.record_static_receiver(object, name, targs);
+                    self.infer_struct_static_method(span.clone(), name, &targs, method, call)?;
+                self.record_static_receiver(object, name, &targs);
                 return Ok(Some(ty));
             }
             // No static of that name: an instance method called through the
             // type takes its receiver as the first argument.
-            if !matches!(name.as_str(), "UnsafePointer" | "Pointer")
-                && !args.is_empty()
-                && self.structs.get(name).is_some_and(|info| {
-                    info.methods
-                        .get(method)
-                        .is_some_and(|sigs| sigs.iter().any(|sig| sig.has_self))
-                })
+            if !args.is_empty()
+                && signatures.is_some_and(|sigs| sigs.iter().any(|sig| sig.has_self))
             {
                 return self
                     .infer_type_receiver_instance_call(
                         span.clone(),
-                        (name, targs, Some(object.source_span())),
+                        (name, &targs, Some(object.source_span())),
                         method,
                         call,
                     )
                     .map(Some);
             }
-            reject_kwargs(kwargs)?;
-            return self
-                .infer_static_method(&object.source_span(), name, targs, method, args)
-                .map(Some);
-        }
-        // `Box[String].filled(...)`: a single non-builtin compile-time
-        // argument parses as a value subscript (`Index`) — the bracket parser
-        // cannot know `String` names a type. A subscript whose base names a
-        // registered struct with a matching static (and no value binding —
-        // struct names are never expression bindings) is that same
-        // static-receiver spelling; reinterpret the index as the receiver's
-        // compile-time argument.
-        if let ExprKind::Index {
-            object: base,
-            index,
-        } = &object.kind
-            && let ExprKind::Identifier(sname) = &base.kind
-            && self.lookup(sname).is_none()
-            && let Some(info) = self.structs.get(sname)
-            && let Some(sigs) = info.methods.get(method)
-        {
-            let targ = mojito_ast::ast::ParamArg::Value((**index).clone());
-            if sigs.iter().any(|sig| !sig.has_self) {
-                let targs = [targ];
-                let ty =
-                    self.infer_struct_static_method(span.clone(), sname, &targs, method, call)?;
-                self.record_static_receiver(object, sname, &targs);
-                return Ok(Some(ty));
-            }
-            if !args.is_empty() && sigs.iter().any(|sig| sig.has_self) {
+            if pointer || matches!(object.kind, ExprKind::TypeApply { .. }) {
+                reject_kwargs(kwargs)?;
                 return self
-                    .infer_type_receiver_instance_call(
-                        span.clone(),
-                        (sname, &[targ], None),
-                        method,
-                        call,
-                    )
+                    .infer_static_method(&object.source_span(), name, &targs, method, args)
                     .map(Some);
             }
         }

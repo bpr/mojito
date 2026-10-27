@@ -370,7 +370,7 @@ impl Checker {
 
     /// Type `spelled`, the expression the checker spelled for `expression`,
     /// and record it in `expression`'s place.
-    fn infer_spelled(&self, expression: &Expr, spelled: Expr) -> Result<Ty, TypeError> {
+    pub(super) fn infer_spelled(&self, expression: &Expr, spelled: Expr) -> Result<Ty, TypeError> {
         let ty = self.infer(&spelled)?;
         self.record_spelled_construction(expression, spelled, &ty);
         Ok(ty)
@@ -532,15 +532,9 @@ pub(super) fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
 fn alias_application(value: &Expr) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
     match &value.kind {
         ExprKind::Identifier(name) => Some((name.clone(), Vec::new())),
-        ExprKind::TypeApply { name, args } => Some((name.clone(), args.clone())),
-        ExprKind::Index { object, index } => match &object.kind {
-            ExprKind::Identifier(name) => Some((
-                name.clone(),
-                super::constraints::subscript_param_args(index),
-            )),
-            _ => None,
-        },
-        _ => None,
+        _ => value
+            .bracket_application()
+            .map(|(name, args)| (name.to_string(), args.into_owned())),
     }
 }
 

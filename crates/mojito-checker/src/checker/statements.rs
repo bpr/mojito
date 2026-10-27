@@ -1300,11 +1300,7 @@ impl Checker {
                         }
                     }
                     // Inferred `var x = e`: declare the value's materialized type.
-                    None if matches!(value.kind, ExprKind::TypeApply { .. })
-                        && self.has_fact(&value.source_span(), |facts| {
-                            facts.overload_target.is_some()
-                        }) =>
-                    {
+                    None if self.specializes_callable_value(value) => {
                         // Explicitly specializing an Origin parameter produces
                         // a first-class, non-capturing function value whose
                         // checked `TyKind::Func` contains the bound origin. Plain

@@ -1593,6 +1593,11 @@ fn const_value(k: &Const) -> Result<Value, RuntimeError> {
                 "the parameter constant `{expr}`"
             )));
         }
+        Const::FunctionInstance { function, .. } => {
+            return Err(parametric_instruction(&format!(
+                "the unelaborated instance of `{function}`"
+            )));
+        }
     })
 }
 

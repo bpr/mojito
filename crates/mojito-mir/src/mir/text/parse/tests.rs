@@ -416,6 +416,10 @@ fn constant_families_reprint_byte_identically() {
         Const::Bool(true),
         Const::Str("line\n\"quoted\"\t\u{7}".into()),
         Const::Function("needs quoting!".into()),
+        Const::FunctionInstance {
+            function: "twice".into(),
+            arguments: vec![TyArg::Val(CtValue::Int(4)), TyArg::Ty(Ty::int())],
+        },
         Const::Dtype(Dtype::UInt16),
         Const::None,
         Const::UninitMem,

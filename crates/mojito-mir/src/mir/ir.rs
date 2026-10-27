@@ -1530,6 +1530,15 @@ pub enum Const {
     Bool(bool),
     Str(String),
     Function(#[serde(serialize_with = "mojito_types::symbol_ref::serialize")] String),
+    /// A generic function's instance at the compile-time arguments its
+    /// value's bracket bound, in declaration order (`twice[4]`,
+    /// `ident[Point]`): upstream's symbol reference to a specialization. The
+    /// elaborator names the instance, so concrete MIR holds none.
+    FunctionInstance {
+        #[serde(serialize_with = "mojito_types::symbol_ref::serialize")]
+        function: String,
+        arguments: Vec<TyArg>,
+    },
     /// A `DType` value.
     Dtype(mojito_ast::ast::Dtype),
     None,

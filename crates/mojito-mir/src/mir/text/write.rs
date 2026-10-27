@@ -2449,6 +2449,16 @@ fn const_value(value: &Const) -> String {
         Const::Bool(v) => positional("bool", &v.to_string()),
         Const::Str(v) => positional("string", &quote(v)),
         Const::Function(v) => positional("function", &symbol(v)),
+        Const::FunctionInstance {
+            function,
+            arguments,
+        } => record(
+            "function_instance",
+            &[
+                ("function", symbol(function)),
+                ("arguments", list(arguments.iter().map(ty_arg))),
+            ],
+        ),
         Const::Dtype(v) => positional("dtype", v.name()),
         Const::None => "none".into(),
         Const::Param(v) => positional("param", &param_expr(v)),

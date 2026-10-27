@@ -53,6 +53,7 @@ assets/ok/bound_value_member_in_signature.mojo	main	exe-differential	sanitized
 assets/ok/bracket_capitalized_display_element.mojo	main	exe-differential	sanitized
 assets/ok/bracket_capitalized_module_constant.mojo	main	exe-differential	sanitized
 assets/ok/bracket_capitalized_subscript_operator.mojo	main	exe-differential	sanitized
+assets/ok/bracket_function_application.mojo	main	exe-differential	sanitized
 assets/ok/builtins_numeric.mojo	main	exe-differential	sanitized
 assets/ok/bundled_def_loan_carrying_argument.mojo	main	exe-differential	sanitized
 assets/ok/bundled_instance_loan_carrying_argument.mojo	main	exe-differential	sanitized

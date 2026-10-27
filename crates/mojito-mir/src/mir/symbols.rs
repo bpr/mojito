@@ -220,7 +220,7 @@ pub fn replace_symbol_uses(blocks: &mut [MirBlock], replace: &mut dyn FnMut(&mut
                         .for_each(&mut *replace);
                 }
                 MirInstr::Const {
-                    k: Const::Function(function),
+                    k: Const::Function(function) | Const::FunctionInstance { function, .. },
                     ..
                 }
                 | MirInstr::ParamListAddress {

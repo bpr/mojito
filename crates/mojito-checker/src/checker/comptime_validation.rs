@@ -2159,12 +2159,12 @@ impl Checker {
             // A reflection handle is a compile-time value, not a type, and a
             // `comptime` alias or a trivial predicate applies to a `Bool`.
             ExprKind::TypeApply { name, .. }
-                if name == "reflect"
-                    || self.comptime_aliases.contains_key(name)
+                if self.comptime_aliases.contains_key(name)
                     || mojito_types::types::trivial_predicate_name(name).is_some() =>
             {
                 Ok(None)
             }
+            _ if matches!(expr.bracket_application(), Some(("reflect", _))) => Ok(None),
             _ if let Some(reflected) = self.reflected_type_operand(expr).transpose() => {
                 reflected.map(Some)
             }

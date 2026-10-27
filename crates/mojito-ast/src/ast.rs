@@ -8,6 +8,8 @@
 //! at source. The span is *metadata*: [`Expr`]'s `PartialEq` compares only the
 //! `kind`, so AST-literal assertions in the tests stay span-agnostic.
 
+use std::borrow::Cow;
+
 use mojito_common::token::Span;
 
 /// The compiler-internal base of a leading-dot
@@ -94,6 +96,41 @@ pub fn canonical_destructor_name(name: &str) -> &str {
     match name {
         "__del__" => "__deinit__",
         other => other,
+    }
+}
+
+/// The compile-time arguments a subscript's index spells: one per element
+/// of a tuple index, none for the empty subscript `f[]`, else the index
+/// itself.
+pub fn subscript_param_args(index: &Expr) -> Vec<ParamArg> {
+    match &index.kind {
+        ExprKind::TupleLit(elements) => elements.iter().map(subscript_param_arg).collect(),
+        ExprKind::EmptySubscript => Vec::new(),
+        _ => vec![subscript_param_arg(index)],
+    }
+}
+
+/// The compile-time arguments a multi-argument subscript spells, a keyword
+/// argument (`plus_one[n=3]`) as a named one. `None` when one is a slice.
+pub fn multi_subscript_param_args(args: &[SubscriptArg]) -> Option<Vec<ParamArg>> {
+    args.iter()
+        .map(|argument| match argument {
+            SubscriptArg::Index(value) => Some(subscript_param_arg(value)),
+            SubscriptArg::Keyword { name, value } => Some(ParamArg::Named {
+                name: name.clone(),
+                value: Box::new(subscript_param_arg(value)),
+            }),
+            SubscriptArg::Slice { .. } | SubscriptArg::KeywordSlice { .. } => None,
+        })
+        .collect()
+}
+
+/// One subscript index as a compile-time argument: a type the subscript
+/// spells (`P.sz[Int]`) is a type argument.
+pub fn subscript_param_arg(index: &Expr) -> ParamArg {
+    match &index.kind {
+        ExprKind::TypeValue(ty) => ParamArg::Type(ty.clone()),
+        _ => ParamArg::Value(index.clone()),
     }
 }
 
@@ -1899,6 +1936,24 @@ impl Expr {
 
     pub fn source_span(&self) -> mojito_common::token::SourceSpan {
         mojito_common::token::SourceSpan::syntax(self.source.clone(), self.span, self.syntax_id)
+    }
+
+    /// The name a bracket after an identifier applies and the compile-time
+    /// operands it spells, upstream's `SubscriptNode` read before its base is
+    /// classified: a parameter application (`S[Int]`), or a subscript with no
+    /// slice operand (`twice[4]`, `pair[a=3, b=4]`, `total[]`). The view
+    /// never says what the name denotes; each caller decides that.
+    pub fn bracket_application(&self) -> Option<(&str, Cow<'_, [ParamArg]>)> {
+        let (object, args) = match &self.kind {
+            ExprKind::TypeApply { name, args } => return Some((name, Cow::Borrowed(args))),
+            ExprKind::Index { object, index } => (object, subscript_param_args(index)),
+            ExprKind::MultiIndex { object, args } => (object, multi_subscript_param_args(args)?),
+            _ => return None,
+        };
+        match &object.kind {
+            ExprKind::Identifier(name) => Some((name, Cow::Owned(args))),
+            _ => None,
+        }
     }
 
     /// The type a type-shaped expression spells: a capitalized name, `Self`,

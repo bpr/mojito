@@ -53,6 +53,7 @@ assets/ok/bound_value_member_in_signature.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/bracket_capitalized_display_element.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bracket_capitalized_module_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bracket_capitalized_subscript_operator.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/bracket_function_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/builtins_numeric.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bundled_def_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/bundled_instance_loan_carrying_argument.mojo	-	ineligible	no-scalar-entry-shape

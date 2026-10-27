@@ -227,22 +227,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             })
             .collect();
 
-        // `reflect[T]` is the current Mojo reflection handle.  Unlike an
-        // ordinary lower-case expression followed by one subscript, its
-        // brackets carry a compile-time type argument and the resulting handle
-        // is used directly (`reflect[T].field["name"]`).  Recognize the builtin
-        // here so user-defined types such as `Point` do not make the expression
-        // look like a runtime `reflect[Point]` index operation.
-        if matches!(&object.kind, ExprKind::Identifier(name) if name == "reflect") {
-            return Ok(self.node(
-                ExprKind::TypeApply {
-                    name: "reflect".to_string(),
-                    args: param_args,
-                },
-                start,
-            ));
-        }
-
         // A named bracket argument over a lowercase (value) base is a keyword
         // subscript (`s[byte=i]`); over a capitalized type name
         // (`Origin[mut=True]`) it stays compile-time parameter application
@@ -281,38 +265,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             ));
         }
         match <[_; 1]>::try_from(param_args) {
-            // A bare value argument normally means runtime indexing, but
-            // `origin_of(place)` is itself a compile-time Origin value.  Mojo
-            // uses that spelling to specialize a function value without
-            // immediately calling it (`var f = borrow[origin_of(value)]`).
-            // Keep ordinary `values[index]` syntax on the Index path while
-            // preserving this compiler-known origin argument as TypeApply.
-            Ok([mojito_ast::ast::ParamArg::Value(origin)])
-                if is_explicit_origin_argument(&origin)
-                    && matches!(object.kind, ExprKind::Identifier(_)) =>
-            {
-                Ok(self.node(
-                    ExprKind::TypeApply {
-                        name: call_name(object)?,
-                        args: vec![mojito_ast::ast::ParamArg::Value(origin)],
-                    },
-                    start,
-                ))
-            }
-            // A spread of a type list (`Tuple[*Ts.reverse()]`) is a
-            // compile-time argument list; no runtime subscript spreads.
-            Ok([mojito_ast::ast::ParamArg::Value(spread)])
-                if matches!(spread.kind, ExprKind::Spread(_))
-                    && matches!(object.kind, ExprKind::Identifier(_)) =>
-            {
-                Ok(self.node(
-                    ExprKind::TypeApply {
-                        name: call_name(object)?,
-                        args: vec![mojito_ast::ast::ParamArg::Value(spread)],
-                    },
-                    start,
-                ))
-            }
             Ok([mojito_ast::ast::ParamArg::Value(index)]) => Ok(self.node(
                 ExprKind::Index {
                     object: Box::new(object),
@@ -358,24 +310,6 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                 ))
             }
             Ok([other]) => self.parameter_application(object, vec![other], start),
-            // `origin_of(...)` has no runtime value, so a bracket list that
-            // contains one cannot be a multi-dimensional subscript. This is
-            // the multi-argument counterpart of the single-origin case above:
-            // `choose[origin_of(left), origin_of(right)]` specializes a
-            // callable, while `grid[row, column]` remains a runtime index.
-            Err(param_args)
-                if param_args.iter().any(|argument| {
-                    matches!(argument, mojito_ast::ast::ParamArg::Value(value) if is_explicit_origin_argument(value))
-                }) =>
-            {
-                Ok(self.node(
-                    ExprKind::TypeApply {
-                        name: call_name(object)?,
-                        args: param_args,
-                    },
-                    start,
-                ))
-            }
             Err(param_args)
                 if param_args.iter().all(|argument| {
                     matches!(

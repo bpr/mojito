@@ -520,7 +520,7 @@ fn followed_callees(
                     } => out.push(target.clone()),
                     MirInstr::MakeClosure { function, .. }
                     | MirInstr::Const {
-                        k: Const::Function(function),
+                        k: Const::Function(function) | Const::FunctionInstance { function, .. },
                         ..
                     } => out.push(function.clone()),
                     _ => out.extend(

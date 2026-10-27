@@ -504,6 +504,15 @@ impl Decoder {
         match &value.kind {
             ValueKind::Atom(tag) if tag == "none" => Some(Const::None),
             ValueKind::Atom(tag) if tag == "uninitmem" => Some(Const::UninitMem),
+            ValueKind::Record(tag, fields) if tag == "function_instance" => {
+                let function = self.req(value, fields, "function", Self::symbol);
+                let arguments = self.req(value, fields, "arguments", |d, v| Some(d.ty_args(v)));
+                self.unknown(fields, &["function", "arguments"]);
+                Some(Const::FunctionInstance {
+                    function: function?,
+                    arguments: arguments?,
+                })
+            }
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "int" => self.int64(inner).map(Const::Int),
                 "int_literal" => self.int_literal(inner).map(Const::IntLiteral),

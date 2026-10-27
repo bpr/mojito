@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.115
+mojito-mir 1.116
 ```
 
-The writer emits 1.115. The reader accepts 1.0 through 1.115; *Schema 1.0*
+The writer emits 1.116. The reader accepts 1.0 through 1.116; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -660,6 +660,14 @@ always passes its value by keyword (R1373). An older record's `true` reads as
 `"value"`; its `false`, a positional value, no store passes any more. The
 package format moves to `mojito-package 112`.
 
+Schema 1.116 adds the constant `function_instance { function, arguments }`:
+a generic function's value names its instance at the compile-time arguments
+its bracket bound (`twice[4]`, `ident[Point]`), as upstream's symbol
+reference names a specialization, where `function(symbol)` named only the
+template and the elaborator had no binding for a parameter no runtime
+argument spells (R1371). No older artifact holds one. The package format
+moves to `mojito-package 113`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1017,7 +1025,11 @@ record.
 
 `Const` is one of `int(sint)`, `float(bits_hex)`,
 `int_literal(decimal)`, `float_literal(exact)`, `bool(true|false)`,
-`string(string)`, `function(symbol)`, `none`, `param(param-expr)` (schema
+`string(string)`, `function(symbol)`, `function_instance { function:
+symbol, arguments: [ty-arg, ...] }` (schema 1.116), a generic function's
+value at the compile-time arguments its bracket bound, which the elaborator
+rewrites to its instance's `function` and concrete MIR never holds, `none`,
+`param(param-expr)` (schema
 1.20), a parameter expression read as a runtime value — a pack's
 `length`, membership, or conformance — which a generator carries, the
 elaborator folds per instance, and concrete MIR never holds, or

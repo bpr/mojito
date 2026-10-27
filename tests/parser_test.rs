@@ -2136,22 +2136,18 @@ fn parses_empty_subscript_as_pointer_dereference_marker() {
 }
 
 #[test]
-fn distinguishes_origin_specialization_from_runtime_indexing() {
-    let specialized = parse_expr("borrow[origin_of(value)]");
-    match specialized.kind {
-        ExprKind::TypeApply { name, args } => {
-            assert_eq!(name, "borrow");
-            assert!(matches!(
-                args.as_slice(),
-                [ParamArg::Value(Expr {
-                    kind: ExprKind::Call { name, args, .. },
-                    ..
-                })] if name == "origin_of"
-                    && matches!(args.as_slice(), [Expr { kind: ExprKind::Identifier(value), .. }] if value == "value")
-            ));
-        }
-        other => panic!("expected an origin-specialized function value, got {other:?}"),
-    }
+fn origin_specialization_parses_as_the_subscript_runtime_indexing_does() {
+    // The parser never classifies a bracket by its operands: an
+    // `origin_of(...)` operand is a subscript like any value operand, and
+    // the checker binds it when the base denotes a function.
+    assert!(matches!(
+        parse_expr("borrow[origin_of(value)]").kind,
+        ExprKind::Index { object, index }
+            if matches!(object.kind, ExprKind::Identifier(ref name) if name == "borrow")
+                && matches!(&index.kind, ExprKind::Call { name, args, .. }
+                    if name == "origin_of"
+                        && matches!(args.as_slice(), [Expr { kind: ExprKind::Identifier(value), .. }] if value == "value"))
+    ));
 
     assert!(matches!(
         parse_expr("values[index]").kind,
@@ -2159,15 +2155,14 @@ fn distinguishes_origin_specialization_from_runtime_indexing() {
             if matches!(index.kind, ExprKind::Identifier(ref name) if name == "index")
     ));
 
-    let specialized = parse_expr("choose[origin_of(left), origin_of(right)]");
     assert!(matches!(
-        specialized.kind,
-        ExprKind::TypeApply { name, args }
-            if name == "choose"
+        parse_expr("choose[origin_of(left), origin_of(right)]").kind,
+        ExprKind::MultiIndex { object, args }
+            if matches!(object.kind, ExprKind::Identifier(ref name) if name == "choose")
                 && args.len() == 2
                 && args.iter().all(|argument| matches!(
                     argument,
-                    ParamArg::Value(Expr {
+                    mojito::ast::SubscriptArg::Index(Expr {
                         kind: ExprKind::Call { name, .. },
                         ..
                     }) if name == "origin_of"

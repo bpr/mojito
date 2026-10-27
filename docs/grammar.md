@@ -329,8 +329,8 @@ keeping its provenance (the upgrade direction, `MutOrigin(origin)`, is
 rejected). The removed `Origin[mut=...].cast_from[origin]` spelling still
 parses and is rejected by the checker with a migration diagnostic. The call
 form is also an ordinary origin argument (a struct or
-`Pointer` origin slot, an `unsafe_origin_cast` target) and, like
-`origin_of(...)`, keeps a bracket over a type name a parameter application. Named
+`Pointer` origin slot, an `unsafe_origin_cast` target), and a bracket
+holding it is classified by its base as any bracket is. Named
 `Origin[mut=...]` parameters and the `//` infer-only marker are likewise
 retained; the marker is followed by `,` or the closing `]`, so `[T: Copyable
 // U: AnyType]` is upstream's "expected ']' for parameter list"; upstream's `ImmOrigin` and `MutOrigin` aliases are accepted as the
@@ -512,8 +512,9 @@ a type-list expression over packs: a reversal (`*Ts.reverse()`) or a
 concatenation (`*TypeList._concat[Self.Ts.values, OtherTs.values]()`), as
 upstream's `Tuple.reverse` and `Tuple.concat` spell their result types. The
 spread of a pack keeps the pack's own type node; any other operand parses as
-a spread expression. A bracket holding one spread after a name is a type
-application (`Tuple[*Ts.reverse()]`), never a subscript. A `Self`-rooted
+a spread expression. A bracket holding one spread after a name parses as a
+subscript like any other, and the checker reads it as the application its
+base denotes (`Tuple[*Ts.reverse()]`). A `Self`-rooted
 chain an operator continues (`storage[Self.Ts.length - 1 - i]`) is the value
 expression it starts, and `Self.Ts.values` is a value argument like a `def`'s
 own `Ts.values`. A call on a type is a value expression too: `Self.width()`
@@ -1009,11 +1010,10 @@ Notes:
   expected type), generic expected types, and leading-dot in type positions.
 - **Parametric static receivers**: a compile-time application of a struct name
   followed by a method call (`Dict[Int, String].fromkeys(...)`) is a static
-  call on the instantiated struct. There is no dedicated production — the
-  receiver parses as the `TypeApply` bracket-postfix fallback (or, for a
-  single non-builtin argument like `Box[String]`, as an ordinary subscript
-  that the checker reinterprets, since the parser cannot know `String` names
-  a type). The bare spelling `Dict.fromkeys(keys, 0)` infers the struct's
+  call on the instantiated struct. There is no dedicated production: the
+  checker classifies the receiver by what its name denotes, whether the
+  bracket parsed as a parameter application (`Dict[Int, String]`) or a
+  subscript (`Box[String]`). The bare spelling `Dict.fromkeys(keys, 0)` infers the struct's
   parameters from the call's argument types; parameter defaults fill in.
 - **A single comparison is an `Infix`; a chain of ≥ 2 (`a < b < c`, `0 <= i < n`) is a
   `Compare` node** — implemented as `(a < b) and (b < c)` with each operand evaluated
@@ -1055,10 +1055,18 @@ Notes:
 - **`[` after a `primary` is disambiguated by what follows**: `NAME '[' param_args ']'
   '(' args ')'` is a call/construction with explicit compile-time parameters;
   `primary '[' subscript_arg, ... ']'` *not* followed by `(` is a **subscript**.
-  A bare `NAME[param_args]` is a parameterized type value unless `NAME` resolves
-  to a function; an origin-generic function can therefore be materialized as
-  `borrow[origin_of(value)]` and invoked later through its origin-specialized
-  callable type.
+  The parser never asks what the base denotes; the checker classifies the
+  bracket by it, as upstream's `SubscriptNode::emitLCVIR` does. Over a name
+  that denotes a function the operands bind its parameters, positionally or
+  by keyword, and the result is a function value naming that instance
+  (`twice[4]`, `pair[b=3, a=4]`, `ident[Point]`, and an origin-generic
+  `borrow[origin_of(value)]` invoked later through its origin-specialized
+  callable type); empty brackets bind none (`total[]()`). Over a name that
+  denotes a type the bracket is a parameterized type value, and over any
+  other value it is a subscript. A bracket over a capitalized name holding
+  several operands or a keyword operand, and one holding an operand that
+  parses as a `type` (a scalar name, `Self`, `None`, `def(...)`), still
+  parse as the parameter application `TypeApply` (roadmap R1513, R1514).
   Over a member of a type (`S[Int].Of[Bool]`, `P.plus[1, 2]`,
   `P.plus[a=1]`), whose base is a capitalized name, `Self`, a parameter
   application, or a member chain of one, the brackets are a subscript too,

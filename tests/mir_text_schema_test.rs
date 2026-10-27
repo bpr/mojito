@@ -13,8 +13,8 @@ use std::collections::HashSet;
 #[test]
 fn schema_version_and_envelope_are_stable() {
     assert_eq!(MAGIC, "mojito-mir");
-    assert_eq!((VERSION_MAJOR, VERSION_MINOR), (1, 113));
-    assert_eq!(version_header(), "mojito-mir 1.115");
+    assert_eq!((VERSION_MAJOR, VERSION_MINOR), (1, 116));
+    assert_eq!(version_header(), "mojito-mir 1.116");
 }
 
 #[test]
@@ -85,6 +85,13 @@ fn constants_and_types_use_schema_tags() {
     assert_eq!(
         constant_spelling(&Const::Function("main".into())),
         "function"
+    );
+    assert_eq!(
+        constant_spelling(&Const::FunctionInstance {
+            function: "twice".into(),
+            arguments: Vec::new(),
+        }),
+        "function_instance"
     );
     assert_eq!(type_spelling(&Ty::int()), "Int");
     assert_eq!(

@@ -5459,6 +5459,7 @@ impl<'a> ArenaBuilder<'a> {
                 | ExprKind::MethodCall { .. }
                 | ExprKind::Invoke { .. }
                 | ExprKind::Index { .. }
+                | ExprKind::MultiIndex { .. }
         ) {
             return None;
         }

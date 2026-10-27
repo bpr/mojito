@@ -63,6 +63,11 @@ impl FnLowering<'_> {
                 format!("parameter constant `{value}` reached native lowering"),
                 dest,
             )),
+            // The elaborator names every function value's instance.
+            MirConst::FunctionInstance { function, .. } => Err(self.unsupported_reg(
+                format!("unelaborated instance of `{function}` reached native lowering"),
+                dest,
+            )),
             MirConst::Value(value) => self.lower_parameter_value(ctx, dest, value),
             MirConst::UninitMem => self.lower_uninit_mem(ctx, dest),
         }

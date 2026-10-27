@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 115;
+pub const VERSION_MINOR: u16 = 116;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -464,6 +464,7 @@ pub const fn constant_spelling(constant: &Const) -> &'static str {
         Const::Bool(_) => "bool",
         Const::Str(_) => "string",
         Const::Function(_) => "function",
+        Const::FunctionInstance { .. } => "function_instance",
         Const::Dtype(_) => "dtype",
         Const::None => "none",
         Const::Param(_) => "param",
