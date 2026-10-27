@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1505**.
+Next free ID: **R1506**.
 
 ## Ordered Work
 
@@ -1419,6 +1419,10 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     names a `mut` parameter.
   - When it lands, add both cases to an `assets/ok` fixture and run it
     natively too.
+  - Probe: a module-level `def fa(mut p: P) -> ref[p.a] Int` called
+    directly, `fa(p) = 7`, and as a destructuring leaf, `(fa(p), m) = (5,
+    6)`, are rejected the same way; the pin prints `7`, and `5 6` for the
+    pair.
   - Found while landing R676 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -1438,6 +1442,27 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     an exclusive loan on `xs` to the statement's end, so the later `mut`
     argument conflicts with it even before the read's placement matters.
   - Found while landing R685 (2026-10-13).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1505 A destructuring leaf's reference lvalue borrows its root
+  exclusively until its store**
+
+  `(r[0], r[1]) = (5, 6)` over a struct whose only accessor is a `ref`
+  getter is rejected ("access to 'r' conflicts with live reference
+  '$call_ref_r4'"), where the pin forms both lvalues, then stores through
+  each, and prints `5 6`.
+  - `lower_destructure` (`mir/lower_stmt.rs`) forms every place leaf before
+    the value, as upstream's `TupleDLValue` does, and a getter leaf's handle
+    is materialized by `materialize_call_reference_place`, whose loans are
+    exclusive.
+  - The second leaf's getter call takes `r` mutably while the first
+    handle's loan is live; upstream's lvalue names an origin and excludes
+    nothing until the store, as a `ref` binding's setup loans do here
+    (`reference_binding_loans`).
+  - Probe: the store above; a single getter leaf, `(r[0], m) = (5, 6)`,
+    already runs (`assets/ok/destructure_subscript_targets.mojo`).
+  - Found while landing R1374 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -2549,26 +2574,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1374 A destructuring leaf stores through its own path, not the
-  assignment's lvalue**
-
-  `destructure_into_place` (`checker/destructure.rs`) rejects a nominal
-  subscript leaf, because the extraction plan has no setter store, where
-  upstream's `TupleDLValue::emitStore` (`DLValues.cpp`) stores each element
-  through `emitStoreToLValue`, so a subscript leaf goes through its
-  `SubscriptDLValue`.
-  - The lever: the leaf takes the subscript lvalue (`subscript_lvalue` in
-    `checker/indexing.rs`) and stores through `store_through_subscript`
-    with a synthetic element-typed value, as the augmented store does. MIR
-    gains a setter call whose value is an element register
-    (`lower_subscript_set` takes only an expression today).
-  - Probe: R1247's `(xs[0], xs[1]) = pair`, which the pin runs, printing `3
-    4`.
-  - Closes R1247 (a nominal subscript as a destructuring target). Shrinks
-    R1224 (the order of a nested sequence store).
-  - Depends on R1373, which supplies the lvalue.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1375 An assignment target must match a list of shapes in the
   parser**
 
@@ -2820,19 +2825,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1140 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1247 A nominal subscript is not a destructuring target**
-
-  Problem: `(xs[0], xs[1]) = pair` is rejected ("a nominal subscript
-  (`xs[i]`) as a destructuring target"), where the pin stores each element
-  through `__setitem__` and prints `3 4`.
-  - `checker/destructure.rs` rejects the leaf because the extraction
-    plan's element store has no `__setitem__` path.
-  - The plain `xs[i] = v` store has one (`lower_subscript_set`).
-  - Fixture to add beside `assets/ok/destructure_swap_and_places.mojo`.
-  - Found while landing R1140 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1248 `comptime if case` is a parse error**
 

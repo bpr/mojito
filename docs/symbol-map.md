@@ -129,13 +129,20 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `store_sequence_element`; a star's slice subscript and a suffix read at
   `$suffix<id> + k`, its start read once; a subscript leaf gated by
   `require_mutable_subscript`), recorded in `statement_desugars`. A tuple
-  target is the recursive walk of a `DestructureTarget` against the value's tuple type,
+  target is the recursive walk of a `DestructureTarget` against the value's tuple type
+  (a tuple display typed against the leaves' types, `display_target_ty`),
   declaring `var`/`ref` leaves (their binding and storage type recorded at
   the leaf's occurrence, which the checked target carries), writing name and
-  place leaves, and attaching the extraction plan — a tree of
+  place leaves — a nominal subscript leaf with a setter through
+  `destructure_into_subscript`, which selects `__setitem__` over a synthetic
+  element-typed value as a plain subscript store does — and attaching the
+  extraction plan — a tree of
   `CheckedTupleUnpackElement`s built by `tuple_unpack_plan` per level — to
   the value node (`SemanticAdjustment::TupleUnpack`); MIR's
-  `lower_destructure` (`mir/lower_stmt.rs`) consumes it.
+  `lower_destructure` (`mir/lower_stmt.rs`) consumes it, lowering a setter
+  leaf's receiver and indices before the value (`lower_subscript_setter`,
+  shared with `lower_subscript_set`) and its `MultiSet` after
+  (`emit_subscript_set`).
 - `checker/patterns.rs` owns the `match` statement (`check_match`): it
   synthesizes the hidden `$match<id>` anchor over the subject (`Synth`;
   `anchor_subject`, which sequence destructuring shares with

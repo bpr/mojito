@@ -11,15 +11,38 @@ use mojito_checked::checked::{
 use mojito_types::types::TyKind;
 
 /// The state one destructuring assignment's leaves share: its place leaves
-/// in order (and the places lowered for the non-name ones), the value's
+/// in order (and the stores lowered for the non-name ones), the value's
 /// loans, and the source place a `ref` leaf borrows.
 struct DestructureFrame<'a, 'p> {
     places: &'p [Node<'a>],
-    lowered: Vec<Option<MirPlace>>,
+    lowered: Vec<Option<LeafStore<'a>>>,
     next: usize,
     loans: Vec<MirLoan>,
     root_place: Option<MirPlace>,
     value: Node<'a>,
+}
+
+/// A destructuring place leaf's destination, evaluated before the value as
+/// upstream forms each element's lvalue first: a place written directly, or
+/// a nominal subscript's setter, which the element is passed to.
+enum LeafStore<'a> {
+    Place(MirPlace),
+    Setter(Box<SubscriptSetter<'a>>),
+}
+
+/// A nominal subscript store's operands, lowered before its value: the
+/// `target` and its index argument nodes, the receiver with the place a
+/// `mut self` setter writes back, the index arguments, the keyword the
+/// value is passed under, and the selected `__setitem__`.
+struct SubscriptSetter<'a> {
+    target: Node<'a>,
+    indices: Vec<Node<'a>>,
+    receiver: Reg,
+    receiver_place: Option<MirPlace>,
+    args: Vec<MirSubscriptArg>,
+    arg_places: Vec<Option<MirPlace>>,
+    value_keyword: String,
+    call: MirSubscriptCall,
 }
 
 /// One `receiver[arguments] OP= rhs` store's checked facts: the subscript
@@ -1446,10 +1469,10 @@ impl<'a> Flatten<'a> {
         )
     }
 
-    /// Lower a slice or multidimensional assignment through the checker-selected
-    /// `__setitem__` implementation. Unlike an ordinary `MirPlace` projection,
-    /// every slice remains a first-class descriptor argument and the receiver
-    /// place is retained for `mut self` write-back.
+    /// Lower a nominal subscript assignment through the checker-selected
+    /// `__setitem__` implementation. Unlike an ordinary `MirPlace`
+    /// projection, every slice remains a first-class descriptor argument and
+    /// the receiver place is retained for `mut self` write-back.
     pub(super) fn lower_subscript_set(
         &mut self,
         target: Node<'a>,
@@ -1458,156 +1481,24 @@ impl<'a> Flatten<'a> {
         if target.call_contract().is_none() {
             return false;
         }
-        if let Some((object, index)) = target
-            .index_operands()
-            .map(|(object, _)| object)
-            .zip(target.index())
-        {
-            let Some(value_keyword) =
-                target
-                    .adjustments()
-                    .iter()
-                    .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::SliceDescriptors {
-                            descriptors,
-                            set_value_keyword: Some(value_keyword),
-                        } if descriptors.as_slice() == [None] => Some(value_keyword.clone()),
-                        _ => None,
-                    })
-            else {
-                return false;
-            };
-            let (receiver, receiver_place) =
-                self.lower_setup_receiver_with(target, object, |this| {
-                    this.lower_call_receiver(object)
-                });
-            let (argument_register, argument_place) = self.lower_call_argument(index);
-            let argument = MirSubscriptArg::Index(argument_register);
-            let (value, value_place) = self.outside_call_setup(|this| {
+        let Some((setter, (value, value_place))) = self.lower_subscript_setter(target, |this| {
+            this.outside_call_setup(|this| {
                 let value = this.lower_assignment_value(target, value_expression);
                 this.converted_store_value(target, value)
-            });
-            self.close_call_setup(None);
-            let call = self
-                .subscript_call_contract(target, std::slice::from_ref(&argument))
-                .expect("checked nominal subscript setter has a call contract");
-            self.emit_interior_invalidations(index, None);
-            self.emit_interior_invalidations(value_expression, None);
-            self.emit_interior_invalidations(target, None);
-            self.emit(MirInstr::MultiSet {
-                receiver,
-                receiver_place: receiver_place.map(Box::new),
-                args: vec![argument],
-                arg_places: vec![argument_place],
-                value,
-                value_place: value_place.map(Box::new),
-                value_keyword,
-                call: Box::new(call),
-            });
-            return true;
-        }
-        let (object, source_arguments) = match target.op() {
-            CheckedOp::Slice {
-                object,
-                lower,
-                upper,
-                step,
-                ..
-            } => (*object, SetArguments::Slice([*lower, *upper, *step])),
-            CheckedOp::MultiIndex { object, args } => (*object, SetArguments::Multi(args)),
-            _ => return false,
-        };
-        let object = Self::subscript_operand(target, object);
-        let Some((descriptors, value_keyword)) =
-            target
-                .adjustments()
-                .iter()
-                .find_map(|adjustment| match adjustment {
-                    mojito_checked::checked::SemanticAdjustment::SliceDescriptors {
-                        descriptors,
-                        set_value_keyword: Some(value_keyword),
-                    } => Some((descriptors.clone(), value_keyword.clone())),
-                    _ => None,
-                })
-        else {
-            self.emit(MirInstr::Unsupported(
-                "checked subscript assignment lacks descriptor metadata".to_string(),
-            ));
-            return true;
-        };
-
-        // Current Mojo evaluates the nominal receiver first, then indices and
-        // bounds from left to right, and finally the assignment RHS; a place
-        // index is read at the setter's setup, after its sibling operands.
-        let (receiver, receiver_place) =
-            self.lower_setup_receiver_with(target, object, |this| this.lower_call_receiver(object));
-        let mut arg_places = Vec::with_capacity(descriptors.len());
-        let args = match source_arguments {
-            SetArguments::Multi(arguments) => arguments
-                .iter()
-                .zip(descriptors)
-                .map(|(argument, descriptor)| match argument {
-                    mojito_checked::checked::CheckedSubscriptArg::Index(value) => {
-                        debug_assert!(descriptor.is_none());
-                        let (register, place) =
-                            self.lower_call_argument(Self::subscript_operand(target, *value));
-                        arg_places.push(place);
-                        MirSubscriptArg::Index(register)
-                    }
-                    mojito_checked::checked::CheckedSubscriptArg::Slice {
-                        lower,
-                        upper,
-                        step,
-                        ..
-                    } => {
-                        let (argument, place) =
-                            self.slice_set_argument(target, descriptor, [*lower, *upper, *step]);
-                        arg_places.push(place);
-                        argument
-                    }
-                    _ => unreachable!("keyword subscript assignment is rejected at checking"),
-                })
-                .collect(),
-            SetArguments::Slice([lower, upper, step]) => {
-                let (argument, place) = self.slice_set_argument(
-                    target,
-                    descriptors.first().cloned().flatten(),
-                    [lower, upper, step],
-                );
-                arg_places.push(place);
-                vec![argument]
+            })
+        }) else {
+            if matches!(
+                target.op(),
+                CheckedOp::Slice { .. } | CheckedOp::MultiIndex { .. }
+            ) {
+                self.emit(MirInstr::Unsupported(
+                    "checked subscript assignment lacks descriptor metadata".to_string(),
+                ));
+                return true;
             }
+            return false;
         };
-        let (value, value_place) = self.outside_call_setup(|this| {
-            let value = this.lower_assignment_value(target, value_expression);
-            this.converted_store_value(target, value)
-        });
-        self.close_call_setup(None);
-        let call = self
-            .subscript_call_contract(target, &args)
-            .expect("checked nominal subscript setter has a call contract");
-        if let SetArguments::Multi(arguments) = source_arguments {
-            for argument in arguments {
-                if let mojito_checked::checked::CheckedSubscriptArg::Index(argument) = argument {
-                    self.emit_interior_invalidations(
-                        Self::subscript_operand(target, *argument),
-                        None,
-                    );
-                }
-            }
-        }
-        self.emit_interior_invalidations(value_expression, None);
-        self.emit_interior_invalidations(target, None);
-        self.emit(MirInstr::MultiSet {
-            receiver,
-            receiver_place: receiver_place.map(Box::new),
-            args,
-            arg_places,
-            value,
-            value_place: value_place.map(Box::new),
-            value_keyword,
-            call: Box::new(call),
-        });
+        self.emit_subscript_set(setter, value, value_place, Some(value_expression));
         true
     }
 
@@ -1646,6 +1537,148 @@ impl<'a> Flatten<'a> {
             value = self.materialize_register(value, &target_ty, value_expression.location());
         }
         (value, value_place)
+    }
+
+    /// Lower the receiver and index arguments of the nominal subscript
+    /// store `target` and select its setter, running `between` before the
+    /// setter's setup reads: current Mojo evaluates the receiver first, then
+    /// indices and bounds from left to right, and a place index is read at
+    /// the setter's setup, after its sibling operands. `None` when `target`
+    /// stores through no checked setter.
+    fn lower_subscript_setter<R>(
+        &mut self,
+        target: Node<'a>,
+        between: impl FnOnce(&mut Self) -> R,
+    ) -> Option<(SubscriptSetter<'a>, R)> {
+        let (descriptors, value_keyword) =
+            target
+                .adjustments()
+                .iter()
+                .find_map(|adjustment| match adjustment {
+                    mojito_checked::checked::SemanticAdjustment::SliceDescriptors {
+                        descriptors,
+                        set_value_keyword: Some(value_keyword),
+                    } => Some((descriptors.clone(), value_keyword.clone())),
+                    _ => None,
+                })?;
+        let (object, source_arguments) = match target.op() {
+            CheckedOp::Slice {
+                object,
+                lower,
+                upper,
+                step,
+                ..
+            } => (
+                Self::subscript_operand(target, *object),
+                SetArguments::Slice([*lower, *upper, *step]),
+            ),
+            CheckedOp::MultiIndex { object, args } => (
+                Self::subscript_operand(target, *object),
+                SetArguments::Multi(args),
+            ),
+            _ if descriptors.as_slice() == [None] => {
+                let (object, index) = target
+                    .index_operands()
+                    .map(|(object, _)| object)
+                    .zip(target.index())?;
+                (object, SetArguments::Index(index))
+            }
+            _ => return None,
+        };
+        let (receiver, receiver_place) =
+            self.lower_setup_receiver_with(target, object, |this| this.lower_call_receiver(object));
+        let mut indices = Vec::new();
+        let mut arg_places = Vec::with_capacity(descriptors.len());
+        let args = match source_arguments {
+            SetArguments::Index(index) => {
+                let (register, place) = self.lower_call_argument(index);
+                arg_places.push(place);
+                indices.push(index);
+                vec![MirSubscriptArg::Index(register)]
+            }
+            SetArguments::Multi(arguments) => arguments
+                .iter()
+                .zip(descriptors)
+                .map(|(argument, descriptor)| match argument {
+                    mojito_checked::checked::CheckedSubscriptArg::Index(value) => {
+                        debug_assert!(descriptor.is_none());
+                        let index = Self::subscript_operand(target, *value);
+                        let (register, place) = self.lower_call_argument(index);
+                        arg_places.push(place);
+                        indices.push(index);
+                        MirSubscriptArg::Index(register)
+                    }
+                    mojito_checked::checked::CheckedSubscriptArg::Slice {
+                        lower,
+                        upper,
+                        step,
+                        ..
+                    } => {
+                        let (argument, place) =
+                            self.slice_set_argument(target, descriptor, [*lower, *upper, *step]);
+                        arg_places.push(place);
+                        argument
+                    }
+                    _ => unreachable!("keyword subscript assignment is rejected at checking"),
+                })
+                .collect(),
+            SetArguments::Slice([lower, upper, step]) => {
+                let (argument, place) = self.slice_set_argument(
+                    target,
+                    descriptors.first().cloned().flatten(),
+                    [lower, upper, step],
+                );
+                arg_places.push(place);
+                vec![argument]
+            }
+        };
+        let between = between(self);
+        self.close_call_setup(None);
+        let call = self
+            .subscript_call_contract(target, &args)
+            .expect("checked nominal subscript setter has a call contract");
+        Some((
+            SubscriptSetter {
+                target,
+                indices,
+                receiver,
+                receiver_place,
+                args,
+                arg_places,
+                value_keyword,
+                call,
+            },
+            between,
+        ))
+    }
+
+    /// Emit `setter`'s call storing `value` (read in `value_place` when it
+    /// lies there), after the writes it makes stale: its index arguments',
+    /// the store's `value_expression`'s when it has one, and the target's.
+    fn emit_subscript_set(
+        &mut self,
+        setter: SubscriptSetter<'a>,
+        value: Reg,
+        value_place: Option<MirPlace>,
+        value_expression: Option<Node<'a>>,
+    ) {
+        for index in setter.indices {
+            self.emit_interior_invalidations(index, None);
+        }
+        if let Some(value_expression) = value_expression {
+            self.emit_interior_invalidations(value_expression, None);
+        }
+        self.emit_interior_invalidations(setter.target, None);
+        self.emit(MirInstr::MultiSet {
+            receiver: setter.receiver,
+            receiver_place: setter.receiver_place.map(Box::new),
+            args: setter.args,
+            arg_places: setter.arg_places,
+            value,
+            value_place: value_place.map(Box::new),
+            value_keyword: setter.value_keyword,
+            call: Box::new(setter.call),
+        });
     }
 
     /// The handle of subscript `subscript`'s operand node `id`.
@@ -2784,19 +2817,31 @@ impl<'a> Flatten<'a> {
         let plan = value
             .tuple_unpack_plan()
             .expect("a checked destructuring value carries an extraction plan");
-        // A name re-assigns its slot; any other place is evaluated now and
-        // written after the value.
+        // A name re-assigns its slot; any other place, or a nominal
+        // subscript's receiver and indices, is evaluated now and written
+        // after the value.
         let lowered = places
             .iter()
-            .map(|place| {
-                if self.name_spelled(*place).is_some() {
-                    None
-                } else {
-                    Some(
-                        self.lower_projected_reference_place(*place)
-                            .unwrap_or_else(|| self.place(*place)),
-                    )
+            .map(|&place| {
+                if self.name_spelled(place).is_some() {
+                    return None;
                 }
+                if place.call_contract().is_some()
+                    && let Some((setter, ())) = self.lower_subscript_setter(place, |_| ())
+                {
+                    return Some(LeafStore::Setter(Box::new(setter)));
+                }
+                // A subscript with only a getter is written through the
+                // reference it returns.
+                let materialized = (place.reference_result().is_some()
+                    && place.index_operands().is_some())
+                .then(|| self.materialize_reference_result_place(place))
+                .flatten();
+                Some(LeafStore::Place(
+                    materialized
+                        .or_else(|| self.lower_projected_reference_place(place))
+                        .unwrap_or_else(|| self.place(place)),
+                ))
             })
             .collect();
         let mut base_place = self.simple_place(value);
@@ -3052,7 +3097,7 @@ impl<'a> Flatten<'a> {
                 }
                 CheckedTargetKind::Place(_) => {
                     let place_node = frame.places[frame.next];
-                    let lowered = frame.lowered[frame.next].clone();
+                    let lowered = frame.lowered[frame.next].take();
                     frame.next += 1;
                     match (self.name_spelled(place_node), lowered) {
                         (Some(name), _) => {
@@ -3070,9 +3115,22 @@ impl<'a> Flatten<'a> {
                             });
                             self.establish_destructured_loans(var, extraction.carries_loans, frame);
                         }
-                        (None, Some(place)) => {
+                        (None, Some(LeafStore::Place(place))) => {
                             self.emit_interior_invalidations(place_node, Some(place.root));
                             self.emit(MirInstr::Store { place, src: elem });
+                        }
+                        // An earlier leaf's setter may have written the
+                        // receiver back, so it is read again for this one.
+                        (None, Some(LeafStore::Setter(mut setter))) => {
+                            setter.receiver = self.reload_augmented_source(
+                                setter.receiver,
+                                &setter.receiver_place,
+                                true,
+                                place_node.location(),
+                            );
+                            let (value, value_place) =
+                                self.converted_store_value(place_node, (elem, None));
+                            self.emit_subscript_set(*setter, value, value_place, None);
                         }
                         (None, None) => self.emit(MirInstr::Unsupported(
                             "a destructuring place leaf without its lowered place".into(),
@@ -3886,6 +3944,7 @@ impl<'a> Flatten<'a> {
 /// bound nodes, or a multi-subscript's checked arguments.
 #[derive(Clone, Copy)]
 enum SetArguments<'a> {
+    Index(Node<'a>),
     Slice([Option<mojito_checked::checked::CheckedNodeId>; 3]),
     Multi(&'a [mojito_checked::checked::CheckedSubscriptArg]),
 }

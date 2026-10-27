@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A nominal subscript is a destructuring leaf, stored as upstream's
+  `TupleDLValue` stores each element through its `SubscriptDLValue`
+  (R1374, R1247): `(xs[0], xs[1]) = pair` evaluates each leaf's receiver
+  and indices before the value and then passes each element to
+  `__setitem__` in order, and a leaf whose struct has only a `ref` getter
+  is written through the getter's reference. A tuple display assigned to a
+  tuple target is now typed against the leaves' types, so a literal
+  element converts where it is built and a `Float64` place takes `(5, 6)`
+  natively too. Two getter-only leaves over one root still conflict
+  (R1505).
 - A subscript store is typed through the getter, as upstream's
   `SubscriptDLValue` is (R1373, R35, R690): a `__setitem__` without a
   `__getitem__` is rejected at the store, the getter is resolved over the

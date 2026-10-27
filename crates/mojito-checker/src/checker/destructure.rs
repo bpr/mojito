@@ -3,7 +3,11 @@
 //!
 //! A tuple target reads the value once and distributes its tuple elements
 //! to the target's leaves through one extraction plan
-//! ([`CheckedTupleUnpackElement`]), which MIR lowers.
+//! ([`CheckedTupleUnpackElement`]), which MIR lowers. A tuple display is
+//! typed against the leaves' types, and a nominal subscript leaf with a
+//! setter is upstream's `SubscriptDLValue`: its element is passed to
+//! `__setitem__` after the value, its receiver and indices evaluated with
+//! the other destinations before it.
 //!
 //! A sequence target is upstream's list-pattern store, a straight line of
 //! ordinary calls and stores, so it is a checked desugar (`desugar.rs`)
@@ -35,6 +39,7 @@
 //! tuple target, whose extraction plan MIR lowers itself.
 
 use super::desugar::{StatementDesugar, Synth};
+use super::indexing::SubscriptLValue;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{BindingMode, DestructureTarget, DestructureTargetKind, SequenceTarget};
@@ -69,7 +74,12 @@ impl Checker {
                 ));
             }
         };
-        let vt = self.infer(value)?;
+        // A tuple display is typed against the target's tuple type, so each
+        // element converts to its place's type where it is built.
+        let vt = match self.display_target_ty(items, value) {
+            Some(expected) => self.infer_with_expected(value, &expected, true)?,
+            None => self.infer(value)?,
+        };
         // A place is read element by element through the reference it
         // yields; the Tuple's index accessor demands it.
         let place = is_place_expr(value);
@@ -107,6 +117,50 @@ impl Checker {
         }
         self.record_at(value.source_span()).tuple_unpack_plan = Some(plan);
         Ok(())
+    }
+
+    /// The tuple type a display `value` assigned to the tuple target `items`
+    /// is typed against, as upstream types an assignment's right-hand side
+    /// with its target's type: a place leaf's element is the place's type, a
+    /// nested tuple leaf over a nested display recurses, and any other leaf's
+    /// element keeps its own default type. `None` when `value` is not a
+    /// display of the target's arity, when no leaf is a place, or when a
+    /// place's type is not known before its store is checked.
+    fn display_target_ty(&self, items: &[DestructureTarget], value: &Expr) -> Option<Ty> {
+        let ExprKind::TupleLit(values) = &value.kind else {
+            return None;
+        };
+        if values.len() != items.len() {
+            return None;
+        }
+        let mut placed = false;
+        let elements = items
+            .iter()
+            .zip(values)
+            .map(|(item, value)| {
+                let element = match &item.kind {
+                    DestructureTargetKind::Place(place) => {
+                        let ty = match self.subscript_lvalue(place).ok()? {
+                            Some(SubscriptLValue::GetterSetter { element, .. }) => element,
+                            _ => self.infer(place).ok()?,
+                        };
+                        Some(match ty.kind() {
+                            TyKind::Ref(reference) => reference.referent.clone(),
+                            _ => ty,
+                        })
+                    }
+                    DestructureTargetKind::Tuple(inner) => self.display_target_ty(inner, value),
+                    _ => None,
+                };
+                placed |= element.is_some();
+                element.or_else(|| {
+                    self.infer(value)
+                        .ok()
+                        .map(|ty| mojito_types::types::default_literal(&ty))
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        placed.then(|| mojito_types::types::tuple_type(elements))
     }
 
     /// Check the destructuring loop target `target` of a `for` statement or
@@ -595,16 +649,13 @@ impl Checker {
         if let Some(root) = place_root_name(place) {
             self.check_capture_access(root, true)?;
         }
-        // A nominal subscript is written through `__setitem__`, which needs
-        // the element as an expression to select; the destructured element
-        // has none yet.
-        if let ExprKind::Index { object, index } = &place.kind
-            && !self.type_keyed_projection(object, index)
-            && matches!(self.infer(object)?.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+        if let Some(SubscriptLValue::GetterSetter {
+            element,
+            value_name,
+            ..
+        }) = self.subscript_lvalue(place)?
         {
-            return Err(TypeError::Unsupported(
-                "a nominal subscript (`xs[i]`) as a destructuring target".into(),
-            ));
+            return self.destructure_into_subscript(place, elem, &element, &value_name);
         }
         let target_ty = self.check_place(place)?;
         self.record_place_write_invalidation(place.source_span(), place);
@@ -625,6 +676,34 @@ impl Checker {
         // restrictions loosen.
         let storage = Some(target_ty);
         self.check_outward_store(place, element_value, elem, &storage)
+    }
+
+    /// Write element `elem` through the setter of the nominal subscript
+    /// `place`, as upstream's `SubscriptDLValue::emitStore` stores a
+    /// destructured element: the element, of the getter's `element` type,
+    /// is passed to `__setitem__` under `value_name`. The synthetic value
+    /// stands for the element MIR extracts, which it binds to the setter.
+    fn destructure_into_subscript(
+        &self,
+        place: &Expr,
+        elem: &Ty,
+        element: &Ty,
+        value_name: &str,
+    ) -> Result<(), TypeError> {
+        if !coerces(elem, element) {
+            return Err(TypeError::TypeMismatch {
+                expected: element.to_string(),
+                found: elem.to_string(),
+                context: "unpacking into a place".to_string(),
+            });
+        }
+        let value = self.synthetic_store_value(place, element);
+        let mut setter = self.store_through_subscript(place, value_name, &value)?;
+        let site = place.source_span();
+        self.release_synthetic_store_value(&site, &value, &mut setter);
+        self.record_at(site.clone()).selected_call = Some(Box::new(setter));
+        self.record_place_write_invalidation(site, place);
+        Ok(())
     }
 
     /// Write element `elem` to the binding `name` in scope, which keeps its

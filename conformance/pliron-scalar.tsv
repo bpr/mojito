@@ -244,10 +244,12 @@ assets/ok/deinit_field_dies_before_non_raising_call_in_try.mojo	-	ineligible	no-
 assets/ok/deinit_param_destruction_timing.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/deinit_receiver_fields_die_in_drop_walk.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/delegated_ref_return_projection.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/destructure_evaluation_order.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_list_wrong_length_raises.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_nested_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_sequence_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_starred_slice.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/destructure_subscript_targets.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/destructure_swap_and_places.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_display_literal_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dict_hasher_forwarding.mojo	-	ineligible	no-scalar-entry-shape

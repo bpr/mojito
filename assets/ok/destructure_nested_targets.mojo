@@ -1,7 +1,7 @@
 # Recursive destructuring targets: nested tuple targets mixing `var`, `ref`
 # (an immutable reference, as on the pin), and `_` leaves, a `var` prefix
 # that declares every leaf, a trailing element beside a nested display, and
-# nested assignment into names in scope.
+# nested assignment into names and nominal subscripts in scope.
 def main():
     var pr = (1, (2, 3))
     (var q, (ref r, _)) = pr
@@ -24,3 +24,8 @@ def main():
     var nested = (1, (2, (3, 4)))
     var (d, (e, (f, g))) = nested
     print(d, e, f, g)
+    var xs: List[Int] = [0, 0]
+    (xs[0], (xs[1], a)) = (1, (2, 3))
+    print(xs[0], xs[1], a)
+    (var u, ref w) = (xs[0], xs[1])
+    print(u, w)
