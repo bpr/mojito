@@ -7,9 +7,10 @@ use mojito_ast::visit::{MutVisitor, walk_block_mut};
 use mojito_common::error::TypeError;
 use mojito_types::types::TyKind;
 
-/// The type handles a block's `comptime T = ...` statements bound so far:
-/// each handle, and its source spelling. A module block also reads the
-/// type handles of the package its program imports, on first lookup.
+/// The type handles a module block's `comptime T = ...` statements bound
+/// so far: each handle, and its source spelling. A module block also reads
+/// the type handles of the package its program imports, on first lookup. A
+/// body's type alias is the check's to bind.
 #[derive(Default)]
 pub(super) struct TypeAliases<'a> {
     values: HashMap<String, CtValue>,
@@ -59,11 +60,10 @@ impl Elab<'_> {
         aliases: TypeAliases<'_>,
     ) -> Result<Vec<Stmt>, ComptimeError> {
         let mut out = Vec::new();
-        // Type handles bound by `comptime T = ...` in this block have no
+        // Type handles bound by a module's `comptime T = ...` have no
         // runtime representation, so every later statement of the block
         // materializes its uses of the alias — `isa[T]()`, `x: T`, `T()` —
-        // as the bound type (an unrolled `comptime for` body is its own block,
-        // so each iteration's `comptime T = Self.Ts[i]` binds separately).
+        // as the bound type.
         let TypeAliases {
             values: mut type_aliases,
             sources: mut source_aliases,
@@ -122,6 +122,7 @@ impl Elab<'_> {
             if let StmtKind::Comptime {
                 name, type_params, ..
             } = &stmt.kind
+                && !in_fn
                 && type_params.is_empty()
                 && let Some((value, source)) = env.get(name).and_then(type_alias)
                 && !matches!(&value, CtValue::Type(ty) if self.binds_raw_list(ty))
@@ -227,10 +228,9 @@ impl Elab<'_> {
                     self.top_consts.borrow_mut().insert(name.clone(), v.clone());
                 }
                 // A closed scalar or string binding of a body is the check's
-                // to bind as its parameter expression; its value stays here
-                // for a type alias this evaluator still folds over it.
+                // to bind as its parameter expression.
                 if in_fn && is_closed_scalar(&v) && check_binds_value(value) {
-                    env.insert(name.clone(), v);
+                    env.shadow(name);
                     out.push(stmt.clone());
                     return Ok(());
                 }
@@ -239,32 +239,31 @@ impl Elab<'_> {
                 // checker's own folder can't evaluate, becomes usable as a value
                 // parameter and materializes cleanly).
                 env.insert(name.clone(), v);
-                // A `TypeList` value has no literal form: the binding stays
-                // for the check, which reads a kept condition's proposition
-                // over it (`tl.contains[Int]()`) from its initializer, as does
-                // a reflection handle such an initializer may name
-                // (`comptime types = r.field_types()`). So does a type no
-                // source spelling names (`TypeList.of[Trait=AnyType, Int]`,
-                // whose raw list has none, nor `ParameterList.of[4, 5]`'s,
-                // whose list materializes as a tuple), at module scope a
-                // struct application of one, and a raw list read off a
-                // struct's parameter (`ParameterList.of[4, 5].values`).
+                // A raw list read off a struct's parameter
+                // (`ParameterList.of[4, 5].values`) has no literal form: the
+                // binding stays for the check.
                 if self.reads_raw_list(value, env) {
                     out.push(stmt.clone());
                     return Ok(());
                 }
-                let unspelled = |value: &CtValue| {
-                    matches!(value, CtValue::Type(ty)
-                        if (mojito_types::ct::source_type(ty, span).is_none()
-                            || self.binds_raw_list(ty))
-                            && (in_fn || matches!(ty.kind(), TyKind::Struct(..))))
+                // A body's type alias is the check's to bind, as upstream
+                // resolves the alias by name lookup to its parameter value; so
+                // is a reflection handle, and a `TypeList` value, whose
+                // proposition a kept condition reads (`tl.contains[Int]()`).
+                // At module scope, so is a struct application no source
+                // spelling names (over `TypeList.of[Trait=AnyType, Int]`,
+                // whose raw list has none, or `ParameterList.of[4, 5]`,
+                // whose list materializes as a tuple).
+                let kept = |value: &CtValue| match value {
+                    CtValue::Type(ty) if !in_fn => {
+                        matches!(ty.kind(), TyKind::Struct(..))
+                            && (mojito_types::ct::source_type(ty, span).is_none()
+                                || self.binds_raw_list(ty))
+                    }
+                    CtValue::Type(_) | CtValue::Reflected(_) => in_fn,
+                    value => in_fn && value.typelist_elements().is_some(),
                 };
-                if env.get(name).is_some_and(|value| {
-                    unspelled(value)
-                        || (in_fn
-                            && (value.typelist_elements().is_some()
-                                || matches!(value, CtValue::Reflected(_))))
-                }) {
+                if env.get(name).is_some_and(kept) {
                     out.push(stmt.clone());
                     return Ok(());
                 }

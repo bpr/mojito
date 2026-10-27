@@ -208,6 +208,7 @@ impl Checker {
         self.reference_parameter_scopes.push(HashMap::new());
         self.callable_origin_scopes.push(HashMap::new());
         self.local_type_aliases.push(HashMap::new());
+        self.local_type_alias_values.push(HashMap::new());
         self.local_comptime_values.push(HashMap::new());
         self.local_comptime_parameters.push(HashMap::new());
         self.comptime_dtypes.push(HashMap::new());
@@ -232,6 +233,7 @@ impl Checker {
         self.reference_parameter_scopes.pop();
         self.callable_origin_scopes.pop();
         self.local_type_aliases.pop();
+        self.local_type_alias_values.pop();
         self.local_comptime_values.pop();
         self.local_comptime_parameters.pop();
         self.comptime_dtypes.pop();

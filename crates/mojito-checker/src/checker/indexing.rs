@@ -2144,12 +2144,13 @@ impl Checker {
         &self,
         object: &Expr,
     ) -> Option<Result<Ty, TypeError>> {
+        // A member of a type or of its application (`S[Int].Of`).
         fn applied_member_root(object: &Expr) -> Option<&String> {
+            let ExprKind::Member { object, .. } = &object.kind else {
+                return None;
+            };
             match &object.kind {
-                ExprKind::Member { object, .. } => match &object.kind {
-                    ExprKind::Identifier(name) => Some(name),
-                    _ => None,
-                },
+                ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. } => Some(name),
                 _ => None,
             }
         }

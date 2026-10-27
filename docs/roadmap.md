@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1477**.
+Next free ID: **R1479**.
 
 ## Ordered Work
 
@@ -132,31 +132,6 @@ which names the upstream pass each one follows. Each is measured by the
     `result_adapter` applied when the frame finishes.
   - Found while landing R1272 (2026-10-23).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1380 A local `comptime` type alias is substituted by the
-  elaborator's alias table**
-
-  The elaborator puts a body's `comptime S = <type>` in the block's
-  `TypeAliases` and rewrites the statements after it, where upstream
-  resolves the alias by name lookup to its parameter value.
-  - The lever: every local alias goes into the check's `local_type_aliases`,
-    as template bodies' aliases already do.
-  - The one builder (`build_ct`, `checker/constraints.rs`), which
-    `comptime_type_operand` adapts, learns `Scalar[dt]`, `SIMD[dt, n]`, and
-    `Self`. A `Self.<value>` goes to R1379's value route.
-  - The block-local `TypeAliases` substitution goes. The pack-element
-    spelling stays for the pack entries (R1169).
-  - `Elab::stmt` still records a closed local value binding's folded value
-    for the aliases it folds over one (`comptime N = 2`, then `comptime V =
-    SIMD[DType.int32, N]` and `V(7)`). That record goes with the table.
-    `V(7)` also needs R475's call half: with `comptime N = k + 1` in `def
-    g[k: Int]`, it reports "Undefined variable 'V'".
-  - Probe: `comptime S = Scalar[DType.float64]`, then `S(2) * 1.25`. The pin
-    prints `2.5`. Mojito fails, in `main` and in `def g[n: Int]` alike.
-  - Closes R475 (a local `Scalar` or `SIMD` alias) and R1170 (a
-    `Self.<type member>` alias in a method).
-  - Depends on R1379, whose value route takes what this route declines.
   - Model: Opus, Not Planned.
 
 - [ ] **R1476 An immediately invoked lambda in a local `comptime` binding is
@@ -1056,6 +1031,24 @@ change that needs a new `MJRT_ABI_VERSION`.
     (`cse` after `automatic-inline` is the first suspect), or type the
     literal at each use as upstream's literal conversion does.
   - Found while landing R662 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1477 Natively, a generic vector-plus-literal fails verification
+  once two dtypes instantiate it**
+
+  `def h[dt: DType](x: Int) -> SIMD[dt, 1]: return SIMD[dt, 1](x) + 1`,
+  called as `h[DType.float32](3)` and `h[DType.int64](3)`, stops with
+  "IR verification failed: Op has different operand types", where the VM
+  and the pin print `4.0` and `4`.
+  - Each instance alone runs, and `SIMD[dt, 1](x) + SIMD[dt, 1](1)` runs
+    at both dtypes, so the instances appear to share the lowered type of
+    the literal operand.
+  - Probe: the float instance beside the stdlib's own integer one, `var y
+    = h[DType.float32](3)` then `print(String("x"))`, stops with
+    "Forwarded operand at 0 is of type builtin.fp32, but should've been
+    builtin.integer i64".
+  - Found while landing R1380 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4452,13 +4445,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Merging the four AST kinds into one node can follow in `mojo-shape`.
   - Probe: `var f = twice[4]` over `def twice[n: Int]() -> Int` prints `8`
     at the pin. Mojito says "cannot be indexed here".
-  - Probe: an alias body over a binder-dependent application, `comptime
-    Next = Sized[n]` in `def next[n: Int]` or `comptime Next = Sized[Self.n
-    + 1]` in a method of `struct Sized[n: Int]`, then `Next()`, prints the
-    size at the pin. The alias binds as a type, but the call does not read
-    a local type alias, so Mojito reports "Undefined variable 'Next'"
-    (R475's probe). The call-bracket form
-    `size[Self.n * 2]()` runs (carried from R72).
+  - The call-bracket form `size[Self.n * 2]()` runs (carried from R72).
   - Closes R326 (`f[]()` read as a dereference) and the parse half of
     R490. Shrinks R383 and R512, whose lowercase subscripts still
     need compile-time `__getitem__` folding.
@@ -4817,42 +4804,20 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R475 A local type alias over `Scalar` or `SIMD` is rejected**
+- [ ] **R1478 A type comparison read as a value over a pack element at a
+  `comptime for` index is not folded per iteration**
 
-  Problem: `comptime S = Scalar[DType.float64]` then `S(2) * 1.25` in a
-  plain `main` fails with "not a compile-time value: 'Scalar' is not a
-  compile-time type", where the pin prints `2.5`.
-  - In a lane-keyed `def`, `comptime S = Scalar[dt]` fails with "Undefined
-    variable 'Scalar'" and `comptime S = SIMD[dt, 1]` with "Undefined
-    variable 'S'".
-  - The elaborator's `Elab::type_from_name` (`comptime/elab.rs`) has no
-    type for a parametric alias or `SIMD`, and the checker's
-    `comptime_type_operand` does not bind one either.
-  - Probe: the call misses any binder-dependent alias, not only `SIMD`.
-    `comptime Next = Sized[Self.n]` in a method of `struct Sized[n: Int]`
-    binds as a type (`var x: Next = Sized[Self.n]()` runs), but `Next()`
-    reports "Undefined variable 'Next'", where the pin prints the size.
-    `Checker::infer_call` (`checker/call_inference.rs`) constructs through
-    a type parameter's binder but never through `local_type_aliases`, and
-    the elaborator substitutes only a closed alias (`comptime Next =
-    Sized[4]` runs).
-  - Found while landing R261 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1170 A struct's `comptime` type member read through `Self` in a
-  method's local `comptime` fails in the instance's elaborator run**
-
-  Over `struct Row[T: Movable]` with `comptime First = Self.T`, a static
-  method's `comptime F = Self.First` or `comptime b = Self.First == Int`
-  stops with "function instantiation of `Row.f` failed: … 'Self' is not a
-  compile-time type", where the pin prints `True` and `10` at `Row[Int]`.
-  - The check reads both (R1387): `comptime if Self.First == Int:` and
-    `print(Self.First == Int)` run.
-  - mono's per-instance run of the pre-check elaborator
-    (`comptime/elab.rs:type_from_name`) has no type for `Self` in a method
-    instance.
-  - Found while landing R805 (2026-10-20).
+  `comptime for i in range(len(Ts)):` with `print(Ts[i] == Int)` or
+  `comptime b = Ts[i] == Int` in `def h[*Ts: ...]` stops with "keeps the
+  parameter constant `Int == Ts[...paramfor_next_value...($iter)]` in
+  elaborated MIR", where the pin prints `True` and `False` for `h[Int,
+  Bool]()`.
+  - `comptime if Ts[i] == Int:` in the same loop runs: mono decides the
+    condition's constraint form, but leaves the value form's `Const::Param`
+    over the loop's iteration value open.
+  - Probe: through a local alias, `comptime E = Ts[i]` then `print(E ==
+    Int)`, fails the same way.
+  - Found while landing R1380 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

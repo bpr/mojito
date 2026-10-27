@@ -437,6 +437,7 @@ assets/ok/live_pointer_ref_argument.mojo	main	exe-differential	sanitized
 assets/ok/loan_carrying_instance_clone.mojo	main	exe-differential	sanitized
 assets/ok/local_comptime_closed_binding.mojo	main	exe-differential	sanitized
 assets/ok/local_comptime_float.mojo	main	exe-differential	sanitized
+assets/ok/local_type_alias_construction.mojo	main	exe-differential	sanitized
 assets/ok/loop_binding_consuming_copy.mojo	main	exe-differential	sanitized
 assets/ok/loop_result_two_breaks.mojo	main	exe-differential	sanitized
 assets/ok/mapping_key_iteration_reads.mojo	main	exe-differential	sanitized

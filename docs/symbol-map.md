@@ -393,7 +393,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SemanticAdjustment::SpelledConstruction` (`record_spelled_construction`,
   shared with t-strings), which `mojito-checked`'s arena builder answers at
   the sugar's location; the sugar's node operand is that construction, so
-  HIR lowers it in the sugar's place. Together they own method-call inference (including the inverted write:
+  HIR lowers it in the sugar's place. The same file owns a body's local type
+  alias: `bind_local_type_alias` records its type and parameter expression,
+  and `infer_local_alias_read` spells an expression the alias heads (a
+  call, a static call, a member read) over that parameter expression, a
+  call as the type's construction, and records the spelling the same way. Together they own method-call inference (including the inverted write:
   `x.write_to(writer)` on a bounded parameter, a builtin, or the
   nominal String records `SemanticAdjustment::InvertedWrite`, which
   `mir/lower_expr/expr_method.rs` lowers as the writer's host primitive

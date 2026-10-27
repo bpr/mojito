@@ -626,10 +626,12 @@ pub struct Checker {
     /// control flow is checked with every arm visited and the declaration's
     /// parameters symbolic, and a module-level function or method body
     /// without such a construct is declared but not checked.
-    /// Per-scope function-local `comptime NAME = <type>` aliases bound while
-    /// validating a body (the elaborator substitutes them before the
-    /// executable check ever runs). Consulted ahead of `tparams`.
+    /// Per-scope function-local `comptime NAME = <type>` aliases, each the
+    /// type its parameter expression names. Consulted ahead of `tparams`.
     local_type_aliases: Vec<HashMap<String, Ty>>,
+    /// The parameter expression each of `local_type_aliases` was bound to,
+    /// as written: a call of the alias constructs its application.
+    local_type_alias_values: Vec<HashMap<String, Expr>>,
     /// Per-scope function-local `comptime NAME = <compile-time value>`
     /// bindings the checker cannot type as a runtime value (a `TypeList`
     /// construction); a compile-time position inlines the defining
@@ -1061,6 +1063,7 @@ impl Checker {
             assumed_conformances: RefCell::new(Vec::new()),
             assumed_propositions: RefCell::new(Vec::new()),
             local_type_aliases: vec![HashMap::new()],
+            local_type_alias_values: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],
             local_comptime_parameters: vec![HashMap::new()],
             local_comptime_displays: vec![HashMap::new()],

@@ -862,6 +862,9 @@ impl Checker {
         if self.value_pack_named(expr).is_some() {
             return self.infer_value_pack_read(expr);
         }
+        if let Some(read) = self.infer_local_alias_read(expr) {
+            return read;
+        }
         match &expr.kind {
             ExprKind::Int(_) => Ok(Ty::int_literal()),
             ExprKind::Float(_) => Ok(Ty::float_literal()),

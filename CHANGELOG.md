@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A local `comptime` type alias is now bound by the check in every body and
+  read by name, as at the pin (R1380), where the elaborator substituted a
+  closed one into the statements after it. A call of the alias constructs
+  its type (`S(2) * 1.25` over `comptime S = Scalar[DType.float64]`, `V(7)`
+  over `comptime V = SIMD[DType.int32, N]`, `Next()` over `comptime Next =
+  Sized[n]`, R475), as does one over a struct's type member in a method
+  (`F()` over `comptime F = Self.First`, R1170), and a static call or member
+  read through it reads the type (`Q.make()`, `Q.k`). An alias of a member
+  application, `comptime A = S[Int].Of[Bool]`, now binds in the check too.
+
 - A closed local `comptime` value binding is now bound by the check to its
   parameter expression, as every local `comptime` is at the pin (R1379),
   where the elaborator folded it above the check or refused it. A

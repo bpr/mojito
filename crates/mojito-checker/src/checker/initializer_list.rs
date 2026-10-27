@@ -27,6 +27,116 @@ impl Checker {
         Ok(ty)
     }
 
+    /// Bind the local `comptime name = value` as a type alias of `ty`: the
+    /// name denotes the type wherever a type is read, and a call of it
+    /// constructs `value` ([`Self::infer_local_alias_read`]).
+    pub(super) fn bind_local_type_alias(
+        &mut self,
+        name: &str,
+        ty: Ty,
+        value: &Expr,
+    ) -> Result<(), TypeError> {
+        let empty = || TypeError::InvariantViolation("checker scope stack is empty".to_string());
+        self.local_type_aliases
+            .last_mut()
+            .ok_or_else(empty)?
+            .insert(name.to_string(), ty);
+        self.local_type_alias_values
+            .last_mut()
+            .ok_or_else(empty)?
+            .insert(name.to_string(), value.clone());
+        Ok(())
+    }
+
+    /// Type an expression headed by a local type alias as the same
+    /// expression over the alias's parameter expression, as upstream's name
+    /// lookup reads the alias as its value. A call constructs the type: the
+    /// alias's own application applied to the call's arguments (`S(2)` over
+    /// `comptime S = Scalar[DType.float64]` is `Scalar[DType.float64](2)`),
+    /// or, for an alias spelled otherwise (`Self.First`), the construction
+    /// of the type it names. A static call, a member read, or an applied
+    /// member through the alias is the type's (`Q.make()` over `comptime Q =
+    /// P` is `P.make()`). The checked arena hands HIR the spelling in the
+    /// expression's place. `None` when no local type alias heads `expression`.
+    pub(super) fn infer_local_alias_read(
+        &self,
+        expression: &Expr,
+    ) -> Option<Result<Ty, TypeError>> {
+        let receiver = |object: &Expr| {
+            let ExprKind::Identifier(name) = &object.kind else {
+                return None;
+            };
+            let value = self.local_type_alias(name)?.1;
+            let mut receiver = value.clone();
+            receiver.source.clone_from(&expression.source);
+            // Ordinal 0 is the spelled expression, 1 an applied member's
+            // callee.
+            mojito_ast::visit::walk_expr_mut(
+                &mut mojito_ast::visit::DerivedIdentities {
+                    parent: expression.syntax_id,
+                    next: 2,
+                },
+                &mut receiver,
+            );
+            Some(Box::new(receiver))
+        };
+        let spelled = match &expression.kind {
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if param_args.is_empty() => {
+                return self.local_type_alias(name).map(|(ty, value)| {
+                    self.alias_construction(expression, ty, value, args, kwargs)
+                        .and_then(|construction| self.infer_spelled(expression, construction))
+                });
+            }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } => ExprKind::MethodCall {
+                object: receiver(object)?,
+                method: method.clone(),
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+            },
+            ExprKind::Member { object, field } => ExprKind::Member {
+                object: receiver(object)?,
+                field: field.clone(),
+            },
+            ExprKind::Invoke {
+                callee,
+                param_args,
+                args,
+                kwargs,
+            } => {
+                let ExprKind::Member { object, field } = &callee.kind else {
+                    return None;
+                };
+                ExprKind::Invoke {
+                    callee: Box::new(spelled_node(
+                        expression,
+                        1,
+                        ExprKind::Member {
+                            object: receiver(object)?,
+                            field: field.clone(),
+                        },
+                        callee.span,
+                    )),
+                    param_args: param_args.clone(),
+                    args: args.clone(),
+                    kwargs: kwargs.clone(),
+                }
+            }
+            _ => return None,
+        };
+        let spelled = spelled_node(expression, 0, spelled, expression.span);
+        Some(self.infer_spelled(expression, spelled))
+    }
+
     /// Record that the sugar `expression` checked as `construction` of type
     /// `ty`: the sugar answers with the construction's type, and the checked
     /// arena hands HIR the construction in the sugar's place.
@@ -59,6 +169,69 @@ impl Checker {
             }) => Some(construction.0.as_ref().clone()),
             _ => None,
         }
+    }
+
+    /// The type the local type alias `name` names, and the parameter
+    /// expression it was bound to; `None` when `name` names no local type
+    /// alias or a binding shadows it.
+    fn local_type_alias(&self, name: &str) -> Option<(&Ty, &Expr)> {
+        if self.lookup(name).is_some() {
+            return None;
+        }
+        let scope = self
+            .local_type_aliases
+            .iter()
+            .rposition(|scope| scope.contains_key(name))?;
+        Some((
+            self.local_type_aliases[scope].get(name)?,
+            self.local_type_alias_values[scope].get(name)?,
+        ))
+    }
+
+    /// The construction a call of a local type alias of `ty`, bound to
+    /// `value`, spells with the call's arguments
+    /// ([`Self::infer_local_alias_read`]).
+    fn alias_construction(
+        &self,
+        expression: &Expr,
+        ty: &Ty,
+        value: &Expr,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Expr, TypeError> {
+        let Some((callee, param_args)) = alias_application(value) else {
+            return self
+                .initializer_list_construction(expression, args, ty)
+                .map(|mut construction| {
+                    if let ExprKind::Call {
+                        kwargs: spelled, ..
+                    }
+                    | ExprKind::Invoke {
+                        kwargs: spelled, ..
+                    } = &mut construction.kind
+                    {
+                        spelled.extend_from_slice(kwargs);
+                    }
+                    construction
+                });
+        };
+        Ok(derived_construction(
+            expression,
+            ExprKind::Call {
+                name: callee,
+                param_args,
+                args: args.to_vec(),
+                kwargs: kwargs.to_vec(),
+            },
+        ))
+    }
+
+    /// Type `spelled`, the expression the checker spelled for `expression`,
+    /// and record it in `expression`'s place.
+    fn infer_spelled(&self, expression: &Expr, spelled: Expr) -> Result<Ty, TypeError> {
+        let ty = self.infer(&spelled)?;
+        self.record_spelled_construction(expression, spelled, &ty);
+        Ok(ty)
     }
 
     /// The construction `expected(entries...)` an initializer list stands
@@ -209,6 +382,24 @@ pub(super) fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
         mojito_ast::visit::walk_expr_mut(&mut identities, value);
     }
     construction
+}
+
+/// The callee and bracket arguments of a type alias's parameter
+/// expression that applies a name (`Scalar[DType.float64]`, `Sized[n]`) or
+/// is one (`Float64`). `None` for any other spelling.
+fn alias_application(value: &Expr) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
+    match &value.kind {
+        ExprKind::Identifier(name) => Some((name.clone(), Vec::new())),
+        ExprKind::TypeApply { name, args } => Some((name.clone(), args.clone())),
+        ExprKind::Index { object, index } => match &object.kind {
+            ExprKind::Identifier(name) => Some((
+                name.clone(),
+                super::constraints::subscript_param_args(index),
+            )),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// The source spelling of a pack element's index that is still a parameter

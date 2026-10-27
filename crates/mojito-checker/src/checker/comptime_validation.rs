@@ -1430,12 +1430,7 @@ impl Checker {
             return Ok(false);
         };
         if let Some(ty) = self.comptime_type_operand(value)? {
-            self.local_type_aliases
-                .last_mut()
-                .ok_or_else(|| {
-                    TypeError::InvariantViolation("checker scope stack is empty".to_string())
-                })?
-                .insert(name.to_string(), ty);
+            self.bind_local_type_alias(name, ty, value)?;
             return Ok(true);
         }
         if let Some((target, display)) = self.aliased_display(value) {
