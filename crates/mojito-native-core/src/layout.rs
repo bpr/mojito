@@ -99,7 +99,7 @@ impl LayoutCx<'_> {
                 .map(|s| s.layout);
         }
         match ty.kind() {
-            TyKind::Int | TyKind::UInt | TyKind::Float64 => Ok(Layout::new(8, 8)),
+            TyKind::INT | TyKind::UINT | TyKind::FLOAT64 => Ok(Layout::new(8, 8)),
             // A `DType` is its one-byte upstream code.
             TyKind::Bool | TyKind::Dtype => Ok(Layout::new(1, 1)),
             TyKind::None => Ok(Layout::ZERO),
@@ -231,7 +231,9 @@ pub const fn lane_layout(dtype: Dtype) -> Layout {
         Dtype::Int8 | Dtype::UInt8 | Dtype::Bool => Layout::new(1, 1),
         Dtype::Int16 | Dtype::UInt16 | Dtype::Float16 => Layout::new(2, 2),
         Dtype::Int32 | Dtype::UInt32 | Dtype::Float32 => Layout::new(4, 4),
-        Dtype::Int | Dtype::Int64 | Dtype::UInt64 | Dtype::Float64 => Layout::new(8, 8),
+        Dtype::Int | Dtype::UInt | Dtype::Int64 | Dtype::UInt64 | Dtype::Float64 => {
+            Layout::new(8, 8)
+        }
     }
 }
 

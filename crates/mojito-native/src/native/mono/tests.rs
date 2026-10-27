@@ -330,7 +330,7 @@ fn same_spelled_binders_of_two_declarations_bind_apart() {
     unify(&parameter("contract"), &Ty::bool(), &mut bindings).unwrap();
     assert_eq!(
         substitute_ty(&parameter("outer"), &bindings).unwrap(),
-        TyKind::Int
+        Ty::int()
     );
     assert_eq!(
         substitute_ty(&parameter("contract"), &bindings).unwrap(),

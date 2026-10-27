@@ -105,10 +105,11 @@ pub const SCALAR_SPLAT_CONVERSION: &str = "SIMD.__init__$splat";
 /// cannot drift.
 pub fn calls_pow_int(left: Option<&Ty>, right: Option<&Ty>) -> bool {
     let floating = |ty: Option<&Ty>| {
-        matches!(
-            ty.map(Ty::kind),
-            Some(TyKind::Float64 | TyKind::FloatLiteral | TyKind::Simd { .. })
-        )
+        ty.map(Ty::kind).is_some_and(|kind| match kind {
+            TyKind::INT | TyKind::UINT => false,
+            TyKind::FloatLiteral | TyKind::Simd { .. } => true,
+            _ => false,
+        })
     };
     !floating(left) && !floating(right)
 }
@@ -1463,9 +1464,9 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         return "Self".to_string();
     }
     match ty.kind() {
-        TyKind::Int | TyKind::IntLiteral => "Int".to_string(),
-        TyKind::UInt => "UInt".to_string(),
-        TyKind::Float64 | TyKind::FloatLiteral => "Float64".to_string(),
+        TyKind::INT | TyKind::IntLiteral => "Int".to_string(),
+        TyKind::UINT => "UInt".to_string(),
+        TyKind::FLOAT64 | TyKind::FloatLiteral => "Float64".to_string(),
         TyKind::Bool => "Bool".to_string(),
         TyKind::StringLiteral => "StringLiteral".to_string(),
         TyKind::None => "None".to_string(),

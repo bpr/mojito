@@ -2765,7 +2765,7 @@ impl MetaTy {
     pub fn is_integer(&self) -> bool {
         matches!(
             self.as_value().map(Ty::kind),
-            Some(TyKind::Int | TyKind::UInt | TyKind::IntLiteral)
+            Some(TyKind::INT | TyKind::UINT | TyKind::IntLiteral)
         )
     }
 
@@ -3450,8 +3450,8 @@ enum IntDomain {
 impl IntDomain {
     fn of(meta: &MetaTy) -> Option<Self> {
         match meta.as_value().map(Ty::kind) {
-            Some(TyKind::Int) => Some(Self::Int),
-            Some(TyKind::UInt) => Some(Self::UInt),
+            Some(TyKind::INT) => Some(Self::Int),
+            Some(TyKind::UINT) => Some(Self::UInt),
             Some(TyKind::IntLiteral) => Some(Self::Literal),
             _ => None,
         }
@@ -3684,10 +3684,10 @@ fn require_bool(op: ParamOp, operand: &ParamExpr) -> Result<(), ParamError> {
 fn is_scalar_domain(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::Int
-            | TyKind::UInt
+        TyKind::INT
+            | TyKind::UINT
             | TyKind::IntLiteral
-            | TyKind::Float64
+            | TyKind::FLOAT64
             | TyKind::FloatLiteral
             | TyKind::Bool
             | TyKind::StringLiteral

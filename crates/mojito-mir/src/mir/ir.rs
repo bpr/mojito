@@ -3155,7 +3155,7 @@ impl MirInstr {
             } => {
                 let literal = operand(*value)?;
                 let materializes =
-                    matches!(target.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
+                    matches!(target.kind(), TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
                         || mojito_types::types::scalar_simd_dtype(target.kind()).is_some();
                 if !materializes
                     || !matches!(literal, CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))
@@ -3599,14 +3599,14 @@ pub struct SpanTable(pub HashMap<u32 /*reg*/, (SourceSpan, Option<VarId>)>);
 /// is the one `ty` names.
 fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
     match (constant, ty.kind()) {
-        (Const::Int(value), TyKind::Int) => Some(CtValue::Int(*value)),
-        (Const::Float(value), TyKind::Float64) => Some(CtValue::Float(value.to_bits())),
+        (Const::Int(value), TyKind::INT) => Some(CtValue::Int(*value)),
+        (Const::Float(value), TyKind::FLOAT64) => Some(CtValue::Float(value.to_bits())),
         (Const::Bool(value), TyKind::Bool) => Some(CtValue::Bool(*value)),
         (Const::IntLiteral(value), TyKind::IntLiteral) => Some(CtValue::IntLiteral(value.clone())),
         (Const::FloatLiteral(value), TyKind::FloatLiteral) => {
             Some(CtValue::FloatLiteral(value.clone()))
         }
-        (Const::Value(value @ CtValue::UInt(_)), TyKind::UInt) => Some(value.clone()),
+        (Const::Value(value @ CtValue::UInt(_)), TyKind::UINT) => Some(value.clone()),
         (
             Const::Value(value @ CtValue::Simd { dtype, lanes }),
             TyKind::Simd {
@@ -3632,7 +3632,7 @@ fn self_comparison(op: InfixOp, operand: &Ty, dest: &Ty) -> Option<CtValue> {
         _ => return None,
     };
     let int_like = match operand.kind() {
-        TyKind::Int | TyKind::UInt | TyKind::Bool | TyKind::IntLiteral => true,
+        TyKind::INT | TyKind::UINT | TyKind::Bool | TyKind::IntLiteral => true,
         TyKind::Simd {
             dtype: SimdDtype::Known(dtype),
             ..
@@ -3672,8 +3672,8 @@ fn is_scalar_element(value: &CtValue, dtype: Dtype) -> bool {
 /// defined by, when `ty` names `value`'s kind.
 fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
     match (value, ty.kind()) {
-        (CtValue::Int(value), TyKind::Int) => Some(Const::Int(value)),
-        (CtValue::Float(bits), TyKind::Float64) => Some(Const::Float(f64::from_bits(bits))),
+        (CtValue::Int(value), TyKind::INT) => Some(Const::Int(value)),
+        (CtValue::Float(bits), TyKind::FLOAT64) => Some(Const::Float(f64::from_bits(bits))),
         (CtValue::Bool(value), TyKind::Bool) => Some(Const::Bool(value)),
         (CtValue::IntLiteral(value), TyKind::IntLiteral) => Some(Const::IntLiteral(value)),
         (CtValue::FloatLiteral(value), TyKind::FloatLiteral) => Some(Const::FloatLiteral(value)),
@@ -3908,10 +3908,7 @@ mod tests {
             }
             .forwarded_operand(&reg_types, &MirDeclarations::default())
         };
-        assert_eq!(
-            folds(Ty::new(TyKind::Int), Ty::new(TyKind::Int)),
-            Some(Reg(0))
-        );
+        assert_eq!(folds(Ty::int(), Ty::int()), Some(Reg(0)));
         assert_eq!(folds(lane(1), lane(1)), Some(Reg(0)));
         assert_eq!(folds(param.clone(), param), None);
         let string = Ty::new(TyKind::Struct("String".into(), Vec::new()));
@@ -3919,11 +3916,8 @@ mod tests {
         assert_eq!(folds(lane(4), lane(4)), Some(Reg(0)));
         let literal = Ty::new(TyKind::StringLiteral);
         assert_eq!(folds(literal.clone(), literal), Some(Reg(0)));
-        assert_eq!(
-            folds(Ty::new(TyKind::IntLiteral), Ty::new(TyKind::Int)),
-            None
-        );
-        let reg_types = HashMap::from([(0, Ty::new(TyKind::Int)), (1, Ty::new(TyKind::Int))]);
+        assert_eq!(folds(Ty::new(TyKind::IntLiteral), Ty::int()), None);
+        let reg_types = HashMap::from([(0, Ty::int()), (1, Ty::int())]);
         let rebind = MirInstr::Rebind {
             dest: Reg(1),
             value: Reg(0),
@@ -3981,22 +3975,17 @@ mod tests {
             structs: vec![
                 structure(
                     "P",
-                    vec![Ty::new(TyKind::Int), lanes.clone()],
+                    vec![Ty::int(), lanes.clone()],
                     trivial,
                     unconditional(),
                 ),
                 structure("Nested", vec![struct_ty("P")], trivial, unconditional()),
-                structure(
-                    "Copied",
-                    vec![Ty::new(TyKind::Int)],
-                    trivial,
-                    unconditional(),
-                ),
+                structure("Copied", vec![Ty::int()], trivial, unconditional()),
                 structure("Holds", vec![string], trivial, unconditional()),
                 structure("Generic", vec![param()], trivial, unconditional()),
                 structure(
                     "Conditional",
-                    vec![Ty::new(TyKind::Int)],
+                    vec![Ty::int()],
                     trivial,
                     vec![GenericConstraint::Conforms {
                         operand: mojito_types::types::ConstraintOperand::Param(
@@ -4007,7 +3996,7 @@ mod tests {
                 ),
                 structure(
                     "Implicit",
-                    vec![Ty::new(TyKind::Int)],
+                    vec![Ty::int()],
                     "ImplicitlyCopyable",
                     unconditional(),
                 ),
@@ -4017,7 +4006,7 @@ mod tests {
         let width = mojito_types::types::ParamDecl::Value {
             id: mojito_types::param_expr::ParamId::new("Lanes", 0),
             name: "n".into(),
-            ty: Ty::new(TyKind::Int),
+            ty: Ty::int(),
             default: None,
             callable_default: None,
             infer_only: false,
@@ -4045,7 +4034,7 @@ mod tests {
         let forwarded = mojito_types::param_expr::ParamContext::detached().decl_ref(
             mojito_types::param_expr::ParamId::new("f", 0),
             "n",
-            mojito_types::param_expr::MetaTy::value(Ty::new(TyKind::Int)),
+            mojito_types::param_expr::MetaTy::value(Ty::int()),
         );
         assert!(
             declarations.copy_is_identity(&lanes_at(vec![TyArg::Val(CtValue::Expr(forwarded))]))
@@ -4131,7 +4120,7 @@ mod tests {
         assert!(!declarations.copy_is_identity(&struct_ty("Passed")));
         assert!(declarations.register_passable(&Ty::new(TyKind::Tuple(vec![
             struct_ty("Passed"),
-            Ty::new(TyKind::Int),
+            Ty::int(),
         ]))));
         assert!(declarations.register_passable(&Ty::new(TyKind::StringLiteral)));
         for memory_only in ["Conditional", "Movable", "String"] {
@@ -4212,20 +4201,16 @@ mod tests {
             ))
         };
         let string = || Ty::new(TyKind::Struct("String".into(), Vec::new()));
-        assert!(declarations.register_passable(&applied("Opt", vec![Ty::new(TyKind::Int)])));
+        assert!(declarations.register_passable(&applied("Opt", vec![Ty::int()])));
         assert!(!declarations.register_passable(&applied("Opt", vec![string()])));
         assert!(!declarations.register_passable(&applied("Opt", Vec::new())));
-        assert!(declarations.register_passable(&applied(
-            "Tup",
-            vec![Ty::new(TyKind::Int), Ty::new(TyKind::Bool)]
-        )));
         assert!(
-            !declarations.register_passable(&applied("Tup", vec![Ty::new(TyKind::Int), string()]))
+            declarations.register_passable(&applied("Tup", vec![Ty::int(), Ty::new(TyKind::Bool)]))
         );
-        assert!(declarations.register_passable(&applied(
-            "Opt",
-            vec![applied("Tup", vec![Ty::new(TyKind::Int)])]
-        )));
+        assert!(!declarations.register_passable(&applied("Tup", vec![Ty::int(), string()])));
+        assert!(
+            declarations.register_passable(&applied("Opt", vec![applied("Tup", vec![Ty::int()])]))
+        );
     }
 
     fn fold_binary(
@@ -4287,8 +4272,8 @@ mod tests {
                 InfixOp::Add,
                 Const::Int(i64::MAX),
                 Const::Int(1),
-                TyKind::Int,
-                TyKind::Int
+                TyKind::INT.clone(),
+                TyKind::INT.clone()
             ),
             Some(Const::Int(i64::MIN))
         ));
@@ -4297,15 +4282,15 @@ mod tests {
             (InfixOp::Shl, Const::Int(1), Const::Int(64)),
             (InfixOp::Div, Const::Int(1), Const::Int(2)),
         ] {
-            assert!(binary(op, a, b, TyKind::Int, TyKind::Int).is_none());
+            assert!(binary(op, a, b, TyKind::INT.clone(), TyKind::INT.clone()).is_none());
         }
         assert!(
             binary(
                 InfixOp::Add,
                 Const::Int(1),
                 Const::Int(2),
-                TyKind::UInt,
-                TyKind::UInt
+                TyKind::UINT.clone(),
+                TyKind::UINT.clone()
             )
             .is_none()
         );
@@ -4320,18 +4305,36 @@ mod tests {
             .is_none()
         );
         let nan = Const::Float(f64::NAN);
-        assert!(binary(InfixOp::Lt, nan.clone(), nan, TyKind::Float64, TyKind::Bool).is_none());
+        assert!(
+            binary(
+                InfixOp::Lt,
+                nan.clone(),
+                nan,
+                TyKind::FLOAT64.clone(),
+                TyKind::Bool
+            )
+            .is_none()
+        );
         let param = Const::Param(
             ParamContext::new()
                 .constant(CtValue::Int(1))
                 .expect("a closed Int is a parameter expression"),
         );
-        assert!(binary(InfixOp::Add, param.clone(), param, TyKind::Int, TyKind::Int).is_none());
+        assert!(
+            binary(
+                InfixOp::Add,
+                param.clone(),
+                param,
+                TyKind::INT.clone(),
+                TyKind::INT.clone()
+            )
+            .is_none()
+        );
 
         let reg_types = HashMap::from([
-            (0, ty(TyKind::Int)),
-            (1, ty(TyKind::Int)),
-            (2, ty(TyKind::Int)),
+            (0, ty(TyKind::INT.clone())),
+            (1, ty(TyKind::INT.clone())),
+            (2, ty(TyKind::INT.clone())),
         ]);
         let ones = |_: Reg| Some(Const::Int(1));
         let raising = MirInstr::BinOp {
@@ -4341,7 +4344,7 @@ mod tests {
             b: Reg(1),
             resolved: None,
             raises: Some(Raises {
-                ty: ty(TyKind::Int),
+                ty: ty(TyKind::INT.clone()),
                 flag: Reg(3),
                 error: Reg(4),
             }),
@@ -4386,11 +4389,11 @@ mod tests {
             )
         };
         assert!(matches!(
-            materialize(TyKind::Int),
+            materialize(TyKind::INT.clone()),
             Some(Const::Int(i64::MIN))
         ));
         assert!(matches!(
-            materialize(TyKind::UInt),
+            materialize(TyKind::UINT.clone()),
             Some(Const::Value(CtValue::UInt(value))) if value == 1 << 63
         ));
 
@@ -4421,7 +4424,7 @@ mod tests {
             (Some(Const::Value(a)), Const::Value(b)) if a == b
         ));
         assert!(matches!(
-            materialize_into(literal(-1), TyKind::IntLiteral, ty(TyKind::UInt)),
+            materialize_into(literal(-1), TyKind::IntLiteral, ty(TyKind::UINT.clone())),
             Some(Const::Value(CtValue::UInt(u64::MAX)))
         ));
         let tenth =
@@ -4452,8 +4455,8 @@ mod tests {
                 InfixOp::Add,
                 uint.clone(),
                 uint.clone(),
-                TyKind::UInt,
-                TyKind::UInt
+                TyKind::UINT.clone(),
+                TyKind::UINT.clone()
             ),
             Some(Const::Value(CtValue::UInt(2)))
         ));
@@ -4462,8 +4465,8 @@ mod tests {
                 InfixOp::FloorDiv,
                 Const::Value(CtValue::UInt(7)),
                 Const::Value(CtValue::UInt(0)),
-                TyKind::UInt,
-                TyKind::UInt
+                TyKind::UINT.clone(),
+                TyKind::UINT.clone()
             )
             .is_none()
         );
@@ -4566,7 +4569,8 @@ mod tests {
         };
         assert_eq!(make(1), Some(vec![CtLane::Int(7)]));
         assert_eq!(make(4), Some(vec![CtLane::Int(7); 4]));
-        let reg_types = HashMap::from([(0, ty(TyKind::UInt)), (1, ty(TyKind::UInt))]);
+        let reg_types =
+            HashMap::from([(0, ty(TyKind::UINT.clone())), (1, ty(TyKind::UINT.clone()))]);
         assert!(matches!(
             MirInstr::CopyValue {
                 dest: Reg(1),
@@ -4607,7 +4611,7 @@ mod tests {
             (InfixOp::Ge, true),
             (InfixOp::Eq, true),
         ] {
-            for operand in [TyKind::Int, TyKind::UInt, TyKind::Bool] {
+            for operand in [TyKind::INT.clone(), TyKind::UINT.clone(), TyKind::Bool] {
                 assert!(matches!(
                     compare(op, operand, TyKind::Bool),
                     Some(Const::Bool(value)) if value == holds
@@ -4618,10 +4622,10 @@ mod tests {
                 Some(Const::Value(CtValue::Simd { dtype: Dtype::Bool, lanes }))
                     if lanes == vec![CtLane::Bool(holds); 4]
             ));
-            assert!(compare(op, TyKind::Float64, TyKind::Bool).is_none());
+            assert!(compare(op, TyKind::FLOAT64.clone(), TyKind::Bool).is_none());
             assert!(compare(op, simd(Dtype::Float32, 4), simd(Dtype::Bool, 4)).is_none());
         }
-        assert!(compare(InfixOp::Add, TyKind::Int, TyKind::Int).is_none());
+        assert!(compare(InfixOp::Add, TyKind::INT.clone(), TyKind::INT.clone()).is_none());
     }
 
     #[test]
@@ -4807,7 +4811,7 @@ mod tests {
         assert!(
             make(
                 vec![
-                    some(Const::Int(7), TyKind::Int),
+                    some(Const::Int(7), TyKind::INT.clone()),
                     some(literal(2).0, TyKind::IntLiteral)
                 ],
                 Dtype::Int32,
@@ -4845,7 +4849,13 @@ mod tests {
                 .folded_constant(|_| Some(operand.clone()), &reg_types, &none)
             };
         assert!(matches!(
-            conversion("UInt", Vec::new(), Const::Int(7), TyKind::Int, TyKind::UInt),
+            conversion(
+                "UInt",
+                Vec::new(),
+                Const::Int(7),
+                TyKind::INT.clone(),
+                TyKind::UINT.clone()
+            ),
             Some(Const::Value(CtValue::UInt(7)))
         ));
         assert!(matches!(
@@ -4859,9 +4869,36 @@ mod tests {
             Some(Const::Bool(true))
         ));
         let huge = Const::Float(1e30);
-        assert!(conversion("Int", Vec::new(), huge, TyKind::Float64, TyKind::Int).is_none());
+        assert!(
+            conversion(
+                "Int",
+                Vec::new(),
+                huge,
+                TyKind::FLOAT64.clone(),
+                TyKind::INT.clone()
+            )
+            .is_none()
+        );
         let keyword = vec![("x".to_string(), Reg(0))];
-        assert!(conversion("Int", keyword, Const::Int(7), TyKind::Int, TyKind::Int).is_none());
-        assert!(conversion("print", Vec::new(), Const::Int(7), TyKind::Int, TyKind::Int).is_none());
+        assert!(
+            conversion(
+                "Int",
+                keyword,
+                Const::Int(7),
+                TyKind::INT.clone(),
+                TyKind::INT.clone()
+            )
+            .is_none()
+        );
+        assert!(
+            conversion(
+                "print",
+                Vec::new(),
+                Const::Int(7),
+                TyKind::INT.clone(),
+                TyKind::INT.clone()
+            )
+            .is_none()
+        );
     }
 }

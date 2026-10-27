@@ -55,8 +55,8 @@ pub(super) fn print_keyword(name: &str, ty: &Ty) -> Option<(bool, &'static str)>
 /// `__bool__` and `Boolable`).
 pub(super) fn conversion_protocol(target: &Ty) -> Option<(&'static str, &'static str)> {
     match target.kind() {
-        TyKind::Int => Some(("__int__", "Intable")),
-        TyKind::Float64 => Some(("__float__", "Floatable")),
+        TyKind::INT => Some(("__int__", "Intable")),
+        TyKind::FLOAT64 => Some(("__float__", "Floatable")),
         TyKind::Bool => Some(("__bool__", "Boolable")),
         _ => None,
     }
@@ -173,11 +173,11 @@ pub(super) fn require_dunder_ret(ret: Ty, expected: &Ty, name: &str) -> Result<T
 /// Functions, ranges, and opaque type parameters are not printable.
 pub(super) fn is_printable(ty: &Ty) -> bool {
     match ty.kind() {
-        TyKind::Int
-        | TyKind::UInt
+        TyKind::INT
+        | TyKind::UINT
         | TyKind::Bool
         | TyKind::StringLiteral
-        | TyKind::Float64
+        | TyKind::FLOAT64
         | TyKind::None
         | TyKind::IntLiteral
         | TyKind::FloatLiteral
@@ -608,7 +608,7 @@ impl Checker {
     /// concrete impl runs after type erasure).
     pub(super) fn infer_round(&self, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args("round", 1, args)?;
-        if matches!((tys[0]).kind(), TyKind::Float64 | TyKind::FloatLiteral) {
+        if matches!((tys[0]).kind(), TyKind::FLOAT64 | TyKind::FloatLiteral) {
             Ok(Ty::float64())
         } else if self.param_has_bound(&tys[0], "Roundable") {
             Ok(tys[0].clone())
@@ -630,7 +630,7 @@ impl Checker {
         {
             for element in elements {
                 match self.len_result_for_type(element)?.as_ref().map(Ty::kind) {
-                    Some(TyKind::Int) => {}
+                    Some(TyKind::INT) => {}
                     _ => return Ok(None),
                 }
             }
@@ -749,11 +749,12 @@ impl Checker {
         let mut triggered = false;
         for ty in &tys {
             let this = match ty.kind() {
-                TyKind::Float64 => {
+                TyKind::FLOAT64 => {
                     triggered = true;
                     Some(Dtype::Float64)
                 }
-                TyKind::Int => Some(Dtype::Int),
+                TyKind::INT => Some(Dtype::Int),
+                TyKind::UINT => Some(Dtype::UInt),
                 TyKind::IntLiteral | TyKind::FloatLiteral => None,
                 // Not a scalar-range shape at all (a symbolic lane included);
                 // the ordinary no-matching-overload diagnostic stands.
@@ -888,8 +889,8 @@ impl Checker {
             (arg_ty.kind(), target.kind()),
             (
                 TyKind::IntLiteral,
-                TyKind::Int | TyKind::UInt | TyKind::Float64
-            ) | (TyKind::FloatLiteral, TyKind::Float64)
+                TyKind::INT | TyKind::UINT | TyKind::FLOAT64
+            ) | (TyKind::FloatLiteral, TyKind::FLOAT64)
         ) {
             self.record_literal_materializations(&args[0], &arg_ty, &target)?;
             self.record_at(span.clone()).adjustment = Some(Box::new(
@@ -900,7 +901,7 @@ impl Checker {
         // `Int(pointer)` is the address conversion (upstream `Pointer.__int__`);
         // a null pointer converts to 0, which is how the libc-facing stdlib
         // tests an optional result.
-        if target == TyKind::Int && matches!(arg_ty.kind(), TyKind::Pointer { .. }) {
+        if target == *TyKind::INT && matches!(arg_ty.kind(), TyKind::Pointer { .. }) {
             return Ok(Ty::int());
         }
         // A concrete value routes through its conversion dunder

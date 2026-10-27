@@ -2482,7 +2482,7 @@ impl<'a> Specializer<'a> {
                     && let [exponent] = args.as_slice()
                     && matches!(
                         (function.reg_types.get(&recv.0).map(peel_refs)).map(Ty::kind),
-                        Some(TyKind::Int | TyKind::UInt | TyKind::Float64)
+                        Some(TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
                     )
                 {
                     *instruction = MirInstr::BinOp {
@@ -2603,10 +2603,9 @@ impl<'a> Specializer<'a> {
                             | mojito_ast::ast::InfixOp::Ge
                     )
                     && function.reg_types.get(&dest.0) == Some(&Ty::bool())
-                    && let Some(TyKind::Simd { width, .. }) =
-                        (function.reg_types.get(&a.0).map(peel_refs).cloned())
-                            .as_ref()
-                            .map(Ty::kind)
+                    && let Some(operand) = function.reg_types.get(&a.0).map(peel_refs).cloned()
+                    && let TyKind::Simd { width, .. } = operand.kind()
+                    && !mojito_types::types::has_host_scalar_value(operand.kind())
                 {
                     let mask = Reg(function.n_regs);
                     function.n_regs += 1;

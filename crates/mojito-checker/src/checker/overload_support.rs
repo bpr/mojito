@@ -804,9 +804,9 @@ pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
 /// `s.__eq__("x")` selecting the `String`-typed overload beside the view one.
 pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
     if actual == expected
-        || matches!(actual.kind(), TyKind::IntLiteral) && matches!(expected.kind(), TyKind::Int)
+        || matches!(actual.kind(), TyKind::IntLiteral) && matches!(expected.kind(), TyKind::INT)
         || matches!(actual.kind(), TyKind::FloatLiteral)
-            && matches!(expected.kind(), TyKind::Float64)
+            && matches!(expected.kind(), TyKind::FLOAT64)
     {
         0
     } else if matches!(actual.kind(), TyKind::StringLiteral)

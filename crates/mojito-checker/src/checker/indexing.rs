@@ -4,7 +4,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::types::TyKind;
+use mojito_types::types::{TyKind, has_host_scalar_value};
 
 /// A nominal subscript as an assignment target, as upstream's
 /// `emitGetterSetterAccess` forms it.
@@ -97,7 +97,9 @@ impl Checker {
                 elements.get(index).cloned()
             }
             TyKind::Pointer { element, .. } => Some((*element).clone()),
-            TyKind::Simd { dtype, .. } => Some(simd_lane(dtype)),
+            TyKind::Simd { dtype, .. } if !has_host_scalar_value(object_ty.kind()) => {
+                Some(simd_lane(dtype))
+            }
             _ => None,
         }
     }
@@ -282,7 +284,9 @@ impl Checker {
                         (*element).clone()
                     }
                     // A SIMD lane write `v[i] = e`: the target is the width-1 scalar.
-                    TyKind::Simd { dtype, .. } => simd_lane(dtype),
+                    TyKind::Simd { dtype, .. } if !has_host_scalar_value(obj_ty.kind()) => {
+                        simd_lane(dtype)
+                    }
                     _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
                 };
                 let idx_ty = self.infer(index)?;
@@ -1314,7 +1318,7 @@ impl Checker {
         }
         // The result of indexing: a SIMD lane, a List element, or a pointer pointee.
         let result = match obj_ty.kind() {
-            TyKind::Simd { dtype, .. } => simd_lane(dtype),
+            TyKind::Simd { dtype, .. } if !has_host_scalar_value(obj_ty.kind()) => simd_lane(dtype),
             TyKind::Pointer { element, origin } => {
                 self.check_pointer_offset(origin, index)?;
                 self.materialize_temporary_holder(object, false);
@@ -1519,7 +1523,7 @@ impl Checker {
                     method.has_self
                         && method.params.is_empty()
                         && method.ret_mlir_index
-                        && substitute(&method.ret, &substitution) == TyKind::Int
+                        && substitute(&method.ret, &substitution) == *TyKind::INT
                 })?;
                 Some(if methods.len() == 1 {
                     format!("{name}.__mlir_index__")
@@ -1537,7 +1541,7 @@ impl Checker {
                     self.lookup_trait_methods(&self.refined_bound(ty)?, "__mlir_index__", 0);
                 let selected = methods
                     .iter()
-                    .find(|method| method.params.is_empty() && method.ret == TyKind::Int)?;
+                    .find(|method| method.params.is_empty() && method.ret == *TyKind::INT)?;
                 Some(method_lowered_name(
                     "__trait_dispatch",
                     "__mlir_index__",
@@ -1550,7 +1554,7 @@ impl Checker {
     }
 
     pub(super) fn has_index_normalization(&self, expression: &Expr, expected: &Ty) -> bool {
-        *expected == TyKind::Int
+        *expected == *TyKind::INT
             && self
                 .node_facts
                 .borrow()
@@ -1613,7 +1617,7 @@ impl Checker {
                 || self
                     .implicit_conversion_target(&actual, &expected)?
                     .is_some();
-            accepts_int |= expected == TyKind::Int;
+            accepts_int |= expected == *TyKind::INT;
         }
         if !accepts_source && accepts_int {
             self.record_at(expression.source_span()).implicit_conversion = Some(target);
@@ -2009,12 +2013,10 @@ impl Checker {
 /// for any other type: a `Bool` or a literal type has no `dtype`.
 pub(super) fn simd_dtype(ty: &Ty) -> Option<Result<SimdDtype, TypeError>> {
     match ty.kind() {
-        TyKind::Int => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Int))),
-        TyKind::Float64 => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Float64))),
+        TyKind::INT => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Int))),
+        TyKind::FLOAT64 => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::Float64))),
+        TyKind::UINT => Some(Ok(SimdDtype::Known(mojito_ast::ast::Dtype::UInt))),
         TyKind::Simd { dtype, .. } => Some(Ok(dtype.clone())),
-        TyKind::UInt => Some(Err(TypeError::Unsupported(
-            "DType.uint is not supported yet".to_string(),
-        ))),
         _ => None,
     }
 }

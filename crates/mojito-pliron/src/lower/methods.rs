@@ -89,9 +89,9 @@ impl FnLowering<'_> {
                 mojito_types::types::is_scalar_simd(ty)
                     || matches!(
                         ty.kind(),
-                        TyKind::Int
-                            | TyKind::UInt
-                            | TyKind::Float64
+                        TyKind::INT
+                            | TyKind::UINT
+                            | TyKind::FLOAT64
                             | TyKind::Bool
                             | TyKind::IntLiteral
                             | TyKind::FloatLiteral
@@ -181,9 +181,9 @@ impl FnLowering<'_> {
                 Some(
                     TyKind::Tuple(_)
                         | TyKind::RuntimePack(_)
-                        | TyKind::Int
-                        | TyKind::UInt
-                        | TyKind::Float64
+                        | TyKind::INT
+                        | TyKind::UINT
+                        | TyKind::FLOAT64
                 )
             )
         {
@@ -195,7 +195,7 @@ impl FnLowering<'_> {
         // its own method arrives resolved instead.
         if resolved.is_none()
             && let Some(recv_ty) = self.func.reg_types.get(&recv.0).cloned()
-            && matches!(recv_ty.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
+            && matches!(recv_ty.kind(), TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
         {
             match (method, args.len()) {
                 ("__floor__" | "__ceil__" | "__trunc__", 0) => {
@@ -222,7 +222,7 @@ impl FnLowering<'_> {
             && kwargs.is_empty()
             && matches!(
                 self.func.reg_types.get(&recv.0).map(Ty::kind),
-                Some(TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Bool)
+                Some(TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::Bool)
             )
             && let Some(op) = [
                 InfixOp::Eq,
@@ -517,7 +517,8 @@ impl FnLowering<'_> {
 
     /// `DType`'s `Bool` queries over the code byte, spelled as upstream's
     /// mask tests: bit 64 marks a float, bit 128 a sized integer, bit 1 a
-    /// signed type, and `DType.int` is the one unsized integer.
+    /// signed type, and `DType.int` and `DType.uint` are the unsized
+    /// integers.
     fn lower_dtype_predicate(
         &mut self,
         ctx: &mut Context,
@@ -544,7 +545,13 @@ impl FnLowering<'_> {
         let index = self.dtype_constant(ctx, Dtype::Int);
         let is_index = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, code, index);
         self.append(ctx, is_index.get_operation(), Some(dest));
-        let integral = OrOp::new(ctx, is_index.get_result(ctx), sized_integer);
+        let unsigned_index = self.dtype_constant(ctx, Dtype::UInt);
+        let is_unsigned_index = ICmpOp::new(ctx, ICmpPredicateAttr::EQ, code, unsigned_index);
+        self.append(ctx, is_unsigned_index.get_operation(), Some(dest));
+        let is_unsigned_index = is_unsigned_index.get_result(ctx);
+        let unsized_integer = OrOp::new(ctx, is_index.get_result(ctx), is_unsigned_index);
+        self.append(ctx, unsized_integer.get_operation(), Some(dest));
+        let integral = OrOp::new(ctx, unsized_integer.get_result(ctx), sized_integer);
         self.append(ctx, integral.get_operation(), Some(dest));
         let integral = integral.get_result(ctx);
         let result = match method {
@@ -563,7 +570,9 @@ impl FnLowering<'_> {
                 self.append(ctx, unsigned.get_operation(), Some(dest));
                 let and = AndOp::new(ctx, sized_integer, unsigned.get_result(ctx));
                 self.append(ctx, and.get_operation(), Some(dest));
-                and.get_result(ctx)
+                let or = OrOp::new(ctx, is_unsigned_index, and.get_result(ctx));
+                self.append(ctx, or.get_operation(), Some(dest));
+                or.get_result(ctx)
             }
             "is_numeric" => {
                 let or = OrOp::new(ctx, integral, float);

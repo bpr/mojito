@@ -291,10 +291,10 @@ pub fn method_owner_params<'a>(
 pub fn has_no_destructor(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::Int
-            | TyKind::UInt
+        TyKind::INT
+            | TyKind::UINT
             | TyKind::Bool
-            | TyKind::Float64
+            | TyKind::FLOAT64
             | TyKind::StringLiteral
             | TyKind::None
             | TyKind::IntLiteral

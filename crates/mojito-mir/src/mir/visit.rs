@@ -566,7 +566,7 @@ mod tests {
 
     #[test]
     fn visit_walk_reaches_every_site_kind() {
-        let int = || Ty::new(TyKind::Int);
+        let int = || Ty::int();
         let mut place = MirPlace::root(0, Some(int()));
         place.project(Proj::Variant(VariantIndex::Known(0)), Ty::new(TyKind::Bool));
         let region = vec![MirBlock {

@@ -1970,7 +1970,7 @@ impl Checker {
             return Ok(());
         }
         let scalar_boundary = matches!(from.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
-            && (matches!(to.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
+            && (matches!(to.kind(), TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
                 || matches!(to.kind(), TyKind::Simd { width, .. } if !width.is_inferred()));
         if scalar_boundary {
             if let Some(value) = self.exact_literal_value(expression)
@@ -2069,7 +2069,7 @@ impl Checker {
             (CtValue::FloatLiteral(_), TyKind::Simd { dtype, width }) if !width.is_inferred() => {
                 dtype.licenses(Dtype::is_float)
             }
-            (value, TyKind::Int | TyKind::UInt | TyKind::Float64) => {
+            (value, TyKind::INT | TyKind::UINT | TyKind::FLOAT64) => {
                 value.clone().materialize_as(target).is_some()
             }
             _ => false,

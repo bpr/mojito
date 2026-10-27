@@ -113,7 +113,7 @@ impl Checker {
             && param_args.is_empty()
             && matches!(
                 obj_ty.kind(),
-                TyKind::Int | TyKind::IntLiteral | TyKind::UInt
+                TyKind::INT | TyKind::IntLiteral | TyKind::UINT
             )
         {
             return Ok(Ty::int());

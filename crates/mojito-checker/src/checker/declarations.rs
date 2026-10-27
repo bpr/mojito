@@ -784,11 +784,11 @@ impl Checker {
             {
                 if !matches!(
                     vty.kind(),
-                    TyKind::Int
-                        | TyKind::UInt
+                    TyKind::INT
+                        | TyKind::UINT
                         | TyKind::Bool
                         | TyKind::StringLiteral
-                        | TyKind::Float64
+                        | TyKind::FLOAT64
                         | TyKind::Dtype
                 ) {
                     return Err(TypeError::BadValueParamType {

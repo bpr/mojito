@@ -498,7 +498,7 @@ pub fn simd_to_bits(target: Dtype, value: &Value) -> Result<Value, RuntimeError>
     let (dtype, lanes) = match value {
         Value::Simd { dtype, lanes } => (*dtype, lanes.clone()),
         Value::Int(n) => (Dtype::Int, SimdLanes::Int(vec![i128::from(*n)])),
-        Value::UInt(n) => (Dtype::UInt64, SimdLanes::Int(vec![i128::from(*n)])),
+        Value::UInt(n) => (Dtype::UInt, SimdLanes::Int(vec![i128::from(*n)])),
         Value::Bool(b) => (Dtype::Bool, SimdLanes::Bool(vec![*b])),
         Value::Float64(x) => (Dtype::Float64, SimdLanes::Float(vec![*x])),
         other => {
@@ -1205,19 +1205,19 @@ pub fn materialize_literal(
 ) -> Result<Value, RuntimeError> {
     use mojito_types::types::TyKind;
     match (value, target.kind()) {
-        (Value::IntLiteral(value), TyKind::Int) => value
+        (Value::IntLiteral(value), TyKind::INT) => value
             .wrapping_signed(64)
             .map(Value::Int)
             .ok_or_else(|| literal_materialization_error(&value, "Int")),
-        (Value::IntLiteral(value), TyKind::UInt) => value
+        (Value::IntLiteral(value), TyKind::UINT) => value
             .wrapping_unsigned(64)
             .map(Value::UInt)
             .ok_or_else(|| literal_materialization_error(&value, "UInt")),
-        (Value::IntLiteral(value), TyKind::Float64) => value
+        (Value::IntLiteral(value), TyKind::FLOAT64) => value
             .to_f64()
             .map(Value::Float64)
             .ok_or_else(|| literal_materialization_error(&value, "Float64")),
-        (Value::FloatLiteral(value), TyKind::Float64) => value
+        (Value::FloatLiteral(value), TyKind::FLOAT64) => value
             .to_f64()
             .map(Value::Float64)
             .ok_or_else(|| literal_materialization_error(&value, "Float64")),
@@ -1262,11 +1262,11 @@ pub fn coerce_checked(value: Value, ty: &mojito_types::types::Ty) -> Value {
         return materialized;
     }
     match ty.kind() {
-        TyKind::UInt => match value {
+        TyKind::UINT => match value {
             Value::Int(n) => Value::UInt(n as u64),
             value => value,
         },
-        TyKind::Float64 => match value {
+        TyKind::FLOAT64 => match value {
             Value::Int(n) => Value::Float64(n as f64),
             Value::UInt(n) => Value::Float64(n as f64),
             value => value,
@@ -1454,10 +1454,9 @@ fn materialize_like_numeric(literal: Value, concrete: &Value) -> Result<Value, R
     }
 }
 
-/// Build a SIMD `Value` from `dtype`+`lanes`, canonicalizing a **width-1
-/// `float64`** to the native `Value::Float64` and a **width-1 `int`** to the
-/// native `Value::Int` — the runtime side of `simd_ty`'s unification of
-/// `Float64`/`SIMD[DType.float64, 1]` and `Int`/`Scalar[DType.int]`.
+/// Build a SIMD `Value` from `dtype`+`lanes`, representing a width-one
+/// `float64`, `int`, or `uint` as the host scalar `Value::Float64`,
+/// `Value::Int`, or `Value::UInt`.
 fn simd_value(dtype: Dtype, lanes: SimdLanes) -> Value {
     if dtype == Dtype::Float64
         && let SimdLanes::Float(v) = &lanes
@@ -1470,6 +1469,12 @@ fn simd_value(dtype: Dtype, lanes: SimdLanes) -> Value {
         && v.len() == 1
     {
         return Value::Int(v[0] as i64);
+    }
+    if dtype == Dtype::UInt
+        && let SimdLanes::Int(v) = &lanes
+        && v.len() == 1
+    {
+        return Value::UInt(v[0] as u64);
     }
     Value::Simd { dtype, lanes }
 }
@@ -1652,7 +1657,7 @@ pub const fn integer_dtype_bits(dtype: Dtype) -> Option<(u32, bool)> {
         Dtype::UInt8 => (8, false),
         Dtype::UInt16 => (16, false),
         Dtype::UInt32 => (32, false),
-        Dtype::UInt64 => (64, false),
+        Dtype::UInt | Dtype::UInt64 => (64, false),
         Dtype::Float16 | Dtype::Float32 | Dtype::Float64 | Dtype::Bool => return None,
     })
 }

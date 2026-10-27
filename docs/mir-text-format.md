@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.116
+mojito-mir 1.117
 ```
 
-The writer emits 1.116. The reader accepts 1.0 through 1.116; *Schema 1.0*
+The writer emits 1.117. The reader accepts 1.0 through 1.117; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -667,6 +667,13 @@ reference names a specialization, where `function(symbol)` named only the
 template and the elaborator had no binding for a parameter no runtime
 argument spells (R1371). No older artifact holds one. The package format
 moves to `mojito-package 113`.
+
+Schema 1.117 adds the dtype `uint`, upstream's `DType.uint`: `UInt` is
+`Scalar[DType.uint]`, as `Int` and `Float64` are the width-one `int` and
+`float64` vectors, and a `simd { dtype: uint, ... }` type or lane names it
+(R1389). The three scalar types keep their `Int`, `UInt`, and `Float64`
+spellings. No older artifact holds the dtype. The package format moves to
+`mojito-package 114`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:

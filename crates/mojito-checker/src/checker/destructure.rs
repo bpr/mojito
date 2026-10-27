@@ -244,7 +244,7 @@ impl Checker {
             self.anchor_subject(&synth, &anchor_name, value, true, ret, in_loop)?;
         if matches!(
             ty.kind(),
-            TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Simd { .. }
+            TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::Simd { .. }
         ) {
             return Err(TypeError::Unsupported(format!(
                 "sequence destructuring of '{ty}', which has no '__len__'/'__getitem__' yet"

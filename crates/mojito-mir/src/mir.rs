@@ -4188,7 +4188,7 @@ impl<'a> Flatten<'a> {
         }
         if !matches!(
             expression.ty().as_ref().map(Ty::kind),
-            Some(TyKind::Int | TyKind::IntLiteral | TyKind::Bool)
+            Some(TyKind::INT | TyKind::IntLiteral | TyKind::Bool)
         ) {
             for display in &displays {
                 self.build_display(display);

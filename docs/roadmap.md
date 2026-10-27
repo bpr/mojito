@@ -5588,13 +5588,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   reports "DType.uint128 is not supported yet"
   (`assets/type_error/dtype_upstream_only_rejected.mojo`, a `divergence` row of
   `conformance/assets-mojo-errors.tsv`).
-  - The names are `uint`, `bfloat16`, `int128`, `uint128`, `int256`,
-    `uint256`, the `float4`/`float6`/`float8` families, and `_uint1`/`_uint2`/
-    `_uint4` (`UPSTREAM_ONLY_DTYPE_NAMES` in `mojito-ast`).
-  - `UInt.dtype` is `DType.uint` and rejects the same way
-    (`assets/type_error/dtype_uint_alias_rejected.mojo`, the `simd_dtype`
-    arms in `checker/indexing.rs` and `associated_value` in
-    `comptime/elab.rs`).
+  - The names are `bfloat16`, `int128`, `uint128`, `int256`, `uint256`, the
+    `float4`/`float6`/`float8` families, and `_uint1`/`_uint2`/`_uint4`
+    (`UPSTREAM_ONLY_DTYPE_NAMES` in `mojito-ast`).
+  - `Dtype::UInt` (R1389) is the latest dtype added, with every table row,
+    the VM's and Pliron's predicate arms included.
   - `Dtype::float_query` answers only `float16`/`float32`/`float64`; a new
     float format adds its row there.
   - Each needs a `Dtype` variant with upstream's code in `Dtype::code`, even
@@ -7263,6 +7261,12 @@ retained on purpose and re-probed rather than fixed; they are listed in
     `comptime if v == w` reduces the lanes. Mojito's elaborator folds a
     four-lane mask, which `fold::comparison_holds` leaves undecided, so the
     instance fails with "the instance does not decide".
+  - A width-one comparison is a one-lane mask too, where the pin's
+    `SIMD.__lt__` returns `Bool`: `Int32(1) < Int32(2) or True` fails with
+    "operator 'or' is not defined for SIMD[DType.bool, 1]", and the pin
+    prints `True`. `Int`, `UInt`, and `Float64` keep their own scalar
+    operator path (`infer_infix`'s `has_host_scalar_value` gate, and the
+    specializer's mask-to-`Bool` rewrite skips them) until this lands.
   - Depends on R143, the scalar comparison methods: once the infix spelling
     goes, `x.ne(y)` is the only ordered comparison left on a scalar, and it
     does not resolve there yet.
@@ -9413,42 +9417,26 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1389 `Int`, `UInt`, and `Float64` are type kinds of their own,
-  where upstream's are `Scalar[DType.int]`, `Scalar[DType.uint]`, and
-  `Scalar[DType.float64]`**
+- [ ] **R1390 The VM and Pliron serve no lane method or lane subscript on an
+  `Int`, `UInt`, or `Float64` value**
 
-  Mojito has `TyKind::Int`, `UInt`, and `Float64` beside `TyKind::Simd`,
-  where upstream's `std/simd.mojo` declares all three as aliases of the one
-  `SIMD` struct.
-  - `canonical_simd_ty` turns width one back into the native kinds, and
-    `simd_shape` reports `UInt` as `uint64`. No `Dtype` stands for
-    upstream's `DType.uint`.
-  - The lever: make the three a width-one `TyKind::Simd` that still displays
-    its alias name, and add `DType.uint`. The VM's `Value::Int`, `UInt`, and
-    `Float64` stay as the width-one representation.
-  - Splitting `Int` from `SIMD` would be a Mojito-only split, so this merge
-    comes first and one library port (`SIMD`) then covers every scalar.
-  - Probe: `g[dt: DType](a: Scalar[dt])` called with `UInt(3)`, and `var x:
-    Scalar[DType.uint] = UInt(3)`. Mojito rejects both ("not a valid SIMD
-    element type: DType.uint"). The pin prints `6` and `3`.
-  - Shrinks R335 and R143.
-  - Done when `canonical_simd_ty` has no special arm.
-  - Depends on nothing.
-  - Model: Fable, Planned.
-
-- [ ] **R1390 The VM and Pliron serve no lane method on an `Int`, `UInt`, or
-  `Float64` value**
-
-  Once the checker types `Float64(2.5).reduce_add()` and `x.ne(y)` on a
-  width-one native scalar, `runtime::simd_method` and Pliron's SIMD method
-  lowering still skip `Value::Int`, `UInt`, and `Float64`, where upstream's
-  are ordinary `SIMD` methods.
-  - Serve the width-one native values in both backends. For a NaN, `ne`
-    stays ordered (`s.ne(s)` is `False`).
-  - Probe: R335's `total(Float64(2.5))` and R143's `x.ne(y)`.
+  `Int`, `UInt`, and `Float64` are width-one `TyKind::Simd`s, but
+  `runtime::simd_method`, the VM's lane reads and writes (`index_value`,
+  `write_simd_reference_lane`), and Pliron's SIMD method lowering skip
+  `Value::Int`, `UInt`, and `Float64`, where upstream's are ordinary `SIMD`
+  methods and lanes.
+  - The checker keeps the three out of the SIMD method arm
+    (`intrinsic_receivers.rs`) and the lane-subscript arms
+    (`checker/indexing.rs`) behind `types::has_host_scalar_value`.
+  - The lever: serve the width-one host values in both backends, then
+    delete those gates. For a NaN, `ne` stays ordered (`s.ne(s)` is
+    `False`).
+  - Probe: R335's `total(Float64(2.5))`, R143's `x.ne(y)`,
+    `Int(5).cast[DType.int32]()`, and `Int(5)[0]` and `Float64(1.5)[0]`,
+    which the pin prints as `5` and `1.5`.
   - Closes R335 (lane reductions on native scalars) and R143 (scalar
     comparison methods).
-  - Depends on R1389.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R1391 `__mlir_type` cannot spell `!kgen.simd`, so `SIMD`'s storage
@@ -11106,8 +11094,9 @@ residue found inside a task moves to the task that owns its fix.
   `Float64(2.5).reduce_add()` is rejected outright; the pin runs both.
   - Upstream's `Float64` is `Scalar[DType.float64]`, a width-one `SIMD`
     with every lane method, and its `Int` converts to `Scalar[DType.int]`.
-    Mojito canonicalizes both width-one vectors to the native scalars, which
-    `runtime::simd_method` and the checker's SIMD receiver arms skip.
+    Mojito's are width-one vectors too (R1389), but the backends hold them
+    as host scalars that `runtime::simd_method` skips, so the checker's SIMD
+    receiver arm skips them as well (R1390).
   - A sized scalar (`Float32(1.5)`) at the same binder runs.
   - Found while landing R259 (2026-10-05).
   - Depends on nothing.

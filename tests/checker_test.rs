@@ -5688,7 +5688,7 @@ fn raising_reference_iterator_preserves_the_reference_loop_binding_type() {
         .expect("loop binding");
     assert!(matches!(
         item.ty.as_ref().map(Ty::kind),
-        Some(mojito::TyKind::Ref(reference)) if reference.referent == mojito::TyKind::Int
+        Some(mojito::TyKind::Ref(reference)) if reference.referent == *mojito::TyKind::INT
     ));
 }
 

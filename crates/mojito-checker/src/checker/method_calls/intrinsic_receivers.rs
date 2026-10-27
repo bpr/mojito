@@ -56,12 +56,13 @@ impl Checker {
         // other builtin scalars.
         if let TyKind::Simd { dtype, width } = obj_ty.kind()
             && method != "__hash__"
+            && !mojito_types::types::has_host_scalar_value(obj_ty.kind())
         {
             return self.infer_simd_method(site, dtype, width).map(Some);
         }
         // Raw-seam compatibility only: with the linked stdlib present the
         // nominal prelude `Optional` owns its full method surface below.
-        if matches!(obj_ty.kind(), TyKind::Struct(name, args) if name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(ty)] if *ty == TyKind::Int))
+        if matches!(obj_ty.kind(), TyKind::Struct(name, args) if name == "Optional" && matches!(args.as_slice(), [TyArg::Ty(ty)] if *ty == *TyKind::INT))
             && !self.structs.contains_key("Optional")
         {
             return self.infer_raw_optional_method(site).map(Some);

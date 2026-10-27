@@ -202,9 +202,6 @@ pub fn scalar_type(
     location: Option<SourceSpan>,
 ) -> Result<ScalarTy, PlironError> {
     match ty.kind() {
-        TyKind::Int => Ok(ScalarTy::Int),
-        TyKind::UInt => Ok(ScalarTy::UInt),
-        TyKind::Float64 => Ok(ScalarTy::Float64),
         TyKind::Bool => Ok(ScalarTy::Bool),
         TyKind::Dtype => Ok(ScalarTy::Dtype),
         ty if let Some(dtype) = scalar_simd_dtype(ty) => Ok(ScalarTy::of_dtype(dtype)),

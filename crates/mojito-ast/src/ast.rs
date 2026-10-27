@@ -408,13 +408,16 @@ pub enum ParamArg {
 
 /// A SIMD element type — the `<dt>` in `SIMD[DType.<dt>, width]`.
 ///
-/// Mojito supports the index and fixed-width integers up to 64 bits,
+/// Mojito supports the signed and unsigned index integers, the fixed-width
+/// integers up to 64 bits,
 /// `float16`, `float32`, `float64`, and `bool`; upstream's other names are
 /// [`UPSTREAM_ONLY_DTYPE_NAMES`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Dtype {
     /// Platform-sized signed integer, used by `Int = Scalar[DType.int]`.
     Int,
+    /// Platform-sized unsigned integer, used by `UInt = Scalar[DType.uint]`.
+    UInt,
     Int8,
     Int16,
     Int32,
@@ -434,6 +437,7 @@ impl Dtype {
     pub fn from_name(name: &str) -> Option<Self> {
         Some(match name {
             "int" => Self::Int,
+            "uint" => Self::UInt,
             "int8" => Self::Int8,
             "int16" => Self::Int16,
             "int32" => Self::Int32,
@@ -454,6 +458,7 @@ impl Dtype {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Int => "int",
+            Self::UInt => "uint",
             Self::Int8 => "int8",
             Self::Int16 => "int16",
             Self::Int32 => "int32",
@@ -483,19 +488,21 @@ impl Dtype {
             Self::UInt64 => "UInt64",
             Self::Float16 => "Float16",
             Self::Float32 => "Float32",
-            // `float64` is spelled by the native `Float64` type (with which it is
-            // unified), and `bool` by `Bool` — neither is a SIMD *alias* name here.
-            Self::Int | Self::Float64 | Self::Bool => return None,
+            // `Int`, `UInt`, and `Float64` name their scalars too, but
+            // conversion routes them as the builtin numeric names, and `bool`
+            // is spelled by `Bool`.
+            Self::Int | Self::UInt | Self::Float64 | Self::Bool => return None,
         })
     }
 
     /// The type name a width-1 `SIMD` of this dtype spells its `repr` with
     /// (`Int32(4)`, `Float64(0.5)`), as upstream's `_scalar_repr_alias`
-    /// answers it: every scalar alias, `Int` and `Float64` included, and
+    /// answers it: every scalar alias, `Int`, `UInt`, and `Float64` included, and
     /// `None` for `bool`, whose `SIMD[DType.bool, 1]` keeps the verbose form.
     pub const fn repr_alias(self) -> Option<&'static str> {
         match self {
             Self::Int => Some("Int"),
+            Self::UInt => Some("UInt"),
             Self::Float64 => Some("Float64"),
             _ => self.scalar_alias(),
         }
@@ -531,7 +538,7 @@ impl Dtype {
             Self::Int8 | Self::UInt8 => 8,
             Self::Int16 | Self::UInt16 | Self::Float16 => 16,
             Self::Int32 | Self::UInt32 | Self::Float32 => 32,
-            Self::Int | Self::Int64 | Self::UInt64 | Self::Float64 => 64,
+            Self::Int | Self::UInt | Self::Int64 | Self::UInt64 | Self::Float64 => 64,
         }
     }
 
@@ -574,6 +581,7 @@ impl Dtype {
         match self {
             Self::Bool => 1,
             Self::Int => 3,
+            Self::UInt => 4,
             Self::UInt8 => 134,
             Self::Int8 => 135,
             Self::UInt16 => 136,
@@ -589,8 +597,9 @@ impl Dtype {
     }
 
     /// Every dtype, in declaration order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Int,
+        Self::UInt,
         Self::Int8,
         Self::Int16,
         Self::Int32,
@@ -610,9 +619,9 @@ impl Dtype {
         self.matches_mask(DTYPE_FLOAT_MASK)
     }
 
-    /// `DType.is_integral()`: the index integer or a sized integer.
+    /// `DType.is_integral()`: an index integer or a sized integer.
     pub const fn is_integral(self) -> bool {
-        matches!(self, Self::Int) || self.matches_mask(DTYPE_INTEGER_MASK)
+        matches!(self, Self::Int | Self::UInt) || self.matches_mask(DTYPE_INTEGER_MASK)
     }
 
     /// `DType.is_signed()`.
@@ -620,9 +629,11 @@ impl Dtype {
         self.is_floating_point() || (self.is_integral() && self.matches_mask(DTYPE_SIGNED_MASK))
     }
 
-    /// `DType.is_unsigned()`.
+    /// `DType.is_unsigned()`: the unsigned index integer, whose code carries
+    /// neither mask bit, or an unsigned sized integer.
     pub const fn is_unsigned(self) -> bool {
-        self.matches_mask(DTYPE_INTEGER_MASK) && !self.matches_mask(DTYPE_SIGNED_MASK)
+        matches!(self, Self::UInt)
+            || (self.matches_mask(DTYPE_INTEGER_MASK) && !self.matches_mask(DTYPE_SIGNED_MASK))
     }
 
     /// `DType.is_float8()`: none of the eight-bit float formats is a
@@ -710,8 +721,7 @@ pub const DTYPE_INTEGER_MASK: u8 = 128;
 
 /// `DType.<name>` spellings upstream defines that no Mojito dtype represents;
 /// they reject as unsupported rather than as unknown attributes.
-pub const UPSTREAM_ONLY_DTYPE_NAMES: [&str; 18] = [
-    "uint",
+pub const UPSTREAM_ONLY_DTYPE_NAMES: [&str; 17] = [
     "bfloat16",
     "_uint1",
     "_uint2",
@@ -3435,7 +3445,7 @@ mod tests {
                 Dtype::Int | Dtype::Int8 | Dtype::Int16 | Dtype::Int32 | Dtype::Int64 => {
                     [true, false, true, false, true]
                 }
-                Dtype::UInt8 | Dtype::UInt16 | Dtype::UInt32 | Dtype::UInt64 => {
+                Dtype::UInt | Dtype::UInt8 | Dtype::UInt16 | Dtype::UInt32 | Dtype::UInt64 => {
                     [true, false, false, true, true]
                 }
                 Dtype::Float16 | Dtype::Float32 | Dtype::Float64 => {

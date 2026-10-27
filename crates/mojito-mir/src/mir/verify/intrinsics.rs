@@ -16,7 +16,7 @@ pub(super) fn verify_intrinsic_index(
 ) {
     if let Some(index) = index
         && !types_compatible(index, &Ty::int())
-        && !matches!(index.kind(), TyKind::UInt)
+        && !matches!(index.kind(), TyKind::UINT)
     {
         errors.push(format!(
             "{prefix}: intrinsic index has non-Indexer register type {index}"

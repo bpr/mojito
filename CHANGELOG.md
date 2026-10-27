@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Int`, `UInt`, and `Float64` are the width-one `SIMD` of `DType.int`,
+  `DType.uint`, and `DType.float64`, as upstream's `Scalar` aliases are
+  (R1389): the type lattice has no variants of their own, and
+  `DType.uint` is a dtype, unsigned and integral, beside `uint64`. So
+  `g(UInt(3))` over `def g[dt: DType](a: Scalar[dt])`, `var x:
+  Scalar[DType.uint] = UInt(3)`, `UInt.dtype`, and `SIMD[DType.uint, 4]`
+  run on the VM and natively where they were rejected (MIR schema 1.117,
+  `mojito-package 114`). The three keep their own operator path and no lane
+  method or lane subscript until the backends serve them (R1390, R185).
 - A parameter binder's annotation resolves like any type expression, as
   upstream's `emitExprType` resolves it (R1372, R482): a trait makes a type
   parameter, and any other type a value parameter of that type, so

@@ -218,9 +218,9 @@ fn default_construction<S: BuildHasher>(
     declarations: &MirDeclarations,
 ) -> Result<Vec<MirInstr>, TypeConstructionError> {
     let zero = match ty.kind() {
-        TyKind::Int | TyKind::IntLiteral | TyKind::UInt => Some(Const::Int(0)),
+        TyKind::INT | TyKind::IntLiteral | TyKind::UINT => Some(Const::Int(0)),
         TyKind::Bool => Some(Const::Bool(false)),
-        TyKind::Float64 | TyKind::FloatLiteral => Some(Const::Float(0.0)),
+        TyKind::FLOAT64 | TyKind::FloatLiteral => Some(Const::Float(0.0)),
         TyKind::StringLiteral => Some(Const::Str(String::new())),
         TyKind::None => Some(Const::None),
         _ => None,

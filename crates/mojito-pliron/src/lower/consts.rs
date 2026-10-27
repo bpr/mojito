@@ -125,16 +125,16 @@ impl FnLowering<'_> {
         let mut bytes = Vec::new();
         for value in elements {
             let encoded = match (element.kind(), value) {
-                (TyKind::Int, CtValue::Int(value)) => Some(value.to_le_bytes().to_vec()),
-                (TyKind::Int, CtValue::IntLiteral(value)) => {
+                (TyKind::INT, CtValue::Int(value)) => Some(value.to_le_bytes().to_vec()),
+                (TyKind::INT, CtValue::IntLiteral(value)) => {
                     value.to_i64().map(|v| v.to_le_bytes().to_vec())
                 }
-                (TyKind::UInt, CtValue::UInt(value)) => Some(value.to_le_bytes().to_vec()),
-                (TyKind::UInt, CtValue::IntLiteral(value)) => {
+                (TyKind::UINT, CtValue::UInt(value)) => Some(value.to_le_bytes().to_vec()),
+                (TyKind::UINT, CtValue::IntLiteral(value)) => {
                     value.to_u64().map(|v| v.to_le_bytes().to_vec())
                 }
-                (TyKind::Float64, CtValue::Float(bits)) => Some(bits.to_le_bytes().to_vec()),
-                (TyKind::Float64, CtValue::FloatLiteral(value)) => {
+                (TyKind::FLOAT64, CtValue::Float(bits)) => Some(bits.to_le_bytes().to_vec()),
+                (TyKind::FLOAT64, CtValue::FloatLiteral(value)) => {
                     value.to_f64().map(|v| v.to_bits().to_le_bytes().to_vec())
                 }
                 (TyKind::Bool, CtValue::Bool(value)) => Some(vec![u8::from(*value)]),
@@ -453,9 +453,9 @@ impl FnLowering<'_> {
         target: &Ty,
     ) -> Result<(), PlironError> {
         let target = match target.kind() {
-            TyKind::Int => ScalarTy::Int,
-            TyKind::UInt => ScalarTy::UInt,
-            TyKind::Float64 => ScalarTy::Float64,
+            TyKind::INT => ScalarTy::Int,
+            TyKind::UINT => ScalarTy::UInt,
+            TyKind::FLOAT64 => ScalarTy::Float64,
             ty if let Some(dtype) = scalar_simd_dtype(ty) => ScalarTy::of_dtype(dtype),
             // Literal-typed storage holds the exact value at its default
             // width, rejecting what i64/f64 cannot represent.

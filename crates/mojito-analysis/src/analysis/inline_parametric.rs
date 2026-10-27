@@ -689,8 +689,7 @@ impl Literal {
     /// `default` read at a parameter of type `ty`, when it is a literal
     /// that type holds or a scalar materializes it as.
     fn of(default: &CheckedConst, ty: &Ty) -> Option<Self> {
-        let scalar =
-            matches!(ty.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64) || is_scalar_simd(ty);
+        let scalar = is_scalar_simd(ty);
         let (k, own) = match (default, ty.kind()) {
             (CheckedConst::Int(value), TyKind::IntLiteral) => {
                 (Const::IntLiteral(value.clone()), None)
@@ -702,7 +701,7 @@ impl Literal {
                 (Const::FloatLiteral(value.clone()), None)
             }
             (CheckedConst::Float(value), _)
-                if matches!(ty.kind(), TyKind::Float64)
+                if matches!(ty.kind(), TyKind::FLOAT64)
                     || scalar_simd_dtype(ty).is_some_and(Dtype::is_float) =>
             {
                 (

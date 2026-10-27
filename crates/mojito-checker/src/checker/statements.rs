@@ -1948,7 +1948,7 @@ impl Checker {
                     })
                     .transpose()?
                     .filter(|expected| {
-                        !matches!(expected.kind(), TyKind::Int | TyKind::IntLiteral)
+                        !matches!(expected.kind(), TyKind::INT | TyKind::IntLiteral)
                     });
                 // A module constant was folded before any declaration; only a
                 // body's own constant folds here.

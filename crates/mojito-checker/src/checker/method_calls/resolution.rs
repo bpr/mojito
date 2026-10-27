@@ -191,7 +191,7 @@ impl Checker {
                             && matches!(method, "__getitem__" | "__getitem_param__")
                             && matches!(sig.decls.as_slice(),
                             [decl @ ParamDecl::Value { .. }]
-                                if decl.value_element_ty().is_some_and(|ty| **ty == TyKind::Int)) =>
+                                if decl.value_element_ty().is_some_and(|ty| **ty == *TyKind::INT)) =>
                     {
                         availability_failure.get_or_insert_with(|| {
                             "expected a compile-time Int index, found a runtime value".to_string()
@@ -600,7 +600,7 @@ impl Checker {
         // sized float scalars resolve through the SIMD method table.
         if kwargs.is_empty()
             && param_args.is_empty()
-            && *obj_ty == TyKind::Float64
+            && *obj_ty == *TyKind::FLOAT64
             && method == "__fma__"
             && args.len() == 2
         {

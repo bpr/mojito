@@ -1170,9 +1170,9 @@ mod native_abi_cross_checks {
         fn ty(&self, structs: &StructFieldIndex, ty: &Ty) -> LLVMTypeRef {
             unsafe {
                 match ty.kind() {
-                    TyKind::Int | TyKind::UInt => LLVMInt64TypeInContext(self.ctx),
+                    TyKind::INT | TyKind::UINT => LLVMInt64TypeInContext(self.ctx),
                     TyKind::Bool => LLVMInt1TypeInContext(self.ctx),
-                    TyKind::Float64 => LLVMDoubleTypeInContext(self.ctx),
+                    TyKind::FLOAT64 => LLVMDoubleTypeInContext(self.ctx),
                     TyKind::None => self.strukt(&[]),
                     TyKind::Pointer { .. } | TyKind::Ref(_) => {
                         LLVMPointerTypeInContext(self.ctx, 0)
@@ -1218,7 +1218,7 @@ mod native_abi_cross_checks {
                             Dtype::Float16 => LLVMHalfTypeInContext(self.ctx),
                             Dtype::Int32 | Dtype::UInt32 => LLVMInt32TypeInContext(self.ctx),
                             Dtype::Float32 => LLVMFloatTypeInContext(self.ctx),
-                            Dtype::Int | Dtype::Int64 | Dtype::UInt64 => {
+                            Dtype::Int | Dtype::UInt | Dtype::Int64 | Dtype::UInt64 => {
                                 LLVMInt64TypeInContext(self.ctx)
                             }
                             Dtype::Float64 => LLVMDoubleTypeInContext(self.ctx),

@@ -1530,7 +1530,7 @@ impl Checker {
                 && args.len() == 1
                 && matches!(
                     scalar_type_name(name).as_ref().map(Ty::kind),
-                    Some(TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::Bool)
+                    Some(TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::Bool)
                 ) =>
             {
                 let target = scalar_type_name(name).expect("guard established a scalar type");

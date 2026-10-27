@@ -480,11 +480,11 @@ fn source_type_from_ty_with_origins(
     origin_names: &HashMap<mojito_types::origin::OriginParamId, String>,
 ) -> Option<Type> {
     Some(match ty.kind() {
-        TyKind::Int | TyKind::IntLiteral => Type::Int,
-        TyKind::UInt => Type::UInt,
+        TyKind::INT | TyKind::IntLiteral => Type::Int,
+        TyKind::UINT => Type::UInt,
         TyKind::Bool => Type::Bool,
         TyKind::StringLiteral => Type::ClosedStringLiteral,
-        TyKind::Float64 | TyKind::FloatLiteral => Type::Float64,
+        TyKind::FLOAT64 | TyKind::FloatLiteral => Type::Float64,
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         TyKind::KgenString => kgen_string_source_type(),

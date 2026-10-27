@@ -156,7 +156,7 @@ impl FnLowering<'_> {
         let signed = matches!(kind, CType::Int | CType::SSizeT | CType::OffT);
         let from = (kind.bits(), signed);
         let to = match self.func.reg_types.get(&dest.0).map(Ty::kind) {
-            Some(TyKind::Int | TyKind::UInt) => 64,
+            Some(TyKind::INT | TyKind::UINT) => 64,
             Some(ty) if let Some(dtype) = scalar_simd_dtype(ty) => {
                 match mojito_vm::runtime::integer_dtype_bits(dtype) {
                     Some((bits, _)) => bits,

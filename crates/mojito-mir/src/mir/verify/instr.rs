@@ -200,7 +200,7 @@ pub(super) fn verify_instruction(
             dest,
         } => {
             if let Some(ty) = cx.reg_ty(*dest)
-                && !matches!(ty.kind(), mojito_types::types::TyKind::UInt)
+                && !matches!(ty.kind(), mojito_types::types::TyKind::UINT)
             {
                 errors.push(format!(
                     "{}: `UInt` value constant is read at `{ty}`",
@@ -476,7 +476,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
     match instruction {
         MirInstr::MaterializeLiteral { value, target, .. } => {
             let valid_target =
-                matches!(target.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
+                matches!(target.kind(), TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
                     || mojito_types::types::is_scalar_simd(target);
             if !valid_target {
                 errors.push(format!(
@@ -491,7 +491,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 let valid_source = match found.kind() {
                     TyKind::IntLiteral => valid_target,
                     TyKind::FloatLiteral => {
-                        matches!(target.kind(), TyKind::Float64)
+                        matches!(target.kind(), TyKind::FLOAT64)
                             || symbolic_lane
                             || mojito_types::types::scalar_simd_dtype(target)
                                 .is_some_and(mojito_ast::ast::Dtype::is_float)
@@ -598,7 +598,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
         }
         MirInstr::SizeOf { dest, ty } => {
             if let Some(found) = cx.reg_ty(*dest)
-                && found != &TyKind::Int
+                && found.kind() != TyKind::INT
             {
                 errors.push(format!(
                     "{prefix}: size_of result register has type {found}, expected Int"

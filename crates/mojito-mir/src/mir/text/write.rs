@@ -2002,11 +2002,11 @@ fn result_adapter_value(value: CheckedResultAdapter) -> String {
 
 fn ty_value(ty: &Ty) -> String {
     match ty.kind() {
-        TyKind::Int => "Int".into(),
-        TyKind::UInt => "UInt".into(),
+        TyKind::INT => "Int".into(),
+        TyKind::UINT => "UInt".into(),
         TyKind::Bool => "Bool".into(),
         TyKind::StringLiteral => "StringLiteral".into(),
-        TyKind::Float64 => "Float64".into(),
+        TyKind::FLOAT64 => "Float64".into(),
         TyKind::None => "None".into(),
         TyKind::Never => "Never".into(),
         TyKind::IntLiteral => "IntLiteral".into(),

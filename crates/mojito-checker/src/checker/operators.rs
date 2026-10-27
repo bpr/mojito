@@ -18,7 +18,7 @@ impl Checker {
             // Negation preserves the (possibly literal) numeric type, except UInt.
             (
                 PrefixOp::Neg,
-                TyKind::Int | TyKind::Float64 | TyKind::IntLiteral | TyKind::FloatLiteral,
+                TyKind::INT | TyKind::FLOAT64 | TyKind::IntLiteral | TyKind::FloatLiteral,
             ) => {
                 return Ok(t);
             }
@@ -35,7 +35,7 @@ impl Checker {
             }
             // Bitwise inversion keeps an integer (or `Bool`) type; float
             // operands and masks have no inversion.
-            (PrefixOp::Invert, TyKind::Int | TyKind::UInt | TyKind::IntLiteral | TyKind::Bool) => {
+            (PrefixOp::Invert, TyKind::INT | TyKind::UINT | TyKind::IntLiteral | TyKind::Bool) => {
                 return Ok(t);
             }
             (PrefixOp::Invert, TyKind::Simd { dtype, .. }) if dtype.licenses(|d| !d.is_float()) => {
@@ -143,8 +143,13 @@ impl Checker {
         if matches!(op, In | NotIn) {
             return self.infer_membership(span, op, left, right, &lt, &rt);
         }
-        // SIMD operators are elementwise (handled before the scalar-numeric path).
-        if matches!(lt.kind(), TyKind::Simd { .. }) || matches!(rt.kind(), TyKind::Simd { .. }) {
+        // SIMD operators are elementwise (handled before the scalar-numeric
+        // path, which `Int`, `UInt`, and `Float64` operands keep).
+        let vector = |ty: &Ty| {
+            matches!(ty.kind(), TyKind::Simd { .. })
+                && !mojito_types::types::has_host_scalar_value(ty.kind())
+        };
+        if vector(&lt) || vector(&rt) {
             return self.infer_simd_infix(op, &lt, &rt);
         }
         // Arithmetic and identity comparison reason about allocation layout,
@@ -164,7 +169,7 @@ impl Checker {
         }
         if let TyKind::Pointer { element, .. } = lt.kind() {
             match (op, rt.kind()) {
-                (Add | Sub, TyKind::Int | TyKind::IntLiteral) => return Ok(lt.clone()),
+                (Add | Sub, TyKind::INT | TyKind::IntLiteral) => return Ok(lt.clone()),
                 (Sub, TyKind::Pointer { element: other, .. }) if element == other => {
                     return Ok(Ty::int());
                 }
@@ -205,8 +210,7 @@ impl Checker {
         // (literals coerced as needed), else None.
         let common = common_numeric(&lt, &rt);
         if let Some(target) = common.as_ref()
-            && (matches!(target.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
-                || is_scalar_simd(target))
+            && is_scalar_simd(target)
         {
             self.record_literal_materializations(left, &lt, target)?;
             self.record_literal_materializations(right, &rt, target)?;
@@ -253,7 +257,7 @@ impl Checker {
             Add | Sub | Mul | FloorDiv | Mod | Pow => common,
             Shl | Shr | BitAnd | BitOr | BitXor
                 if common.as_ref().is_some_and(|ty| {
-                    matches!(ty.kind(), TyKind::Int | TyKind::UInt | TyKind::IntLiteral)
+                    matches!(ty.kind(), TyKind::INT | TyKind::UINT | TyKind::IntLiteral)
                 }) =>
             {
                 common

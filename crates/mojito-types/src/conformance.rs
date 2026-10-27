@@ -356,9 +356,9 @@ pub fn modelled_conformance(
         },
         "Sized" => matches!(
             ty.kind(),
-            TyKind::Int
-                | TyKind::UInt
-                | TyKind::Float64
+            TyKind::INT
+                | TyKind::UINT
+                | TyKind::FLOAT64
                 | TyKind::Simd { .. }
                 | TyKind::Tuple(_)
                 | TyKind::RuntimePack(_)
@@ -395,7 +395,7 @@ pub fn is_scalar(ty: &Ty) -> bool {
 pub fn is_numeric(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::Int | TyKind::UInt | TyKind::Float64 | TyKind::IntLiteral | TyKind::FloatLiteral
+        TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::IntLiteral | TyKind::FloatLiteral
     )
 }
 
@@ -406,23 +406,23 @@ pub fn is_numeric_like(ty: &Ty) -> bool {
 /// Integer-kind scalars — the operands of bitwise and shift operators
 /// (`IntLiteral` materializes to `Int`).
 pub fn is_integer_like(ty: &Ty) -> bool {
-    matches!(default_literal(ty).kind(), TyKind::Int | TyKind::UInt)
+    matches!(default_literal(ty).kind(), TyKind::INT | TyKind::UINT)
 }
 
 /// Signed numeric scalars — the operands of arithmetic negation (`-x`); `UInt`
 /// is excluded.
 pub fn is_signed_numeric_like(ty: &Ty) -> bool {
-    matches!(default_literal(ty).kind(), TyKind::Int | TyKind::Float64)
+    matches!(default_literal(ty).kind(), TyKind::INT | TyKind::FLOAT64)
 }
 
 pub fn builtin_hashable_ty(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::Int
-            | TyKind::UInt
+        TyKind::INT
+            | TyKind::UINT
             | TyKind::Bool
             | TyKind::StringLiteral
-            | TyKind::Float64
+            | TyKind::FLOAT64
             | TyKind::Simd { .. }
             | TyKind::Dtype
     )

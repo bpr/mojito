@@ -56,6 +56,7 @@ impl ScalarTy {
     pub(super) const fn of_dtype(dtype: Dtype) -> Self {
         match dtype {
             Dtype::Int => Self::Int,
+            Dtype::UInt => Self::UInt,
             Dtype::Float64 => Self::Float64,
             Dtype::Bool => Self::Bool,
             sized => Self::Sized(sized),
@@ -132,9 +133,6 @@ pub fn lower_ty(
     location: Option<SourceSpan>,
 ) -> Result<LowerTy, PlironError> {
     match ty.kind() {
-        TyKind::Int => Ok(LowerTy::Scalar(ScalarTy::Int)),
-        TyKind::UInt => Ok(LowerTy::Scalar(ScalarTy::UInt)),
-        TyKind::Float64 => Ok(LowerTy::Scalar(ScalarTy::Float64)),
         TyKind::Bool => Ok(LowerTy::Scalar(ScalarTy::Bool)),
         TyKind::Dtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
         ty if let Some(dtype) = scalar_simd_dtype(ty) => {

@@ -342,7 +342,7 @@ pub(super) fn verify_place(
                     ));
                 } else if let Some(index_ty) = function.reg_types.get(&register.0)
                     && !types_compatible(index_ty, &Ty::int())
-                    && !matches!(index_ty.kind(), TyKind::UInt)
+                    && !matches!(index_ty.kind(), TyKind::UINT)
                 {
                     errors.push(format!(
                         "{prefix} place index register r{} has non-Indexer type {index_ty}",

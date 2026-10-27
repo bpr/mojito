@@ -547,11 +547,11 @@ pub enum JitValue {
 pub enum RetKind {
     /// `TyKind::None` — no return value.
     Void,
-    /// `TyKind::Int` — signed i64.
+    /// `TyKind::INT` — signed i64.
     I64,
-    /// `TyKind::UInt` — the i64 bits reinterpret as u64.
+    /// `TyKind::UINT` — the i64 bits reinterpret as u64.
     U64,
-    /// `TyKind::Float64` — f64.
+    /// `TyKind::FLOAT64` — f64.
     F64,
     /// `TyKind::Bool` — i1 (read as u8, low bit significant).
     Bool,

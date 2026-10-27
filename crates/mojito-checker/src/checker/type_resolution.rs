@@ -4056,7 +4056,7 @@ impl Checker {
     }
 
     /// The (canonicalized) `Ty` for `SIMD[DType.<dt>, width]` — a width-1 `float64`
-    /// resolves to `TyKind::Float64` (the unification).
+    /// resolves to `TyKind::FLOAT64` (the unification).
     pub(super) fn simd_type(
         &self,
         args: &[mojito_ast::ast::ParamArg],
@@ -4215,11 +4215,8 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::Infer => true,
         TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
         TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
-        TyKind::Int
-        | TyKind::UInt
-        | TyKind::Bool
+        TyKind::Bool
         | TyKind::StringLiteral
-        | TyKind::Float64
         | TyKind::None
         | TyKind::Never
         | TyKind::IntLiteral

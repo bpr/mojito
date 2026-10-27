@@ -258,9 +258,9 @@ impl<'a> Flatten<'a> {
             && object.ty().is_some_and(|ty| {
                 matches!(
                     ty.kind(),
-                    mojito_types::types::TyKind::Int
+                    mojito_types::types::TyKind::INT
                         | mojito_types::types::TyKind::IntLiteral
-                        | mojito_types::types::TyKind::UInt
+                        | mojito_types::types::TyKind::UINT
                 )
             })
         {

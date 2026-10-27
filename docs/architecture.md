@@ -1543,7 +1543,21 @@ pointer to storage its context uniques (`mojito_types::types`):
   level once.
 - Equality compares the handles first, then the digests, and the variants
   only when both agree; hashing writes the digest. A variant that carries
-  no data (`Ty::int()`, `Ty::none()`, …) is one node per process.
+  no data (`Ty::bool()`, `Ty::none()`, …) is one node per process, and so
+  is each of the three named scalars.
+- `Int`, `UInt`, and `Float64` are no variants of their own: as upstream's
+  `Scalar[DType.int]`, `Scalar[DType.uint]`, and `Scalar[DType.float64]`
+  aliases are, each is the width-one `TyKind::Simd` of its dtype
+  (`TyKind::INT`, `UINT`, and `FLOAT64` name them in patterns, and
+  `Ty::int()`, `uint()`, and `float64()` build them), displayed by its alias
+  name (`Dtype::repr_alias`). `types::canonical_simd_ty` builds every known
+  vector, a scalar one included, with no special case. Below the waist a
+  width-one `int`, `uint`, or `float64` value keeps its host scalar form
+  (the VM's `Value::Int`, `UInt`, and `Float64`, `CtValue::Int`, `UInt`,
+  and `Float`, MIR's `Const::Int` and `Float`, Pliron's `ScalarTy`); that is
+  a value encoding, not a type. Above it the three keep a scalar operator
+  path, and no lane method or lane subscript, behind one predicate
+  (`types::has_host_scalar_value`) until the backends serve them (R1390).
 - A write is explicit: `Ty::update` unshares the node and refreshes its
   facts, and a rewriting walk rebuilds through `Ty::reusing`, which keeps
   the handle it read when the rebuilt variant is equal.

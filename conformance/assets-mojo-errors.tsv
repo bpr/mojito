@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	799
+# swept-count	798
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -347,7 +347,6 @@ assets/type_error/dtype_keyed_struct_method_untaken_arm.mojo	compile-reject	agre
 assets/type_error/dtype_ordering_rejected.mojo	compile-reject	agree	error: 'DType' does not implement the '__lt__' method
 assets/type_error/dtype_struct_applied_in_validated_body.mojo	compile-reject	agree	error: cannot implicitly convert 'Float64' value to 'String'
 assets/type_error/dtype_struct_applied_symbolically.mojo	compile-reject	agree	error: cannot implicitly convert 'Scalar[dt]' value to 'String'
-assets/type_error/dtype_uint_alias_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: DType.uint is not supported yet
 assets/type_error/dtype_unknown_member_rejected.mojo	compile-reject	agree	error: 'DType' value has no attribute 'nosuch'
 assets/type_error/dtype_upstream_only_rejected.mojo	runs	divergence	the pin runs it; Mojito rejects: DType.uint128 is not supported yet
 assets/type_error/dtype_value_param_type_arg.mojo	compile-reject	agree	error: invalid call to 'convert': 'convert' parameter 'dt' has 'DType' type, but value has type 'AnyStruct[Int]'

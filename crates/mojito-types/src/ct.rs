@@ -148,7 +148,7 @@ pub fn wrap_lane(dtype: mojito_ast::ast::Dtype, value: i128) -> i128 {
         Dtype::UInt8 => i128::from(value as u8),
         Dtype::UInt16 => i128::from(value as u16),
         Dtype::UInt32 => i128::from(value as u32),
-        Dtype::UInt64 => i128::from(value as u64),
+        Dtype::UInt | Dtype::UInt64 => i128::from(value as u64),
         Dtype::Float16 | Dtype::Float32 | Dtype::Float64 | Dtype::Bool => value,
     }
 }
@@ -902,9 +902,9 @@ impl CtValue {
     /// type, which the type lattice forbids.
     pub fn materialize_as(self, ty: &Ty) -> Option<Self> {
         match (self, ty.kind()) {
-            (value @ Self::Int(_), TyKind::Int)
-            | (value @ Self::UInt(_), TyKind::UInt)
-            | (value @ Self::Float(_), TyKind::Float64)
+            (value @ Self::Int(_), TyKind::INT)
+            | (value @ Self::UInt(_), TyKind::UINT)
+            | (value @ Self::Float(_), TyKind::FLOAT64)
             | (value @ Self::IntLiteral(_), TyKind::IntLiteral)
             | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral)
             | (value @ Self::Bool(_), TyKind::Bool)
@@ -927,6 +927,23 @@ impl CtValue {
             // A generator binds a generator-typed parameter whose
             // conversion the checker proved.
             (value @ Self::Generator(_), TyKind::Generator(_)) => Some(value),
+            // `Int`, `UInt`, and `Float64` hold their one lane as the host
+            // scalar.
+            (Self::Simd { dtype, lanes }, TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
+                if lanes.len() == 1
+                    && crate::types::scalar_simd_dtype(ty.kind()) == Some(dtype) =>
+            {
+                match (dtype, &lanes[0]) {
+                    (mojito_ast::ast::Dtype::Float64, CtLane::Float(bits)) => {
+                        Some(Self::Float(*bits))
+                    }
+                    (mojito_ast::ast::Dtype::Int, CtLane::Int(value)) => {
+                        i64::try_from(*value).ok().map(Self::Int)
+                    }
+                    (_, CtLane::Int(value)) => u64::try_from(*value).ok().map(Self::UInt),
+                    _ => None,
+                }
+            }
             (
                 value @ Self::Simd { .. },
                 TyKind::Simd {
@@ -948,25 +965,14 @@ impl CtValue {
                 (crate::types::struct_template(name) == crate::types::struct_template(target))
                     .then_some(value)
             }
-            (Self::IntLiteral(value), TyKind::Int) => value.wrapping_signed(64).map(CtValue::Int),
-            (Self::IntLiteral(value), TyKind::UInt) => {
+            (Self::IntLiteral(value), TyKind::INT) => value.wrapping_signed(64).map(CtValue::Int),
+            (Self::IntLiteral(value), TyKind::UINT) => {
                 value.wrapping_unsigned(64).map(CtValue::UInt)
             }
-            // `Float64` is `SIMD[DType.float64, 1]`.
-            (
-                Self::Simd {
-                    dtype: mojito_ast::ast::Dtype::Float64,
-                    lanes,
-                },
-                TyKind::Float64,
-            ) if lanes.len() == 1 => match lanes[0] {
-                CtLane::Float(bits) => Some(Self::Float(bits)),
-                _ => None,
-            },
-            (Self::IntLiteral(value), TyKind::Float64) => {
+            (Self::IntLiteral(value), TyKind::FLOAT64) => {
                 value.to_f64().map(|value| Self::Float(value.to_bits()))
             }
-            (Self::FloatLiteral(value), TyKind::Float64) => {
+            (Self::FloatLiteral(value), TyKind::FLOAT64) => {
                 value.to_f64().map(|value| Self::Float(value.to_bits()))
             }
             (Self::IntLiteral(value), kind)
@@ -1261,11 +1267,11 @@ impl CtValue {
 /// it. Origin arguments and callables have no spelling here.
 pub fn source_type(ty: &Ty, span: Span) -> Option<Type> {
     Some(match ty.kind() {
-        TyKind::Int | TyKind::IntLiteral => Type::Int,
-        TyKind::UInt => Type::UInt,
+        TyKind::INT | TyKind::IntLiteral => Type::Int,
+        TyKind::UINT => Type::UInt,
         TyKind::Bool => Type::Bool,
         TyKind::StringLiteral => Type::StringLiteral,
-        TyKind::Float64 | TyKind::FloatLiteral => Type::Float64,
+        TyKind::FLOAT64 | TyKind::FloatLiteral => Type::Float64,
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         TyKind::Simd {

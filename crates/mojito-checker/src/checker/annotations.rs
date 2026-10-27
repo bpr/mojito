@@ -135,9 +135,9 @@ pub(super) fn converts_to_lane(ty: &Ty, dtype: &SimdDtype) -> bool {
     if splats_to(ty, dtype) {
         return true;
     }
-    let integer_source = matches!(ty.kind(), TyKind::Int | TyKind::UInt)
+    let integer_source = matches!(ty.kind(), TyKind::INT | TyKind::UINT)
         || matches!(scalar_simd_dtype(ty), Some(d) if !d.is_float() && d != Dtype::Bool);
-    let float_source = matches!(ty.kind(), TyKind::Float64)
+    let float_source = matches!(ty.kind(), TyKind::FLOAT64)
         || matches!(scalar_simd_dtype(ty), Some(d) if d.is_float());
     match dtype.known() {
         Some(Dtype::Bool) => false,
@@ -150,6 +150,7 @@ pub(super) fn converts_to_lane(ty: &Ty, dtype: &SimdDtype) -> bool {
 pub(super) const fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
     match dtype {
         Dtype::Int
+        | Dtype::UInt
         | Dtype::Int8
         | Dtype::Int16
         | Dtype::Int32
@@ -166,7 +167,7 @@ pub(super) const fn int_literal_materializes_to_dtype(dtype: Dtype) -> bool {
 }
 
 /// The (canonicalized) `Ty` for a SIMD of `dtype`/`width`: a **width-1 `float64`**
-/// is the native `TyKind::Float64` (Mojo unifies `Float64` with `SIMD[DType.float64,
+/// is the native `TyKind::FLOAT64` (Mojo unifies `Float64` with `SIMD[DType.float64,
 /// 1]`); everything else is a `TyKind::Simd`.
 pub(super) fn simd_ty(dtype: Dtype, width: i64) -> Ty {
     mojito_types::types::canonical_simd_ty(dtype, width)

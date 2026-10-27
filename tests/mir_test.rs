@@ -52,7 +52,7 @@ fn value_binder_slot_is_typed_by_its_declaration() {
     let mir = checked_program_mir(source);
     let plain = mir_function(&mir, "plain");
     assert!(
-        matches!(binder_slot_ty(plain, "n"), Some(TyKind::Int)),
+        matches!(binder_slot_ty(plain, "n"), Some(TyKind::INT)),
         "{plain:#?}"
     );
     for var in nested_instructions(&plain.blocks)
@@ -95,7 +95,7 @@ fn uninitialized_declaration_defines_nothing_before_its_first_assignment() {
     let mir = checked_program_mir(source);
     let main = mir_function(&mir, "main");
     assert!(
-        matches!(binder_slot_ty(main, "a"), Some(TyKind::Int)),
+        matches!(binder_slot_ty(main, "a"), Some(TyKind::INT)),
         "{main:#?}"
     );
     let slot = main
@@ -1858,7 +1858,7 @@ fn reference_yielding_next_call_retains_a_typed_reference_destination() {
         .expect("typed `__next__` destination");
     assert!(matches!(
         destination_ty.kind(),
-        mojito::TyKind::Ref(reference) if reference.referent == mojito::TyKind::Int
+        mojito::TyKind::Ref(reference) if reference.referent == *mojito::TyKind::INT
     ));
     assert_eq!(
         reference_result.as_deref(),
@@ -2462,7 +2462,7 @@ fn literal_materialization_is_explicit_in_typed_mir() {
     )));
     assert!(instructions.clone().any(|instruction| matches!(
         instruction,
-        MirInstr::MaterializeLiteral { target, .. } if *target == mojito::TyKind::Int
+        MirInstr::MaterializeLiteral { target, .. } if *target == *mojito::TyKind::INT
     )));
 }
 
@@ -2605,7 +2605,7 @@ fn collection_and_range_literal_boundaries_are_explicit_in_typed_mir() {
         .filter(|instruction| {
             matches!(
                 instruction,
-                MirInstr::MaterializeLiteral { target, .. } if *target == mojito::TyKind::Int
+                MirInstr::MaterializeLiteral { target, .. } if *target == *mojito::TyKind::INT
             )
         })
         .count();
@@ -5115,7 +5115,7 @@ fn callable_type_bound_is_retained_and_verifies_indirect_calls() {
     assert!(
         contract
             .as_func()
-            .is_some_and(|func| func.params == [Ty::int()] && *func.ret == mojito::TyKind::Int)
+            .is_some_and(|func| func.params == [Ty::int()] && *func.ret == *mojito::TyKind::INT)
     );
     assert!(
         target

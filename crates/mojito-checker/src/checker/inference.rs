@@ -469,8 +469,7 @@ impl Checker {
             .and_then(|ty| self.apply_rebind_target(expr, ty))
             .map(|ty| self.read_through_call_reference(expr, ty));
         if let Ok(ty) = &result {
-            if (matches!(ty.kind(), TyKind::Int | TyKind::UInt | TyKind::Float64)
-                || is_scalar_simd(ty))
+            if is_scalar_simd(ty)
                 && let Some(value) = self.exact_literal_value(expr)
             {
                 let literal_ty = match value {

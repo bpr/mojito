@@ -190,7 +190,7 @@ impl<'a> FnLowering<'a> {
             return Err(self.unsupported_reg(format!("`{target}` takes no leaf"), dest));
         };
         let operand = match receiver.kind() {
-            TyKind::Float64 => {
+            TyKind::FLOAT64 => {
                 let value = self.reg_value(ctx, recv, ScalarTy::Float64)?;
                 self.folded_float(ctx, value, ScalarTy::Float64, dest)
             }
@@ -989,7 +989,7 @@ impl<'a> FnLowering<'a> {
 fn lane_shape(ty: &LowerTy) -> Option<(Dtype, i64)> {
     match ty {
         LowerTy::Scalar(ScalarTy::Int) => Some((Dtype::Int, 1)),
-        LowerTy::Scalar(ScalarTy::UInt) => Some((Dtype::UInt64, 1)),
+        LowerTy::Scalar(ScalarTy::UInt) => Some((Dtype::UInt, 1)),
         LowerTy::Scalar(ScalarTy::Float64) => Some((Dtype::Float64, 1)),
         LowerTy::Scalar(ScalarTy::Bool) => Some((Dtype::Bool, 1)),
         LowerTy::Scalar(ScalarTy::Sized(dtype)) => Some((*dtype, 1)),
