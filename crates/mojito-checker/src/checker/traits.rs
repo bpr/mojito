@@ -8,7 +8,9 @@ use super::decorators::DecoratorSite;
 use super::*;
 use mojito_checked::declaration::{Witness, WitnessTable};
 use mojito_symbol::symbol::{TRAIT_DISPATCH, qualified_method_symbol};
-use mojito_types::conformance::{LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule};
+use mojito_types::conformance::{
+    Conformance, LIFECYCLE_TRAITS, StructTraitRule, struct_trait_rule,
+};
 use mojito_types::origin::{Mutability, Origin, RefSig, SigMutability, SigOrigin};
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
 
@@ -859,8 +861,7 @@ impl Checker {
             // types its receiver's bare bounds do not admit.
             let signature = match self.method_where_assumptions(&m.where_clauses, &method_decls) {
                 Ok(assumptions) => {
-                    self.assume_propositions(Vec::new());
-                    self.assumed_conformances.borrow_mut().push(assumptions);
+                    self.push_assumptions(assumptions);
                     let signature = (|| {
                         let all_types = self.param_tys(&m.params)?;
                         let sig = self.method_sig(m, method_decls, &all_types)?;
@@ -875,7 +876,7 @@ impl Checker {
                         }
                         Ok::<_, TypeError>((all_types, sig))
                     })();
-                    self.assumed_conformances.borrow_mut().pop();
+                    self.pop_assumptions();
                     signature
                 }
                 Err(error) => Err(error),
@@ -1491,7 +1492,7 @@ impl Checker {
                         )
                     })
             }
-            TyKind::Assoc { .. } => self.assoc_member_bound_proves(ty, "Copyable"),
+            TyKind::Assoc { .. } => self.archetype_conformance(ty, "Copyable").is_proven(),
             TyKind::Struct(name, arguments) => {
                 let Some(info) = self.structs.get(name) else {
                     // A compatibility spelling may produce an opaque nominal
@@ -1888,115 +1889,74 @@ impl Checker {
         }
     }
 
-    /// Whether `ty` conforms to trait `tr`. Lifecycle marker built-ins are tied
-    /// to observable ownership behavior; a leaf type answers any other
-    /// built-in by its shape. Every other trait is satisfied nominally: a
-    /// struct must *declare* conformance, and a type parameter must carry `tr`
-    /// among its bounds (so a bounded `T` can be forwarded to another
-    /// `[U: tr]` parameter).
+    /// Whether `ty` is proven to conform to trait `tr`, as upstream's
+    /// `provenConformsTo` asks [`Self::conformance`].
     pub(super) fn conforms_to(&self, ty: &Ty, tr: &str) -> bool {
+        self.conformance(ty, tr).is_proven()
+    }
+
+    /// How `ty` conforms to trait `tr`, upstream's `doesConformTo`. A struct
+    /// answers by its declaration, a conditional one by its condition under
+    /// the scope's assumptions. An archetype (a type parameter or an
+    /// associated projection) conforms to what its bounds provide and is
+    /// unknown otherwise. A leaf type answers a built-in trait by its shape
+    /// and a library trait as the upstream struct it stands in for
+    /// declares.
+    pub(super) fn conformance(&self, ty: &Ty, tr: &str) -> Conformance {
         if let Some(element) = self.opaque_element(ty) {
-            return self.conforms_to(&element, tr);
-        }
-        if self.has_assumed_conformance(ty, tr) {
-            return true;
+            return self.conformance(&element, tr);
         }
         // Every type is a `!kgen.type`, while a binder of it implies no
         // trait, not even `AnyType`.
-        if tr == TYPE_OF_ALL_TYPES {
-            return true;
+        if tr == TYPE_OF_ALL_TYPES || self.has_assumed_conformance(ty, tr) {
+            return Conformance::Proven;
         }
-        if let TyKind::Param { bounds, .. } = ty.kind() {
-            if bounds.iter().any(|bound| bound == tr) {
-                return true;
-            }
-            if matches!(bounds.as_slice(), [only] if only == TYPE_OF_ALL_TYPES) {
-                return false;
-            }
-        }
-        if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) {
-            if let Some(conforms) =
-                mojito_types::conformance::leaf_conforms(ty, tr, &mut |element, tr| {
-                    self.conforms_to(element, tr)
-                })
-            {
-                return conforms;
-            }
-            return match tr {
-                "AnyType" => true,
-                "Copyable" => self.is_copyable(ty),
-                "ImplicitlyCopyable" => self.is_implicitly_copyable(ty),
-                "Movable" => self.is_movable(ty),
-                "Deinitable" => self.is_deinitable(ty),
-                "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
-                | "Modable" => is_numeric_like(ty),
-                "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {
-                    is_integer_like(ty)
-                }
-                "Negatable" => is_signed_numeric_like(ty),
-                // A struct answers by its declared conformances, as upstream
-                // decides any trait; a leaf's shape alone holds the rest.
-                _ => match ty.kind() {
-                    TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-                    TyKind::Param { bounds, .. } => bounds
-                        .iter()
-                        .any(|bound| bound == tr || self.trait_refines(bound, tr)),
-                    _ => true,
-                },
-            };
-        }
+        let element = &mut |element: &Ty, tr: &str| self.conformance(element, tr);
         match ty.kind() {
-            TyKind::Struct(name, args) => self.struct_conformance_applies(name, args, tr),
-            TyKind::Param { bounds, .. } => bounds
-                .iter()
-                .any(|bound| bound == tr || self.trait_refines(bound, tr)),
-            _ => mojito_types::conformance::modelled_declares(ty, tr, &mut |element, tr| {
-                self.conforms_to(element, tr)
-            }),
+            TyKind::Struct(name, args) => self.struct_trait_conformance(ty, name, args, tr),
+            TyKind::Param { .. } | TyKind::Assoc { .. } => self.archetype_conformance(ty, tr),
+            TyKind::Dependent(_) | TyKind::SelfType | TyKind::Infer => Conformance::Unknown,
+            // An already-reported error proves anything, so it cascades no
+            // further.
+            TyKind::Error => Conformance::Proven,
+            _ if COMPILER_TRAITS.contains(&tr) && !self.traits.contains_key(tr) => {
+                mojito_types::conformance::leaf_conformance(ty, tr, element)
+                    .unwrap_or(Conformance::Unknown)
+            }
+            _ => mojito_types::conformance::modelled_conformance(ty, tr, element),
         }
     }
 
-    /// A positive `conforms_to(T, Trait)` atom from the active method's
-    /// availability clause refines only that opaque parameter, by its binder's
-    /// identity, while its body is checked. No negative or disjunctive fact
-    /// reaches this table (see `guaranteed_conformance_atoms`).
+    /// Whether the scope's assumptions state that the type parameter `ty`
+    /// conforms to `required`, or to a trait implying it: an enclosing
+    /// `where` clause or `comptime` condition's positive atom over its
+    /// binder (see [`Self::guaranteed_facts`]).
     pub(super) fn has_assumed_conformance(&self, ty: &Ty, required: &str) -> bool {
-        let TyKind::Param { binder, .. } = ty.kind() else {
-            return false;
-        };
-        let subject = AssumedSubject::Binder(binder.id.clone());
-        self.assumed_conformances
-            .borrow()
-            .iter()
-            .rev()
-            .any(|scope| {
-                scope.iter().any(|(parameter, available)| {
-                    *parameter == subject
-                        && (available == required
-                            || self.trait_refines(available, required)
-                            || builtin_trait_implies(available, required))
-                })
-            })
+        self.assumed_bounds(ty).iter().any(|available| {
+            available == required
+                || self.trait_refines(available, required)
+                || builtin_trait_implies(available, required)
+        })
     }
 
-    /// The traits the active methods' availability clauses assume the type
-    /// parameter `ty` conforms to, innermost clause first.
+    /// The traits the scope's assumptions state the type parameter `ty`
+    /// conforms to, innermost scope first.
     pub(super) fn assumed_bounds(&self, ty: &Ty) -> Vec<String> {
         let TyKind::Param { binder, .. } = ty.kind() else {
             return Vec::new();
         };
-        let subject = AssumedSubject::Binder(binder.id.clone());
         let mut assumed: Vec<String> = Vec::new();
         for (_, available) in self
-            .assumed_conformances
+            .assumptions
             .borrow()
             .iter()
             .rev()
             .flatten()
-            .filter(|(parameter, _)| *parameter == subject)
+            .filter_map(binder_fact)
+            .filter(|(subject, _)| *subject == binder.id)
         {
-            if !assumed.contains(available) {
-                assumed.push(available.clone());
+            if !assumed.contains(&available) {
+                assumed.push(available);
             }
         }
         assumed
@@ -2421,6 +2381,18 @@ impl Checker {
         args: &[TyArg],
         required: &str,
     ) -> bool {
+        self.struct_conformance(name, args, required).is_proven()
+    }
+
+    /// How the struct `name` applied to `args` conforms to `required` by its
+    /// declared conformances: a declared trait that is `required` or refines
+    /// it, under that declaration's condition.
+    pub(super) fn struct_conformance(
+        &self,
+        name: &str,
+        args: &[TyArg],
+        required: &str,
+    ) -> Conformance {
         // A minted value specialization not registered here (the
         // specialization oracle predates the clone) answers as its template
         // applied to the baked values.
@@ -2432,32 +2404,32 @@ impl Checker {
                     demangled = values.into_iter().map(TyArg::Val).collect::<Vec<_>>();
                     (template, demangled.as_slice())
                 }
-                _ => return false,
+                _ => return Conformance::Refuted,
             },
         };
         let Some(info) = self.structs.get(name) else {
-            return false;
+            return Conformance::Refuted;
         };
-        info.conforms.iter().any(|declared| {
-            (declared == required || self.trait_refines(declared, required))
-                && info
-                    .conformance_conditions
-                    .get(declared)
-                    .is_none_or(|condition| self.eval_conformance_condition(info, args, condition))
-        })
+        info.conforms
+            .iter()
+            .filter(|declared| *declared == required || self.trait_refines(declared, required))
+            .map(|declared| self.declared_conformance(info, args, declared))
+            .fold(Conformance::Refuted, Conformance::or)
     }
 
-    /// Whether a struct's conformance condition holds under `args`: the
+    /// How a struct's conformance condition holds under `args`: the
     /// condition compiled against the struct's own binders, judged under the
-    /// arguments bound to them by identity.
-    pub(super) fn eval_conformance_condition(
+    /// arguments bound to them by identity. A residual the scope's
+    /// assumptions do not prove is unknown, as upstream's
+    /// `canDischargeConstraintsInScope` leaves it.
+    pub(super) fn conformance_condition(
         &self,
         info: &StructInfo,
         args: &[TyArg],
         expr: &Expr,
-    ) -> bool {
+    ) -> Conformance {
         let Ok(condition) = self.compile_condition(&info.decls, expr) else {
-            return false;
+            return Conformance::Refuted;
         };
         // A sole variadic parameter binds every positional argument as one
         // pack.
@@ -2469,7 +2441,16 @@ impl Checker {
             ),
             _ => ConstraintEnvironment::declared(&info.decls, args),
         };
-        self.eval_generic_constraint(&condition, &environment)
+        match self.constraint_verdict(&condition, &environment) {
+            Ok(ConstraintVerdict::Proven) => Conformance::Proven,
+            Ok(ConstraintVerdict::Residual(proposition))
+                if self.assumptions_prove(&proposition) =>
+            {
+                Conformance::Proven
+            }
+            Ok(ConstraintVerdict::Residual(_)) => Conformance::Unknown,
+            Ok(ConstraintVerdict::Disproven) | Err(_) => Conformance::Refuted,
+        }
     }
 
     pub(super) fn trait_refines(&self, candidate: &str, required: &str) -> bool {
@@ -2533,7 +2514,10 @@ impl Checker {
             let Some(condition) = info.conformance_conditions.get(declared) else {
                 continue;
             };
-            if self.eval_conformance_condition(info, arguments, condition) {
+            if self
+                .conformance_condition(info, arguments, condition)
+                .is_proven()
+            {
                 continue;
             }
             if let ExprKind::TupleLit(elements) = &condition.kind
@@ -2597,54 +2581,7 @@ impl Checker {
     /// `ImplicitlyCopyable` conformance **or defines `__copyinit__`**, and a type
     /// parameter only if bounded by Copyable/ImplicitlyCopyable.
     pub(super) fn is_copyable(&self, ty: &Ty) -> bool {
-        if let Some(element) = self.opaque_element(ty) {
-            return self.is_copyable(&element);
-        }
-        if self.has_assumed_conformance(ty, "Copyable")
-            || self.has_assumed_conformance(ty, "ImplicitlyCopyable")
-        {
-            return true;
-        }
-        match ty.kind() {
-            TyKind::Struct(name, args) => self.structs.get(name).is_none_or(|s| {
-                // A declared Copyable-family conformance is the contract
-                // and its condition decides: `Array[T]` declares
-                // `Copyable where conforms_to(T, Copyable)` beside a
-                // where-gated copy initializer, so the initializer's
-                // presence alone proves nothing. Only a struct declaring
-                // no such conformance answers by its copy initializer.
-                let mut declared = s
-                    .conforms
-                    .iter()
-                    .filter(|c| self.trait_implies(c, "Copyable"))
-                    .peekable();
-                if declared.peek().is_some() {
-                    declared.any(|c| {
-                        s.conformance_conditions.get(c).is_none_or(|condition| {
-                            self.eval_conformance_condition(s, args, condition)
-                        })
-                    })
-                } else {
-                    s.methods.contains_key("__copyinit__")
-                }
-            }),
-            TyKind::Param { bounds, .. } => bounds
-                .iter()
-                .any(|bound| self.trait_implies(bound, "Copyable")),
-            // An abstract associated type (`C.Element`) is copyable only when
-            // the bound trait's member declaration proves it — never
-            // vacuously.
-            TyKind::Assoc { .. } => self.assoc_member_bound_proves(ty, "Copyable"),
-            // Scalars, `String`, `List`/`Tuple`/`Simd`/`Range`, `Error`, closures,
-            // and `Self` are treated as copyable (element-wise copyability of
-            // aggregates is not modeled).
-            // Every other type answers by its shape, an aggregate by its
-            // elements.
-            _ => mojito_types::conformance::leaf_conforms(ty, "Copyable", &mut |element, _| {
-                self.is_copyable(element)
-            })
-            .unwrap_or(true),
-        }
+        self.conformance(ty, "Copyable").is_proven()
     }
 
     /// `ImplicitlyCopyable` is stronger than `Copyable`: it means the type can be
@@ -2652,56 +2589,7 @@ impl Checker {
     /// copy constructor. Structs opt in by declaring the marker, and fieldwise
     /// conformance requires all fields to be implicitly copyable.
     pub(super) fn is_implicitly_copyable(&self, ty: &Ty) -> bool {
-        if let Some(element) = self.opaque_element(ty) {
-            return self.is_implicitly_copyable(&element);
-        }
-        if self.has_assumed_conformance(ty, "ImplicitlyCopyable") {
-            return true;
-        }
-        // Compiler-private inline uninit storage copies its raw bits; the
-        // `MaybeUninit` header conditions gate the public copy on the
-        // payload's triviality.
-        if mojito_types::types::uninit_storage_element(ty).is_some() {
-            return true;
-        }
-        match ty.kind() {
-            TyKind::Struct(name, args) => self.structs.get(name).map_or_else(
-                || {
-                    mojito_types::types::list_element(ty).is_none()
-                        && mojito_types::types::dict_elements(ty).is_none()
-                        && mojito_types::types::set_element(ty).is_none()
-                        && mojito_types::types::optional_element(ty).is_none()
-                        && mojito_types::types::array_element(ty).is_none()
-                        && mojito_types::types::owned_pointer_element(ty).is_none()
-                },
-                // A conditional conformance's condition decides at the
-                // instance: its fields were checked under that condition at
-                // the declaration. An unconditional one holds fieldwise.
-                |s| {
-                    s.conforms.iter().any(|c| {
-                        self.trait_implies(c, "ImplicitlyCopyable")
-                            && s.conformance_conditions.get(c).map_or_else(
-                                || self.struct_implicitly_copyable_conformance_ok(name, None),
-                                |condition| self.eval_conformance_condition(s, args, condition),
-                            )
-                    })
-                },
-            ),
-            TyKind::Param { bounds, .. } => bounds
-                .iter()
-                .any(|bound| self.trait_implies(bound, "ImplicitlyCopyable")),
-            // An abstract associated type is implicitly copyable only when its
-            // declared member bounds say so, mirroring the `TyKind::Param` rule.
-            TyKind::Assoc { .. } => self.assoc_member_bound_proves(ty, "ImplicitlyCopyable"),
-            // Every other type answers by its shape, an aggregate by its
-            // elements.
-            _ => mojito_types::conformance::leaf_conforms(
-                ty,
-                "ImplicitlyCopyable",
-                &mut |element, _| self.is_implicitly_copyable(element),
-            )
-            .unwrap_or(true),
-        }
+        self.conformance(ty, "ImplicitlyCopyable").is_proven()
     }
 
     /// Whether a call binds an argument to a value independent of the caller's
@@ -2737,23 +2625,6 @@ impl Checker {
         self.is_implicitly_copyable(ty) && !matches!(ty.kind(), TyKind::Struct(..))
     }
 
-    /// Whether an associated type projected off a bounded parameter
-    /// (`C.Element`) proves `required` through the bound trait's declared
-    /// member bounds. `Copyable` is satisfied by `Copyable`,
-    /// `ImplicitlyCopyable`, or a refining trait; `ImplicitlyCopyable`
-    /// requires the exact marker, matching the `TyKind::Param` rule.
-    fn assoc_member_bound_proves(&self, ty: &Ty, required: &str) -> bool {
-        let TyKind::Assoc { .. } = ty.kind() else {
-            return false;
-        };
-        self.projection_bounds(ty).is_some_and(|associated_bounds| {
-            associated_bounds.iter().any(|bound| {
-                bound == required
-                    || (required == "Copyable" && self.trait_implies(bound, "Copyable"))
-            })
-        })
-    }
-
     /// Every initialized value of a concrete type is movable by default; only
     /// a struct that *declares* a conditional `Movable` conformance whose
     /// predicate fails (commonly `Movable where False`) opts out. A type
@@ -2761,40 +2632,7 @@ impl Checker {
     /// `is_deinitable` asks of `Deinitable`: the declaration is checked once
     /// for every instance, an opted-out one included.
     pub(super) fn is_movable(&self, ty: &Ty) -> bool {
-        if let Some(element) = self.opaque_element(ty) {
-            return self.is_movable(&element);
-        }
-        if self.has_assumed_conformance(ty, "Movable") {
-            return true;
-        }
-        match ty.kind() {
-            TyKind::Struct(name, args) => self.structs.get(name).is_none_or(|info| {
-                if info.conforms.iter().any(|tr| tr == "Movable") {
-                    self.struct_conformance_applies(name, args, "Movable")
-                } else {
-                    true
-                }
-            }),
-            TyKind::Param {
-                bounds,
-                callable_bound: None,
-                ..
-            } => self.bounds_prove_movable(bounds),
-            // Every other type answers by its shape, an aggregate by its
-            // elements.
-            _ => mojito_types::conformance::leaf_conforms(ty, "Movable", &mut |element, _| {
-                self.is_movable(element)
-            })
-            .unwrap_or(true),
-        }
-    }
-
-    /// Whether a parameter's bounds prove `Movable`: the trait itself or a
-    /// trait refining it (`Copyable` and what refines that).
-    pub(super) fn bounds_prove_movable(&self, bounds: &[String]) -> bool {
-        bounds
-            .iter()
-            .any(|bound| self.trait_implies(bound, "Movable"))
+        self.conformance(ty, "Movable").is_proven()
     }
 
     /// Whether `ty` conforms to `TrivialRegisterPassable`: a numeric, `Bool`,
@@ -2995,38 +2833,7 @@ impl Checker {
     }
 
     pub(super) fn is_deinitable(&self, ty: &Ty) -> bool {
-        if let Some(element) = self.opaque_element(ty) {
-            return self.is_deinitable(&element);
-        }
-        if self.has_assumed_conformance(ty, "Deinitable") {
-            return true;
-        }
-        match ty.kind() {
-            TyKind::Struct(name, args) => self.structs.get(name).is_none_or(|info| {
-                if info.conforms.iter().any(|tr| tr == "Deinitable") {
-                    self.struct_conformance_applies(name, args, "Deinitable")
-                } else {
-                    true
-                }
-            }),
-            // A closure trait refines `Deinitable`, as upstream's closure
-            // storage conforms to it.
-            TyKind::Param {
-                binder,
-                bounds,
-                callable_bound,
-            } => {
-                callable_bound.is_some()
-                    || self.trait_bounded_binders.contains_key(&binder.id)
-                    || self.bounds_prove_deinitable(bounds)
-            }
-            // Every other type answers by its shape, an aggregate by its
-            // elements.
-            _ => mojito_types::conformance::leaf_conforms(ty, "Deinitable", &mut |element, _| {
-                self.is_deinitable(element)
-            })
-            .unwrap_or(true),
-        }
+        self.conformance(ty, "Deinitable").is_proven()
     }
 
     /// Whether a parameter's bounds prove `Deinitable`: the trait itself or
@@ -3347,6 +3154,138 @@ impl Checker {
             })
     }
 
+    /// How the struct type `ty` (`name` applied to `args`) conforms to `tr`,
+    /// by the rule [`struct_trait_rule`] names. A lifecycle trait answers by
+    /// its declared conformance where the struct declares one, and otherwise
+    /// as its synthesized members decide: a struct copies through its copy
+    /// initializer, and moves and destroys unless it declares otherwise.
+    fn struct_trait_conformance(
+        &self,
+        ty: &Ty,
+        name: &str,
+        args: &[TyArg],
+        tr: &str,
+    ) -> Conformance {
+        match struct_trait_rule(tr, self.traits.contains_key(tr)) {
+            StructTraitRule::Always => Conformance::Proven,
+            StructTraitRule::Never => Conformance::Refuted,
+            StructTraitRule::Declared => self.struct_conformance(name, args, tr),
+            // A struct not registered here (the focused checker's unlinked
+            // nominal spelling) keeps the compatibility answer.
+            StructTraitRule::Lifecycle => match (tr, self.structs.get(name)) {
+                // Compiler-private inline uninit storage copies its raw
+                // bits; the `MaybeUninit` header conditions gate the public
+                // copy on the payload's triviality.
+                ("ImplicitlyCopyable", _)
+                    if mojito_types::types::uninit_storage_element(ty).is_some() =>
+                {
+                    Conformance::Proven
+                }
+                ("ImplicitlyCopyable", None) => (mojito_types::types::list_element(ty).is_none()
+                    && mojito_types::types::dict_elements(ty).is_none()
+                    && mojito_types::types::set_element(ty).is_none()
+                    && mojito_types::types::optional_element(ty).is_none()
+                    && mojito_types::types::array_element(ty).is_none()
+                    && mojito_types::types::owned_pointer_element(ty).is_none())
+                .into(),
+                // A conditional conformance's condition decides at the
+                // instance: its fields were checked under that condition at
+                // the declaration. An unconditional one holds fieldwise.
+                ("ImplicitlyCopyable", Some(info)) => info
+                    .conforms
+                    .iter()
+                    .filter(|declared| self.trait_implies(declared, tr))
+                    .map(|declared| match info.conformance_conditions.get(declared) {
+                        Some(condition) => self.conformance_condition(info, args, condition),
+                        None => self
+                            .struct_implicitly_copyable_conformance_ok(name, None)
+                            .into(),
+                    })
+                    .fold(Conformance::Refuted, Conformance::or),
+                // A declared Copyable-family conformance is the contract and
+                // its condition decides: `Array[T]` declares `Copyable where
+                // conforms_to(T, Copyable)` beside a where-gated copy
+                // initializer, so the initializer's presence alone proves
+                // nothing. Only a struct declaring no such conformance
+                // answers by its copy initializer.
+                ("Copyable", Some(info)) => {
+                    let mut declared = info
+                        .conforms
+                        .iter()
+                        .filter(|declared| self.trait_implies(declared, tr))
+                        .peekable();
+                    if declared.peek().is_some() {
+                        declared
+                            .map(|declared| self.declared_conformance(info, args, declared))
+                            .fold(Conformance::Refuted, Conformance::or)
+                    } else {
+                        info.methods.contains_key("__copyinit__").into()
+                    }
+                }
+                ("Movable" | "Deinitable", Some(info))
+                    if info.conforms.iter().any(|declared| declared == tr) =>
+                {
+                    self.struct_conformance(name, args, tr)
+                }
+                ("Copyable" | "Movable" | "Deinitable", _) => Conformance::Proven,
+                _ => self.struct_conformance(name, args, tr),
+            },
+        }
+    }
+
+    /// How the archetype `ty` — a type parameter, or an associated
+    /// projection off one — conforms to `tr`: proven where its bounds
+    /// provide the trait, and unknown otherwise, as upstream answers an
+    /// archetype. A `!kgen.type` binder conforms to no trait, and a closure
+    /// parameter, or a binder a trait's own requirement bounds, moves and
+    /// destroys as upstream's closure storage and trait archetype do.
+    fn archetype_conformance(&self, ty: &Ty, tr: &str) -> Conformance {
+        if let TyKind::Param {
+            binder,
+            bounds,
+            callable_bound,
+        } = ty.kind()
+        {
+            if matches!(bounds.as_slice(), [only] if only == TYPE_OF_ALL_TYPES) {
+                return Conformance::Refuted;
+            }
+            let lifecycle = match tr {
+                "AnyType" => true,
+                "Movable" => callable_bound.is_some(),
+                "Deinitable" => {
+                    callable_bound.is_some() || self.trait_bounded_binders.contains_key(&binder.id)
+                }
+                _ => false,
+            };
+            if lifecycle {
+                return Conformance::Proven;
+            }
+        }
+        let provided = self
+            .projection_bounds(ty)
+            .is_some_and(|bounds| bounds.iter().any(|bound| self.trait_implies(bound, tr)));
+        if provided {
+            Conformance::Proven
+        } else {
+            Conformance::Unknown
+        }
+    }
+
+    /// How the struct's declared conformance `declared` holds under `args`:
+    /// unconditionally, or as its condition does.
+    fn declared_conformance(
+        &self,
+        info: &StructInfo,
+        args: &[TyArg],
+        declared: &str,
+    ) -> Conformance {
+        info.conformance_conditions
+            .get(declared)
+            .map_or(Conformance::Proven, |condition| {
+                self.conformance_condition(info, args, condition)
+            })
+    }
+
     /// A requirement's default as the attribute its signature holds, the
     /// same at a call through the bound as in the trait's scope: a literal,
     /// a module constant, or a compile-time `Int` expression over them, as
@@ -3488,6 +3427,34 @@ pub(super) fn refines_trait(
         candidate,
         required,
     )
+}
+
+/// The binder a conformance fact states something of, and the trait it
+/// states: a `conforms_to` or `IsTrivially*` atom (under the predicate's
+/// spelling) over a type parameter, or a pack's `conforms_to`.
+pub(super) fn binder_fact(known: &ParamExpr) -> Option<(ParamId, String)> {
+    let binder = |subject: &ParamExpr| match subject.kind() {
+        ParamKind::TypeShape(ty) => match ty.kind() {
+            TyKind::Param { binder, .. } => Some(binder.id.clone()),
+            _ => None,
+        },
+        _ => None,
+    };
+    match known.kind() {
+        ParamKind::Conforms {
+            subject,
+            trait_name,
+        } => Some((binder(subject)?, trait_name.clone())),
+        ParamKind::Trivial { lifecycle, subject } => Some((
+            binder(subject)?,
+            mojito_types::types::trivial_predicate_spelling(*lifecycle).to_string(),
+        )),
+        ParamKind::PackQuery {
+            pack,
+            query: mojito_types::param_expr::PackQuery::Conforms(trait_name),
+        } => Some((pack.id.clone(), trait_name.clone())),
+        _ => None,
+    }
 }
 
 /// Whether the compiler-known `name` is `AnyType` or a lifecycle trait,

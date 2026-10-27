@@ -2,6 +2,7 @@
 //! callable-type application, generic-call instantiation, and forwarded-kwargs
 //! element typing. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+use super::constraints::LACKING_EVIDENCE;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_symbol::symbol::TypeKey;
@@ -489,7 +490,8 @@ impl Checker {
             }
             Err(TypeError::BadCall { reason, .. })
                 if reason.starts_with("constraint failed: ")
-                    || reason.starts_with("violated constraint; ") =>
+                    || reason.starts_with("violated constraint; ")
+                    || reason.starts_with(LACKING_EVIDENCE) =>
             {
                 // Generic constraints are validated while solving type
                 // arguments, before the final coercion and alias checks.
@@ -520,8 +522,13 @@ impl Checker {
                     )
                     .is_ok()
                 {
+                    // A sole candidate's own failed assertion or unproven
+                    // constraint is the call's diagnostic, as upstream
+                    // reports it.
                     CandidateOutcome::Unavailable(
-                        reason.starts_with("constraint failed: ").then_some(reason),
+                        (reason.starts_with("constraint failed: ")
+                            || reason.starts_with(LACKING_EVIDENCE))
+                        .then_some(reason),
                     )
                 } else {
                     CandidateOutcome::Rejected

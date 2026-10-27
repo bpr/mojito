@@ -37,6 +37,47 @@ pub const COMPILER_TRAITS: &[&str] = &[
     "Negatable",
 ];
 
+/// A conformance query's answer, upstream's `TriBool`: an archetype whose
+/// bounds neither provide nor exclude a trait is unknown, not refuted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Conformance {
+    Proven,
+    Refuted,
+    Unknown,
+}
+
+impl Conformance {
+    pub fn is_proven(self) -> bool {
+        self == Self::Proven
+    }
+
+    /// Both hold: a refutation decides, then an unknown.
+    #[must_use]
+    pub const fn and(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Refuted, _) | (_, Self::Refuted) => Self::Refuted,
+            (Self::Proven, Self::Proven) => Self::Proven,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Either holds: a proof decides, then an unknown.
+    #[must_use]
+    pub const fn or(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Proven, _) | (_, Self::Proven) => Self::Proven,
+            (Self::Refuted, Self::Refuted) => Self::Refuted,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl From<bool> for Conformance {
+    fn from(holds: bool) -> Self {
+        if holds { Self::Proven } else { Self::Refuted }
+    }
+}
+
 /// The traits a struct's declaration answers beside its declared list.
 ///
 /// The lifecycle traits, which its methods and fields decide as well, and
@@ -147,11 +188,11 @@ pub fn reflects_no_conformance(ty: &Ty) -> bool {
 /// `None` for a type whose answer is a declaration's: a struct, a type
 /// parameter, an associated or dependent type. `element` answers for a
 /// component of an aggregate, which may be such a type.
-pub fn leaf_conforms(
+pub fn leaf_conformance(
     ty: &Ty,
     trait_name: &str,
-    element: &mut dyn FnMut(&Ty, &str) -> bool,
-) -> Option<bool> {
+    element: &mut dyn FnMut(&Ty, &str) -> Conformance,
+) -> Option<Conformance> {
     if matches!(
         ty.kind(),
         TyKind::Struct(..)
@@ -171,32 +212,46 @@ pub fn leaf_conforms(
                     element(item, trait_name)
                 }
                 TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
-                    items.iter().all(|item| element(item, trait_name))
+                    every(items, trait_name, element)
                 }
                 // A closure's storage is copyable exactly when each of its
                 // captures is.
                 TyKind::Func(func) if matches!(trait_name, "Copyable" | "ImplicitlyCopyable") => {
                     match &func.environment {
-                        crate::origin::CallableEnvironment::Storage(storage) => storage.copyable,
-                        _ => true,
+                        crate::origin::CallableEnvironment::Storage(storage) => {
+                            storage.copyable.into()
+                        }
+                        _ => Conformance::Proven,
                     }
                 }
-                _ => true,
+                _ => Conformance::Proven,
             }
         }
-        "Writer" => false,
+        "Writer" => Conformance::Refuted,
         "Addable" | "Subtractable" | "Multipliable" | "Divisible" | "FloorDivisible"
-        | "Modable" => is_numeric_like(ty),
+        | "Modable" => is_numeric_like(ty).into(),
         "ShiftLeftable" | "ShiftRightable" | "Andable" | "Orable" | "Xorable" => {
-            is_integer_like(ty)
+            is_integer_like(ty).into()
         }
-        "Negatable" => is_signed_numeric_like(ty),
+        "Negatable" => is_signed_numeric_like(ty).into(),
         // `AnyType`, and the layout and operation markers that stay shallow.
-        _ => true,
+        _ => Conformance::Proven,
     })
 }
 
-/// Whether the compiler-modelled type `ty` conforms to the library trait
+/// [`leaf_conformance`] where only a proof counts.
+pub fn leaf_conforms(
+    ty: &Ty,
+    trait_name: &str,
+    element: &mut dyn FnMut(&Ty, &str) -> bool,
+) -> Option<bool> {
+    leaf_conformance(ty, trait_name, &mut |item, trait_name| {
+        element(item, trait_name).into()
+    })
+    .map(Conformance::is_proven)
+}
+
+/// How the compiler-modelled type `ty` conforms to the library trait
 /// `trait_name`, as the upstream struct it stands in for declares.
 ///
 /// Upstream's `SIMD` (whose scalars `Int`, `UInt`, and `Float64` are),
@@ -234,13 +289,13 @@ pub fn leaf_conforms(
 ///
 /// A struct or a type parameter answers by its own declaration or bounds
 /// instead.
-pub fn modelled_declares(
+pub fn modelled_conformance(
     ty: &Ty,
     trait_name: &str,
-    element: &mut dyn FnMut(&Ty, &str) -> bool,
-) -> bool {
+    element: &mut dyn FnMut(&Ty, &str) -> Conformance,
+) -> Conformance {
     // The `std.math` traits outside the prelude answer by their linked name.
-    match trait_name
+    let declares = match trait_name
         .strip_prefix("__module$std$math$")
         .unwrap_or(trait_name)
     {
@@ -271,14 +326,14 @@ pub fn modelled_declares(
         "Hashable" => builtin_hashable_ty(ty),
         "Writable" => match ty.kind() {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
-                items.iter().all(|item| element(item, trait_name))
+                return every(items, trait_name, element);
             }
             TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_) => false,
             _ => true,
         },
         "Defaultable" => match ty.kind() {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
-                items.iter().all(|item| element(item, trait_name))
+                return every(items, trait_name, element);
             }
             _ => {
                 is_numeric_like(ty)
@@ -291,7 +346,7 @@ pub fn modelled_declares(
         "TrivialRegisterPassable" => modelled_trivial_register_passable(ty),
         "RegisterPassable" => match ty.kind() {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) => {
-                items.iter().all(|item| element(item, trait_name))
+                return every(items, trait_name, element);
             }
             TyKind::Func(func) => matches!(
                 &func.environment,
@@ -311,7 +366,20 @@ pub fn modelled_declares(
                 | TyKind::ComptimeList(_)
         ),
         _ => false,
-    }
+    };
+    declares.into()
+}
+
+/// [`modelled_conformance`] where only a proof counts.
+pub fn modelled_declares(
+    ty: &Ty,
+    trait_name: &str,
+    element: &mut dyn FnMut(&Ty, &str) -> bool,
+) -> bool {
+    modelled_conformance(ty, trait_name, &mut |item, trait_name| {
+        element(item, trait_name).into()
+    })
+    .is_proven()
 }
 
 /// Whether `ty` is a non-numeric scalar value type — what `==`/`!=` compare once
@@ -373,4 +441,22 @@ fn modelled_trivial_register_passable(ty: &Ty) -> bool {
     is_numeric_like(ty)
         || simd_valued_ty(ty)
         || matches!(ty.kind(), TyKind::Bool | TyKind::None | TyKind::Dtype)
+}
+
+/// Whether every one of `items` conforms to `trait_name`, as `element`
+/// answers each.
+fn every(
+    items: &[Ty],
+    trait_name: &str,
+    element: &mut dyn FnMut(&Ty, &str) -> Conformance,
+) -> Conformance {
+    items
+        .iter()
+        .try_fold(Conformance::Proven, |all, item| {
+            match all.and(element(item, trait_name)) {
+                Conformance::Refuted => None,
+                all => Some(all),
+            }
+        })
+        .unwrap_or(Conformance::Refuted)
 }

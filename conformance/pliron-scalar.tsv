@@ -164,6 +164,7 @@ assets/ok/comptime_if_overloaded_def.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_overloaded_def_explicit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_scalar_value_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_struct_equality.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_if_symbolic_conditional_conformance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_lambda_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_layout_constant.mojo	-	ineligible	no-scalar-entry-shape
@@ -1271,6 +1272,7 @@ assets/ok/view_temporary_origins.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/vm_backed_ctfe_recursive_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/vm_backed_ctfe_ternary.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/waypoints.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/where_conformance_disjunction_assumed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_message_satisfied.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/where_repeated_clauses.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/while.mojo	-	ineligible	no-scalar-entry-shape

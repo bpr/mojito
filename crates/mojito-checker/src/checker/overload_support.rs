@@ -250,48 +250,6 @@ pub(super) const fn method_arity_range(sig: &MethodSig) -> (usize, usize) {
     (sig.params.len(), sig.params.len())
 }
 
-/// The conformances a compiled, bound `where` clause guarantees inside its
-/// declaration's body, each keyed by the binder it refines.
-pub(super) fn guaranteed_conformance_atoms(
-    constraint: &GenericConstraint,
-    output: &mut HashSet<(AssumedSubject, String)>,
-) {
-    let binder = |param: &ParamRef| AssumedSubject::Binder(param.id.clone());
-    match constraint {
-        GenericConstraint::WithMessage(condition, _) => {
-            guaranteed_conformance_atoms(condition, output);
-        }
-        // `conforms_to(Ts.values, Trait)` and `Ts.all_conforms_to[Trait]()`
-        // guarantee the trait of every element, recorded under the pack.
-        GenericConstraint::Conforms {
-            operand: mojito_types::types::ConstraintOperand::Param(param),
-            trait_name,
-        }
-        | GenericConstraint::ConformsPack {
-            operand: mojito_types::types::ConstraintOperand::Param(param),
-            trait_name,
-        } => {
-            output.insert((binder(param), trait_name.clone()));
-        }
-        // `where IsTrivially*[T]` guarantees the facet (and, through the
-        // assumption table's implications, the base capability) inside the
-        // body, recorded under the predicate's spelling.
-        GenericConstraint::Trivial(kind, mojito_types::types::ConstraintOperand::Param(param)) => {
-            output.insert((
-                binder(param),
-                mojito_types::types::trivial_predicate_spelling(*kind).to_string(),
-            ));
-        }
-        GenericConstraint::And(left, right) => {
-            guaranteed_conformance_atoms(left, output);
-            guaranteed_conformance_atoms(right, output);
-        }
-        // A disjunction, negation, comparison, or other pack predicate does
-        // not unconditionally refine a type parameter.
-        _ => {}
-    }
-}
-
 /// Overload identity works at the mangled-symbol level: two parameter lists
 /// are the same overload when every parameter type mangles identically. The
 /// compile-time `StringLiteral` and the nominal stdlib `String` are distinct

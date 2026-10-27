@@ -5,9 +5,14 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::conformance::Conformance;
 use mojito_types::ct::SimdConstructionError;
 use mojito_types::param_expr::fold::comparison_holds;
 use mojito_types::types::TyKind;
+
+/// The reason a constraint neither proven nor disproven fails with, as
+/// upstream reports an undischarged proposition.
+pub(super) const LACKING_EVIDENCE: &str = "lacking evidence to prove correctness; ";
 
 /// Whether a module constant folded to `value` is that attribute wherever
 /// a body reads it: a closed parameter argument, or a string.
@@ -244,18 +249,17 @@ impl Checker {
                 .iter()
                 .map(|condition| self.compile_where_clause(condition))
                 .collect::<Result<Vec<_>, _>>()?;
-            let mut facts = HashSet::new();
+            let mut facts = Vec::new();
             for constraint in &compiled {
-                guaranteed_conformance_atoms(&self.bind_constraint(constraint, &[]), &mut facts);
+                self.guaranteed_facts(&self.bind_constraint(constraint, &[]), &mut facts);
             }
             for (trait_name, condition) in conformance_conditions {
                 if self.trait_requires_comptime_member(trait_name, &member.name) {
                     let constraint = self.compile_condition(&self.self_decls, condition)?;
-                    guaranteed_conformance_atoms(&constraint, &mut facts);
+                    self.guaranteed_facts(&constraint, &mut facts);
                 }
             }
-            self.assume_propositions(Vec::new());
-            self.assumed_conformances.borrow_mut().push(facts);
+            self.push_assumptions(facts);
             let resolved = (|| {
                 if member.params.is_empty() {
                     // A call is the application of its callee over the
@@ -321,7 +325,7 @@ impl Checker {
                 };
                 Ok((None, Some(template)))
             })();
-            self.assumed_conformances.borrow_mut().pop();
+            self.pop_assumptions();
             match resolved? {
                 (Some(value), _) => {
                     if !compiled.is_empty() {
@@ -1965,18 +1969,12 @@ impl Checker {
             TypeError::NotComptime("conforms_to takes a type as its first argument".to_string())
         })?;
         let context = &self.param_context;
-        let subject = match operand.kind() {
-            TyKind::Dependent(dependent) => dependent.expr().clone(),
-            _ if mojito_types::types::has_free_parameters(&operand) => {
-                context.type_shape(operand.clone())
-            }
-            _ => {
-                let conforms = !mojito_types::conformance::reflects_no_conformance(&operand)
-                    && trait_names
-                        .iter()
-                        .all(|trait_name| self.conforms_to(&operand, trait_name));
-                return self.ct_param(CtValue::Bool(conforms));
-            }
+        let Some(subject) = self.conformance_subject(&operand) else {
+            let conforms = !mojito_types::conformance::reflects_no_conformance(&operand)
+                && trait_names
+                    .iter()
+                    .all(|trait_name| self.conforms_to(&operand, trait_name));
+            return self.ct_param(CtValue::Bool(conforms));
         };
         let mut propositions = trait_names
             .iter()
@@ -1989,6 +1987,19 @@ impl Checker {
                 .infix(InfixOp::And, &all, &proposition?)
                 .map_err(param_error)
         })
+    }
+
+    /// The subject of a `conforms_to` proposition over `ty`: a dependent
+    /// type's expression or an open type's shape. `None` for a closed type,
+    /// whose conformance is decided now.
+    pub(super) fn conformance_subject(&self, ty: &Ty) -> Option<ParamExpr> {
+        match ty.kind() {
+            TyKind::Dependent(dependent) => Some(dependent.expr().clone()),
+            _ if mojito_types::types::has_free_parameters(ty) => {
+                Some(self.param_context.type_shape(ty.clone()))
+            }
+            _ => None,
+        }
     }
 
     fn ct_param(&self, value: CtValue) -> Result<ParamExpr, TypeError> {
@@ -3381,41 +3392,42 @@ impl Checker {
         Ok(())
     }
 
-    /// Record what the declaration `owner` assumes inside its own body: each
+    /// What a declaration assumes inside its own body: the conjuncts of each
     /// of its `where` clauses that is still a proposition once its own
-    /// parameters stand for themselves. It is recorded beside the
-    /// conformance assumptions about to be pushed, so the same pop closes it.
-    pub(super) fn assume_declared_propositions(&self, decls: &[ParamDecl]) {
+    /// parameters stand for themselves.
+    pub(super) fn declared_propositions(&self, decls: &[ParamDecl]) -> Vec<ParamExpr> {
         let arguments = params_as_args(decls);
         let environment = ConstraintEnvironment::declared(decls, &arguments);
-        let mut assumed = Vec::new();
-        for constraint in decls.iter().flat_map(|decl| match decl {
-            ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
-                constraints.as_slice()
-            }
-        }) {
-            if let Ok(ConstraintVerdict::Residual(proposition)) =
-                self.constraint_verdict(constraint, &environment)
-            {
-                assumed.extend(conjuncts(&proposition));
-            }
-        }
-        self.assume_propositions(assumed);
+        decls
+            .iter()
+            .flat_map(|decl| match decl {
+                ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
+                    constraints.as_slice()
+                }
+            })
+            .filter_map(
+                |constraint| match self.constraint_verdict(constraint, &environment) {
+                    Ok(ConstraintVerdict::Residual(proposition)) => Some(conjuncts(&proposition)),
+                    _ => None,
+                },
+            )
+            .flatten()
+            .collect()
     }
 
-    /// [`Self::assume_declared_propositions`] for a method: its own `where`
+    /// [`Self::declared_propositions`] for a method: its own `where`
     /// clauses, over the struct's parameters (`Self.n`) and its own.
-    pub(super) fn assume_method_propositions(
+    pub(super) fn method_propositions(
         &self,
         where_clauses: &[mojito_ast::ast::Expr],
         method_decls: &[ParamDecl],
-    ) {
+    ) -> Vec<ParamExpr> {
         let struct_decls = self.self_decls.clone();
         let struct_arguments = params_as_args(&struct_decls);
         let method_arguments = params_as_args(method_decls);
         let mut environment = ConstraintEnvironment::declared(&struct_decls, &struct_arguments);
         environment.bind_declared(method_decls, &method_arguments);
-        let assumed = where_clauses
+        where_clauses
             .iter()
             .filter_map(|condition| self.compile_where_clause(condition).ok())
             .map(|constraint| self.bind_constraint(&constraint, method_decls))
@@ -3426,19 +3438,72 @@ impl Checker {
                 },
             )
             .flatten()
-            .collect();
-        self.assume_propositions(assumed);
+            .collect()
     }
 
-    /// Open the proposition level of the conformance assumptions about to be
-    /// pushed. Every push site calls this, so a closed level never lingers
-    /// under a later declaration.
-    pub(super) fn assume_propositions(&self, assumed: Vec<ParamExpr>) {
-        let depth = self.assumed_conformances.borrow().len();
-        let mut propositions = self.assumed_propositions.borrow_mut();
-        propositions.truncate(depth);
-        propositions.resize_with(depth, Vec::new);
-        propositions.push(assumed);
+    /// The conformance facts a compiled, bound `where` clause guarantees
+    /// inside its declaration's body, each the atom upstream records: a
+    /// `conforms_to` or `IsTrivially*` over a type parameter, or a pack's
+    /// `conforms_to(Ts.values, Trait)`. A disjunction, negation, comparison,
+    /// or other pack predicate refines no parameter.
+    pub(super) fn guaranteed_facts(
+        &self,
+        constraint: &GenericConstraint,
+        facts: &mut Vec<ParamExpr>,
+    ) {
+        let context = &self.param_context;
+        let shape = |param: &ParamRef| {
+            context.type_shape(
+                TyKind::Param {
+                    binder: param.clone(),
+                    bounds: Vec::new(),
+                    callable_bound: None,
+                }
+                .into(),
+            )
+        };
+        match constraint {
+            GenericConstraint::WithMessage(condition, _) => {
+                self.guaranteed_facts(condition, facts);
+            }
+            GenericConstraint::And(left, right) => {
+                self.guaranteed_facts(left, facts);
+                self.guaranteed_facts(right, facts);
+            }
+            // `conforms_to(Ts.values, Trait)` and `Ts.all_conforms_to[Trait]()`
+            // guarantee the trait of every element of the pack.
+            GenericConstraint::Conforms {
+                operand: ConstraintOperand::Param(param),
+                trait_name,
+            }
+            | GenericConstraint::ConformsPack {
+                operand: ConstraintOperand::Param(param),
+                trait_name,
+            } => facts.extend(if param.name.starts_with('*') {
+                Some(context.pack_query(
+                    param,
+                    mojito_types::param_expr::PackQuery::Conforms(trait_name.clone()),
+                ))
+            } else {
+                context.conforms(&shape(param), trait_name).ok()
+            }),
+            GenericConstraint::Trivial(kind, ConstraintOperand::Param(param)) => {
+                facts.extend(context.trivial(*kind, &shape(param)).ok());
+            }
+            _ => {}
+        }
+    }
+
+    /// Open one assumption level holding `level`'s propositions. Every
+    /// push is paired with a [`Self::pop_assumptions`].
+    pub(super) fn push_assumptions(&self, mut level: Vec<ParamExpr>) {
+        let mut seen = HashSet::new();
+        level.retain(|proposition| seen.insert(proposition.clone()));
+        self.assumptions.borrow_mut().push(level);
+    }
+
+    pub(super) fn pop_assumptions(&self) {
+        self.assumptions.borrow_mut().pop();
     }
 
     /// Open one assumption level holding what the compile-time condition
@@ -3453,27 +3518,24 @@ impl Checker {
         cond: &Expr,
         constraint: Option<&GenericConstraint>,
     ) -> Result<(), TypeError> {
-        let proved = self.conformance_arm_assumptions(cond)?;
-        let assumed = constraint
-            .map(|constraint| self.condition_propositions(constraint))
-            .unwrap_or_default();
-        self.assume_propositions(assumed);
-        self.assumed_conformances.borrow_mut().push(proved);
+        let mut known = self.conformance_arm_assumptions(cond)?;
+        known.extend(
+            constraint
+                .map(|constraint| self.condition_propositions(constraint))
+                .unwrap_or_default(),
+        );
+        self.push_assumptions(known);
         Ok(())
     }
 
     /// Whether every conjunct of a residual proposition is one an enclosing
-    /// declaration assumes. Canonical node identity is the whole proof: there
-    /// is no solver behind it.
-    fn assumptions_prove(&self, proposition: &ParamExpr) -> bool {
-        conjuncts(proposition).iter().all(|conjunct| {
-            self.assumed_propositions
-                .borrow()
-                .iter()
-                .take(self.assumed_conformances.borrow().len())
-                .flatten()
-                .any(|assumed| assumed == conjunct)
-        })
+    /// scope assumes. Canonical node identity is the whole proof: there is
+    /// no solver behind it.
+    pub(super) fn assumptions_prove(&self, proposition: &ParamExpr) -> bool {
+        let assumptions = self.assumptions.borrow();
+        conjuncts(proposition)
+            .iter()
+            .all(|conjunct| assumptions.iter().flatten().any(|known| known == conjunct))
     }
 
     /// The conjuncts of the residual proposition `constraint` states with
@@ -3540,9 +3602,9 @@ impl Checker {
             ConstraintVerdict::Residual(proposition) if self.assumptions_prove(&proposition) => {
                 return Ok(());
             }
-            ConstraintVerdict::Residual(_) => format!(
-                "lacking evidence to prove correctness; cannot prove constraint '{constraint}'"
-            ),
+            ConstraintVerdict::Residual(_) => {
+                format!("{LACKING_EVIDENCE}cannot prove constraint '{constraint}'")
+            }
             ConstraintVerdict::Disproven => match constraint {
                 GenericConstraint::WithMessage(_, message) => {
                     format!("constraint failed: {message}")
@@ -3660,12 +3722,32 @@ impl Checker {
                 operand,
                 trait_name,
             } => match self.constraint_value(operand, environment) {
-                Some(TyArg::Ty(ty)) => context.boolean(self.conforms_to(&ty, trait_name)),
+                // An unknown answer stays the `conforms_to` proposition, as
+                // upstream's fold leaves an un-foldable conformance attribute.
+                Some(TyArg::Ty(ty)) => match self.conformance(&ty, trait_name) {
+                    Conformance::Unknown => match self.conformance_subject(&ty) {
+                        Some(subject) => context.conforms(&subject, trait_name)?,
+                        None => context.boolean(false),
+                    },
+                    answer => context.boolean(answer.is_proven()),
+                },
                 Some(TyArg::Val(_) | TyArg::Origin(_)) => context.boolean(false),
                 None => unknown(),
             },
             Trivial(kind, operand) => match self.constraint_value(operand, environment) {
-                Some(TyArg::Ty(ty)) => context.boolean(self.is_trivially(*kind, &ty)),
+                Some(TyArg::Ty(ty)) if self.is_trivially(*kind, &ty) => context.boolean(true),
+                // An archetype's triviality is unknown: its proposition.
+                Some(TyArg::Ty(ty))
+                    if matches!(
+                        ty.kind(),
+                        TyKind::Param { .. } | TyKind::Assoc { .. } | TyKind::Dependent(_)
+                    ) =>
+                {
+                    match self.conformance_subject(&ty) {
+                        Some(subject) => context.trivial(*kind, &subject)?,
+                        None => context.boolean(false),
+                    }
+                }
                 Some(_) => context.boolean(false),
                 None => unknown(),
             },

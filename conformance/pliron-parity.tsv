@@ -164,6 +164,7 @@ assets/ok/comptime_if_overloaded_def.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_overloaded_def_explicit.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_scalar_value_param.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_struct_equality.mojo	main	exe-differential	sanitized
+assets/ok/comptime_if_symbolic_conditional_conformance.mojo	main	exe-differential	sanitized
 assets/ok/comptime_if_template_served.mojo	main	exe-differential	sanitized
 assets/ok/comptime_lambda_initializer.mojo	main	exe-differential	sanitized
 assets/ok/comptime_layout_constant.mojo	main	exe-differential	sanitized
@@ -1271,6 +1272,7 @@ assets/ok/view_temporary_origins.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_recursive_call.mojo	main	exe-differential	sanitized
 assets/ok/vm_backed_ctfe_ternary.mojo	main	exe-differential	sanitized
 assets/ok/waypoints.mojo	main	exe-differential	sanitized
+assets/ok/where_conformance_disjunction_assumed.mojo	main	exe-differential	sanitized
 assets/ok/where_message_satisfied.mojo	main	exe-differential	sanitized
 assets/ok/where_repeated_clauses.mojo	main	exe-differential	sanitized
 assets/ok/while.mojo	main	exe-differential	sanitized

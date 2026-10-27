@@ -1443,7 +1443,7 @@ impl Checker {
                     self.record_at(expr.source_span()).comptime_conditional = true;
                     self.assume_condition(cond, constraint.as_ref())?;
                     let tt = self.infer(then_branch);
-                    self.assumed_conformances.borrow_mut().pop();
+                    self.pop_assumptions();
                     tt?
                 } else {
                     self.expect_bool(cond, "conditional-expression condition")?;

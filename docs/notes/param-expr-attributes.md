@@ -277,7 +277,7 @@ residual is neither accepted nor reported as false:
   binding no longer turns into an acceptance under negation.
 - `validate_constraint_in_environment` accepts a residual only when the
   enclosing declaration's own `where` assumes the same canonical proposition
-  (`assume_declared_propositions`, `assumptions_prove`). Canonical operand
+  (`declared_propositions`, `assumptions_prove`). Canonical operand
   order makes `where k == n + 1` evidence for `n + 1 == k`. There is no solver.
 
 `assets/ok/param_expr_where_assumption.mojo`,
@@ -535,12 +535,12 @@ Three decisions shaped this, against the pack precedent.
   on `types[0]` says nothing of `types[i]`, a proof after the use or in
   another loop nothing at all. A preceding `comptime assert conforms_to(X,
   A & B)` proves the same for the rest of its block, and nothing before it
-  or outside the block. `Checker::assume_condition` opens one level for an
-  arm or for the rest of an assertion's block: `conformance_arm_assumptions`'
-  atoms on `assumed_conformances`, keyed by the binder's identity or the
-  element's canonical expression, so the plain-parameter path
-  (`has_assumed_conformance`) and the view path read the same table, and
-  beside them each conjunct of the residual proposition the condition
+  or outside the block. `Checker::assume_condition` opens one level of
+  the one assumption store (`Checker::assumptions`) for an arm or for the
+  rest of an assertion's block: `conformance_arm_assumptions`' `conforms_to`
+  atoms, over the binder's shape or the element's canonical expression, so
+  the plain-parameter path (`has_assumed_conformance`, by binder identity)
+  and the view path read the same atoms, and beside them each conjunct of the residual proposition the condition
   states, which proves a callee's `where` clause as the enclosing
   declaration's own `where` does.
 

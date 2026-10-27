@@ -8764,6 +8764,31 @@ fn comptime_assert_proves_nothing_before_it_or_outside_its_block() {
 }
 
 #[test]
+fn symbolic_conformance_is_unproven_not_violated() {
+    // A trait a parameter's bound neither provides nor excludes is unknown:
+    // the constraint lacks evidence rather than evaluating to False.
+    for source in [
+        "def f[T: Copyable & Hashable & Equatable](x: T):\n    var d = {1: x.copy()}\n\ndef main():\n    f(1)\n",
+        "def g[T: AnyType]() where not conforms_to(T, Copyable):\n    print(\"g\")\n\ndef f[T: AnyType]():\n    g[T]()\n\ndef main():\n    f[Int]()\n",
+    ] {
+        let error = err_std(source).to_string();
+        assert!(error.contains("lacking evidence"), "{source:?}: {error}");
+    }
+    // The unknown conformance stays one proposition, so a caller assuming
+    // the callee's clause discharges it.
+    ok_std(
+        "def g[T: AnyType]() where conforms_to(T, Copyable) or conforms_to(T, Movable):\n    print(\"g\")\n\ndef f[T: AnyType]() where conforms_to(T, Copyable) or conforms_to(T, Movable):\n    g[T]()\n\ndef main():\n    f[Int]()\n",
+    );
+    // A closed type's missing conformance is still violated.
+    let movable = "struct M(Movable):\n    var v: Int\n\n    def __init__(out self, v: Int):\n        self.v = v\n\n";
+    let error = err_std(&format!(
+        "{movable}def main():\n    var d = {{1: M(1)}}\n    print(len(d))\n"
+    ))
+    .to_string();
+    assert!(error.contains("violated constraint"), "{error}");
+}
+
+#[test]
 fn comptime_assert_rejects_a_dynamic_condition_and_a_computed_message() {
     let dynamic =
         err_std("def main():\n    var x = 3\n    comptime assert x == 3, \"rt\"\n").to_string();

@@ -1,4 +1,4 @@
-# expect: invalid call to 'Set': violated constraint
+# expect: lacking evidence to prove correctness
 # A set display is `Set`'s `__set_literal__` constructor, whose `where`
 # clause requires a `Deinitable` element, so a generic display over an
 # element type whose bounds do not prove it is rejected at the display, as

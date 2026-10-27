@@ -849,6 +849,22 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A conformance query answers proven, refuted, or unknown, as upstream's
+  `doesConformTo` does (R1364). A trait a type parameter's or associated
+  projection's bounds do not provide is unknown, not false, so a call
+  needing it under symbolic arguments reports "lacking evidence to prove
+  correctness" instead of "violated constraint" (R698, the dict display
+  `{1: x.copy()}` and its spelled `Dict[Int, T](...)` included), a
+  negated conformance is no longer accepted unproven, and a caller's own
+  `where conforms_to(T, A) or conforms_to(T, B)` discharges the same
+  clause at its callee. A `comptime if conforms_to(Maybe[T], Writable)`
+  over a symbolic struct's conditional conformance is decided per
+  instance rather than folded false. An associated projection is `Movable`
+  and `Deinitable` only where its bounds say so, and the enclosing scopes'
+  conformance facts and `where` propositions are one assumption store.
+  An `IsTrivially*` over a symbolic struct (R1493) and a conformance
+  boundary's explicit premise (R1494) remain.
+
 - One compile-time expression is now one parameter expression, as at the
   pin (R389): the check names every function lifted for a `comptime if`
   leaf, a `comptime for` iterable, or a bracket argument, local `comptime`

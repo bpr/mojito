@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1493**.
+Next free ID: **R1495**.
 
 ## Ordered Work
 
@@ -1620,9 +1620,20 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     `explicit_destroy_types` key go away.
   - Probe: R711's `return mk(a) < b` in `def g[T: Comparable & Copyable]`.
     The pin names 'Comparable', Mojito names 'AnyType'.
-  - Closes R711 ('AnyType' named instead of the bound), R30 (an opaque `var`
-    is not required to be `Deinitable`), and R667's temporary half. Shrinks
-    R302.
+  - Probe: `_ = s.get()` in `def g[T: Source](mut s: T)`, where `Source`
+    declares `comptime Element: Movable` and `def get(mut self) ->
+    Self.Element`, runs in Mojito. The pin rejects it: "'(expression
+    temporary)' abandoned without being explicitly destroyed". The
+    projection is no longer `Deinitable` (R1364), but the walk never asks.
+  - Probe: `x.first() > y.first()` in `def bigger[C: Holder](x: C, y: C)`,
+    for `comptime Elem: Comparable & ImplicitlyCopyable` in `trait Holder`,
+    runs in Mojito, where the pin rejects both operand temporaries as
+    abandoned.
+  - `moving_an_iterable_while_its_generic_iterator_lives_rejects`
+    (`tests/vm_test.rs`) discards an element. If it starts failing for
+    this reason, give it a non-discarding read.
+  - Closes R711 ('AnyType' named instead of the bound) and R30 (an opaque
+    `var` is not required to be `Deinitable`). Shrinks R302.
   - R351 (a named `out` result called abandoned) is a different cause:
     upstream's `out` argument ends initialized.
   - Depends on R1364 (the three-valued verdict) and R1365 (the refined
@@ -2231,8 +2242,8 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     with `true`. It never compares the `__deinit__`'s `where` clause with
     the conformance's condition, as `method_satisfies_requirement_under`
     does for a declared requirement's availability.
-  - The pin reports the unproven clause as "lacking evidence", which needs
-    R1364's three-valued query.
+  - The pin reports the unproven clause as "lacking evidence": ask
+    `Checker::struct_conformance`, which answers unknown for it.
   - Probe:
     `conformance/probes/conditional_deinit_without_conditional_conformance.mojo`.
   - Depends on R1364.
@@ -2969,33 +2980,51 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1364 A conformance query answers yes or no, never "lacking
-  evidence"**
+- [ ] **R1493 An `IsTrivially*` over a symbolic struct is false, not
+  unknown**
 
-  `conforms_to` and the `is_copyable`/`is_movable`/`is_deinitable` family
-  (`checker/traits.rs`) answer a Bool with per-trait defaults, where
-  upstream's `ASTType::doesConformTo` returns a `TriBool` checked against
-  the scope's known assumptions
-  (`ASTDecl::getKnownAssumptionsIncludingParents`,
-  `canDischargeConstraintsInScope` in `MojoParser/Constraints.cpp`).
-  - The lever: one query returning proven, refuted, or unknown. It reads the
-    declared bounds, `projection_bounds`, and one stack of assumed facts.
-    Bool callers keep asking for proven.
-  - Merge `assumed_conformances` and `assumed_propositions` into one
-    per-scope set, as upstream keeps one `knownAssumptions` list.
-  - Delete the `leaf_conforms(..).unwrap_or(true)` fallbacks. An associated
-    projection is unknown unless its bounds prove the trait.
-  - `constraint_proposition`'s `Conforms` arm (`constraints.rs`) maps
-    unknown to a hole, so a symbolic parameter reports "lacking evidence". A
-    `comptime if` arm keeps folding.
-  - Probe: R698's `var d = {1: x.copy()}` in `def f[T: Copyable & Hashable &
-    Equatable](x: T)`. The pin says "lacking evidence to prove correctness",
-    Mojito says "violated constraint".
-  - Closes R698 (a missing conformance is reported as violated, not
-    unproven). Shrinks R667 (its `is_deinitable` half) and R129 (the pin
-    rejects it when checking the conformance).
+  `trivial_lifecycle` (`checker/traits.rs`) answers a Bool, and its field
+  recursion over a type parameter is `false`, where upstream's
+  `IsTrivially*` over a struct whose fields name an archetype stays
+  un-foldable and is judged against the scope's assumptions.
+  - So `where IsTriviallyDeinitable[Box[T]]`, called from a generic body,
+    reports "violated constraint" where the pin says "lacking evidence to
+    prove correctness".
+  - `constraint_proposition`'s `Trivial` arm (`constraints.rs`) already
+    keeps an archetype operand as its `ParamKind::Trivial` atom; only a
+    struct operand folds through the Bool.
+  - The lever: `trivial_lifecycle` answers a
+    `mojito_types::conformance::Conformance`, a field over an archetype
+    being unknown, and the `Trivial` arm keeps an unknown struct operand as
+    its atom over `conformance_subject`, as the `Conforms` arm does.
+  - Probe: `struct Box[T: Copyable & Deinitable](Copyable)` holding a
+    `Self.T`, `def g[T: Copyable & Deinitable]() where
+    IsTriviallyDeinitable[Box[T]]`, and `g[T]()` from `def f[T: Copyable &
+    Deinitable]()`. The pin says "lacking evidence", Mojito "violated
+    constraint".
+  - Found while landing R1364 (2026-10-27).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1494 A conformance boundary's premise is a second assumption
+  channel**
+
+  A conditional conformance's `where` premise reaches its conformance check
+  as an explicit `assumption: Option<&GenericConstraint>` argument
+  (`is_copyable_under_assumption`, `conforms_to_under_assumption[_inner]`,
+  `eval_constraint_under_assumption`, `verify_builtin_conformance`,
+  `ct_member_satisfies`, `struct_copyable_conformance_ok`,
+  `struct_implicitly_copyable_conformance_ok`, all `checker/traits.rs`),
+  where upstream passes it as `additionalAssumptions` to the one
+  `doesConformTo` (`canDischargeConstraintsInScope`, `Constraints.cpp`).
+  - The lever: push the premise's facts (`guaranteed_facts`) and residual
+    conjuncts as one level of `Checker::assumptions` and ask
+    `Checker::conformance`. The `_under_assumption` family goes.
+  - Probe: R1412's library struct whose conditional `ImplicitlyCopyable`
+    holds only under its premise; expect it to shrink.
+  - Found while landing R1364 (2026-10-27).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1365 A type parameter's bound is not refined by its scope's `where`
   facts**
@@ -3007,7 +3036,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   (`ExprNodes.cpp`) merges the declared bound with
   `getTraitBoundFromAssumptions` into one refined type every consumer sees.
   - The lever: one effective bound per binder or projection, made of the
-    declared bounds plus every trait R1364's evidence set proves.
+    declared bounds plus every trait the scope's assumption store
+    (`Checker::assumptions`) proves.
   - Method lookup asks for that bound, and its `copy` and `__hash__` cases
     (a refining or member bound proving the trait) go.
   - Record the refined bound on the selected call's requirement, so
@@ -3072,38 +3102,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on R35.
   - Model: Opus, Not Planned.
 
-- [ ] **R667 An associated projection is treated as `Deinitable` and
-  `Movable` whatever its bounds**
-
-  Problem: `def g[T: Source](mut s: T)` doing `_ = s.get()`, where
-  `Source` declares `comptime Element: Movable` and `def get(mut self) ->
-  Self.Element`, runs, but the pin rejects it: "'(expression temporary)'
-  abandoned without being explicitly destroyed".
-  - Upstream's own `_DropIterator` asserts `conforms_to(Self.Element,
-    Deinitable)` before it discards an `Iterator.Element`, which is bound
-    only by `Movable`.
-  - The cause: `is_deinitable` and `is_movable`
-    (`crates/mojito-checker/src/checker/traits.rs`) fall through to
-    `leaf_conforms(..).unwrap_or(true)` for every `Assoc`.
-  - The lever: R1364's three-valued query answers an `Assoc` from
-    `projection_bounds`, as `assoc_member_bound_proves` already does for
-    `Copyable`.
-  - The same discard of `it.__next__()` over `T: Iterator` is rejected
-    first by R1152: `__next__` raises `StopIteration` into a plain
-    `raises` context.
-  - Probe: `x.first() > y.first()` in `def bigger[C: Holder](x: C, y: C)`,
-    for `comptime Elem: Comparable & ImplicitlyCopyable` in `trait Holder`,
-    runs in Mojito, where the pin rejects both operand temporaries as
-    abandoned.
-  - Expect fallout in generic bundled-std bodies that drop a projected
-    value.
-  - `moving_an_iterable_while_its_generic_iterator_lives_rejects`
-    (`tests/vm_test.rs`) discards an element. If it starts failing for
-    this reason, give it a non-discarding read.
-  - Found while landing R665 (2026-10-13).
-  - Depends on R1364.
-  - Model: Opus, Not Planned.
-
 - [ ] **R792 `conforms_to` takes only a parameter name and one trait**
 
   Problem: `where conforms_to(IteratorType.Element, Movable & Deinitable)`
@@ -3114,8 +3112,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     it when this lands.
   - The constraint compiler is `compile_generic_constraint`
     (`crates/mojito-checker/src/checker/constraints.rs`).
-  - Depends on R667, which first gives an associated projection its real
-    bounds.
+  - Depends on nothing.
   - Model: Opus, Not Planned.
 
 - [ ] **R858 A program's own `def Int` breaks a library body's builtin
@@ -4151,22 +4148,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     (`assets/type_error/trait_member_direct_access.mojo`); the bracketed
     application takes another path.
   - Found while landing R551 (2026-10-10).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R698 A constraint on a type parameter that lacks the trait is
-  "violated" where the pin says "lacking evidence"**
-
-  Problem: `var d = {1: x.copy()}` in `def f[T: Copyable & Hashable &
-  Equatable](x: T)` is rejected by both, but Mojito says "violated
-  constraint" and the pin says "lacking evidence to prove correctness".
-  - `constraint_verdict`'s `Conforms` arm
-    (`crates/mojito-checker/src/checker/constraints.rs`) folds a symbolic
-    parameter's missing conformance to false; the pin leaves it unproven.
-  - The same holds for the spelled
-    `Dict[Int, T](keys=[1], values=[x.copy()], __dict_literal__=None)`.
-  - Keep a `comptime if conforms_to(T, ...)` arm's folding as it is.
-  - Found while landing R694 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

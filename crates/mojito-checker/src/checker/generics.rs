@@ -1,5 +1,6 @@
 //! Generic parameter classification, solving, substitution, and bound checks.
 
+use super::constraints::LACKING_EVIDENCE;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 pub(super) use mojito_symbol::symbol::materialized_instantiation_argument;
@@ -1466,13 +1467,21 @@ impl Checker {
         let mut environment = ConstraintEnvironment::declared(&signature.decls, arguments);
         environment.bind_declared(struct_decls, &struct_arguments);
         for constraint in &signature.availability {
-            if !self.eval_generic_constraint(constraint, &environment) {
-                return Err(match constraint {
-                    GenericConstraint::WithMessage(_, message) => {
-                        ConstraintFailure::Message(message.as_str())
-                    }
-                    violated => ConstraintFailure::Violated(violated),
-                });
+            match self.constraint_verdict(constraint, &environment) {
+                Ok(ConstraintVerdict::Proven) => {}
+                Ok(ConstraintVerdict::Residual(proposition))
+                    if self.assumptions_prove(&proposition) => {}
+                Ok(ConstraintVerdict::Residual(_)) => {
+                    return Err(ConstraintFailure::Unproven(constraint));
+                }
+                Ok(ConstraintVerdict::Disproven) | Err(_) => {
+                    return Err(match constraint {
+                        GenericConstraint::WithMessage(_, message) => {
+                            ConstraintFailure::Message(message.as_str())
+                        }
+                        violated => ConstraintFailure::Violated(violated),
+                    });
+                }
             }
         }
         Ok(())
@@ -1485,6 +1494,9 @@ pub(super) enum ConstraintFailure<'a> {
     Message(&'a str),
     /// A message-less clause: the diagnostic spells the clause itself.
     Violated(&'a GenericConstraint),
+    /// A clause neither proven nor disproven, which the scope's
+    /// assumptions do not discharge.
+    Unproven(&'a GenericConstraint),
 }
 
 impl ConstraintFailure<'_> {
@@ -1494,6 +1506,9 @@ impl ConstraintFailure<'_> {
         match self {
             ConstraintFailure::Message(message) => format!("constraint failed: {message}"),
             ConstraintFailure::Violated(constraint) => violated_constraint_reason(constraint),
+            ConstraintFailure::Unproven(constraint) => {
+                format!("{LACKING_EVIDENCE}cannot prove constraint '{constraint}'")
+            }
         }
     }
 }

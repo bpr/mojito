@@ -508,7 +508,7 @@ impl Checker {
                 // What the condition proves holds in this arm alone.
                 self.assume_condition(condition, constraint.as_ref())?;
                 let checked = self.check_block(&case.body, ret, in_loop);
-                self.assumed_conformances.borrow_mut().pop();
+                self.pop_assumptions();
                 checked
             }
             None => self.check_block(&case.body, ret, in_loop),

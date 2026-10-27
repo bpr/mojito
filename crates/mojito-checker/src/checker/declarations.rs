@@ -1248,14 +1248,11 @@ impl Checker {
         &self,
         where_clauses: &[Expr],
         method_decls: &[ParamDecl],
-    ) -> Result<HashSet<(AssumedSubject, String)>, TypeError> {
-        let mut facts = HashSet::new();
+    ) -> Result<Vec<ParamExpr>, TypeError> {
+        let mut facts = Vec::new();
         for condition in where_clauses {
             let constraint = self.compile_where_clause(condition)?;
-            guaranteed_conformance_atoms(
-                &self.bind_constraint(&constraint, method_decls),
-                &mut facts,
-            );
+            self.guaranteed_facts(&self.bind_constraint(&constraint, method_decls), &mut facts);
         }
         Ok(facts)
     }
@@ -1317,9 +1314,9 @@ impl Checker {
         self.enclosing_type_params.extend(m.type_params.clone());
         let assumptions = self.method_where_assumptions(&m.where_clauses, &decls);
         let result = match assumptions {
-            Ok(assumptions) => {
-                self.assume_method_propositions(&m.where_clauses, &decls);
-                self.assumed_conformances.borrow_mut().push(assumptions);
+            Ok(mut assumptions) => {
+                assumptions.extend(self.method_propositions(&m.where_clauses, &decls));
+                self.push_assumptions(assumptions);
                 let result = (|| {
                     for param in 0..m.params.len() {
                         let site = mojito_checked::checked::AnnotationSite::MethodParam {
@@ -1367,7 +1364,7 @@ impl Checker {
                     )?;
                     self.check_method_inner(self_ty, m, effect_key)
                 })();
-                self.assumed_conformances.borrow_mut().pop();
+                self.pop_assumptions();
                 result
             }
             Err(error) => Err(error),

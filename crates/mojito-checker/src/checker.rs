@@ -587,17 +587,15 @@ pub struct Checker {
     /// so `Self.T` resolves to `TyKind::Param` and `Self.n` to a value parameter.
     /// Saved/restored around a (possibly nested) struct definition.
     self_decls: Vec<ParamDecl>,
-    /// Positive conformance facts guaranteed by the active method's `where`
-    /// clause. These are deliberately kept separate from `self_decls`: adding
-    /// a temporary bound to the declaration changes the identity of `TyKind::Param`
-    /// and can make an otherwise identical return type fail to match. The
-    /// facts refine capability queries only while that method body is checked.
-    assumed_conformances: RefCell<Vec<HashSet<(AssumedSubject, String)>>>,
-    /// The residual propositions the enclosing declarations' own `where`
-    /// clauses assume, level for level beside `assumed_conformances`. A
-    /// callee's constraint that stays residual is proven only by being one of
-    /// these canonical nodes.
-    assumed_propositions: RefCell<Vec<Vec<ParamExpr>>>,
+    /// What each enclosing scope knows, innermost last, as upstream's
+    /// per-declaration `knownAssumptions`: the conjuncts of a declaration's
+    /// own `where` clauses, and of a `comptime if`, `comptime assert`, or
+    /// case guard condition, each a canonical Bool proposition. A
+    /// conformance fact is a `conforms_to`, `IsTrivially*`, or pack
+    /// `conforms_to` atom. Facts are kept apart from `self_decls`: adding a
+    /// temporary bound to the declaration changes the identity of
+    /// `TyKind::Param`.
+    assumptions: RefCell<Vec<Vec<ParamExpr>>>,
     /// Source-validation mode (`validate_comptime_templates`): compile-time
     /// control flow is checked with every arm visited and the declaration's
     /// parameters symbolic, and a module-level function or method body
@@ -1035,8 +1033,7 @@ impl Checker {
             pack_element_views: RefCell::new(HashMap::new()),
             param_context: ParamContext::detached(),
             self_decls: Vec::new(),
-            assumed_conformances: RefCell::new(Vec::new()),
-            assumed_propositions: RefCell::new(Vec::new()),
+            assumptions: RefCell::new(Vec::new()),
             local_type_aliases: vec![HashMap::new()],
             local_type_alias_values: vec![HashMap::new()],
             local_comptime_values: vec![HashMap::new()],
@@ -2667,15 +2664,6 @@ fn self_struct_arguments(
                 .map(|(id, _)| TyArg::Origin(mojito_types::origin::Origin::Param(id))),
         )
         .collect()
-}
-
-/// What a conformance assumption refines: a declared parameter by its
-/// binder's identity, or a dependent pack element a `comptime if` arm proves
-/// something of, by its canonical expression.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum AssumedSubject {
-    Binder(ParamId),
-    Element(ParamExpr),
 }
 
 /// A generic top-level alias (`comptime Alias[params] = Type` or a Bool

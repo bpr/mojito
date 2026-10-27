@@ -771,11 +771,11 @@ impl Checker {
             .replace(self.enclosing_type_params.len());
         let where_clauses: Vec<Expr> = wrapper.condition.iter().cloned().collect();
         let assumptions = self.method_where_assumptions(&where_clauses, &signature.decls);
-        let result = assumptions.and_then(|assumptions| {
-            self.assume_method_propositions(&where_clauses, &signature.decls);
-            self.assumed_conformances.borrow_mut().push(assumptions);
+        let result = assumptions.and_then(|mut assumptions| {
+            assumptions.extend(self.method_propositions(&where_clauses, &signature.decls));
+            self.push_assumptions(assumptions);
             let result = self.check_default_wrapper_body(self_ty, wrapper, &signature, effect_key);
-            self.assumed_conformances.borrow_mut().pop();
+            self.pop_assumptions();
             result
         });
         self.enclosing_struct_type_params.set(saved_struct_count);

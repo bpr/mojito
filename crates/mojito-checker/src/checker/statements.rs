@@ -669,9 +669,9 @@ impl Checker {
             }
             Ok(())
         });
-        let mut assumed = self.assumed_conformances.borrow_mut();
-        let depth = assumed.len() - asserted;
-        assumed.truncate(depth);
+        let mut assumptions = self.assumptions.borrow_mut();
+        let depth = assumptions.len() - asserted;
+        assumptions.truncate(depth);
         result
     }
 
@@ -726,7 +726,7 @@ impl Checker {
                 // What the condition proves holds in this arm alone.
                 self.assume_condition(cond, constraint.as_ref())?;
                 let checked = self.check_scoped_block(body, ret, in_loop);
-                self.assumed_conformances.borrow_mut().pop();
+                self.pop_assumptions();
                 checked?;
             } else {
                 self.register_named_bindings(cond)?;
@@ -2735,7 +2735,7 @@ impl Checker {
             name.clone()
         };
         let mut decls = self.classify_params(&owner, type_params)?;
-        let mut function_assumptions = HashSet::new();
+        let mut function_assumptions = Vec::new();
         let mut erased_origin_constraints = Vec::new();
         // An arithmetic `where` operand names the declaration's own value
         // parameters, so their scope is open while the clauses compile.
@@ -2749,7 +2749,7 @@ impl Checker {
             .collect::<Result<Vec<_>, _>>();
         self.tparams.pop();
         for constraint in compiled? {
-            guaranteed_conformance_atoms(&constraint, &mut function_assumptions);
+            self.guaranteed_facts(&constraint, &mut function_assumptions);
             if let Some(last) = decls.last_mut() {
                 match last {
                     ParamDecl::Type { constraints, .. } | ParamDecl::Value { constraints, .. } => {
@@ -3047,10 +3047,9 @@ impl Checker {
                 lambda,
             })
         };
-        self.assume_declared_propositions(&decls);
-        self.assumed_conformances
-            .borrow_mut()
-            .push(function_assumptions);
+        let mut known = self.declared_propositions(&decls);
+        known.extend(function_assumptions);
+        self.push_assumptions(known);
         // A parameter typed by a dependent pack projection (`values.Ts[index]`
         // in a `Tuple.consume_elements` handler) is opaque inside the user's
         // handler body, as upstream: the pack's `Movable` bound is all the
@@ -3450,7 +3449,7 @@ impl Checker {
             self.capture_contexts.borrow_mut().pop();
         }
         self.raising_context.pop();
-        self.assumed_conformances.borrow_mut().pop();
+        self.pop_assumptions();
         self.tparams.pop();
         result
     }

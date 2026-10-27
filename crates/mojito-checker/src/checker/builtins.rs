@@ -11,8 +11,7 @@ pub use mojito_types::types::{
 };
 
 pub(super) use mojito_types::conformance::{
-    builtin_hashable_ty, is_integer_like, is_numeric, is_numeric_like, is_scalar,
-    is_signed_numeric_like, simd_valued_ty,
+    builtin_hashable_ty, is_numeric, is_numeric_like, is_scalar, simd_valued_ty,
 };
 pub(super) use mojito_types::types::default_literal;
 

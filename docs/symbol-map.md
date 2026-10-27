@@ -505,12 +505,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   (`mojito-ast::ast::is_unavailable`) keeps its body out of
   `CheckedProgram::lowering_units`.
 - `checker/traits.rs` owns trait/struct declaration checking, conformance
-  (nominal and built-in), and type-capability queries (`is_deinitable`,
-  `is_movable`, `is_copyable`, …, and the three-valued
-  `register_passability`, which `conforms_to(_, RegisterPassable)` and a
-  result origin read). A type parameter is movable or
-  destructible only where its bounds prove it (`bounds_prove_movable`,
-  `bounds_prove_deinitable`), and `Checker::trait_implies` is the one
+  (nominal and built-in), and type-capability queries. `Checker::conformance`
+  is the one query, upstream's `doesConformTo`: it answers a
+  `mojito_types::conformance::Conformance` (proven, refuted, or unknown),
+  a struct through `struct_trait_conformance`/`struct_conformance` (a
+  conditional declaration's condition through `conformance_condition`, a
+  residual the scope's assumptions do not prove being unknown), an
+  archetype — a type parameter or an associated projection — through
+  `archetype_conformance` (what its bounds or `projection_bounds` provide,
+  else unknown), and a leaf through `conformance::leaf_conformance` and
+  `modelled_conformance`. `conforms_to`, `is_copyable`,
+  `is_implicitly_copyable`, `is_movable`, and `is_deinitable` are its
+  `is_proven()` projections, as upstream's `provenConformsTo`; the
+  three-valued `register_passability`, which `conforms_to(_,
+  RegisterPassable)` and a result origin read, stays its own query. A type
+  parameter is destructible only where its bounds prove it
+  (`bounds_prove_deinitable`), and `Checker::trait_implies` is the one
   answer of which trait proves which, for an assumed conformance and for a
   `where` premise alike: the declared and lifecycle refinements, and
   `overload_support::builtin_trait_implies` for an `IsTrivially*`
@@ -904,8 +914,13 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   record selects (the qualifier of the symbol `lowered_method_name`
   declares, which a call records verbatim).
   `constraint_verdict`/`constraint_proposition` are the three-valued
-  evaluator, `assume_declared_propositions`/`assumptions_prove` the evidence
-  an enclosing `where` supplies, and `eval_generic_constraint` its
+  evaluator (an unknown conformance stays its `ParamKind::Conforms` atom
+  over `conformance_subject`, an archetype's unknown triviality its
+  `ParamKind::Trivial`), `Checker::assumptions` the one per-scope store of
+  what enclosing scopes know (`push_assumptions`/`pop_assumptions`, filled
+  by `declared_propositions`/`method_propositions` and the conformance
+  atoms `guaranteed_facts` reads off a `where` clause), `assumptions_prove`
+  its canonical-identity proof, and `eval_generic_constraint` its
   `is_proven()` projection. `compile_where_clause` retains an optional source
   diagnostic around the semantic constraint compiled by
   `compile_generic_constraint`, which rejects a type compared with a value
@@ -2232,8 +2247,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ParamType`) and whose `bounds` hold the sibling's declared set, the
   body's view. The checker classifies it in `classify_params_in_scope`
   through `sibling_trait_binder` (`declarations.rs`) and records it in
-  `Checker::trait_bounded_binders`, which `is_deinitable` (`traits.rs`)
-  reads to destroy such a value by the generic default; the elaborator's
+  `Checker::trait_bounded_binders`, which `archetype_conformance`
+  (`traits.rs`) reads to destroy such a value by the generic default; the elaborator's
   `classify_ct_param` (`comptime/params.rs`) agrees.
   `Checker::validate_trait_parameter_bounds` (`checker.rs`), beside
   `validate_callable_parameter_bounds`, checks each argument against the

@@ -8,6 +8,7 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{ParamArg, SourceType};
+use mojito_types::conformance::Conformance;
 use mojito_types::types::TyKind;
 use mojito_types::types::{ConstraintOperand, GenericConstraint};
 
@@ -473,39 +474,44 @@ impl Checker {
                 trait_names
                     .iter()
                     .try_for_each(|trait_name| self.check_trait_name(trait_name))?;
-                // A dependent element (a reflected field type at a loop
-                // index) conforms per instance: the condition is the
-                // conjunction of its conformance propositions, which the
-                // elaborator below MIR decides once the element is closed.
-                // A concrete type's conformance is a fact decided here.
-                let operand = self.comptime_type_operand(&args[0])?;
-                let Some(TyKind::Dependent(dependent)) = operand.as_ref().map(Ty::kind) else {
-                    let Some(operand) = operand else {
-                        return Ok(None);
-                    };
-                    let conforms = !mojito_types::conformance::reflects_no_conformance(&operand)
-                        && trait_names
-                            .iter()
-                            .all(|trait_name| self.conforms_to(&operand, trait_name));
-                    let constraint = GenericConstraint::Bool(conforms);
-                    self.record_comptime_condition(cond, &constraint);
-                    return Ok(Some(constraint));
+                // A closed type's conformance is a fact decided here. An
+                // open one's (a symbolic struct, a reflected field type at a
+                // loop index) is, where unknown, the conjunction of its
+                // conformance propositions, which the elaborator below MIR
+                // decides once the type is closed.
+                let Some(operand) = self.comptime_type_operand(&args[0])? else {
+                    return Ok(None);
                 };
-                let mut propositions = Vec::with_capacity(trait_names.len());
+                let mut refuted = mojito_types::conformance::reflects_no_conformance(&operand);
+                let mut propositions = Vec::new();
                 for trait_name in trait_names {
+                    let unknown = match self.conformance(&operand, trait_name) {
+                        Conformance::Proven => continue,
+                        Conformance::Refuted => None,
+                        Conformance::Unknown => self.conformance_subject(&operand),
+                    };
+                    let Some(subject) = unknown else {
+                        refuted = true;
+                        continue;
+                    };
                     let conforms = self
                         .param_context
-                        .conforms(dependent.expr(), trait_name)
+                        .conforms(&subject, trait_name)
                         .map_err(param_error)?;
                     propositions.push(GenericConstraint::Eq(
                         ConstraintOperand::Expr(conforms),
                         ConstraintOperand::Value(mojito_types::ct::CtValue::Bool(true)),
                     ));
                 }
-                let Some(constraint) = propositions.into_iter().reduce(|all, proposition| {
-                    GenericConstraint::And(Box::new(all), Box::new(proposition))
-                }) else {
-                    return Ok(None);
+                let constraint = if refuted {
+                    GenericConstraint::Bool(false)
+                } else {
+                    propositions
+                        .into_iter()
+                        .reduce(|all, proposition| {
+                            GenericConstraint::And(Box::new(all), Box::new(proposition))
+                        })
+                        .unwrap_or(GenericConstraint::Bool(true))
                 };
                 self.record_comptime_condition(cond, &constraint);
                 return Ok(Some(constraint));
@@ -682,9 +688,9 @@ impl Checker {
     pub(super) fn conformance_arm_assumptions(
         &self,
         cond: &Expr,
-    ) -> Result<HashSet<(AssumedSubject, String)>, TypeError> {
+    ) -> Result<Vec<ParamExpr>, TypeError> {
         let cond = self.inline_local_comptime_values(cond);
-        let mut proved = HashSet::new();
+        let mut proved = Vec::new();
         self.collect_arm_assumptions(&cond, &mut proved)?;
         Ok(proved)
     }
@@ -692,7 +698,7 @@ impl Checker {
     fn collect_arm_assumptions(
         &self,
         cond: &Expr,
-        proved: &mut HashSet<(AssumedSubject, String)>,
+        proved: &mut Vec<ParamExpr>,
     ) -> Result<(), TypeError> {
         match &cond.kind {
             ExprKind::Infix(InfixOp::And, left, right) => {
@@ -703,18 +709,21 @@ impl Checker {
                 let Some(trait_names) = mojito_ast::ast::trait_conjunction_names(&args[1]) else {
                     return Ok(());
                 };
-                let key = match self.comptime_type_operand(&args[0])?.as_ref().map(Ty::kind) {
-                    Some(TyKind::Param { binder, .. }) => AssumedSubject::Binder(binder.id.clone()),
-                    Some(TyKind::Dependent(dependent)) => {
-                        AssumedSubject::Element(dependent.expr().clone())
-                    }
+                let Some(operand) = self.comptime_type_operand(&args[0])? else {
+                    return Ok(());
+                };
+                let subject = match operand.kind() {
+                    TyKind::Param { .. } => self.param_context.type_shape(operand.clone()),
+                    TyKind::Dependent(dependent) => dependent.expr().clone(),
                     _ => return Ok(()),
                 };
-                proved.extend(
-                    trait_names
-                        .into_iter()
-                        .map(|trait_name| (key.clone(), trait_name.to_string())),
-                );
+                for trait_name in trait_names {
+                    proved.push(
+                        self.param_context
+                            .conforms(&subject, trait_name)
+                            .map_err(param_error)?,
+                    );
+                }
                 Ok(())
             }
             _ => Ok(()),
@@ -3146,13 +3155,20 @@ impl Checker {
             _ => member_traits.unwrap_or_default(),
         };
         let spelled = dependent.expr().to_string();
-        for (subject, guaranteed) in self.assumed_conformances.borrow().iter().flatten() {
-            let names_element = match subject {
-                AssumedSubject::Element(element) => element == dependent.expr(),
-                AssumedSubject::Binder(id) => pack.is_some_and(|reference| &reference.id == id),
+        for known in self.assumptions.borrow().iter().flatten() {
+            let guaranteed = match known.kind() {
+                ParamKind::Conforms {
+                    subject,
+                    trait_name,
+                } if subject == dependent.expr() => Some(trait_name.clone()),
+                _ => super::traits::binder_fact(known)
+                    .filter(|(id, _)| pack.is_some_and(|reference| &reference.id == id))
+                    .map(|(_, trait_name)| trait_name),
             };
-            if names_element && !bounds.contains(guaranteed) {
-                bounds.push(guaranteed.clone());
+            if let Some(guaranteed) = guaranteed
+                && !bounds.contains(&guaranteed)
+            {
+                bounds.push(guaranteed);
             }
         }
         // Two packs may share a spelling (`Tuple.Ts`, `Bag.Ts`); a view's name

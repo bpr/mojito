@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	781
+# swept-count	783
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -322,6 +322,7 @@ assets/type_error/destructure_starred_discard_slices.mojo	compile-reject	agree	e
 assets/type_error/destructure_starred_tuple_target.mojo	compile-reject	agree	error: cannot unpack value of type 'Span[Int, origin_of(values["element"])]' into 2 values
 assets/type_error/destructure_undeclared_target.mojo	compile-reject	agree	error: implicit declaration of 'a' is not allowed; add 'var' to declare a new name
 assets/type_error/dict_display_requires_copyable_value.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/dict_display_symbolic_value_lacks_evidence.mojo	compile-reject	agree	error: invalid call to '__init__': lacking evidence to prove correctness, each candidate requires 1 implicit conversion, disambiguate with an explicit cast
 assets/type_error/dict_requires_hashable_key.mojo	compile-reject	agree	error: 'Dict' parameter 'K' has 'KeyElement' type, but value has type 'AnyStruct[Key]'
 assets/type_error/dict_view_index_rejected.mojo	compile-reject	agree	error: '_DictKeyIter[Int, Int, AHasher[SIMD[.uint64, 4](0)], origin_of(d)]' is not subscriptable, it does not implement the `__getitem__`/`__setitem__` methods
 assets/type_error/dict_view_len_rejected.mojo	compile-reject	agree	error: no matching function in call to 'len'
@@ -806,6 +807,7 @@ assets/type_error/variant_set_linear_alternative.mojo	compile-reject	agree	error
 assets/type_error/variant_take_renamed.mojo	compile-reject	agree	error: 'Variant[Int, String]' value has no attribute 'take'
 assets/type_error/var_less_introduction.mojo	compile-reject	agree	error: implicit declaration of 'count' is not allowed; add 'var' to declare a new name
 assets/type_error/where_message_violated.mojo	compile-reject	agree	error: invalid call to 'disabled': violated constraint
+assets/type_error/where_negated_conformance_lacks_evidence.mojo	compile-reject	agree	error: invalid call to 'g': lacking evidence to prove correctness
 assets/type_error/where_repeated_second_fails.mojo	compile-reject	agree	error: invalid call to 'pick': violated constraint
 assets/type_error/where_violated_sole_candidate.mojo	compile-reject	agree	error: invalid call to 'show': violated constraint
 assets/type_error/with_consuming_enter_and_exit.mojo	compile-reject	agree	error: context manager of type 'Both' defines a consuming __enter__ method as well as an __exit__ method; either remove 'var' from its '__enter__' method or remove the '__exit__' method

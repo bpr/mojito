@@ -1460,8 +1460,8 @@ spelling). A field type has no declared bound: `T`'s own bound says nothing
 about a field, so a trait use of it is rejected until proved, and a
 `comptime if conforms_to(X, A & B)` condition proves exactly those traits of
 exactly that operand for the arm it guards, and a `comptime assert` of it
-for the rest of its block (`conformance_arm_assumptions`, pushed on
-`assumed_conformances` by `assume_condition`), which is what the pin
+for the rest of its block (`conformance_arm_assumptions`' `conforms_to`
+atoms, pushed on the one assumption store by `assume_condition`), which is what the pin
 licenses for a plain parameter, a pack element, and a field type alike; a
 proof on another index, after the use, in another loop, or in an `or` proves
 nothing. A value read of a query over a parameter
@@ -3020,9 +3020,21 @@ binding is unknown. The connectives are the parameter-expression context's, so
 acceptance under negation. As at the pin, an application needs evidence even
 with its arguments symbolic: a residual passes only when the enclosing
 declaration's own `where` assumes the same canonical proposition, and is
-otherwise reported as lacking evidence rather than as false. A selecting
-consumer (an overload, a conditional conformance, method availability) reads
-`eval_generic_constraint`, which is `is_proven()`.
+otherwise reported as lacking evidence rather than as false. A conformance
+leaf asks `Checker::conformance`, upstream's three-valued `doesConformTo`:
+an archetype (a type parameter or an associated projection) conforms to
+what its bounds provide and is otherwise unknown, and an unknown leaf stays
+its `conforms_to` atom (an archetype's `IsTrivially*` its `Trivial` atom),
+so a caller whose own `where` states the same clause discharges it by
+canonical identity and any other caller lacks evidence. A `comptime if
+conforms_to(S[T], Tr)` over a symbolic struct is likewise the atom, which
+the elaborator decides per instance. The enclosing scopes' knowledge is one
+store, `Checker::assumptions`: one level per declaration or condition,
+holding the conjuncts of its `where` clauses or condition, as upstream's
+`getKnownAssumptionsIncludingParents` collects them. A selecting consumer
+(an overload, a conditional conformance) reads `eval_generic_constraint`,
+which is `is_proven()`; method availability discharges a residual against
+the store and reports one it cannot as lacking evidence.
 Top-level comptime aliases, generic or not, lower once into the checker's
 alias registry (`Checker::comptime_aliases`: classified `ParamDecl`s plus a
 symbolic template shared with parameterized associated members, and the
