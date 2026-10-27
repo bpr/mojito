@@ -426,14 +426,8 @@ impl FnLowering<'_> {
         args: &[Reg],
     ) -> Result<(), PlironError> {
         match method {
-            "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" | "reduce_and"
-            | "reduce_or"
-                if args.is_empty() =>
-            {
+            "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" if args.is_empty() => {
                 self.lower_simd_reduce(ctx, dest, recv, dtype, width, method)
-            }
-            "select" if dtype == Dtype::Bool && args.len() == 2 => {
-                self.lower_simd_select(ctx, dest, recv, args[0], args[1], width)
             }
             // The elementwise comparisons share the infix operator's
             // lowering, a width-one receiver its scalar one; only the
@@ -493,10 +487,11 @@ impl FnLowering<'_> {
         }
     }
 
-    /// The six reductions (`runtime::simd_reduce`): a strict left fold in
-    /// the VM. Integer add/mul wrap per step, so the wrapping vector
-    /// reductions are exact; min/max select the signed or unsigned family;
-    /// the bool reductions are `and`/`or` over `<N x i1>`; float add/mul
+    /// The six reductions (`runtime::simd_reduce`, and `simd.reduce`'s
+    /// `runtime::simd_reduce_lanes`): a strict left fold in the VM. Integer
+    /// add/mul wrap per step, so the wrapping vector reductions are exact;
+    /// min/max select the signed or unsigned family; `and`/`or` are the
+    /// bitwise reductions over integer or `<N x i1>` lanes; float add/mul
     /// use the *ordered* `llvm.vector.reduce.fadd/fmul` from the exact
     /// identity (`-0.0`, `1.0`) with no reassociation, which is the VM's
     /// fold; float min/max fold lane by lane through `minnum`/`maxnum`
@@ -593,8 +588,8 @@ impl FnLowering<'_> {
                     ("reduce_max", Some((_, true))) => "smax",
                     ("reduce_min", Some((_, false))) => "umin",
                     ("reduce_max", Some((_, false))) => "umax",
-                    ("reduce_and", None) if lane_ty == ScalarTy::Bool => "and",
-                    ("reduce_or", None) if lane_ty == ScalarTy::Bool => "or",
+                    ("reduce_and", _) => "and",
+                    ("reduce_or", _) => "or",
                     _ => {
                         return Err(self.unsupported_reg(
                             format!("SIMD `{method}` on {} lanes", lane_ty.name()),
@@ -613,8 +608,8 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// `mask.select(yes, no)` — one vector `select` over the `<N x i1>`
-    /// mask; either case may be a splatting scalar (`runtime::simd_select`).
+    /// `simd.select` — one `select` over the `<N x i1>` mask, or the `i1`
+    /// of a width-one mask (`runtime::simd_select`).
     pub(super) fn lower_simd_select(
         &mut self,
         ctx: &mut Context,
@@ -622,17 +617,82 @@ impl FnLowering<'_> {
         mask: Reg,
         yes: Reg,
         no: Reg,
-        width: usize,
     ) -> Result<(), PlironError> {
-        let Some((dtype, _)) = self.func.reg_types.get(&dest.0).and_then(simd_dims) else {
+        let Some((dtype, width)) = self.func.reg_types.get(&dest.0).and_then(simd_dims) else {
             return Err(self.unsupported_reg("SIMD select result type".into(), dest));
         };
+        let width = width as usize;
+        if width == 1 {
+            let lane_ty = ScalarTy::of_dtype(dtype);
+            let condition = self.reg_value(ctx, mask, ScalarTy::Bool)?;
+            let yes_value = self.reg_value(ctx, yes, lane_ty)?;
+            let no_value = self.reg_value(ctx, no, lane_ty)?;
+            let select = SelectOp::new(ctx, condition, yes_value, no_value);
+            return self.define(ctx, dest, select.get_operation(), select.get_result(ctx));
+        }
         let condition = self.simd_load_vector(ctx, mask, Dtype::Bool, width, dest)?;
         let yes_value = self.simd_operand_vector(ctx, yes, dtype, width, dest)?;
         let no_value = self.simd_operand_vector(ctx, no, dtype, width, dest)?;
         let select = SelectOp::new(ctx, condition, yes_value, no_value);
         self.append(ctx, select.get_operation(), Some(dest));
         self.simd_store_vector(ctx, dest, dtype, width, select.get_result(ctx));
+        Ok(())
+    }
+
+    /// `simd.extract` — lane `index` of a vector, its index guarded as a
+    /// lane read is (`runtime::read_value_lane`).
+    pub(super) fn lower_simd_extract(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        value: Reg,
+        index: Reg,
+    ) -> Result<(), PlironError> {
+        let Some((dtype, width)) = self.func.reg_types.get(&value.0).and_then(simd_dims) else {
+            return Err(self.unsupported_reg("SIMD lane read operand type".into(), dest));
+        };
+        self.emit_index_guard(ctx, index, width as usize, dest)?;
+        // A width-1 vector is a scalar register (`LowerTy::Scalar`): its
+        // only lane is the value itself.
+        if width == 1 {
+            let lane = self.reg_value(ctx, value, ScalarTy::of_dtype(dtype))?;
+            self.reg_values.insert(dest.0, lane);
+            return Ok(());
+        }
+        // The guard above makes the dynamic `extractelement` index in range
+        // (an out-of-range LLVM index is poison).
+        let vector = self.simd_load_vector(ctx, value, dtype, width as usize, dest)?;
+        let position = self.reg_value(ctx, index, ScalarTy::Int)?;
+        let extract = ExtractElementOp::new(ctx, vector, position);
+        self.define(ctx, dest, extract.get_operation(), extract.get_result(ctx))
+    }
+
+    /// `simd.insert` — a vector with lane `index` replaced, its index
+    /// guarded as [`Self::lower_simd_extract`]'s is
+    /// (`runtime::set_value_lane`).
+    pub(super) fn lower_simd_insert(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        value: Reg,
+        element: Reg,
+        index: Reg,
+    ) -> Result<(), PlironError> {
+        let Some((dtype, width)) = self.func.reg_types.get(&value.0).and_then(simd_dims) else {
+            return Err(self.unsupported_reg("SIMD lane write operand type".into(), dest));
+        };
+        let width = width as usize;
+        self.emit_index_guard(ctx, index, width, dest)?;
+        let lane = self.reg_value(ctx, element, ScalarTy::of_dtype(dtype))?;
+        if width == 1 {
+            self.reg_values.insert(dest.0, lane);
+            return Ok(());
+        }
+        let vector = self.simd_load_vector(ctx, value, dtype, width, dest)?;
+        let position = self.reg_value(ctx, index, ScalarTy::Int)?;
+        let insert = InsertElementOp::new(ctx, vector, lane, position);
+        self.append(ctx, insert.get_operation(), Some(dest));
+        self.simd_store_vector(ctx, dest, dtype, width, insert.get_result(ctx));
         Ok(())
     }
 

@@ -219,6 +219,27 @@ impl Checker {
             {
                 self.infer_storage_construction(span, name, &Ty::bool(), &kwargs[0])
             }
+            // `Bool(mlir_value=s)`: upstream's initializer from the
+            // `!kgen.scalar<bool>` a `pop.simd.reduce_and` gives, which
+            // Mojito holds as the one-lane `bool` vector the `Bool` casts.
+            "Bool"
+                if args.is_empty()
+                    && param_args.is_empty()
+                    && matches!(kwargs, [keyword] if keyword.name == "mlir_value") =>
+            {
+                self.infer_storage_construction(
+                    span.clone(),
+                    name,
+                    &simd_ty(Dtype::Bool, 1),
+                    &kwargs[0],
+                )?;
+                self.record_at(span).adjustment = Some(Box::new(
+                    mojito_checked::checked::SemanticAdjustment::ScalarCast(
+                        mojito_types::ct::ScalarConversion::Bool,
+                    ),
+                ));
+                Ok(Ty::bool())
+            }
             // `SIMD[DType.bool, N](fill=b)`: a mask's splat takes its one
             // lane by keyword.
             "SIMD" if !kwargs.is_empty() => self.infer_simd_fill(&span, param_args, args, kwargs),
@@ -747,7 +768,8 @@ impl Checker {
     }
 
     /// The built-in value type a constructor head names (`Int`,
-    /// `SIMD[DType.float32, 4]`, `Float32`), whose copy is the value read.
+    /// `SIMD[DType.float32, 4]`, `Scalar[DType.bool]`, `Float32`), whose
+    /// copy is the value read.
     fn builtin_copy_constructed(
         &self,
         name: &str,
@@ -755,6 +777,11 @@ impl Checker {
     ) -> Option<(Ty, BracketAttributes)> {
         match name {
             "SIMD" => self.simd_type(param_args).ok(),
+            "Scalar" if param_args.len() == 1 => {
+                let dtype = self.dtype_from_arg(&param_args[0]).ok()?;
+                let attribute = dtype_attribute(&param_args[0], &dtype);
+                Some((simd_of(dtype, SimdWidth::Known(1)).ok()?, vec![attribute]))
+            }
             "Int" | "UInt" | "Bool" | "Float64" if param_args.is_empty() => {
                 scalar_type_name(name).map(|ty| (ty, Vec::new()))
             }

@@ -2434,9 +2434,15 @@ fn rejects_simd_mask_negation_and_shape_misuse() {
         ),
         TypeError::TypeMismatch { .. }
     ));
-    // Bool reductions live on masks only.
+    // The bitwise reductions take integer or bool lanes, as upstream's
+    // `reduce_and` constrains them.
+    ok(
+        "def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var bits: Int32 = v.reduce_and()\n",
+    );
     assert!(matches!(
-        err("def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var bad = v.reduce_and()\n"),
+        err(
+            "def main():\n    var v = SIMD[DType.float32, 2](1, 2)\n    var bad = v.reduce_and()\n"
+        ),
         TypeError::NoSuchMethod { .. }
     ));
 }
@@ -8300,6 +8306,45 @@ fn pop_and_index_op_verifier_errors_are_rejected() {
         (
             "def main():\n    var a = SIMD[DType.float32, 2](1, 2)\n    print(SIMD[DType.float32, 4](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type](a._mlir_value)))\n",
             "are cast incompatible",
+        ),
+    ] {
+        let error = err(source);
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+
+#[test]
+fn pop_simd_lane_ops_type_as_their_verifiers_do() {
+    // `select` keeps its cases' type, `extractelement` and the reductions
+    // give one lane (`!kgen.scalar<dt>`), which `Bool(mlir_value=)` takes
+    // for `bool` lanes, and `insertelement` keeps the vector's type.
+    ok(
+        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var m = a.gt(2)\n    var s: SIMD[DType.int32, 4] = __mlir_op.`pop.simd.select`(m._mlir_value, a._mlir_value, a._mlir_value)\n    var e: Int32 = __mlir_op.`pop.simd.extractelement`(a._mlir_value, Int(1).__mlir_index__())\n    var w: SIMD[DType.int32, 4] = __mlir_op.`pop.simd.insertelement`(a._mlir_value, e._mlir_value, Int(0).__mlir_index__())\n    var all = Bool(mlir_value=__mlir_op.`pop.simd.reduce_and`(m._mlir_value))\n    var bits: Int32 = __mlir_op.`pop.simd.reduce_or`(a._mlir_value)\n    print(s, e, w, all, bits)\n",
+    );
+    for (source, message) in [
+        (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.simd.select`(a._mlir_value, a._mlir_value, a._mlir_value)))\n",
+            "op operand #0 must be !kgen.simd<N, bool>",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    var b = SIMD[DType.int64, 2](1, 2)\n    var m = a.gt(1)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.simd.select`(m._mlir_value, a._mlir_value, b._mlir_value)))\n",
+            "have same type",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(Int32(mlir_value=__mlir_op.`pop.simd.extractelement`(a._mlir_value, Int32(1)._mlir_value)))\n",
+            "op operand #1 must be index",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.simd.insertelement`(a._mlir_value, Int64(9)._mlir_value, Int(1).__mlir_index__())))\n",
+            "value type matches dtype of the vector operand",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.float32, 2](1, 2)\n    print(Float32(mlir_value=__mlir_op.`pop.simd.reduce_and`(a._mlir_value)))\n",
+            "element type is integral or bool dtype",
+        ),
+        (
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(Bool(mlir_value=__mlir_op.`pop.simd.reduce_and`(a._mlir_value)))\n",
+            "argument 'mlir_value' of 'Bool'",
         ),
     ] {
         let error = err(source);

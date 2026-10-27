@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `__mlir_op` now admits upstream's `pop.simd` lane ops, `select`,
+  `extractelement`, `insertelement`, `reduce_and`, and `reduce_or`, typed as
+  the pin's verifier types them, so upstream's `SIMD.__getitem__`,
+  `__setitem__`, `select`, `__eq__`, and `__bool__` bodies run on the VM and
+  natively (R1393). Each is one MIR instruction (`simd.select`,
+  `simd.extract`, `simd.insert`, `simd.reduce`), which the compiler
+  `SIMD`'s `select`, `reduce_and`, `reduce_or`, and lane subscripts now
+  lower to instead of host methods and lane places. `reduce_and` and
+  `reduce_or` also take integer lanes, as upstream's do, and
+  `Bool(mlir_value=s)` and `Scalar[dt](mlir_value=s)` read a reduction. MIR
+  schema 1.120 adds the four instructions and rejects an `index.get` with
+  the `simd` intrinsic, and the package format moves to
+  `mojito-package 118`.
 - `__mlir_op` now admits upstream's `pop` ops (`add`, `sub`, `mul`, `div`,
   `floordiv`, `rem`, `neg`, `abs`, `shl`, `shr`, `cmp`, `cast`,
   `simd.splat`, `simd.and`/`or`/`xor`, the rounding ops, and `fma`) over

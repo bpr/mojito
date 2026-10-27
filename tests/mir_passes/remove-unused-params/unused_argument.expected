@@ -80,7 +80,7 @@
             instructions: [
               place.load { dest: %r0, place: place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }) } }], type: present(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }) }), through: absent } },
               const { dest: %r1, value: int_literal(0) },
-              index.get { dest: %r2, base: %r0, index: %r1, base_place: present(place { root: $v0, root_type: present(struct_type { name: Arr, arguments: [value_arg(ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }))] }), projections: [projection { op: field(v), type: simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }) } }], type: present(simd { dtype: int64, width: ct_expr(param_decl_ref { owner: "fs", slot: 0, name: n, type: meta_value(Int) }) }), through: absent }), index_place: absent, call: absent, intrinsic: present(simd) },
+              simd.extract { dest: %r2, value: %r0, index: %r1 },
               scalar.cast { dest: %r3, value: %r2, target: Int }
             ],
             terminator: return { value: present(%r3) }

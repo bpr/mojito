@@ -69,6 +69,10 @@ pub(super) fn verify_instruction(
         | MirInstr::SimdCast { .. }
         | MirInstr::SimdBitcast { .. }
         | MirInstr::SimdShuffle { .. } => verify_simd_instruction(&cx, instruction, errors),
+        MirInstr::SimdSelect { .. }
+        | MirInstr::SimdExtract { .. }
+        | MirInstr::SimdInsert { .. }
+        | MirInstr::SimdReduce { .. } => verify_simd_lane_instruction(&cx, instruction, errors),
         MirInstr::EstablishLoans { .. } | MirInstr::InvalidateInteriors { .. } => {
             verify_loan_instruction(&cx, instruction, errors);
         }
@@ -975,6 +979,129 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
         }
         _ => {}
     }
+}
+
+/// The lane instructions, where their registers are typed: a `simd.select`
+/// takes a `bool` mask and cases of its result type at the mask's width; a
+/// `simd.extract` and a `simd.reduce` give one lane of the vector's dtype,
+/// a `simd.insert` takes one (a `Bool` for `bool` lanes) and gives the
+/// vector's type; and a lane index
+/// is an `Int`, a `UInt`, or an `IntLiteral`.
+fn verify_simd_lane_instruction(
+    cx: &InstrCx<'_>,
+    instruction: &MirInstr,
+    errors: &mut Vec<String>,
+) {
+    let prefix = cx.prefix;
+    let mnemonic = crate::mir::text::instruction_mnemonic(instruction);
+    let slots = |register: Reg| {
+        cx.reg_ty(register)
+            .map(|ty| (ty, mojito_types::types::simd_slots(ty.kind())))
+    };
+    let mut expect_vector = |register: Reg, role: &str| match slots(register) {
+        Some((ty, None)) => {
+            errors.push(format!(
+                "{prefix}: {mnemonic} {role} has the non-SIMD type {ty}"
+            ));
+            None
+        }
+        Some((_, Some(slots))) => Some(slots),
+        None => None,
+    };
+    let lane_of = |dtype: &mojito_types::types::SimdDtype| {
+        mojito_types::types::simd_ty_from_slots(
+            dtype.clone(),
+            mojito_types::types::SimdWidth::Known(1),
+        )
+        .ok()
+    };
+    let mut mismatches = Vec::new();
+    let mut expect_type = |register: Reg, expected: Option<Ty>, role: &str| {
+        if let (Some(found), Some(expected)) = (cx.reg_ty(register), expected)
+            && *found != expected
+        {
+            mismatches.push(format!(
+                "{prefix}: {mnemonic} {role} has type {found}, expected {expected}"
+            ));
+        }
+    };
+    let index_ok = |register: Reg| {
+        cx.reg_ty(register).is_none_or(|ty| {
+            types_compatible(ty, &Ty::int())
+                || matches!(ty.kind(), TyKind::UINT | TyKind::IntLiteral)
+        })
+    };
+    match *instruction {
+        MirInstr::SimdSelect {
+            dest,
+            mask,
+            on_true,
+            on_false,
+        } => {
+            let mask_slots = expect_vector(mask, "mask");
+            if let Some((dtype, _)) = &mask_slots
+                && dtype
+                    .known()
+                    .is_some_and(|dtype| dtype != mojito_ast::ast::Dtype::Bool)
+            {
+                errors.push(format!(
+                    "{prefix}: {mnemonic} mask has {dtype} lanes, not bool"
+                ));
+            }
+            let result = cx.reg_ty(dest).cloned();
+            if let (Some((_, mask_width)), Some(Some((_, width)))) = (
+                &mask_slots,
+                result
+                    .as_ref()
+                    .map(|ty| mojito_types::types::simd_slots(ty.kind())),
+            ) && *mask_width != width
+            {
+                errors.push(format!(
+                    "{prefix}: {mnemonic} mask of width {mask_width} selects a result of width {width}"
+                ));
+            }
+            expect_type(on_true, result.clone(), "true case");
+            expect_type(on_false, result, "false case");
+        }
+        MirInstr::SimdExtract { dest, value, index } => {
+            let lane = expect_vector(value, "vector").and_then(|(dtype, _)| lane_of(&dtype));
+            expect_type(dest, lane, "result");
+            if !index_ok(index) {
+                errors.push(format!("{prefix}: {mnemonic} index is not an Int"));
+            }
+        }
+        MirInstr::SimdInsert {
+            dest,
+            value,
+            element,
+            index,
+        } => {
+            let lane = expect_vector(value, "vector").and_then(|(dtype, _)| lane_of(&dtype));
+            // A `Bool` is a `bool` lane, as the checker coerces it.
+            let bool_lane = lane.as_ref().and_then(|lane| {
+                mojito_types::types::simd_slots(lane.kind()).and_then(|(dtype, _)| dtype.known())
+            }) == Some(mojito_ast::ast::Dtype::Bool)
+                && cx.reg_ty(element) == Some(&Ty::bool());
+            if !bool_lane {
+                expect_type(element, lane, "element");
+            }
+            expect_type(dest, cx.reg_ty(value).cloned(), "result");
+            if !index_ok(index) {
+                errors.push(format!("{prefix}: {mnemonic} index is not an Int"));
+            }
+        }
+        MirInstr::SimdReduce { dest, value, .. } => {
+            let slots = expect_vector(value, "vector");
+            if let Some((dtype, _)) = &slots
+                && dtype.known().is_some_and(mojito_ast::ast::Dtype::is_float)
+            {
+                errors.push(format!("{prefix}: {mnemonic} reduces {dtype} lanes"));
+            }
+            expect_type(dest, slots.and_then(|(dtype, _)| lane_of(&dtype)), "result");
+        }
+        _ => {}
+    }
+    errors.extend(mismatches);
 }
 
 /// A `struct.create` builds a declared struct of as many fields as it

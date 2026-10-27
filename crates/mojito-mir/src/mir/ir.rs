@@ -1047,6 +1047,20 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             out.extend([dest, value]);
             out.extend(other.iter_mut());
         }
+        MirInstr::SimdSelect {
+            dest,
+            mask,
+            on_true,
+            on_false,
+        } => out.extend([dest, mask, on_true, on_false]),
+        MirInstr::SimdExtract { dest, value, index } => out.extend([dest, value, index]),
+        MirInstr::SimdInsert {
+            dest,
+            value,
+            element,
+            index,
+        } => out.extend([dest, value, element, index]),
+        MirInstr::SimdReduce { dest, value, .. } => out.extend([dest, value]),
         MirInstr::Drop { reg, .. } => out.push(reg),
         MirInstr::DropPlace { place: target, .. }
         | MirInstr::MarkInitialized { place: target }
@@ -1730,6 +1744,31 @@ impl MirPlace {
 
     pub const fn is_typed(&self) -> bool {
         self.root_ty.is_some() && self.ty.is_some() && self.proj.len() == self.projection_tys.len()
+    }
+
+    /// The vector place and lane index of a place designating one lane of
+    /// SIMD storage (`v[i]`, `s.v[i]`): its last step indexes a vector.
+    /// `None` for any other place, or an untyped one.
+    pub fn simd_lane(&self) -> Option<(Self, Reg)> {
+        let Some(&Proj::Index(index)) = self.proj.last() else {
+            return None;
+        };
+        if !self.is_typed() {
+            return None;
+        }
+        let steps = self.proj.len();
+        let vector_ty = match steps {
+            1 => self.root_ty.clone(),
+            _ => self.projection_tys.get(steps - 2).cloned(),
+        }?;
+        if !matches!(vector_ty.kind(), TyKind::Simd { .. }) {
+            return None;
+        }
+        let mut vector = self.clone();
+        vector.proj.pop();
+        vector.projection_tys.pop();
+        vector.ty = Some(vector_ty);
+        Some((vector, index))
     }
 
     /// The type of the storage this place designates: its own, else its
@@ -2625,6 +2664,42 @@ pub enum MirInstr {
         other: Option<Reg>,
         mask: mojito_types::types::LaneMask,
     },
+    /// `pop.simd.select`: lane `i` of the result is `on_true`'s where lane
+    /// `i` of the `bool` `mask` is set, else `on_false`'s. Both cases are of
+    /// the destination's type, at the mask's width (`m.select(a, b)`).
+    SimdSelect {
+        dest: Reg,
+        mask: Reg,
+        on_true: Reg,
+        on_false: Reg,
+    },
+    /// `pop.simd.extractelement`: lane `index` of `value`, a width-one
+    /// vector of its dtype (`v[i]`). The index is an `Int`, a `UInt`, or an
+    /// `IntLiteral`; one outside the lanes traps, where upstream's lane is
+    /// poison.
+    SimdExtract {
+        dest: Reg,
+        value: Reg,
+        index: Reg,
+    },
+    /// `pop.simd.insertelement`: `value` with lane `index` replaced by
+    /// `element`, a width-one vector of its dtype or, for `bool` lanes, a
+    /// `Bool` (`v[i] = x` stores the result back to `v`). The index traps as [`MirInstr::SimdExtract`]'s
+    /// does.
+    SimdInsert {
+        dest: Reg,
+        value: Reg,
+        element: Reg,
+        index: Reg,
+    },
+    /// `pop.simd.reduce_and` / `pop.simd.reduce_or`: whether every lane, or
+    /// some lane, of the `bool` vector `value` is set, as a `Bool`
+    /// (`m.reduce_and()`).
+    SimdReduce {
+        dest: Reg,
+        value: Reg,
+        op: SimdReduction,
+    },
     /// `lit.try` once `LowerSemanticCF`'s `lowerTryFinally` has run: a
     /// `try`/`except`/`else` whose `finally` MIR lowering copied before
     /// each terminator leaving it. Each part is a region of one block that
@@ -2972,7 +3047,9 @@ impl MirInstr {
             | Self::MakeArray { .. }
             | Self::SimdCast { .. }
             | Self::SimdBitcast { .. }
-            | Self::SimdShuffle { .. } => true,
+            | Self::SimdShuffle { .. }
+            | Self::SimdSelect { .. }
+            | Self::SimdReduce { .. } => true,
             // An integer division by zero traps.
             Self::Pop { op, .. } => !matches!(op, PopOp::Div | PopOp::Rem),
             // A closure of reference captures is a struct of pointers to
@@ -3006,6 +3083,8 @@ impl MirInstr {
             | Self::UninitStorageTake { .. }
             | Self::UninitStorageDestroy { .. }
             | Self::Index { .. }
+            | Self::SimdExtract { .. }
+            | Self::SimdInsert { .. }
             | Self::MultiIndex { .. }
             | Self::MultiSet { .. }
             | Self::Store { .. }

@@ -40,15 +40,10 @@ pub(super) fn verify_intrinsic_index(
             MirIntrinsicSubscript::VariadicStorage,
             Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)),
         ) => (!elements.is_empty()).then(|| elements.iter().collect::<Vec<_>>()),
-        (MirIntrinsicSubscript::Simd, Some(TyKind::Simd { dtype, .. })) => {
-            let scalar = simd_element_type(dtype);
-            if let Some(dest) = dest
-                && !types_compatible(dest, &scalar)
-            {
-                errors.push(format!(
-                    "{prefix}: SIMD intrinsic result has type {dest}, expected {scalar}"
-                ));
-            }
+        (MirIntrinsicSubscript::Simd, _) => {
+            errors.push(format!(
+                "{prefix}: a SIMD lane read is a simd.extract, not an intrinsic index"
+            ));
             return;
         }
         (MirIntrinsicSubscript::Pointer, Some(TyKind::Pointer { element, .. }))

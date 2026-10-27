@@ -238,25 +238,6 @@ impl FnLowering<'_> {
         intrinsic: mojito_mir::mir::MirIntrinsicSubscript,
     ) -> Result<(), PlironError> {
         use mojito_mir::mir::MirIntrinsicSubscript as Sub;
-        if matches!(intrinsic, Sub::Simd) {
-            let Some((dtype, width)) = self.func.reg_types.get(&base.0).and_then(simd_dims) else {
-                return Err(self.unsupported_reg("SIMD subscript base type".into(), dest));
-            };
-            self.emit_index_guard(ctx, index, width as usize, dest)?;
-            // A width-1 vector is a scalar register (`LowerTy::Scalar`): its
-            // only lane is the value itself.
-            if width == 1 {
-                let value = self.reg_value(ctx, base, ScalarTy::of_dtype(dtype))?;
-                self.reg_values.insert(dest.0, value);
-                return Ok(());
-            }
-            // The guard above makes the dynamic `extractelement` index
-            // in range (an out-of-range LLVM index is poison).
-            let vector = self.simd_load_vector(ctx, base, dtype, width as usize, dest)?;
-            let position = self.reg_value(ctx, index, ScalarTy::Int)?;
-            let extract = ExtractElementOp::new(ctx, vector, position);
-            return self.define(ctx, dest, extract.get_operation(), extract.get_result(ctx));
-        }
         if !matches!(intrinsic, Sub::TupleStorage | Sub::VariadicStorage) {
             return Err(self.unsupported_reg("intrinsic subscript".into(), dest));
         }

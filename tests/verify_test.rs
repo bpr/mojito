@@ -748,21 +748,40 @@ fn verifier_rejects_missing_nominal_subscript_contracts() {
 
 #[test]
 fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
-    let mut mistyped = lower_source(
-        "def main():\n    var lanes = SIMD[DType.int, 2](1, 2)\n    print(lanes[0])\n",
+    // A lane read is `simd.extract`; as an intrinsic index it is rejected,
+    // and so is a pointer subscript of the vector.
+    let lane_read_as = |intrinsic: MirIntrinsicSubscript| {
+        let mut mir = lower_source(
+            "def main():\n    var lanes = SIMD[DType.int, 2](1, 2)\n    print(lanes[0])\n",
+        );
+        let instruction = mir
+            .functions
+            .iter_mut()
+            .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+            .find(|instruction| matches!(instruction, MirInstr::SimdExtract { .. }))
+            .expect("SIMD lane read lowered");
+        let MirInstr::SimdExtract { dest, value, index } = *instruction else {
+            unreachable!();
+        };
+        *instruction = MirInstr::Index {
+            dest,
+            base: value,
+            index,
+            base_place: None,
+            index_place: None,
+            call: None,
+            intrinsic: Some(intrinsic),
+        };
+        mir
+    };
+    expect_finding(
+        &lane_read_as(MirIntrinsicSubscript::Simd),
+        "a SIMD lane read is a simd.extract",
     );
-    let intrinsic = mistyped
-        .functions
-        .iter_mut()
-        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
-        .find_map(|instruction| match instruction {
-            MirInstr::Index { intrinsic, .. } => Some(intrinsic),
-            _ => None,
-        })
-        .expect("SIMD Index lowered");
-    assert_eq!(*intrinsic, Some(MirIntrinsicSubscript::Simd));
-    *intrinsic = Some(MirIntrinsicSubscript::Pointer);
-    expect_finding(&mistyped, "Pointer is incompatible with checked base type");
+    expect_finding(
+        &lane_read_as(MirIntrinsicSubscript::Pointer),
+        "Pointer is incompatible with checked base type",
+    );
 
     let source = "@fieldwise_init\nstruct Access:\n    var value: Int\n    def __getitem__(self, index: Int) -> Int:\n        return self.value\n\ndef main():\n    print(Access(1)[0])\n";
     let mut conflicting = lower_source(source);
@@ -777,6 +796,23 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
         .expect("nominal Index lowered")
         .replace(MirIntrinsicSubscript::TupleStorage);
     expect_finding(&conflicting, "index operation must carry exactly one");
+}
+
+#[test]
+fn verifier_types_simd_lane_instructions() {
+    let mut mir = lower_source(
+        "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var m = v.gt(2)\n    print(m.select(v, v), m.reduce_and())\n",
+    );
+    let select = mir
+        .functions
+        .iter_mut()
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .find(|instruction| matches!(instruction, MirInstr::SimdSelect { .. }))
+        .expect("SIMD select lowered");
+    if let MirInstr::SimdSelect { mask, on_true, .. } = select {
+        *mask = *on_true;
+    }
+    expect_finding(&mir, "simd.select mask has DType.int32 lanes, not bool");
 }
 
 #[test]

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.119
+mojito-mir 1.120
 ```
 
-The writer emits 1.119. The reader accepts 1.0 through 1.119; *Schema 1.0*
+The writer emits 1.120. The reader accepts 1.0 through 1.120; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -698,6 +698,20 @@ destination's SIMD type (R1392). The other admitted `__mlir_op` `pop` and
 `index` ops lower to `binary`, `unary`, `simd.make`, and `simd.cast`. The
 checked `MlirOp` adjustment records the op, and the package format moves to
 `mojito-package 117`.
+
+Schema 1.120 adds upstream's `pop.simd` lane ops as four instructions
+(R1393): `simd.select { dest, mask, on_true, on_false }`, `simd.extract {
+dest, value, index }`, `simd.insert { dest, value, element, index }`, and
+`simd.reduce { dest, value, op }` with `op` `and` or `or`. A lane is a
+width-one vector of the vector's dtype (a `Bool` may stand for a `bool`
+lane an insert writes), an index is an `Int`, a `UInt`, or an
+`IntLiteral`, and one outside the lanes traps. They compute the
+`__mlir_op` lane ops and the compiler `SIMD`'s `select`, `reduce_and`,
+`reduce_or`, and lane subscripts, so `index.get` no longer carries the
+`simd` intrinsic, which the verifier rejects, and a lane read or write is
+a whole-vector `place.load` or `place.store` around the instruction. The
+checked `SimdReceiverOp` adjustment records a method's op, and the package
+format moves to `mojito-package 118`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1445,6 +1459,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `VariantTag` | `variant.tag { dest, variant }` (schema 1.103: the active alternative's index as an `Int`, an `enum` storage's discriminant) |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.73: `variant.set_init_with` carries `destructors` as `variant.set` does) |
 | `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_shuffle { lanes: [<param_expr>, ...] }`, `lane_slice { offset: <param_expr>, width: <width> }`, or `lane_join {}`, which elaboration closes (schema 1.26) |
+| `SimdSelect` / `SimdExtract` / `SimdInsert` / `SimdReduce` | `simd.select { dest, mask, on_true, on_false }` / `simd.extract { dest, value, index }` / `simd.insert { dest, value, element, index }` / `simd.reduce { dest, value, op }` (schema 1.120): upstream's `pop.simd.select`, `extractelement`, `insertelement`, and `reduce_and`/`reduce_or` (`op` is `and` or `or`); a lane is a width-one vector of the vector's dtype, and an index outside the lanes traps |
 | `Try` | `try { label: tryN, error: option<$vN>, results: [%rN...], body, handler_arguments: [%rN...], handler, else_arguments: [%rN...], orelse }` — `lit.try` after `lowerTryFinally`: `label` names it for the raises in its body (schema 1.92; before, a `try` named nothing and held `finalbody` and `cleanup`, see *Compatibility*); `error` is its error slot, `lit.try`'s `$err`, which each raise naming it stores into and its handler reads (schema 1.107; before, the handler record's `error_var` bound the error); `results` are the op's, `handler_arguments` the handler's, which every raise naming it defines, and `else_arguments` the `else`'s, which the body's `try.yield` defines (schema 1.93) |
 | `DeclareVar` | `var.declare` (schema 1.50: a `var x: T` slot's declaration point; no def, no use, a no-op on both backends, counted as a def site by region locality; unlike the lifetime markers it survives `lower-lit`, as upstream lowers `lit.var.decl` to an allocation) |
 | `Drop` / `DropVar` / `DropPlace` | `drop.reg { reg }` / `drop.var { var }` / `drop.place { place }` — each carries `destructor: "<symbol>"` after its operand when it names the `__deinit__` it runs on the whole value, as upstream's destructor insertion names the `__del__` at each death: the template member in a parametric body, its instance in concrete MIR; the writer omits the field when the drop names none, the reader takes an absent field as none, and the verifier reports a drop naming an undeclared function or other than the destructor its struct's member table records (schema 1.67) |
@@ -1460,7 +1475,8 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 
 `UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic
 subscripts are `tuple_storage`, `variadic_storage`, `simd`, `pointer`, and
-`comptime_list`. Result adapters currently contain only
+`comptime_list`; the verifier rejects `simd` from schema 1.120, where a lane
+read is `simd.extract`. Result adapters currently contain only
 `copy_iterator_reference`.
 
 For `Try`, `body`, `handler`, and `orelse` contain lists of local

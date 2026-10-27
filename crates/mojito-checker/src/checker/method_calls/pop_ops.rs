@@ -1,6 +1,6 @@
 //! The `pop` and `index` `__mlir_op` expressions: upstream's elementwise
-//! ops over `!kgen.simd` storage and its `index` ops, typed as their MLIR
-//! verifiers type them, with the `pred`, `fastmathFlags`, and `_type`
+//! ops over `!kgen.simd` storage, its `pop.simd` lane ops, and its `index`
+//! ops, typed as their MLIR verifiers type them, with the `pred`, `fastmathFlags`, and `_type`
 //! attributes they take. The admitted set is `mojito_types::mlir::MlirOp`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -15,7 +15,7 @@ impl Checker {
     /// ones (`Int`). Arithmetic keeps the operand type, `pop.cmp` gives the
     /// `bool` mask of the operand width, `index.cmp` an `i1` (`Bool`), and
     /// `pop.cast` and `pop.simd.splat` the type their `_type` attribute
-    /// names.
+    /// names. The lane ops are typed by [`lane_op_result`].
     pub(super) fn infer_pop_op(
         &self,
         span: &SourceSpan,
@@ -103,6 +103,8 @@ impl Checker {
             .collect::<Result<Vec<_>, _>>()?;
         let result = if op.is_index() {
             index_op_result(op, &operands).map_err(invalid)?
+        } else if op.is_lane() {
+            lane_op_result(op, &operands).map_err(invalid)?
         } else {
             pop_op_result(op, &operands, result_type).map_err(|error| match error {
                 PopTypeError::Verifier(reason) => invalid(reason),
@@ -167,6 +169,91 @@ fn index_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
     } else {
         Ty::int()
     })
+}
+
+/// The result of a `pop.simd` lane op, as upstream's verifier types it:
+/// `select` takes a `bool` mask and two cases of one vector type at the
+/// mask's width and gives that type; `extractelement` takes a vector and an
+/// `index` (`Int`) and gives the lane, a width-one vector of its dtype
+/// (`!kgen.scalar<dt>`); `insertelement` takes a vector, a lane of its
+/// dtype, and an `index` and gives the vector's type; and `reduce_and` and
+/// `reduce_or` take integer or `bool` lanes and give one lane of them.
+fn lane_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
+    let vector = |position: usize| {
+        simd_slots(operands[position].kind()).ok_or_else(|| {
+            format!(
+                "op operand #{position} must be SIMD type, but got '{}'",
+                operands[position]
+            )
+        })
+    };
+    let index = |position: usize| {
+        (operands[position] == Ty::int())
+            .then_some(())
+            .ok_or_else(|| {
+                format!(
+                    "op operand #{position} must be index, but got '{}'",
+                    operands[position]
+                )
+            })
+    };
+    let lane =
+        |dtype: SimdDtype| simd_of(dtype, SimdWidth::Known(1)).map_err(|error| error.to_string());
+    match op.lowering() {
+        MlirLowering::Select => {
+            let (mask, width) = vector(0)?;
+            if mask.known() != Some(Dtype::Bool) {
+                return Err(format!(
+                    "op operand #0 must be !kgen.simd<N, bool>, but got '{}'",
+                    operands[0]
+                ));
+            }
+            let (_, case_width) = vector(1)?;
+            vector(2)?;
+            if operands[1] != operands[2] {
+                return Err(
+                    "op failed to verify that all of {trueValue, falseValue, result} have same \
+                     type"
+                        .to_string(),
+                );
+            }
+            if case_width != width {
+                return Err(format!(
+                    "op mask '{}' and cases '{}' differ in width",
+                    operands[0], operands[1]
+                ));
+            }
+            Ok(operands[1].clone())
+        }
+        MlirLowering::Extract => {
+            let (dtype, _) = vector(0)?;
+            index(1)?;
+            lane(dtype)
+        }
+        MlirLowering::Insert => {
+            let (dtype, _) = vector(0)?;
+            if vector(1)? != (dtype, SimdWidth::Known(1)) {
+                return Err(
+                    "op failed to verify that value type matches dtype of the vector operand"
+                        .to_string(),
+                );
+            }
+            index(2)?;
+            Ok(operands[0].clone())
+        }
+        MlirLowering::Reduce(_) => {
+            let (dtype, _) = vector(0)?;
+            if !dtype.licenses(|dtype| LaneKinds::IntegralOrBool.admits(dtype)) {
+                return Err(format!(
+                    "op operand #0 must be SIMD type whose element type is {} dtype, but got '{}'",
+                    LaneKinds::IntegralOrBool.describe(),
+                    operands[0]
+                ));
+            }
+            lane(dtype)
+        }
+        _ => unreachable!("`{}` is a lane op", op.name()),
+    }
 }
 
 /// The result of a `pop` op over `operands`, with the `_type` attribute's

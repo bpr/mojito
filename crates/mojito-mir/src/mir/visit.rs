@@ -388,6 +388,10 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         | I::StoreToMem { .. }
         | I::ScalarCast { .. }
         | I::Pop { .. }
+        | I::SimdSelect { .. }
+        | I::SimdExtract { .. }
+        | I::SimdInsert { .. }
+        | I::SimdReduce { .. }
         | I::UseVar { .. }
         | I::DeclareVar { .. }
         | I::UninitStorage { .. }

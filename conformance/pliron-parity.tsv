@@ -499,6 +499,7 @@ assets/ok/method_unused_receiver.mojo	main	exe-differential	sanitized
 assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_ops.mojo	main	exe-differential	sanitized
+assets/ok/mlir_simd_lane_ops.mojo	main	exe-differential	sanitized
 assets/ok/module_constant_literal_bracket.mojo	main	exe-differential	sanitized
 assets/ok/module_reference_result_reads.mojo	main	exe-differential	sanitized
 assets/ok/module_type_alias_reads.mojo	main	exe-differential	sanitized

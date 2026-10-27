@@ -1854,9 +1854,9 @@ pub fn simd_shuffle(
     Ok(simd_value(dtype, gathered))
 }
 
-/// Dispatch a method call on a SIMD receiver: `select` on bool masks and the
-/// lane reductions. The checker validated shapes; an unknown name is a clean
-/// has-no-method error.
+/// Dispatch a method call on a SIMD receiver: the elementwise comparisons
+/// and the numeric lane reductions. The checker validated shapes; an
+/// unknown name is a clean has-no-method error.
 pub fn simd_method(
     dtype: Dtype,
     lanes: &SimdLanes,
@@ -1899,20 +1899,9 @@ pub fn simd_method(
             };
             simd_binop(op, &receiver, &args[0])
         }
-        "select" if args.len() == 2 => simd_select(lanes, &args[0], &args[1]),
         "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" if args.is_empty() => {
             simd_reduce(dtype, lanes, method)
         }
-        "reduce_and" | "reduce_or" if args.is_empty() => match lanes {
-            SimdLanes::Bool(v) => Ok(Value::Bool(if method == "reduce_and" {
-                v.iter().all(|lane| *lane)
-            } else {
-                v.iter().any(|lane| *lane)
-            })),
-            _ => Err(RuntimeError::TypeError(format!(
-                "{method}() requires bool lanes"
-            ))),
-        },
         _ => Err(RuntimeError::Unsupported(format!(
             "vm: SIMD[DType.{}, {}] has no method '{method}'",
             dtype.name(),
@@ -1921,27 +1910,22 @@ pub fn simd_method(
     }
 }
 
-/// Elementwise blend through a bool mask: lane `i` of the result takes
-/// `when_true`'s lane where the mask is set, else `when_false`'s. A scalar or
-/// literal case splats, like an infix operand.
-fn simd_select(
-    mask: &SimdLanes,
+/// `simd.select`: lane `i` of the result takes `when_true`'s lane where
+/// lane `i` of the bool `mask` is set, else `when_false`'s.
+pub fn simd_select(
+    mask: &Value,
     when_true: &Value,
     when_false: &Value,
 ) -> Result<Value, RuntimeError> {
-    let SimdLanes::Bool(mask) = mask else {
+    let Some((_, SimdLanes::Bool(mask))) = simd_parts(mask) else {
         return Err(RuntimeError::TypeError(
-            "select() requires a bool-mask receiver".to_string(),
+            "simd.select requires a bool mask".to_string(),
         ));
     };
     let width = mask.len();
-    // The checker guarantees at least one case is a SIMD of the payload dtype.
-    let Some(dtype) = [when_true, when_false].into_iter().find_map(|v| match v {
-        Value::Simd { dtype, .. } => Some(*dtype),
-        _ => None,
-    }) else {
+    let Some((dtype, _)) = simd_parts(when_true) else {
         return Err(RuntimeError::TypeError(
-            "select() requires a SIMD case operand".to_string(),
+            "simd.select requires SIMD cases".to_string(),
         ));
     };
     let lanes = if dtype == Dtype::Bool {
@@ -1973,6 +1957,31 @@ fn simd_select(
         )
     };
     Ok(simd_value(dtype, lanes))
+}
+
+/// `simd.reduce`: the bitwise and or or of the integer or `bool` lanes of
+/// `value`, one lane of its dtype.
+pub fn simd_reduce_lanes(
+    op: mojito_types::mlir::SimdReduction,
+    value: &Value,
+) -> Result<Value, RuntimeError> {
+    let lane = match simd_parts(value) {
+        Some((dtype, SimdLanes::Bool(lanes))) => (
+            dtype,
+            SimdLanes::Bool(vec![op.reduce_bools(lanes.into_iter())]),
+        ),
+        Some((dtype, SimdLanes::Int(lanes))) => (
+            dtype,
+            SimdLanes::Int(vec![op.reduce_ints(lanes.into_iter())]),
+        ),
+        _ => {
+            return Err(RuntimeError::TypeError(format!(
+                "simd.reduce {} requires integer or bool lanes",
+                op.mnemonic()
+            )));
+        }
+    };
+    Ok(simd_value(lane.0, lane.1))
 }
 
 /// Collapse lanes to the canonicalized width-1 scalar. Integer `add`/`mul`

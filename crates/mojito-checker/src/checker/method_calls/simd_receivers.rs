@@ -2,6 +2,7 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_types::mlir::MlirOp;
 use mojito_types::types::LaneMask;
 use mojito_types::types::TyKind;
 
@@ -158,7 +159,10 @@ impl Checker {
                     _ => None,
                 };
                 match payload {
-                    Some(d) => simd_of(d, width),
+                    Some(d) => {
+                        self.record_simd_receiver_op(span, MlirOp::PopSimdSelect);
+                        simd_of(d, width)
+                    }
                     None => Err(TypeError::TypeMismatch {
                         expected: format!("two width-{width} SIMD cases of one dtype"),
                         found: format!("{true_case} and {false_case}"),
@@ -202,10 +206,24 @@ impl Checker {
             {
                 simd_of(dtype, SimdWidth::Known(1))
             }
-            "reduce_and" | "reduce_or"
-                if dtype.licenses(|d| d == Dtype::Bool) && args.is_empty() =>
-            {
-                Ok(Ty::bool())
+            // Upstream's `bool` and integer reductions give one lane,
+            // which Mojito types `Bool` for `bool` lanes (and a symbolic
+            // dtype's), so the reduction combines with `and` and `or`.
+            "reduce_and" | "reduce_or" if dtype.licenses(|d| !d.is_float()) && args.is_empty() => {
+                self.record_simd_receiver_op(
+                    span,
+                    if method == "reduce_and" {
+                        MlirOp::PopSimdReduceAnd
+                    } else {
+                        MlirOp::PopSimdReduceOr
+                    },
+                );
+                match dtype.known() {
+                    Some(lanes) if lanes != Dtype::Bool => {
+                        simd_of(SimdDtype::Known(lanes), SimdWidth::Known(1))
+                    }
+                    _ => Ok(Ty::bool()),
+                }
             }
             // A float scalar's rounding dunders and its
             // fused multiply-add (`k.__fma__(step, start)`, a float range
@@ -437,6 +455,14 @@ impl Checker {
             .map_or_else(|| mask.clone(), LaneMask::Known);
         self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::SimdShuffle { mask, joined },
+        ));
+    }
+
+    /// Record the method call at `span` as the `pop.simd` lane `op` over
+    /// its receiver and arguments.
+    fn record_simd_receiver_op(&self, span: &SourceSpan, op: MlirOp) {
+        self.record_at(span.clone()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::SimdReceiverOp(op),
         ));
     }
 }

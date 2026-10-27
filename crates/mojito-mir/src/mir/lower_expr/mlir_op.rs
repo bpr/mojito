@@ -1,4 +1,5 @@
-//! The `pop` and `index` `__mlir_op` expressions, lowered to the
+//! The `pop` and `index` `__mlir_op` expressions, and the `SIMD` methods
+//! whose upstream bodies are one `pop.simd` lane op, lowered to the
 //! instruction that computes each (`mojito_types::mlir::MlirOp::lowering`).
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -17,14 +18,83 @@ impl<'a> Flatten<'a> {
             })
     }
 
+    /// The lane op the checker recorded on `call`, if it is a `SIMD` method
+    /// whose operands are its receiver and arguments.
+    pub(super) fn checked_simd_receiver_op(call: Node<'a>) -> Option<MlirOp> {
+        call.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::SimdReceiverOp(op) => Some(*op),
+                _ => None,
+            })
+    }
+
     /// Lower the checked `op` over `args`: a built-in operator whose lanes
     /// compute the op (`binary`, `unary`), a `simd.make` splat or
-    /// `simd.cast` at the result type's slots, or a `pop` instruction. The
-    /// destination is typed by the checked result.
+    /// `simd.cast` at the result type's slots, a `pop` instruction, or a
+    /// lane instruction. The destination is typed by the checked result.
     pub(super) fn lower_mlir_op(&mut self, call: Node<'a>, op: MlirOp, args: &[Node<'a>]) -> Reg {
         let operands: Vec<Reg> = args.iter().map(|argument| self.expr(*argument)).collect();
         let ty = call.ty().expect("a checked `__mlir_op` has a type");
-        let dest = self.fresh_typed(call.location(), None, ty.clone());
+        self.emit_mlir_op(call.location(), op, operands, &ty)
+    }
+
+    /// Lower the `SIMD` method `call` the checker resolved to the lane `op`
+    /// over `object` and `args`. A `select` case of another type than the
+    /// result (a scalar or a literal) splats to it first, and a `bool`
+    /// reduction the checker typed `Bool` casts its one lane to it.
+    pub(super) fn lower_simd_receiver_op(
+        &mut self,
+        call: Node<'a>,
+        op: MlirOp,
+        object: Node<'a>,
+        args: &[Node<'a>],
+    ) -> Reg {
+        let ty = call.ty().expect("a checked SIMD method call has a type");
+        let mut operands = vec![self.expr(object)];
+        for argument in args {
+            let value = self.expr(*argument);
+            operands.push(match argument.ty() {
+                Some(found) if op == MlirOp::PopSimdSelect && found != ty => {
+                    self.f.reg_types.entry(value.0).or_insert(found);
+                    self.splat_scalar(value, &ty, argument.location())
+                }
+                _ => value,
+            });
+        }
+        let lane = match (op.lowering(), object.ty().as_ref().map(Ty::kind)) {
+            (MlirLowering::Reduce(_), Some(TyKind::Simd { dtype, .. })) => {
+                mojito_types::types::simd_ty_from_slots(
+                    dtype.clone(),
+                    mojito_types::types::SimdWidth::Known(1),
+                )
+                .ok()
+            }
+            _ => None,
+        };
+        let Some(lane) = lane.filter(|lane| *lane != ty) else {
+            return self.emit_mlir_op(call.location(), op, operands, &ty);
+        };
+        let value = self.emit_mlir_op(call.location(), op, operands, &lane);
+        let dest = self.fresh_typed(call.location(), None, Ty::bool());
+        self.emit(MirInstr::ScalarCast {
+            dest,
+            value,
+            target: ScalarConversion::Bool,
+        });
+        dest
+    }
+
+    /// Emit the instruction computing `op` over `operands` at `location`,
+    /// its destination of type `ty`.
+    fn emit_mlir_op(
+        &mut self,
+        location: SourceSpan,
+        op: MlirOp,
+        operands: Vec<Reg>,
+        ty: &Ty,
+    ) -> Reg {
+        let dest = self.fresh_typed(location, None, ty.clone());
         let slots = || {
             mojito_types::types::simd_slots(ty.kind())
                 .expect("a checked splat or cast names a SIMD type")
@@ -63,6 +133,28 @@ impl<'a> Flatten<'a> {
                     width,
                 }
             }
+            (MlirLowering::Select, [mask, on_true, on_false]) => MirInstr::SimdSelect {
+                dest,
+                mask: *mask,
+                on_true: *on_true,
+                on_false: *on_false,
+            },
+            (MlirLowering::Extract, [value, index]) => MirInstr::SimdExtract {
+                dest,
+                value: *value,
+                index: *index,
+            },
+            (MlirLowering::Insert, [value, element, index]) => MirInstr::SimdInsert {
+                dest,
+                value: *value,
+                element: *element,
+                index: *index,
+            },
+            (MlirLowering::Reduce(op), [value]) => MirInstr::SimdReduce {
+                dest,
+                value: *value,
+                op,
+            },
             (MlirLowering::Pop(op), _) => MirInstr::Pop { dest, op, operands },
             _ => unreachable!("the checker admits `{}` with its arity", op.name()),
         });

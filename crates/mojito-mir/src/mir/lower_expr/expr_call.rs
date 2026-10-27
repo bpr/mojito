@@ -208,7 +208,10 @@ impl<'a> Flatten<'a> {
                 _ => None,
             })
         {
-            let value = self.expr(*args.first()?);
+            let operand = args
+                .first()
+                .or_else(|| kwargs.first().map(|(_, value)| value))?;
+            let value = self.expr(*operand);
             let dest = self.fresh_typed(call.location(), None, target.ty());
             self.emit(MirInstr::ScalarCast {
                 dest,

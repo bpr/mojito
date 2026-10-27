@@ -963,6 +963,11 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Lever: find the pass that shares the literal across the two bodies
     (`cse` after `automatic-inline` is the first suspect), or type the
     literal at each use as upstream's literal conversion does.
+  - Probe: `print(v[2])` over an `int32` vector, then `f[3] *= 2` over a
+    `float32` one, fails the same way with no generic at all: `cse` merges
+    the index `2` and the multiplier `2` into one `int_literal(2)`, and
+    Pliron's `reg_value` caches a pending literal at its first use's type
+    (`cache_lazy`), so the `float32` multiply reads an `Int`.
   - Found while landing R662 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -3645,6 +3650,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A width-1 bool lane (`a == b or c < d` over `UInt64`s) rejects the same
     way, though `if`/`while` accept one through the `Bool(x)` truthiness
     conversion. Workaround: nest the tests.
+  - Probe: `m.reduce_and()` over a `bool` vector is `Scalar[DType.bool]`
+    at the pin (`SIMD[dtype, size_out]`), and Mojito types it `Bool` so
+    that `m.reduce_or() and not m.reduce_and()` checks: its MIR casts the
+    `simd.reduce` lane to `Bool`. Once `and`/`or` take the lane, the
+    method takes upstream's type and `size_out`.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9462,18 +9472,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1392.
   - Model: Opus, Not Planned.
 
-- [ ] **R1393 `SIMD`'s lane ops are host methods, where upstream's are
-  `pop.simd` ops**
-
-  `select`, lane extract and insert, and `reduce_and`/`reduce_or` run in
-  `runtime::simd_method` and Pliron's per-method code, where upstream's
-  bodies call `pop.simd.select`, `extractelement`, `insertelement`,
-  `reduce_and`, `reduce_or`, and `shuffle`.
-  - Add one MIR instruction for each, next to `SimdShuffle`, and teach the
-    VM, Pliron, and `__mlir_op` typing.
-  - Depends on R1392.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1394 `llvm_intrinsic` is undefined**
 
   Upstream's `SIMD` reaches `llvm.vector.reduce.*`, `fma`, and the bit ops
@@ -9590,6 +9588,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Pliron's per-method SIMD lowering serve only the storage type, which has
   no members upstream.
   - Delete them.
+  - A SIMD lane is still a MIR place where a lane is borrowed:
+    `bump(v[2])` over a `mut` lane parameter, and R169's `ref lane =
+    v[i]`. Every other lane read and write is `simd.extract` or
+    `simd.insert` (`Flatten::lane_access`). Once `v[i]` is the library's
+    `__getitem__`/`__setitem__`, delete `MirPlace::simd_lane`, the lane arms
+    of the VM's `load_place`/`store_place`, and Pliron's
+    `try_lower_simd_lane_store` and lane addressing too.
   - Done when `rg simd_method crates` finds nothing.
   - Depends on R1397.
   - Model: Opus, Not Planned.
@@ -9834,6 +9839,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - A self-hosted `SIMD` would move the typing, the constraints, and the
     lowering choice into source, and `LaneMask` would shrink to the known
     mask.
+  - Probe: ``__mlir_op.`pop.simd.shuffle`[mask=tup._mlir_value,
+    _type=...](a, b)``, upstream's `_shuffle_list` body, is rejected as
+    outside the subset. Its `mask` attribute is a compile-time
+    `StaticTuple[SIMDLength, n]`'s storage, and Mojito bundles no
+    `StaticTuple`. `MirInstr::SimdShuffle` already computes the op.
   - Depends on nothing.
   - Model: Fable, Not Planned.
 

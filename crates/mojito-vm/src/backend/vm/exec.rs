@@ -1029,8 +1029,7 @@ impl VmBackend {
                         }
                         (
                             MirIntrinsicSubscript::TupleStorage
-                            | MirIntrinsicSubscript::VariadicStorage
-                            | MirIntrinsicSubscript::Simd,
+                            | MirIntrinsicSubscript::VariadicStorage,
                             value,
                         ) => {
                             let idx = self.normalize_index(prog, &regs[index.0 as usize])?;
@@ -1498,6 +1497,40 @@ impl VmBackend {
                 )?;
                 regs[dest.0 as usize] = gathered;
             }
+            MirInstr::SimdSelect {
+                dest,
+                mask,
+                on_true,
+                on_false,
+            } => {
+                regs[dest.0 as usize] = crate::runtime::simd_select(
+                    &regs[mask.0 as usize],
+                    &regs[on_true.0 as usize],
+                    &regs[on_false.0 as usize],
+                )?;
+            }
+            MirInstr::SimdExtract { dest, value, index } => {
+                let index = value_as_index(&regs[index.0 as usize])?;
+                regs[dest.0 as usize] =
+                    crate::runtime::read_value_lane(&regs[value.0 as usize], index)
+                        .ok_or_else(|| simd_operand_error("simd.extract"))??;
+            }
+            MirInstr::SimdInsert {
+                dest,
+                value,
+                element,
+                index,
+            } => {
+                let index = value_as_index(&regs[index.0 as usize])?;
+                let mut vector = regs[value.0 as usize].clone();
+                crate::runtime::set_value_lane(&mut vector, index, &regs[element.0 as usize])
+                    .ok_or_else(|| simd_operand_error("simd.insert"))??;
+                regs[dest.0 as usize] = vector;
+            }
+            MirInstr::SimdReduce { dest, value, op } => {
+                regs[dest.0 as usize] =
+                    crate::runtime::simd_reduce_lanes(*op, &regs[value.0 as usize])?;
+            }
             MirInstr::Store { place, src } => {
                 let mut v = regs[src.0 as usize].clone();
                 // A place projected from a pointer slot writes within its
@@ -1853,6 +1886,11 @@ impl VmBackend {
 /// or passes it by address. A drop, consumption, or mark is no such use,
 /// so it builds no storage. A place reached through a reference addresses
 /// storage some other frame owns.
+/// The error of a lane instruction whose vector operand is no SIMD value.
+fn simd_operand_error(mnemonic: &str) -> RuntimeError {
+    RuntimeError::TypeError(format!("vm: {mnemonic} of a non-SIMD value"))
+}
+
 fn give_storage(prog: &Prog, function: usize, instruction: &MirInstr, vars: &mut [Value]) {
     let mut give = |root: VarId| {
         let slot = &mut vars[root as usize];

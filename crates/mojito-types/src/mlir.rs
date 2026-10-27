@@ -1,8 +1,9 @@
 //! The `__mlir_op` operations Mojito admits beyond the ownership markers.
 //!
-//! These are upstream's elementwise `pop` ops over `!kgen.simd` storage and
-//! the `index` ops over `__mlir_type.index`, with the `__mlir_attr`
-//! spellings their attributes take. The checker verifies an op's operands
+//! These are upstream's elementwise `pop` ops over `!kgen.simd` storage,
+//! its `pop.simd` lane ops (select, extract, insert, and the `bool`
+//! reductions), and the `index` ops over `__mlir_type.index`, with the
+//! `__mlir_attr` spellings their attributes take. The checker verifies an op's operands
 //! as upstream's op verifier does and records the [`MlirOp`]. MIR lowering
 //! reads [`MlirOp::lowering`], and the backends compute a [`PopOp`] lane by
 //! [`pop_int_lane`] and [`pop_float_lane`].
@@ -34,6 +35,11 @@ pub enum MlirOp {
     PopCeil,
     PopTrunc,
     PopFma,
+    PopSimdSelect,
+    PopSimdExtractElement,
+    PopSimdInsertElement,
+    PopSimdReduceAnd,
+    PopSimdReduceOr,
     IndexAdd,
     IndexSub,
     IndexMul,
@@ -89,6 +95,11 @@ impl MlirOp {
             "pop.ceil" => Self::PopCeil,
             "pop.trunc" => Self::PopTrunc,
             "pop.fma" => Self::PopFma,
+            "pop.simd.select" => Self::PopSimdSelect,
+            "pop.simd.extractelement" => Self::PopSimdExtractElement,
+            "pop.simd.insertelement" => Self::PopSimdInsertElement,
+            "pop.simd.reduce_and" => Self::PopSimdReduceAnd,
+            "pop.simd.reduce_or" => Self::PopSimdReduceOr,
             "index.add" => Self::IndexAdd,
             "index.sub" => Self::IndexSub,
             "index.mul" => Self::IndexMul,
@@ -127,6 +138,11 @@ impl MlirOp {
             Self::PopCeil => "pop.ceil",
             Self::PopTrunc => "pop.trunc",
             Self::PopFma => "pop.fma",
+            Self::PopSimdSelect => "pop.simd.select",
+            Self::PopSimdExtractElement => "pop.simd.extractelement",
+            Self::PopSimdInsertElement => "pop.simd.insertelement",
+            Self::PopSimdReduceAnd => "pop.simd.reduce_and",
+            Self::PopSimdReduceOr => "pop.simd.reduce_or",
             Self::IndexAdd => "index.add",
             Self::IndexSub => "index.sub",
             Self::IndexMul => "index.mul",
@@ -152,6 +168,18 @@ impl MlirOp {
         )
     }
 
+    /// Whether this is a `pop.simd` lane op, whose operands are not all of
+    /// one vector type: a `bool` mask, a lane, or an `index` position.
+    pub const fn is_lane(self) -> bool {
+        matches!(
+            self.lowering(),
+            MlirLowering::Select
+                | MlirLowering::Extract
+                | MlirLowering::Insert
+                | MlirLowering::Reduce(_)
+        )
+    }
+
     /// Whether the op names its result type with a `_type` attribute.
     pub const fn takes_result_type(self) -> bool {
         matches!(self, Self::PopCast | Self::PopSplat)
@@ -161,7 +189,12 @@ impl MlirOp {
     pub const fn arity(self) -> usize {
         match self.lowering() {
             MlirLowering::Binary(_) => 2,
-            MlirLowering::Negate | MlirLowering::Splat | MlirLowering::Cast => 1,
+            MlirLowering::Negate
+            | MlirLowering::Splat
+            | MlirLowering::Cast
+            | MlirLowering::Reduce(_) => 1,
+            MlirLowering::Extract => 2,
+            MlirLowering::Select | MlirLowering::Insert => 3,
             MlirLowering::Pop(op) => op.arity(),
         }
     }
@@ -216,6 +249,11 @@ impl MlirOp {
             Self::PopCeil => MlirLowering::Pop(PopOp::Ceil),
             Self::PopTrunc => MlirLowering::Pop(PopOp::Trunc),
             Self::PopFma => MlirLowering::Pop(PopOp::Fma),
+            Self::PopSimdSelect => MlirLowering::Select,
+            Self::PopSimdExtractElement => MlirLowering::Extract,
+            Self::PopSimdInsertElement => MlirLowering::Insert,
+            Self::PopSimdReduceAnd => MlirLowering::Reduce(SimdReduction::And),
+            Self::PopSimdReduceOr => MlirLowering::Reduce(SimdReduction::Or),
         }
     }
 }
@@ -255,8 +293,9 @@ impl LaneKinds {
 ///
 /// That is the built-in operator whose lane semantics are the op's
 /// (`binary`/`unary`), a construction or cast carrying the `_type`
-/// attribute's slots, or the `pop` instruction for an op no operator
-/// computes.
+/// attribute's slots, the `pop` instruction for an op no operator
+/// computes, or the `simd.select`, `simd.extract`, `simd.insert`, or
+/// `simd.reduce` lane instruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MlirLowering {
     Binary(InfixOp),
@@ -264,6 +303,54 @@ pub enum MlirLowering {
     Splat,
     Cast,
     Pop(PopOp),
+    Select,
+    Extract,
+    Insert,
+    Reduce(SimdReduction),
+}
+
+/// A lane reduction over integer or `bool` lanes: `pop.simd.reduce_and`
+/// (the lanes' bitwise and; every `bool` lane is set) or
+/// `pop.simd.reduce_or` (their bitwise or; some `bool` lane is).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum SimdReduction {
+    And,
+    Or,
+}
+
+impl SimdReduction {
+    /// The reduction's name after `pop.simd.reduce_`, its MIR text
+    /// spelling.
+    pub const fn mnemonic(self) -> &'static str {
+        match self {
+            Self::And => "and",
+            Self::Or => "or",
+        }
+    }
+
+    /// The reduction spelled `mnemonic`.
+    pub fn from_mnemonic(mnemonic: &str) -> Option<Self> {
+        [Self::And, Self::Or]
+            .into_iter()
+            .find(|reduction| reduction.mnemonic() == mnemonic)
+    }
+
+    /// The reduction of `bool` lanes.
+    pub fn reduce_bools(self, mut lanes: impl Iterator<Item = bool>) -> bool {
+        match self {
+            Self::And => lanes.all(|lane| lane),
+            Self::Or => lanes.any(|lane| lane),
+        }
+    }
+
+    /// The reduction of integer lanes, each held sign- or zero-extended:
+    /// the bitwise fold keeps that extension.
+    pub fn reduce_ints(self, lanes: impl Iterator<Item = i128>) -> i128 {
+        match self {
+            Self::And => lanes.fold(-1, |acc, lane| acc & lane),
+            Self::Or => lanes.fold(0, |acc, lane| acc | lane),
+        }
+    }
 }
 
 /// A compare predicate: `#kgen.cmp_pred<…>` for `pop.cmp`, or the signed
@@ -462,6 +549,11 @@ mod tests {
             "pop.ceil",
             "pop.trunc",
             "pop.fma",
+            "pop.simd.select",
+            "pop.simd.extractelement",
+            "pop.simd.insertelement",
+            "pop.simd.reduce_and",
+            "pop.simd.reduce_or",
             "index.add",
             "index.sub",
             "index.mul",
@@ -493,6 +585,10 @@ mod tests {
     #[test]
     fn spellings_outside_the_subset_do_not_parse() {
         assert_eq!(MlirOp::parse("pop.max", None), Err(MlirOpError::Unknown));
+        assert_eq!(
+            MlirOp::parse("pop.simd.shuffle", None),
+            Err(MlirOpError::Unknown)
+        );
         assert_eq!(
             MlirOp::parse("pop.cmp", None),
             Err(MlirOpError::MissingPredicate)

@@ -815,6 +815,28 @@ impl Decoder {
                 other: self.req(value, fields, "other", |d, v| Some(d.option_reg(v)))?,
                 mask: self.req(value, fields, "mask", Self::lane_mask)?,
             }),
+            "simd.select" => Some(MirInstr::SimdSelect {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                mask: self.req(value, fields, "mask", Self::reg)?,
+                on_true: self.req(value, fields, "on_true", Self::reg)?,
+                on_false: self.req(value, fields, "on_false", Self::reg)?,
+            }),
+            "simd.extract" => Some(MirInstr::SimdExtract {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                value: self.req(value, fields, "value", Self::reg)?,
+                index: self.req(value, fields, "index", Self::reg)?,
+            }),
+            "simd.insert" => Some(MirInstr::SimdInsert {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                value: self.req(value, fields, "value", Self::reg)?,
+                element: self.req(value, fields, "element", Self::reg)?,
+                index: self.req(value, fields, "index", Self::reg)?,
+            }),
+            "simd.reduce" => Some(MirInstr::SimdReduce {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                value: self.req(value, fields, "value", Self::reg)?,
+                op: self.req(value, fields, "op", Self::simd_reduction)?,
+            }),
             "try" => {
                 let body = self.req(value, fields, "body", |d, v| Some(d.region_blocks(v)))?;
                 let mut error = self

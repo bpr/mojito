@@ -803,6 +803,32 @@ impl FnLowering<'_> {
                     Err(self.unsupported_reg(format!("the symbolic lane mask `{mask}`"), *dest))
                 }
             },
+            MirInstr::SimdSelect {
+                dest,
+                mask,
+                on_true,
+                on_false,
+            } => self.lower_simd_select(ctx, *dest, *mask, *on_true, *on_false),
+            MirInstr::SimdExtract { dest, value, index } => {
+                self.lower_simd_extract(ctx, *dest, *value, *index)
+            }
+            MirInstr::SimdInsert {
+                dest,
+                value,
+                element,
+                index,
+            } => self.lower_simd_insert(ctx, *dest, *value, *element, *index),
+            MirInstr::SimdReduce { dest, value, op } => {
+                let Some((dtype, width)) = self.func.reg_types.get(&value.0).and_then(simd_dims)
+                else {
+                    return Err(self.unsupported_reg("SIMD reduction operand type".into(), *dest));
+                };
+                let method = match op {
+                    mojito_types::mlir::SimdReduction::And => "reduce_and",
+                    mojito_types::mlir::SimdReduction::Or => "reduce_or",
+                };
+                self.lower_simd_reduce(ctx, *dest, *value, dtype, width as usize, method)
+            }
             MirInstr::If {
                 results,
                 cond,

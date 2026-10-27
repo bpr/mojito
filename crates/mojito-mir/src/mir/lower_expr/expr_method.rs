@@ -51,6 +51,9 @@ impl<'a> Flatten<'a> {
         if let Some(op) = Self::checked_mlir_op(call) {
             return self.lower_mlir_op(call, op, args);
         }
+        if let Some(op) = Self::checked_simd_receiver_op(call) {
+            return self.lower_simd_receiver_op(call, op, object, args);
+        }
         if let Some(dest) = self.method_call_value_form(call, object, method, args, kwargs) {
             return dest;
         }

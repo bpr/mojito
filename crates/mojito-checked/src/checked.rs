@@ -1117,6 +1117,12 @@ pub enum SemanticAdjustment {
     /// `index` values (`__mlir_op.`pop.add`(a, b)`). MIR lowers it to the
     /// instruction [`mojito_types::mlir::MlirOp::lowering`] names.
     MlirOp(mojito_types::mlir::MlirOp),
+    /// A `SIMD` method whose upstream body is one `pop.simd` lane op over
+    /// its receiver and arguments, in that order: `m.select(a, b)` is
+    /// `pop.simd.select`, `m.reduce_and()` and `m.reduce_or()` the `bool`
+    /// reductions. A scalar or literal case of `select` splats to the
+    /// result type first, as upstream's implicit `SIMD` constructor does.
+    SimdReceiverOp(mojito_types::mlir::MlirOp),
     /// A sugar written as the construction it stands for: an initializer
     /// list `{}` / `{a, b}` at the type its context expects (upstream's
     /// set-initializer literal, emitted as the construction `T(a, b)` of that

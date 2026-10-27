@@ -293,7 +293,11 @@ impl Table<'_> {
             | MirInstr::MakeSimd { .. }
             | MirInstr::SimdCast { .. }
             | MirInstr::SimdBitcast { .. }
-            | MirInstr::SimdShuffle { .. } => true,
+            | MirInstr::SimdShuffle { .. }
+            | MirInstr::SimdSelect { .. }
+            | MirInstr::SimdExtract { .. }
+            | MirInstr::SimdInsert { .. }
+            | MirInstr::SimdReduce { .. } => true,
             MirInstr::GetField { base, .. } => self
                 .reg_types
                 .get(&base.0)

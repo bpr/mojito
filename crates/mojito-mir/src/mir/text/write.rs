@@ -1535,6 +1535,50 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("mask", lane_mask(mask)),
             ],
         ),
+        MirInstr::SimdSelect {
+            dest,
+            mask,
+            on_true,
+            on_false,
+        } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("mask", reg_value(*mask)),
+                ("on_true", reg_value(*on_true)),
+                ("on_false", reg_value(*on_false)),
+            ],
+        ),
+        MirInstr::SimdExtract { dest, value, index } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("value", reg_value(*value)),
+                ("index", reg_value(*index)),
+            ],
+        ),
+        MirInstr::SimdInsert {
+            dest,
+            value,
+            element,
+            index,
+        } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("value", reg_value(*value)),
+                ("element", reg_value(*element)),
+                ("index", reg_value(*index)),
+            ],
+        ),
+        MirInstr::SimdReduce { dest, value, op } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("value", reg_value(*value)),
+                ("op", op.mnemonic().into()),
+            ],
+        ),
         MirInstr::Try {
             label,
             error,
