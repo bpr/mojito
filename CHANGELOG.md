@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A compile-time call binds its callee's own compile-time parameters as a
+  run-time call does, over the callee's classified signature, so a
+  signature, field type, or parameter default calling a callee generic
+  over a type (`SIMD[DType.int32, idt(n)]`), over a `DType`
+  (`bit_width_of[dt]() // 8`, `_dtype: DType = w[dtype]()`), or with a
+  defaulted or explicit type parameter, which was rejected as "not an
+  associated comptime expression", runs as at the pin (R397). A builtin
+  body over a type parameter folds (`_select_register_value`), and a
+  static method's parameter default reading its struct's binder
+  (`[m: Int = Self.n + 1]`), which failed elaboration, takes the
+  receiver's argument.
 - `SIMD`'s `__abs__`, `__floor__`, `__ceil__`, `__trunc__`,
   `is_power_of_two`, `select`, and `cast` are upstream's bodies in
   `std.simd`, and `SIMD` declares `Absable`, `Ceilable`, `Floorable`, and

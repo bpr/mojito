@@ -1149,14 +1149,19 @@ which `resolve_param_arg` and origin binding also record at the argument
 `Ty` (`NodeFacts::type_operand`, `Checker::type_value`); the op holds them,
 and MIR reads them instead of the spelling. A closed one in a plain `def`
 (`g[h(3)]()`) is lifted the same way, over no binder. A call of a
-module `def` or a static method over `Int` and `Bool` values lifts nothing:
+module `def` or a static method over compile-time values lifts nothing:
 it is the application of that callable to the parameter expressions of its
 arguments (`Checker::called_application`, over the `applicable_functions`
 collected before any declaration is checked), as the pin's call node is.
 The application names the MIR declaration of the one overload the
 arguments select, and lists the callee's own compile-time arguments, then
 its runtime ones in declared order with a declared default where the call
-omits one, so `d(1)` and `d(1, 3)` are one node. A static method of a
+omits one, so `d(1)` and `d(1, 3)` are one node. The callee's compile-time
+parameters bind as the run-time call binds them (`resolve_use_params`,
+over the callee's signature classified as its own check classifies it):
+explicitly, by inference from the arguments, or by default, a type
+parameter's argument the type's shape, so `idt(n)` over `def
+idt[T: ImplicitlyCopyable](x: T) -> T` is `idt[Int](n)`. A static method of a
 generic struct is applied first to the instance it is called on
 (`G[n].w()`, `Self.w()`), a type that is still a pattern; a builtin one
 whose body folds binds its struct's parameters from that instance instead,

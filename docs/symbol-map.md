@@ -1843,19 +1843,27 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `def`, a static method, or a struct's `__init__` (a construction, the
   synthesized fieldwise one included, listed under the struct's name with
   `ApplicableFunction::constructs`, its result the instance it constructs)
-  over `Int` and `Bool` values is instead the application of the callable
+  over compile-time scalar, `DType`, and type arguments is instead the application of the callable
   itself (`Checker::called_application`, tried
   first by `lifted_application` and alone in a signature or a field type):
   `applicable_functions` (`checker/comptime_validation.rs`, run by
   `check_program`) collects every
   overload under the name a call spells (`ApplicableFunction`, built by
   `ApplicableShape::applicable`) before any declaration is checked,
-  `selected_application` picks the one overload the arguments bind and
+  `classify_applicable_signatures` classifies each one's own compile-time
+  parameters as its check does, under the same binder owner, into its
+  `AppliedSignature` (with its result and its `SlotType::Declared`
+  runtime parameter types) before the builtin folds and again after the
+  traits, `selected_application` picks the one overload the arguments bind and
   type (several tied by value, such as `__init__(IntLiteral)` beside
   `__init__(Int)`, by the overload the run-time call selects,
   `run_time_overload`), `applied_owner` resolves a static call's struct and instance
-  (`S.f(n)`, `G[n].f()`, `Self.f()`), `applied_arguments` orders the
-  compile-time and runtime arguments through `ast::call::match_call_slots`
+  (`S.f(n)`, `G[n].f()`, `Self.f()`), `applied_arguments` binds the
+  callee's compile-time parameters through `resolve_use_params`, as a
+  run-time call does (explicit bracket arguments, inference from the
+  runtime arguments its parameter types read, defaults; a type
+  parameter's argument its type shape), and orders the runtime arguments
+  through `ast::call::match_call_slots`
   with `applied_default` for an omitted one, `calls_raising_application`
   backs the raising-callee rejection in `eval_associated_ct`,
   `solve_applied_args` (`checker/generics.rs`, from `solve_value_args`)
@@ -1869,7 +1877,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `bound_bracket_attribute` makes the argument's attribute. A call of an
   `@always_inline("builtin")` callable whose body folds is that body instead
   (`ApplicableFunction::folded_body`, a `FoldedBody`, replaced over the
-  call's arguments): an `__init__`'s is the field list its body stores
+  call's arguments, a type parameter's slot a type binder
+  `ApplicableFunction::argument_slots` declares and the call binds to its
+  argument's type): an `__init__`'s is the field list its body stores
   (`FoldedBody::Fields`, from `folded_construction`, which binds `self` to
   the fields stored so far so a body reads one back through
   `struct_value_field`), which a call builds into the struct value

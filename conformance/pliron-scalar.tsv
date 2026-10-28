@@ -687,6 +687,7 @@ assets/ok/param_expr_normal_form.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/param_expr_overflow.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/param_expr_where.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/param_expr_where_assumption.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parameter_default_dtype_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_list_of_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_list_raw_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_list_raw_values.mojo	-	ineligible	no-scalar-entry-shape
@@ -897,6 +898,8 @@ assets/ok/set_methods_growth.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/set_variadic_constructor.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/shadowed_local_callable_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/shadowing_constants.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/signature_builtin_select_application.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/signature_generic_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_abi_crossings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_arithmetic_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bitwise_dunders.mojo	-	ineligible	no-scalar-entry-shape

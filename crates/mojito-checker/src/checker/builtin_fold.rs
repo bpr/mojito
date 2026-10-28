@@ -10,7 +10,7 @@
 //! `twice(n)` over `return n + n` and `n + n` spelled in place are one
 //! expression.
 
-use super::comptime_validation::{ApplicableDeclaration, FoldedBody, applicable_declarations};
+use super::comptime_validation::{ApplicableDeclaration, FoldedBody};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{InfixOp, PrefixOp};
@@ -32,11 +32,11 @@ impl Checker {
         if let Some(error) = self.builtin_convention_rejection(stmts) {
             return Err(error);
         }
-        let declarations: Vec<_> =
-            applicable_declarations(stmts, &*self.overload_sets, &*self.program_constants)
-                .into_iter()
-                .filter(|declaration| declaration.function.inline == InlineLevel::Builtin)
-                .collect();
+        let declarations: Vec<_> = self
+            .listed_declarations(stmts)
+            .into_iter()
+            .filter(|declaration| declaration.function.inline == InlineLevel::Builtin)
+            .collect();
         if let Some(error) = declarations.iter().find_map(|declaration| {
             self.in_owner_scope(declaration, |checker| {
                 checker.builtin_body_rejection(declaration)
@@ -59,15 +59,7 @@ impl Checker {
                 else {
                     return true;
                 };
-                if let Some(entry) = self
-                    .applicable_functions
-                    .get_mut(&declaration.name)
-                    .and_then(|overloads| {
-                        overloads
-                            .iter_mut()
-                            .find(|function| function.symbol() == declaration.function.symbol())
-                    })
-                {
+                if let Some(entry) = self.applicable_entry(declaration) {
                     entry.folded_body = Some(body);
                 }
                 false
@@ -88,20 +80,11 @@ impl Checker {
         f: impl FnOnce(&mut Self, usize) -> T,
     ) -> Option<T> {
         self.in_owner_scope(declaration, |checker| {
-            let function = &declaration.function;
-            let symbol = function.symbol();
-            let slots = function.argument_slots(checker.self_ty.as_ref())?;
-            checker.push_param_scope(&[]);
+            let slots = declaration
+                .function
+                .argument_slots(checker.self_ty.as_ref())?;
+            checker.push_param_scope(&slots);
             let level = checker.tparams.len() - 1;
-            if let Some(scope) = checker.vparams.last_mut() {
-                scope.extend(slots.iter().enumerate().map(|(slot, (name, ty))| {
-                    let binder = super::annotations::builtin_body_binder(symbol, slot, name);
-                    (
-                        (*name).to_string(),
-                        super::annotations::value_binder_expr(binder.id, name, ty),
-                    )
-                }));
-            }
             checker.local_comptime_parameters.push(HashMap::new());
             let result = f(checker, level);
             checker.local_comptime_parameters.pop();
@@ -221,7 +204,7 @@ impl Checker {
         struct Operations<'a> {
             checker: &'a Checker,
             /// The names of the body's operands typed `Self`.
-            receivers: Vec<&'a str>,
+            receivers: Vec<String>,
             /// The methods of the struct declaring the body.
             methods: &'a [mojito_ast::ast::Method],
             found: bool,
@@ -238,7 +221,7 @@ impl Checker {
                     .iter()
                     .filter(|declared| declared.name == method)
                     .collect();
-                self.receivers.contains(&name.as_str())
+                self.receivers.contains(name)
                     && !overloads.is_empty()
                     && overloads.iter().all(|declared| {
                         !matches!(
@@ -295,8 +278,8 @@ impl Checker {
                 Some(
                     slots
                         .into_iter()
-                        .filter(|(_, ty)| ty == self_ty)
-                        .map(|(name, _)| name)
+                        .filter(|slot| slot_ty(slot) == Some(self_ty))
+                        .map(|slot| slot.name().to_string())
                         .collect(),
                 )
             })
@@ -376,21 +359,17 @@ impl Checker {
         level: usize,
         self_ty: &Ty,
     ) -> Option<()> {
-        let symbol = declaration.function.symbol();
         let slots = declaration.function.argument_slots(Some(self_ty))?;
-        if slots.iter().all(|(_, ty)| ty != self_ty) {
+        if slots.iter().all(|slot| slot_ty(slot) != Some(self_ty)) {
             return Some(());
         }
         let fields = self.declared_fields(declaration)?;
-        for (slot, (name, ty)) in slots.iter().enumerate() {
-            if ty != self_ty {
+        for slot in &slots {
+            if slot_ty(slot) != Some(self_ty) {
                 continue;
             }
-            let operand = super::annotations::value_binder_expr(
-                super::annotations::builtin_body_binder(symbol, slot, name).id,
-                name,
-                ty,
-            );
+            let name = slot.name();
+            let operand = super::annotations::value_binder_expr(slot.id().clone(), name, self_ty);
             let read = fields
                 .iter()
                 .map(|(field, field_ty)| {
@@ -428,7 +407,7 @@ impl Checker {
     /// where `Self` and its parameters are the struct's own binders, as the
     /// struct's members are checked; `None` when its shell is not yet
     /// registered.
-    fn in_owner_scope<T>(
+    pub(super) fn in_owner_scope<T>(
         &mut self,
         declaration: &ApplicableDeclaration<'_>,
         f: impl FnOnce(&mut Self) -> T,
@@ -486,16 +465,15 @@ impl Checker {
         let mut slots: Vec<ParamExpr> = declaration
             .function
             .argument_slots(Some(&self_ty))?
-            .into_iter()
-            .enumerate()
-            .map(|(slot, (name, ty))| {
-                super::annotations::value_binder_expr(
-                    super::annotations::builtin_body_binder(symbol, slot, name).id,
-                    name,
-                    &ty,
-                )
+            .iter()
+            .map(|slot| match slot {
+                ParamDecl::Value { id, name, ty, .. } => {
+                    Some(super::annotations::value_binder_expr(id.clone(), name, ty))
+                }
+                ParamDecl::Type { .. } => super::annotations::type_parameter(slot)
+                    .map(|ty| self.param_context.type_shape(ty)),
             })
-            .collect();
+            .collect::<Option<_>>()?;
         if !self.enclosing_type_params.is_empty() {
             slots.insert(0, self.param_context.type_shape(self_ty.clone()));
         }
@@ -701,6 +679,17 @@ fn non_builtin_call() -> TypeError {
 /// statement.
 fn early_return() -> TypeError {
     builtin_rejection("does not support MLIR operation lit.return")
+}
+
+/// The type of an argument slot ([`ApplicableFunction::argument_slots`])
+/// holding a value; `None` for a type slot.
+///
+/// [`ApplicableFunction::argument_slots`]: comptime_validation::ApplicableFunction::argument_slots
+const fn slot_ty(slot: &ParamDecl) -> Option<&Ty> {
+    match slot {
+        ParamDecl::Value { ty, .. } => Some(ty),
+        ParamDecl::Type { .. } => None,
+    }
 }
 
 /// Whether `body` holds a `return` anywhere.

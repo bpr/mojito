@@ -3654,6 +3654,8 @@ impl Checker {
                 } = decl
                 {
                     TyArg::Val(default_argument(
+                        &self.param_context,
+                        decls,
                         value,
                         &value_environment,
                         ty,
@@ -3784,7 +3786,14 @@ impl Checker {
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value.clone()));
                     } else if let Some(value) = default {
-                        let value = default_argument(value, &value_environment, ty, pname)?;
+                        let value = default_argument(
+                            &self.param_context,
+                            decls,
+                            value,
+                            &value_environment,
+                            ty,
+                            pname,
+                        )?;
                         value_environment
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value));
@@ -4531,6 +4540,8 @@ fn with_trait_arguments(
 /// `environment`: the value it folds to, or a closed application it denotes
 /// (`e: Extent = Extent(2, 3)`), which the elaborator evaluates.
 fn default_argument(
+    params: &mojito_types::param_expr::ParamContext,
+    decls: &[ParamDecl],
     value: &ParamExpr,
     environment: &HashMap<String, CtValue>,
     ty: &Ty,
@@ -4541,9 +4552,24 @@ fn default_argument(
         Ok(value) => value,
         // A closed application the elaborator evaluates, or a default over
         // binders still open at the use (`Self.dtype` at a receiver in its
-        // struct's own generic body), which each instance closes.
+        // struct's own generic body), which each instance closes. The
+        // earlier parameters it reads are their arguments (`w[dtype]()` at
+        // `dtype = DType.float32`).
         Err(_) if value.meta().as_value() == Some(ty) => {
-            return Ok(CtValue::Expr(value.clone()));
+            let mut bindings = mojito_types::param_expr::ParamBindings::new();
+            for decl in decls {
+                if let Some(argument) = environment
+                    .get(decl.name().trim_start_matches('*'))
+                    .and_then(|argument| params.constant(argument.clone()).ok())
+                {
+                    bindings.bind(decl.id().clone(), argument);
+                }
+            }
+            return Ok(CtValue::Expr(
+                params
+                    .replace(value, &bindings)
+                    .unwrap_or_else(|_| value.clone()),
+            ));
         }
         Err(_) => return Err(TypeError::NotComptime(context())),
     };

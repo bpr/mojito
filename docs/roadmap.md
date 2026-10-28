@@ -158,7 +158,8 @@ which names the upstream pass each one follows. Each is measured by the
 - [ ] **R1528 An application takes only scalar parameters**
 
   `ApplicableShape::applicable` (`checker/comptime_validation.rs`) admits
-  only by-value `Int`, `UInt`, `Bool`, and `Float64` runtime parameters, so
+  only by-value scalar, `DType`, `Self`, and type-parameter-typed runtime
+  parameters, so
   a call over a `String`, a struct, or a `*xs: T` collector denotes nothing
   in a type, where the pin keeps each as its callee's application.
   - Probe: `f[1](SIMD[DType.int8, total(1, 1)](1))` over `def f[n:
@@ -205,8 +206,15 @@ which names the upstream pass each one follows. Each is measured by the
     `[1, 1]` at the pin; Mojito says "unsupported associated comptime
     member access", since `M.__init__` takes a struct, so no
     `FoldedBody::Fields` is built for it.
+  - A runtime parameter typed by the callee's own type parameter (`x:
+    T`) applies only at a scalar or `DType` argument
+    (`declared_slot_value`).
+  - Probe: `SIMD[DType.int32, inf(SIMD[DType.int32, n](0))]` over `def
+    inf[n: Int, //](x: SIMD[DType.int32, n]) -> Int` is "not an
+    associated comptime expression"; the pin prints `[1, 1]` for `n = 2`.
+  - A callee with a pack, callable, or origin compile-time parameter is
+    not listed (`ApplicableShape::applicable`).
   - Plan: `R1472-a-symbolic-tuple-list-or-struct-plan.md`, Slice 1.
-  - Related to R397 (a callee's own type parameters).
   - Found while landing R1472 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -5553,37 +5561,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `Float64` and a `String`.
   - Model: Fable, Not Planned.
 
-- [ ] **R397 A signature that calls a function generic over a type is
-  rejected**
-
-  Problem: `def gen[n: Int]() -> SIMD[DType.int32, idt(n)]:` for `def
-  idt[T: Copyable](x: T) -> T` is rejected with "not a compile-time Int
-  constant: not an associated comptime expression", where the pin runs it.
-  - A callee's own compile-time parameters are applied by name when each is
-    an `Int` or a `Bool` the call spells (`twice[n]()`).
-  - A type parameter, a parameter the call leaves to inference, and one
-    with a default are left out (`ApplicableShape::applicable`,
-    `checker/comptime_validation.rs`).
-  - A default argument that reads a name the calling declaration binds too
-    is left out as well, since the default belongs to the callee's scope
-    (`Checker::applied_default`).
-  - In a body such a call is lifted whole, so it runs there.
-  - Probe: `def g[n: Int](t: Tag[_select_register_value(n > 2, n, 0)])`
-    over upstream's `std.utils._select` and `struct Tag[k: Int]` stops the
-    same way; `g[1](Tag[0]())` runs at the pin. Its body is foldable (a
-    builtin `pick(c: Bool, a: Int, b: Int)` over the same `pop.select`
-    applies), so only the type parameter `T` blocks it.
-  - Probe: a parameter default applied over an earlier `DType` binder,
-    `def f[dtype: DType, _dtype: DType = w[dtype]()]()` over `def
-    w[dt: DType]() -> DType`, stops with "not a compile-time Int constant:
-    not an associated comptime expression", as does a method's `_dtype:
-    DType = w[Self.dtype]()`; the pin prints `32`. Only an `Int`, `UInt`,
-    `Bool`, `Float64`, or `index` binder is applicable. Upstream's
-    `SIMD.to_bits` default spells it (R1578).
-  - Found while landing the callee shapes a signature applies (2026-10-06).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1588 A `comptime assert` over a parameter that the pin folds to
   `False` does not end a return path**
 
@@ -5835,6 +5812,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     value `r`, or `len(P[Int, Bool].Ts)` over `struct P[*Ts: Movable]`,
     fails with "no overload matches" for `len`, where the pin prints `2`
     (found while landing R1547).
+  - Probe: `t.k` over `t: Tag[idt(n)]` in `def g[n: Int]` reports "type
+    'Tag[idt[Int](n)]' has no field 'k'", where the pin prints `1` for
+    `g[1](Tag[idt(1)]())`; `t.key()` over a method returning `Self.k` runs.
   - Found while landing R1401 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10064,9 +10044,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `bitcast[DType.uint8, 4](UInt32(4631))` prints `[23, 18, 0,
     0]` at the pin.
   - `bitcast`'s asserts compare `src_dtype == .float16` (R1238).
-  - `to_bits`'s default `_uint_type_of_width[bit_width_of[Self.dtype]()]()`
-    is an application over a `DType` binder (R397).
-  - Depends on R1576, R397, and R1238.
+  - Depends on R1576 and R1238.
   - Model: Fable, Planned.
 
 - [ ] **R1579 `SIMD.__hash__` is a hash-leaf rule, where upstream's is a

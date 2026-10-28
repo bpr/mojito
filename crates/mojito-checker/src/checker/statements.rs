@@ -140,8 +140,10 @@ impl Checker {
             }
         }
         drop(phase);
-        // A builtin body folds before any signature or field type calls it.
+        // A builtin body folds before any signature or field type calls it,
+        // and over the callable's classified parameters.
         let phase = timing::span("declarations.builtin_folds");
+        self.classify_applicable_signatures(stmts);
         self.fold_builtin_bodies(stmts)?;
         self.compile_application_constraints(stmts);
         drop(phase);
@@ -262,6 +264,9 @@ impl Checker {
                 waiting_aliases.push(index);
             }
         }
+        // A callable bounded by a trait or typed by an alias this module
+        // declares classifies once they have registered.
+        self.classify_applicable_signatures(stmts);
         drop(phase);
         let phase = timing::span("declarations.types");
         let mut waiting_conformers = Vec::new();

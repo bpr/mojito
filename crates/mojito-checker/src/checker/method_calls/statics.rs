@@ -303,6 +303,10 @@ impl Checker {
                 .kw_variadic
                 .as_ref()
                 .map(|ty| self.resolve_assoc_ty(&substitute_at(ty, info, &tyargs)));
+            // A default reading the struct's own binder (`[m: Int =
+            // Self.n + 1]`) reads the receiver's argument, as a method
+            // call's does.
+            let at_receiver = self.method_decls_at_receiver(sig, info, &tyargs);
             let Ok((
                 params,
                 variadic,
@@ -312,7 +316,7 @@ impl Checker {
                 bracket_attributes,
             )) = self.instantiate_method_generics(
                 &format!("{sname}.{method}"),
-                sig,
+                at_receiver.as_ref().unwrap_or(sig),
                 &receiver_params,
                 receiver_variadic.as_ref(),
                 receiver_kw_variadic.as_ref(),

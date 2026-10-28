@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	890
+# swept-count	891
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -748,6 +748,7 @@ assets/type_error/set_display_requires_deinitable_element.mojo	compile-reject	ag
 assets/type_error/set_element_ref_write.mojo	runs	subset	the pin runs it;Mojito rejects: must be mutable
 assets/type_error/set_requires_hashable_element.mojo	compile-reject	agree	error: 'Set' parameter 'T' has 'KeyElement' type, but value has type 'AnyStruct[Elem]'
 assets/type_error/setter_without_getter.mojo	compile-reject	agree	error: 'Sink' has '__setitem__' but no '__getitem__' method
+assets/type_error/signature_application_unfolded.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 't' cannot be converted from 'Tag[Int(1)]' to 'Tag[idt[Int](Int(1))]'
 assets/type_error/simd_bool_lane_multiply.mojo	compile-reject	agree	error: 'pop.mul' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got '!kgen.simd<2, bool>'
 assets/type_error/simd_bool_lane_subtract.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_bool_mask_inplace_add.mojo	compile-reject	agree	error: function instantiation failed

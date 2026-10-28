@@ -2268,6 +2268,38 @@ fn called_callable_shapes_keep_application_identity() {
 }
 
 #[test]
+fn called_generic_callable_binds_its_parameters_as_a_call_does() {
+    let prefix = "def idt[T: ImplicitlyCopyable](x: T) -> T:\n    return x\n\n\
+        def d[n: Int = 2]() -> Int:\n    return n\n\n\
+        def many[*Ts: AnyType](n: Int) -> Int:\n    return n\n\n\
+        def generic[n: Int]() -> SIMD[DType.int32, idt(n)]:\n    \
+        return SIMD[DType.int32, idt(n)](7)\n\n\
+        def defaulted[n: Int]() -> SIMD[DType.int32, d()]:\n    \
+        return SIMD[DType.int32, d()](n)\n\n";
+    ok_std(&format!(
+        "{prefix}def main():\n    var a: SIMD[DType.int32, idt(2)] = generic[2]()\n    \
+         var b: SIMD[DType.int32, d[2]()] = defaulted[3]()\n"
+    ));
+    // The type parameter is bound by the argument, and the application is
+    // not the value it computes.
+    let computed = check_with_std(&format!(
+        "{prefix}def main():\n    var a: SIMD[DType.int32, 2] = generic[2]()\n"
+    ))
+    .expect_err("an application is not its value");
+    assert!(matches!(computed, TypeError::TypeMismatch { found, .. }
+            if found == "SIMD[DType.int32, idt[Int](2)]"));
+    // A callable over a pack is applied by no call yet (R1528).
+    assert!(
+        check_with_std(&format!(
+            "{prefix}def packed[n: Int]() -> SIMD[DType.int32, many(n)]:\n    \
+             return SIMD[DType.int32, many(n)](7)\n\n\
+             def main():\n    var p = packed[2]()\n"
+        ))
+        .is_err()
+    );
+}
+
+#[test]
 fn comptime_not_and_conditional_compile_to_parameter_operators() {
     let prefix = "def h(n: Int) -> Int:\n    return n * 2\n\n\
         struct Flag[b: Bool]:\n    var x: Int\n\n\
