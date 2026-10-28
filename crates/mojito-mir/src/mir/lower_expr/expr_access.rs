@@ -74,17 +74,21 @@ impl<'a> Flatten<'a> {
         if e.is_simd_storage() {
             return self.expr(object);
         }
-        // `v.length` and `v.dtype` on a SIMD value (or `DType.<name>`) are
-        // the lane slots: a known one is a constant, and one a generator
-        // names is the evaluation of its parameter expression.
+        // `v.length` on a SIMD value is its `SIMDLength` parameter, after
+        // a value receiver (`f().length`) runs.
+        if let Some(length) = e.simd_length() {
+            if !object.is_name() && object.ty().is_some() {
+                self.expr(object);
+            }
+            return self.param_value_register(e, length);
+        }
+        // `v.dtype` on a SIMD value (or `DType.<name>`) is the lane slot: a
+        // known one is a constant, and one a generator names is the
+        // evaluation of its parameter expression.
         let folded = node
             .adjustments
             .iter()
             .find_map(|adjustment| match adjustment {
-                SemanticAdjustment::SimdLength { width } => Some(match width.clone() {
-                    mojito_types::types::SimdWidth::Known(width) => Ok(Const::Int(width)),
-                    mojito_types::types::SimdWidth::Expr(expr) => Err(expr),
-                }),
                 SemanticAdjustment::DtypeConstant { dtype } => Some(match dtype.clone() {
                     mojito_types::types::SimdDtype::Known(dtype) => Ok(Const::Dtype(dtype)),
                     mojito_types::types::SimdDtype::Expr(expr) => Err(expr),

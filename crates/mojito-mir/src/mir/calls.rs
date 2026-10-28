@@ -482,9 +482,11 @@ impl<'a> Flatten<'a> {
         // An implicitly converted temporary (`f(String("abc"))` at a view
         // parameter) materializes inside the conversion lowering instead: the
         // slot holds the unconverted source and the callee receives the view.
-        // An `Indexer` normalized to `Int` likewise passes its result.
+        // An `Indexer` normalized to `Int` and a `SIMDLength` converted to a
+        // vector likewise pass their results.
         let converted = expression.implicit_conversion().is_some()
-            || expression.index_normalization().is_some();
+            || expression.index_normalization().is_some()
+            || expression.simd_from_length().is_some();
         if let Some(owner) = mojito_checked::checked::materialized_borrow_owner(adjustments)
             && !converted
         {
@@ -859,6 +861,9 @@ impl<'a> Flatten<'a> {
                 } => self.materialize_literal(value, target, site.clone()),
                 mojito_checked::checked::CheckedCallValueAdjustment::SplatScalar { target } => {
                     self.splat_scalar(value, target, site.clone())
+                }
+                mojito_checked::checked::CheckedCallValueAdjustment::SimdFromLength { target } => {
+                    self.simd_from_length(value, target, site.clone())
                 }
             };
         }

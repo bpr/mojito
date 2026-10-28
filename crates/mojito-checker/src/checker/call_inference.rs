@@ -392,9 +392,18 @@ impl Checker {
                     });
                 }
                 let dtype = self.dtype_from_arg(&param_args[0])?;
-                self.record_bracket_attributes(span, vec![dtype_attribute(&param_args[0], &dtype)]);
+                self.record_bracket_attributes(
+                    span.clone(),
+                    vec![dtype_attribute(&param_args[0], &dtype)],
+                );
+                let ty = simd_of(dtype.clone(), SimdWidth::Known(1))?;
+                if let [arg] = args
+                    && self.simd_length_construction(&span, &ty, arg, &self.infer(arg)?)?
+                {
+                    return Ok(ty);
+                }
                 self.check_simd_args(&dtype, &SimdWidth::Known(1), args)?;
-                simd_of(dtype, SimdWidth::Known(1))
+                Ok(ty)
             }
             "List" => self.infer_list_construction(&span, param_args, args),
             "Set" => {

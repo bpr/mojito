@@ -1413,7 +1413,8 @@ an explicit `MaterializeLiteral` instruction.
 
 `SIMD[DType.<dt>, <width>]` is a fixed-width vector of `<width>` lanes of element type
 `<dt>` — a built-in **parameterized** type. `<width>` is a comptime `SIMDLength`
-(represented by a compile-time `Int`) and must be a power of two; `_` in a
+(upstream's library struct, bundled as `std/builtin/simd_length.mojo`; an
+`Int` or literal converts to one) and must be a power of two; `_` in a
 construction infers the width from its explicit lanes. The transitional
 `SIMDSize` spelling was removed upstream (2026-08) and rejects like any
 unknown name. `<dt>` is written `DType.<dt>` where
@@ -1444,7 +1445,9 @@ argument, never as a value).
 - **Generic widths**: a `def` may take its width as a `[w: SIMDLength]` value
   parameter and use it in `SIMD[...]` positions; each call monomorphizes, and an
   invalid bound width is rejected during checked elaboration. (A struct-parameter
-  width stays deferred.)
+  width stays deferred.) `v.length` is the vector's `SIMDLength` parameter, and a
+  `SIMDLength` converts to any vector through `SIMD`'s `@implicit
+  __init__(SIMDLength)` (`Int(w)`, `n * w`, `var x: Int = v.length`).
 - **Operators** (elementwise, both operands the same SIMD type; a numeric *literal*
   splats to the other operand's type): `+ - *` on any numeric element type, `/` on
   `float32`, and unary `-v` on numeric lanes (integer lanes wrap). Comparisons

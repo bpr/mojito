@@ -781,6 +781,13 @@ upstream's `pop.select`: `on_true` where the one-lane `bool` `condition`
 checked `MlirOp` vocabulary grows and the bundled library gains
 `std.utils._select`.
 
+The package format moves to `mojito-package 128` with schema 1.125
+unchanged (R1539): the bundled library gains upstream's
+`std.builtin.simd_length`, the checker's `SimdLengthBinders` table is gone,
+`v.length`'s checked adjustment carries its `SIMDLength` parameter, and the
+checked adjustments gain `SimdFromLength` and rename `LiteralConstruction`
+to `ConvertedArgument`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1758,8 +1765,7 @@ mojito-package 82
   its lowered part beside an integer constant's value, format 105), and
   a declaration's residue holds the module-scope compile-time facts its
   names bind (tables `Elaborated`, `ComptimeDtypes`, `ComptimeParameters`,
-  `ComptimeValues`, and `SimdLengthBinders`, the last keyed by the
-  binders' owner); no module has a checker record of its own.
+  and `ComptimeValues`); no module has a checker record of its own.
 - The importer maps the file (`PackageBytes`, `memmap2`) and decodes only
   the header eagerly. A cached package is written to
   a private partial file and renamed over its path, and removed only by

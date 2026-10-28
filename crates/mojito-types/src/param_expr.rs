@@ -4014,6 +4014,11 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
         ParamKind::Constant(value) => write!(f, "{value}"),
         ParamKind::DeclRef(reference) => write!(f, "{}", reference.name),
         ParamKind::IndexRef { depth, index } => write!(f, "${depth}.{index}"),
+        // A `SIMDLength`'s lane count shows as the length, as the pin
+        // spells a width (`SIMD[DType.int32, w]`).
+        ParamKind::Op { .. } if let Some(length) = crate::types::simd_length_of_image(expr) => {
+            write_expr(f, length, parent)
+        }
         ParamKind::Op { op, operands } => {
             let level = precedence(*op);
             if level < parent {

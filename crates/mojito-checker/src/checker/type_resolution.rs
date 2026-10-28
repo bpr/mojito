@@ -7,7 +7,7 @@
 use super::*;
 use mojito_types::origin::CallableEnvironment;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
-use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
+use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind, simd_length_image};
 
 /// Current Mojo treats a bare `def(...)` in a general type position (struct
 /// field, collection element) as a trait, not a storable callable-value type;
@@ -1209,24 +1209,17 @@ impl Checker {
         Ok(TyKind::ParamList(element).into())
     }
 
-    /// An `index` operand of an MLIR type spelling: a `SIMDLength`'s
-    /// `_mlir_value`, the length itself while `SIMDLength` is `Int` (R1535).
-    /// An `Int`'s `_mlir_value` is a scalar `!kgen.simd`, never an index, as
-    /// at the pin, so a symbolic operand must read a `SIMDLength` binder.
+    /// An `index` operand of an MLIR type spelling, a `SIMDLength`'s
+    /// `_mlir_value`, as the lane count it is ([`simd_length_image`]). An
+    /// `Int`'s `_mlir_value` is a scalar `!kgen.simd`, never an index, as
+    /// at the pin.
     fn mlir_index_operand(&self, arg: &mojito_ast::ast::ParamArg) -> Result<SimdWidth, TypeError> {
         let not_index = || mlir_operand_mismatch("index", "SIMDLength");
         let operand = mojito_types::types::mlir_value_operand(arg).ok_or_else(not_index)?;
-        let (width, _) = self.index_slot(&operand)?;
-        match &width {
-            SimdWidth::Expr(expr)
-                if !expr
-                    .as_decl_ref()
-                    .is_some_and(|reference| self.is_simd_length_binder(&reference.id)) =>
-            {
-                Err(not_index())
-            }
-            _ => Ok(width),
-        }
+        let lanes = self
+            .simd_length_lanes(&self.slot_value(&operand)?)
+            .ok_or_else(not_index)??;
+        Ok(integer_slot(&operand, lanes)?.0)
     }
 
     /// The type a bracket argument denotes where a trait is a type (a raw
@@ -4175,19 +4168,79 @@ impl Checker {
         &self,
         arg: &mojito_ast::ast::ParamArg,
     ) -> Result<(SimdWidth, Option<TyArg>), TypeError> {
-        let (width, attribute) = self.index_slot(arg)?;
+        let value = self.slot_value(arg)?;
+        let value = self.simd_length_lanes(&value).transpose()?.unwrap_or(value);
+        let (width, attribute) = integer_slot(arg, value)?;
         Ok((power_of_two_width(width)?, attribute))
     }
 
-    /// Evaluate an index-valued bracket argument (a width, an array size):
-    /// a comptime `Int`, or — while its declaration is a template — an
-    /// `Int` expression over value parameters in scope, beside its bracket
-    /// attribute.
-    pub(super) fn index_slot(
-        &self,
-        arg: &mojito_ast::ast::ParamArg,
-    ) -> Result<(SimdWidth, Option<TyArg>), TypeError> {
-        let value = match arg {
+    /// The `SIMDLength` parameter a width slot holds the lane count of:
+    /// the length itself where the slot holds its image (`w` of
+    /// `SIMD[dt, w]`), else [`Self::simd_length_of_lanes`].
+    pub(super) fn simd_length_parameter(&self, width: &SimdWidth) -> Option<ParamExpr> {
+        if let SimdWidth::Expr(lanes) = width
+            && let Some(length) = mojito_types::types::simd_length_of_image(lanes)
+        {
+            return Some(length.clone());
+        }
+        match self.simd_length_of_lanes(width)? {
+            CtValue::Expr(length) => Some(length),
+            closed => self.param_context.constant(closed).ok(),
+        }
+    }
+
+    /// The `SIMDLength` a width slot's lane count `lanes` is the image of:
+    /// upstream's `SIMDLength.__init__(Int)` applied to it, so four lanes
+    /// are the closed `SIMDLength(4)`. `None` when the bundled struct
+    /// converts no `Int`.
+    pub(super) fn simd_length_of_lanes(&self, lanes: &SimdWidth) -> Option<CtValue> {
+        let count = match lanes {
+            SimdWidth::Known(count) => self.param_context.constant(CtValue::Int(*count)).ok()?,
+            SimdWidth::Expr(expr) => expr.clone(),
+        };
+        let length: Ty = TyKind::Struct(
+            mojito_types::types::SIMD_LENGTH_TYPE_NAME.to_string(),
+            Vec::new(),
+        )
+        .into();
+        let length = self
+            .implicit_parameter_application(&Ty::int(), &length, |_| Some(count))
+            .ok()??;
+        Some(
+            length
+                .as_constant()
+                .cloned()
+                .unwrap_or(CtValue::Expr(length)),
+        )
+    }
+
+    /// The lane count `value` converts to when it is a `SIMDLength`, as
+    /// `SIMD`'s width slot holds it ([`simd_length_image`]). `None` for any
+    /// other value.
+    fn simd_length_lanes(&self, value: &CtValue) -> Option<Result<CtValue, TypeError>> {
+        let length = match value {
+            CtValue::Expr(expr) => expr.clone(),
+            value => self.param_context.constant(value.clone()).ok()?,
+        };
+        if !length
+            .meta()
+            .as_value()
+            .is_some_and(mojito_types::types::is_simd_length)
+        {
+            return None;
+        }
+        Some(
+            simd_length_image(&self.param_context, &length)
+                .map(|lanes| lanes.as_constant().cloned().unwrap_or(CtValue::Expr(lanes)))
+                .map_err(param_error),
+        )
+    }
+
+    /// The value an index-valued bracket argument evaluates to: a
+    /// compile-time value, or — while its declaration is a template — an
+    /// expression over value parameters in scope.
+    fn slot_value(&self, arg: &mojito_ast::ast::ParamArg) -> Result<CtValue, TypeError> {
+        Ok(match arg {
             mojito_ast::ast::ParamArg::Value(expr) => {
                 let _lifting = self.lifting_position();
                 match self.eval_associated_ct(expr) {
@@ -4226,18 +4279,7 @@ impl Checker {
             mojito_ast::ast::ParamArg::Named { .. } => {
                 return Err(TypeError::BadSimdWidth("a named argument".to_string()));
             }
-        };
-        let attribute = bracket_attribute(arg, &TyArg::Val(value.clone()));
-        if let CtValue::Expr(expr) = value {
-            if !expr.meta().is_integer() {
-                return Err(TypeError::BadSimdWidth(expr.to_string()));
-            }
-            return Ok((SimdWidth::Expr(expr), attribute));
-        }
-        let w = mojito_types::param_expr::fold::integer_value(&value)
-            .and_then(|width| width.to_i64())
-            .ok_or_else(|| TypeError::BadSimdWidth(value.to_string()))?;
-        Ok((SimdWidth::Known(w), attribute))
+        })
     }
 
     /// The read a type-spelled bracket argument denotes in a value slot,
@@ -4459,6 +4501,25 @@ fn mlir_operand_mismatch(expected: &str, holder: &str) -> TypeError {
 
 /// `width` as a SIMD length, which must be a power of two; a symbolic one
 /// is its instantiation's to check.
+/// An index-valued bracket argument's slot: a symbolic integer expression
+/// or a known count, beside its bracket attribute.
+fn integer_slot(
+    arg: &mojito_ast::ast::ParamArg,
+    value: CtValue,
+) -> Result<(SimdWidth, Option<TyArg>), TypeError> {
+    let attribute = bracket_attribute(arg, &TyArg::Val(value.clone()));
+    if let CtValue::Expr(expr) = value {
+        if !expr.meta().is_integer() {
+            return Err(TypeError::BadSimdWidth(expr.to_string()));
+        }
+        return Ok((SimdWidth::Expr(expr), attribute));
+    }
+    let w = mojito_types::param_expr::fold::integer_value(&value)
+        .and_then(|width| width.to_i64())
+        .ok_or_else(|| TypeError::BadSimdWidth(value.to_string()))?;
+    Ok((SimdWidth::Known(w), attribute))
+}
+
 fn power_of_two_width(width: SimdWidth) -> Result<SimdWidth, TypeError> {
     match width {
         SimdWidth::Known(w) if w < 1 || (w & (w - 1)) != 0 => {

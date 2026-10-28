@@ -266,8 +266,8 @@ import (every compilation that links the bundled library):
   reads it there, and the elaborator's prepare-time folds read a type
   alias's type through `InstalledInterfaces::type_alias`. A declaration's
   residue holds the module-scope compile-time facts its names bind (a
-  bound dtype, a lifted constant's application, a kept compile-time value,
-  its `SIMDLength` binders). Its lowered part holds its integer constant's
+  bound dtype, a lifted constant's application, a kept compile-time value).
+  Its lowered part holds its integer constant's
   one exact value (`package::LoweredDeclaration::constant`), and its type
   alias's spelling (`LoweredDeclaration::type_alias`), which the
   residue's integer row and elaborated value are joined back from, as
@@ -1956,8 +1956,10 @@ scalar boundaries rather than relying on VM container coercion. A built-in
 scalar constructed from a literal (`UInt(7)`, `Int(7)`, `Float64(2.5)`) is
 that literal's materialization, as upstream's builtin-inline
 `SIMD.__init__(IntLiteral)` is `pop.int_literal_convert`: `infer_conversion`
-records `SemanticAdjustment::LiteralConstruction` on the call and
+records `SemanticAdjustment::ConvertedArgument` on the call and
 `MaterializeLiteral` on its argument, and MIR lowers the call as its argument.
+`Int(w)` of a `SIMDLength` is upstream's `SIMD.__init__(SIMDLength)` the
+same way, its argument carrying `SimdFromLength`.
 The nullary `UInt()` is the literal `0` materialized the same way.
 
 A runtime scalar meets a multi-lane vector of its dtype through upstream's

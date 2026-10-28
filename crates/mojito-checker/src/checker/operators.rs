@@ -138,6 +138,7 @@ impl Checker {
         }
         let rt = self.infer(right)?;
         let rt = self.opaque_element(&rt).unwrap_or(rt);
+        let rt = self.simd_length_operand(right, &lt, rt)?;
 
         // Membership `in` / `not in` — the right operand is a container.
         if matches!(op, In | NotIn) {
@@ -307,6 +308,27 @@ impl Checker {
             return Ok(ty);
         }
         Err(bad_infix_operator(op, &lt, &rt))
+    }
+
+    /// The type a right `SIMDLength` operand takes beside a left `lt`:
+    /// beside a SIMD operand, that operand's type, and after a literal, which
+    /// materializes to `Int`, `Int`, through upstream's `@implicit
+    /// SIMD.__init__(SIMDLength)`, so the left operand's dunder takes it
+    /// (`n * w`, `2 * w`). `rt` itself for any other pair.
+    fn simd_length_operand(&self, right: &Expr, lt: &Ty, rt: Ty) -> Result<Ty, TypeError> {
+        if !mojito_types::types::is_simd_length(&rt) {
+            return Ok(rt);
+        }
+        let target = match lt.kind() {
+            TyKind::Simd { .. } => lt.clone(),
+            TyKind::IntLiteral => Ty::int(),
+            _ => return Ok(rt),
+        };
+        Ok(if self.record_implicit_conversion(right, &rt, &target)? {
+            target
+        } else {
+            rt
+        })
     }
 
     /// Type a chained comparison `a < b < c`: each adjacent pair must
@@ -562,8 +584,14 @@ impl Checker {
             }
             width = SimdWidth::Known(inferred);
         }
+        let ty = simd_of(dtype.clone(), width.clone())?;
+        if let [arg] = args
+            && self.simd_length_construction(span, &ty, arg, &self.infer(arg)?)?
+        {
+            return Ok(ty);
+        }
         self.check_simd_args(&dtype, &width, args)?;
-        simd_of(dtype, width)
+        Ok(ty)
     }
 
     /// The closed dimensions of a module vector alias

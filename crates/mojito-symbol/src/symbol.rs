@@ -96,6 +96,14 @@ pub const WRITE_FORMATTED: &str = "$write_formatted";
 /// one-element `MakeSimd`.
 pub const SCALAR_SPLAT_CONVERSION: &str = "SIMD.__init__$splat";
 
+/// The implicit-conversion target that converts a `SIMDLength` to a vector.
+///
+/// It stands for upstream's `@implicit SIMD.__init__(SIMDLength)`, which the
+/// builtin `SIMD` declares no constructor to name; MIR lowers it as that
+/// constructor's body: the length's `index` cast to `Int`, then to the
+/// vector's dtype, then splat across its lanes.
+pub const SIMD_LENGTH_CONVERSION: &str = "SIMD.__init__$simd_length";
+
 /// Whether a `**` on these operand types calls [`POW_INT_SYMBOL`].
 ///
 /// Every pair the native lowering routes to its integer arms does, which is

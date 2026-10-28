@@ -196,6 +196,7 @@ impl<'a> Flatten<'a> {
         };
         let adjusted = e.implicit_conversion().is_some()
             || e.index_normalization().is_some()
+            || e.simd_from_length().is_some()
             || e.rebind_target().is_some()
             || e.borrow_mutability().is_some();
         if adjusted || e.register_passable_result() {

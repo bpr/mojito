@@ -79,7 +79,8 @@ struct TypeList[
     comptime length: Int = len(Self.values)
     """The number of types in the list."""
 
-    # Upstream's index type is `SIMDLength`, which the subset lacks.
+    # Upstream's index type is `SIMDLength`, which a parameter list does not
+    # take as an index yet (R1540).
     comptime __getitem_param__[idx: Int] = Self.values[idx]
     """Gets a type at the given index.
 

@@ -91,6 +91,10 @@ point, as upstream's toolchain does.
   Only a scalar `SIMD` is `Intable`, and only an integral one `Indexer`,
   since upstream's methods assert as much (R1397). A scalar answers a
   requirement through its builtin conversion.
+- `std/builtin/simd_length.mojo` — upstream's `SIMDLength`, verbatim, the
+  type of `SIMD`'s width: a wrapper of the MLIR `index` that a literal or an
+  `Int` converts to, and that converts to any `SIMD` through the compiler
+  `SIMD`'s `@implicit __init__(SIMDLength)`. The prelude exports it.
 - `std/builtin/value.mojo` — upstream's `Defaultable`, `RegisterPassable`,
   and `TrivialRegisterPassable` traits; the prelude exports all three.
   `TrivialRegisterPassable` refines `Deinitable`, `ImplicitlyCopyable`,

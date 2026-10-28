@@ -434,6 +434,7 @@ assets/ok/lane_gather_template_served.mojo	main	exe-differential	sanitized
 assets/ok/lane_keyed_hash.mojo	main	exe-differential	sanitized
 assets/ok/lane_template_served.mojo	main	exe-differential	sanitized
 assets/ok/late_initialized_local.mojo	main	exe-differential	sanitized
+assets/ok/later_argument_converts_to_bound_parameter.mojo	main	exe-differential	sanitized
 assets/ok/layout_allocation.mojo	main	exe-differential	sanitized
 assets/ok/len_library_overloads.mojo	main	exe-differential	sanitized
 assets/ok/library_declared_conformances.mojo	main	exe-differential	sanitized
@@ -907,6 +908,7 @@ assets/ok/simd_lane_binders_inferred.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_dynamic.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_dynamic_widths.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_write.mojo	main	exe-differential	sanitized
+assets/ok/simd_length_struct.mojo	main	exe-differential	sanitized
 assets/ok/simd_literal_splat.mojo	main	exe-differential	sanitized
 assets/ok/simd_methods.mojo	main	exe-differential	sanitized
 assets/ok/simd_mlir_storage.mojo	main	exe-differential	sanitized

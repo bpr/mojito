@@ -203,7 +203,7 @@ impl<'a> Flatten<'a> {
         if node.adjustments.iter().any(|adjustment| {
             matches!(
                 adjustment,
-                mojito_checked::checked::SemanticAdjustment::LiteralConstruction
+                mojito_checked::checked::SemanticAdjustment::ConvertedArgument
             )
         }) {
             return args.first().map(|argument| self.expr(*argument));

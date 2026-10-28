@@ -1976,7 +1976,10 @@ impl<'a> Flatten<'a> {
             }
             (CheckedOp::Member { field, .. }, Some(object)) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
-                if e.is_dtype_constant() || e.recorded_value().is_some() {
+                if e.is_dtype_constant()
+                    || e.simd_length().is_some()
+                    || e.recorded_value().is_some()
+                {
                     return None;
                 }
                 let mut p = self.simple_place(object)?;
@@ -2016,7 +2019,10 @@ impl<'a> Flatten<'a> {
         match (e.op(), e.object()) {
             (CheckedOp::Member { field, .. }, Some(object)) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
-                if e.is_dtype_constant() || e.recorded_value().is_some() {
+                if e.is_dtype_constant()
+                    || e.simd_length().is_some()
+                    || e.recorded_value().is_some()
+                {
                     return None;
                 }
                 let mut p = self.pure_field_place(object)?;
@@ -2051,7 +2057,10 @@ impl<'a> Flatten<'a> {
             }
             (CheckedOp::Member { field, .. }, Some(object)) => {
                 // A compile-time member read (`T.K`, `A.K`) is a value.
-                if e.is_dtype_constant() || e.recorded_value().is_some() {
+                if e.is_dtype_constant()
+                    || e.simd_length().is_some()
+                    || e.recorded_value().is_some()
+                {
                     return None;
                 }
                 let mut p = self.try_place(object)?;

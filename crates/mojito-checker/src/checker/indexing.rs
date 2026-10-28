@@ -1667,6 +1667,12 @@ impl Checker {
             ));
             return Ok(Ty::dtype());
         }
+        if field == "length"
+            && let Some(ty) = self.member_type_operand(object)
+            && let Some(read) = self.simd_length_read(span.clone(), &ty)
+        {
+            return Ok(read);
+        }
         // The length of a `TypeList` value, or of a list computed from
         // packs, is the `Int` its elements fix. A type pack's own `length`
         // is its `TypeList`'s member, read below.
@@ -1719,16 +1725,10 @@ impl Checker {
             self.record_at(object.source_span()).reference_value_use =
                 Some(reference.mutability == mojito_types::origin::Mutability::Mutable);
         }
-        // `v.length` on a SIMD value (a native scalar is a width-1 vector)
-        // is upstream's lane-count parameter: an `Int` constant when known,
-        // the width's parameter expression in a generator.
         if field == "length"
-            && let Some((_, width)) = simd_slots(&obj_ty)
+            && let Some(read) = self.simd_length_read(span.clone(), &obj_ty)
         {
-            self.record_at(span).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::SimdLength { width },
-            ));
-            return Ok(Ty::int());
+            return Ok(read);
         }
         // `v._mlir_value` is upstream's `!kgen.simd` storage field, which
         // `__mlir_type[`!kgen.simd<`, ...]` resolves to the vector itself.
@@ -1860,6 +1860,20 @@ impl Checker {
     /// rather than a binding or a struct — the dtype, an unsupported
     /// upstream-only name, or an unknown member. `None` for any other member
     /// expression.
+    /// `length` of a SIMD type or value (`v.length`, `Int32.length`; a
+    /// native scalar is a width-1 vector): upstream's `length` parameter, a
+    /// `SIMDLength`, the length whose lane count the width slot holds. The
+    /// read's type, or `None` when `ty` is no SIMD type.
+    fn simd_length_read(&self, span: SourceSpan, ty: &Ty) -> Option<Ty> {
+        let (_, width) = simd_slots(ty)?;
+        let length = self.simd_length_parameter(&width)?;
+        let read = length.meta().as_value().cloned()?;
+        self.record_at(span).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::SimdLength { length },
+        ));
+        Some(read)
+    }
+
     pub(super) fn dtype_constant(
         &self,
         object: &Expr,

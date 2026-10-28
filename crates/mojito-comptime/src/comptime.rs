@@ -623,9 +623,6 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
         "Int" => Some(Ty::int()),
         // A `DType` value, and the type of a `[dtype: DType]` value parameter.
         "DType" => Some(Ty::dtype()),
-        // A SIMD width parameter is a compile-time Int value parameter (the
-        // removed `SIMDSize` spelling rejects).
-        "SIMDLength" => Some(Ty::int()),
         "UInt" => Some(Ty::uint()),
         "Bool" => Some(Ty::bool()),
         "StringLiteral" => Some(Ty::string_literal()),

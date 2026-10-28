@@ -347,12 +347,12 @@ pub(super) fn solved_value_bindings(
 /// binds to the actual's value argument in the same slot (`Array[T, length]`
 /// against `Array[Int, 3]` solves `length = 3`). First solution wins; a
 /// structural mismatch contributes nothing, exactly like `unify`.
-/// `width_binders` are the binders declared `SIMDLength`, the only ones a
-/// vector's width slot solves.
+/// `length_of_lanes` is the `SIMDLength` whose lane count a width slot
+/// holds, the value a vector's width slot binds a `SIMDLength` binder to.
 pub(super) fn solve_value_args(
     pattern: &Ty,
     actual: &Ty,
-    width_binders: &dyn Fn(&ParamId) -> bool,
+    length_of_lanes: &dyn Fn(&SimdWidth) -> Option<CtValue>,
     out: &mut HashMap<String, CtValue>,
 ) {
     match (pattern.kind(), actual.kind()) {
@@ -361,11 +361,13 @@ pub(super) fn solve_value_args(
         // binds it at the literal's default type (`kind(3)` solves
         // `DType.int`, `kind(2.5)` `DType.float64`), as upstream materializes
         // it. A `Bool` is no SIMD but converts into `Scalar[DType.bool]`, so
-        // it binds `DType.bool`. The width slot solves a binder of SIMD's own
-        // width type (`SIMD[dt, w]` with `w: SIMDLength` against a four-lane
-        // vector, a scalar at width one); an `Int` binder there is a
-        // conversion upstream leaves unresolved. A slot the actual leaves
-        // open (the caller's own `SIMD[dt, n]`) binds its expression.
+        // it binds `DType.bool`. The width slot holds a `SIMDLength`'s lane
+        // count, so it solves a binder of SIMD's own width type (`SIMD[dt,
+        // w]` with `w: SIMDLength` against a four-lane vector, a scalar at
+        // width one) to the length of the actual's lanes. An `Int` binder
+        // there is solved at the pin by the width's construction, which the
+        // slot does not keep. A slot the actual leaves open (the caller's
+        // own `SIMD[dt, n]`) binds its expression.
         (TyKind::Simd { dtype, width }, _) => {
             let actual_slots = match actual.kind() {
                 TyKind::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),
@@ -384,18 +386,13 @@ pub(super) fn solve_value_args(
                 out.entry(reference.name.to_string()).or_insert(value);
             }
             if let (SimdWidth::Expr(lanes), SimdWidth::Expr(actual)) = (width, &actual_width) {
-                solve_applied_args(lanes, actual, width_binders, out);
+                solve_applied_args(lanes, actual, length_of_lanes, out);
             }
             if let SimdWidth::Expr(lanes) = width
-                && let Some(reference) = lanes.as_decl_ref()
-                && width_binders(&reference.id)
+                && let Some(reference) = mojito_types::types::simd_length_of_image(lanes)
+                    .and_then(ParamExpr::as_decl_ref)
+                && let Some(value) = length_of_lanes(&actual_width)
             {
-                let value = match actual_width {
-                    SimdWidth::Known(width) => CtValue::Int(width),
-                    SimdWidth::Expr(expr) => expr
-                        .as_i64()
-                        .map_or_else(|| CtValue::Expr(expr), CtValue::Int),
-                };
                 out.entry(reference.name.to_string()).or_insert(value);
             }
         }
@@ -450,10 +447,10 @@ pub(super) fn solve_value_args(
                             out.entry(reference.name.to_string())
                                 .or_insert_with(|| value.clone());
                         } else if let CtValue::Expr(actual) = value {
-                            solve_applied_args(expr, actual, width_binders, out);
+                            solve_applied_args(expr, actual, length_of_lanes, out);
                         }
                     }
-                    (TyArg::Ty(p), TyArg::Ty(a)) => solve_value_args(p, a, width_binders, out),
+                    (TyArg::Ty(p), TyArg::Ty(a)) => solve_value_args(p, a, length_of_lanes, out),
                     _ => {}
                 }
             }
@@ -462,12 +459,12 @@ pub(super) fn solve_value_args(
             solve_value_args(
                 &pattern_reference.referent,
                 &actual_reference.referent,
-                width_binders,
+                length_of_lanes,
                 out,
             );
         }
         (TyKind::Ref(pattern_reference), _) => {
-            solve_value_args(&pattern_reference.referent, actual, width_binders, out);
+            solve_value_args(&pattern_reference.referent, actual, length_of_lanes, out);
         }
         _ => {}
     }
@@ -687,7 +684,7 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
 fn solve_applied_args(
     pattern: &ParamExpr,
     actual: &ParamExpr,
-    width_binders: &dyn Fn(&ParamId) -> bool,
+    length_of_lanes: &dyn Fn(&SimdWidth) -> Option<CtValue>,
     out: &mut HashMap<String, CtValue>,
 ) {
     let construction = |expr: &ParamExpr| match expr.kind() {
@@ -722,8 +719,8 @@ fn solve_applied_args(
             (
                 ParamKind::TypeShape(pattern),
                 ParamKind::TypeShape(actual) | ParamKind::Constant(CtValue::Type(actual)),
-            ) => solve_value_args(pattern, actual, width_binders, out),
-            _ => solve_applied_args(arg, actual, width_binders, out),
+            ) => solve_value_args(pattern, actual, length_of_lanes, out),
+            _ => solve_applied_args(arg, actual, length_of_lanes, out),
         }
     }
 }

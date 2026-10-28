@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMDLength` is upstream's library struct, bundled verbatim from
+  `std/builtin/simd_length.mojo` and exported by the prelude, where it was
+  typed `Int`. A `[w: SIMDLength]` binder is struct-typed, a vector's width
+  slot holds its lane count, a vector argument solves the binder to its
+  length, and `v.length` is the vector's `SIMDLength` parameter, so
+  `print(v.length)` is rejected as at the pin. A SIMD type's `T.length`
+  reads it too, where it was rejected as a type read as a value. A `SIMDLength` converts to
+  any vector through `SIMD`'s `@implicit __init__(SIMDLength)`: `Int(w)`,
+  `n * w`, `2 * w` (folded in a parameter expression), and
+  `var s: SIMD[DType.float32, 4] = v.length`, which was rejected.
+- A type parameter bound by an earlier argument takes a later argument
+  that converts to it (`select(c, 0, length)` is over `Int`), as at the
+  pin. Such a call was rejected as a type-parameter mismatch.
+
 - `<<=` and `>>=` are augmented assignments, shifting a builtin integer in
   place and calling a struct's `__ilshift__`/`__irshift__`, as at the pin.
   They did not lex.
@@ -1166,6 +1180,10 @@ to evolve under the `0.x` compatibility rules.
   the package format is 70.
 
 ### Fixed
+
+- An implicit conversion of a `Self(...)` argument now converts the
+  construction it spells. It was dropped, so the call failed MIR
+  verification.
 
 - An overloaded constructor or method whose parameter is spelled
   `__mlir_type.index`, ``__mlir_type[`!kgen.simd<`, …, `>`]``, or

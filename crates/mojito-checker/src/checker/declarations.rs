@@ -807,16 +807,11 @@ impl Checker {
                         ty: only.clone(),
                     });
                 }
-                if only == "SIMDLength" {
-                    self.simd_length_binders.insert(binder_id(decls.len()));
-                }
                 decls.push(self.value_param_decl(tp, binder_id(decls.len()), vty)?);
                 continue;
             }
             // A lone bound naming a registered struct is a struct-typed
-            // value parameter (`[e: Extent]`); such declarations are
-            // monomorphized before checking, so the checker only ever sees
-            // this classification, never a symbolic body.
+            // value parameter (`[e: Extent]`, `[w: SIMDLength]`).
             if let [only] = tp.bounds.as_slice()
                 && self.structs.contains_key(only)
             {
@@ -3697,7 +3692,7 @@ impl Checker {
             solve_value_args(
                 pat,
                 act,
-                &|binder| self.is_simd_length_binder(binder),
+                &|lanes| self.simd_length_of_lanes(lanes),
                 &mut value_solutions,
             );
         }
@@ -3727,6 +3722,14 @@ impl Checker {
                 && self.binds_unmaterialized_literal(act, bounds)
             {
                 subst.insert(binder.id.clone(), act.clone());
+            } else if let TyKind::Param { binder, .. } = pat.kind()
+                && let Some(bound) = subst.get(&binder.id)
+                && *bound != *act
+                && self.implicit_conversion_constructor(act, bound)?.is_some()
+            {
+                // An earlier argument bound the parameter, and this one
+                // converts to that type, as the pin binds a parameter at its
+                // first argument (`select(c, 0, length)` is over `Int`).
             } else {
                 unify(pat, act, &mut subst)?;
             }

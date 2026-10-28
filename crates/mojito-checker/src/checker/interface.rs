@@ -581,8 +581,6 @@ pub(super) struct DeclarationInterface {
     comptime_parameters: Vec<(String, (usize, ParamExpr))>,
     #[serde(with = "keyless")]
     comptime_values: Vec<(String, Expr)>,
-    /// The `SIMDLength` binders it owns.
-    simd_length_binders: Vec<ParamId>,
     /// The structs whose declared parameters, fields, fieldwise
     /// initializer, and explicit-destruction facts the record leaves to
     /// their lowered declarations, sorted by name.
@@ -813,15 +811,6 @@ impl Checker {
             Table::ComptimeValues,
             comptime_values
         );
-        for binder in &self.simd_length_binders {
-            if let Some(declaration) =
-                place(&binder.owner, builtin.simd_length_binders.contains(binder))
-            {
-                let (record, keys) = declarations.entry(declaration).or_default();
-                record.simd_length_binders.push(binder.clone());
-                keys.push((Table::SimdLengthBinders, binder.owner.to_string()));
-            }
-        }
         let scope = module_scope(&self.scopes);
         let mutable = module_scope(&self.mutable_scopes);
         let owners = module_scope(&self.owner_scopes);
@@ -983,17 +972,6 @@ impl Checker {
         self.installed
             .as_ref()
             .is_some_and(|(installed, _)| installed.keys(table).next().is_some())
-    }
-
-    /// Whether `binder` is a `SIMDLength` binder: one the check declared,
-    /// or one an installed declaration owns.
-    pub(super) fn is_simd_length_binder(&self, binder: &ParamId) -> bool {
-        self.simd_length_binders.contains(binder)
-            || self.installed.as_ref().is_some_and(|(installed, _)| {
-                installed
-                    .declaration(Table::SimdLengthBinders, &binder.owner)
-                    .is_some_and(|record| record.simd_length_binders.contains(binder))
-            })
     }
 
     /// The explicit-destruction obligations `own` gives the program's own
@@ -1425,7 +1403,6 @@ impl DeclarationInterface {
         by_name(&mut self.comptime_dtypes);
         by_name(&mut self.comptime_parameters);
         by_name(&mut self.comptime_values);
-        self.simd_length_binders.sort();
         self.bindings
             .sort_by(|left, right| left.name.cmp(&right.name));
         self.projected_structs

@@ -243,6 +243,54 @@ impl fmt::Display for SimdWidth {
     }
 }
 
+/// Whether `ty` is upstream's `SIMDLength`.
+pub fn is_simd_length(ty: &Ty) -> bool {
+    matches!(ty.kind(), TyKind::Struct(name, args) if name == SIMD_LENGTH_TYPE_NAME && args.is_empty())
+}
+
+/// The lane count a `SIMDLength` value is, `Int(mlir_value=length._mlir_value)`:
+/// upstream's `SIMD.__init__(SIMDLength)` folded, which is what a SIMD
+/// width slot holds. A closed length folds to its `Int`.
+pub fn simd_length_image(
+    context: &ParamContext,
+    length: &ParamExpr,
+) -> Result<ParamExpr, ParamError> {
+    context.cast_from_builtin(&context.field(
+        length,
+        crate::ct::MLIR_VALUE_FIELD,
+        MetaTy::value(Ty::index()),
+    )?)
+}
+
+/// The closed `SIMDLength(lanes)`: upstream's `__init__(Int)` folded, its
+/// one `index` field the count.
+pub fn simd_length_value(lanes: i64) -> CtValue {
+    CtValue::Struct {
+        name: SIMD_LENGTH_TYPE_NAME.to_string(),
+        fields: vec![(
+            crate::ct::MLIR_VALUE_FIELD.to_string(),
+            CtValue::Index(lanes),
+        )],
+    }
+}
+
+/// The `SIMDLength` whose lane count `lanes` is, when `lanes` is that
+/// length's [`simd_length_image`]: the inverse a width binder is solved by.
+pub fn simd_length_of_image(lanes: &ParamExpr) -> Option<&ParamExpr> {
+    let ParamKind::Op {
+        op: crate::param_expr::ParamOp::CastFromBuiltin,
+        operands,
+    } = lanes.kind()
+    else {
+        return None;
+    };
+    let ParamKind::Field { base, name } = operands.first()?.kind() else {
+        return None;
+    };
+    (name == crate::ct::MLIR_VALUE_FIELD && base.meta().as_value().is_some_and(is_simd_length))
+        .then_some(base)
+}
+
 /// The alternative a `Variant` storage operation selects: the index
 /// attribute upstream's `pop.variant` operations take, computed by
 /// `_get_type_index[T, *Ts]()`.
@@ -1093,6 +1141,9 @@ pub const DICT_TYPE_NAME: &str = "Dict";
 
 pub const TUPLE_TYPE_NAME: &str = "Tuple";
 
+/// The name of upstream's `SIMDLength`, the type of `SIMD`'s width.
+pub const SIMD_LENGTH_TYPE_NAME: &str = "SIMDLength";
+
 /// The bound of a type binder whose type is upstream's `!kgen.type`
 /// ([`TyKind::TypeType`]), the name the pin prints for it: every type
 /// satisfies it, and it implies no trait, not even `AnyType`.
@@ -1168,9 +1219,10 @@ pub fn mlir_type_spelling(
 
 /// The parameter an MLIR type operand reads the `_mlir_value` of.
 ///
-/// `n._mlir_value` and `Self.dtype._mlir_value` read the parameter itself
-/// while `DType` and `SIMDLength` are compiler types (R160, R1535). `None`
-/// for an operand that reads no `_mlir_value`.
+/// `n._mlir_value` and `Self.dtype._mlir_value` read a `SIMDLength`'s
+/// `index` storage, and a `DType`'s, which is the parameter itself while
+/// `DType` is a compiler type (R160). `None` for an operand that reads no
+/// `_mlir_value`.
 pub fn mlir_value_operand(arg: &mojito_ast::ast::ParamArg) -> Option<mojito_ast::ast::ParamArg> {
     use mojito_ast::ast::{Expr, ExprKind, ParamArg, Type};
     match arg {

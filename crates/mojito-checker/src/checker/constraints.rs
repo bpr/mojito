@@ -1797,6 +1797,20 @@ impl Checker {
             self.build_ct(left, recording)?,
             self.build_ct(right, recording)?,
         );
+        // A `SIMDLength` after a vector or a literal converts to the left
+        // operand's type, as it does at run time (`2 * w` is `2 * Int(w)`):
+        // its lane count, upstream's `SIMD.__init__(SIMDLength)` folded.
+        let right_built = if is_simd_length_value(&right_built)
+            && left_built
+                .meta()
+                .as_value()
+                .is_some_and(|ty| matches!(ty.kind(), TyKind::Simd { .. } | TyKind::IntLiteral))
+        {
+            mojito_types::types::simd_length_image(&self.param_context, &right_built)
+                .map_err(param_error)?
+        } else {
+            right_built
+        };
         if struct_valued(&left_built) || struct_valued(&right_built) {
             let mut candidates = Vec::new();
             if struct_valued(&left_built)
@@ -4713,6 +4727,13 @@ fn struct_valued(value: &ParamExpr) -> bool {
         .meta()
         .as_value()
         .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+}
+
+fn is_simd_length_value(value: &ParamExpr) -> bool {
+    value
+        .meta()
+        .as_value()
+        .is_some_and(mojito_types::types::is_simd_length)
 }
 
 fn is_scalar_value(value: &ParamExpr) -> bool {

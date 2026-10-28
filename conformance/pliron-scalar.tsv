@@ -434,6 +434,7 @@ assets/ok/lane_gather_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lane_keyed_hash.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/lane_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/late_initialized_local.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/later_argument_converts_to_bound_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/layout_allocation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/len_library_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/library_declared_conformances.mojo	-	ineligible	no-scalar-entry-shape
@@ -907,6 +908,7 @@ assets/ok/simd_lane_binders_inferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_dynamic.mojo	compute	differential	ret=Int
 assets/ok/simd_lane_dynamic_widths.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_length_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_literal_splat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_mlir_storage.mojo	-	ineligible	no-scalar-entry-shape

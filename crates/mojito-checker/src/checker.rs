@@ -773,10 +773,6 @@ pub struct Checker {
     /// Free functions decorated `@__unsafe_nested_origins_read_only`; see
     /// [`MethodSig::nested_origins`].
     nested_origins_read_only_functions: declaration_table::DeclarationSet,
-    /// The value binders declared `SIMDLength`, SIMD's own width type: a
-    /// vector argument's width slot solves one, while an `Int` binder in the
-    /// slot is a conversion the pin leaves unresolved.
-    simd_length_binders: HashSet<mojito_types::param_expr::ParamId>,
     /// The type binders bounded by a trait-valued sibling (`T: Tr`), each
     /// with that sibling: as upstream decides nothing of a `ParamType` over
     /// the trait metatype, a value of one is destroyed by the generic
@@ -1081,7 +1077,6 @@ impl Checker {
             enum_declaration: false,
             node_facts: RefCell::new(FactMap::default()),
             nested_origins_read_only_functions: declaration_table::DeclarationSet::default(),
-            simd_length_binders: HashSet::new(),
             trait_bounded_binders: HashMap::new(),
             call_bindings: RefCell::new(FactMap::default()),
             struct_instantiations: RefCell::new(FactVec::default()),
@@ -1739,6 +1734,15 @@ impl Checker {
         if mojito_types::types::scalar_splats_into(from, to) {
             return Ok(Some(SelectedConversion {
                 target: mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION.to_string(),
+                source_borrow: None,
+                consumes_source: false,
+                error: None,
+            }));
+        }
+        // And upstream's `@implicit SIMD.__init__(SIMDLength)` by this one.
+        if mojito_types::types::is_simd_length(from) && matches!(to.kind(), TyKind::Simd { .. }) {
+            return Ok(Some(SelectedConversion {
+                target: mojito_symbol::symbol::SIMD_LENGTH_CONVERSION.to_string(),
                 source_borrow: None,
                 consumes_source: false,
                 error: None,

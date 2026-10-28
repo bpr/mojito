@@ -104,6 +104,7 @@ pub enum CheckedCallValueAdjustment {
     IndexNormalization { target: String },
     MaterializeLiteral { target: Ty },
     SplatScalar { target: Ty },
+    SimdFromLength { target: Ty },
 }
 
 /// Call-boundary facts for one supplied argument.
@@ -598,11 +599,13 @@ pub enum SemanticAdjustment {
     /// the storage initializer over a storage that is the vector itself: MIR
     /// lowers the call as its one keyword argument's value.
     BuiltinCopyConstruction,
-    /// `UInt(7)`, `Float64(2.5)`: a built-in scalar constructed from a
-    /// literal, upstream's builtin-inline `SIMD.__init__(IntLiteral)`, which
-    /// is the literal's conversion. MIR lowers the call as its one argument,
-    /// which carries the `MaterializeLiteral` to the constructed type.
-    LiteralConstruction,
+    /// A built-in vector constructed by its one argument's own conversion,
+    /// which the argument carries: `UInt(7)`, `Float64(2.5)` from a literal,
+    /// upstream's builtin-inline `SIMD.__init__(IntLiteral)` (its
+    /// `MaterializeLiteral`), or `Int(w)`, `SIMD[dt, n](w)` from a
+    /// `SIMDLength`, its `SIMD.__init__(SIMDLength)` (its `SimdFromLength`).
+    /// MIR lowers the call as its one argument.
+    ConvertedArgument,
     /// `Int(x)`, `UInt(x)`, `Float64(x)`, `Bool(x)` over a scalar operand:
     /// upstream's inlined `SIMD.__init__` or `Bool.__init__`, a `pop.cast`
     /// or a compare. MIR lowers the call as a `scalar.cast` of its one
@@ -689,6 +692,9 @@ pub enum SemanticAdjustment {
     /// Splat a runtime one-lane value across the checked multi-lane vector
     /// type, upstream's `@implicit SIMD.__init__(Scalar[dtype])`.
     SplatScalar(Ty),
+    /// Convert a `SIMDLength` to the checked vector type, upstream's
+    /// `@implicit SIMD.__init__(SIMDLength)`.
+    SimdFromLength(Ty),
     BorrowShared,
     BorrowMutable,
     /// Constructor arguments bound to origin-solving `ref` parameters: the
@@ -970,11 +976,11 @@ pub enum SemanticAdjustment {
         dtype: SimdDtype,
         width: SimdWidth,
     },
-    /// `v.length` on a SIMD value — the lane count, lowered as an `Int`
-    /// constant when known and as the evaluation of its parameter
-    /// expression in a generator.
+    /// `v.length` on a SIMD value — its `length` parameter, the
+    /// `SIMDLength` `length`, lowered as that parameter value after a value
+    /// receiver runs.
     SimdLength {
-        width: SimdWidth,
+        length: mojito_types::param_expr::ParamExpr,
     },
     /// `v._mlir_value` on a SIMD value — its `!kgen.simd` storage, which is
     /// the value itself while `SIMD` is a compiler type: the read, borrow,
@@ -4847,6 +4853,13 @@ impl CheckedProgram {
                         );
                         implicit_conversion_types.insert(location.clone(), ty.clone());
                     }
+                    SemanticAdjustment::SimdFromLength(ty) => {
+                        implicit_conversions.insert(
+                            location.clone(),
+                            mojito_symbol::symbol::SIMD_LENGTH_CONVERSION.to_string(),
+                        );
+                        implicit_conversion_types.insert(location.clone(), ty.clone());
+                    }
                     SemanticAdjustment::ConversionResultType(ty) => {
                         implicit_conversion_types.insert(location.clone(), ty.clone());
                     }
@@ -5504,9 +5517,11 @@ impl<'a> ArenaBuilder<'a> {
             return None;
         };
         let node = self.expr(&construction.0);
-        // A `for` loop iterates the construction it spells, and a `comptime
-        // for` steps it.
+        // A conversion the sugar takes converts its construction, a `for`
+        // loop iterates the construction it spells, and a `comptime for`
+        // steps it.
         let facts = self.facts(&expression.source_span());
+        let conversions = conversion_adjustments(facts);
         let loops: Vec<SemanticAdjustment> = facts
             .iteration_protocol
             .iter()
@@ -5518,6 +5533,7 @@ impl<'a> ArenaBuilder<'a> {
                     .map(|iteration| SemanticAdjustment::ComptimeIteration(iteration.clone())),
             )
             .collect();
+        self.nodes[node.0 as usize].adjustments.extend(conversions);
         self.nodes[node.0 as usize].adjustments.extend(loops);
         Some(node)
     }
@@ -6402,6 +6418,55 @@ fn map_params(map: &mut dyn NodeMap, params: &[CheckedFnParam]) -> Vec<CheckedFn
         .collect()
 }
 
+/// The adjustments the implicit conversion `facts` record at a node
+/// compose to: a reserved conversion's own adjustment, or a converting
+/// constructor's call with its result type, effects, and source borrow.
+fn conversion_adjustments(facts: &NodeFacts) -> Vec<SemanticAdjustment> {
+    let mut adjustments = Vec::new();
+    let Some(target) = &facts.implicit_conversion else {
+        return adjustments;
+    };
+    if mojito_symbol::symbol::is_index_normalization_symbol(target) {
+        adjustments.push(SemanticAdjustment::IndexNormalization {
+            target: target.clone(),
+        });
+    } else if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
+        adjustments.extend(
+            facts
+                .implicit_conversion_type
+                .clone()
+                .map(SemanticAdjustment::SplatScalar),
+        );
+    } else if target == mojito_symbol::symbol::SIMD_LENGTH_CONVERSION {
+        adjustments.extend(
+            facts
+                .implicit_conversion_type
+                .clone()
+                .map(SemanticAdjustment::SimdFromLength),
+        );
+    } else {
+        adjustments.push(SemanticAdjustment::ImplicitConversion(target.clone()));
+        if let Some(ty) = &facts.implicit_conversion_type {
+            adjustments.push(SemanticAdjustment::ConversionResultType(ty.clone()));
+        }
+        if let Some(error) = &facts.conversion_raises {
+            adjustments.push(SemanticAdjustment::ConversionRaises(error.clone()));
+        }
+        if facts.conversion_indirect_result {
+            adjustments.push(SemanticAdjustment::ConversionIndirectResult);
+        }
+        if let Some(arguments) = &facts.conversion_instantiation {
+            adjustments.push(SemanticAdjustment::ConversionInstantiatedArguments(
+                arguments.clone(),
+            ));
+        }
+        if let Some(mutable) = &facts.conversion_source_borrow {
+            adjustments.push(SemanticAdjustment::BorrowConversionSource { mutable: *mutable });
+        }
+    }
+    adjustments
+}
+
 fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustment> {
     let mut adjustments = Vec::new();
     if let Some(target) = &facts.overload_target {
@@ -6416,39 +6481,7 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
             set_value_keyword: set_value_keyword.clone(),
         });
     }
-    if let Some(target) = &facts.implicit_conversion {
-        if mojito_symbol::symbol::is_index_normalization_symbol(target) {
-            adjustments.push(SemanticAdjustment::IndexNormalization {
-                target: target.clone(),
-            });
-        } else if target == mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION {
-            adjustments.extend(
-                facts
-                    .implicit_conversion_type
-                    .clone()
-                    .map(SemanticAdjustment::SplatScalar),
-            );
-        } else {
-            adjustments.push(SemanticAdjustment::ImplicitConversion(target.clone()));
-            if let Some(ty) = &facts.implicit_conversion_type {
-                adjustments.push(SemanticAdjustment::ConversionResultType(ty.clone()));
-            }
-            if let Some(error) = &facts.conversion_raises {
-                adjustments.push(SemanticAdjustment::ConversionRaises(error.clone()));
-            }
-            if facts.conversion_indirect_result {
-                adjustments.push(SemanticAdjustment::ConversionIndirectResult);
-            }
-            if let Some(arguments) = &facts.conversion_instantiation {
-                adjustments.push(SemanticAdjustment::ConversionInstantiatedArguments(
-                    arguments.clone(),
-                ));
-            }
-            if let Some(mutable) = &facts.conversion_source_borrow {
-                adjustments.push(SemanticAdjustment::BorrowConversionSource { mutable: *mutable });
-            }
-        }
-    }
+    adjustments.extend(conversion_adjustments(facts));
     // A `^` the checker bound to a read parameter or receiver lends
     // its place and does not move it.
     if matches!(expression.kind, ExprKind::Transfer(_)) && !facts.borrowed_read_call_place {

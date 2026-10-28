@@ -3931,7 +3931,7 @@ fn nightly_pack_conformance_checks_every_type_value() {
 
 #[test]
 fn int_is_scalar_dtype_int_and_simdlength_drives_width_values() {
-    ok(
+    ok_std(
         "def width_value[width: SIMDLength]() -> Int where width > 0:\n    return width\n\ndef main():\n    var scalar: Scalar[DType.int] = 41\n    var same: Int = Scalar[DType.int](scalar + 1)\n    var vector: SIMD[DType.int, 4] = SIMD[DType.int, _](1, 2, 3, 4)\n    var width = width_value[4]()\n",
     );
 }
@@ -6212,10 +6212,10 @@ fn vector_argument_infers_dtype_and_simd_length_binders() {
     // binder together, a native scalar as a width-one vector, and a caller's
     // open `SIMD[dt, n]` forwards its own slots; `SIMD[_, _]` stands for
     // exactly those two infer-only binders.
-    ok(
+    ok_std(
         "def lanes[dt: DType, w: SIMDLength](v: SIMD[dt, w]) -> Int:\n    return w\n\ndef main():\n    var a = lanes(SIMD[DType.int32, 4](1, 2, 3, 4))\n    var b = lanes(Float64(2.5))\n",
     );
-    ok(
+    ok_std(
         "def lanes[dt: DType, w: SIMDLength](v: SIMD[dt, w]) -> Int:\n    return w\n\ndef forward[dt: DType, n: Int](v: SIMD[dt, n]) -> Int:\n    return lanes(v)\n",
     );
     check_with_std(
@@ -8937,7 +8937,7 @@ fn scalar_construction_from_a_literal_is_its_materialization() {
         .filter(|expression| {
             expression
                 .adjustments
-                .contains(&SemanticAdjustment::LiteralConstruction)
+                .contains(&SemanticAdjustment::ConvertedArgument)
         })
         .collect::<Vec<_>>();
     assert_eq!(constructions.len(), 1, "{constructions:#?}");

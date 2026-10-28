@@ -240,12 +240,10 @@ pub enum InterfaceTable {
     ComptimeDtypes,
     ComptimeParameters,
     ComptimeValues,
-    /// The `SIMDLength` binders a declaration owns, under the owner.
-    SimdLengthBinders,
 }
 
 impl InterfaceTable {
-    pub const COUNT: usize = Self::SimdLengthBinders as usize + 1;
+    pub const COUNT: usize = Self::ComptimeValues as usize + 1;
     const ALL: [Self; Self::COUNT] = [
         Self::Structs,
         Self::Traits,
@@ -267,7 +265,6 @@ impl InterfaceTable {
         Self::ComptimeDtypes,
         Self::ComptimeParameters,
         Self::ComptimeValues,
-        Self::SimdLengthBinders,
     ];
 
     /// The table numbered `index`.

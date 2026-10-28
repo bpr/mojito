@@ -987,6 +987,46 @@ impl<'a> Flatten<'a> {
         dest
     }
 
+    /// Convert a `SIMDLength` register to the checked vector `target` as
+    /// upstream's `@implicit SIMD.__init__(SIMDLength)` body does: its
+    /// `index` cast to `Int`, that cast to the vector's dtype, and the scalar
+    /// splat across the vector's lanes.
+    pub(in crate::mir) fn simd_from_length(
+        &mut self,
+        value: Reg,
+        target: &Ty,
+        source: SourceSpan,
+    ) -> Reg {
+        let index = self.fresh_typed(source.clone(), None, Ty::index());
+        self.emit(MirInstr::GetField {
+            dest: index,
+            base: value,
+            field: mojito_types::ct::MLIR_VALUE_FIELD.to_string(),
+        });
+        let int = self.builtin_cast(source.clone(), index, Ty::int());
+        let Some((dtype, width)) = mojito_types::types::simd_slots(target) else {
+            return int;
+        };
+        let one = mojito_types::types::SimdWidth::Known(1);
+        let scalar = match mojito_types::types::simd_ty_from_slots(dtype.clone(), one.clone()) {
+            Ok(scalar) if scalar != Ty::int() => {
+                let dest = self.fresh_typed(source.clone(), None, scalar);
+                self.emit(MirInstr::SimdCast {
+                    dest,
+                    value: int,
+                    dtype,
+                    width: one.clone(),
+                });
+                dest
+            }
+            _ => int,
+        };
+        if width == one {
+            return scalar;
+        }
+        self.splat_scalar(scalar, target, source)
+    }
+
     /// The type of the closure of the body `info` as a function value: its
     /// checked type, a storage value's environment read as the storage's
     /// captures.

@@ -227,6 +227,17 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// The `SIMDLength` parameter `v.length` on a SIMD value reads.
+    pub(super) fn simd_length(self) -> Option<mojito_types::param_expr::ParamExpr> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::SimdLength { length } => Some(length),
+                _ => None,
+            })
+            .cloned()
+    }
+
     /// Whether this is `v._mlir_value` on a SIMD value, whose storage is
     /// the value itself.
     pub(super) fn is_simd_storage(self) -> bool {
@@ -784,6 +795,18 @@ impl<'a> Node<'a> {
             .iter()
             .find_map(|adjustment| match adjustment {
                 mojito_checked::checked::SemanticAdjustment::SplatScalar(target) => Some(target),
+                _ => None,
+            })
+            .cloned()
+    }
+
+    /// The vector a `SIMDLength` converts to here, upstream's `@implicit
+    /// SIMD.__init__(SIMDLength)`.
+    pub(super) fn simd_from_length(self) -> Option<Ty> {
+        self.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::SimdFromLength(target) => Some(target),
                 _ => None,
             })
             .cloned()

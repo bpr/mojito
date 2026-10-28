@@ -864,6 +864,28 @@ impl Checker {
     /// conversion — `Int(x)` on `T: Intable`, `Float64(x)` on `T: Floatable`,
     /// `Bool(x)` on `T: Boolable` (`__int__`/`__float__`/`__bool__` run after
     /// type erasure).
+    /// Whether a `SIMDLength` argument constructs the vector `target`
+    /// (`Int(w)`, `Scalar[dt](w)`, `SIMD[dt, n](w)`): that is upstream's
+    /// `@implicit SIMD.__init__(SIMDLength)` called by name, so the call is
+    /// its argument's conversion.
+    pub(super) fn simd_length_construction(
+        &self,
+        span: &SourceSpan,
+        target: &Ty,
+        arg: &Expr,
+        arg_ty: &Ty,
+    ) -> Result<bool, TypeError> {
+        if !mojito_types::types::is_simd_length(arg_ty)
+            || !self.record_implicit_conversion(arg, arg_ty, target)?
+        {
+            return Ok(false);
+        }
+        self.record_at(span.clone()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::ConvertedArgument,
+        ));
+        Ok(true)
+    }
+
     pub(super) fn infer_conversion(
         &self,
         span: &SourceSpan,
@@ -883,6 +905,9 @@ impl Checker {
         }
         let arg_ty = self.infer(&args[0])?;
         let arg_ty = self.opaque_element(&arg_ty).unwrap_or(arg_ty);
+        if self.simd_length_construction(span, &target, &args[0], &arg_ty)? {
+            return Ok(target);
+        }
         // A literal argument is converted where the call is built, as
         // upstream's builtin-inline `SIMD.__init__(IntLiteral)` is
         // `pop.int_literal_convert`.
@@ -895,7 +920,7 @@ impl Checker {
         ) {
             self.record_literal_materializations(&args[0], &arg_ty, &target)?;
             self.record_at(span.clone()).adjustment = Some(Box::new(
-                mojito_checked::checked::SemanticAdjustment::LiteralConstruction,
+                mojito_checked::checked::SemanticAdjustment::ConvertedArgument,
             ));
             return Ok(target);
         }

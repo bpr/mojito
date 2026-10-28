@@ -1817,6 +1817,9 @@ fn mir_default(checked: &CheckedProgram, default: CheckedNodeId) -> Option<Check
             mojito_checked::checked::SemanticAdjustment::SplatScalar(_) => {
                 Some(mojito_symbol::symbol::SCALAR_SPLAT_CONVERSION.to_string())
             }
+            mojito_checked::checked::SemanticAdjustment::SimdFromLength(_) => {
+                Some(mojito_symbol::symbol::SIMD_LENGTH_CONVERSION.to_string())
+            }
             _ => None,
         });
     match conversion {
@@ -4374,7 +4377,7 @@ impl<'a> Flatten<'a> {
                 self.enclosing_binders.value(field, true)
             }
             CheckedOp::Prefix(PrefixOp::Neg, value) => {
-                context.neg(&self.value_binder_node(*value)?).ok()
+                context.neg(&self.value_binder_operand(*value)?).ok()
             }
             CheckedOp::Infix(
                 op @ (InfixOp::Add
@@ -4389,12 +4392,37 @@ impl<'a> Flatten<'a> {
             ) => context
                 .infix(
                     *op,
-                    &self.value_binder_node(*left)?,
-                    &self.value_binder_node(*right)?,
+                    &self.value_binder_operand(*left)?,
+                    &self.value_binder_operand(*right)?,
                 )
                 .ok(),
             _ => None,
         }
+    }
+
+    /// [`Self::value_binder_node`] of an operator's operand, after the
+    /// conversion the checker recorded on it: a `SIMDLength` beside a
+    /// scalar is its lane count (`2 * w`).
+    fn value_binder_operand(
+        &self,
+        id: mojito_checked::checked::CheckedNodeId,
+    ) -> Option<ParamExpr> {
+        let value = self.value_binder_node(id)?;
+        let converts = self
+            .checked
+            .expression(id)?
+            .adjustments
+            .iter()
+            .any(|adjustment| {
+                matches!(
+                    adjustment,
+                    mojito_checked::checked::SemanticAdjustment::SimdFromLength(_)
+                )
+            });
+        if !converts {
+            return Some(value);
+        }
+        mojito_types::types::simd_length_image(&ParamContext::detached(), &value).ok()
     }
 
     /// An erased argument keeps its (empty) slot: every backend aligns the
@@ -4468,14 +4496,15 @@ impl<'a> Flatten<'a> {
             });
             return Some(dest);
         }
-        // An element or the length of a local display binding is a
-        // parameter constant the elaborator answers.
-        if let (
+        // An element or the length of a local display binding, and the lane
+        // count of a `SIMDLength`, are parameter constants the elaborator
+        // answers.
+        let answered = matches!(
+            expr.kind(),
             mojito_types::param_expr::ParamKind::ListGet { .. }
-            | mojito_types::param_expr::ParamKind::Apply { .. },
-            Some(ty),
-        ) = (expr.kind(), expr.meta().as_value())
-        {
+                | mojito_types::param_expr::ParamKind::Apply { .. }
+        ) || mojito_types::types::simd_length_of_image(expr).is_some();
+        if answered && let Some(ty) = expr.meta().as_value() {
             let dest = self.fresh_typed(site.clone(), None, ty.clone());
             self.emit(MirInstr::Const {
                 dest,

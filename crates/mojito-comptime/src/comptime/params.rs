@@ -127,9 +127,6 @@ pub(super) fn ct_value_param_type(name: &str) -> Option<Ty> {
         "Int" => Ty::int(),
         // A `DType` value, and the type of a `[dtype: DType]` value parameter.
         "DType" => Ty::dtype(),
-        // A SIMD width parameter is a compile-time Int value parameter (the
-        // removed `SIMDSize` spelling rejects).
-        "SIMDLength" => Ty::int(),
         "Bool" => Ty::bool(),
         "String" => Ty::string_literal(),
         "StringLiteral" => Ty::string_literal(),

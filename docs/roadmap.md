@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1540**.
+Next free ID: **R1541**.
 
 ## Ordered Work
 
@@ -3385,21 +3385,38 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   `a = SIMD[DType.int32, n](1)` in `def f[n: Int]()` is rejected with
   "cannot infer type parameter 'w' of 'show' from the arguments", where the
   pin binds `w` to `n` and prints.
-  - `solve_value_args` (`checker/generics.rs`) solves a vector's width slot
-    only for a binder declared `SIMDLength`.
-  - That is right for a width that is a literal, which the pin leaves an
-    `Int` binder unresolved against.
-  - A width spelled by an `Int` expression (`n`, an element of a local
-    `comptime` display) converts the same way on both sides, so the pin
-    solves the binder.
+  - Cause: the SIMD width slot holds a `SIMDLength`'s `Int` lane count
+    (`types::simd_length_image`), where the pin's holds the `SIMDLength`
+    value its construction spelled, `SIMDLength(n)`.
+  - The pin solves an `Int` binder by unifying that construction,
+    `SIMDLength(w)` against `SIMDLength(n)`, never the canonical value. The
+    image is canonical, so no rule over it can match, and
+    `solve_value_args` (`checker/generics.rs`) and `mono/unify.rs` solve the
+    slot only for a `SIMDLength` binder.
+  - Lever: hold the `SIMDLength`-typed expression in `SimdWidth::Expr` (a
+    decl ref, or a `StructValue` whose `spelling` is the `__init__`
+    application); readers needing a lane count call `simd_length_image`,
+    and the width arm becomes the struct-valued arm, whose
+    `solve_applied_args` already unifies spellings. It touches every
+    `SimdWidth::Expr` site, the MIR verifier's width meta, and the width's
+    MIR text (a `VERSION_MINOR` bump).
+  - Probe: the pin solves `w` from `n` and `n * 2` over `def f[n: Int]()`,
+    from `Int(m) + 1` and `Int(m) * 2` over `m: SIMDLength`, and from an
+    explicit `SIMD[_, SIMDLength(n)]`.
+  - Probe: the pin rejects `m`, `m + 1`, and `Int(m)` over `m: SIMDLength`,
+    a literal width, `SIMDLength(n) + 2`, a module `comptime K: Int = 4`,
+    and `comptime L = SIMDLength(n)` then `SIMD[_, L]`.
+  - Probe: `SIMD[dt, m + 2]` and `SIMD[dt, Int(m) + 2]` are one type at the
+    pin, so identity stays on the value.
+  - Risk: a `StructValue` over `m._mlir_value` and the decl ref `m` are
+    unequal unless the context eta-reduces; probe `SIMD[dt, m]` against
+    `SIMD[dt, SIMDLength(mlir_value=m._mlir_value)]` at the pin first.
+  - Must keep `assets/type_error/simd_int_width_binder_not_inferred.mojo`
+    rejected (a literal width).
   - Found while landing a display binding read in a type or a parameter
     argument (2026-10-06).
-  - At the pin both widths are `SIMDLength(n)`, so `SIMDLength(w)` against
-    `SIMDLength(n)` solves structurally once the width slot holds the
-    struct (R1539).
-  - Depends on R1539.
-  - Model: Opus, Not Planned.
-
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 - [ ] **R53 A list literal does not reach a `List` built over a binder**
 
   Problem: `count([1, 2])` for `def count[T: …](extra: List[T])` reports
@@ -8711,9 +8728,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     '__mlir_type[`!kgen.param_list<`, T, `>`]' are accepted"
     (`checker/type_resolution.rs::mlir_applied_type`).
   - Add a `!pop.array<{},{}>` arm to `mlir_applied_type`. Its size slot is
-    `Checker::index_slot`, which `!kgen.simd`'s length shares through
-    `mlir_index_operand`; a `size: __mlir_type.index` binder is read bare,
-    not through `_mlir_value`.
+    `Checker::slot_value` read by `integer_slot` (`type_resolution.rs`),
+    which `!kgen.simd`'s length shares through `mlir_index_operand`; a
+    `size: __mlir_type.index` binder is read bare, not through
+    `_mlir_value`.
   - The size needs the `Known`/`Expr` shape `SimdWidth` has, substituted
     by the elaborator and refused symbolic by the concrete verifier.
   - Found while landing R1304 (2026-10-23).
@@ -9428,6 +9446,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
+- [ ] **R1540 A parameter list is indexed by an `Int`, where upstream's
+  `__getitem_param__` takes a `SIMDLength`**
+
+  `ParamContext::list_get` (`mojito-types/param_expr.rs`) takes only an
+  `Int` index, where upstream's `TypeList.__getitem_param__[idx:
+  SIMDLength]` indexes `Self.values` by a `SIMDLength`.
+  - Probe: respelling `stdlib/std/builtin/variadics.mojo`'s
+    `comptime __getitem_param__[idx: Int] = Self.values[idx]` as
+    upstream's `idx: SIMDLength` fails to package the library with
+    "parameter list element expects an Int parameter list index, found
+    SIMDLength".
+  - Lever: a `SIMDLength` index reads as its lane count
+    (`types::simd_length_image`), as the SIMD width slot reads one; then
+    respell `TypeList.__getitem_param__` and drop its comment.
+  - `ParameterList.__getitem_param__` (R800) takes the same index.
+  - Found while landing R1539 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R800 A compile-time subscript of a value pack is a checker rule, not
   `ParameterList.__getitem_param__`**
 
@@ -9442,9 +9479,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `stdlib/std/builtin/variadics.mojo`, as `TypeList` already declares
     its own, read under the raw-list gate
     (`Checker::bundled_raw_list_operand`).
-  - Upstream's index parameter is `idx: SIMDLength` (R1539), so the port
-    spells it `Int`, as `TypeList`'s does, and says so in the module
-    header.
+  - Upstream's index parameter is `idx: SIMDLength`, which a parameter
+    list does not take as an index yet (R1540), so the port spells it
+    `Int`, as `TypeList`'s does, and says so in the module header.
   - Probe: `comptime e = vs.__getitem_param__[1]` in `def go[*vs: Int]()`
     reports "type 'ParameterList[Int, vs]' has no field
     '__getitem_param__'", where the pin prints `5`.
@@ -9804,9 +9841,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and `reduce_min` off x86) are `llvm_intrinsic` calls of
     `llvm.vector.reduce.*`, which run since R1394. Its subvector and
     shuffle bodies need R1519.
+  - The width slot holds a `SIMDLength`'s `Int` lane count, where the
+    ported `SIMD[dtype, length: SIMDLength]` holds the length itself
+    (R382).
   - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R1522, R1526, R1539 (the
-    length type), R185 and R186 (so the port is upstream's bodies with no
-    leniency), R58, R1516, R1517, R1518, and R1519.
+    length type), R382 (the width slot), R185 and R186 (so the port is
+    upstream's bodies with no leniency), R58, R1516, R1517, R1518, and
+    R1519.
   - Model: Fable, Planned.
 
 - [ ] **R1398 The checker, VM, and Pliron keep `SIMD` member rules no
@@ -10075,48 +10116,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `StaticTuple`. `MirInstr::SimdShuffle` already computes the op.
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1539 `SIMDLength` is `Int` in Mojito, told apart only where a
-  width binder is inferred**
-
-  Upstream declares `SIMD[dtype: DType, length: SIMDLength]` over its
-  library `struct SIMDLength` (`std/builtin/simd_length.mojo`), where
-  Mojito types `SIMDLength` as `Int` and records its binders in a checker
-  side table (`Checker::simd_length_binders`).
-  - The table has two readers: `solve_value_args` (`checker/generics.rs`)
-    and `Checker::mlir_index_operand` (`checker/type_resolution.rs`).
-  - It is persisted as `Table::SimdLengthBinders`, so deleting it bumps
-    `PACKAGE_FORMAT`.
-  - `SIMDLength` is typed `Int` by name in `checker/annotations.rs`,
-    `mojito-comptime/src/comptime.rs`, and `comptime/params.rs`.
-  - Lever: bundle upstream's struct verbatim, let the width slot hold the
-    `Int` image of a `SIMDLength` (a literal or an `Int` converted through
-    its `@implicit` `__init__`), let the solver read the slot's shape,
-    delete the table, and convert a `SIMDLength` to `SIMD` as upstream's
-    `@implicit __init__(SIMDLength)` does.
-  - The bundled struct checks only with that conversion in place:
-    `__rshift__`'s `select(rhs < 0, 0, …)` and `__pow__`'s `res *= x`
-    convert a `SIMDLength` to `Int`. So the struct, the slot, the solver,
-    and the conversion land together.
-  - Probe: `print(v.length)`, `print(x)` over `x: SIMDLength`, and
-    `print(w)` over a `w: SIMDLength` binder print here, where the pin
-    rejects each: `SIMDLength` is not `Writable`.
-  - Probe: `var t: Tag[SIMDLength(1) + SIMDLength(2)] = Tag[SIMDLength(3)]()`
-    prints `ok` at the pin.
-  - Probe: `show[w: Int](x: SIMD[DType.int32, w])` called with a
-    `SIMD[DType.int32, n]` or `SIMD[DType.int32, n * 2]` in `def f[n:
-    Int]()` binds `w` at the pin. This closes R382.
-  - `comptime k: SIMDLength = 4` also needs R1538. Leave it out of this
-    entry's fixture until that lands.
-  - Must keep `assets/ok/simd_lane_binders_inferred.mojo`,
-    `hashlib_values.mojo`, `simd_mlir_storage.mojo`, and
-    `assets/type_error/simd_int_width_binder_not_inferred.mojo` as they are.
-  - Plan: `R1535-simdlength-is-int-in-mojito-told-plan.md`, slices S1–S5.
-    Its prerequisites N1–N3 and N4's application-argument half landed with
-    R1535. N4's annotated-binding half is R1538.
-  - Found while landing R259 (2026-10-05).
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string
   accumulator where upstream writes through a `Writer` struct**
