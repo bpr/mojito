@@ -249,6 +249,8 @@ impl Checker {
         let result = match op {
             // Short-circuiting boolean logic requires `Bool` operands.
             And | Or if lt == TyKind::Bool && rt == TyKind::Bool => Some(Ty::bool()),
+            // Upstream's `Bool.__and__`/`__or__`/`__xor__`: the eager `i1` op.
+            BitAnd | BitOr | BitXor if lt == TyKind::Bool && rt == TyKind::Bool => Some(Ty::bool()),
             // `+` concatenates String, or adds numbers (result = common type).
             Add if lt == TyKind::StringLiteral && rt == TyKind::StringLiteral => {
                 Some(Ty::string_literal())

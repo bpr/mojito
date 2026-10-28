@@ -5,7 +5,6 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::ct::MLIR_VALUE_FIELD;
 use mojito_types::origin::CallableEnvironment;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet};
 use mojito_types::types::{TYPE_OF_ALL_TYPES, TyKind};
@@ -1178,12 +1177,12 @@ impl Checker {
     /// the type of `SIMD._mlir_value`, which is the vector itself while
     /// `SIMD` is a compiler type. Every other spelling is outside the subset.
     fn mlir_applied_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
-        let (text, operands) = mlir_spelling(args);
+        let (text, operands) = mojito_types::types::mlir_type_spelling(args);
         match (text.as_str(), operands.as_slice()) {
             ("!kgen.param_list<{}>", [element]) => self.mlir_param_list_type(element),
             ("!kgen.simd<{},{}>", [length, dtype]) => {
                 let width = self.mlir_index_operand(length)?;
-                let dtype = mlir_value_operand(dtype)
+                let dtype = mojito_types::types::mlir_value_operand(dtype)
                     .ok_or_else(|| mlir_operand_mismatch("!kgen.dtype", "DType"))?;
                 simd_of(self.dtype_from_arg(&dtype)?, power_of_two_width(width)?)
             }
@@ -1209,12 +1208,12 @@ impl Checker {
     }
 
     /// An `index` operand of an MLIR type spelling: a `SIMDLength`'s
-    /// `_mlir_value`, the length itself while `SIMDLength` is `Int` (R336).
+    /// `_mlir_value`, the length itself while `SIMDLength` is `Int` (R1535).
     /// An `Int`'s `_mlir_value` is a scalar `!kgen.simd`, never an index, as
     /// at the pin, so a symbolic operand must read a `SIMDLength` binder.
     fn mlir_index_operand(&self, arg: &mojito_ast::ast::ParamArg) -> Result<SimdWidth, TypeError> {
         let not_index = || mlir_operand_mismatch("index", "SIMDLength");
-        let operand = mlir_value_operand(arg).ok_or_else(not_index)?;
+        let operand = mojito_types::types::mlir_value_operand(arg).ok_or_else(not_index)?;
         let (width, _) = self.index_slot(&operand)?;
         match &width {
             SimdWidth::Expr(expr)
@@ -4373,51 +4372,6 @@ fn unsupported_mlir_type() -> TypeError {
          are accepted"
             .to_string(),
     )
-}
-
-/// A bracketed MLIR type spelling as KGEN concatenates it: its text pieces
-/// (the backtick-stropped arguments no plain identifier spells) joined
-/// without whitespace, each other argument a `{}` hole, beside those
-/// operands in order.
-fn mlir_spelling(args: &[mojito_ast::ast::ParamArg]) -> (String, Vec<&mojito_ast::ast::ParamArg>) {
-    let mut operands = Vec::new();
-    let text = args
-        .iter()
-        .map(|arg| match arg {
-            mojito_ast::ast::ParamArg::Value(Expr {
-                kind: ExprKind::Identifier(text),
-                ..
-            }) if !text.chars().all(|c| c == '_' || c.is_alphanumeric()) => {
-                text.split_whitespace().collect::<String>()
-            }
-            operand => {
-                operands.push(operand);
-                "{}".to_string()
-            }
-        })
-        .collect();
-    (text, operands)
-}
-
-/// The parameter an MLIR type operand reads the `_mlir_value` of
-/// (`n._mlir_value`, `Self.dtype._mlir_value`), which is the parameter
-/// itself while `DType` and `SIMDLength` are compiler types (R160, R336).
-/// `None` for an operand that reads no `_mlir_value`.
-fn mlir_value_operand(arg: &mojito_ast::ast::ParamArg) -> Option<mojito_ast::ast::ParamArg> {
-    match arg {
-        mojito_ast::ast::ParamArg::Value(Expr {
-            kind: ExprKind::Member { object, field },
-            ..
-        }) if field == MLIR_VALUE_FIELD => {
-            Some(mojito_ast::ast::ParamArg::Value((**object).clone()))
-        }
-        mojito_ast::ast::ParamArg::Type(SourceType::Assoc { base, name, args })
-            if name == MLIR_VALUE_FIELD && args.is_empty() =>
-        {
-            Some(mojito_ast::ast::ParamArg::Type((**base).clone()))
-        }
-        _ => None,
-    }
 }
 
 /// An MLIR type operand of the wrong attribute type: `expected` holds only

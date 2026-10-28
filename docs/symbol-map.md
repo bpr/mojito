@@ -2323,10 +2323,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `Checker::parameter_list_spread`, `resolve_use_params`). The checker
   resolves upstream's `__mlir_type[`!kgen.param_list<`, T, `>`]` body
   (`Checker::mlir_applied_type`, which reads a bracketed spelling as text
-  with operand holes, then `mlir_param_list_type`, `type_resolution.rs`).
+  with operand holes through `types::mlir_type_spelling`, then
+  `mlir_param_list_type`, `type_resolution.rs`).
   The same reader resolves `SIMD`'s ``!kgen.simd<length, dtype>`` storage
-  type to `TyKind::Simd` (`mlir_index_operand` for the length slot over
-  `Checker::index_slot`), and the check's `SemanticAdjustment::SimdStorage`
+  type to `TyKind::Simd` (`types::mlir_value_operand` reads each operand,
+  `mlir_index_operand` the length slot over `Checker::index_slot`).
+  `symbol::ast_raw` reads the same spelling through the same two helpers
+  (`mlir_simd_annotation`), and spells an `` __mlir_type.`name` `` by
+  `types::mlir_type_named`, so an overload over either keys alike at its
+  declaration and its call. The check's `SemanticAdjustment::SimdStorage`
   makes `v._mlir_value` the vector's own value or place
   (`Node::project_member`, `mir/facts.rs`).
   The bundled struct conforms to `Writable` where its element type does

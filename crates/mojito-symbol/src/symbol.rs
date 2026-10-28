@@ -1655,6 +1655,15 @@ fn ast_raw(
         {
             return ast_raw(&aliased, comptimes, type_bounds, self_spelling);
         }
+        // `__mlir_type[`!kgen.simd<`, length._mlir_value, `, `,
+        // dtype._mlir_value, `>`]` spells as the vector the checker resolves
+        // it to (`SIMD[dtype, length]`).
+        Type::Named(name, args)
+            if name == "__mlir_type"
+                && let Some(vector) = mlir_simd_annotation(args) =>
+        {
+            return ast_raw(&vector, comptimes, type_bounds, self_spelling);
+        }
         Type::Int => "Int".to_string(),
         Type::UInt => "UInt".to_string(),
         Type::Bool => "Bool".to_string(),
@@ -1823,6 +1832,17 @@ fn ast_raw(
         // and the checker resolves both to the same `TyKind::Param` — spell them
         // identically so the two sides agree.
         Type::SelfParam(name) => parameter_raw(name, type_bounds),
+        // An `` __mlir_type.`name` `` the subset reads spells as the type the
+        // checker resolves it to (`mlir_type_named`), so the declaration and
+        // its call sites agree.
+        Type::Assoc { base, name, args }
+            if args.is_empty()
+                && matches!(base.as_ref(), Type::Named(base, base_args)
+                    if base == "__mlir_type" && base_args.is_empty())
+                && let Some(mlir) = mojito_types::types::mlir_type_named(name) =>
+        {
+            ty_raw(&mlir, None)
+        }
         Type::Assoc { base, name, .. } => format!(
             "Assoc${}${}",
             ast_raw(base, comptimes, type_bounds, self_spelling),
@@ -1842,6 +1862,22 @@ fn ast_raw(
         Some(spelling) if raw == spelling => "Self".to_string(),
         _ => raw,
     }
+}
+
+/// The `SIMD[dtype, length]` annotation a `__mlir_type[...]` spelling of
+/// `!kgen.simd<length, dtype>` names, as the checker's `mlir_applied_type`
+/// reads it; `None` for every other MLIR type spelling.
+fn mlir_simd_annotation(args: &[ParamArg]) -> Option<Type> {
+    let (text, operands) = mojito_types::types::mlir_type_spelling(args);
+    let [length, dtype] = operands.as_slice() else {
+        return None;
+    };
+    if text != "!kgen.simd<{},{}>" {
+        return None;
+    }
+    let length = mojito_types::types::mlir_value_operand(length)?;
+    let dtype = mojito_types::types::mlir_value_operand(dtype)?;
+    Some(Type::Named("SIMD".to_string(), vec![dtype, length]))
 }
 
 /// Mirror `ty_raw`'s Display-based encoding of a resolved callable type
@@ -2085,18 +2121,25 @@ fn existential_trait(arg: &ParamArg) -> Option<&str> {
     }
 }
 
-/// The binder of the signature a `Scalar`/`SIMD` annotation argument names.
+/// The binder of the signature a `Scalar`/`SIMD` annotation argument names,
+/// bare (`n`) or through `Self` (`Self.n`), which name one parameter.
 fn simd_binder_slot<'a>(
     arg: &'a ParamArg,
     type_bounds: &HashMap<String, BinderSpelling>,
 ) -> Option<&'a str> {
-    match arg {
+    let name = match arg {
         ParamArg::Value(Expr {
             kind: ExprKind::Identifier(name),
             ..
-        }) if type_bounds.contains_key(name) => Some(name),
-        _ => None,
-    }
+        })
+        | ParamArg::Type(Type::SelfParam(name)) => name,
+        ParamArg::Value(Expr {
+            kind: ExprKind::Member { object, field },
+            ..
+        }) if matches!(&object.kind, ExprKind::Identifier(base) if base == "Self") => field,
+        _ => return None,
+    };
+    type_bounds.contains_key(name).then_some(name.as_str())
 }
 
 /// A declared compile-time parameter as its annotation spells in an overload

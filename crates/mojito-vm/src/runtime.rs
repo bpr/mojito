@@ -633,6 +633,9 @@ pub fn apply_infix(op: InfixOp, l: Value, r: Value) -> Result<Value, RuntimeErro
         (InfixOp::Le, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a <= b)),
         (InfixOp::Gt, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a > b)),
         (InfixOp::Ge, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a >= b)),
+        (InfixOp::BitAnd, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a & b)),
+        (InfixOp::BitOr, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a | b)),
+        (InfixOp::BitXor, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a ^ b)),
         _ => Err(RuntimeError::TypeError(format!(
             "operator {:?} is not defined for {} and {}",
             op,

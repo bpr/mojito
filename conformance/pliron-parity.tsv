@@ -50,6 +50,7 @@ assets/ok/augmented_store_copies_nothing.mojo	main	exe-differential	sanitized
 assets/ok/bit_count_ops.mojo	main	exe-differential	sanitized
 assets/ok/bitwise_shift_precedence.mojo	main	exe-differential	sanitized
 assets/ok/bool_alias_predicate_where.mojo	main	exe-differential	sanitized
+assets/ok/bool_bitwise_operators.mojo	main	exe-differential	sanitized
 assets/ok/boolable_and_divmod.mojo	main	exe-differential	sanitized
 assets/ok/borrowed_iteration_temporary_source_drop.mojo	main	exe-differential	sanitized
 assets/ok/bound_generic_write_to.mojo	main	exe-differential	sanitized
@@ -508,6 +509,7 @@ assets/ok/mlir_builtin_casts.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_simd_lane_ops.mojo	main	exe-differential	sanitized
+assets/ok/mlir_type_overload_identity.mojo	main	exe-differential	sanitized
 assets/ok/module_constant_literal_bracket.mojo	main	exe-differential	sanitized
 assets/ok/module_reference_result_reads.mojo	main	exe-differential	sanitized
 assets/ok/module_type_alias_reads.mojo	main	exe-differential	sanitized

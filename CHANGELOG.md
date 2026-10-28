@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `&`, `|`, and `^` over two `Bool`s are upstream's eager
+  `Bool.__and__`/`__or__`/`__xor__`, with `&=`, `|=`, and `^=`, at run
+  time, natively, and in a parameter expression (`Tag[True & False]`), as
+  at the pin. They were rejected before.
 - Upstream's MLIR builtin `__mlir_type.index` is now a type of its own,
   apart from `Int`, as at the pin (R1516). `Int.__mlir_index__()` (after a
   `UInt`'s cast to `Int`) is upstream's `pop.cast_to_builtin`,
@@ -1111,6 +1115,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An overloaded constructor or method whose parameter is spelled
+  `__mlir_type.index`, ``__mlir_type[`!kgen.simd<`, …, `>`]``, or
+  `SIMD[Self.dt, Self.n]` is now declared under the symbol its calls name,
+  so `S(mlir_value=i)` beside `S(n)` runs where it stopped with "keyword
+  arguments … are not supported" or "checked constructor … is missing from
+  MIR". `SIMDLength`'s port to upstream's library struct, which needed this
+  fix, is now filed as R1535 behind R1531–R1534.
 - MIR lowering now applies the check's transfer verdict instead of deciding
   copy or move again by whether the type owns storage (R1367, R121). A
   `^` over a `TrivialRegisterPassable` struct, or a type parameter bounded

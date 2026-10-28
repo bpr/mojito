@@ -1138,6 +1138,55 @@ pub fn mlir_type_named(name: &str) -> Option<Ty> {
     }
 }
 
+/// A bracketed `__mlir_type[...]` spelling as KGEN concatenates it.
+///
+/// The text pieces (the backtick-stropped arguments no plain identifier
+/// spells) join without whitespace, each other argument a `{}` hole, beside
+/// those operands in order.
+pub fn mlir_type_spelling(
+    args: &[mojito_ast::ast::ParamArg],
+) -> (String, Vec<&mojito_ast::ast::ParamArg>) {
+    use mojito_ast::ast::{Expr, ExprKind, ParamArg};
+    let mut operands = Vec::new();
+    let text = args
+        .iter()
+        .map(|arg| match arg {
+            ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(text),
+                ..
+            }) if !text.chars().all(|c| c == '_' || c.is_alphanumeric()) => {
+                text.split_whitespace().collect::<String>()
+            }
+            operand => {
+                operands.push(operand);
+                "{}".to_string()
+            }
+        })
+        .collect();
+    (text, operands)
+}
+
+/// The parameter an MLIR type operand reads the `_mlir_value` of.
+///
+/// `n._mlir_value` and `Self.dtype._mlir_value` read the parameter itself
+/// while `DType` and `SIMDLength` are compiler types (R160, R1535). `None`
+/// for an operand that reads no `_mlir_value`.
+pub fn mlir_value_operand(arg: &mojito_ast::ast::ParamArg) -> Option<mojito_ast::ast::ParamArg> {
+    use mojito_ast::ast::{Expr, ExprKind, ParamArg, Type};
+    match arg {
+        ParamArg::Value(Expr {
+            kind: ExprKind::Member { object, field },
+            ..
+        }) if field == crate::ct::MLIR_VALUE_FIELD => Some(ParamArg::Value((**object).clone())),
+        ParamArg::Type(Type::Assoc { base, name, args })
+            if name == crate::ct::MLIR_VALUE_FIELD && args.is_empty() =>
+        {
+            Some(ParamArg::Type((**base).clone()))
+        }
+        _ => None,
+    }
+}
+
 /// Decompose a checker-abstract scalar-range type — a struct naming a
 /// [`SCALAR_RANGE_FAMILY`] member or [`FLOAT_STRIDED_RANGE`] (plain or
 /// module-qualified) with one concrete dtype value argument.

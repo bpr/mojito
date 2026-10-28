@@ -430,6 +430,42 @@ fn self_typed_overload_keys_agree_between_declaration_and_call() {
     }
 }
 
+#[test]
+fn mlir_typed_overload_keys_agree_between_declaration_and_call() {
+    // An overload over `__mlir_type.index` keys by the type the annotation
+    // resolves to on both sides, so the recorded callee names the declared
+    // MIR function.
+    let src = "struct Index:\n\
+         \x20   var _mlir_value: __mlir_type.index\n\
+         \n    def __init__(out self, *, mlir_value: __mlir_type.index):\n\
+         \x20       self._mlir_value = mlir_value\n\
+         \n    def __init__(out self, value: Int, /):\n\
+         \x20       self._mlir_value = value.__mlir_index__()\n\
+         def main():\n\
+         \x20   var a = Index(mlir_value=Int(3).__mlir_index__())\n\
+         \x20   print(Int(mlir_value=a._mlir_value), Int(mlir_value=Index(5)._mlir_value))\n";
+    let program = parse(src).expect("parse error");
+    let targets = resolve_overload_targets(&program).expect("check error");
+    let names: HashSet<String> = lower_program(&program)
+        .expect("type error")
+        .functions
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert!(
+        targets
+            .values()
+            .any(|t| t.starts_with("Index.__init__$ov$") && t.ends_with("$kw$mlir_value")),
+        "expected a recorded `mlir_value` constructor target; got: {targets:?}"
+    );
+    for target in targets.values() {
+        assert!(
+            names.contains(target),
+            "checker target '{target}' names no MIR function; emitted: {names:?}"
+        );
+    }
+}
+
 /// Repository hygiene: the `$ov$` spelling may exist only in the canonical
 /// symbol module. A new hand-built overload symbol anywhere else in the
 /// compiler sources (the facade's `src/` or any workspace crate under
