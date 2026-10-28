@@ -36,6 +36,17 @@ impl Checker {
         }
     }
 
+    /// Whether the declared struct `name` is constructed by the compiler's
+    /// rule rather than by a declared initializer: `SIMD`, while
+    /// `std.simd` declares none of upstream's `__init__` overloads (R1555).
+    pub(super) fn constructs_by_rule(&self, name: &str) -> bool {
+        name == mojito_types::types::SIMD_TYPE_NAME
+            && self
+                .structs
+                .get(name)
+                .is_some_and(|info| !info.methods.contains_key("__init__"))
+    }
+
     fn erased_origin_constraint_environment(
         signature: &CallableOriginSignature,
         bindings: &HashMap<usize, bool>,
@@ -105,7 +116,7 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match name {
-            _ if self.structs.contains_key(name) => {
+            _ if self.structs.contains_key(name) && !self.constructs_by_rule(name) => {
                 // `String(x)` on a non-literal argument stringifies through
                 // the builtin conversion, which builds the nominal struct
                 // itself: the call routes to the `"String"` builtin (a

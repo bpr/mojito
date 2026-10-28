@@ -1294,7 +1294,7 @@ fn lower_synthesized_member(
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
 ) {
-    let receiver: Ty = TyKind::Struct(name.to_string(), Vec::new()).into();
+    let receiver = self_receiver_ty(name, parameters);
     let (symbol, parameter, receiver_convention, keyword_only) = match member {
         SynthesizedMember::Copy => (
             format!("{name}.__copyinit__"),
@@ -1532,7 +1532,7 @@ fn lower_fieldwise_members(
     functions: &mut Vec<(String, MirFunction)>,
     declarations: &mut MirDeclarations,
 ) {
-    let receiver: Ty = TyKind::Struct(name.to_string(), Vec::new()).into();
+    let receiver = self_receiver_ty(name, parameters);
     let fields: Vec<(&str, Ty, Option<ArgConvention>)> = parameter_fields
         .iter()
         .map(|field| (field.field, field.ty.clone(), field.convention))
@@ -2041,6 +2041,21 @@ fn lower_function(
     );
 }
 
+/// The type of `self` in a member of struct `name` declaring `parameters`:
+/// the struct at its own binders, which parametric MIR spells by the bare
+/// name and each instance replaces. `SIMD` is the exception while the
+/// `Ty::new` bridge holds its application as the compiler's `TyKind::Simd`
+/// (R1557): its receiver is that type at the binders, which an instance
+/// substitutes as any other type.
+fn self_receiver_ty(name: &str, parameters: &[ParamDecl]) -> Ty {
+    let arguments = if name == mojito_types::types::SIMD_TYPE_NAME {
+        parameters.iter().map(ParamDecl::own_argument).collect()
+    } else {
+        Vec::new()
+    };
+    TyKind::Struct(name.to_string(), arguments).into()
+}
+
 /// Lower struct `structure`'s member `m`: its declaration, its parameter
 /// defaults, and its body.
 fn lower_struct_member<P: DeclaredParam>(
@@ -2104,16 +2119,14 @@ fn lower_struct_member<P: DeclaredParam>(
         param_decls = struct_decls.iter().cloned().chain(param_decls).collect();
     }
     let value_parameter_locals = callable_parameter_locals(&param_decls);
-    let enclosing_binders = EnclosingBinders::of(
-        checked
-            .generic_parameters_at(&GenericSite::Struct {
-                module,
-                declaration: name.to_string(),
-            })
-            .unwrap_or(&[])
-            .iter()
-            .chain(&signature.parameters),
-    );
+    let struct_parameters = checked
+        .generic_parameters_at(&GenericSite::Struct {
+            module,
+            declaration: name.to_string(),
+        })
+        .unwrap_or(&[]);
+    let enclosing_binders =
+        EnclosingBinders::of(struct_parameters.iter().chain(&signature.parameters));
     let defaults = regular
         .iter()
         .map(|param| {
@@ -2209,7 +2222,7 @@ fn lower_struct_member<P: DeclaredParam>(
     let mut refp: Vec<bool> = Vec::new();
     if m.has_self {
         names.push("self".to_string());
-        ptys.push(TyKind::Struct(name.to_string(), Vec::new()).into());
+        ptys.push(self_receiver_ty(name, struct_parameters));
         owned.push(is_owned(&m.self_convention));
         deinit.push(is_deinit(&m.self_convention));
         refp.push(is_ref(&m.self_convention));

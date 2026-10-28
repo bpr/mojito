@@ -239,6 +239,17 @@ impl Specializer<'_> {
             })
     }
 
+    /// Whether the declared struct `receiver` is an instance of answers the
+    /// requirement `dispatch` with a body: `SIMD`'s, for a `TyKind::Simd`
+    /// receiver, once `std.simd` declares the witness. Any other requirement
+    /// is the builtin's to answer.
+    pub(super) fn declares_witness(&self, receiver: &Ty, dispatch: &str) -> bool {
+        mojito_types::types::nominal_parts(receiver)
+            .and_then(|(name, _)| self.structs.get(name))
+            .and_then(|declaration| declaration.witness(dispatch))
+            .is_some_and(|target| self.functions.contains_key(target))
+    }
+
     pub(super) fn enqueue_display_instance(
         &mut self,
         owner: &str,

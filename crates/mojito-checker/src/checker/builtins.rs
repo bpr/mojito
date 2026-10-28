@@ -649,8 +649,15 @@ impl Checker {
             }
             return Ok(Some(Ty::int()));
         }
-        // A literal argument materializes, and `SIMD.__len__` returns the
-        // lane count of every scalar it models.
+        // `len(c)` on a struct dispatches to `c.__len__()` (`Sized`), which
+        // must return `Int`: a vector's or scalar's is `SIMD`'s, and a literal
+        // argument materializes to one first.
+        if let Some(result) = self.struct_dunder(&default_literal(ty), "__len__", &[]) {
+            return result
+                .and_then(|ret| require_dunder_ret(ret, &Ty::int(), "__len__"))
+                .map(Some);
+        }
+        // A pack's storage answers `Sized` where it stands.
         if mojito_types::conformance::modelled_declares(
             &default_literal(ty),
             "Sized",
@@ -668,13 +675,6 @@ impl Checker {
                 || mojito_types::types::scalar_range_parts(ty).is_some())
         {
             return Ok(Some(Ty::int()));
-        }
-        // `len(c)` on a user struct dispatches to `c.__len__()` (`Sized`), which
-        // must return `Int`.
-        if let Some(result) = self.struct_dunder(ty, "__len__", &[]) {
-            return result
-                .and_then(|ret| require_dunder_ret(ret, &Ty::int(), "__len__"))
-                .map(Some);
         }
         // `len(x)` on an opaque type parameter is permitted when it conforms
         // to either of upstream's `len` overload bounds, `Sized` or

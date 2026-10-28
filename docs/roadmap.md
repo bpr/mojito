@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1561**.
+Next free ID: **R1562**.
 
 ## Ordered Work
 
@@ -2638,6 +2638,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     pin.
   - Probe: `s[0][1] = 7`, both levels a value getter and a setter, prints
     `get`, `inner set`, `set`, `7` at the pin.
+  - Probe: `bump(v[1])`, a `mut` argument over the same getter and setter,
+    passes the check and then fails MIR verification ("dynamic element
+    projection requires checked indexed storage"), where the pin writes
+    the bumped value back and prints `1 12`.
+  - R1561 moves `bump(v[i])` over a `SIMD` lane onto this path.
   - Found while landing R1373 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7198,6 +7203,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     and a SIMD lane read `ref lane = v[i]`.
   - The lane binding also writes through to the vector, so `lane += 2`
     changes `v`.
+  - Once R1561 makes `v[i]` the declared value getter, `ref lane = v[i]`
+    binds a materialized copy instead of writing through, and is still
+    accepted where the pin rejects it.
   - A memory-backed temporary (`ref x = make_list()`) is accepted by both.
   - The lever is the `StmtKind::RefDecl` arm in
     `crates/mojito-checker/src/checker/statements.rs`, whose
@@ -9805,39 +9813,33 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1549 `SIMD` has no declaration, where upstream's is `struct
-  SIMD[dtype: DType, length: SIMDLength]` in `std/simd.mojo`**
+- [ ] **R1561 `v[i]` over a `SIMD` is the lane-subscript rule, where
+  upstream's is the declared `__getitem__` and `__setitem__`**
 
-  The name `SIMD`, and through R1389 `Int`, `UInt`, `Float64`, and the sized
-  aliases, resolves to `TyKind::Simd` with checker-rule members, where
-  upstream declares the struct over its `!kgen.simd` storage, which is
-  already `TyKind::KgenSimd` (R1397).
-  - Bundle `stdlib/std/simd.mojo` with the struct, `_mlir_type`,
-    `_mlir_value`, and upstream's `__len__`, `__getitem__`, and
-    `__setitem__` bodies. Add `SIMD` to the prelude and to
-    `implicit_public_identity` (`mojito-module/src/module.rs`), as R1539
-    did for `SIMDLength`.
-  - Bridge: `Ty::new` canonicalizes `Struct("SIMD", [dtype, length])` into
-    `TyKind::Simd`, so the declaration's `Self` and source `SIMD[...]` keep
-    the compiler's representation until R1557.
-  - Member lookup on a `TyKind::Simd` receiver consults the declaration
-    first (`resolve_receiver_method`, `struct_dunder`), and the rule second.
-  - Delete the lane-subscript rule and `MirIntrinsicSubscript::Simd`
-    (MIR, VM, Pliron).
-  - The elaborator must not mint `SIMD$mono$…` struct instances.
-  - Trap: the bridge is global, so code that builds `Struct("SIMD", …)`
-    and then matches `TyKind::Struct` misses (struct registration's
-    `self_ty`, `instance_arguments`).
-  - Probe: `n.__getitem__(0)` over `n = 5` is rejected with "type 'Int' has
-    no method '__getitem__'", where the pin prints `5`.
-  - Probe: in a raising `main`, `var [a] = 5` and `var [a, b] =
-    SIMD[DType.int32, 2](1, 2)` print `5` and `1 2` at the pin, and `var
-    [a, b] = 5` raises "list pattern does not match value length".
-    `checker/destructure.rs` rejects all three. A sequence *pattern* over
-    these types crashes the pin, so `compile_sequence_pattern`'s rejection
-    stays.
-  - Depends on nothing.
-  - Model: Fable, Planned.
+  A subscript read, store, augmented store, or place over a vector or
+  scalar is typed by the checker's lane rule and lowered through
+  `MirIntrinsicSubscript::Simd`, though `std/simd.mojo` declares upstream's
+  bodies, which explicit calls already run.
+  - Route subscripts on a `TyKind::Simd` through `Checker::nominal_struct`,
+    as struct subscripts go (`infer_struct_getitem_call`,
+    `subscript_lvalue`), and delete the lane rule (`simd_lane` in
+    `checker/indexing.rs`) and `MirIntrinsicSubscript::Simd` (MIR, VM,
+    Pliron).
+  - No MIR writer emits `simd` as an intrinsic subscript, so deleting the
+    variant needs no MIR minor bump.
+  - The elaborator's `rewrite_subscript_call` (`mono/infer.rs`) binds the
+    owner through `types::nominal_parts`, as `infer_call` now does.
+  - A `mut` lane argument (`bump(v[i])`) then needs R1503's write-back;
+    `tests/vm_test.rs`'s
+    `dynamic_intrinsic_index_actual_is_evaluated_once_and_writes_back`
+    pins it.
+  - A comptime `c[1]` must still fold, through the CTFE running
+    `SIMD.__getitem__`.
+  - `assets/type_error/simd_subscript_indexer.mojo`'s `# expect:` becomes
+    the declared `__setitem__`'s argument mismatch.
+  - Found while landing R1549 (2026-10-28).
+  - Depends on R1503, for the `mut` lane argument.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1550 `SIMD`'s conversions and conformances are checker rules,
   where upstream's are its declared members and trait list**
@@ -9969,6 +9971,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     …)` through the declaration.
   - `Scalar`, `Int`, `UInt`, `Float64`, `Byte`, and the sized aliases come
     from `std/simd.mojo`'s `comptime` aliases, in the pin's prelude list.
+  - Delete what the bridge needed beside it: `Checker::constructs_by_rule`
+    (if R1555 left it), `self_receiver_ty`'s `SIMD` arm (`mojito-mir`),
+    and `types::nominal_parts`'s `Simd` arm, which the elaborator, the
+    checker, and the VM's `declared_owner` read `SIMD`'s identity through.
   - Depends on R1555, R276, R330, and R1556.
   - Model: Fable, Planned.
 
@@ -9997,11 +10003,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `bump(v[2])` over a `mut` lane parameter, and R169's `ref lane =
     v[i]`. Every other lane read and write is `simd.extract` or
     `simd.insert` (`Flatten::lane_access`). Once `v[i]` is the library's
-    `__getitem__`/`__setitem__`, delete `MirPlace::simd_lane`, the lane arms
+    `__getitem__`/`__setitem__` (R1561), delete `MirPlace::simd_lane`, the lane arms
     of the VM's `load_place`/`store_place`, and Pliron's
     `try_lower_simd_lane_store` and lane addressing too.
   - Done when `rg simd_method crates` finds nothing.
-  - Depends on R1555, R330, and R276, which port the last members.
+  - Depends on R1555, R330, and R276, which port the last members, and
+    R1561, which retires the lane subscript.
   - Model: Opus, Not Planned.
 
 - [ ] **R1399 `Int(x)`, `UInt(x)`, and `Float64(x)` are checker built-ins,

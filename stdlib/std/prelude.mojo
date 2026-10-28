@@ -25,6 +25,7 @@ from std.builtin.value import (
 )
 from std.builtin.int import Indexer, Intable, IntableRaising
 from std.builtin.simd_length import SIMDLength
+from std.simd import SIMD
 from std.math import Absable, Powable, Roundable
 from std.builtin.enum_like import EnumLike
 from std.builtin.tuple import Tuple

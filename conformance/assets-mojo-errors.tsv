@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	876
+# swept-count	878
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -475,6 +475,7 @@ assets/type_error/input_outside_raising_context.mojo	compile-reject	agree	error:
 assets/type_error/instantiated_generic_abandoned_binding.mojo	compile-reject	agree	error: 'y' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/int_literal_local_not_concrete.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[3]' value to 'IntLiteral[_]'
 assets/type_error/int_literal_parameter_int_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Int' to 'IntLiteral[x.value]', it depends on an unresolved parameter 'x.value'
+assets/type_error/int_literal_receiver_len.mojo	compile-reject	agree	error: 'IntLiteral[5]' value has no attribute '__len__'
 assets/type_error/int_storage_init_from_int.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/is_operator_missing_dunder.mojo	compile-reject	agree	error: 'Plain' does not implement the '__is__' method
 assets/type_error/is_operator_non_struct.mojo	compile-reject	agree	error: 'Int' does not implement the '__is__' method
@@ -761,6 +762,7 @@ assets/type_error/simd_length_not_writable.mojo	compile-reject	agree	error: inva
 assets/type_error/simd_scalar_splat_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Int32' value to 'SIMD[.int64, 4]'
 assets/type_error/simd_shuffle_width_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_size_removed_alias.mojo	compile-reject	agree	error: use of unknown declaration 'SIMDSize'
+assets/type_error/simd_star_destructure.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from slice literal to 'Int'
 assets/type_error/simd_storage_passed_as_simd.mojo	compile-reject	agree	error: invalid call to 'show': value passed to 'x' cannot be converted from '__mlir_type.`!kgen.simd<2, si32>`' to 'SIMD[.int32, 2]'
 assets/type_error/simd_subscript_indexer.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from 'Offset' to 'Int'
 assets/type_error/simd_symbolic_scalar_operand_rejected.mojo	compile-reject	agree	error: invalid call to '__mul__': value passed to 'rhs' cannot be converted from 'Int' to 'Scalar[dt]'

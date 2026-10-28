@@ -267,7 +267,9 @@ impl Checker {
                 TyKind::Struct(name, _) if self.structs.contains_key(name) => {
                     Some(format!("{name}.{method}"))
                 }
-                _ => None,
+                _ => self
+                    .declared_receiver_member(obj_ty, method)
+                    .map(|(name, _)| format!("{name}.{method}")),
             });
         if let Some(target) = &selected_target {
             self.record_at(span.clone()).overload_target = Some(target.clone());

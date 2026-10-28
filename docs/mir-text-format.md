@@ -830,6 +830,10 @@ Schema 1.129 adds the type `kgen_simd { dtype, width }` (R1397), upstream's
 `` __mlir_type.`!kgen.scalar<dtype>` `` spellings, and of `pop` op operands
 and results. The package format moves to `mojito-package 134`.
 
+The package format moves to `mojito-package 135` (R1549), since the bundled
+library gains `std.simd`, whose `SIMD` the prelude exports; the MIR schema
+does not change.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

@@ -2929,10 +2929,10 @@ impl<'a> Specializer<'a> {
                             let receiver = peel_refs(receiver).clone();
                             self.enqueue_hash_leaf_instances(owner, function, args[0], &receiver)?;
                         }
-                        if resolved
-                            .as_deref()
-                            .is_some_and(mojito_symbol::symbol::is_trait_dispatch_symbol)
-                            && !matches!(peel_refs(receiver).kind(), TyKind::Struct(..))
+                        if let Some(dispatch) = resolved.as_deref().filter(|symbol| {
+                            mojito_symbol::symbol::is_trait_dispatch_symbol(symbol)
+                        }) && !matches!(peel_refs(receiver).kind(), TyKind::Struct(..))
+                            && !self.declares_witness(peel_refs(receiver), dispatch)
                         {
                             // The builtin answers the call itself and takes
                             // none of the requirement's compile-time arguments.
@@ -2961,7 +2961,9 @@ impl<'a> Specializer<'a> {
                         }
                         // A borrowed receiver dispatches on its referent, as
                         // the VM dereferences `Value::Ref` receivers.
-                        let TyKind::Struct(receiver_name, _) = peel_refs(receiver).kind() else {
+                        let Some((receiver_name, _)) =
+                            mojito_types::types::nominal_parts(peel_refs(receiver))
+                        else {
                             continue;
                         };
                         // Source methods are declared under the template name;

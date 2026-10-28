@@ -122,8 +122,8 @@ impl Checker {
     /// lowering evaluates the receiver for its effect and calls the static
     /// symbol with the arguments alone.
     fn receiver_is_elided(&self, obj_ty: &Ty, method: &str, target: &str) -> bool {
-        match obj_ty.kind() {
-            TyKind::Struct(name, _) => self.structs.get(name).is_some_and(|info| {
+        match self.nominal_struct(obj_ty) {
+            Some((name, _)) => self.structs.get(name).is_some_and(|info| {
                 info.methods.get(method).is_some_and(|signatures| {
                     // The target spells the overload symbol only when
                     // the name is overloaded (see `lowered_name` above).
@@ -136,7 +136,7 @@ impl Checker {
                     })
                 })
             }),
-            _ => false,
+            None => false,
         }
     }
 

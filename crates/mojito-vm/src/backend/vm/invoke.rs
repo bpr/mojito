@@ -267,9 +267,19 @@ impl VmBackend {
             recv
         };
         let keyword_names: Vec<String> = kwargs.iter().map(|(name, _)| name.clone()).collect();
+        // The declared struct whose method the call runs: a struct value's
+        // own, and for a value the VM holds as a builtin (a `SIMD`), the
+        // owner of the declared member the elaborator selected.
+        let declared_owner = match &recv {
+            Value::Struct { name, .. } => Some(name.clone()),
+            _ => resolved
+                .filter(|selected| prog.index_of(selected).is_some())
+                .and_then(mojito_symbol::symbol::split_method_symbol)
+                .map(|(owner, _)| owner.to_string()),
+        };
         // Intrinsic dunders on a built-in numeric/hashable value; a struct with
         // its own implementation still dispatches to its method below.
-        if !matches!(recv, Value::Struct { .. }) {
+        if declared_owner.is_none() {
             match (method, args.len()) {
                 // Hashable scalar leaf: contribute the value itself (`-0.0`
                 // folded, as upstream's `SIMD.__hash__`) to the caller-owned
@@ -353,12 +363,6 @@ impl VmBackend {
                 ("__fma__", 2) => {
                     return crate::runtime::builtin_fma(&recv, &args[0], &args[1]);
                 }
-                // `SIMD.__len__`: the lane count, one for each scalar it models.
-                ("__len__", 0) => match &recv {
-                    Value::Int(_) | Value::UInt(_) | Value::Float64(_) => return Ok(Value::Int(1)),
-                    Value::Simd { lanes, .. } => return Ok(Value::Int(lanes.width() as i64)),
-                    _ => {}
-                },
                 // `Equatable` and `Comparable` on a scalar: its operator.
                 ("__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__", 1) if !matches!(&recv, Value::Simd { lanes, .. } if lanes.width() != 1) =>
                 {
@@ -443,7 +447,9 @@ impl VmBackend {
             Value::Tuple(_) => Err(RuntimeError::Unsupported(format!(
                 "vm: internal tuple-pack storage has no runtime method '{method}'; public Tuple methods require nominal lowering"
             ))),
-            Value::Simd { .. } | Value::Int(_) | Value::UInt(_) | Value::Float64(_) => {
+            Value::Simd { .. } | Value::Int(_) | Value::UInt(_) | Value::Float64(_)
+                if declared_owner.is_none() =>
+            {
                 let (dtype, lanes) = crate::runtime::simd_parts(&recv).ok_or_else(|| {
                     RuntimeError::TypeError("vm: a SIMD method needs a SIMD receiver".to_string())
                 })?;
@@ -496,7 +502,7 @@ impl VmBackend {
                 self.store_at_call_place(frame_id, place, writer, regs, vars)?;
                 Ok(Value::None)
             }
-            Value::Struct { name, .. } => {
+            _ if let Some(name) = &declared_owner => {
                 let method_argc = args.len();
                 let source_fname = format!("{name}.{method}");
                 let (fname, fidx) = prog

@@ -265,12 +265,13 @@ impl Specializer<'_> {
         let mut own_start = 0;
         if let Some(receiver) = receiver {
             let actual_receiver = peel_refs(reg_ty(caller, receiver, owner)?);
-            if let TyKind::Struct(receiver_name, arguments) = actual_receiver.kind()
+            if let Some((receiver_name, arguments)) =
+                mojito_types::types::nominal_parts(actual_receiver)
                 && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
             {
                 own_start =
                     owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
-                bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
+                bind_ty_args(&struct_decl.param_decls, &arguments, &mut bindings).map_err(|e| {
                     self.error(
                         Some(owner),
                         format!("monomorphizing receiver for `{target}`: {e}"),
@@ -532,11 +533,34 @@ impl Specializer<'_> {
             owner_covered =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
         }
+        // A method of a struct the elaborator mints no instance of (`SIMD`,
+        // which the compiler's type holds) is a generator over its struct's
+        // parameters before its own, as upstream's method generator lists
+        // them: the owner's arguments lead the instance's.
+        let mut arguments = match receiver {
+            Some(receiver) if bindings.self_instance.is_none() => {
+                let actual = peel_refs(reg_ty(caller, receiver, owner)?);
+                match mojito_types::types::nominal_parts(actual)
+                    .filter(|_| !matches!(actual.kind(), TyKind::Struct(..)))
+                    .and_then(|(name, _)| self.structs.get(name))
+                {
+                    Some(struct_decl) => {
+                        self.own_arguments(&struct_decl.param_decls, &bindings, target, 0)?
+                    }
+                    None => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        };
         // The owner-restating prefix (`__init__` prepends the struct's
         // `param_decls`) is already carried by the instance's `owner`
         // identity; keep only the method's own parameters.
-        let mut arguments =
-            self.own_arguments(&declaration.param_decls, &bindings, target, owner_covered)?;
+        arguments.extend(self.own_arguments(
+            &declaration.param_decls,
+            &bindings,
+            target,
+            owner_covered,
+        )?);
         arguments.extend(callable_arguments);
         push_sugar_arguments(declaration, &bindings, &mut arguments);
         Ok((target.to_string(), bindings, arguments))

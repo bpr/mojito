@@ -882,6 +882,7 @@ assets/ok/scalar_range_sequential.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_strided.mojo	main	exe-differential	sanitized
 assets/ok/scalar_range_zero_starting.mojo	main	exe-differential	sanitized
 assets/ok/scalar_runtime_conversions.mojo	main	exe-differential	sanitized
+assets/ok/scalar_sequence_destructure.mojo	main	exe-differential	sanitized
 assets/ok/scalar_simd_lane_methods.mojo	main	exe-differential	sanitized
 assets/ok/scalar_uint_dtype.mojo	main	exe-differential	sanitized
 assets/ok/self_call_construction.mojo	main	exe-differential	sanitized
@@ -901,6 +902,7 @@ assets/ok/simd_cast_float_thresholds.mojo	main	exe-differential	sanitized
 assets/ok/simd_cast_matrix.mojo	main	exe-differential	sanitized
 assets/ok/simd_compare_all_dtypes.mojo	main	exe-differential	sanitized
 assets/ok/simd_comparison_dunders.mojo	main	exe-differential	sanitized
+assets/ok/simd_declared_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtype_alias.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtypes_int_lanes.mojo	main	exe-differential	sanitized
 assets/ok/simd_float_div.mojo	main	exe-differential	sanitized

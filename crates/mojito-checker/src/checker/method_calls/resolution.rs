@@ -25,8 +25,42 @@ impl Checker {
             TyKind::Param { .. } | TyKind::Assoc { .. } => {
                 self.resolve_bound_method(site, availability_failure)
             }
-            _ => self.resolve_builtin_method(site),
+            _ => match self.declared_receiver_member(site.obj_ty, site.method) {
+                Some((sname, targs)) => {
+                    self.resolve_struct_method(site, sname, &targs, availability_failure)
+                }
+                None => self.resolve_builtin_method(site),
+            },
         }
+    }
+
+    /// The declared struct `ty` is an instance of, and its arguments, when
+    /// the checker registered it: a struct's own, and a SIMD-valued type's
+    /// as `SIMD`'s ([`mojito_types::types::nominal_parts`]).
+    pub(in crate::checker) fn nominal_struct<'t>(
+        &self,
+        ty: &'t Ty,
+    ) -> Option<(&'t str, std::borrow::Cow<'t, [TyArg]>)> {
+        mojito_types::types::nominal_parts(ty).filter(|(name, _)| self.structs.contains_key(name))
+    }
+
+    /// The declaration a compiler-typed receiver's member `method` is read
+    /// from before the compiler's rule: `SIMD`'s, for a `TyKind::Simd`
+    /// receiver whose struct declares it. A literal receiver is no instance
+    /// (`(5).__len__()` has no such attribute at the pin).
+    pub(in crate::checker) fn declared_receiver_member<'t>(
+        &self,
+        ty: &'t Ty,
+        method: &str,
+    ) -> Option<(&'t str, std::borrow::Cow<'t, [TyArg]>)> {
+        if !matches!(ty.kind(), TyKind::Simd { .. }) {
+            return None;
+        }
+        self.nominal_struct(ty).filter(|(name, _)| {
+            self.structs
+                .get(name)
+                .is_some_and(|info| info.methods.contains_key(method))
+        })
     }
 
     /// A name no signature answers: a callable-typed field invoked through
@@ -84,13 +118,13 @@ impl Checker {
             ..
         } = site;
         let param_args = call.param_args;
-        if let (TyKind::Struct(sname, targs), Some(arguments)) =
-            (obj_ty.kind(), &resolved.instantiation)
+        if let (Some((sname, targs)), Some(arguments)) =
+            (self.nominal_struct(obj_ty), &resolved.instantiation)
         {
             // On a closed instance of an ordinary generic struct the
             // instantiation is keyed by the instance: its arguments come
             // before the call's.
-            let owner_arguments = self.instance_arguments(sname, targs).unwrap_or_default();
+            let owner_arguments = self.instance_arguments(sname, &targs).unwrap_or_default();
             let overload = resolved
                 .lowered_name
                 .as_deref()
@@ -99,7 +133,7 @@ impl Checker {
             self.record_dtype_parameter_arguments(param_args, arguments);
             self.record_at(span.clone()).method_instantiation =
                 Some(mojito_checked::checked::MethodInstantiation {
-                    owner: sname.clone(),
+                    owner: sname.to_string(),
                     owner_arguments,
                     method: method.to_string(),
                     parameter_names: resolved.parameter_names.clone(),

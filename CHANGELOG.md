@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD` is declared in `std.simd` as upstream's struct over its
+  `!kgen.simd` storage, in the prelude, and its `__len__`, `__getitem__`,
+  and `__setitem__` are upstream's bodies (R1549). Explicit calls on a
+  vector or scalar (`n.__getitem__(0)` over an `Int` included), `len`, a
+  `Sized` bound, and compile-time calls run them on the VM and natively,
+  each instance named by its `dtype` and `length`. A scalar or vector now
+  destructures as a sequence (`var [a] = 5`), raising on a wrong length as
+  at the pin; both were rejected. Every other member, construction, and
+  `v[i]` stay compiler rules (R1550–R1555, R1561). The package format moves
+  to `mojito-package 135`.
+
 - A `SIMD`'s `!kgen.simd` storage is now a type of its own, as at the pin
   (R1397, first slice): `v._mlir_value`, the
   ``__mlir_type[`!kgen.simd<`, ...]`` and

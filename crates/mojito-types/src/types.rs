@@ -861,8 +861,15 @@ impl Ty {
 
     /// The type of variant `kind`. A variant that carries no data shares one
     /// node per compilation.
+    ///
+    /// A `SIMD[dtype, length]` application of the declared struct is the
+    /// compiler's [`TyKind::Simd`] ([`bridged_simd`]), so the declaration's
+    /// `Self` and every substitution of it keep one representation until
+    /// R1557 makes the struct the only one.
     pub fn new(kind: TyKind) -> Self {
-        Self::dataless(&kind).unwrap_or_else(|| Self(Arc::new(TyNode::new(kind))))
+        Self::dataless(&kind)
+            .or_else(|| bridged_simd(&kind))
+            .unwrap_or_else(|| Self(Arc::new(TyNode::new(kind))))
     }
 
     /// The type's variant.
@@ -1217,6 +1224,9 @@ pub const TUPLE_TYPE_NAME: &str = "Tuple";
 
 /// The name of upstream's `SIMDLength`, the type of `SIMD`'s width.
 pub const SIMD_LENGTH_TYPE_NAME: &str = "SIMDLength";
+
+/// The name of upstream's `SIMD`, declared in `std.simd`.
+pub const SIMD_TYPE_NAME: &str = "SIMD";
 
 /// The bound of a type binder whose type is upstream's `!kgen.type`
 /// ([`TyKind::TypeType`]), the name the pin prints for it: every type
@@ -3172,6 +3182,43 @@ pub fn simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
         _ => {
             simd_shape(ty).map(|(dtype, width)| (SimdDtype::Known(dtype), SimdWidth::Known(width)))
         }
+    }
+}
+
+/// The `[dtype, length]` arguments of the `SIMD` a SIMD-valued type applies.
+///
+/// It is the inverse of the [`Ty::new`] bridge. A known width is its closed
+/// `SIMDLength`, and a symbolic one the length its slot holds.
+pub fn simd_struct_arguments(ty: &TyKind) -> Option<Vec<TyArg>> {
+    let (dtype, width) = simd_slots(ty)?;
+    let dtype = match dtype {
+        SimdDtype::Known(dtype) => CtValue::Dtype(dtype),
+        SimdDtype::Expr(expr) => CtValue::Expr(expr),
+    };
+    let length = match width {
+        SimdWidth::Known(lanes) => simd_length_value(lanes),
+        SimdWidth::Expr(length) => CtValue::Expr(length),
+    };
+    Some(vec![TyArg::Val(dtype), TyArg::Val(length)])
+}
+
+/// The declared struct `ty` is an instance of, and its arguments.
+///
+/// A struct answers its own, and a [`TyKind::Simd`] answers `SIMD`'s
+/// ([`simd_struct_arguments`]). A literal's flexible type is no instance:
+/// it materializes only where a conversion asks for it.
+///
+/// Nominal identity is read through this, never by matching
+/// `TyKind::Struct`, while the [`Ty::new`] bridge holds `SIMD` as the
+/// compiler's type.
+pub fn nominal_parts(ty: &Ty) -> Option<(&str, std::borrow::Cow<'_, [TyArg]>)> {
+    match ty.kind() {
+        TyKind::Struct(name, args) => Some((name, std::borrow::Cow::Borrowed(args))),
+        kind @ TyKind::Simd { .. } => Some((
+            SIMD_TYPE_NAME,
+            std::borrow::Cow::Owned(simd_struct_arguments(kind)?),
+        )),
+        _ => None,
     }
 }
 
@@ -5891,6 +5938,39 @@ fn struct_pack_arguments(decls: &[ParamDecl], arguments: &[TyArg]) -> HashMap<Pa
                 .then(|| (decl.binder().id, elements))
         })
         .collect()
+}
+
+/// The [`TyKind::Simd`] a `SIMD[dtype, length]` application is: a dtype
+/// value and a `SIMDLength` value, closed or symbolic. Any other shape (the
+/// bare template, an erased or deferred argument) stays the struct.
+fn bridged_simd(kind: &TyKind) -> Option<Ty> {
+    let TyKind::Struct(name, args) = kind else {
+        return None;
+    };
+    let [TyArg::Val(dtype), TyArg::Val(length)] = args.as_slice() else {
+        return None;
+    };
+    if name != SIMD_TYPE_NAME {
+        return None;
+    }
+    let dtype = match dtype {
+        CtValue::Dtype(dtype) => SimdDtype::Known(*dtype),
+        CtValue::Expr(expr)
+            if matches!(expr.meta().as_value().map(Ty::kind), Some(TyKind::Dtype)) =>
+        {
+            SimdDtype::Expr(expr.clone())
+        }
+        _ => return None,
+    };
+    let length = match length {
+        CtValue::Struct { name, .. } if name == SIMD_LENGTH_TYPE_NAME => {
+            ParamContext::detached().constant(length.clone()).ok()?
+        }
+        CtValue::Expr(expr) => expr.clone(),
+        _ => return None,
+    };
+    let width = SimdWidth::of_length(&ParamContext::detached(), length).ok()?;
+    simd_ty_from_slots(dtype, width).ok()
 }
 
 #[cfg(test)]

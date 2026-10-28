@@ -242,14 +242,6 @@ impl Checker {
         let anchor_name = format!("$seq{}", synth.parent().0);
         let (anchor, ty, _) =
             self.anchor_subject(&synth, &anchor_name, value, true, ret, in_loop)?;
-        if matches!(
-            ty.kind(),
-            TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::Simd { .. }
-        ) {
-            return Err(TypeError::Unsupported(format!(
-                "sequence destructuring of '{ty}', which has no '__len__'/'__getitem__' yet"
-            )));
-        }
         self.require_sized(&ty)?;
         let check_list_length = builtin_stub("check_list_length");
         if self.lookup(&check_list_length).is_none() {
