@@ -3964,6 +3964,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The bundled `List.__getitem__(ContiguousSlice)` spells
     `Span[...](unsafe_ptr=..., length=...)` where upstream returns
     `{unsafe_ptr = ..., length = ...}`.
+  - Probe: upstream's `std/math` SIMD `max` returns ``{mlir_value =
+    __mlir_op.`pop.max`(x._mlir_value, y._mlir_value)}``, which stops in
+    the parser with "Expected '}' after brace literal".
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4303,6 +4306,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     resolved, for `method_sig` and the free-function registration.
     `Checker::type_of_operand` (`checker/constraints.rs`) then needs no
     signature rejection.
+  - Probe: upstream's `std/math` SIMD `max` and `min`, `def max[dtype:
+    DType, //](x: SIMD[dtype, _], y: type_of(x), /) -> type_of(x)`, stop
+    here; their `pop.max`/`pop.min` bodies run since R1517.
   - Found while landing R1369 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9718,28 +9724,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     one session cannot land it.
   - Found while landing R1183 (2026-10-20).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1517 `pop.max`, `pop.min`, `bool`-lane casts, unsigned `index`
-  compares, and float bit logic have no MIR instruction**
-
-  The admitted `__mlir_op` set stops where no MIR instruction computes the
-  op with the pin's semantics, so these are rejected as outside the subset.
-  - Probe: upstream's `std/math` SIMD `max` and `min` spell `pop.max` and
-    `pop.min`, rejected as outside the subset.
-  - Probe: `pop.cast` to `bool` lanes truncates to `i1` at the pin
-    (`SIMD[DType.int32, 2](0, 4)` casts to `[False, False]`), where
-    `simd.cast` tests for nonzero. The checker rejects a cast to or from
-    `bool` lanes.
-  - Probe: `index.cmp` with `#index.cmp_predicate<ult>` (upstream's
-    `_plugin/selector.mojo`) is rejected, since `binary` compares an `Int`
-    signed.
-  - Probe: `pop.simd.and` over `float32` lanes `[-3.0, 4.0]` prints them
-    unchanged at the pin, a bitwise op over the lane bits, and is rejected.
-  - Lever: add each to `PopOp` (`mojito_types::mlir`), with its lanes in
-    `pop_int_lane`/`pop_float_lane` and Pliron's `lower_pop`.
-  - Found while landing R1392 (2026-10-27).
-  - Depends on R1392.
   - Model: Opus, Not Planned.
 
 - [ ] **R1519 The subvector and shuffle LLVM intrinsics are outside

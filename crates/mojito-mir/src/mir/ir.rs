@@ -2205,8 +2205,12 @@ pub enum MirInstr {
     /// `operands` of the destination's type: `pop.div` and `pop.rem`
     /// (truncating; `index.divs`), `pop.abs` (wrapping), `pop.round` (half
     /// to even), `pop.floor`, `pop.ceil`, `pop.trunc` (the identity on
-    /// integer lanes), and `pop.fma`. Each lane is `mlir::pop_int_lane` or
-    /// `mlir::pop_float_lane`; an integer division by zero traps.
+    /// integer lanes), `pop.fma`, and `pop.max` and `pop.min` (`maxnum` and
+    /// `minnum` over float lanes, or and and over `bool` ones). An unsigned
+    /// `index.cmp` (`ult`, `ule`, `ugt`, `uge`) compares two `index`
+    /// operands into a `Bool`. Each lane is `mlir::pop_int_lane`,
+    /// `mlir::pop_float_lane`, or `mlir::pop_bool_lane`; an integer
+    /// division by zero traps.
     Pop {
         dest: Reg,
         op: PopOp,
@@ -2727,8 +2731,11 @@ pub enum MirInstr {
         width: mojito_types::types::SimdWidth,
         elems: Vec<Reg>,
     },
-    /// Elementwise dtype conversion `v.cast[DType.<dt>]()`. The target
-    /// `dtype`/`width` are the result type's slots, like
+    /// Elementwise dtype conversion, upstream's `pop.cast`: integer lanes
+    /// wrap, float lanes truncate toward zero into an integer, a `bool` lane
+    /// widens to 0 or 1, and a lane cast to `bool` is its low bit (`trunc`
+    /// to `i1`; a float lane truncated first, as `fptoui` reads one in
+    /// range). The target `dtype`/`width` are the result type's slots, like
     /// [`MirInstr::MakeSimd`]'s.
     SimdCast {
         dest: Reg,

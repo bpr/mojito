@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.126
+mojito-mir 1.127
 ```
 
-The writer emits 1.126. The reader accepts 1.0 through 1.126; *Schema 1.0*
+The writer emits 1.127. The reader accepts 1.0 through 1.127; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -803,6 +803,15 @@ adjustments gain `InstanceAssertion`, the dunder's or the implicit `Bool`
 to mask constructor's `comptime assert` of one lane, which MIR emits as a
 `comptime.assert` before the node.
 
+Schema 1.127 gives `pop` six more ops (R1517): `max` and `min`
+(upstream's `pop.max` and `pop.min`: signed or unsigned by the lanes,
+`llvm.maxnum` and `llvm.minnum` over float lanes, or and and over `bool`
+ones), and `ult`, `ule`, `ugt`, and `uge`, `index.cmp`'s unsigned
+predicates, which compare two `index` operands into a `Bool`. `simd.cast`
+is upstream's `pop.cast` to and from `bool` lanes too: a `bool` lane widens
+to 0 or 1, and a lane cast to `bool` is its low bit. The package format
+moves to `mojito-package 131`, since the checked `MlirOp` vocabulary grows.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1537,7 +1546,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): exactly one of `dest` and `value` is an `index`, the other an `Int`; the bits are unchanged |
-| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, or `fma`, taking 2, 2, 1, 1, 1, 1, 1, or 3 operands of the destination's SIMD type; an integer division by zero traps |
+| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into a `Bool`; an integer division by zero traps |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
 | `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |

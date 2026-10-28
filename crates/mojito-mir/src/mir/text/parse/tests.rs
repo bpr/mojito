@@ -1304,6 +1304,16 @@ fn instruction_families_reprint_byte_identically() {
             op: mojito_types::mlir::PopOp::Fma,
             operands: vec![Reg(1), Reg(2), Reg(3)],
         },
+        MirInstr::Pop {
+            dest: Reg(35),
+            op: mojito_types::mlir::PopOp::Max,
+            operands: vec![Reg(1), Reg(2)],
+        },
+        MirInstr::Pop {
+            dest: Reg(35),
+            op: mojito_types::mlir::PopOp::Ult,
+            operands: vec![Reg(1), Reg(2)],
+        },
         MirInstr::SimdCast {
             dest: Reg(36),
             value: Reg(35),

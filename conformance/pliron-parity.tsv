@@ -514,6 +514,7 @@ assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
 assets/ok/mlir_builtin_casts.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_parameter.mojo	main	exe-differential	sanitized
+assets/ok/mlir_pop_max_min_bool_casts.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_select.mojo	main	exe-differential	sanitized
 assets/ok/mlir_simd_lane_ops.mojo	main	exe-differential	sanitized

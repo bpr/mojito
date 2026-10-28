@@ -386,7 +386,11 @@ fn pop_op_result(op: MlirOp, operands: &[Ty], result_type: Option<Ty>) -> Result
         let floats =
             lanes == LaneKinds::IntegralOrBool && dtype.known().is_some_and(Dtype::is_float);
         return Err(if floats {
-            PopTypeError::Subset("over float lanes is outside the subset".to_string())
+            PopTypeError::Subset(
+                "over float lanes is outside the subset: the pin's LLVM translation rejects \
+                 bitwise logic over float lanes"
+                    .to_string(),
+            )
         } else {
             PopTypeError::Verifier(format!(
                 "op operand #0 must be SIMD type whose element type is {} dtype, but got '{}'",
@@ -395,7 +399,6 @@ fn pop_op_result(op: MlirOp, operands: &[Ty], result_type: Option<Ty>) -> Result
             ))
         });
     }
-    let bool_lanes = |slot: &SimdDtype| slot.known() == Some(Dtype::Bool);
     match op.lowering() {
         MlirLowering::Binary(_) if matches!(op, MlirOp::PopCmp(_)) => {
             simd_of(SimdDtype::Known(Dtype::Bool), width)
@@ -403,7 +406,7 @@ fn pop_op_result(op: MlirOp, operands: &[Ty], result_type: Option<Ty>) -> Result
         }
         MlirLowering::Cast => {
             let target = result_type.expect("a cast names its result type");
-            let Some((target_dtype, target_width)) = simd_slots(target.kind()) else {
+            let Some((_, target_width)) = simd_slots(target.kind()) else {
                 return Err(PopTypeError::Verifier(format!(
                     "op result must be SIMD type, but got '{target}'"
                 )));
@@ -413,11 +416,6 @@ fn pop_op_result(op: MlirOp, operands: &[Ty], result_type: Option<Ty>) -> Result
                     "op operand type '{}' and result type '{target}' are cast incompatible",
                     operands[0]
                 )));
-            }
-            if bool_lanes(&dtype) || bool_lanes(&target_dtype) {
-                return Err(PopTypeError::Subset(
-                    "to or from 'bool' lanes is outside the subset".to_string(),
-                ));
             }
             Ok(target)
         }

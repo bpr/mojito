@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `__mlir_op` takes `pop.max` and `pop.min` (upstream's `std/math` SIMD
+  `max` and `min` bodies: signed or unsigned by the lanes, `llvm.maxnum`
+  and `llvm.minnum` over float lanes, or and and over `bool` lanes), a
+  `pop.cast` to or from `bool` lanes (a lane's low bit, so `4` casts to
+  `False`; a `bool` lane widens to 0 or 1), and `index.cmp`'s unsigned
+  predicates `ult`, `ule`, `ugt`, and `uge`, as at the pin (R1517). Each was
+  rejected as outside the subset. `pop.simd.and`/`or`/`xor` over float lanes
+  stays rejected, as the pin's LLVM translation rejects it. MIR moves to
+  schema 1.127 and the package format to `mojito-package 131`.
 - An infix `SIMD` comparison is upstream's builtin dunder, a `Bool` at
   every width: `v == w` holds when every lane is equal and `!=` is its
   negation, and `<`, `<=`, `>`, `>=` are defined on `Scalar`s only, their

@@ -8323,33 +8323,27 @@ fn mlir_op_outside_the_bundled_library_is_rejected() {
 #[test]
 fn pop_and_index_ops_type_as_their_verifiers_do() {
     // `pop` arithmetic keeps its operands' `!kgen.simd` type, `pop.cmp`
-    // gives the mask, `pop.cast` and `pop.simd.splat` the `_type` they
-    // name, and an `index` op takes and gives `__mlir_type.index` values.
+    // gives the mask, `pop.cast` (to and from `bool` lanes too) and
+    // `pop.simd.splat` the `_type` they name, `pop.max` takes `bool` lanes,
+    // and an `index` op takes and gives `__mlir_type.index` values, a
+    // signed or unsigned compare an `i1`.
     ok(
-        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var s: SIMD[DType.int32, 4] = __mlir_op.`pop.add`(a._mlir_value, a._mlir_value)\n    var m: SIMD[DType.bool, 4] = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<lt>`](a._mlir_value, s._mlir_value)\n    var f: SIMD[DType.float32, 4] = __mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type, fastmathFlags=__mlir_attr.`#pop.fmf<fast>`](a._mlir_value)\n    var t: SIMD[DType.float32, 4] = __mlir_op.`pop.simd.splat`[_type=SIMD[DType.float32, 4]._mlir_type](Float32(2.5)._mlir_value)\n    var x = Int(3).__mlir_index__()\n    var y = __mlir_op.`index.add`(x, x)\n    var b: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<slt>`](x, y)\n    print(s, m, f, t, Int(mlir_value=y), Bool(value=b))\n",
+        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var s: SIMD[DType.int32, 4] = __mlir_op.`pop.add`(a._mlir_value, a._mlir_value)\n    var m: SIMD[DType.bool, 4] = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<lt>`](a._mlir_value, s._mlir_value)\n    var f: SIMD[DType.float32, 4] = __mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type, fastmathFlags=__mlir_attr.`#pop.fmf<fast>`](a._mlir_value)\n    var t: SIMD[DType.float32, 4] = __mlir_op.`pop.simd.splat`[_type=SIMD[DType.float32, 4]._mlir_type](Float32(2.5)._mlir_value)\n    var c: SIMD[DType.bool, 4] = __mlir_op.`pop.cast`[_type=SIMD[DType.bool, 4]._mlir_type](a._mlir_value)\n    var w: SIMD[DType.float32, 4] = __mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type](c._mlir_value)\n    var h: SIMD[DType.bool, 4] = __mlir_op.`pop.max`(m._mlir_value, c._mlir_value)\n    var x = Int(3).__mlir_index__()\n    var y = __mlir_op.`index.add`(x, x)\n    var b: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<slt>`](x, y)\n    var u: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<ult>`](x, y)\n    print(s, m, f, t, c, w, h, Int(mlir_value=y), Bool(value=b), Bool(value=u))\n",
     );
 }
 
 #[test]
 fn pop_and_index_ops_outside_the_subset_are_rejected() {
-    // Each of these the pin accepts: an op outside the admitted set, an
-    // unsigned `index` predicate, a cast to `bool` lanes (`trunc` to `i1`),
-    // and a bitwise op over float lanes.
+    // Mojito rejects an op outside the admitted set, and a bitwise op over
+    // float lanes, which the pin's verifier admits and its LLVM translation
+    // rejects unless it folds (`x & x`).
     for (source, message) in [
         (
-            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.max`(a._mlir_value, a._mlir_value)))\n",
-            "'__mlir_op.`pop.max`' is outside the subset",
+            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.int32, 2](mlir_value=__mlir_op.`pop.simd.shuffle`(a._mlir_value, a._mlir_value)))\n",
+            "'__mlir_op.`pop.simd.shuffle`' is outside the subset",
         ),
         (
-            "def main():\n    var x = Int(3).__mlir_index__()\n    print(Bool(value=__mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<ult>`](x, x)))\n",
-            "is not a predicate Mojito admits here",
-        ),
-        (
-            "def main():\n    var a = SIMD[DType.int32, 2](1, 2)\n    print(SIMD[DType.bool, 2](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.bool, 2]._mlir_type](a._mlir_value)))\n",
-            "'pop.cast' to or from 'bool' lanes is outside the subset",
-        ),
-        (
-            "def main():\n    var a = SIMD[DType.float32, 2](1, 2)\n    print(SIMD[DType.float32, 2](mlir_value=__mlir_op.`pop.simd.and`(a._mlir_value, a._mlir_value)))\n",
+            "def main():\n    var a = SIMD[DType.float32, 2](1, 2)\n    var b = SIMD[DType.float32, 2](3, 4)\n    print(SIMD[DType.float32, 2](mlir_value=__mlir_op.`pop.simd.and`(a._mlir_value, b._mlir_value)))\n",
             "'pop.simd.and' over float lanes is outside the subset",
         ),
     ] {

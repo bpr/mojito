@@ -1,7 +1,8 @@
 //! The `__mlir_op` operations Mojito admits beyond the ownership markers.
 //!
-//! These are upstream's elementwise `pop` ops over `!kgen.simd` storage,
-//! its `pop.select` of one of two register-passable values, its `pop.simd`
+//! These are upstream's elementwise `pop` ops over `!kgen.simd` storage
+//! (`pop.max` and `pop.min` among them, and `pop.cast` to and from `bool`
+//! lanes), its `pop.select` of one of two register-passable values, its `pop.simd`
 //! lane ops (select, extract, insert, and the `bool`
 //! reductions), the `index` ops over `__mlir_type.index`, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
@@ -9,7 +10,7 @@
 //! `__mlir_attr` spellings their attributes take. The checker verifies an op's operands
 //! as upstream's op verifier does and records the [`MlirOp`]. MIR lowering
 //! reads [`MlirOp::lowering`], and the backends compute a [`PopOp`] lane by
-//! [`pop_int_lane`] and [`pop_float_lane`].
+//! [`pop_int_lane`], [`pop_float_lane`], and [`pop_bool_lane`].
 
 use mojito_ast::ast::{Dtype, InfixOp};
 
@@ -38,6 +39,8 @@ pub enum MlirOp {
     PopCeil,
     PopTrunc,
     PopFma,
+    PopMax,
+    PopMin,
     PopSelect,
     PopSimdSelect,
     PopSimdExtractElement,
@@ -101,6 +104,8 @@ impl MlirOp {
             "pop.ceil" => Self::PopCeil,
             "pop.trunc" => Self::PopTrunc,
             "pop.fma" => Self::PopFma,
+            "pop.max" => Self::PopMax,
+            "pop.min" => Self::PopMin,
             "pop.select" => Self::PopSelect,
             "pop.simd.select" => Self::PopSimdSelect,
             "pop.simd.extractelement" => Self::PopSimdExtractElement,
@@ -147,6 +152,8 @@ impl MlirOp {
             Self::PopCeil => "pop.ceil",
             Self::PopTrunc => "pop.trunc",
             Self::PopFma => "pop.fma",
+            Self::PopMax => "pop.max",
+            Self::PopMin => "pop.min",
             Self::PopSelect => "pop.select",
             Self::PopSimdSelect => "pop.simd.select",
             Self::PopSimdExtractElement => "pop.simd.extractelement",
@@ -228,6 +235,7 @@ impl MlirOp {
     pub const fn lanes(self) -> Option<LaneKinds> {
         Some(match self {
             Self::PopShl | Self::PopShr => LaneKinds::Integral,
+            Self::PopMax | Self::PopMin => LaneKinds::NumericOrBool,
             Self::PopAnd | Self::PopOr | Self::PopXor => LaneKinds::IntegralOrBool,
             Self::PopRound
             | Self::PopFloor
@@ -258,9 +266,7 @@ impl MlirOp {
             Self::PopAnd | Self::IndexAnd => MlirLowering::Binary(InfixOp::BitAnd),
             Self::PopOr => MlirLowering::Binary(InfixOp::BitOr),
             Self::PopXor => MlirLowering::Binary(InfixOp::BitXor),
-            Self::PopCmp(predicate) | Self::IndexCmp(predicate) => {
-                MlirLowering::Binary(predicate.infix())
-            }
+            Self::PopCmp(predicate) | Self::IndexCmp(predicate) => predicate.lowering(),
             Self::PopNeg => MlirLowering::Negate,
             Self::PopSplat => MlirLowering::Splat,
             Self::PopCast => MlirLowering::Cast,
@@ -273,6 +279,8 @@ impl MlirOp {
             Self::PopCeil => MlirLowering::Pop(PopOp::Ceil),
             Self::PopTrunc => MlirLowering::Pop(PopOp::Trunc),
             Self::PopFma => MlirLowering::Pop(PopOp::Fma),
+            Self::PopMax => MlirLowering::Pop(PopOp::Max),
+            Self::PopMin => MlirLowering::Pop(PopOp::Min),
             Self::PopSelect => MlirLowering::Select,
             Self::PopSimdSelect => MlirLowering::SimdSelect,
             Self::PopSimdExtractElement => MlirLowering::Extract,
@@ -292,6 +300,8 @@ pub enum LaneKinds {
     Integral,
     /// Integer or `bool` lanes.
     IntegralOrBool,
+    /// Integer, float, or `bool` lanes.
+    NumericOrBool,
 }
 
 impl LaneKinds {
@@ -301,6 +311,7 @@ impl LaneKinds {
             Self::Numeric => !matches!(dtype, Dtype::Bool),
             Self::Integral => !matches!(dtype, Dtype::Bool) && !dtype.is_float(),
             Self::IntegralOrBool => !dtype.is_float(),
+            Self::NumericOrBool => true,
         }
     }
 
@@ -310,6 +321,7 @@ impl LaneKinds {
             Self::Numeric => "integer or float",
             Self::Integral => "integral",
             Self::IntegralOrBool => "integral or bool",
+            Self::NumericOrBool => "integer, float, or bool",
         }
     }
 }
@@ -382,8 +394,11 @@ impl SimdReduction {
     }
 }
 
-/// A compare predicate: `#kgen.cmp_pred<…>` for `pop.cmp`, or the signed
-/// `#index.cmp_predicate<…>` for `index.cmp`.
+/// A compare predicate of `pop.cmp` or `index.cmp`.
+///
+/// `#kgen.cmp_pred<…>`'s ordering follows the lanes' signedness;
+/// `#index.cmp_predicate<…>` names a signed (`slt`, as `Lt`) or unsigned
+/// (`ult`) ordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum CmpPredicate {
     Eq,
@@ -392,39 +407,55 @@ pub enum CmpPredicate {
     Le,
     Gt,
     Ge,
+    Ult,
+    Ule,
+    Ugt,
+    Uge,
 }
 
 impl CmpPredicate {
     /// The predicate of `#kgen.cmp_pred<p>`.
     pub fn parse_kgen(attribute: &str) -> Option<Self> {
-        Self::named(
-            attribute
-                .strip_prefix("#kgen.cmp_pred<")?
-                .strip_suffix('>')?,
-            ["eq", "ne", "lt", "le", "gt", "ge"],
-        )
+        let name = attribute
+            .strip_prefix("#kgen.cmp_pred<")?
+            .strip_suffix('>')?;
+        Self::named(name, ["eq", "ne", "lt", "le", "gt", "ge"])
     }
 
-    /// The predicate of `#index.cmp_predicate<p>`, signed or equality.
+    /// The predicate of `#index.cmp_predicate<p>`: equality, or a signed or
+    /// unsigned ordering.
     pub fn parse_index(attribute: &str) -> Option<Self> {
-        Self::named(
-            attribute
-                .strip_prefix("#index.cmp_predicate<")?
-                .strip_suffix('>')?,
-            ["eq", "ne", "slt", "sle", "sgt", "sge"],
-        )
+        let name = attribute
+            .strip_prefix("#index.cmp_predicate<")?
+            .strip_suffix('>')?;
+        Self::named(name, ["eq", "ne", "slt", "sle", "sgt", "sge"]).or_else(|| {
+            [
+                ("ult", Self::Ult),
+                ("ule", Self::Ule),
+                ("ugt", Self::Ugt),
+                ("uge", Self::Uge),
+            ]
+            .into_iter()
+            .find_map(|(spelling, predicate)| (spelling == name).then_some(predicate))
+        })
     }
 
-    /// The infix compare this predicate computes.
-    pub const fn infix(self) -> InfixOp {
-        match self {
+    /// The instruction computing this compare: the infix compare, whose
+    /// ordering is the operands' own, or the `pop` instruction's unsigned
+    /// compare.
+    pub const fn lowering(self) -> MlirLowering {
+        MlirLowering::Binary(match self {
             Self::Eq => InfixOp::Eq,
             Self::Ne => InfixOp::Ne,
             Self::Lt => InfixOp::Lt,
             Self::Le => InfixOp::Le,
             Self::Gt => InfixOp::Gt,
             Self::Ge => InfixOp::Ge,
-        }
+            Self::Ult => return MlirLowering::Pop(PopOp::Ult),
+            Self::Ule => return MlirLowering::Pop(PopOp::Ule),
+            Self::Ugt => return MlirLowering::Pop(PopOp::Ugt),
+            Self::Uge => return MlirLowering::Pop(PopOp::Uge),
+        })
     }
 
     fn named(name: &str, spellings: [&str; 6]) -> Option<Self> {
@@ -436,9 +467,11 @@ impl CmpPredicate {
     }
 }
 
-/// The lane operations the MIR `pop` instruction computes: the `pop` ops
-/// whose semantics no built-in operator has (`div` and `rem` truncate,
-/// `abs` wraps, the rounding ops and `fma`).
+/// The lane operations the MIR `pop` instruction computes.
+///
+/// These are the `pop` ops whose semantics no built-in operator has (`div`
+/// and `rem` truncate, `abs` wraps, the rounding ops, `fma`, and `max` and
+/// `min`), and `index.cmp`'s unsigned compares.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PopOp {
     Div,
@@ -449,11 +482,17 @@ pub enum PopOp {
     Ceil,
     Trunc,
     Fma,
+    Max,
+    Min,
+    Ult,
+    Ule,
+    Ugt,
+    Uge,
 }
 
 impl PopOp {
     /// Every operation, in declaration order.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 14] = [
         Self::Div,
         Self::Rem,
         Self::Abs,
@@ -462,15 +501,27 @@ impl PopOp {
         Self::Ceil,
         Self::Trunc,
         Self::Fma,
+        Self::Max,
+        Self::Min,
+        Self::Ult,
+        Self::Ule,
+        Self::Ugt,
+        Self::Uge,
     ];
 
     /// The number of operands.
     pub const fn arity(self) -> usize {
         match self {
-            Self::Div | Self::Rem => 2,
             Self::Abs | Self::Round | Self::Floor | Self::Ceil | Self::Trunc => 1,
             Self::Fma => 3,
+            _ => 2,
         }
+    }
+
+    /// Whether this is an unsigned compare, whose result is an `i1`
+    /// (`Bool`) rather than its operands' type.
+    pub const fn is_compare(self) -> bool {
+        matches!(self, Self::Ult | Self::Ule | Self::Ugt | Self::Uge)
     }
 
     /// The op's name after `pop.`, its MIR text spelling.
@@ -484,6 +535,12 @@ impl PopOp {
             Self::Ceil => "ceil",
             Self::Trunc => "trunc",
             Self::Fma => "fma",
+            Self::Max => "max",
+            Self::Min => "min",
+            Self::Ult => "ult",
+            Self::Ule => "ule",
+            Self::Ugt => "ugt",
+            Self::Uge => "uge",
         }
     }
 
@@ -508,13 +565,17 @@ pub fn is_fastmath_attribute(attribute: &str) -> bool {
         })
 }
 
-/// One integer lane of `op` over lanes of `dtype`, as upstream's `pop` op
-/// computes it, or `None` for a zero divisor (undefined upstream).
+/// One integer lane of `op` over lanes of `dtype`, each held sign- or
+/// zero-extended, as upstream's `pop` op computes it, or `None` for a zero
+/// divisor (undefined upstream).
 ///
 /// `div` and `rem` truncate toward zero, `abs` wraps (`int8 -128` stays
 /// `-128`) and is the identity on an unsigned lane, the rounding ops are
-/// the identity, and `fma` wraps `a * b + c`.
+/// the identity, `fma` wraps `a * b + c`, `max` and `min` order the lanes
+/// by their signedness, and an unsigned compare reads both lanes'
+/// `dtype`-wide bits unsigned and gives 1 or 0.
 pub fn pop_int_lane(op: PopOp, dtype: Dtype, lanes: &[i128]) -> Option<i128> {
+    let unsigned = |lane: i128| lane & ((1i128 << dtype.bit_width()) - 1);
     let lane = match (op, lanes) {
         (PopOp::Div | PopOp::Rem, [_, 0]) => return None,
         (PopOp::Div, [a, b]) => a.wrapping_div(*b),
@@ -522,17 +583,35 @@ pub fn pop_int_lane(op: PopOp, dtype: Dtype, lanes: &[i128]) -> Option<i128> {
         (PopOp::Abs, [a]) => a.wrapping_abs(),
         (PopOp::Round | PopOp::Floor | PopOp::Ceil | PopOp::Trunc, [a]) => *a,
         (PopOp::Fma, [a, b, c]) => a.wrapping_mul(*b).wrapping_add(*c),
+        (PopOp::Max, [a, b]) => *a.max(b),
+        (PopOp::Min, [a, b]) => *a.min(b),
+        (PopOp::Ult, [a, b]) => return Some(i128::from(unsigned(*a) < unsigned(*b))),
+        (PopOp::Ule, [a, b]) => return Some(i128::from(unsigned(*a) <= unsigned(*b))),
+        (PopOp::Ugt, [a, b]) => return Some(i128::from(unsigned(*a) > unsigned(*b))),
+        (PopOp::Uge, [a, b]) => return Some(i128::from(unsigned(*a) >= unsigned(*b))),
         _ => return None,
     };
     Some(crate::ct::wrap_lane(dtype, lane))
+}
+
+/// One `bool` lane of `op`: `max` is the lanes' or and `min` their and,
+/// as over `i1`; `None` for an op `bool` lanes do not take.
+pub const fn pop_bool_lane(op: PopOp, a: bool, b: bool) -> Option<bool> {
+    match op {
+        PopOp::Max => Some(a | b),
+        PopOp::Min => Some(a & b),
+        _ => None,
+    }
 }
 
 /// One float lane of `op` over lanes of `dtype`, computed at double
 /// precision and rounded once to the lane.
 ///
 /// `rem` is the truncating remainder (`fmod`, exact), `round` rounds half
-/// to even, and `fma` rounds the fused product-sum once (a `float32` lane
-/// fuses at single precision, as `llvm.fma.f32` does).
+/// to even, `fma` rounds the fused product-sum once (a `float32` lane
+/// fuses at single precision, as `llvm.fma.f32` does), and `max` and `min`
+/// are `llvm.maxnum` and `llvm.minnum`: a NaN lane gives the other one,
+/// and equal lanes (`0.0` and `-0.0`) give the first.
 pub fn pop_float_lane(op: PopOp, dtype: Dtype, lanes: &[f64]) -> Option<f64> {
     let lane = match (op, lanes) {
         (PopOp::Div, [a, b]) => a / b,
@@ -546,6 +625,9 @@ pub fn pop_float_lane(op: PopOp, dtype: Dtype, lanes: &[f64]) -> Option<f64> {
             f64::from((*a as f32).mul_add(*b as f32, *c as f32))
         }
         (PopOp::Fma, [a, b, c]) => a.mul_add(*b, *c),
+        (PopOp::Max, [a, b]) if a.is_nan() || b > a => *b,
+        (PopOp::Min, [a, b]) if a.is_nan() || b < a => *b,
+        (PopOp::Max | PopOp::Min, [a, _]) => *a,
         _ => return None,
     };
     Some(dtype.round_lane(lane))
@@ -578,6 +660,8 @@ mod tests {
             "pop.ceil",
             "pop.trunc",
             "pop.fma",
+            "pop.max",
+            "pop.min",
             "pop.simd.select",
             "pop.simd.extractelement",
             "pop.simd.insertelement",
@@ -602,7 +686,9 @@ mod tests {
                 Ok(MlirOp::PopCmp(_))
             ));
         }
-        for predicate in ["eq", "ne", "slt", "sle", "sgt", "sge"] {
+        for predicate in [
+            "eq", "ne", "slt", "sle", "sgt", "sge", "ult", "ule", "ugt", "uge",
+        ] {
             let attribute = format!("#index.cmp_predicate<{predicate}>");
             assert!(matches!(
                 MlirOp::parse("index.cmp", Some(&attribute)),
@@ -615,19 +701,18 @@ mod tests {
 
     #[test]
     fn spellings_outside_the_subset_do_not_parse() {
-        assert_eq!(MlirOp::parse("pop.max", None), Err(MlirOpError::Unknown));
         assert_eq!(
             MlirOp::parse("pop.simd.shuffle", None),
             Err(MlirOpError::Unknown)
         );
+        assert!(matches!(
+            MlirOp::parse("pop.cmp", Some("#kgen.cmp_pred<ult>")),
+            Err(MlirOpError::BadPredicate(_))
+        ));
         assert_eq!(
             MlirOp::parse("pop.cmp", None),
             Err(MlirOpError::MissingPredicate)
         );
-        assert!(matches!(
-            MlirOp::parse("index.cmp", Some("#index.cmp_predicate<ult>")),
-            Err(MlirOpError::BadPredicate(_))
-        ));
         assert!(matches!(
             MlirOp::parse("pop.cmp", Some("#index.cmp_predicate<slt>")),
             Err(MlirOpError::BadPredicate(_))
@@ -659,5 +744,24 @@ mod tests {
             pop_float_lane(PopOp::Round, Dtype::Float64, &[-2.5]),
             Some(-2.0)
         );
+        assert_eq!(
+            pop_int_lane(PopOp::Max, Dtype::UInt8, &[200, 100]),
+            Some(200)
+        );
+        assert_eq!(
+            pop_int_lane(PopOp::Min, Dtype::Int8, &[-100, 100]),
+            Some(-100)
+        );
+        assert_eq!(pop_int_lane(PopOp::Ult, Dtype::Int, &[-1, 3]), Some(0));
+        assert_eq!(pop_int_lane(PopOp::Ugt, Dtype::Int, &[-1, 3]), Some(1));
+        assert_eq!(
+            pop_float_lane(PopOp::Max, Dtype::Float64, &[f64::NAN, 1.0]),
+            Some(1.0)
+        );
+        assert_eq!(
+            pop_float_lane(PopOp::Min, Dtype::Float64, &[2.0, f64::NAN]),
+            Some(2.0)
+        );
+        assert_eq!(pop_bool_lane(PopOp::Max, true, false), Some(true));
     }
 }

@@ -1251,6 +1251,25 @@ fn verify_pop(
     let Some(result) = cx.reg_ty(dest) else {
         return;
     };
+    if op.is_compare() {
+        if *result != Ty::bool() {
+            errors.push(format!(
+                "{prefix}: pop.{} defines a register of type {result}, not Bool",
+                op.mnemonic()
+            ));
+        }
+        for operand in operands {
+            if let Some(found) = cx.reg_ty(*operand)
+                && *found != Ty::index()
+            {
+                errors.push(format!(
+                    "{prefix}: pop.{} compares an operand of type {found}, not index",
+                    op.mnemonic()
+                ));
+            }
+        }
+        return;
+    }
     // `index.divs` divides `index` values.
     if mojito_types::types::simd_slots(result.kind()).is_none() && *result != Ty::index() {
         errors.push(format!(

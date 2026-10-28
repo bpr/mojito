@@ -153,13 +153,13 @@ impl FnLowering<'_> {
         Ok(Some(call.get_result(ctx)))
     }
 
-    /// `SimdCast` (`x.cast[DType.<dt>]()`) — the VM's
+    /// `SimdCast` (upstream's `pop.cast`) — the VM's
     /// `runtime::simd_cast`: int→int rewraps at the new width, int→float
     /// converts through f64 (narrow lanes round), float→float widens or
     /// rounds, and float→int truncates toward zero saturating at the
     /// 128-bit intermediate before wrapping — saturation must happen at
     /// i128, not the target width, or large magnitudes wrap differently
-    /// than the VM. Bool casts reject (VM parity).
+    /// than the VM. A cast to or from `bool` lanes is [`Self::bool_lane_cast`].
     pub(super) fn lower_simd_cast(
         &mut self,
         ctx: &mut Context,
@@ -168,9 +168,6 @@ impl FnLowering<'_> {
         dtype: Dtype,
         width: usize,
     ) -> Result<(), PlironError> {
-        if dtype == Dtype::Bool {
-            return Err(self.unsupported_reg("bool SIMD dtype cast".into(), dest));
-        }
         if width > 1 {
             let Some((source_dtype, source_width)) =
                 self.func.reg_types.get(&value.0).and_then(simd_dims)
@@ -181,24 +178,32 @@ impl FnLowering<'_> {
                 return Err(self.unsupported_reg("SIMD cast width mismatch".into(), dest));
             }
             let source_ty = ScalarTy::of_dtype(source_dtype);
-            if matches!(source_ty, ScalarTy::Bool | ScalarTy::Ptr) {
-                return Err(self.unsupported_reg("SIMD cast of a Bool operand".into(), dest));
+            if source_ty == ScalarTy::Ptr {
+                return Err(self.unsupported_reg("SIMD cast of a pointer operand".into(), dest));
             }
             let source = self.simd_load_vector(ctx, value, source_dtype, width, dest)?;
-            let converted = self.simd_cast_vector(ctx, source, source_ty, dtype, width, dest)?;
+            let converted = if dtype == Dtype::Bool || source_ty == ScalarTy::Bool {
+                self.bool_lane_cast(ctx, source, source_ty, dtype, Some(width), dest)?
+            } else {
+                self.simd_cast_vector(ctx, source, source_ty, dtype, width, dest)?
+            };
             self.simd_store_vector(ctx, dest, dtype, width, converted);
             return Ok(());
         }
         let source = self.concrete_scalar_ty(value)?.ok_or_else(|| {
             self.unsupported_reg("SIMD cast of an unmaterialized literal".into(), dest)
         })?;
-        if matches!(source, ScalarTy::Bool | ScalarTy::Ptr) {
+        if source == ScalarTy::Ptr {
             return Err(
                 self.unsupported_reg(format!("SIMD cast of a {} operand", source.name()), dest)
             );
         }
         let lane = self.reg_value(ctx, value, source)?;
-        let converted = self.simd_cast_lane(ctx, lane, source, dtype, dest)?;
+        let converted = if dtype == Dtype::Bool || source == ScalarTy::Bool {
+            self.bool_lane_cast(ctx, lane, source, dtype, None, dest)?
+        } else {
+            self.simd_cast_lane(ctx, lane, source, dtype, dest)?
+        };
         self.reg_values.insert(dest.0, converted);
         Ok(())
     }
@@ -256,7 +261,7 @@ impl FnLowering<'_> {
             integer => {
                 let (to_bits, _) = integer
                     .int_shape()
-                    .expect("bool targets are rejected above");
+                    .expect("a bool target is `bool_lane_cast`");
                 if let Some(from) = source.int_shape() {
                     self.resize_int(ctx, lane, from, to_bits, dest)
                 } else {
@@ -832,6 +837,9 @@ impl FnLowering<'_> {
         op: PopOp,
         operands: &[Reg],
     ) -> Result<(), PlironError> {
+        if op.is_compare() {
+            return self.lower_unsigned_compare(ctx, dest, op, operands);
+        }
         // `index.divs` divides `index` values, held as `Int` lanes.
         let Some((dtype, width)) = self.func.reg_types.get(&dest.0).and_then(|ty| {
             simd_dims(ty).or_else(|| (*ty == Ty::index()).then_some((Dtype::Int, 1)))
@@ -848,6 +856,8 @@ impl FnLowering<'_> {
         }
         let value = if dtype.is_float() {
             self.pop_float_value(ctx, op, dtype, shape, values, dest)?
+        } else if dtype == Dtype::Bool {
+            self.pop_bool_value(ctx, op, &values, dest)?
         } else {
             self.pop_int_value(ctx, op, dtype, shape, &values, dest)?
         };
@@ -907,7 +917,7 @@ impl FnLowering<'_> {
                 types.push(IntegerType::get(ctx, 1, Signedness::Signless).into());
                 continue;
             }
-            let (dtype, shape) = dims(arg).map(shaped).unwrap_or(operand);
+            let (dtype, shape) = dims(arg).map_or(operand, shaped);
             values.push(match shape {
                 Some(width) => self.simd_load_vector(ctx, *arg, dtype, width, dest)?,
                 None => self.reg_value(ctx, *arg, ScalarTy::of_dtype(dtype))?,
@@ -946,7 +956,7 @@ impl FnLowering<'_> {
     /// `width` lanes, or the lane.
     fn llvm_intrinsic_ty(
         &mut self,
-        ctx: &mut Context,
+        ctx: &Context,
         dtype: Dtype,
         width: Option<usize>,
     ) -> TypeHandle {
@@ -1245,6 +1255,59 @@ impl FnLowering<'_> {
             .expect("SIMD lane has a native layout")
     }
 
+    /// A `pop.cast` to or from `bool` lanes over a lane (`shape` `None`)
+    /// or a vector of `shape` lanes, as the VM's `runtime::simd_cast`
+    /// computes it: a `bool` lane widens to 0 or 1 (`zext` to a byte, then
+    /// the byte's cast), and a lane cast to `bool` is its low bit (`trunc`
+    /// to `i1`), a float lane first cast to an `int64` lane as the integer
+    /// cast does.
+    fn bool_lane_cast(
+        &mut self,
+        ctx: &mut Context,
+        value: Value,
+        source: ScalarTy,
+        dtype: Dtype,
+        shape: Option<usize>,
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        if source == ScalarTy::Bool && dtype == Dtype::Bool {
+            return Ok(value);
+        }
+        if source == ScalarTy::Bool {
+            let byte = self.resize_int_lanes(ctx, value, (1, false), 8, shape, dest);
+            let byte_ty = ScalarTy::of_dtype(Dtype::UInt8);
+            return match shape {
+                Some(width) => self.simd_cast_vector(ctx, byte, byte_ty, dtype, width, dest),
+                None => self.simd_cast_lane(ctx, byte, byte_ty, dtype, dest),
+            };
+        }
+        if let Some(from) = source.int_shape() {
+            return Ok(self.resize_int_lanes(ctx, value, from, 1, shape, dest));
+        }
+        let int = match shape {
+            Some(width) => self.simd_cast_vector(ctx, value, source, Dtype::Int64, width, dest)?,
+            None => self.simd_cast_lane(ctx, value, source, Dtype::Int64, dest)?,
+        };
+        Ok(self.resize_int_lanes(ctx, int, (64, true), 1, shape, dest))
+    }
+
+    /// [`Self::resize_int`] over a lane (`shape` `None`) or a vector of
+    /// `shape` lanes.
+    fn resize_int_lanes(
+        &mut self,
+        ctx: &mut Context,
+        value: Value,
+        from: (u32, bool),
+        to: u32,
+        shape: Option<usize>,
+        dest: Reg,
+    ) -> Value {
+        match shape {
+            Some(width) => self.simd_resize_int(ctx, value, from, to, width, dest),
+            None => self.resize_int(ctx, value, from, to, dest),
+        }
+    }
+
     /// `simd_cast_lane` over a whole vector: integer resizes and int↔float
     /// conversions are vector casts (narrow float targets round through f64,
     /// as the VM does); float→int splits into a guarded vector conversion
@@ -1269,7 +1332,7 @@ impl FnLowering<'_> {
             integer => {
                 let (to_bits, _) = integer
                     .int_shape()
-                    .expect("bool targets are rejected above");
+                    .expect("a bool target is `bool_lane_cast`");
                 if let Some(from) = source_ty.int_shape() {
                     self.simd_resize_int(ctx, source, from, to_bits, width, dest)
                 } else if source_ty == ScalarTy::Sized(Dtype::Float16) {
@@ -1474,7 +1537,9 @@ impl FnLowering<'_> {
                     PopOp::Ceil => "ceil",
                     PopOp::Trunc => "trunc",
                     PopOp::Fma => "fma",
-                    PopOp::Div | PopOp::Rem => {
+                    PopOp::Max => "maxnum",
+                    PopOp::Min => "minnum",
+                    PopOp::Div | PopOp::Rem | PopOp::Ult | PopOp::Ule | PopOp::Ugt | PopOp::Uge => {
                         return Err(self.unsupported_reg(
                             format!("`pop.{}` operand count", op.mnemonic()),
                             dest,
@@ -1493,7 +1558,8 @@ impl FnLowering<'_> {
     /// overflowing `MIN / -1` lane divided by one so it wraps as the VM's
     /// does; `abs` wraps (`llvm.abs` with `is_int_min_poison` false) and is
     /// the identity on unsigned lanes, the rounding ops are the identity,
-    /// and `fma` wraps `a * b + c`.
+    /// `fma` wraps `a * b + c`, and `max`/`min` select by the lanes'
+    /// signed or unsigned order.
     fn pop_int_value(
         &mut self,
         ctx: &mut Context,
@@ -1565,6 +1631,19 @@ impl FnLowering<'_> {
             (PopOp::Abs | PopOp::Round | PopOp::Floor | PopOp::Ceil | PopOp::Trunc, [value]) => {
                 *value
             }
+            (PopOp::Max | PopOp::Min, [a, b]) => {
+                let predicate = match (op, signed) {
+                    (PopOp::Max, true) => ICmpPredicateAttr::SGT,
+                    (PopOp::Max, false) => ICmpPredicateAttr::UGT,
+                    (_, true) => ICmpPredicateAttr::SLT,
+                    (_, false) => ICmpPredicateAttr::ULT,
+                };
+                let first = ICmpOp::new(ctx, predicate, *a, *b);
+                self.append(ctx, first.get_operation(), Some(dest));
+                let select = SelectOp::new(ctx, first.get_result(ctx), *a, *b);
+                self.append(ctx, select.get_operation(), Some(dest));
+                select.get_result(ctx)
+            }
             (PopOp::Fma, [a, b, c]) => {
                 let product = MulOp::new_with_overflow_flag(ctx, *a, *b, no_overflow_flags());
                 self.append(ctx, product.get_operation(), Some(dest));
@@ -1583,6 +1662,54 @@ impl FnLowering<'_> {
                 );
             }
         })
+    }
+
+    /// A `pop` op over `bool` lanes (`i1` or `<N x i1>`): `max` is their
+    /// `or` and `min` their `and`.
+    fn pop_bool_value(
+        &mut self,
+        ctx: &mut Context,
+        op: PopOp,
+        values: &[Value],
+        dest: Reg,
+    ) -> Result<Value, PlironError> {
+        let operation = match (op, values) {
+            (PopOp::Max, [a, b]) => OrOp::new(ctx, *a, *b).get_operation(),
+            (PopOp::Min, [a, b]) => AndOp::new(ctx, *a, *b).get_operation(),
+            _ => {
+                return Err(
+                    self.unsupported_reg(format!("`pop.{}` over bool lanes", op.mnemonic()), dest)
+                );
+            }
+        };
+        self.append(ctx, operation, Some(dest));
+        Ok(operation.deref(ctx).get_result(0))
+    }
+
+    /// `index.cmp`'s unsigned compare of two `index` operands, held as
+    /// `i64`, into its `i1`.
+    fn lower_unsigned_compare(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        op: PopOp,
+        operands: &[Reg],
+    ) -> Result<(), PlironError> {
+        let [lhs, rhs] = operands else {
+            return Err(
+                self.unsupported_reg(format!("`pop.{}` operand count", op.mnemonic()), dest)
+            );
+        };
+        let predicate = match op {
+            PopOp::Ult => ICmpPredicateAttr::ULT,
+            PopOp::Ule => ICmpPredicateAttr::ULE,
+            PopOp::Ugt => ICmpPredicateAttr::UGT,
+            _ => ICmpPredicateAttr::UGE,
+        };
+        let lhs = self.reg_value(ctx, *lhs, ScalarTy::Int)?;
+        let rhs = self.reg_value(ctx, *rhs, ScalarTy::Int)?;
+        let compare = ICmpOp::new(ctx, predicate, lhs, rhs);
+        self.define(ctx, dest, compare.get_operation(), compare.get_result(ctx))
     }
 
     /// Whether any lane of an `<N x i1>` mask is set.

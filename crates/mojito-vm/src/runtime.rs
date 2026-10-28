@@ -1193,8 +1193,10 @@ pub fn simd_binop(op: InfixOp, l: &Value, r: &Value) -> Result<Value, RuntimeErr
 /// type.
 ///
 /// A width-one `Int`, `UInt`, or `Float64` held as its host scalar stays
-/// one. Each lane is `mlir::pop_int_lane` or `mlir::pop_float_lane`, and an
-/// integer division by zero is an error, as the scalar operator's is.
+/// one. Each lane is `mlir::pop_int_lane`, `mlir::pop_float_lane`, or
+/// `mlir::pop_bool_lane`, and an integer division by zero is an error, as
+/// the scalar operator's is. An unsigned compare of two `index` values,
+/// held as `Int`s, gives a `Bool`.
 pub fn pop_op(op: mojito_types::mlir::PopOp, operands: &[Value]) -> Result<Value, RuntimeError> {
     let mismatch = || {
         RuntimeError::TypeError(format!(
@@ -1214,6 +1216,25 @@ pub fn pop_op(op: mojito_types::mlir::PopOp, operands: &[Value]) -> Result<Value
         SimdLanes::Float(zip_lanes(&parts, width, float_lanes, mismatch, |lane| {
             mojito_types::mlir::pop_float_lane(op, dtype, lane).ok_or_else(mismatch)
         })?)
+    } else if dtype == Dtype::Bool {
+        SimdLanes::Bool(zip_lanes(
+            &parts,
+            width,
+            bool_lanes,
+            mismatch,
+            |lane| match lane {
+                [a, b] => mojito_types::mlir::pop_bool_lane(op, *a, *b).ok_or_else(mismatch),
+                _ => Err(mismatch()),
+            },
+        )?)
+    } else if op.is_compare() {
+        let lanes = zip_lanes(&parts, width, int_lanes, mismatch, |lane| {
+            mojito_types::mlir::pop_int_lane(op, dtype, lane).ok_or_else(mismatch)
+        })?;
+        return match lanes.as_slice() {
+            [lane] => Ok(Value::Bool(*lane != 0)),
+            _ => Err(mismatch()),
+        };
     } else {
         SimdLanes::Int(zip_lanes(&parts, width, int_lanes, mismatch, |lane| {
             mojito_types::mlir::pop_int_lane(op, dtype, lane).ok_or_else(|| {
@@ -1619,6 +1640,13 @@ fn float_lanes(lanes: &SimdLanes) -> Option<&[f64]> {
     }
 }
 
+fn bool_lanes(lanes: &SimdLanes) -> Option<&[bool]> {
+    match lanes {
+        SimdLanes::Bool(values) => Some(values),
+        _ => None,
+    }
+}
+
 fn simd_value(dtype: Dtype, lanes: SimdLanes) -> Value {
     if dtype == Dtype::Float64
         && let SimdLanes::Float(v) = &lanes
@@ -1832,18 +1860,26 @@ const fn simd_shape(v: &Value) -> Option<(Dtype, usize)> {
     }
 }
 
-/// Elementwise dtype conversion (`v.cast[DType.<dt>]()`).
+/// Elementwise dtype conversion, upstream's `pop.cast`.
 ///
 /// Integer targets re-wrap at the new element width, float targets convert
 /// numerically (`float32` rounds), and a float source converts to an integer
 /// lane by truncating toward zero (saturating at the 128-bit intermediate) and
-/// then wrapping — Mojito's pinned bit-accurate policy.
-///
-/// Bool casts are rejected at checking.
+/// then wrapping — Mojito's pinned bit-accurate policy. A `bool` lane widens
+/// to 0 or 1, and a `bool` target takes the low bit (`trunc` to `i1`) of the
+/// integer lane or of the float lane truncated.
 pub fn simd_cast(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
     let (_, lanes) = simd_parts(value).ok_or_else(|| {
         RuntimeError::TypeError(format!("cannot cast {} as a SIMD value", type_name(value)))
     })?;
+    if target == Dtype::Bool {
+        let low_bit = match &lanes {
+            SimdLanes::Int(v) => v.iter().map(|x| x & 1 != 0).collect(),
+            SimdLanes::Float(v) => v.iter().map(|x| (x.trunc() as i128) & 1 != 0).collect(),
+            SimdLanes::Bool(v) => v.clone(),
+        };
+        return Ok(simd_value(target, SimdLanes::Bool(low_bit)));
+    }
     let cast = match (&lanes, target.is_float()) {
         (SimdLanes::Int(v), false) => {
             SimdLanes::Int(v.iter().map(|x| wrap_lane(target, *x)).collect())
@@ -1859,10 +1895,9 @@ pub fn simd_cast(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
         (SimdLanes::Float(v), true) => {
             SimdLanes::Float(v.iter().map(|x| target.round_lane(*x)).collect())
         }
-        (SimdLanes::Bool(_), _) => {
-            return Err(RuntimeError::TypeError(
-                "bool SIMD dtype casts are not supported".to_string(),
-            ));
+        (SimdLanes::Bool(v), false) => SimdLanes::Int(v.iter().map(|x| i128::from(*x)).collect()),
+        (SimdLanes::Bool(v), true) => {
+            SimdLanes::Float(v.iter().map(|x| f64::from(u8::from(*x))).collect())
         }
     };
     Ok(simd_value(target, cast))
