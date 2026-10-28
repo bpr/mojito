@@ -820,7 +820,7 @@ impl Decoder {
                 dtype: self.req(value, fields, "dtype", Self::simd_dtype_slot)?,
                 width: self.req(value, fields, "width", Self::simd_width_slot)?,
             }),
-            "simd.bits" => Some(MirInstr::SimdBitcast {
+            "simd.bitcast" => Some(MirInstr::SimdBitcast {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 value: self.req(value, fields, "value", Self::reg)?,
                 dtype: self.req(value, fields, "dtype", Self::simd_dtype_slot)?,

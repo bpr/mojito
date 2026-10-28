@@ -11,10 +11,10 @@
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
 # `__abs__`, `_refine`, `cast`, `is_power_of_two`, and `select`. The other
 # members are still served by the compiler (R184, R1555, R1566, R1567,
-# R1578–R1582, R1585, R1586, R330, R276), and the struct declares only the
-# traits whose requirements are ported here; as upstream's, its trait list
-# has no `Floatable`. `Scalar`, `Int`, `UInt`, the sized aliases, and `Byte`
-# stay compiler names until R1557.
+# R1579–R1582, R1585, R1586, R1589, R330, R276), and the struct declares
+# only the traits whose requirements are ported here; as upstream's, its
+# trait list has no `Floatable`. `Scalar`, `Int`, `UInt`, the sized aliases,
+# and `Byte` stay compiler names until R1557.
 # `cast` omits upstream's `is_nvidia_gpu()` and `bfloat16`-on-AMD branches
 # (R1562), and its float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4`
 # branches (R65): Mojito has none of those targets or dtypes.

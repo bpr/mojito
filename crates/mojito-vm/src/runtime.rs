@@ -486,48 +486,85 @@ pub fn hash_leaf_value(value: Value) -> Value {
     }
 }
 
-/// Lane-wise bit reinterpretation (`v.to_bits[DType.<target>]()`).
+/// Reinterpret `value`'s bits as `width` lanes of `target`, upstream's
+/// `pop.bitcast`.
 ///
-/// Each lane's bit pattern zero-extended into the unsigned `target` lane — an
-/// integer lane masked to its own dtype's width, a float lane as its IEEE
-/// bits, a bool lane as 0/1.
-///
-/// The checker guarantees `target` is unsigned and at least as wide as the
-/// source lane.
-pub fn simd_to_bits(target: Dtype, value: &Value) -> Result<Value, RuntimeError> {
+/// The lanes pack little-endian, lane 0 lowest, and a `bool` lane is one bit.
+/// The total bit width is kept, which the checker and the MIR verifier
+/// guarantee.
+pub fn simd_bitcast(target: Dtype, width: usize, value: &Value) -> Result<Value, RuntimeError> {
     let (dtype, lanes) = match value {
         Value::Bool(b) => (Dtype::Bool, SimdLanes::Bool(vec![*b])),
         other => simd_parts(other).ok_or_else(|| {
-            RuntimeError::TypeError(format!(
-                "cannot reinterpret {} as SIMD bits",
-                type_name(other)
-            ))
+            RuntimeError::TypeError(format!("cannot bitcast {}", type_name(other)))
         })?,
     };
-    let bits = match &lanes {
-        SimdLanes::Int(values) => {
-            let width = integer_dtype_bits(dtype).map_or(64, |(bits, _)| bits);
-            let mask = if width == 64 {
-                u64::MAX
-            } else {
-                (1_u64 << width) - 1
-            };
-            values
-                .iter()
-                .map(|lane| i128::from((*lane as u64) & mask))
-                .collect()
-        }
+    let source_bits = dtype.bit_width() as usize;
+    let target_bits = target.bit_width() as usize;
+    let raw: Vec<u64> = match &lanes {
+        SimdLanes::Int(values) => values.iter().map(|lane| *lane as u64).collect(),
         SimdLanes::Float(values) => values
             .iter()
             .map(|lane| match dtype {
-                Dtype::Float16 => i128::from(mojito_common::float::f16_bits(*lane)),
-                Dtype::Float32 => i128::from((*lane as f32).to_bits()),
-                _ => i128::from(lane.to_bits()),
+                Dtype::Float16 => u64::from(mojito_common::float::f16_bits(*lane)),
+                Dtype::Float32 => u64::from((*lane as f32).to_bits()),
+                _ => lane.to_bits(),
             })
             .collect(),
-        SimdLanes::Bool(values) => values.iter().map(|lane| i128::from(*lane)).collect(),
+        SimdLanes::Bool(values) => values.iter().map(|lane| u64::from(*lane)).collect(),
     };
-    Ok(simd_value(target, SimdLanes::Int(bits)))
+    if raw.len() * source_bits != width * target_bits {
+        return Err(RuntimeError::TypeError(format!(
+            "cannot bitcast {} {} lane(s) to {width} {} lane(s)",
+            raw.len(),
+            dtype.name(),
+            target.name()
+        )));
+    }
+    let mut words = vec![0_u64; (width * target_bits).div_ceil(64)];
+    for (index, lane) in raw.into_iter().enumerate() {
+        let offset = index * source_bits;
+        words[offset / 64] |= (lane & low_bits(source_bits)) << (offset % 64);
+    }
+    let read = |index: usize| {
+        let offset = index * target_bits;
+        (words[offset / 64] >> (offset % 64)) & low_bits(target_bits)
+    };
+    let lanes = match target {
+        Dtype::Bool => SimdLanes::Bool((0..width).map(|index| read(index) != 0).collect()),
+        Dtype::Float16 => SimdLanes::Float(
+            (0..width)
+                .map(|index| mojito_common::float::f16_from_bits(read(index) as u16))
+                .collect(),
+        ),
+        Dtype::Float32 => SimdLanes::Float(
+            (0..width)
+                .map(|index| f64::from(f32::from_bits(read(index) as u32)))
+                .collect(),
+        ),
+        Dtype::Float64 => SimdLanes::Float(
+            (0..width)
+                .map(|index| f64::from_bits(read(index)))
+                .collect(),
+        ),
+        _ => {
+            let shift = 64 - target_bits as u32;
+            let signed = integer_dtype_bits(target).is_some_and(|(_, signed)| signed);
+            SimdLanes::Int(
+                (0..width)
+                    .map(|index| {
+                        let raw = read(index);
+                        if signed {
+                            i128::from(((raw << shift) as i64) >> shift)
+                        } else {
+                            i128::from(raw)
+                        }
+                    })
+                    .collect(),
+            )
+        }
+    };
+    Ok(simd_value(target, lanes))
 }
 
 /// Apply a unary operator to an already-evaluated operand for VM execution and
@@ -2545,6 +2582,15 @@ impl fmt::Display for RuntimeError {
 
 impl std::error::Error for RuntimeError {}
 
+/// A mask of the low `bits` bits of a `u64`.
+const fn low_bits(bits: usize) -> u64 {
+    if bits >= 64 {
+        u64::MAX
+    } else {
+        (1 << bits) - 1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2626,34 +2672,54 @@ mod tests {
     }
 
     #[test]
-    fn simd_to_bits_zero_extends_lanes_and_folds_nothing() {
+    fn simd_bitcast_keeps_the_bits_and_folds_nothing() {
+        let simd = |dtype, lanes| Value::Simd { dtype, lanes };
+        let ints = |dtype, lanes: &[i128]| simd(dtype, SimdLanes::Int(lanes.to_vec()));
+        let bools = SimdLanes::Bool(vec![true, true, false, true, false, false, false, false]);
         assert_eq!(
-            simd_to_bits(Dtype::UInt64, &Value::Int(-1)).unwrap(),
-            Value::Simd {
-                dtype: Dtype::UInt64,
-                lanes: SimdLanes::Int(vec![i128::from(u64::MAX)]),
-            }
+            simd_bitcast(Dtype::UInt8, 1, &simd(Dtype::Bool, bools.clone())).unwrap(),
+            ints(Dtype::UInt8, &[11])
         );
         assert_eq!(
-            simd_to_bits(
+            simd_bitcast(Dtype::Bool, 8, &ints(Dtype::UInt8, &[11])).unwrap(),
+            simd(Dtype::Bool, bools)
+        );
+        assert_eq!(
+            simd_bitcast(
                 Dtype::UInt8,
-                &Value::Simd {
-                    dtype: Dtype::Int8,
-                    lanes: SimdLanes::Int(vec![-1]),
-                }
+                2,
+                &simd(Dtype::Bool, SimdLanes::Bool(vec![true; 16]))
             )
             .unwrap(),
-            Value::Simd {
-                dtype: Dtype::UInt8,
-                lanes: SimdLanes::Int(vec![0xFF]),
-            }
+            ints(Dtype::UInt8, &[255, 255])
         );
         assert_eq!(
-            simd_to_bits(Dtype::UInt64, &Value::Float64(-0.0)).unwrap(),
-            Value::Simd {
-                dtype: Dtype::UInt64,
-                lanes: SimdLanes::Int(vec![i128::from(1_u64 << 63)]),
-            }
+            simd_bitcast(
+                Dtype::Int16,
+                4,
+                &simd(Dtype::Float32, SimdLanes::Float(vec![1.0, -2.0]))
+            )
+            .unwrap(),
+            ints(Dtype::Int16, &[0, 16256, 0, -16384])
+        );
+        assert!(matches!(
+            simd_bitcast(Dtype::Float64, 1, &Value::Int(-1)).unwrap(),
+            Value::Float64(x) if x.is_nan()
+        ));
+        let negative_zero = simd_bitcast(Dtype::UInt64, 1, &Value::Float64(-0.0)).unwrap();
+        assert_eq!(
+            negative_zero,
+            ints(Dtype::UInt64, &[i128::from(1_u64 << 63)])
+        );
+        assert!(matches!(
+            simd_bitcast(Dtype::Float64, 1, &negative_zero).unwrap(),
+            Value::Float64(x) if x == 0.0 && x.is_sign_negative()
+        ));
+        let bytes = simd_bitcast(Dtype::UInt8, 4, &ints(Dtype::UInt32, &[4631])).unwrap();
+        assert_eq!(bytes, ints(Dtype::UInt8, &[23, 18, 0, 0]));
+        assert_eq!(
+            simd_bitcast(Dtype::UInt32, 1, &bytes).unwrap(),
+            ints(Dtype::UInt32, &[4631])
         );
         assert_eq!(hash_leaf_value(Value::Float64(-0.0)), Value::Float64(0.0));
         assert_eq!(hash_leaf_ty(&Value::Bool(true)), Some(Ty::bool()));

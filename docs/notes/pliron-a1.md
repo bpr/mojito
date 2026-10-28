@@ -127,7 +127,7 @@ compile benchmarks:
 | Operation | MIR forms | Effect |
 |---|---|---|
 | `unary` | `unary` | pure |
-| `simd_convert` | `simd.cast`, `simd.bits` | pure, never removed |
+| `simd_convert` | `simd.cast`, `simd.bitcast` | pure, never removed |
 | `ref_read` | `ref.read` | effectful |
 | `copy` | `value.copy` | effectful |
 | `move` | `place.move` | effectful |

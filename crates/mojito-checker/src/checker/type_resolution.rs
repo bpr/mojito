@@ -2911,6 +2911,19 @@ impl Checker {
                                 to: ty.to_string(),
                             });
                         }
+                    } else if is_simd_length(&actual) && matches!(ty.kind(), TyKind::INT) {
+                        // A `SIMDLength` binds an `Int` as its lane count:
+                        // upstream's builtin `SIMD.__init__(SIMDLength)`
+                        // folded.
+                        let lanes = mojito_types::types::simd_length_image(
+                            &self.param_context,
+                            &self.param_context.constant(value).map_err(param_error)?,
+                        )
+                        .map_err(param_error)?;
+                        let lanes =
+                            TyArg::Val(lanes.as_i64().map_or(CtValue::Expr(lanes), CtValue::Int));
+                        self.record_at(expr.source_span()).argument_attribute = Some(lanes.clone());
+                        return Ok(lanes);
                     } else if !coerces(&actual, ty) && !self.converts_to_parameter(expr, &value, ty)
                     {
                         // A struct parameter converts its argument through

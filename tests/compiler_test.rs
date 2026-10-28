@@ -1866,7 +1866,7 @@ fn template_value_shaped_operations_run_per_instance() {
     assert!(
         error
             .to_string()
-            .contains("at least as wide as the source lane"),
+            .contains("at least as wide as the source type"),
         "{error}"
     );
 }

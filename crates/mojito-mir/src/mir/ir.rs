@@ -2671,10 +2671,11 @@ pub enum MirInstr {
         dtype: mojito_types::types::SimdDtype,
         width: mojito_types::types::SimdWidth,
     },
-    /// Lane-wise bit reinterpretation `v.to_bits[DType.<dt>]()`: each lane's
-    /// bit pattern zero-extended into the unsigned target `dtype` (at least
-    /// as wide as the source lane; `bool` reads as 0/1). The target
-    /// `dtype`/`width` are the result type's slots, like
+    /// Bit reinterpretation, upstream's `pop.bitcast`: the operand's bits
+    /// read as the result type, which has the same total bit width. Lanes
+    /// pack little-endian, lane 0 lowest; a `bool` lane is one bit, so the
+    /// lane count may differ (eight `bool` lanes are one `uint8`). The
+    /// target `dtype`/`width` are the result type's slots, like
     /// [`MirInstr::MakeSimd`]'s.
     SimdBitcast {
         dest: Reg,

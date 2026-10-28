@@ -17,6 +17,11 @@ pub fn f16_bits(value: f64) -> u16 {
     f16::from_f64(value).to_bits()
 }
 
+/// The double a binary16 encoding denotes, widened exactly.
+pub fn f16_from_bits(bits: u16) -> f64 {
+    f16::from_bits(bits).to_f64()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

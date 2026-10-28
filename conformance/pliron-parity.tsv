@@ -286,6 +286,7 @@ assets/ok/dtype_compile_time_values.mojo	main	exe-differential	sanitized
 assets/ok/dtype_default_param.mojo	main	exe-differential	sanitized
 assets/ok/dtype_float_queries.mojo	main	exe-differential	sanitized
 assets/ok/dtype_float_query_template_served.mojo	main	exe-differential	sanitized
+assets/ok/dtype_integral_type_of.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_bool_lane.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_method.mojo	main	exe-differential	sanitized
 assets/ok/dtype_keyed_method_forward.mojo	main	exe-differential	sanitized
@@ -508,6 +509,7 @@ assets/ok/maybe_uninit_write.mojo	main	exe-differential	sanitized
 assets/ok/member_alias_application.mojo	main	exe-differential	sanitized
 assets/ok/member_call_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/member_read_through_construction.mojo	main	exe-differential	sanitized
+assets/ok/memory_bitcast.mojo	main	exe-differential	sanitized
 assets/ok/method_capturing_callable_parameter.mojo	main	exe-differential	sanitized
 assets/ok/method_mut_param.mojo	main	exe-differential	sanitized
 assets/ok/method_named_result.mojo	main	exe-differential	sanitized
@@ -700,6 +702,7 @@ assets/ok/parameterized_assoc_self_origin_return.mojo	main	exe-differential	sani
 assets/ok/parameterized_assoc_value.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_value_member.mojo	main	exe-differential	sanitized
 assets/ok/parametric_static_methods.mojo	main	exe-differential	sanitized
+assets/ok/partial_explicit_application.mojo	main	exe-differential	sanitized
 assets/ok/partial_move_mut_parameter_reinit.mojo	main	exe-differential	sanitized
 assets/ok/partial_move_reinit_sibling_use.mojo	main	exe-differential	sanitized
 assets/ok/path_operations.mojo	main	exe-differential	sanitized
@@ -927,6 +930,7 @@ assets/ok/simd_lane_binders_inferred.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_dynamic.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_dynamic_widths.mojo	main	exe-differential	sanitized
 assets/ok/simd_lane_write.mojo	main	exe-differential	sanitized
+assets/ok/simd_length_int_parameter.mojo	main	exe-differential	sanitized
 assets/ok/simd_length_struct.mojo	main	exe-differential	sanitized
 assets/ok/simd_literal_splat.mojo	main	exe-differential	sanitized
 assets/ok/simd_math_cast_members.mojo	main	exe-differential	sanitized
@@ -1256,6 +1260,7 @@ assets/ok/tuple_unpack_place_copies.mojo	main	exe-differential	sanitized
 assets/ok/type_comparison_values.mojo	main	exe-differential	sanitized
 assets/ok/type_member_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/type_names_applied_elements.mojo	main	exe-differential	sanitized
+assets/ok/type_of_comptime_assert.mojo	main	exe-differential	sanitized
 assets/ok/type_of_value_annotation.mojo	main	exe-differential	sanitized
 assets/ok/type_pack_reads_through_typelist.mojo	main	exe-differential	sanitized
 assets/ok/type_pack_runtime_read.mojo	main	exe-differential	sanitized

@@ -95,7 +95,6 @@ pub(super) fn substitute_function(
         &bindings.callables,
     )?;
     walk_function_mut(&mut Substitution { bindings }, function)?;
-    check_reinterpretation_widths(&function.blocks, &function.reg_types)?;
     copy_builtin_receivers(&mut function.blocks, &function.reg_types);
     Ok(())
 }
@@ -1197,47 +1196,4 @@ fn fresh_register(ty: Ty, n_regs: &mut u32, reg_types: &mut HashMap<u32, Ty>) ->
     *n_regs += 1;
     reg_types.insert(reg.0, ty);
     reg
-}
-
-/// `SIMD.to_bits`' constraint, decided once an instance closes its source
-/// lane: the target must be at least as wide, as the pin's instantiation
-/// requires.
-fn check_reinterpretation_widths(
-    blocks: &[MirBlock],
-    reg_types: &HashMap<u32, Ty>,
-) -> Result<(), MonoError> {
-    for block in blocks {
-        for instruction in &block.instrs {
-            match instruction {
-                MirInstr::SimdBitcast {
-                    value,
-                    dtype: SimdDtype::Known(target),
-                    ..
-                } => {
-                    if let Some(TyKind::Simd {
-                        dtype: SimdDtype::Known(source),
-                        ..
-                    }) = reg_types.get(&value.0).map(Ty::kind)
-                        && target.bit_width() < source.bit_width()
-                    {
-                        return Err(MonoError {
-                            kind: MonoErrorKind::Unsupported,
-                            function: None,
-                            construct: format!(
-                                "constraint failed: the target type `{}` of `to_bits` must be at least as wide as the source lane `{}`",
-                                target.name(),
-                                source.name()
-                            ),
-                        });
-                    }
-                }
-                instruction => {
-                    for region in mojito_mir::mir::instruction_regions(instruction) {
-                        check_reinterpretation_widths(region, reg_types)?;
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
 }

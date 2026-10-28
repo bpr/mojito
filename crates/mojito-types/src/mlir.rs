@@ -2,7 +2,7 @@
 //!
 //! These are upstream's elementwise `pop` ops over `!kgen.simd` storage
 //! (`pop.max` and `pop.min` among them, and `pop.cast` to and from `bool`
-//! lanes), its `pop.select` of one of two register-passable values, its `pop.simd`
+//! lanes), its `pop.bitcast` reinterpretation, its `pop.select` of one of two register-passable values, its `pop.simd`
 //! lane ops (select, extract, insert, and the `bool`
 //! reductions), the `index` ops over `__mlir_type.index`, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
@@ -30,6 +30,7 @@ pub enum MlirOp {
     PopShr,
     PopCmp(CmpPredicate),
     PopCast,
+    PopBitcast,
     PopSplat,
     PopAnd,
     PopOr,
@@ -95,6 +96,7 @@ impl MlirOp {
             "pop.shl" => Self::PopShl,
             "pop.shr" => Self::PopShr,
             "pop.cast" => Self::PopCast,
+            "pop.bitcast" => Self::PopBitcast,
             "pop.simd.splat" => Self::PopSplat,
             "pop.simd.and" => Self::PopAnd,
             "pop.simd.or" => Self::PopOr,
@@ -143,6 +145,7 @@ impl MlirOp {
             Self::PopShr => "pop.shr",
             Self::PopCmp(_) => "pop.cmp",
             Self::PopCast => "pop.cast",
+            Self::PopBitcast => "pop.bitcast",
             Self::PopSplat => "pop.simd.splat",
             Self::PopAnd => "pop.simd.and",
             Self::PopOr => "pop.simd.or",
@@ -210,7 +213,11 @@ impl MlirOp {
     pub const fn takes_result_type(self) -> bool {
         matches!(
             self,
-            Self::PopCast | Self::PopSplat | Self::PopCastFromBuiltin | Self::PopCastToBuiltin
+            Self::PopCast
+                | Self::PopBitcast
+                | Self::PopSplat
+                | Self::PopCastFromBuiltin
+                | Self::PopCastToBuiltin
         )
     }
 
@@ -221,6 +228,7 @@ impl MlirOp {
             MlirLowering::Negate
             | MlirLowering::Splat
             | MlirLowering::Cast
+            | MlirLowering::Bitcast
             | MlirLowering::BuiltinCast
             | MlirLowering::Reduce(_) => 1,
             MlirLowering::Extract => 2,
@@ -270,6 +278,7 @@ impl MlirOp {
             Self::PopNeg => MlirLowering::Negate,
             Self::PopSplat => MlirLowering::Splat,
             Self::PopCast => MlirLowering::Cast,
+            Self::PopBitcast => MlirLowering::Bitcast,
             Self::PopCastFromBuiltin | Self::PopCastToBuiltin => MlirLowering::BuiltinCast,
             Self::PopDiv | Self::IndexDivs => MlirLowering::Pop(PopOp::Div),
             Self::PopRem => MlirLowering::Pop(PopOp::Rem),
@@ -326,11 +335,18 @@ impl LaneKinds {
     }
 }
 
+/// The bits `!kgen.simd` storage of `width` `dtype` lanes occupies, as
+/// `pop.bitcast` counts them: a `bool` lane is one bit, and `Int` and
+/// `UInt` lanes are 64. A bitcast keeps this total.
+pub fn storage_bits(dtype: Dtype, width: i64) -> i64 {
+    i64::from(dtype.bit_width()) * width
+}
+
 /// The instruction an [`MlirOp`] lowers to.
 ///
 /// That is the built-in operator whose lane semantics are the op's
-/// (`binary`/`unary`), a construction or cast carrying the `_type`
-/// attribute's slots, the `pop` instruction for an op no operator
+/// (`binary`/`unary`), a construction, cast, or bitcast carrying the
+/// `_type` attribute's slots, the `pop` instruction for an op no operator
 /// computes, the `select` of one of two register values, the
 /// `simd.select`, `simd.extract`, `simd.insert`, or
 /// `simd.reduce` lane instruction, or the `builtin.cast` that retypes an
@@ -341,6 +357,7 @@ pub enum MlirLowering {
     Negate,
     Splat,
     Cast,
+    Bitcast,
     BuiltinCast,
     Pop(PopOp),
     Select,

@@ -1063,7 +1063,7 @@ impl Checker {
         if reads_comptime_interpreter_query(expr) {
             return false;
         }
-        let mut names = names_read(expr);
+        let mut names = value_names_read(expr);
         // A collector's `args.__len__()` is its pack's length.
         for collector in self.pack_length_receivers(expr) {
             if let Some(position) = names.iter().position(|name| *name == collector) {
@@ -4984,6 +4984,59 @@ fn predicate_spelling(expr: &Expr) -> Option<&str> {
 /// Whether two bound lists name the same traits, in any order.
 fn same_bounds(left: &[String], right: &[String]) -> bool {
     left.len() == right.len() && left.iter().all(|bound| right.contains(bound))
+}
+
+/// The names `expr` reads as values: every name it spells but one under a
+/// `type_of` operand, which reads only its operand's type.
+fn value_names_read(expr: &Expr) -> Vec<String> {
+    struct Names {
+        values: Vec<(*const Expr, String)>,
+        typed: HashSet<*const Expr>,
+    }
+    impl Names {
+        fn type_operand(&mut self, operand: &Expr) {
+            struct Identifiers<'n>(&'n mut HashSet<*const Expr>);
+            impl mojito_ast::visit::Visitor for Identifiers<'_> {
+                fn visit_expr(&mut self, expr: &Expr) {
+                    if matches!(expr.kind, ExprKind::Identifier(_)) {
+                        self.0.insert(std::ptr::from_ref(expr));
+                    }
+                }
+            }
+            mojito_ast::visit::walk_expr(&mut Identifiers(&mut self.typed), operand);
+        }
+    }
+    impl mojito_ast::visit::Visitor for Names {
+        fn visit_expr(&mut self, expr: &Expr) {
+            match &expr.kind {
+                ExprKind::Identifier(name) => {
+                    self.values.push((std::ptr::from_ref(expr), name.clone()));
+                }
+                ExprKind::Call { name, args, .. } if name == "type_of" => {
+                    for operand in args {
+                        self.type_operand(operand);
+                    }
+                }
+                _ => {}
+            }
+        }
+        fn visit_type(&mut self, ty: &SourceType) {
+            if let SourceType::TypeOf(operand) = ty {
+                self.type_operand(operand);
+            }
+        }
+    }
+    let mut names = Names {
+        values: Vec::new(),
+        typed: HashSet::new(),
+    };
+    mojito_ast::visit::walk_expr(&mut names, expr);
+    names
+        .values
+        .into_iter()
+        .filter(|(identifier, _)| !names.typed.contains(identifier))
+        .map(|(_, name)| name)
+        .collect()
 }
 
 const VARIADICS_MODULE: &str = "std.builtin.variadics";

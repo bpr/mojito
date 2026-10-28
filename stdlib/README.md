@@ -95,6 +95,10 @@ point, as upstream's toolchain does.
   type of `SIMD`'s width: a wrapper of the MLIR `index` that a literal or an
   `Int` converts to, and that converts to any `SIMD` through the compiler
   `SIMD`'s `@implicit __init__(SIMDLength)`. The prelude exports it.
+- `std/memory/unsafe.mojo` — upstream's `bitcast` and `pack_bits` over
+  `pop.bitcast`, re-exported by `std.memory`; `std/builtin/dtype.mojo`
+  bundles `_uint_type_of_width`, `_integral_type_of`, and
+  `_unsigned_integral_type_of`.
 - `std/builtin/value.mojo` — upstream's `Defaultable`, `RegisterPassable`,
   and `TrivialRegisterPassable` traits; the prelude exports all three.
   `TrivialRegisterPassable` refines `Deinitable`, `ImplicitlyCopyable`,

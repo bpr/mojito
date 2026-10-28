@@ -45,6 +45,27 @@ impl Checker {
                 });
             }
         }
+        // A lane still a parameter is judged per instance, as upstream's
+        // `comptime assert` in the body is.
+        if let (Some(target_dtype), SimdDtype::Expr(lane)) = (target.known(), source)
+            && source.is_symbolic()
+            && let Some(holds) = Dtype::ALL
+                .into_iter()
+                .filter(|wider| wider.bit_width() > target_dtype.bit_width())
+                .map(|wider| {
+                    GenericConstraint::Ne(
+                        ConstraintOperand::Expr(lane.clone()),
+                        ConstraintOperand::Value(CtValue::Dtype(wider)),
+                    )
+                })
+                .reduce(|left, right| GenericConstraint::And(Box::new(left), Box::new(right)))
+        {
+            self.record_instance_constraint(
+                span,
+                holds,
+                "the target type must be at least as wide as the source type",
+            );
+        }
         self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::SimdToBits {
                 dtype: target.clone(),

@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.memory`'s `bitcast` and `pack_bits` are upstream's library bodies
+  over the `pop.bitcast` `__mlir_op`, which Mojito now admits, and
+  `std.builtin.dtype` bundles `_integral_type_of` and
+  `_unsigned_integral_type_of` (R1578, in part).
+  `bitcast[DType.uint8, 4](UInt32(4631))` prints `[23, 18, 0, 0]`, a
+  `bool` vector packs into an unsigned integer, and the bodies' asserts
+  reject a width change with the pin's messages. MIR's `simd.bits` is
+  `simd.bitcast` with `pop.bitcast`'s same-total-width meaning (MIR 1.131,
+  `mojito-package 140`). A partial explicit application now solves its
+  remaining value binders from the arguments (`g2[1](Box[4](0))`, which
+  was "cannot infer type parameter", R479), a `SIMDLength` binds an `Int`
+  value parameter as its lane count, and a name under `type_of` is no
+  run-time read in a `comptime assert`.
 - A compile-time call binds its callee's own compile-time parameters as a
   run-time call does, over the callee's classified signature, so a
   signature, field type, or parameter default calling a callee generic

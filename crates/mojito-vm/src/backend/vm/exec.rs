@@ -1568,9 +1568,9 @@ impl VmBackend {
                 dtype,
                 width,
             } => {
-                let (dtype, _) = concrete_simd_slots(&(dtype.clone(), width.clone()))?;
+                let (dtype, width) = concrete_simd_slots(&(dtype.clone(), width.clone()))?;
                 regs[dest.0 as usize] =
-                    crate::runtime::simd_to_bits(dtype, &regs[value.0 as usize])?;
+                    crate::runtime::simd_bitcast(dtype, width, &regs[value.0 as usize])?;
             }
             MirInstr::SimdShuffle {
                 dest,

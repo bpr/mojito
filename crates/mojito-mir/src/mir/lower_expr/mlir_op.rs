@@ -9,6 +9,8 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::mlir::{MlirLowering, MlirOp};
+use mojito_types::param_expr::ParamOp;
+use mojito_types::types::{SimdDtype, SimdWidth};
 
 impl<'a> Flatten<'a> {
     /// The op the checker recorded on `call`, if it is a `pop` or `index`
@@ -123,8 +125,8 @@ impl<'a> Flatten<'a> {
     }
 
     /// Lower the checked `op` over `args`: a built-in operator whose lanes
-    /// compute the op (`binary`, `unary`), a `simd.make` splat or
-    /// `simd.cast` at the result type's slots, a `pop` instruction, or a
+    /// compute the op (`binary`, `unary`), a `simd.make` splat,
+    /// `simd.cast`, or `simd.bitcast` at the result type's slots, a `pop` instruction, or a
     /// lane instruction. The destination is typed by the checked result.
     pub(super) fn lower_mlir_op(&mut self, call: Node<'a>, op: MlirOp, args: &[Node<'a>]) -> Reg {
         let operands: Vec<Reg> = args.iter().map(|argument| self.expr(*argument)).collect();
@@ -178,6 +180,90 @@ impl<'a> Flatten<'a> {
         dest
     }
 
+    /// Lower the checker's `to_bits` rule over `object` to upstream's body
+    /// shape: a `bool` lane cast to `uint8`, a `simd.bitcast` to the
+    /// unsigned dtype of the lane's width, and a `simd.cast` to the `target`
+    /// dtype when it differs. A lane still a parameter takes each step's
+    /// dtype as a `cond` the instance folds.
+    pub(super) fn lower_simd_to_bits(
+        &mut self,
+        location: &SourceSpan,
+        object: Node<'a>,
+        target: SimdDtype,
+        width: &SimdWidth,
+    ) -> Reg {
+        let source = object
+            .ty()
+            .and_then(|ty| mojito_types::types::held_simd_slots(ty.kind()))
+            .map(|(dtype, _)| dtype)
+            .expect("a checked `to_bits` receiver is a SIMD value");
+        let value = self.expr(object);
+        let context = ParamContext::detached();
+        let dtype = |dtype: Dtype| {
+            context
+                .constant(CtValue::Dtype(dtype))
+                .expect("a dtype is a constant")
+        };
+        let (lane, unsigned) = match &source {
+            SimdDtype::Known(Dtype::Bool) => (
+                SimdDtype::Known(Dtype::UInt8),
+                SimdDtype::Known(Dtype::UInt8),
+            ),
+            SimdDtype::Known(lane) => (
+                source.clone(),
+                SimdDtype::Known(mojito_types::types::unsigned_dtype_of_width(
+                    lane.bit_width(),
+                )),
+            ),
+            SimdDtype::Expr(lane) => {
+                let is_bool = context.identical(lane, &dtype(Dtype::Bool));
+                (
+                    SimdDtype::Expr(
+                        context
+                            .op(ParamOp::Cond, &[is_bool, dtype(Dtype::UInt8), lane.clone()])
+                            .expect("a `cond` over dtypes is well-typed"),
+                    ),
+                    SimdDtype::Expr(
+                        mojito_types::types::symbolic_unsigned_dtype_of(&context, lane)
+                            .expect("the unsigned dtype of a lane is well-typed"),
+                    ),
+                )
+            }
+        };
+        let emit = |this: &mut Self, value: Reg, dtype: SimdDtype, bitcast: bool| {
+            let ty = mojito_types::types::simd_ty_from_slots(dtype.clone(), width.clone())
+                .expect("`to_bits` slots form a SIMD type");
+            let dest = this.fresh_typed(location.clone(), None, ty);
+            this.emit(if bitcast {
+                MirInstr::SimdBitcast {
+                    dest,
+                    value,
+                    dtype,
+                    width: width.clone(),
+                }
+            } else {
+                MirInstr::SimdCast {
+                    dest,
+                    value,
+                    dtype,
+                    width: width.clone(),
+                }
+            });
+            dest
+        };
+        let value = if lane == source {
+            value
+        } else {
+            emit(self, value, lane, false)
+        };
+        let value = emit(self, value, unsigned.clone(), true);
+        if unsigned == target {
+            value
+        } else {
+            emit(self, value, target, false)
+        }
+    }
+
     /// Retype `value` as `ty` with upstream's `pop.cast_to_builtin` (an
     /// `Int` to its `index`) or `pop.cast_from_builtin` (back), whichever
     /// `ty` names.
@@ -199,7 +285,7 @@ impl<'a> Flatten<'a> {
         let dest = self.fresh_typed(location, None, ty.clone());
         let slots = || {
             mojito_types::types::held_simd_slots(ty.kind())
-                .expect("a checked splat or cast names a SIMD type")
+                .expect("a checked splat, cast, or bitcast names a SIMD type")
         };
         self.emit(match (op.lowering(), operands.as_slice()) {
             (MlirLowering::Binary(infix), [a, b]) => MirInstr::BinOp {
@@ -229,6 +315,15 @@ impl<'a> Flatten<'a> {
             (MlirLowering::Cast, [value]) => {
                 let (dtype, width) = slots();
                 MirInstr::SimdCast {
+                    dest,
+                    value: *value,
+                    dtype,
+                    width,
+                }
+            }
+            (MlirLowering::Bitcast, [value]) => {
+                let (dtype, width) = slots();
+                MirInstr::SimdBitcast {
                     dest,
                     value: *value,
                     dtype,

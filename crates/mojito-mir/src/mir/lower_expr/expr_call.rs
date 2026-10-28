@@ -485,8 +485,7 @@ impl<'a> Flatten<'a> {
             return self.expr(object);
         }
         // `v.to_bits[DType.<dt>]()` carries its checker-resolved payload
-        // in the adjustment: a lane-wise bit reinterpretation of the
-        // member callee's object.
+        // in the adjustment, lowered over the member callee's object.
         let simd_to_bits = node
             .adjustments
             .iter()
@@ -499,15 +498,7 @@ impl<'a> Flatten<'a> {
         if let Some((dtype, width)) = simd_to_bits
             && let Some(object) = callee.member_object()
         {
-            let value = self.expr(object);
-            let dest = self.fresh(call.location(), None);
-            self.emit(MirInstr::SimdBitcast {
-                dest,
-                value,
-                dtype,
-                width,
-            });
-            return dest;
+            return self.lower_simd_to_bits(&call.location(), object, dtype, &width);
         }
         let simd_shuffle = node
             .adjustments

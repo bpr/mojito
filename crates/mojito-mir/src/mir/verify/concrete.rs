@@ -9,6 +9,7 @@
 use super::*;
 use crate::mir::text::instruction_mnemonic;
 use crate::mir::{Const, MirParamArg, MirSubscriptCall, UseMode, VarId};
+use mojito_types::mlir::storage_bits;
 use mojito_types::types::TyKind;
 
 /// The concreteness findings for one function body.
@@ -261,6 +262,7 @@ fn concrete_blocks(
             }
             concrete_instruction(&head, instruction, errors);
             reference_read(&head, function, instruction, errors);
+            bitcast_width(&head, function, instruction, errors);
             concrete_llvm_intrinsic(&head, function, declarations, instruction, errors);
         }
         if matches!(
@@ -540,6 +542,44 @@ fn reference_read(
             "{head} copies reference slot ${var} by `UseVar`; a reference binding is read by `LoadPlace`"
         )),
         _ => {}
+    }
+}
+
+/// `pop.bitcast`'s verifier over a closed `simd.bitcast`: the bits are
+/// kept. It runs on elaborated MIR, after the instance's compile-time
+/// assertions (`bitcast`'s own among them) are judged, as the pin verifies
+/// the op after instantiation.
+fn bitcast_width(
+    head: &str,
+    function: &MirFunction,
+    instruction: &MirInstr,
+    errors: &mut Vec<String>,
+) {
+    let MirInstr::SimdBitcast {
+        value,
+        dtype,
+        width,
+        ..
+    } = instruction
+    else {
+        return;
+    };
+    let source = function
+        .reg_types
+        .get(&value.0)
+        .and_then(|ty| mojito_types::types::held_simd_slots(ty.kind()));
+    if let (Some(dtype), Some(width), Some((source_dtype, source_width))) =
+        (dtype.known(), width.known(), source)
+        && let (Some(source_dtype), Some(source_width)) =
+            (source_dtype.known(), source_width.known())
+        && storage_bits(source_dtype, source_width) != storage_bits(dtype, width)
+    {
+        errors.push(format!(
+            "{head}: 'pop.bitcast' op input type `SIMD[{}, {source_width}]` and result type \
+             `SIMD[{}, {width}]` are cast incompatible",
+            source_dtype.name(),
+            dtype.name()
+        ));
     }
 }
 

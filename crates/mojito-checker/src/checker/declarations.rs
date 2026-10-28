@@ -3456,8 +3456,10 @@ impl Checker {
     /// Resolve a generic use site's parameters, returning a type-parameter
     /// substitution and the full argument list (types + values) for the struct's
     /// identity. When `param_args` is non-empty the parameters are supplied
-    /// explicitly (positionally); otherwise the type parameters are inferred from
-    /// `patterns`/`actuals` (a value parameter cannot be inferred).
+    /// explicitly (positionally), and the parameters they leave open are
+    /// inferred; otherwise every parameter is inferred from
+    /// `patterns`/`actuals` (a value parameter where it occupies an argument
+    /// type's slot).
     #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn resolve_use_params(
         &self,
@@ -3497,6 +3499,13 @@ impl Checker {
                     continue;
                 }
                 unify(pattern, actual, &mut subst)?;
+            }
+            // A value binder no bracket argument spells is solved from the
+            // argument types as in an inferred call (`bitcast[DType.uint8,
+            // 4](x)` solves `src_dtype` and `src_width` from `x`).
+            let mut value_solutions = HashMap::new();
+            for (pattern, actual) in patterns.iter().zip(actuals) {
+                solve_value_args(pattern, actual, &mut value_solutions);
             }
             unify_through_callable_bounds(decls, &mut subst)?;
             self.solve_binders_from_values(decls, &mut subst, |index, declared| {
@@ -3637,6 +3646,10 @@ impl Checker {
                     attributes[*position] = self.bound_bracket_attribute(argument, &resolved);
                     resolved
                 } else if let Some(solved) = trait_solutions.get(decl.id()) {
+                    TyArg::Val(solved.clone())
+                } else if let ParamDecl::Value { name: pname, .. } = decl
+                    && let Some(solved) = value_solutions.get(pname)
+                {
                     TyArg::Val(solved.clone())
                 } else if let ParamDecl::Value {
                     callable_default: Some(_),

@@ -8,7 +8,9 @@
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
-use mojito_types::mlir::{LaneKinds, MlirLowering, MlirOp, MlirOpError, is_fastmath_attribute};
+use mojito_types::mlir::{
+    LaneKinds, MlirLowering, MlirOp, MlirOpError, is_fastmath_attribute, storage_bits,
+};
 
 impl Checker {
     /// Type `__mlir_op.`name`[attributes](operands)` for an admitted `pop`
@@ -18,8 +20,8 @@ impl Checker {
     /// op `__mlir_type.index` ones. Arithmetic keeps the operand type,
     /// `pop.cmp` gives the `bool` mask storage of the operand width,
     /// `index.cmp` an `i1` (`Bool`), and
-    /// `pop.cast` and `pop.simd.splat` the type their `_type` attribute
-    /// names. `pop.select` is typed by [`select_result`], the lane ops by
+    /// `pop.cast`, `pop.bitcast`, and `pop.simd.splat` the type their
+    /// `_type` attribute names. `pop.select` is typed by [`select_result`], the lane ops by
     /// [`lane_op_result`], the casts between `index` and its storage by
     /// [`builtin_cast_result`].
     pub(super) fn infer_pop_op(
@@ -479,6 +481,30 @@ fn pop_op_result(op: MlirOp, operands: &[Ty], result_type: Option<Ty>) -> Result
             if target_width != width {
                 return Err(PopTypeError::Verifier(format!(
                     "op operand type '{}' and result type '{}' are cast incompatible",
+                    mlir_spelling(&operands[0]),
+                    mlir_spelling(&target)
+                )));
+            }
+            Ok(target)
+        }
+        MlirLowering::Bitcast => {
+            let target = result_type.expect("a bitcast names its result type");
+            let Some((target_dtype, target_width)) = storage_slots(&target) else {
+                return Err(PopTypeError::Verifier(format!(
+                    "op result must be SIMD type, but got '{}'",
+                    mlir_spelling(&target)
+                )));
+            };
+            // A side still symbolic is the MIR verifier's per instance.
+            let bits = |dtype: &SimdDtype, width: &SimdWidth| {
+                Some(storage_bits(dtype.known()?, width.known()?))
+            };
+            if let (Some(from), Some(to)) =
+                (bits(&dtype, &width), bits(&target_dtype, &target_width))
+                && from != to
+            {
+                return Err(PopTypeError::Verifier(format!(
+                    "op input type '{}' and result type '{}' are cast incompatible",
                     mlir_spelling(&operands[0]),
                     mlir_spelling(&target)
                 )));

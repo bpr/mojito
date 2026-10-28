@@ -1330,6 +1330,43 @@ pub fn held_simd_ty(ty: &Ty) -> Ty {
     storage_simd(ty).unwrap_or_else(|| ty.clone())
 }
 
+/// `SIMD.to_bits`'s default target: the unsigned dtype of the source lane's
+/// width (a `bool` lane reads through `uint8`, as upstream casts it first).
+pub const fn unsigned_dtype_of_width(bits: u32) -> Dtype {
+    match bits {
+        16 => Dtype::UInt16,
+        32 => Dtype::UInt32,
+        64 => Dtype::UInt64,
+        _ => Dtype::UInt8,
+    }
+}
+
+/// [`unsigned_dtype_of_width`] over a symbolic source lane `source`.
+///
+/// It is a `cond` chain testing the lane's identity against each dtype of a
+/// width, which folds to the closed target once an instance binds the lane,
+/// as upstream's `_unsigned_integral_type_of[dtype]()` default does.
+pub fn symbolic_unsigned_dtype_of(
+    context: &ParamContext,
+    source: &ParamExpr,
+) -> Result<ParamExpr, ParamError> {
+    let dtype = |dtype: Dtype| context.constant(CtValue::Dtype(dtype));
+    let mut target = dtype(Dtype::UInt64)?;
+    for unsigned in [Dtype::UInt32, Dtype::UInt16, Dtype::UInt8] {
+        let tests = Dtype::ALL
+            .into_iter()
+            .filter(|lane| unsigned_dtype_of_width(lane.bit_width()) == unsigned)
+            .map(|lane| Ok(context.identical(source, &dtype(lane)?)))
+            .collect::<Result<Vec<_>, ParamError>>()?;
+        let same_width = context.op(crate::param_expr::ParamOp::BoolOr, &tests)?;
+        target = context.op(
+            crate::param_expr::ParamOp::Cond,
+            &[same_width, dtype(unsigned)?, target],
+        )?;
+    }
+    Ok(target)
+}
+
 /// A bracketed `__mlir_type[...]` spelling as KGEN concatenates it.
 ///
 /// The text pieces (the backtick-stropped arguments no plain identifier

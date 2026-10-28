@@ -379,7 +379,7 @@ impl<'a> Flatten<'a> {
         }
         // `v.to_bits()` with the default target arrives as an ordinary
         // method call; the parameterized spelling takes the invoke
-        // path above. Both lower to the same lane-wise reinterpret.
+        // path above. Both lower to upstream's body shape.
         if method == "to_bits"
             && args.is_empty()
             && kwargs.is_empty()
@@ -394,15 +394,7 @@ impl<'a> Flatten<'a> {
                         _ => None,
                     })
         {
-            let value = self.expr(object);
-            let dest = self.fresh(call.location(), None);
-            self.emit(MirInstr::SimdBitcast {
-                dest,
-                value,
-                dtype,
-                width,
-            });
-            return Some(dest);
+            return Some(self.lower_simd_to_bits(&call.location(), object, dtype, &width));
         }
         // `v.set(init_with=…)` infers its alternative from the factory
         // (no explicit type parameter), so it arrives as an ordinary

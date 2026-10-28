@@ -286,6 +286,7 @@ assets/ok/dtype_compile_time_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_default_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_float_queries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_float_query_template_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/dtype_integral_type_of.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_keyed_bool_lane.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_keyed_method.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/dtype_keyed_method_forward.mojo	-	ineligible	no-scalar-entry-shape
@@ -508,6 +509,7 @@ assets/ok/maybe_uninit_write.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/member_alias_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/member_call_unread_struct_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/member_read_through_construction.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/memory_bitcast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_capturing_callable_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_mut_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_named_result.mojo	-	ineligible	no-scalar-entry-shape
@@ -700,6 +702,7 @@ assets/ok/parameterized_assoc_self_origin_return.mojo	-	ineligible	no-scalar-ent
 assets/ok/parameterized_assoc_value.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_value_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parametric_static_methods.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/partial_explicit_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/partial_move_mut_parameter_reinit.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/partial_move_reinit_sibling_use.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/path_operations.mojo	-	ineligible	no-scalar-entry-shape
@@ -927,6 +930,7 @@ assets/ok/simd_lane_binders_inferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_dynamic.mojo	compute	differential	ret=Int
 assets/ok/simd_lane_dynamic_widths.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_write.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_length_int_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_length_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_literal_splat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_math_cast_members.mojo	-	ineligible	no-scalar-entry-shape
@@ -1256,6 +1260,7 @@ assets/ok/tuple_unpack_place_copies.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_comparison_values.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_member_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_names_applied_elements.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/type_of_comptime_assert.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_of_value_annotation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_pack_reads_through_typelist.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_pack_runtime_read.mojo	-	ineligible	no-scalar-entry-shape

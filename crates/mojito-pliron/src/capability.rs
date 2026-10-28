@@ -336,9 +336,9 @@ pub const INSTR_CAPABILITIES: &[(&str, CapabilityStatus, &str)] = &[
         "vector int rewrap and f64-mediated float conversion; float-to-int converts the whole vector inside the exactly-convertible range and saturates at i128 lane by lane outside it; bool casts reject in the checker",
     ),
     (
-        "simd.bits",
+        "simd.bitcast",
         CapabilityStatus::Supported,
-        "each lane's bit pattern zero-extended into the unsigned target lane (floats through bitcast, bool as 0/1); a reinterpretation, not a conversion, so it is exact by construction and matches the VM's `simd_to_bits` on every lane",
+        "the operand's bits reinterpreted as the target type of the same total width, one LLVM `bitcast` over the compute types (a `bool` lane is an `i1`), so it matches the VM's `simd_bitcast` bit for bit",
     ),
     (
         "simd.shuffle",

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1589**.
+Next free ID: **R1590**.
 
 ## Ordered Work
 
@@ -3350,27 +3350,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R479 A partial explicit application does not infer the remaining
-  parameters**
-
-  Problem: `g2[m: Int, n: Int](a: Box[n])` called as `g2[1](Box[4](0))` is
-  rejected with "cannot infer type parameter 'n' of 'g2' from the
-  arguments", where the pin prints `5`.
-  - The same holds for a lane: `h[DType.int8](Box[4](0), Int8(1))` for
-    `h[dt: DType, n: Int](a: Box[n], b: Scalar[dt])`, pin `4`.
-  - It holds for a keyword-only prefix too: `k[s="yo2"](Int16(2))` for
-    `k[dt: DType, s: String](x: Scalar[dt])`, and `z[T=P](Int8(1))`.
-  - Once any parameter is spelled, the checker solves none of the rest from
-    the arguments.
-  - Probe: the same holds for infer-only binders before a spelled one:
-    `rotate_left[1](v)` over `def rotate_left[dtype: DType, size:
-    SIMDLength, //, shift: Int](v: SIMD[dtype, size])` prints the rotation
-    at the pin and stops with "cannot infer type parameter 'dtype'".
-    `assets/ok/llvm_intrinsic_shuffles.mojo` spells every parameter instead.
-  - Found while landing R477 (2026-10-07).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1448 An implicit conversion never selects a constructor with
   parameters of its own**
 
@@ -4760,6 +4739,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `def`'s `k[n](a)` from the same body.
   - MIR emits the binder as a runtime register, but the checker records no
     type for the argument expression on the method path.
+  - Probe: a local `comptime u = pick[d]()` passed the same way,
+    `v.cast[u]()` in `def f[d: DType, w: SIMDLength](v: SIMD[d, w])`,
+    fails with "register r1 has no checked type (UseVar …)"; the pin runs
+    it.
   - Found while landing R478 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6185,10 +6168,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     "cannot use a dynamic value in a parameter list". The `materialize`
     check (`Checker::infer_template_materialize`) rejects only an operand
     reading `__is_run_in_comptime_interpreter`.
-  - Trap: `reads_compile_time_alone` counts the local of `type_of(t)` as a
-    run-time read, so gating on it rejects
+  - `reads_compile_time_alone` already skips a name under a `type_of`
+    operand, so gating on it keeps
     `assets/ok/type_of_value_annotation.mojo`'s
-    `materialize[type_of(t) == String]()`. A type read must not count.
+    `materialize[type_of(t) == String]()`.
   - Found while landing R1546 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -10008,25 +9991,31 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1566, R1561, R1562, R330, and R1568.
   - Model: Fable, Planned.
 
-- [ ] **R1578 `SIMD.to_bits` is a checker rule and `std.memory.bitcast` is
-  missing, where upstream's are library bodies over `pop.bitcast`**
+- [ ] **R1589 `SIMD.to_bits` is a checker rule, where upstream's is a
+  library body over `bitcast`**
 
   `infer_simd_to_bits`, `SemanticAdjustment::SimdToBits`, and the
   `to_bits` arms of `expr_method.rs` and `expr_call.rs` serve `to_bits`
-  by name.
-  - Admit `pop.bitcast` (`MlirOp`). Give `MirInstr::SimdBitcast`
-    `pop.bitcast`'s meaning, the same total bit width with a lane count
-    that may differ, in the VM (`runtime::simd_to_bits`) and Pliron
-    (`lower_simd_bitcast`): a MIR minor and package bump.
-  - Bundle `std/memory/unsafe.mojo`'s `bitcast` (its GPU guard omitted,
-    R1562) and `pack_bits`.
-  - Bundle `_integral_type_of` and `_unsigned_integral_type_of` into
-    `stdlib/std/builtin/dtype.mojo`, then port `to_bits` and
-    `_to_bits_signed`.
-  - Probe: `bitcast[DType.uint8, 4](UInt32(4631))` prints `[23, 18, 0,
-    0]` at the pin.
-  - `bitcast`'s asserts compare `src_dtype == .float16`, which runs.
-  - Depends on R1576.
+  by name, lowered to upstream's body shape by
+  `Flatten::lower_simd_to_bits`.
+  - Port `to_bits` and `_to_bits_signed` (`simd.mojo:2522`, `:2547`) over
+    the bundled `bitcast`, `_integral_type_of`, and
+    `_unsigned_integral_type_of`, importing `bitcast` into `std.simd`.
+  - The port fails every `bool` `to_bits` until R376 lands: the untaken
+    `else` arm's `comptime uint = _unsigned_integral_type_of[Self.dtype]()`
+    is applied and reaches its `comptime assert False`.
+  - Retire `infer_simd_to_bits`, the `"to_bits"` arm of
+    `intrinsic_receivers.rs`, `types::{unsigned_dtype_of_width,
+    symbolic_unsigned_dtype_of}`, `SemanticAdjustment::SimdToBits`,
+    `lower_simd_to_bits`, and the rule's narrower-target instance
+    assertion: a package bump.
+  - Trap: `template_value_shaped_operations_run_per_instance` and the two
+    `template_method_simd_leaf_default_bits*` tests compile through
+    `compile_unlinked`; confirm `std.simd`'s members are linked there.
+  - Probe: `Float64(-0.0)._to_bits_signed()` prints
+    `-9223372036854775808` at the pin and is "type 'Float64' has no
+    method '_to_bits_signed'" here.
+  - Depends on R376.
   - Model: Fable, Planned.
 
 - [ ] **R1579 `SIMD.__hash__` is a hash-leaf rule, where upstream's is a
@@ -10047,7 +10036,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     Upstream's `SIMD.__hash__` calls `_update_with_simd` in library code;
     the `Bool`, `DType`, and `StringLiteral` leaves keep both members
     type-reached until they are library code too.
-  - Depends on R1578 and R1509.
+  - Depends on R1589 and R1509.
   - Model: Fable, Planned.
 
 - [ ] **R1580 `SIMD.fma` is missing and `__fma__` is a Mojito-only rule,
@@ -10239,7 +10228,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     of the VM's `load_place`/`store_place`, and Pliron's
     `try_lower_simd_lane_store` and lane addressing too.
   - Done when `rg simd_method crates` finds nothing.
-  - Depends on R1555, R1578, R1579, R1580, R1581, R1582, R1585, R1586,
+  - Depends on R1555, R1589, R1579, R1580, R1581, R1582, R1585, R1586,
     R330, and R276, which port the last members, and R1561, which retires
     the lane subscript.
   - Model: Opus, Not Planned.

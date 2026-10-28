@@ -14,6 +14,7 @@ pub(super) use mojito_types::conformance::{
     builtin_hashable_ty, is_numeric, is_scalar, simd_valued_ty,
 };
 pub(super) use mojito_types::types::default_literal;
+pub(super) use mojito_types::types::{symbolic_unsigned_dtype_of, unsigned_dtype_of_width};
 
 /// Upstream's `print` rejection: its variadic `*values` pack element does not
 /// conform to `Writable`.
@@ -132,39 +133,6 @@ pub(super) const fn prefix_operation_trait(op: mojito_ast::ast::PrefixOp) -> &'s
         mojito_ast::ast::PrefixOp::Not => "Boolable",
         mojito_ast::ast::PrefixOp::Invert => "Invertable",
     }
-}
-
-/// `SIMD.to_bits`'s default target: the unsigned dtype of the source lane's
-/// width (a `bool` lane reads through `uint8`, as upstream casts it first).
-pub(super) const fn unsigned_dtype_of_width(bits: u32) -> Dtype {
-    match bits {
-        16 => Dtype::UInt16,
-        32 => Dtype::UInt32,
-        64 => Dtype::UInt64,
-        _ => Dtype::UInt8,
-    }
-}
-
-/// [`unsigned_dtype_of_width`] over a symbolic source lane `source`: a `cond`
-/// chain testing the lane's identity against each dtype of a width, which
-/// folds to the closed target once an instance binds the lane, as upstream's
-/// `_unsigned_integral_type_of[dtype]()` default does.
-pub(super) fn symbolic_unsigned_dtype_of(
-    context: &ParamContext,
-    source: &ParamExpr,
-) -> Result<ParamExpr, ParamError> {
-    let dtype = |dtype: Dtype| context.constant(CtValue::Dtype(dtype));
-    let mut target = dtype(Dtype::UInt64)?;
-    for unsigned in [Dtype::UInt32, Dtype::UInt16, Dtype::UInt8] {
-        let tests = Dtype::ALL
-            .into_iter()
-            .filter(|lane| unsigned_dtype_of_width(lane.bit_width()) == unsigned)
-            .map(|lane| Ok(context.identical(source, &dtype(lane)?)))
-            .collect::<Result<Vec<_>, ParamError>>()?;
-        let same_width = context.op(ParamOp::BoolOr, &tests)?;
-        target = context.op(ParamOp::Cond, &[same_width, dtype(unsigned)?, target])?;
-    }
-    Ok(target)
 }
 
 /// Enforce that a builtin-driven dunder (`__len__`/`__str__`/`__contains__`)
