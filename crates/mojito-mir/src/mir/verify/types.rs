@@ -26,6 +26,16 @@ pub(super) fn types_compatible(found: &Ty, expected: &Ty) -> bool {
     if found == expected {
         return true;
     }
+    // A vector and its `!kgen.simd` storage are one held representation
+    // while `SIMD` is a compiler type: `_mlir_value` reads the vector's own
+    // register, and `mlir_value=` constructs the vector from it.
+    let (held_found, held_expected) = (
+        mojito_types::types::held_simd_ty(found),
+        mojito_types::types::held_simd_ty(expected),
+    );
+    if held_found != *found || held_expected != *expected {
+        return types_compatible(&held_found, &held_expected);
+    }
     if let (Some(found), Some(expected)) =
         (callable_environment(found), callable_environment(expected))
         && !mojito_types::types::callable_environment_coerces(found, expected)

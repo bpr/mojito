@@ -175,11 +175,15 @@ pub fn refines<'a>(
 
 /// Whether a closed `conforms_to(ty, Tr)` is `False` for every trait.
 ///
-/// The pin answers so for an MLIR type (`!kgen.string`, `index`), not even
-/// `AnyType`. A trait-bounded binder still binds one, and `conforms_to`
-/// over that binder answers by the type's shape, as at the pin.
+/// The pin answers so for an MLIR type (`!kgen.string`, `index`,
+/// `!kgen.simd`), not even `AnyType`. A trait-bounded binder still binds
+/// one, and `conforms_to` over that binder answers by the type's shape, as
+/// at the pin.
 pub fn reflects_no_conformance(ty: &Ty) -> bool {
-    matches!(ty.kind(), TyKind::KgenString | TyKind::Index)
+    matches!(
+        ty.kind(),
+        TyKind::KgenString | TyKind::Index | TyKind::KgenSimd { .. }
+    )
 }
 
 /// Whether the shape of `ty` alone decides its conformance to the built-in
@@ -332,7 +336,11 @@ pub fn modelled_conformance(
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {
                 return every(items, trait_name, element);
             }
-            TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::Overload(_) => false,
+            TyKind::Func(_)
+            | TyKind::GenericFunc(_)
+            | TyKind::Overload(_)
+            | TyKind::Index
+            | TyKind::KgenSimd { .. } => false,
             _ => true,
         },
         "Defaultable" => match ty.kind() {
@@ -444,7 +452,10 @@ pub fn simd_valued_ty(ty: &Ty) -> bool {
 fn modelled_trivial_register_passable(ty: &Ty) -> bool {
     is_numeric_like(ty)
         || simd_valued_ty(ty)
-        || matches!(ty.kind(), TyKind::Bool | TyKind::None | TyKind::Dtype)
+        || matches!(
+            ty.kind(),
+            TyKind::Bool | TyKind::None | TyKind::Dtype | TyKind::Index | TyKind::KgenSimd { .. }
+        )
 }
 
 /// Whether every one of `items` conforms to `trait_name`, as `element`

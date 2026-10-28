@@ -569,6 +569,18 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             },
         }
         .into(),
+        // A vector's storage closes as the vector it stores.
+        TyKind::KgenSimd { dtype, width } => {
+            let vector = substitute_ty(
+                &TyKind::Simd {
+                    dtype: dtype.clone(),
+                    width: width.clone(),
+                }
+                .into(),
+                bindings,
+            )?;
+            mojito_types::types::simd_storage(&vector).unwrap_or(vector)
+        }
         _ => ty.clone(),
     })
 }

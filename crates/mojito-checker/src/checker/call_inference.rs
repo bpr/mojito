@@ -748,10 +748,11 @@ impl Checker {
     }
 
     /// `Name(mlir_value=v)` on a SIMD type, or `Bool(value=b)`: upstream's
-    /// initializer from the `!kgen.simd` storage or the `i1`, which is the
-    /// value itself, so the argument must already be a value of the type,
-    /// never a literal or another width or dtype converted to it. `Int`'s
-    /// overload from an `index` casts it to that storage.
+    /// initializer from the `!kgen.simd` storage of the type or the `i1`
+    /// (which Mojito holds as the `Bool` itself), so the argument must
+    /// already be that storage, never a literal, a value of the type, or
+    /// another width or dtype. `Int`'s overload from an `index` casts it to
+    /// that storage.
     fn infer_storage_construction(
         &self,
         span: SourceSpan,
@@ -770,9 +771,13 @@ impl Checker {
             ));
             return Ok(Ty::int());
         }
-        if found != *ty {
+        let expected = match storage.name.as_str() {
+            "mlir_value" => mojito_types::types::simd_storage(ty).unwrap_or_else(|| ty.clone()),
+            _ => ty.clone(),
+        };
+        if found != expected {
             return Err(TypeError::TypeMismatch {
-                expected: ty.to_string(),
+                expected: expected.to_string(),
                 found: if mojito_types::types::default_literal(&found) == found {
                     found.to_string()
                 } else {

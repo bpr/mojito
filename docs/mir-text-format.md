@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.128
+mojito-mir 1.129
 ```
 
-The writer emits 1.128. The reader accepts 1.0 through 1.128; *Schema 1.0*
+The writer emits 1.129. The reader accepts 1.0 through 1.129; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -824,6 +824,12 @@ adjustments gain `KgenStructExtract`, upstream's `kgen.struct.extract` of a
 literal struct's element, which MIR lowers to the tuple-storage `index.get`
 it already has; the MIR schema does not change.
 
+Schema 1.129 adds the type `kgen_simd { dtype, width }` (R1397), upstream's
+`!kgen.simd<width, dtype>` vector storage: the type of a `SIMD`'s
+`_mlir_value`, of the `__mlir_type[`!kgen.simd<`, ...]` and
+`` __mlir_type.`!kgen.scalar<dtype>` `` spellings, and of `pop` op operands
+and results. The package format moves to `mojito-package 134`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1354,6 +1360,7 @@ assoc { base, member, arguments }
 dependent_parameter(param-expr)
 struct_type { name, arguments }
 simd { dtype, width }
+kgen_simd { dtype, width }
 comptime_list(type) param_list(type) tuple([type...]) runtime_pack([type...])
 pop_array { size, element } variadic_pack(type) variant([type...])
 pointer { element, origin }
@@ -1391,6 +1398,14 @@ it types records the bound `__TypeOfAllTypes`.
 `KgenString` (schema 1.79) is upstream's KGEN string type `!kgen.string`, the
 type of a `StringLiteral`'s `value` parameter, whose values are
 `ct_kgen_string`. It is compile-time only, as `any_trait` is.
+
+`kgen_simd { dtype, width }` (schema 1.129) is upstream's vector storage
+`!kgen.simd<width, dtype>` (`!kgen.scalar<dtype>` at width one), the type of
+a `SIMD`'s `_mlir_value` field and of `pop` op operands, with `simd`'s slots.
+It is a type apart from the `simd` it stores, but both backends hold it as
+that vector, and the verifier compares the two as one held representation:
+`_mlir_value` reads the vector's register, and `mlir_value=` constructs the
+vector from its storage.
 
 `index` (schema 1.123) is upstream's MLIR builtin `__mlir_type.index`, what
 `Indexer.__mlir_index__` returns and an `index` op computes over. Both

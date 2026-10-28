@@ -184,7 +184,9 @@ pub(super) fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::PopArray { element: v, .. }
         | TyKind::Pointer { element: v, .. } => is_symbolic(v),
         TyKind::Ref(v) => is_symbolic(&v.referent),
-        TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
+        TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
+            dtype.is_symbolic() || width.is_symbolic()
+        }
         TyKind::Func(func) => {
             let FuncTy {
                 params,

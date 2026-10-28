@@ -599,8 +599,8 @@ pub enum SemanticAdjustment {
     },
     /// `Int(copy=x)`, the `Copyable` initializer of a built-in value type,
     /// whose copy is the read of its source, or `SIMD[dt, n](mlir_value=v)`,
-    /// the storage initializer over a storage that is the vector itself: MIR
-    /// lowers the call as its one keyword argument's value.
+    /// the storage initializer over a storage held as the vector: MIR lowers
+    /// the call as its one keyword argument's value.
     BuiltinCopyConstruction,
     /// A built-in vector constructed by its one argument's own conversion,
     /// which the argument carries: `UInt(7)`, `Float64(2.5)` from a literal,
@@ -985,9 +985,9 @@ pub enum SemanticAdjustment {
     SimdLength {
         length: mojito_types::param_expr::ParamExpr,
     },
-    /// `v._mlir_value` on a SIMD value — its `!kgen.simd` storage, which is
-    /// the value itself while `SIMD` is a compiler type: the read, borrow,
-    /// or store of `v`.
+    /// `v._mlir_value` on a SIMD value — its `!kgen.simd` storage, which
+    /// both backends hold as the vector while `SIMD` is a compiler type: the
+    /// read, borrow, or store of `v`.
     SimdStorage,
     /// `DType.<name>` read as a runtime value, or the `dtype` of a `SIMD` type
     /// or value (`Int32.dtype`, `v.dtype`) — the dtype, lowered as a dtype

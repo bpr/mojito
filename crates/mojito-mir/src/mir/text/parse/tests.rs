@@ -2557,6 +2557,25 @@ fn kgen_string_metatype_round_trips() {
     assert!(text.contains("KgenString") && text.contains("ct_kgen_string(\"None\")"));
 }
 
+/// Schema 1.129 spells upstream's `!kgen.simd` vector storage
+/// `kgen_simd { dtype, width }`, a type apart from the `simd` it stores.
+#[test]
+fn kgen_simd_storage_round_trips() {
+    let storage = mojito_types::types::kgen_simd_ty(mojito_ast::ast::Dtype::Int32, 4);
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![storage.clone()],
+            vec![MirInstr::ConstructType {
+                dest: Reg(0),
+                ty: storage,
+            }],
+        ),
+    )]);
+    assert_reprints(&program);
+    assert!(write::program(&program).contains("kgen_simd { dtype: int32, width: 4 }"));
+}
+
 /// Schema 1.78 spells a trait used as a type `trait_type([...])` and a type
 /// binder's trait-parameter bound `trait_param: present(binder {...})`.
 #[test]

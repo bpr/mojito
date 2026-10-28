@@ -697,6 +697,18 @@ pub enum TyKind {
     /// from an `Int`'s `!kgen.scalar<index>` storage. Both backends hold it
     /// as they hold an `Int`.
     Index,
+    /// Upstream's KGEN vector storage `!kgen.simd<width, dtype>`, the type
+    /// of a `SIMD`'s `_mlir_value` field, displayed
+    /// ``__mlir_type.`!kgen.simd<4, si32>` `` (``__mlir_type.`!kgen.scalar<index>` ``
+    /// at width one). It is distinct from the [`TyKind::Simd`] it stores:
+    /// `pop` ops take it, and it has no members and conforms to no
+    /// numeric trait. Either slot is a parameter expression while its
+    /// declaration is symbolic. Both backends hold it as they hold the
+    /// vector.
+    KgenSimd {
+        dtype: SimdDtype,
+        width: SimdWidth,
+    },
     /// Upstream's generator type `!kgen.generator`, spelled
     /// `__generator_type[idx: Int] Int`: the type of a parameterized
     /// `comptime` declaration read unapplied, and of a parameter that takes
@@ -1237,18 +1249,75 @@ pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 /// The MLIR type an `` __mlir_type.`name` `` spelling names.
 ///
 /// It is one of the types the subset reads: the builtin `index`
-/// ([`TyKind::Index`]), an `Int`'s `!kgen.scalar<index>` storage (which is
-/// `Int` itself until a scalar's storage is a type of its own, R1397), or
-/// the compile-time-only `!kgen.type` ([`TyKind::TypeType`]) and
-/// `!kgen.string` ([`TyKind::KgenString`]).
+/// ([`TyKind::Index`]), a scalar's `!kgen.scalar<dtype>` storage
+/// ([`TyKind::KgenSimd`], `!kgen.scalar<index>` for an `Int`), or the
+/// compile-time-only `!kgen.type` ([`TyKind::TypeType`]) and `!kgen.string`
+/// ([`TyKind::KgenString`]).
 pub fn mlir_type_named(name: &str) -> Option<Ty> {
     match name {
         "index" => Some(Ty::index()),
-        "!kgen.scalar<index>" => Some(Ty::int()),
         "!kgen.type" => Some(TyKind::TypeType.into()),
         "!kgen.string" => Some(TyKind::KgenString.into()),
+        _ => name
+            .strip_prefix("!kgen.scalar<")
+            .and_then(|rest| rest.strip_suffix('>'))
+            .and_then(Dtype::from_kgen_mnemonic)
+            .map(|dtype| kgen_simd_ty(dtype, 1)),
+    }
+}
+
+/// The `!kgen.simd` storage of a `dtype` vector of `width` lanes
+/// ([`TyKind::KgenSimd`]).
+pub fn kgen_simd_ty(dtype: Dtype, width: i64) -> Ty {
+    TyKind::KgenSimd {
+        dtype: SimdDtype::Known(dtype),
+        width: SimdWidth::Known(width),
+    }
+    .into()
+}
+
+/// The `!kgen.simd` storage type of a SIMD type, its `_mlir_value`
+/// field's type, or `None` for any other type.
+pub fn simd_storage(ty: &Ty) -> Option<Ty> {
+    match ty.kind() {
+        TyKind::Simd { dtype, width } => Some(
+            TyKind::KgenSimd {
+                dtype: dtype.clone(),
+                width: width.clone(),
+            }
+            .into(),
+        ),
         _ => None,
     }
+}
+
+/// The SIMD type whose storage is the `!kgen.simd` type `ty`, or `None`
+/// for any other type.
+pub fn storage_simd(ty: &Ty) -> Option<Ty> {
+    match ty.kind() {
+        TyKind::KgenSimd { dtype, width } => simd_ty_from_slots(dtype.clone(), width.clone()).ok(),
+        _ => None,
+    }
+}
+
+/// The slots of a `!kgen.simd` storage type.
+pub fn kgen_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
+    match ty {
+        TyKind::KgenSimd { dtype, width } => Some((dtype.clone(), width.clone())),
+        _ => None,
+    }
+}
+
+/// The slots of a register a backend holds as a vector: a SIMD value or
+/// its `!kgen.simd` storage, which are one representation.
+pub fn held_simd_slots(ty: &TyKind) -> Option<(SimdDtype, SimdWidth)> {
+    kgen_simd_slots(ty).or_else(|| simd_slots(ty))
+}
+
+/// The SIMD type a backend holds a register of `ty` as: the vector of a
+/// `!kgen.simd` storage type, and any other type itself.
+pub fn held_simd_ty(ty: &Ty) -> Ty {
+    storage_simd(ty).unwrap_or_else(|| ty.clone())
 }
 
 /// A bracketed `__mlir_type[...]` spelling as KGEN concatenates it.
@@ -2689,6 +2758,16 @@ impl fmt::Display for TyKind {
             Self::TypeType => write!(f, "{TYPE_OF_ALL_TYPES}"),
             Self::KgenString => f.write_str(KGEN_STRING_TYPE_SPELLING),
             Self::Index => f.write_str(MLIR_INDEX_TYPE_SPELLING),
+            Self::KgenSimd { dtype, width } => {
+                let dtype = match dtype {
+                    SimdDtype::Known(dtype) => dtype.kgen_mnemonic().to_string(),
+                    SimdDtype::Expr(_) => dtype.to_string(),
+                };
+                match width {
+                    SimdWidth::Known(1) => write!(f, "__mlir_type.`!kgen.scalar<{dtype}>`"),
+                    width => write!(f, "__mlir_type.`!kgen.simd<{width}, {dtype}>`"),
+                }
+            }
             Self::Generator(generator) => {
                 f.write_str("__generator_type")?;
                 if !generator.params.is_empty() {
@@ -3545,6 +3624,10 @@ pub const fn copy_is_identity(ty: &TyKind) -> bool {
                 width: SimdWidth::Known(1),
                 ..
             }
+            | TyKind::KgenSimd {
+                width: SimdWidth::Known(1),
+                ..
+            }
     )
 }
 
@@ -3552,7 +3635,11 @@ pub const fn copy_is_identity(ty: &TyKind) -> bool {
 /// `TrivialRegisterPassable`: a [`copy_is_identity`] value, a SIMD vector
 /// of any dtype and width, or a `StringLiteral`. Its copy is a bit copy.
 pub const fn trivially_register_passable_leaf(ty: &TyKind) -> bool {
-    copy_is_identity(ty) || matches!(ty, TyKind::Simd { .. } | TyKind::StringLiteral)
+    copy_is_identity(ty)
+        || matches!(
+            ty,
+            TyKind::Simd { .. } | TyKind::KgenSimd { .. } | TyKind::StringLiteral
+        )
 }
 
 /// Recover the monomorphic or generic callable contract carried either directly
@@ -4189,7 +4276,7 @@ pub fn substitute(ty: &Ty, subst: &TySubst) -> Ty {
             }
             ty.reusing(TyKind::Struct(name.clone(), args))
         }
-        TyKind::Dependent(_) | TyKind::Simd { .. } if is_symbolic(ty) => {
+        TyKind::Dependent(_) | TyKind::Simd { .. } | TyKind::KgenSimd { .. } if is_symbolic(ty) => {
             replace_parameters(&ParamContext::detached(), ty, &type_bindings(subst), 0)
                 .unwrap_or_else(|_| ty.clone())
         }
@@ -4500,6 +4587,17 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
                 known @ SimdWidth::Known(_) => known.clone(),
             };
             simd_ty_from_slots(dtype, width)?
+        }
+        TyKind::KgenSimd { dtype, width } => {
+            let vector = rewrite_ty(
+                &TyKind::Simd {
+                    dtype: dtype.clone(),
+                    width: width.clone(),
+                }
+                .into(),
+                rewrite,
+            )?;
+            simd_storage(&vector).unwrap_or(vector)
         }
         TyKind::Bool
         | TyKind::StringLiteral
@@ -5028,7 +5126,9 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::PopArray { element, .. }
         | TyKind::Pointer { element, .. } => is_symbolic(element),
         TyKind::Ref(reference) => is_symbolic(&reference.referent),
-        TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
+        TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
+            dtype.is_symbolic() || width.is_symbolic()
+        }
         TyKind::Dtype
         | TyKind::AnyTrait(_)
         | TyKind::Trait(_)
@@ -5319,7 +5419,7 @@ fn decorated(ty: &Ty) -> bool {
         | TyKind::Pointer { element, .. } => element.carries_decorations(),
         TyKind::Ref(reference) => reference.referent.carries_decorations(),
         TyKind::Dependent(dependent) => dependent.expr().carries_decorations(),
-        TyKind::Simd { dtype, width } => {
+        TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
             matches!(dtype, SimdDtype::Expr(expr) if expr.carries_decorations())
                 || matches!(width, SimdWidth::Expr(expr) if expr.carries_decorations())
         }
@@ -5410,7 +5510,9 @@ fn closed_kind(kind: &TyKind) -> bool {
         | TyKind::Dtype
         | TyKind::Index
         | TyKind::Error => true,
-        TyKind::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
+        TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
+            !dtype.is_expr() && !width.is_expr()
+        }
         TyKind::Struct(_, arguments) => arguments.iter().all(closed_argument),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {
             elements.iter().all(Ty::is_closed)
@@ -5595,7 +5697,7 @@ fn expand_packs<S: std::hash::BuildHasher>(
         }
         // A lane dtype or width naming a folded value binder closes and
         // re-canonicalizes (`Scalar[dt]` at `dt = DType.int` is `Int`).
-        TyKind::Simd { .. } if !values.is_empty() && is_symbolic(ty) => {
+        TyKind::Simd { .. } | TyKind::KgenSimd { .. } if !values.is_empty() && is_symbolic(ty) => {
             let context = ParamContext::detached();
             replace_parameters(
                 &context,

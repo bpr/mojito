@@ -639,7 +639,7 @@ fn translation_blocks(
                 function
                     .reg_types
                     .get(&reg.0)
-                    .and_then(|ty| mojito_types::types::simd_slots(ty.kind()))
+                    .and_then(|ty| mojito_types::types::held_simd_slots(ty.kind()))
                     .and_then(|(_, width)| width.known())
                     .and_then(|width| usize::try_from(width).ok())
             };

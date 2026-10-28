@@ -1740,12 +1740,14 @@ impl Checker {
             return Ok(read);
         }
         // `v._mlir_value` is upstream's `!kgen.simd` storage field, which
-        // `__mlir_type[`!kgen.simd<`, ...]` resolves to the vector itself.
-        if field == mojito_types::ct::MLIR_VALUE_FIELD && simd_slots(&obj_ty).is_some() {
+        // both backends hold as they hold the vector.
+        if field == mojito_types::ct::MLIR_VALUE_FIELD
+            && let Some(storage) = mojito_types::types::simd_storage(&obj_ty)
+        {
             self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::SimdStorage,
             ));
-            return Ok(obj_ty);
+            return Ok(storage);
         }
         // `v.dtype` is upstream's lane-dtype parameter, the slot itself.
         if field == "dtype"

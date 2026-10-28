@@ -474,6 +474,34 @@ impl Dtype {
         }
     }
 
+    /// The KGEN mnemonic of this dtype, which `!kgen.simd<N, …>` and
+    /// `!kgen.scalar<…>` storage types spell (`si32`, `index`, `f64`).
+    pub const fn kgen_mnemonic(self) -> &'static str {
+        match self {
+            Self::Int => "index",
+            Self::UInt => "uindex",
+            Self::Int8 => "si8",
+            Self::Int16 => "si16",
+            Self::Int32 => "si32",
+            Self::Int64 => "si64",
+            Self::UInt8 => "ui8",
+            Self::UInt16 => "ui16",
+            Self::UInt32 => "ui32",
+            Self::UInt64 => "ui64",
+            Self::Float16 => "f16",
+            Self::Float32 => "f32",
+            Self::Float64 => "f64",
+            Self::Bool => "bool",
+        }
+    }
+
+    /// The dtype a KGEN mnemonic names (`"si32"` → `Int32`), or `None`.
+    pub fn from_kgen_mnemonic(mnemonic: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|dtype| dtype.kgen_mnemonic() == mnemonic)
+    }
+
     /// The scalar-alias spelling (`Int32`, `Float16`, …) that means
     /// `SIMD[DType.<self>, 1]`, or `None` for `bool` (which has no alias).
     pub const fn scalar_alias(self) -> Option<&'static str> {

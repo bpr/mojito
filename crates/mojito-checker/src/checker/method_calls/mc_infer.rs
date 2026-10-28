@@ -129,15 +129,15 @@ impl Checker {
             return Ok(Ty::bool());
         }
         // `Bool.__mlir_bool__()` is upstream's read of its
-        // `!kgen.scalar<bool>` storage, the one-lane `bool` vector the
-        // `Bool` splats to while `Bool` is a compiler type.
+        // `!kgen.scalar<bool>` storage, held as the one-lane `bool` vector
+        // the `Bool` splats to while `Bool` is a compiler type.
         if method == "__mlir_bool__"
             && args.is_empty()
             && kwargs.is_empty()
             && param_args.is_empty()
             && matches!(obj_ty.kind(), TyKind::Bool)
         {
-            return Ok(simd_ty(Dtype::Bool, 1));
+            return Ok(mojito_types::types::kgen_simd_ty(Dtype::Bool, 1));
         }
         // A heterogeneous collector's `get_loaded_kgen_pack()` is upstream's
         // `VariadicPack` loading its elements into a `!kgen.pack`, which is

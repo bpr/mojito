@@ -570,7 +570,7 @@ impl ScopeCx<'_> {
             TyKind::Dependent(DependentType::Parameter(expr)) => {
                 self.expr(role, "dependent type", expr, &MetaTy::Type, nested);
             }
-            TyKind::Simd { dtype, width } => {
+            TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
                 if let SimdDtype::Expr(expr) = dtype {
                     self.expr(role, "lane", expr, &MetaTy::value(Ty::dtype()), nested);
                 }

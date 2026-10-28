@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `SIMD`'s `!kgen.simd` storage is now a type of its own, as at the pin
+  (R1397, first slice): `v._mlir_value`, the
+  ``__mlir_type[`!kgen.simd<`, ...]`` and
+  ``__mlir_type.`!kgen.scalar<dtype>` `` spellings (any dtype's KGEN
+  mnemonic), `SIMD[...]._mlir_type`, `Bool.__mlir_bool__()`, and every
+  `pop` op's operands and results are typed by it, printed as the pin
+  prints them. It has no members, operators, or `conforms_to`
+  conformances, binds a `TrivialRegisterPassable` parameter but not a
+  `Writable` one, infers `DType` and `SIMDLength` binders as its vector
+  does, and does not pass where its `SIMD` is taken. A storage value passed
+  as a `SIMD`, `Int(mlir_value=n)` over an `Int`, `print` of storage, and a
+  `pop` op over a `SIMD` value were accepted and are now rejected, as at
+  the pin. Both backends hold the storage as the vector. MIR spells the
+  type `kgen_simd { dtype, width }` (schema 1.129), and the package format
+  moves to `mojito-package 134`. `SIMD`'s declaration and library members
+  are filed as R1549–R1558.
+
 - `llvm_intrinsic` calls `llvm.vector.deinterleave2`, typed as at the pin
   by upstream's `_RegisterPackType` of its two halves (the even lanes and
   the odd), on the VM and natively (R1547). `std.sys` bundles

@@ -1485,6 +1485,12 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         TyKind::Trait(traits) => format!("__Trait${}", traits.join("$")),
         TyKind::TypeType => mojito_types::types::TYPE_OF_ALL_TYPES.to_string(),
         TyKind::KgenString => "__KgenString".to_string(),
+        // A vector's storage keys as the vector it stores, marked apart.
+        TyKind::KgenSimd { .. } => format!(
+            "__KgenSimd${}",
+            mojito_types::types::storage_simd(ty)
+                .map_or_else(|| ty.to_string(), |vector| ty_raw_in(&vector, None, mode))
+        ),
         TyKind::Tuple(elems) => format!(
             "Tuple${}",
             elems
@@ -1672,13 +1678,16 @@ fn ast_raw(
             return ast_raw(&aliased, comptimes, type_bounds, self_spelling);
         }
         // `__mlir_type[`!kgen.simd<`, length._mlir_value, `, `,
-        // dtype._mlir_value, `>`]` spells as the vector the checker resolves
-        // it to (`SIMD[dtype, length]`).
+        // dtype._mlir_value, `>`]` spells as the checker's storage of the
+        // vector `SIMD[dtype, length]` does.
         Type::Named(name, args)
             if name == "__mlir_type"
                 && let Some(vector) = mlir_simd_annotation(args) =>
         {
-            return ast_raw(&vector, comptimes, type_bounds, self_spelling);
+            return format!(
+                "__KgenSimd${}",
+                ast_raw(&vector, comptimes, type_bounds, None)
+            );
         }
         Type::Int => "Int".to_string(),
         Type::UInt => "UInt".to_string(),
@@ -1880,9 +1889,9 @@ fn ast_raw(
     }
 }
 
-/// The `SIMD[dtype, length]` annotation a `__mlir_type[...]` spelling of
-/// `!kgen.simd<length, dtype>` names, as the checker's `mlir_applied_type`
-/// reads it; `None` for every other MLIR type spelling.
+/// The `SIMD[dtype, length]` annotation whose storage a `__mlir_type[...]`
+/// spelling of `!kgen.simd<length, dtype>` names, as the checker's
+/// `mlir_applied_type` reads it; `None` for every other MLIR type spelling.
 fn mlir_simd_annotation(args: &[ParamArg]) -> Option<Type> {
     let (text, operands) = mojito_types::types::mlir_type_spelling(args);
     let [length, dtype] = operands.as_slice() else {

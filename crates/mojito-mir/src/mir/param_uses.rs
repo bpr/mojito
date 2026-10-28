@@ -302,6 +302,7 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
             | TyKind::Dtype
             | TyKind::Index
             | TyKind::Simd { .. }
+            | TyKind::KgenSimd { .. }
     )
 }
 

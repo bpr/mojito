@@ -8322,13 +8322,13 @@ fn mlir_op_outside_the_bundled_library_is_rejected() {
 
 #[test]
 fn pop_and_index_ops_type_as_their_verifiers_do() {
-    // `pop` arithmetic keeps its operands' `!kgen.simd` type, `pop.cmp`
-    // gives the mask, `pop.cast` (to and from `bool` lanes too) and
+    // `pop` arithmetic keeps its operands' `!kgen.simd` storage type, which
+    // `mlir_value=` takes back, `pop.cmp` gives the mask's, `pop.cast` (to and from `bool` lanes too) and
     // `pop.simd.splat` the `_type` they name, `pop.max` takes `bool` lanes,
     // and an `index` op takes and gives `__mlir_type.index` values, a
     // signed or unsigned compare an `i1`.
     ok(
-        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var s: SIMD[DType.int32, 4] = __mlir_op.`pop.add`(a._mlir_value, a._mlir_value)\n    var m: SIMD[DType.bool, 4] = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<lt>`](a._mlir_value, s._mlir_value)\n    var f: SIMD[DType.float32, 4] = __mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type, fastmathFlags=__mlir_attr.`#pop.fmf<fast>`](a._mlir_value)\n    var t: SIMD[DType.float32, 4] = __mlir_op.`pop.simd.splat`[_type=SIMD[DType.float32, 4]._mlir_type](Float32(2.5)._mlir_value)\n    var c: SIMD[DType.bool, 4] = __mlir_op.`pop.cast`[_type=SIMD[DType.bool, 4]._mlir_type](a._mlir_value)\n    var w: SIMD[DType.float32, 4] = __mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type](c._mlir_value)\n    var h: SIMD[DType.bool, 4] = __mlir_op.`pop.max`(m._mlir_value, c._mlir_value)\n    var x = Int(3).__mlir_index__()\n    var y = __mlir_op.`index.add`(x, x)\n    var b: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<slt>`](x, y)\n    var u: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<ult>`](x, y)\n    print(s, m, f, t, c, w, h, Int(mlir_value=y), Bool(value=b), Bool(value=u))\n",
+        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var s = SIMD[DType.int32, 4](mlir_value=__mlir_op.`pop.add`(a._mlir_value, a._mlir_value))\n    var m = SIMD[DType.bool, 4](mlir_value=__mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<lt>`](a._mlir_value, s._mlir_value))\n    var f = SIMD[DType.float32, 4](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type, fastmathFlags=__mlir_attr.`#pop.fmf<fast>`](a._mlir_value))\n    var t = SIMD[DType.float32, 4](mlir_value=__mlir_op.`pop.simd.splat`[_type=SIMD[DType.float32, 4]._mlir_type](Float32(2.5)._mlir_value))\n    var c = SIMD[DType.bool, 4](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.bool, 4]._mlir_type](a._mlir_value))\n    var w = SIMD[DType.float32, 4](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type](c._mlir_value))\n    var h = SIMD[DType.bool, 4](mlir_value=__mlir_op.`pop.max`(m._mlir_value, c._mlir_value))\n    var x = Int(3).__mlir_index__()\n    var y = __mlir_op.`index.add`(x, x)\n    var b: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<slt>`](x, y)\n    var u: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<ult>`](x, y)\n    print(s, m, f, t, c, w, h, Int(mlir_value=y), Bool(value=b), Bool(value=u))\n",
     );
 }
 

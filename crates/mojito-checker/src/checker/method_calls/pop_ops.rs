@@ -13,10 +13,11 @@ use mojito_types::mlir::{LaneKinds, MlirLowering, MlirOp, MlirOpError, is_fastma
 impl Checker {
     /// Type `__mlir_op.`name`[attributes](operands)` for an admitted `pop`
     /// or `index` op, recording it as `SemanticAdjustment::MlirOp`. A `pop`
-    /// op takes `!kgen.simd` operands of one type (`Int`, `UInt`, and
-    /// `Float64` are width-one vectors), an `index` op `__mlir_type.index`
-    /// ones. Arithmetic keeps the operand type, `pop.cmp` gives the
-    /// `bool` mask of the operand width, `index.cmp` an `i1` (`Bool`), and
+    /// op takes `!kgen.simd` storage operands of one type
+    /// ([`TyKind::KgenSimd`], never the `SIMD` value holding it), an `index`
+    /// op `__mlir_type.index` ones. Arithmetic keeps the operand type,
+    /// `pop.cmp` gives the `bool` mask storage of the operand width,
+    /// `index.cmp` an `i1` (`Bool`), and
     /// `pop.cast` and `pop.simd.splat` the type their `_type` attribute
     /// names. `pop.select` is typed by [`select_result`], the lane ops by
     /// [`lane_op_result`], the casts between `index` and its storage by
@@ -165,14 +166,30 @@ enum PopTypeError {
     Subset(String),
 }
 
-/// How an MLIR verifier spells `ty`: the builtin `index` as `index`, and an
-/// `Int` as its `!kgen.scalar<index>` storage.
+/// How an MLIR verifier spells `ty`: the builtin `index` as `index`, and a
+/// `!kgen.simd` storage type unwrapped from its `__mlir_type` spelling.
 fn mlir_spelling(ty: &Ty) -> String {
     match ty.kind() {
         TyKind::Index => "index".to_string(),
-        TyKind::INT => "!kgen.scalar<index>".to_string(),
+        TyKind::KgenSimd { .. } => ty
+            .to_string()
+            .trim_start_matches("__mlir_type.`")
+            .trim_end_matches('`')
+            .to_string(),
         _ => ty.to_string(),
     }
+}
+
+/// The slots of a `pop` op's `!kgen.simd` storage operand.
+fn storage_slots(ty: &Ty) -> Option<(SimdDtype, SimdWidth)> {
+    mojito_types::types::kgen_simd_slots(ty.kind())
+}
+
+/// The `!kgen.simd` storage of `dtype` lanes at `width`.
+fn storage_of(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, String> {
+    simd_of(dtype, width)
+        .map(|vector| mojito_types::types::simd_storage(&vector).unwrap_or(vector))
+        .map_err(|error| error.to_string())
 }
 
 /// The result of an `index` op: every operand is an `index`; the compare
@@ -204,7 +221,7 @@ fn select_result(
     operands: &[Ty],
     trivially_register_passable: impl Fn(&Ty) -> bool,
 ) -> Result<Ty, PopTypeError> {
-    if operands[0] != simd_ty(Dtype::Bool, 1) {
+    if operands[0] != mojito_types::types::kgen_simd_ty(Dtype::Bool, 1) {
         return Err(PopTypeError::Verifier(format!(
             "op operand #0 must be !kgen.scalar<bool>, but got '{}'",
             mlir_spelling(&operands[0])
@@ -233,7 +250,7 @@ fn select_result(
 }
 
 /// The result of `pop.cast_from_builtin` (an `index` to the `_type`
-/// storage `!kgen.scalar<index>`, an `Int`) or `pop.cast_to_builtin` (that
+/// storage `!kgen.scalar<index>`, an `Int`'s) or `pop.cast_to_builtin` (that
 /// storage to the `_type` builtin `index`), as upstream's verifier types
 /// them. The pin's other builtin pairs (`i1` and `!kgen.scalar<bool>`) are
 /// outside the subset.
@@ -246,8 +263,9 @@ fn builtin_cast_result(op: MlirOp, operands: &[Ty], target: Ty) -> Result<Ty, Po
             mlir_spelling(&target)
         ))
     };
+    let int_storage = mojito_types::types::kgen_simd_ty(Dtype::Int, 1);
     if op == MlirOp::PopCastFromBuiltin {
-        if target != Ty::int() {
+        if target != int_storage {
             return Err(outside());
         }
         if *operand != Ty::index() {
@@ -257,13 +275,13 @@ fn builtin_cast_result(op: MlirOp, operands: &[Ty], target: Ty) -> Result<Ty, Po
             )));
         }
     } else {
-        if !matches!(operand.kind(), TyKind::Simd { .. }) {
+        if storage_slots(operand).is_none() {
             return Err(PopTypeError::Verifier(format!(
                 "op operand #0 must be parameterized SIMD vector type, but got '{}'",
                 mlir_spelling(operand)
             )));
         }
-        if target != Ty::index() || *operand != Ty::int() {
+        if target != Ty::index() || *operand != int_storage {
             return Err(outside());
         }
     }
@@ -279,7 +297,7 @@ fn builtin_cast_result(op: MlirOp, operands: &[Ty], target: Ty) -> Result<Ty, Po
 /// `reduce_or` take integer or `bool` lanes and give one lane of them.
 fn lane_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
     let vector = |position: usize| {
-        simd_slots(operands[position].kind()).ok_or_else(|| {
+        storage_slots(&operands[position]).ok_or_else(|| {
             format!(
                 "op operand #{position} must be SIMD type, but got '{}'",
                 mlir_spelling(&operands[position])
@@ -296,15 +314,14 @@ fn lane_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
                 )
             })
     };
-    let lane =
-        |dtype: SimdDtype| simd_of(dtype, SimdWidth::Known(1)).map_err(|error| error.to_string());
+    let lane = |dtype: SimdDtype| storage_of(dtype, SimdWidth::Known(1));
     match op.lowering() {
         MlirLowering::SimdSelect => {
             let (mask, width) = vector(0)?;
             if mask.known() != Some(Dtype::Bool) {
                 return Err(format!(
                     "op operand #0 must be !kgen.simd<N, bool>, but got '{}'",
-                    operands[0]
+                    mlir_spelling(&operands[0])
                 ));
             }
             let (_, case_width) = vector(1)?;
@@ -319,7 +336,8 @@ fn lane_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
             if case_width != width {
                 return Err(format!(
                     "op mask '{}' and cases '{}' differ in width",
-                    operands[0], operands[1]
+                    mlir_spelling(&operands[0]),
+                    mlir_spelling(&operands[1])
                 ));
             }
             Ok(operands[1].clone())
@@ -346,7 +364,7 @@ fn lane_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
                 return Err(format!(
                     "op operand #0 must be SIMD type whose element type is {} dtype, but got '{}'",
                     LaneKinds::IntegralOrBool.describe(),
-                    operands[0]
+                    mlir_spelling(&operands[0])
                 ));
             }
             lane(dtype)
@@ -361,23 +379,21 @@ fn pop_op_result(op: MlirOp, operands: &[Ty], result_type: Option<Ty>) -> Result
     if let Some((position, operand)) = operands
         .iter()
         .enumerate()
-        .find(|(_, operand)| !matches!(operand.kind(), TyKind::Simd { .. }))
+        .find(|(_, operand)| storage_slots(operand).is_none())
     {
         return Err(PopTypeError::Verifier(format!(
             "op operand #{position} must be SIMD type, but got '{}'",
             mlir_spelling(operand)
         )));
     }
-    let Some((dtype, width)) = operands
-        .first()
-        .and_then(|operand| simd_slots(operand.kind()))
-    else {
+    let Some((dtype, width)) = operands.first().and_then(storage_slots) else {
         return Err(PopTypeError::Verifier("op takes an operand".to_string()));
     };
     if let Some(other) = operands.iter().find(|operand| **operand != operands[0]) {
         return Err(PopTypeError::Verifier(format!(
-            "op requires the same type for all operands and results, found '{}' and '{other}'",
-            operands[0]
+            "op requires the same type for all operands and results, found '{}' and '{}'",
+            mlir_spelling(&operands[0]),
+            mlir_spelling(other)
         )));
     }
     if let Some(lanes) = op.lanes()
@@ -395,41 +411,43 @@ fn pop_op_result(op: MlirOp, operands: &[Ty], result_type: Option<Ty>) -> Result
             PopTypeError::Verifier(format!(
                 "op operand #0 must be SIMD type whose element type is {} dtype, but got '{}'",
                 lanes.describe(),
-                operands[0]
+                mlir_spelling(&operands[0])
             ))
         });
     }
     match op.lowering() {
         MlirLowering::Binary(_) if matches!(op, MlirOp::PopCmp(_)) => {
-            simd_of(SimdDtype::Known(Dtype::Bool), width)
-                .map_err(|error| PopTypeError::Verifier(error.to_string()))
+            storage_of(SimdDtype::Known(Dtype::Bool), width).map_err(PopTypeError::Verifier)
         }
         MlirLowering::Cast => {
             let target = result_type.expect("a cast names its result type");
-            let Some((_, target_width)) = simd_slots(target.kind()) else {
+            let Some((_, target_width)) = storage_slots(&target) else {
                 return Err(PopTypeError::Verifier(format!(
-                    "op result must be SIMD type, but got '{target}'"
+                    "op result must be SIMD type, but got '{}'",
+                    mlir_spelling(&target)
                 )));
             };
             if target_width != width {
                 return Err(PopTypeError::Verifier(format!(
-                    "op operand type '{}' and result type '{target}' are cast incompatible",
-                    operands[0]
+                    "op operand type '{}' and result type '{}' are cast incompatible",
+                    mlir_spelling(&operands[0]),
+                    mlir_spelling(&target)
                 )));
             }
             Ok(target)
         }
         MlirLowering::Splat => {
             let target = result_type.expect("a splat names its result type");
-            match simd_slots(target.kind()) {
+            match storage_slots(&target) {
                 Some((target_dtype, _))
                     if target_dtype == dtype && width == SimdWidth::Known(1) =>
                 {
                     Ok(target)
                 }
                 _ => Err(PopTypeError::Verifier(format!(
-                    "op splats a scalar of the result's element type, but got '{}' for '{target}'",
-                    operands[0]
+                    "op splats a scalar of the result's element type, but got '{}' for '{}'",
+                    mlir_spelling(&operands[0]),
+                    mlir_spelling(&target)
                 ))),
             }
         }

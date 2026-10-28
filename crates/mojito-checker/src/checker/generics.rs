@@ -362,6 +362,15 @@ pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<Stri
         // against `SIMDLength(n)`, as at the pin. A known width, or a length
         // no conversion spells (`m`, `m + 1`, an alias), solves no `Int`
         // binder.
+        // `!kgen.simd` storage solves its slots as the vector it stores.
+        (TyKind::KgenSimd { .. }, TyKind::KgenSimd { .. }) => {
+            if let (Some(pattern), Some(actual)) = (
+                mojito_types::types::storage_simd(pattern),
+                mojito_types::types::storage_simd(actual),
+            ) {
+                solve_value_args(&pattern, &actual, out);
+            }
+        }
         (TyKind::Simd { dtype, width }, _) => {
             let actual_slots = match actual.kind() {
                 TyKind::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),
@@ -660,7 +669,7 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
         }
         // A symbolic lane dtype or width closes the same way and
         // re-canonicalizes (`Scalar[Self.dt]` at `dt = DType.int` is `Int`).
-        TyKind::Simd { .. } if mojito_types::types::is_symbolic(ty) => {
+        TyKind::Simd { .. } | TyKind::KgenSimd { .. } if mojito_types::types::is_symbolic(ty) => {
             mojito_types::types::replace_parameters(&context, ty, bindings, 0)
                 .unwrap_or_else(|_| ty.clone())
         }

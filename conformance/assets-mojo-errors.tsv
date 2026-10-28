@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	872
+# swept-count	876
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -475,6 +475,7 @@ assets/type_error/input_outside_raising_context.mojo	compile-reject	agree	error:
 assets/type_error/instantiated_generic_abandoned_binding.mojo	compile-reject	agree	error: 'y' abandoned without being explicitly destroyed: unhandled explicitly destroyed type 'Writable'
 assets/type_error/int_literal_local_not_concrete.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[3]' value to 'IntLiteral[_]'
 assets/type_error/int_literal_parameter_int_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Int' to 'IntLiteral[x.value]', it depends on an unresolved parameter 'x.value'
+assets/type_error/int_storage_init_from_int.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/is_operator_missing_dunder.mojo	compile-reject	agree	error: 'Plain' does not implement the '__is__' method
 assets/type_error/is_operator_non_struct.mojo	compile-reject	agree	error: 'Int' does not implement the '__is__' method
 assets/type_error/is_run_in_comptime_interpreter_comptime_assert.mojo	compile-reject	agree	error: cannot use a dynamic value in 'comptime assert' expression
@@ -588,6 +589,8 @@ assets/type_error/mlir_op_select_cases_differ.mojo	compile-reject	agree	error: M
 assets/type_error/mlir_op_select_condition_not_scalar.mojo	compile-reject	agree	error: MLIR verification error: 'pop.select' op operand #0 must be !kgen.scalar<bool>, but got '!kgen.simd<2, bool>'
 assets/type_error/mlir_op_select_mask_not_bool.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.select' op operand #0 must be !kgen.simd<N, bool>, but got '!kgen.simd<4, si32>'
 assets/type_error/mlir_pop_op_index_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got 'index'
+assets/type_error/mlir_pop_op_simd_struct_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got '!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype si32}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {2}>>'
+assets/type_error/mlir_scalar_storage_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type '__mlir_type.`!kgen.scalar<index>`' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/mlir_simd_int_length_operand.mojo	compile-reject	agree	error: invalid MLIR type: !kgen.simd<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> length, "_mlir_value"> : !kgen.scalar<index>, #lit.struct.extract<:!lit.struct<@std::@builtin::@dtype::@DType> dtype, "_mlir_value"> : !kgen.dtype>
 assets/type_error/mlir_type_unsupported.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to '__mlir_type.i64' in return value
 assets/type_error/movable_where_false_transfer.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'Pinned' doesn't conform to 'Movable'
@@ -758,6 +761,7 @@ assets/type_error/simd_length_not_writable.mojo	compile-reject	agree	error: inva
 assets/type_error/simd_scalar_splat_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Int32' value to 'SIMD[.int64, 4]'
 assets/type_error/simd_shuffle_width_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_size_removed_alias.mojo	compile-reject	agree	error: use of unknown declaration 'SIMDSize'
+assets/type_error/simd_storage_passed_as_simd.mojo	compile-reject	agree	error: invalid call to 'show': value passed to 'x' cannot be converted from '__mlir_type.`!kgen.simd<2, si32>`' to 'SIMD[.int32, 2]'
 assets/type_error/simd_subscript_indexer.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from 'Offset' to 'Int'
 assets/type_error/simd_symbolic_scalar_operand_rejected.mojo	compile-reject	agree	error: invalid call to '__mul__': value passed to 'rhs' cannot be converted from 'Int' to 'Scalar[dt]'
 assets/type_error/simd_symbolic_width_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[dt, width]' value to 'SIMD[dt, 4]'

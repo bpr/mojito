@@ -239,7 +239,7 @@ impl<'a> Node<'a> {
     }
 
     /// Whether this is `v._mlir_value` on a SIMD value, whose storage is
-    /// the value itself.
+    /// held as the value itself.
     pub(super) fn is_simd_storage(self) -> bool {
         self.adjustments().iter().any(|adjustment| {
             matches!(

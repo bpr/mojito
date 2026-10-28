@@ -137,6 +137,13 @@ pub fn lower_ty(
         TyKind::Dtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
         // The MLIR builtin `index` is held as the `Int` it casts from.
         TyKind::Index => Ok(LowerTy::Scalar(ScalarTy::Int)),
+        // A vector's `!kgen.simd` storage is held as the vector.
+        TyKind::KgenSimd { .. } => lower_ty(
+            function,
+            &mojito_types::types::held_simd_ty(ty),
+            layout,
+            location,
+        ),
         ty if let Some(dtype) = scalar_simd_dtype(ty) => {
             Ok(LowerTy::Scalar(ScalarTy::of_dtype(dtype)))
         }

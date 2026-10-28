@@ -317,8 +317,20 @@ impl LlvmIntrinsic {
     /// register-passable struct is its field, as upstream's KGEN-to-LLVM
     /// lowering unwraps it, and the caller unwraps it before asking. A
     /// literal struct is a `TyKind::Tuple`, upstream's
-    /// `!kgen.struct<…isParamPack>`, which is never unwrapped.
+    /// `!kgen.struct<…isParamPack>`, which is never unwrapped. A vector's
+    /// `!kgen.simd` storage translates as the vector, and the builtin
+    /// `index` as the `Int` it casts from.
     pub fn signature_error(self, result: &Ty, operands: &[Ty]) -> Option<String> {
+        let translated = |ty: &Ty| match ty.kind() {
+            TyKind::Index => Ty::int(),
+            _ => crate::types::held_simd_ty(ty),
+        };
+        let operands: Vec<Ty> = operands.iter().map(translated).collect();
+        self.translated_signature_error(&translated(result), &operands)
+    }
+
+    /// [`Self::signature_error`] over the types LLVM translation sees.
+    fn translated_signature_error(self, result: &Ty, operands: &[Ty]) -> Option<String> {
         if operands.len() != self.arity() {
             return Some(format!(
                 "'{}' takes {} operand(s), got {}",

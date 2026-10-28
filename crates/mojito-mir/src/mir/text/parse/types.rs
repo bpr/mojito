@@ -138,6 +138,15 @@ impl Decoder {
                         .map_err(|error| self.error(value.span, error.to_string()))
                         .ok()?
                 }
+                "kgen_simd" => {
+                    let dtype = self.req(value, fields, "dtype", Self::simd_dtype_slot)?;
+                    let width = self.req(value, fields, "width", Self::simd_width_slot)?;
+                    self.unknown(fields, &["dtype", "width"]);
+                    mojito_types::types::simd_ty_from_slots(dtype, width)
+                        .map_err(|error| self.error(value.span, error.to_string()))
+                        .ok()
+                        .and_then(|vector| mojito_types::types::simd_storage(&vector))?
+                }
                 "pointer" => {
                     let element = self.req(value, fields, "element", Self::ty)?;
                     let origin = self.req(value, fields, "origin", Self::pointer_origin)?;

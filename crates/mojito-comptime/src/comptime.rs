@@ -582,6 +582,16 @@ fn source_type_from_ty_with_origins(
                 ParamArg::Value(CtValue::Int(width.known()?).materialize((0, 0))?),
             ],
         ),
+        // A vector's storage is spelled through the vector's `_mlir_type`
+        // member, which names it.
+        TyKind::KgenSimd { .. } => Type::Assoc {
+            base: Box::new(source_type_from_ty_with_origins(
+                &mojito_types::types::storage_simd(ty)?,
+                origin_names,
+            )?),
+            name: "_mlir_type".to_string(),
+            args: Vec::new(),
+        },
         TyKind::Ref(reference) => {
             let origin_name = match &reference.origin {
                 mojito_types::origin::Origin::Param(id) => origin_names.get(id)?.clone(),

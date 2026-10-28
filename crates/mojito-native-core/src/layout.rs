@@ -138,6 +138,8 @@ impl LayoutCx<'_> {
                 let lane = lane_layout(dtype);
                 Ok(Layout::new(lane.size * width as u64, lane.align))
             }
+            // A vector's `!kgen.simd` storage lays out as the vector.
+            TyKind::KgenSimd { .. } => self.layout_of(&mojito_types::types::held_simd_ty(ty)),
             // Literal-typed storage holds the value at its default
             // materialized width; a value that exceeds it rejects at lowering.
             TyKind::IntLiteral | TyKind::FloatLiteral => Ok(Layout::new(8, 8)),

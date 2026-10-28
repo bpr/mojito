@@ -2348,15 +2348,30 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   with operand holes through `types::mlir_type_spelling`, then
   `mlir_param_list_type`, `type_resolution.rs`).
   The same reader resolves `SIMD`'s ``!kgen.simd<length, dtype>`` storage
-  type to `TyKind::Simd` (`types::mlir_value_operand` reads each operand,
-  `mlir_index_operand` the length slot: a `SIMDLength`'s `_mlir_value`,
-  whose length the slot holds).
+  type to `TyKind::KgenSimd` (`types::mlir_value_operand` reads each
+  operand, `mlir_index_operand` the length slot: a `SIMDLength`'s
+  `_mlir_value`, whose length the slot holds).
+  `TyKind::KgenSimd` is the storage, a type apart from the `TyKind::Simd`
+  it stores, with its slots: `types::simd_storage`/`storage_simd` convert
+  between the two, `types::kgen_simd_ty` builds one, and
+  `types::mlir_type_named` reads `` `!kgen.scalar<dtype>` `` by
+  `Dtype::kgen_mnemonic`. `Checker::member_type` gives a vector's
+  `_mlir_type`, `infer_storage_construction` (`call_inference.rs`) demands
+  it of `mlir_value=`, and `method_calls/pop_ops.rs` types `pop` operands
+  and results by it. Inference solves it as its vector
+  (`generics::solve_value_args`, mono's `unify`/`substitute_ty`).
   `symbol::ast_raw` reads the same spelling through the same two helpers
-  (`mlir_simd_annotation`), and spells an `` __mlir_type.`name` `` by
+  (`mlir_simd_annotation`) and keys it `__KgenSimd$…` as `ty_raw` keys the
+  storage type, and spells an `` __mlir_type.`name` `` by
   `types::mlir_type_named`, so an overload over either keys alike at its
   declaration and its call. The check's `SemanticAdjustment::SimdStorage`
   makes `v._mlir_value` the vector's own value or place
-  (`Node::project_member`, `mir/facts.rs`).
+  (`Node::project_member`, `mir/facts.rs`). Below the check the storage is
+  held as its vector: `types::held_simd_ty`/`held_simd_slots`
+  answer for both, the MIR verifier's `types_compatible`
+  (`verify/types.rs`) compares the two as one representation, and layout,
+  Pliron's `lower_ty`/`scalar_type`/`simd_dims`, and
+  `LlvmIntrinsic::signature_error` read the storage as the vector.
   The bundled struct conforms to `Writable` where its element type does
   (`_write_elements`, `write_to`, `write_repr_to`, upstream's members).
   `ParameterList.get_span` takes the elements' static address from the
@@ -2508,7 +2523,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - Upstream's MLIR builtin `__mlir_type.index` is `TyKind::Index`
   (`Ty::index()`, displayed `types::MLIR_INDEX_TYPE_SPELLING`), resolved
   by `types::mlir_type_named`, which also reads
-  `` __mlir_type.`!kgen.scalar<index>` `` as `Int` (R1397). It is what
+  `` __mlir_type.`!kgen.scalar<index>` `` as an `Int`'s `TyKind::KgenSimd`
+  storage. It is what
   `Indexer.__mlir_index__` returns (`mc_infer.rs` types
   `Int`/`UInt`/literal receivers; `Checker::index_normalization_target`,
   `indexing.rs`, selects a struct's or bound's witness by that return), a

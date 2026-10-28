@@ -434,6 +434,16 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
             }
             _ => Err(format!("expected `{pattern}`, found `{actual}`")),
         },
+        // A vector's storage binds as the vector it stores.
+        TyKind::KgenSimd { .. } => {
+            match (
+                mojito_types::types::storage_simd(pattern),
+                mojito_types::types::storage_simd(actual),
+            ) {
+                (Some(pattern), Some(actual)) => unify(&pattern, &actual, bindings),
+                _ => Err(format!("expected `{pattern}`, found `{actual}`")),
+            }
+        }
         // A vector's lane dtype or width that is a bare binder binds from the
         // argument's slot (`Scalar[dt]` against a `Float32`, `SIMD[dt, n]`
         // against a four-lane vector); a compound expression (`2 * n`) is

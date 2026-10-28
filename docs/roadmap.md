@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1549**.
+Next free ID: **R1561**.
 
 ## Ordered Work
 
@@ -557,7 +557,7 @@ which names the upstream pass each one follows. Each is measured by the
     keeps its call at the pin and inlines here.
   - Marking that `nxt` `nodebug`, which inlines at any size in the first
     round, makes `f` cost 10 at the pin, which confirms the cause.
-  - Probe, once R1397 makes `Int` arithmetic `SIMD` dunder calls: `for i in
+  - Probe, once R1551 makes `Int` arithmetic `SIMD` dunder calls: `for i in
     range(x): break` costs 31 here and `var r = range(x)` then `try: s +=
     Int(r.__next__())` costs 28, where the pin keeps both, since
     `SIMD.__add__` spliced into `__next__` puts it past the bound.
@@ -6233,7 +6233,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime M: Int = 4` then `var z: type_of(M) = 9` prints `9` at
     the pin. Mojito cannot tell the annotated binding from `comptime N = 4`
     and rejects it too.
-  - R1397's `#pop.int_literal_convert` needs the same parametric
+  - R1555's `#pop.int_literal_convert` needs the same parametric
     `IntLiteral[value]`.
   - Probe: `def f(x: IntLiteral)` binds a run-time `IntLiteral` register
     rather than inferring `x.value` per call, so `f(n)` over `var n = 3`
@@ -9805,90 +9805,194 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1397 `SIMD` is a compiler type, where upstream's is `struct
-  SIMD[dtype: DType, length: SIMDLength]` over `!kgen.simd`**
+- [ ] **R1549 `SIMD` has no declaration, where upstream's is `struct
+  SIMD[dtype: DType, length: SIMDLength]` in `std/simd.mojo`**
 
   The name `SIMD`, and through R1389 `Int`, `UInt`, `Float64`, and the sized
   aliases, resolves to `TyKind::Simd` with checker-rule members, where
-  upstream declares the struct and its aliases in `std/simd.mojo`.
-  - Bundle `stdlib/std/simd.mojo`. Port upstream's bodies for every member
-    the checker serves today, plus `__len__`, `__getitem__`, `__int__`,
-    `__floordiv__`, and `__mod__`. `TyKind::Simd` stays only as the storage
-    type.
-  - A literal still converts by the checker's coercion. Upstream's
-    `#pop.int_literal_convert` needs a parametric `IntLiteral[value]`
-    (R1507).
-  - This is the one step that cannot be split. The entries before and after
-    it take everything that can be.
-  - Closes R330 (lane gathers become library methods), R331 (shuffle's `2 *
-    length` bound), R187 (upstream's reduction tree), and R850 (float `//`
-    and `%`). Shrinks R212 and R171.
-  - Probe (merged from R1223): `n.__getitem__(0)` over `n = 5` is rejected
-    with "type 'Int' has no method '__getitem__'", where the pin prints `5`.
-    `len(5)` already prints 1, through the checker's `modelled_declares`
-    rule in `len_result_for_type` (`checker/builtins.rs`).
+  upstream declares the struct over its `!kgen.simd` storage, which is
+  already `TyKind::KgenSimd` (R1397).
+  - Bundle `stdlib/std/simd.mojo` with the struct, `_mlir_type`,
+    `_mlir_value`, and upstream's `__len__`, `__getitem__`, and
+    `__setitem__` bodies. Add `SIMD` to the prelude and to
+    `implicit_public_identity` (`mojito-module/src/module.rs`), as R1539
+    did for `SIMDLength`.
+  - Bridge: `Ty::new` canonicalizes `Struct("SIMD", [dtype, length])` into
+    `TyKind::Simd`, so the declaration's `Self` and source `SIMD[...]` keep
+    the compiler's representation until R1557.
+  - Member lookup on a `TyKind::Simd` receiver consults the declaration
+    first (`resolve_receiver_method`, `struct_dunder`), and the rule second.
+  - Delete the lane-subscript rule and `MirIntrinsicSubscript::Simd`
+    (MIR, VM, Pliron).
+  - The elaborator must not mint `SIMD$mono$…` struct instances.
+  - Trap: the bridge is global, so code that builds `Struct("SIMD", …)`
+    and then matches `TyKind::Struct` misses (struct registration's
+    `self_ty`, `instance_arguments`).
+  - Probe: `n.__getitem__(0)` over `n = 5` is rejected with "type 'Int' has
+    no method '__getitem__'", where the pin prints `5`.
   - Probe: in a raising `main`, `var [a] = 5` and `var [a, b] =
     SIMD[DType.int32, 2](1, 2)` print `5` and `1 2` at the pin, and `var
     [a, b] = 5` raises "list pattern does not match value length".
-    `checker/destructure.rs` rejects all three ("sequence destructuring of
-    'Int', which has no '__len__'/'__getitem__' yet"); lift that rejection
-    with the port. A sequence *pattern* over these types crashes the pin,
-    so `compile_sequence_pattern`'s rejection stays.
+    `checker/destructure.rs` rejects all three. A sequence *pattern* over
+    these types crashes the pin, so `compile_sequence_pattern`'s rejection
+    stays.
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1550 `SIMD`'s conversions and conformances are checker rules,
+  where upstream's are its declared members and trait list**
+
+  `modelled_conformance` answers `SIMD`'s traits by shape, where upstream's
+  struct declares them at every dtype and width and fails an instance at a
+  member's `comptime assert`.
+  - Port `__int__`, `__mlir_index__`, `__float__`, `__bool__`, `_refine`,
+    and `__contains__`, and declare their traits on the struct.
+  - Bundle what they import: `stdlib/std/sys/info.mojo` (`bit_width_of`,
+    and `CompilationTarget` with the host's answers, which R1554 and R330
+    need), and `_uint_type_of_width`, `_integral_type_of`, and
+    `_unsigned_integral_type_of` from `std.builtin.dtype`.
+  - Conformance of a `SIMD` answers from the declaration for the ported
+    traits.
   - Probe: `conforms_to(SIMD[DType.int32, 4], Intable)` and
-    `conforms_to(Float64, Indexer)` are `True` at the pin, whose `SIMD`
-    declares both at every width and dtype and fails an instance at
-    `__int__`'s scalar constraint or `__mlir_index__`'s integral one.
-    `modelled_declares` (`mojito-types::conformance`) answers `Intable` for
-    a scalar and `Indexer` for an integral scalar only, since the builtin
-    conversion has no such constraint, so the bound rejects both instead.
-  - Probe: ``__mlir_type[`!kgen.simd<`, ...]`` resolves to `TyKind::Simd`,
-    the vector itself, so `show(v._mlir_value)` over `def show(x:
-    SIMD[DType.int32, 2])` and `Int(mlir_value=n)` over an `Int` `n` run,
-    where the pin rejects a `!kgen.simd` passed as `SIMD` and `SIMD` passed
-    as storage. The port's distinct struct type closes both.
-  - Probe: ``__mlir_type.`!kgen.scalar<index>` `` is `Int` itself
-    (`types::mlir_type_named`), so `print(s)` over `var s:
-    __mlir_type.`!kgen.scalar<index>` = Int(4)._mlir_value` prints `4`,
-    where the pin rejects the storage as not `Writable`.
-  - Probe: ``__mlir_op.`pop.add`(a, a)`` over a `SIMD` value `a`, not its
-    `_mlir_value`, runs, where the pin rejects "'pop.add' op operand #0
-    must be SIMD type ... but got '!lit.struct<...SIMD...>'". The same
-    distinct struct type closes it.
-  - Every upstream body constructs through `Self(mlir_value=...)` and
-    overloads `__init__` over `Self`-dependent parameter types (R1518).
+    `conforms_to(Float64, Indexer)` are `True` at the pin. Mojito answers
+    `False`, since `modelled_declares` (`mojito-types::conformance`) gives
+    `Intable` to scalars and `Indexer` to integral scalars only.
+  - Shrinks R1457.
+  - Depends on R1549.
+  - Model: Fable, Planned.
+
+- [ ] **R1551 `SIMD`'s arithmetic is a checker rule and MIR binop, where
+  upstream's is `SIMD`'s `__add__` … `__pow__` bodies**
+
+  An infix operator over a `SIMD` is typed by `infer_simd_infix` and run by
+  name-keyed VM and Pliron arms, where upstream's dunders are `pop` ops in
+  library bodies.
+  - Port `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`,
+    `__mod__`, `__divmod__`, `__pow__`, `__neg__`, `__pos__`,
+    `__ceildiv__`, and their reflected forms.
+  - Infix over `SIMD` dispatches to the declared dunders, as struct
+    operators do (R1348–R1359). `builtin_fold::mlir_op_operator` keeps
+    rewriting `pop.add` over storage only, so it does not recurse.
+  - Retire the arithmetic half of `infer_simd_infix` and the matching VM
+    and Pliron arms.
+  - Measure VM run time with `scripts/smoke` before and after: every `Int`
+    operation in the corpus moves to an inlined library call.
+  - Closes R850. Shrinks R171.
+  - Probe (from R1452): once `Int` arithmetic is a dunder call, `for i in
+    range(x): break` costs 31 here.
+  - Depends on R1550.
+  - Model: Fable, Planned.
+
+- [ ] **R1552 `SIMD`'s bitwise, shift, and in-place operators are checker
+  rules, where upstream's are library bodies**
+
+  `&`, `|`, `^`, `~`, `<<`, `>>`, and every in-place form over a `SIMD` are
+  typed by rule and run by name-keyed backend arms.
+  - Port `__and__`, `__or__`, `__xor__`, `__invert__`, `__lshift__`,
+    `__rshift__`, their reflected forms, and every `__i*__`.
+  - Retire the rest of `infer_simd_infix` and the backend arms.
+  - Depends on R1551.
+  - Model: Opus, Planned.
+
+- [ ] **R1553 `SIMD`'s comparisons are builtin dunders, where upstream's
+  are `pop.cmp` in library bodies**
+
+  R185's rules type `==` … `>=` over a `SIMD` and the specializer rewrites
+  the mask, where upstream's `__eq__` … `__le__` and `eq` … `le` are
+  `pop.cmp` bodies.
+  - Port them, and `__bool__`'s `pop.cmp`.
+  - `builtin_fold.rs` does not fold `pop.cmp`: an infix comparison is the
+    reducing dunder, so it cannot be rewritten to one. Fold `pop.cmp`
+    elementwise (`param_expr::fold::fold_infix`) and
+    `pop.simd.reduce_*` under `Bool(mlir_value=…)` as the reduction.
+  - Retire R185's dunder rules in `operators.rs` and the mask rewrite.
+  - Depends on R1552.
+  - Model: Fable, Planned.
+
+- [ ] **R1554 `SIMD`'s `cast`, bit views, reductions, and math dunders are
+  checker rules, where upstream's are library bodies**
+
+  `infer_simd_method`, `resolve_builtin_method`'s `__hash__` and math
+  arms, and the backends' `"reduce_*"`/`"__floor__"` dispatch serve these
+  members by name.
+  - Port `cast`, `to_bits`, `from_bits`, `select`, `reduce_*`,
+    `reduce_bit_count`, `clamp`, `fma`, `is_power_of_two`, `__abs__`,
+    `__floor__`, `__ceil__`, `__trunc__`, `__round__`, and `__hash__`.
+  - Bundle `std.memory.bitcast`.
+  - Upstream's `reduce_and`/`reduce_or` (and `reduce_max`/`reduce_min`
+    off x86) call `llvm.vector.reduce.*`, which run since R1394.
   - Probe (from R1109): the hash leaf reaches `__hash__` and a hasher's
     `_update_with_simd` from the value's type
-    (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores;
-    upstream's `SIMD.__hash__` calls `_update_with_simd` in library code.
-  - Upstream's `eq`/`lt`/`__bool__` bodies are `pop.cmp` in builtin
-    bodies, which `builtin_fold.rs` does not fold: an infix comparison is
-    the reducing dunder, so `pop.cmp` cannot be rewritten to one. The port
-    folds `pop.cmp` elementwise (`fold::fold_infix`) and
-    `pop.simd.reduce_*` under `Bool(mlir_value=...)` as the reduction.
-  - Upstream's method `reduce_and`/`reduce_or` bodies (and `reduce_max`
-    and `reduce_min` off x86) are `llvm_intrinsic` calls of
-    `llvm.vector.reduce.*`, which run since R1394. Its `slice`, `insert`,
-    `interleave`, rotation, and shift bodies call intrinsics that run since
-    R1519, and its `deinterleave` body's `llvm.vector.deinterleave2` into
-    a `_RegisterPackType` runs since R1547. `slice` reads
-    `__is_run_in_comptime_interpreter` (R1546).
-  - Those bodies also read `CurrentPlugin.lowers_subvector_intrinsics`
-    (`std/_plugin`), which is `True` on the CPU plugin. The port bundles
-    the CPU plugin's answer.
-  - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R1522, R1526, R1539 (the
-    length type), R382 (the width slot), R185 and R186 (so the port is
-    upstream's bodies with no leniency), R58, R1516, R1517, R1518, R1519,
-    R1546, and R1547.
+    (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores.
+    Upstream's `SIMD.__hash__` calls `_update_with_simd` in library code.
+  - Closes R1457 and R187 (upstream's reduction tree).
+  - Depends on R1553.
+  - Model: Fable, Planned.
+
+- [ ] **R1555 `SIMD`'s initializers are checker rules, where upstream's
+  are `__init__` overloads**
+
+  R186's `infer_simd_construction`, `infer_simd_fill`,
+  `infer_simd_alias_construction`, `check_simd_args`, and the
+  `call_inference.rs` `"SIMD"`/`"Scalar"` arms type every construction.
+  - Port every `__init__` overload, including the `mlir_value=` one, but
+    `py=` and the `Intable`, `IntableRaising`, and `Floatable` conversions,
+    which R1399 ports.
+  - Port `MAX`, `MIN`, `MAX_FINITE`, and `MIN_FINITE` after bundling
+    `std/utils/numerics.mojo`'s `_max_or_inf` family.
+  - Every upstream body constructs through `Self(mlir_value=...)` and
+    overloads `__init__` over `Self`-dependent parameter types (R1518).
+  - The `IntLiteral` initializer stays the checker's coercion until R1507:
+    upstream's `#pop.int_literal_convert` needs a parametric
+    `IntLiteral[value]`.
+  - Depends on R1554.
+  - Model: Fable, Planned.
+
+- [ ] **R1556 Code outside `mojito-types` matches `TyKind::Simd` and
+  `TyKind::INT` by pattern**
+
+  167 `TyKind::Simd` and 115 `TyKind::INT`/`UINT`/`FLOAT64` pattern sites
+  span the checker, MIR, the elaborator, Pliron, and the VM, so R1557 and
+  R1558 would each touch all of them.
+  - Replace them with `types::simd_slots`, `Ty::is_int()`, and their
+    siblings. No behavior changes.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1557 `SIMD` and its aliases are compiler types in the checker,
+  where upstream's are the declared struct and `comptime` aliases**
+
+  Once every member is a library body, the `Ty::new` bridge and
+  `type_resolution.rs`'s `"SIMD"`/`"Scalar"` name rules are all that keep
+  `SIMD` a compiler type.
+  - Delete the bridge: `SIMD[...]` resolves to `TyKind::Struct("SIMD",
+    …)` through the declaration.
+  - `Scalar`, `Int`, `UInt`, `Float64`, `Byte`, and the sized aliases come
+    from `std/simd.mojo`'s `comptime` aliases, in the pin's prelude list.
+  - Depends on R1555, R276, R330, and R1556.
+  - Model: Fable, Planned.
+
+- [ ] **R1558 MIR and the backends hold a `SIMD` value as a vector type,
+  where upstream holds the struct as its `!kgen.simd` field**
+
+  `TyKind::Simd` stays below the checker after R1557, and the MIR verifier
+  compares it with `TyKind::KgenSimd` as one held representation
+  (`verify/types.rs`, `types::held_simd_ty`).
+  - Delete the nominal `TyKind::Simd`. `KgenSimd` is the only vector type.
+  - A `SIMD` register is a held one-field struct (R1396's rule,
+    `MirDeclarations::translated_type` for Pliron).
+  - Delete the verifier's equivalence and the `held_simd_*` helpers.
+  - Depends on R1557.
   - Model: Fable, Planned.
 
 - [ ] **R1398 The checker, VM, and Pliron keep `SIMD` member rules no
   program reaches**
 
-  After R1397, `checker/method_calls/simd_receivers.rs`, the SIMD arms of
+  Once every `SIMD` member is a library body,
+  `checker/method_calls/simd_receivers.rs`, the SIMD arms of
   `checker/operators.rs`, `LaneMask::resolve`, `runtime::simd_method`, and
-  Pliron's per-method SIMD lowering serve only the storage type, which has
-  no members upstream.
-  - Delete them.
+  Pliron's per-method SIMD lowering serve no program.
+  - Delete what the member entries left of them.
   - A SIMD lane is still a MIR place where a lane is borrowed:
     `bump(v[2])` over a `mut` lane parameter, and R169's `ref lane =
     v[i]`. Every other lane read and write is `simd.extract` or
@@ -9897,7 +10001,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     of the VM's `load_place`/`store_place`, and Pliron's
     `try_lower_simd_lane_store` and lane addressing too.
   - Done when `rg simd_method crates` finds nothing.
-  - Depends on R1397.
+  - Depends on R1555, R330, and R276, which port the last members.
   - Model: Opus, Not Planned.
 
 - [ ] **R1399 `Int(x)`, `UInt(x)`, and `Float64(x)` are checker built-ins,
@@ -9933,7 +10037,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     through `simd.make` (`mir::TYPE_REACHED_MEMBERS`), so an `__int__`
     ignoring `self` keeps one instance per `n`, where `Int(C[n](1))`
     already calls it.
-  - Depends on R1397.
+  - Depends on R1555, which declares the other `__init__` overloads.
   - Model: Fable, Not Planned.
 
 - [ ] **R1407 An `enum`'s `__Enum` members are generated on each enum,
@@ -10020,8 +10124,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   stdlib struct whose `write_to` and `write_repr_to` are Mojo, choosing the
   scalar alias through `_scalar_repr_alias`.
   - The texts match the pin; the shape does not.
-  - The text moves into Mojo with the library `SIMD` (R1397), which takes
-    a `DType` parameter without R160's `DType` struct.
+  - Port `_write_scalar`, `write_to`, `write_repr_to`, `write_padded`, and
+    `_scalar_repr_alias` into the declared `SIMD` (R1549), which takes a
+    `DType` parameter without R160's `DType` struct.
+  - Bundle what they import: `std/builtin/format_int.mojo` (`_write_int`)
+    and `std/builtin/_format_float.mojo` (`_write_float`). Read R159 first,
+    since the float text interacts with it.
+  - Retire the inverted-write rule for `SIMD` in `intrinsic_receivers.rs`.
   - Probe: `x.write_repr_to(w)` on an `Int`, `UInt`, or `Float64`
     (`SemanticAdjustment::InvertedReprWrite`, `mir/lower_expr/expr_method.rs`)
     builds `repr(x)` into an owned `String` and writes that, where
@@ -10030,7 +10139,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `Int8(4).write_to(t)` stop with "type 'Int8' has no method
     'write_repr_to'" (or `'write_to'`), where the pin writes `Int8(4)` and
     `Float32(1.5)`: a sized scalar's host method table has neither.
-  - Depends on R1397.
+  - Depends on R1555.
   - Model: Fable, Not Planned.
 
 - [ ] **R359 `Tuple`'s private storage destroys its elements, where
@@ -10137,15 +10246,27 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     pin's is the compile-time result of `indices()`.
   - The pin's `slice` lowers to `llvm.vector.extract` or an element loop,
     not a shuffle.
-  - A self-hosted `SIMD` would move the typing, the constraints, and the
-    lowering choice into source, and `LaneMask` would shrink to the known
-    mask.
+  - Port `_shuffle_variadic`, `_shuffle_list`, the variadic `shuffle`
+    overloads, `slice`, `insert`, `join`, `interleave`, `split`,
+    `deinterleave`, the rotations, the shifts, and `reversed` into the
+    declared `SIMD` (R1549), and retire `infer_simd_shuffle`/`slice`/`join`
+    and `LaneMask`'s rule use.
+  - Admit `pop.simd.shuffle` in `MlirOp`, lowering to `MirInstr::SimdShuffle`.
+  - Bundle `std/utils/static_tuple.mojo` (`StaticTuple`) and `std/_plugin`
+    (`PluginHooks`, `DefaultPlugin`, and `CurrentPlugin`, which is
+    `CompilationTarget.current().stdlib_plugin`, R1550). The bodies read
+    `CurrentPlugin.lowers_subvector_intrinsics`, `True` on the CPU plugin.
+  - The `slice`, `insert`, `interleave`, rotation, and shift bodies call
+    intrinsics that run since R1519, `deinterleave`'s since R1547, and
+    `slice` reads `__is_run_in_comptime_interpreter` (R1546).
+  - The `IndexList` overloads of `shuffle` wait on an `IndexList` entry.
   - Probe: ``__mlir_op.`pop.simd.shuffle`[mask=tup._mlir_value,
     _type=...](a, b)``, upstream's `_shuffle_list` body, is rejected as
     outside the subset. Its `mask` attribute is a compile-time
     `StaticTuple[SIMDLength, n]`'s storage, and Mojito bundles no
     `StaticTuple`. `MirInstr::SimdShuffle` already computes the op.
-  - Depends on nothing.
+  - Closes R331 (the pin's `2 * length` bound). Shrinks R212.
+  - Depends on R1550, which bundles `CompilationTarget`.
   - Model: Fable, Not Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string

@@ -174,11 +174,14 @@ pub fn collect_loaded_places(blocks: &[MirBlock]) -> HashMap<u32, MirPlace> {
     output
 }
 
-/// The concrete lane dtype and width of a `TyKind::Simd` register type. A
-/// symbolic slot never reaches lowering: the MIR verifier refuses it.
+/// The concrete lane dtype and width of a `TyKind::Simd` register type, of
+/// its `!kgen.simd` storage, or of the builtin `index`, held as the `Int`
+/// it casts from. A symbolic slot never reaches lowering: the MIR verifier
+/// refuses it.
 pub fn simd_dims(ty: &Ty) -> Option<(Dtype, i64)> {
-    match ty.kind() {
+    match mojito_types::types::held_simd_ty(ty).kind() {
         TyKind::Simd { dtype, width } => Some((dtype.known()?, width.known()?)),
+        TyKind::Index => Some((Dtype::Int, 1)),
         _ => None,
     }
 }
@@ -205,6 +208,9 @@ pub fn scalar_type(
         TyKind::Bool => Ok(ScalarTy::Bool),
         TyKind::Dtype => Ok(ScalarTy::Dtype),
         TyKind::Index => Ok(ScalarTy::Int),
+        TyKind::KgenSimd { .. } => {
+            scalar_type(function, &mojito_types::types::held_simd_ty(ty), location)
+        }
         ty if let Some(dtype) = scalar_simd_dtype(ty) => Ok(ScalarTy::of_dtype(dtype)),
         TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(ScalarTy::Ptr),
         other => Err(PlironError {

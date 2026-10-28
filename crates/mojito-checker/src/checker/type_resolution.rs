@@ -633,8 +633,8 @@ impl Checker {
                 None => return Err(TypeError::UnknownSelfParam("Self".to_string())),
             },
             // The MLIR types the subset reads (`mlir_type_named`): the
-            // builtin `index` upstream's `Indexer` requirement returns, an
-            // `Int`'s `!kgen.scalar<index>` storage, the metatype
+            // builtin `index` upstream's `Indexer` requirement returns, a
+            // scalar's `!kgen.scalar<dtype>` storage, the metatype
             // `!kgen.type`, and a `StringLiteral`'s parameter type
             // `!kgen.string`. Every other MLIR type spelling is outside the
             // subset.
@@ -1176,8 +1176,8 @@ impl Checker {
     /// KGEN reads it: the text pieces joined, each operand a `{}` hole.
     /// `!kgen.param_list<T>` is upstream's `_MLIR.KGENParamListType[T]`
     /// body, the raw parameter list of `T`, and `!kgen.simd<length, dtype>`
-    /// the type of `SIMD._mlir_value`, which is the vector itself while
-    /// `SIMD` is a compiler type. Every other spelling is outside the subset.
+    /// the vector storage `SIMD._mlir_value` holds ([`TyKind::KgenSimd`]).
+    /// Every other spelling is outside the subset.
     fn mlir_applied_type(&self, args: &[mojito_ast::ast::ParamArg]) -> Result<Ty, TypeError> {
         let (text, operands) = mojito_types::types::mlir_type_spelling(args);
         match (text.as_str(), operands.as_slice()) {
@@ -1186,7 +1186,8 @@ impl Checker {
                 let width = self.mlir_index_operand(length)?;
                 let dtype = mojito_types::types::mlir_value_operand(dtype)
                     .ok_or_else(|| mlir_operand_mismatch("!kgen.dtype", "DType"))?;
-                simd_of(self.dtype_from_arg(&dtype)?, power_of_two_width(width)?)
+                let vector = simd_of(self.dtype_from_arg(&dtype)?, power_of_two_width(width)?)?;
+                Ok(mojito_types::types::simd_storage(&vector).unwrap_or(vector))
             }
             ("!kgen.struct<{}isParamPack>", [elements]) => self.mlir_param_pack_struct(elements),
             _ => Err(unsupported_mlir_type()),
@@ -2070,7 +2071,7 @@ impl Checker {
             // A symbolic lane dtype or width closes under the use's bindings
             // and re-canonicalizes: `Scalar[dt]` at `dt = DType.float64` is
             // `Float64`.
-            TyKind::Simd { .. }
+            TyKind::Simd { .. } | TyKind::KgenSimd { .. }
                 if !parameters.is_empty() && mojito_types::types::is_symbolic(ty) =>
             {
                 let context = &self.param_context;
@@ -2340,9 +2341,10 @@ impl Checker {
                 args: args.to_vec(),
             }
             .into()),
-            // A vector's `!kgen.simd` storage type, which is the vector
-            // itself, as its `_mlir_value` is.
-            TyKind::Simd { .. } if name == "_mlir_type" && args.is_empty() => Ok(base.clone()),
+            // A vector's `!kgen.simd` storage type, its `_mlir_value`'s.
+            TyKind::Simd { .. } if name == "_mlir_type" && args.is_empty() => {
+                Ok(mojito_types::types::simd_storage(base).unwrap_or_else(|| base.clone()))
+            }
             _ => Err(TypeError::NoSuchAssociatedType {
                 object_type: base.to_string(),
                 member: name.to_string(),
@@ -4408,7 +4410,9 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::SelfType
         | TyKind::Infer => true,
         TyKind::Struct(_, arguments) => arguments.iter().any(tyarg_is_symbolic),
-        TyKind::Simd { dtype, width } => dtype.is_symbolic() || width.is_symbolic(),
+        TyKind::Simd { dtype, width } | TyKind::KgenSimd { dtype, width } => {
+            dtype.is_symbolic() || width.is_symbolic()
+        }
         TyKind::Bool
         | TyKind::StringLiteral
         | TyKind::None
@@ -4522,7 +4526,7 @@ fn origin_has_subtree_tail(origin: &mojito_types::origin::PointerOrigin) -> bool
 fn unsupported_mlir_type() -> TypeError {
     TypeError::Unsupported(
         "this MLIR type spelling is outside the supported subset; only \
-         '__mlir_type.index', '__mlir_type.`!kgen.scalar<index>`', \
+         '__mlir_type.index', '__mlir_type.`!kgen.scalar<dtype>`', \
          '__mlir_type.`!kgen.type`', '__mlir_type.`!kgen.string`', \
          '__mlir_type[`!kgen.param_list<`, T, `>`]', \
          '__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value, `>`]', \
