@@ -267,7 +267,7 @@ missing.
   - R1280's iteration step cannot inline.
 - **Closes**:
   - Dispatch: R1280, R1466 (R1031 and R1109 closed).
-  - Operators: R81, R1238 (R708, R1332, R697, and R1282 closed).
+  - Operators: R81 (R708, R1332, R697, R1282, and R1238 closed).
   - Traits: R712, R579 (R707, R706, R191, and R109 closed).
 - **Shrinks** R987, R1291, R684, R113, R1119, R25, R817, R862, and R860
   (R861 and R863 closed).

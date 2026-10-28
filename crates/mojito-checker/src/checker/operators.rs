@@ -135,6 +135,19 @@ impl Checker {
                     operands: format!("{lt} and a leading-dot operand"),
                 });
         }
+        // `DType`'s `__eq__` and `__ne__` take `rhs: Self`, so beside a
+        // `DType` that parameter types the leading-dot operand.
+        if matches!(op, Eq | Ne)
+            && lt == TyKind::Dtype
+            && super::inference::contextual_root_span(right).is_some()
+        {
+            let rt = self.infer_with_expected(right, &lt, true)?;
+            return if rt == TyKind::Dtype {
+                Ok(Ty::bool())
+            } else {
+                Err(bad_infix_operator(op, &lt, &rt))
+            };
+        }
         let rt = self.infer(right)?;
         let rt = self.opaque_element(&rt).unwrap_or(rt);
         let rt = self.simd_length_operand(right, &lt, rt)?;

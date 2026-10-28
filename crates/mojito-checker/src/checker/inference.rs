@@ -2153,6 +2153,9 @@ impl Checker {
         if let Some(root_span) = contextual_root_span(expression) {
             let base = match expected.kind() {
                 TyKind::Struct(name, _) => name.clone(),
+                // `DType` is a compiler type here, whose members are
+                // upstream's `comptime` members of `struct DType`.
+                TyKind::Dtype => "DType".to_string(),
                 TyKind::Param { .. } => {
                     return Err(TypeError::ContextualMember {
                         member: contextual_member_name(expression),

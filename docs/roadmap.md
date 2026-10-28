@@ -2878,25 +2878,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1238 A leading-dot operand of `==` beside a `DType` has no
-  contextual type**
-
-  Problem: `d == .int64` over a `DType`, and `case .int64:` over one, fail
-  with "no contextual type is available here", where the pin prints
-  `True` and runs the case.
-  - A struct operator types a leading-dot right operand by the selected
-    dunder's parameter (`c == .mk()` runs), but `DType` is a compiler type
-    here (`TyKind::Dtype`) that declares no `__eq__`: `d.__eq__(.int64)`
-    reports "type 'DType' has no method '__eq__'".
-  - A leading-dot case head over a subject that is not `EnumLike` is the
-    same `==` test.
-  - `k == .X` and `case .X:` over a struct's `comptime X = K(1)` also need
-    R396 ("not an associated comptime expression"), as `take(.X)` does.
-  - Probe: `conformance/probes/leading_dot_equality_operand.mojo`.
-  - Found while landing R1133 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1222 `== literal` in a case pattern does not warn that `==` is
   redundant**
 
@@ -5545,10 +5526,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     different value from the same call spelled in another declaration.
   - A struct value in the parameter domain can take the frozen form a
     struct-typed parameter argument already has.
-  - Probe: a struct's member `comptime X = K(1)` in `struct K(Equatable,
-    ImplicitlyCopyable)`, matched as `case K.X:`, fails with "not an
-    associated comptime expression", where the pin prints `x`: no
-    initializer is a callable a compile-time call applies.
   - Probe: `S[u.__mlir_index__()]` over a binder `u: UInt` (`S[n:
     __mlir_type.index]`) fails with "not an associated comptime
     expression", and `Int(u)` in the builder with "'Int' conversion of a
@@ -9801,6 +9778,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     hard-wired `DType` site.
   - Several checker and elaborator capabilities land before the struct can
     replace the builtin.
+  - Probe: `d.__eq__(DType.int64)` over a `DType` fails with "type 'DType'
+    has no method '__eq__'", where the pin prints `True`. The `==` and `!=`
+    operators, and a leading-dot operand beside them, are a
+    `TyKind::Dtype` arm of `infer_infix` that upstream's declared
+    `DType.__eq__(self, rhs: Self)` replaces.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -10043,8 +10025,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `_to_bits_signed`.
   - Probe: `bitcast[DType.uint8, 4](UInt32(4631))` prints `[23, 18, 0,
     0]` at the pin.
-  - `bitcast`'s asserts compare `src_dtype == .float16` (R1238).
-  - Depends on R1576 and R1238.
+  - `bitcast`'s asserts compare `src_dtype == .float16`, which runs.
+  - Depends on R1576.
   - Model: Fable, Planned.
 
 - [ ] **R1579 `SIMD.__hash__` is a hash-leaf rule, where upstream's is a

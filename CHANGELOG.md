@@ -1370,6 +1370,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A leading-dot operand beside a `DType` takes `DType` as its contextual
+  type, as upstream's `DType.__eq__(self, rhs: Self)` gives it (R1238).
+  `d == .int64`, `dt != .int8` in a `comptime if`, `var e: DType =
+  .uint16`, and `case .int64:` over a `DType`, which failed with "no
+  contextual type is available here", run as at the pin. `match
+  DType.float64:` and `match K.X:` over a type's member, which failed with
+  "Undefined variable", match a value.
 - A compile-time application whose compile-time argument is itself an
   application, a lifted `comptime` value included, has that argument
   demanded first (R1577). `_uint_type_of_width[bit_width_of[DType.int16]()]()`,

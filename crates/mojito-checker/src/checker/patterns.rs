@@ -161,8 +161,10 @@ impl Checker {
     /// place themselves — and with the place's capability otherwise; any
     /// other subject is a temporary materialized into one owner that lasts
     /// through the statement (`var name = value`), which no `ref` binding of
-    /// a register-passable value may name. The anchor statement, the
-    /// subject's type (a reference stripped), and whether it is a temporary.
+    /// a register-passable value may name. A member of a type (`K.X`,
+    /// `DType.int64`) roots at no binding, so it is a value, not a place.
+    /// The anchor statement, the subject's type (a reference stripped), and
+    /// whether it is a temporary.
     pub(super) fn anchor_subject(
         &mut self,
         synth: &Synth,
@@ -172,8 +174,10 @@ impl Checker {
         ret: Option<&Ty>,
         in_loop: bool,
     ) -> Result<(Stmt, Ty, bool), TypeError> {
-        let temporary = !(super::places::is_place_expr(subject)
-            || matches!(self.infer(subject)?.kind(), TyKind::Ref(_)));
+        let bound_place = super::places::is_place_expr(subject)
+            && super::overload_support::place_root_name(subject)
+                .is_some_and(|root| self.lookup(root).is_some());
+        let temporary = !(bound_place || matches!(self.infer(subject)?.kind(), TyKind::Ref(_)));
         let anchor = synth.stmt(if temporary {
             StmtKind::VarDecl {
                 name: name.to_string(),

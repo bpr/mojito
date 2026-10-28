@@ -438,6 +438,7 @@ assets/ok/lane_template_served.mojo	main	exe-differential	sanitized
 assets/ok/late_initialized_local.mojo	main	exe-differential	sanitized
 assets/ok/later_argument_converts_to_bound_parameter.mojo	main	exe-differential	sanitized
 assets/ok/layout_allocation.mojo	main	exe-differential	sanitized
+assets/ok/leading_dot_equality_operand.mojo	main	exe-differential	sanitized
 assets/ok/len_library_overloads.mojo	main	exe-differential	sanitized
 assets/ok/library_declared_conformances.mojo	main	exe-differential	sanitized
 assets/ok/lifecycle_deprecated_spellings.mojo	main	exe-differential	sanitized
