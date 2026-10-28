@@ -8406,6 +8406,37 @@ fn pop_simd_lane_ops_type_as_their_verifiers_do() {
 }
 
 #[test]
+fn pop_select_types_as_its_verifier_does() {
+    // A `Bool`'s `!kgen.scalar<bool>` storage selects one of two cases of
+    // one trivially register-passable type, which the result has; the
+    // struct case is `assets/ok/mlir_pop_select.mojo`.
+    ok(
+        "def main():\n    var c = 3 > 2\n    var n: Int = __mlir_op.`pop.select`(c.__mlir_bool__(), Int(1), Int(2))\n    var v: SIMD[DType.int8, 4] = __mlir_op.`pop.select`(c.__mlir_bool__(), SIMD[DType.int8, 4](1), SIMD[DType.int8, 4](2))\n    var b: Bool = __mlir_op.`pop.select`(c.__mlir_bool__(), False, True)\n    print(n, v, b)\n",
+    );
+    for (source, message) in [
+        (
+            "def main():\n    var c = 3 > 2\n    print(__mlir_op.`pop.select`(c, Int(1), Int(2)))\n",
+            "op operand #0 must be !kgen.scalar<bool>",
+        ),
+        (
+            "def main():\n    var c = 3 > 2\n    print(__mlir_op.`pop.select`(c.__mlir_bool__(), Int(1), UInt8(2)))\n",
+            "have same type",
+        ),
+        (
+            "def main():\n    var c = 3 > 2\n    print(__mlir_op.`pop.select`(c.__mlir_bool__(), 1, 2))\n",
+            "over literal cases is outside the subset",
+        ),
+        (
+            "def main():\n    var c = 3 > 2\n    print(__mlir_op.`pop.select`(c.__mlir_bool__(), String(\"a\"), String(\"b\")))\n",
+            "Mojito selects trivially register-passable values",
+        ),
+    ] {
+        let error = err(source);
+        assert!(error.to_string().contains(message), "{error}");
+    }
+}
+
+#[test]
 fn pop_call_llvm_intrinsic_types_as_its_verifier_does() {
     // `intrin` is a `!kgen.string`, `_type` names the result, and
     // `hasSideEffects` is a `Bool`'s `__mlir_i1__()`; plain operands pass.

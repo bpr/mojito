@@ -569,8 +569,7 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1255 MIR has no select instruction, so `canonicalize` cannot turn
-  an `if` into one**
+- [ ] **R1255 `canonicalize` does not turn an `if` into a `select`**
 
   The generator `Canonicalizer` rewrites an `hlcf.if` whose arms only
   yield values into `pop.select` (`EmptyIfToSelect`, `IfToSelect`,
@@ -579,8 +578,8 @@ which names the upstream pass each one follows. Each is measured by the
   - Shape: an `if` whose two arms yield different constants, such as
     `x = 1 if c else 2`, stays an `if` with a result; `HoistYieldResults`
     folds only equal yields and a `Bool` true/false pair.
-  - The fix adds a select instruction to MIR, the VM, and Pliron, and the
-    three patterns to `canonicalize/hlcf.rs`.
+  - MIR's `select` (upstream's `pop.select`) runs on both backends; the
+    fix adds the three patterns to `canonicalize/hlcf.rs`.
   - Depends on R1254, before which no structured body reaches the pass.
   - Model: Fable, Not Planned.
 
@@ -5407,6 +5406,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     is left out as well, since the default belongs to the callee's scope
     (`Checker::applied_default`).
   - In a body such a call is lifted whole, so it runs there.
+  - Probe: `def g[n: Int](t: Tag[_select_register_value(n > 2, n, 0)])`
+    over upstream's `std.utils._select` and `struct Tag[k: Int]` stops the
+    same way; `g[1](Tag[0]())` runs at the pin. Its body is foldable (a
+    builtin `pick(c: Bool, a: Int, b: Int)` over the same `pop.select`
+    applies), so only the type parameter `T` blocks it.
   - Found while landing the callee shapes a signature applies (2026-10-06).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -10078,27 +10082,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1532 (its `IntLiteral` constructor), R1533 (a width
     argument converts to it), and R1534 (its `__rshift__`).
   - Model: Fable, Planned.
-
-- [ ] **R1534 `pop.select` is outside the subset, so upstream's
-  `std.utils._select` cannot be bundled**
-
-  `__mlir_op.`pop.select`(cond.__mlir_bool__(), lhs, rhs)` is rejected
-  with "'__mlir_op.`pop.select`' is outside the subset", where the pin
-  selects one of two register-passable values.
-  - Probe: upstream's `_select_register_value[T:
-    TrivialRegisterPassable](cond: Bool, lhs: T, rhs: T) -> T`, called over
-    two `Int`s with `True` and `False`, prints `1 2` at the pin.
-  - `MlirOp` (`mojito_types::mlir`) has no select, and no MIR instruction
-    selects a scalar or struct register (`simd.select` takes a mask).
-  - Lever: admit `pop.select` in `checker/method_calls/pop_ops.rs` over any
-    register-passable operand type, as one MIR select instruction lowered
-    on the VM and to `llvm.select`, and bundle
-    `stdlib/std/utils/_select.mojo`.
-  - Bumps the MIR text minor version.
-  - Needed for upstream's `SIMDLength.__rshift__` (R1535).
-  - Found while planning R336 (2026-10-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string
   accumulator where upstream writes through a `Writer` struct**

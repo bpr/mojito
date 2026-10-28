@@ -171,6 +171,42 @@ impl FnLowering<'_> {
         }
     }
 
+    /// `select` — one `select` over two scalar cases, or over the
+    /// addresses of two aggregate cases, the chosen one then copied as a
+    /// trivially register-passable value is (`runtime::select`).
+    pub(super) fn lower_select(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        condition: Reg,
+        yes: Reg,
+        no: Reg,
+    ) -> Result<(), PlironError> {
+        let Some(ty) = self.func.reg_types.get(&dest.0).cloned() else {
+            return Err(self.unsupported_reg("untyped select result".into(), dest));
+        };
+        let condition = self.reg_value(ctx, condition, ScalarTy::Bool)?;
+        match lower_ty(self.name, &ty, &self.layout, self.reg_span(dest))? {
+            LowerTy::Scalar(scalar) => {
+                let yes = self.reg_value(ctx, yes, scalar)?;
+                let no = self.reg_value(ctx, no, scalar)?;
+                let select = SelectOp::new(ctx, condition, yes, no);
+                self.define(ctx, dest, select.get_operation(), select.get_result(ctx))
+            }
+            LowerTy::Aggregate { ty, layout } => {
+                let yes = self.reg_ptr(ctx, yes)?;
+                let no = self.reg_ptr(ctx, no)?;
+                let select = SelectOp::new(ctx, condition, yes, no);
+                self.append(ctx, select.get_operation(), Some(dest));
+                self.copy_aggregate(ctx, dest, &ty, layout, select.get_result(ctx))
+            }
+            LowerTy::ZeroSized => {
+                self.erased.insert(dest.0);
+                Ok(())
+            }
+        }
+    }
+
     /// The intercepted `std.memory` allocation entry point,
     /// `unsafe_alloc[T](count, *, alignment = 0)`: `mjrt_alloc(count *
     /// sizeof(T), align)` with the element type taken from the call site's

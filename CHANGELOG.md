@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- ``__mlir_op.`pop.select`(cond.__mlir_bool__(), lhs, rhs)`` now chooses one
+  of two trivially register-passable values, and upstream's
+  `std.utils._select` is bundled, so `_select_register_value` runs on the
+  VM and natively, in a `comptime` value, and folded in a builtin body, as
+  at the pin (R1534). `Bool.__mlir_bool__()` gives its `!kgen.scalar<bool>`
+  storage. The op was outside the subset. MIR gains `select` (schema
+  1.125); the package format is `mojito-package 127`.
 - A value-parameter argument, a `Self.n` argument, or a declared default
   that is not of the parameter's struct type now converts through the
   struct's `@implicit` constructor, as a run-time argument does and as at

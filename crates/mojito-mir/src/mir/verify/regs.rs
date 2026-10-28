@@ -48,6 +48,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::SimdCast { dest, .. }
         | MirInstr::SimdBitcast { dest, .. }
         | MirInstr::SimdShuffle { dest, .. }
+        | MirInstr::Select { dest, .. }
         | MirInstr::SimdSelect { dest, .. }
         | MirInstr::SimdExtract { dest, .. }
         | MirInstr::SimdInsert { dest, .. }
@@ -319,7 +320,13 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
             out.push(*value);
             out.extend(*other);
         }
-        MirInstr::SimdSelect {
+        MirInstr::Select {
+            condition: mask,
+            on_true,
+            on_false,
+            ..
+        }
+        | MirInstr::SimdSelect {
             mask,
             on_true,
             on_false,

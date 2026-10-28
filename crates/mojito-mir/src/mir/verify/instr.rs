@@ -87,6 +87,12 @@ pub(super) fn verify_instruction(
             target,
         } => verify_scalar_cast(&cx, *dest, *value, *target, errors),
         MirInstr::BuiltinCast { dest, value } => verify_builtin_cast(&cx, *dest, *value, errors),
+        MirInstr::Select {
+            dest,
+            condition,
+            on_true,
+            on_false,
+        } => verify_select(&cx, *dest, *condition, [*on_true, *on_false], errors),
         MirInstr::Pop { dest, op, operands } => verify_pop(&cx, *dest, *op, operands, errors),
         MirInstr::CallLlvmIntrinsic { args, spread, .. } => {
             verify_llvm_intrinsic(&cx, args, *spread, errors);
@@ -1321,6 +1327,37 @@ fn verify_scalar_cast(
 
 /// A `builtin.cast` retypes an `index` as its `Int` storage or back, so
 /// exactly one side is an `index` and the other an `Int`.
+/// `select`'s condition is a one-lane `bool` vector, and both cases are of
+/// the destination's type.
+fn verify_select(
+    cx: &InstrCx<'_>,
+    dest: Reg,
+    condition: Reg,
+    cases: [Reg; 2],
+    errors: &mut Vec<String>,
+) {
+    let prefix = cx.prefix;
+    if let Some(found) = cx.reg_ty(condition)
+        && *found != mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::Bool, 1)
+    {
+        errors.push(format!(
+            "{prefix}: select condition has type {found}, not a one-lane bool vector"
+        ));
+    }
+    let Some(result) = cx.reg_ty(dest) else {
+        return;
+    };
+    for (role, case) in ["true", "false"].into_iter().zip(cases) {
+        if let Some(found) = cx.reg_ty(case)
+            && found != result
+        {
+            errors.push(format!(
+                "{prefix}: select {role} case has type {found}, expected {result}"
+            ));
+        }
+    }
+}
+
 fn verify_builtin_cast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec<String>) {
     let (Some(to), Some(from)) = (cx.reg_ty(dest), cx.reg_ty(value)) else {
         return;

@@ -329,6 +329,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::SimdCast { .. } => "SimdCast",
         MirInstr::SimdBitcast { .. } => "SimdBitcast",
         MirInstr::SimdShuffle { .. } => "SimdShuffle",
+        MirInstr::Select { .. } => "Select",
         MirInstr::SimdSelect { .. } => "SimdSelect",
         MirInstr::SimdExtract { .. } => "SimdExtract",
         MirInstr::SimdInsert { .. } => "SimdInsert",

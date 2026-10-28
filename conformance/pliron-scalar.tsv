@@ -511,6 +511,7 @@ assets/ok/mlir_builtin_casts.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_index_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_index_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_ops.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mlir_pop_select.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_simd_lane_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_type_overload_identity.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/module_constant_literal_bracket.mojo	-	ineligible	no-scalar-entry-shape

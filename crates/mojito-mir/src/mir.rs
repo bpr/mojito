@@ -5208,6 +5208,11 @@ fn close_register_types(
                         }),
                     )),
                     MirInstr::SimdInsert { dest, value, .. }
+                    | MirInstr::Select {
+                        dest,
+                        on_true: value,
+                        ..
+                    }
                     | MirInstr::SimdSelect {
                         dest,
                         on_true: value,

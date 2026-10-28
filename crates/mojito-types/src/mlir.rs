@@ -1,7 +1,8 @@
 //! The `__mlir_op` operations Mojito admits beyond the ownership markers.
 //!
 //! These are upstream's elementwise `pop` ops over `!kgen.simd` storage,
-//! its `pop.simd` lane ops (select, extract, insert, and the `bool`
+//! its `pop.select` of one of two register-passable values, its `pop.simd`
+//! lane ops (select, extract, insert, and the `bool`
 //! reductions), the `index` ops over `__mlir_type.index`, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
 //! and its `!kgen.scalar<index>` storage, with the
@@ -37,6 +38,7 @@ pub enum MlirOp {
     PopCeil,
     PopTrunc,
     PopFma,
+    PopSelect,
     PopSimdSelect,
     PopSimdExtractElement,
     PopSimdInsertElement,
@@ -99,6 +101,7 @@ impl MlirOp {
             "pop.ceil" => Self::PopCeil,
             "pop.trunc" => Self::PopTrunc,
             "pop.fma" => Self::PopFma,
+            "pop.select" => Self::PopSelect,
             "pop.simd.select" => Self::PopSimdSelect,
             "pop.simd.extractelement" => Self::PopSimdExtractElement,
             "pop.simd.insertelement" => Self::PopSimdInsertElement,
@@ -144,6 +147,7 @@ impl MlirOp {
             Self::PopCeil => "pop.ceil",
             Self::PopTrunc => "pop.trunc",
             Self::PopFma => "pop.fma",
+            Self::PopSelect => "pop.select",
             Self::PopSimdSelect => "pop.simd.select",
             Self::PopSimdExtractElement => "pop.simd.extractelement",
             Self::PopSimdInsertElement => "pop.simd.insertelement",
@@ -181,7 +185,7 @@ impl MlirOp {
     pub const fn is_lane(self) -> bool {
         matches!(
             self.lowering(),
-            MlirLowering::Select
+            MlirLowering::SimdSelect
                 | MlirLowering::Extract
                 | MlirLowering::Insert
                 | MlirLowering::Reduce(_)
@@ -213,7 +217,7 @@ impl MlirOp {
             | MlirLowering::BuiltinCast
             | MlirLowering::Reduce(_) => 1,
             MlirLowering::Extract => 2,
-            MlirLowering::Select | MlirLowering::Insert => 3,
+            MlirLowering::Select | MlirLowering::SimdSelect | MlirLowering::Insert => 3,
             MlirLowering::Pop(op) => op.arity(),
         }
     }
@@ -269,7 +273,8 @@ impl MlirOp {
             Self::PopCeil => MlirLowering::Pop(PopOp::Ceil),
             Self::PopTrunc => MlirLowering::Pop(PopOp::Trunc),
             Self::PopFma => MlirLowering::Pop(PopOp::Fma),
-            Self::PopSimdSelect => MlirLowering::Select,
+            Self::PopSelect => MlirLowering::Select,
+            Self::PopSimdSelect => MlirLowering::SimdSelect,
             Self::PopSimdExtractElement => MlirLowering::Extract,
             Self::PopSimdInsertElement => MlirLowering::Insert,
             Self::PopSimdReduceAnd => MlirLowering::Reduce(SimdReduction::And),
@@ -314,7 +319,8 @@ impl LaneKinds {
 /// That is the built-in operator whose lane semantics are the op's
 /// (`binary`/`unary`), a construction or cast carrying the `_type`
 /// attribute's slots, the `pop` instruction for an op no operator
-/// computes, the `simd.select`, `simd.extract`, `simd.insert`, or
+/// computes, the `select` of one of two register values, the
+/// `simd.select`, `simd.extract`, `simd.insert`, or
 /// `simd.reduce` lane instruction, or the `builtin.cast` that retypes an
 /// `index` as its `!kgen.scalar<index>` storage or back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,6 +332,7 @@ pub enum MlirLowering {
     BuiltinCast,
     Pop(PopOp),
     Select,
+    SimdSelect,
     Extract,
     Insert,
     Reduce(SimdReduction),

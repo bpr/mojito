@@ -819,6 +819,12 @@ impl FnLowering<'_> {
                     Err(self.unsupported_reg(format!("the symbolic lane mask `{mask}`"), *dest))
                 }
             },
+            MirInstr::Select {
+                dest,
+                condition,
+                on_true,
+                on_false,
+            } => self.lower_select(ctx, *dest, *condition, *on_true, *on_false),
             MirInstr::SimdSelect {
                 dest,
                 mask,

@@ -816,6 +816,29 @@ fn verifier_types_simd_lane_instructions() {
 }
 
 #[test]
+fn verifier_types_select() {
+    let mut mir = lower_source(
+        "def main():\n    var c = 3 > 2\n    print(__mlir_op.`pop.select`(c.__mlir_bool__(), Int(1), Int(2)))\n",
+    );
+    let select = mir
+        .functions
+        .iter_mut()
+        .flat_map(|(_, function)| leaf_instructions_mut(&mut function.blocks))
+        .find(|instruction| matches!(instruction, MirInstr::Select { .. }))
+        .expect("select lowered");
+    if let MirInstr::Select {
+        condition, on_true, ..
+    } = select
+    {
+        *condition = *on_true;
+    }
+    expect_finding(
+        &mir,
+        "select condition has type Int, not a one-lane bool vector",
+    );
+}
+
+#[test]
 fn verifier_checks_llvm_intrinsic_calls() {
     let lowered = || {
         lower_source(

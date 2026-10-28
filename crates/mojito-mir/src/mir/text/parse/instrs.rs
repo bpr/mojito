@@ -829,6 +829,12 @@ impl Decoder {
                 other: self.req(value, fields, "other", |d, v| Some(d.option_reg(v)))?,
                 mask: self.req(value, fields, "mask", Self::lane_mask)?,
             }),
+            "select" => Some(MirInstr::Select {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+                condition: self.req(value, fields, "condition", Self::reg)?,
+                on_true: self.req(value, fields, "on_true", Self::reg)?,
+                on_false: self.req(value, fields, "on_false", Self::reg)?,
+            }),
             "simd.select" => Some(MirInstr::SimdSelect {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 mask: self.req(value, fields, "mask", Self::reg)?,

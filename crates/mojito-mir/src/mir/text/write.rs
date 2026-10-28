@@ -1558,6 +1558,20 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("mask", lane_mask(mask)),
             ],
         ),
+        MirInstr::Select {
+            dest,
+            condition,
+            on_true,
+            on_false,
+        } => record(
+            tag,
+            &[
+                ("dest", reg_value(*dest)),
+                ("condition", reg_value(*condition)),
+                ("on_true", reg_value(*on_true)),
+                ("on_false", reg_value(*on_false)),
+            ],
+        ),
         MirInstr::SimdSelect {
             dest,
             mask,

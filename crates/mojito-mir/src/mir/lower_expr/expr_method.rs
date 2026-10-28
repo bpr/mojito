@@ -259,51 +259,11 @@ impl<'a> Flatten<'a> {
             });
             return Some(dest);
         }
-        // `x.__mlir_index__()` on an integer is upstream's
-        // `pop.cast_to_builtin` of an `Int`: a `UInt` is `pop.cast` to
-        // `Int` first, and a literal materializes as one.
-        if method == "__mlir_index__"
-            && args.is_empty()
-            && kwargs.is_empty()
-            && let Some(found) = object.ty().filter(|ty| {
-                matches!(
-                    ty.kind(),
-                    mojito_types::types::TyKind::INT
-                        | mojito_types::types::TyKind::IntLiteral
-                        | mojito_types::types::TyKind::UINT
-                )
-            })
-        {
-            let value = self.expr(object);
-            let value = match found.kind() {
-                mojito_types::types::TyKind::IntLiteral => {
-                    self.materialize_literal(value, &Ty::int(), call.location())
-                }
-                mojito_types::types::TyKind::UINT => {
-                    let dest = self.fresh_typed(call.location(), None, Ty::int());
-                    self.emit(MirInstr::ScalarCast {
-                        dest,
-                        value,
-                        target: ScalarConversion::Int,
-                    });
-                    dest
-                }
-                _ => value,
-            };
-            return Some(self.builtin_cast(call.location(), value, Ty::index()));
-        }
-        // `b.__mlir_i1__()` on a `Bool` is the identity conversion to the
-        // builtin `i1` (`Bool`), and a heterogeneous collector's
-        // `get_loaded_kgen_pack()` the collector itself.
         if args.is_empty()
             && kwargs.is_empty()
-            && object.ty().is_some_and(|ty| match method {
-                "__mlir_i1__" => matches!(ty.kind(), mojito_types::types::TyKind::Bool),
-                "get_loaded_kgen_pack" => mojito_types::types::is_heterogeneous_collector(&ty),
-                _ => false,
-            })
+            && let Some(converted) = self.mlir_conversion(call, object, method)
         {
-            return Some(self.expr(object));
+            return Some(converted);
         }
         // `x.copy()` on a built-in copyable value has no callee: the
         // checker resolved it to the value read itself.
@@ -527,6 +487,66 @@ impl<'a> Flatten<'a> {
             });
             self.emit_nested_closure_argument_keepalives(args, kwargs);
             return Some(dest);
+        }
+        None
+    }
+
+    /// An argument-free conversion the checker resolved to upstream's MLIR
+    /// storage or builtin form of `object`: `__mlir_index__`,
+    /// `__mlir_bool__`, `__mlir_i1__`, or a collector's
+    /// `get_loaded_kgen_pack`. `None` leaves the call to the later forms.
+    fn mlir_conversion(&mut self, call: Node<'a>, object: Node<'a>, method: &str) -> Option<Reg> {
+        // `x.__mlir_index__()` on an integer is upstream's
+        // `pop.cast_to_builtin` of an `Int`: a `UInt` is `pop.cast` to
+        // `Int` first, and a literal materializes as one.
+        if method == "__mlir_index__"
+            && let Some(found) = object.ty().filter(|ty| {
+                matches!(
+                    ty.kind(),
+                    mojito_types::types::TyKind::INT
+                        | mojito_types::types::TyKind::IntLiteral
+                        | mojito_types::types::TyKind::UINT
+                )
+            })
+        {
+            let value = self.expr(object);
+            let value = match found.kind() {
+                mojito_types::types::TyKind::IntLiteral => {
+                    self.materialize_literal(value, &Ty::int(), call.location())
+                }
+                mojito_types::types::TyKind::UINT => {
+                    let dest = self.fresh_typed(call.location(), None, Ty::int());
+                    self.emit(MirInstr::ScalarCast {
+                        dest,
+                        value,
+                        target: ScalarConversion::Int,
+                    });
+                    dest
+                }
+                _ => value,
+            };
+            return Some(self.builtin_cast(call.location(), value, Ty::index()));
+        }
+        // `b.__mlir_bool__()` on a `Bool` is its `!kgen.scalar<bool>`
+        // storage, the one-lane `bool` vector the `Bool` splats to.
+        if method == "__mlir_bool__"
+            && object
+                .ty()
+                .is_some_and(|ty| matches!(ty.kind(), mojito_types::types::TyKind::Bool))
+        {
+            let value = self.expr(object);
+            let storage = mojito_types::types::canonical_simd_ty(mojito_ast::ast::Dtype::Bool, 1);
+            return Some(self.splat_scalar(value, &storage, call.location()));
+        }
+        // `b.__mlir_i1__()` on a `Bool` is the identity conversion to the
+        // builtin `i1` (`Bool`), and a heterogeneous collector's
+        // `get_loaded_kgen_pack()` the collector itself.
+        if object.ty().is_some_and(|ty| match method {
+            "__mlir_i1__" => matches!(ty.kind(), mojito_types::types::TyKind::Bool),
+            "get_loaded_kgen_pack" => mojito_types::types::is_heterogeneous_collector(&ty),
+            _ => false,
+        }) {
+            return Some(self.expr(object));
         }
         None
     }

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.124
+mojito-mir 1.125
 ```
 
-The writer emits 1.124. The reader accepts 1.0 through 1.124; *Schema 1.0*
+The writer emits 1.125. The reader accepts 1.0 through 1.125; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -772,6 +772,14 @@ expressions gain the unary operators `cast_to_builtin` and
 `cast_from_builtin`, the casts between `Int` and `index` (R1531). The
 package format moves to `mojito-package 126`, since checked parameter
 values and expressions may carry them.
+
+Schema 1.125 adds `select { dest, condition, on_true, on_false }`,
+upstream's `pop.select`: `on_true` where the one-lane `bool` `condition`
+(a `Bool`'s `!kgen.scalar<bool>` storage, `b.__mlir_bool__()`) is set, else
+`on_false`, both cases of `dest`'s trivially register-passable type
+(R1534). The package format moves to `mojito-package 127`, since the
+checked `MlirOp` vocabulary grows and the bundled library gains
+`std.utils._select`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
@@ -1529,6 +1537,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `VariantTag` | `variant.tag { dest, variant }` (schema 1.103: the active alternative's index as an `Int`, an `enum` storage's discriminant) |
 | `VariantTake` / `VariantSetInitWith` / `VariantDeinitWith` / `VariantReplace` | `variant.take` / `variant.set_init_with` / `variant.deinit_with` / `variant.replace` (schema 1.71: `variant.replace` carries `constructor: "<symbol>"` as `variant.make` does; schema 1.73: `variant.set_init_with` carries `destructors` as `variant.set` does) |
 | `MakeSimd` / `SimdCast` / `SimdBitcast` / `SimdShuffle` | `simd.make` / `simd.cast` / `simd.bits` / `simd.shuffle` — `dtype` is a dtype name or `ct_expr(...)`, `width` a lane count or `ct_expr(...)` (schema 1.18); a shuffle's `mask` is a list of lane indices, or a template's `lane_shuffle { lanes: [<param_expr>, ...] }`, `lane_slice { offset: <param_expr>, width: <width> }`, or `lane_join {}`, which elaboration closes (schema 1.26) |
+| `Select` | `select { dest, condition, on_true, on_false }` (schema 1.125): upstream's `pop.select`, `on_true` where the one-lane `bool` `condition` is set, else `on_false`; both cases are of `dest`'s trivially register-passable type |
 | `SimdSelect` / `SimdExtract` / `SimdInsert` / `SimdReduce` | `simd.select { dest, mask, on_true, on_false }` / `simd.extract { dest, value, index }` / `simd.insert { dest, value, element, index }` / `simd.reduce { dest, value, op }` (schema 1.120): upstream's `pop.simd.select`, `extractelement`, `insertelement`, and `reduce_and`/`reduce_or` (`op` is `and` or `or`); a lane is a width-one vector of the vector's dtype, and an index outside the lanes traps |
 | `CallLlvmIntrinsic` | `llvm.intrinsic { dest, intrinsic, has_side_effect, args: [%rA, …], spread: option<N> }` (schema 1.121): upstream's `pop.call_llvm_intrinsic`; `intrinsic` is a `!kgen.string` constant and `has_side_effect` a `Bool` constant, each a `value(...)` or, in a template, a `param(...)`; `spread` names a heterogeneous collector operand the elaborator replaces by its elements; the call is pure when `has_side_effect` is `false` |
 | `Try` | `try { label: tryN, error: option<$vN>, results: [%rN...], body, handler_arguments: [%rN...], handler, else_arguments: [%rN...], orelse }` — `lit.try` after `lowerTryFinally`: `label` names it for the raises in its body (schema 1.92; before, a `try` named nothing and held `finalbody` and `cleanup`, see *Compatibility*); `error` is its error slot, `lit.try`'s `$err`, which each raise naming it stores into and its handler reads (schema 1.107; before, the handler record's `error_var` bound the error); `results` are the op's, `handler_arguments` the handler's, which every raise naming it defines, and `else_arguments` the `else`'s, which the body's `try.yield` defines (schema 1.93) |

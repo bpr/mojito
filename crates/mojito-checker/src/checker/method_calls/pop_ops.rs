@@ -1,5 +1,6 @@
 //! The `pop` and `index` `__mlir_op` expressions: upstream's elementwise
-//! ops over `!kgen.simd` storage, its `pop.simd` lane ops, its `index` ops,
+//! ops over `!kgen.simd` storage, its `pop.select` of one of two
+//! register-passable values, its `pop.simd` lane ops, its `index` ops,
 //! and its `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between
 //! `index` and `!kgen.scalar<index>`, typed as their MLIR verifiers type
 //! them, with the `pred`, `fastmathFlags`, and `_type` attributes they
@@ -17,8 +18,9 @@ impl Checker {
     /// ones. Arithmetic keeps the operand type, `pop.cmp` gives the
     /// `bool` mask of the operand width, `index.cmp` an `i1` (`Bool`), and
     /// `pop.cast` and `pop.simd.splat` the type their `_type` attribute
-    /// names. The lane ops are typed by [`lane_op_result`], the casts
-    /// between `index` and its storage by [`builtin_cast_result`].
+    /// names. `pop.select` is typed by [`select_result`], the lane ops by
+    /// [`lane_op_result`], the casts between `index` and its storage by
+    /// [`builtin_cast_result`].
     pub(super) fn infer_pop_op(
         &self,
         span: &SourceSpan,
@@ -104,25 +106,22 @@ impl Checker {
             .iter()
             .map(|argument| self.infer(argument))
             .collect::<Result<Vec<_>, _>>()?;
-        let result = if op.is_builtin_cast() {
+        let subset_error = |error| match error {
+            PopTypeError::Verifier(reason) => invalid(reason),
+            PopTypeError::Subset(reason) => TypeError::Unsupported(format!("'{name}' {reason}")),
+        };
+        let result = if op == MlirOp::PopSelect {
+            select_result(&operands, |ty| self.is_trivial_register_passable(ty))
+                .map_err(subset_error)?
+        } else if op.is_builtin_cast() {
             let result_type = result_type.expect("a builtin cast names its result type");
-            builtin_cast_result(op, &operands, result_type).map_err(|error| match error {
-                PopTypeError::Verifier(reason) => invalid(reason),
-                PopTypeError::Subset(reason) => {
-                    TypeError::Unsupported(format!("'{name}' {reason}"))
-                }
-            })?
+            builtin_cast_result(op, &operands, result_type).map_err(subset_error)?
         } else if op.is_index() {
             index_op_result(op, &operands).map_err(invalid)?
         } else if op.is_lane() {
             lane_op_result(op, &operands).map_err(invalid)?
         } else {
-            pop_op_result(op, &operands, result_type).map_err(|error| match error {
-                PopTypeError::Verifier(reason) => invalid(reason),
-                PopTypeError::Subset(reason) => {
-                    TypeError::Unsupported(format!("'{name}' {reason}"))
-                }
-            })?
+            pop_op_result(op, &operands, result_type).map_err(subset_error)?
         };
         self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::MlirOp(op),
@@ -196,6 +195,43 @@ fn index_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
     })
 }
 
+/// The result of `pop.select`, as upstream's verifier types it: a
+/// `!kgen.scalar<bool>` condition (a `Bool`'s `__mlir_bool__()`) and two
+/// cases of one type, which the result has. Mojito selects trivially
+/// register-passable values, and no literal: the pin types each literal
+/// value apart, so `1` and `2` are cases of two types.
+fn select_result(
+    operands: &[Ty],
+    trivially_register_passable: impl Fn(&Ty) -> bool,
+) -> Result<Ty, PopTypeError> {
+    if operands[0] != simd_ty(Dtype::Bool, 1) {
+        return Err(PopTypeError::Verifier(format!(
+            "op operand #0 must be !kgen.scalar<bool>, but got '{}'",
+            mlir_spelling(&operands[0])
+        )));
+    }
+    let case = &operands[1];
+    if *case != operands[2] {
+        return Err(PopTypeError::Verifier(
+            "op failed to verify that all of {trueValue, falseValue, result} have same type"
+                .to_string(),
+        ));
+    }
+    if matches!(case.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) {
+        return Err(PopTypeError::Subset(
+            "over literal cases is outside the subset: the pin types each literal value apart"
+                .to_string(),
+        ));
+    }
+    if !trivially_register_passable(case) {
+        return Err(PopTypeError::Subset(format!(
+            "over '{case}' is outside the subset: Mojito selects trivially register-passable \
+             values"
+        )));
+    }
+    Ok(case.clone())
+}
+
 /// The result of `pop.cast_from_builtin` (an `index` to the `_type`
 /// storage `!kgen.scalar<index>`, an `Int`) or `pop.cast_to_builtin` (that
 /// storage to the `_type` builtin `index`), as upstream's verifier types
@@ -263,7 +299,7 @@ fn lane_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
     let lane =
         |dtype: SimdDtype| simd_of(dtype, SimdWidth::Known(1)).map_err(|error| error.to_string());
     match op.lowering() {
-        MlirLowering::Select => {
+        MlirLowering::SimdSelect => {
             let (mask, width) = vector(0)?;
             if mask.known() != Some(Dtype::Bool) {
                 return Err(format!(

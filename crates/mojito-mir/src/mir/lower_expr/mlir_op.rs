@@ -192,7 +192,13 @@ impl<'a> Flatten<'a> {
                     width,
                 }
             }
-            (MlirLowering::Select, [mask, on_true, on_false]) => MirInstr::SimdSelect {
+            (MlirLowering::Select, [condition, on_true, on_false]) => MirInstr::Select {
+                dest,
+                condition: *condition,
+                on_true: *on_true,
+                on_false: *on_false,
+            },
+            (MlirLowering::SimdSelect, [mask, on_true, on_false]) => MirInstr::SimdSelect {
                 dest,
                 mask: *mask,
                 on_true: *on_true,

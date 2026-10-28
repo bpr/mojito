@@ -1978,6 +1978,26 @@ pub fn simd_method(
     }
 }
 
+/// `pop.select`: `when_true` where the one-lane `bool` `condition` is set,
+/// else `when_false`. The cases are trivially register-passable, so the
+/// chosen one is a bit copy.
+pub fn select(
+    condition: &Value,
+    when_true: &Value,
+    when_false: &Value,
+) -> Result<Value, RuntimeError> {
+    match simd_parts(condition) {
+        Some((_, SimdLanes::Bool(lanes))) if lanes.len() == 1 => Ok(if lanes[0] {
+            when_true.clone()
+        } else {
+            when_false.clone()
+        }),
+        _ => Err(RuntimeError::TypeError(
+            "select requires a one-lane bool condition".to_string(),
+        )),
+    }
+}
+
 /// `simd.select`: lane `i` of the result takes `when_true`'s lane where
 /// lane `i` of the bool `mask` is set, else `when_false`'s.
 pub fn simd_select(

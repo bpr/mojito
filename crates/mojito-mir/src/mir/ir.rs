@@ -1051,20 +1051,11 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
             out.extend([dest, value]);
             out.extend(other.iter_mut());
         }
-        MirInstr::SimdSelect {
-            dest,
-            mask,
-            on_true,
-            on_false,
-        } => out.extend([dest, mask, on_true, on_false]),
-        MirInstr::SimdExtract { dest, value, index } => out.extend([dest, value, index]),
-        MirInstr::SimdInsert {
-            dest,
-            value,
-            element,
-            index,
-        } => out.extend([dest, value, element, index]),
-        MirInstr::SimdReduce { dest, value, .. } => out.extend([dest, value]),
+        MirInstr::Select { .. }
+        | MirInstr::SimdSelect { .. }
+        | MirInstr::SimdExtract { .. }
+        | MirInstr::SimdInsert { .. }
+        | MirInstr::SimdReduce { .. } => out.extend(select_and_lane_regs_mut(instruction)),
         MirInstr::Drop { reg, .. } => out.push(reg),
         MirInstr::DropPlace { place: target, .. }
         | MirInstr::MarkInitialized { place: target }
@@ -2703,6 +2694,16 @@ pub enum MirInstr {
         other: Option<Reg>,
         mask: mojito_types::types::LaneMask,
     },
+    /// `pop.select`: `on_true` where the one-lane `bool` `condition` (a
+    /// `Bool`'s `!kgen.scalar<bool>` storage) is set, else `on_false`. Both
+    /// cases are of the destination's type, a trivially register-passable
+    /// one, and the two are evaluated before the selection.
+    Select {
+        dest: Reg,
+        condition: Reg,
+        on_true: Reg,
+        on_false: Reg,
+    },
     /// `pop.simd.select`: lane `i` of the result is `on_true`'s where lane
     /// `i` of the `bool` `mask` is set, else `on_false`'s. Both cases are of
     /// the destination's type, at the mask's width (`m.select(a, b)`).
@@ -3088,6 +3089,7 @@ impl MirInstr {
             | Self::SimdCast { .. }
             | Self::SimdBitcast { .. }
             | Self::SimdShuffle { .. }
+            | Self::Select { .. }
             | Self::SimdSelect { .. }
             | Self::SimdReduce { .. } => true,
             // An integer division by zero traps.
@@ -3854,6 +3856,34 @@ fn exits_in(
         {
             visit(values, site);
         }
+    }
+}
+
+/// The registers of a `select` or a SIMD lane instruction
+/// [`instruction_regs_mut`] lists, its destination first.
+fn select_and_lane_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
+    match instruction {
+        MirInstr::Select {
+            dest,
+            condition: mask,
+            on_true,
+            on_false,
+        }
+        | MirInstr::SimdSelect {
+            dest,
+            mask,
+            on_true,
+            on_false,
+        } => vec![dest, mask, on_true, on_false],
+        MirInstr::SimdExtract { dest, value, index } => vec![dest, value, index],
+        MirInstr::SimdInsert {
+            dest,
+            value,
+            element,
+            index,
+        } => vec![dest, value, element, index],
+        MirInstr::SimdReduce { dest, value, .. } => vec![dest, value],
+        _ => Vec::new(),
     }
 }
 

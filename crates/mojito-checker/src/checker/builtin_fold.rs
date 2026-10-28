@@ -590,8 +590,9 @@ impl Checker {
 /// The operator expression ``__mlir_op.`op`(a, b)`` computes when `op` is a
 /// `pop` or `index` op the compile-time builder reads, an infix operator or
 /// a negation over the same operands (`a + b` for `pop.add`, `a < b` for
-/// `index.cmp` at `slt`), as upstream's parameter folder reads the op. A
-/// builtin cast is its sugar: `pop.cast_to_builtin` over `s` is
+/// `index.cmp` at `slt`), as upstream's parameter folder reads the op.
+/// `pop.select` over `c.__mlir_bool__()` is the conditional `a if c else
+/// b`. A builtin cast is its sugar: `pop.cast_to_builtin` over `s` is
 /// `s.__mlir_index__()` and `pop.cast_from_builtin` over `i` is
 /// `Int(mlir_value=i)`, the result type its `_type=` names being the one
 /// the check gave the op. `None` for any other expression or op.
@@ -661,6 +662,21 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
         (MlirLowering::Negate, [operand]) => {
             ExprKind::Prefix(PrefixOp::Neg, Box::new(operand.clone()))
         }
+        (MlirLowering::Select, [condition, on_true, on_false]) => match &condition.kind {
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if method == "__mlir_bool__" && args.is_empty() && kwargs.is_empty() => {
+                ExprKind::IfExpr {
+                    cond: object.clone(),
+                    then_branch: Box::new(on_true.clone()),
+                    else_branch: Box::new(on_false.clone()),
+                }
+            }
+            _ => return None,
+        },
         _ => return None,
     };
     let mut operator = Expr::new(kind, expr.span);

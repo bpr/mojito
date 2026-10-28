@@ -1577,6 +1577,18 @@ impl VmBackend {
                 )?;
                 regs[dest.0 as usize] = gathered;
             }
+            MirInstr::Select {
+                dest,
+                condition,
+                on_true,
+                on_false,
+            } => {
+                regs[dest.0 as usize] = crate::runtime::select(
+                    &regs[condition.0 as usize],
+                    &regs[on_true.0 as usize],
+                    &regs[on_false.0 as usize],
+                )?;
+            }
             MirInstr::SimdSelect {
                 dest,
                 mask,
