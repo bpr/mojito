@@ -1287,7 +1287,15 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   result slot (`conditional_into_slot`, which `expr_c` returns as the
   value's storage) to a consumer with a destination the same way; a result the checker marked
   `SemanticAdjustment::RegisterPassableResult` (`Node::register_passable_result`)
-  is yielded by its `If` instead. A conditional the checker marked
+  is yielded by its `If` instead. `Flatten::short_circuit` lowers `and`/`or`
+  the same way, as upstream's `emitAndOr`: a left operand the checker marked
+  `Truthiness` (`Checker::infer_short_circuit`, `checker/operators.rs`) is
+  tested through `bool_conversion`, held in a slot its `__bool__` reads when
+  that is a call (`hold_tested_operand`), and a memory-only result goes
+  through a result slot (`short_circuit_into_slot`). Both conditionals take
+  their arms' common type from `Checker::coerce_to_each_other`, upstream's
+  `coerceTypesToEachOther`, and a compile-time `and`/`or` folds through
+  `Checker::short_circuit_value` (`checker/constraints.rs`). A conditional the checker marked
   `SemanticAdjustment::ComptimeConditional` (`Node::comptime_conditional`;
   `Checker::parameter_valued_condition`, `checker/comptime_validation.rs`,
   decides it as upstream's `getIfPValue`) builds a `ComptimeIf` on its

@@ -1,6 +1,7 @@
 //! Operator, SIMD-construction, and pointer-construction type inference
 //! for the checker. Extracted from `checker.rs`; see `docs/symbol-map.md`.
 
+use super::traits::RegisterPassability;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_checked::checked::{CheckedCompareLink, SemanticAdjustment};
@@ -118,6 +119,9 @@ impl Checker {
             NotIn, Or, Pow, Shl, Shr, Sub,
         };
 
+        if matches!(op, And | Or) {
+            return self.infer_short_circuit(span, op, left, right);
+        }
         // An element of an unbound pack takes its operators from its bounds.
         let lt = self.infer(left)?;
         let lt = self.opaque_element(&lt).unwrap_or(lt);
@@ -296,8 +300,6 @@ impl Checker {
             }
         }
         let result = match op {
-            // Short-circuiting boolean logic requires `Bool` operands.
-            And | Or if lt == TyKind::Bool && rt == TyKind::Bool => Some(Ty::bool()),
             // Upstream's `Bool.__and__`/`__or__`/`__xor__`: the eager `i1` op.
             BitAnd | BitOr | BitXor if lt == TyKind::Bool && rt == TyKind::Bool => Some(Ty::bool()),
             // `+` concatenates String, or adds numbers (result = common type).
@@ -364,6 +366,105 @@ impl Checker {
             return Ok(ty);
         }
         Err(bad_infix_operator(op, &lt, &rt))
+    }
+
+    /// The common type two values merging into one result take (a
+    /// conditional expression's arms, `and`/`or`'s operands), as upstream's
+    /// `coerceTypesToEachOther` finds it: their shared or numeric common
+    /// type, else the left's type when the right converts to it implicitly,
+    /// else the right's when the left does; nothing converts to a type
+    /// parameter it is not. Each value's conversion to it is
+    /// recorded at the value, a literal's materialization included. `None`
+    /// when neither converts.
+    pub(super) fn coerce_to_each_other(
+        &self,
+        left: &Expr,
+        lt: &Ty,
+        right: &Expr,
+        rt: &Ty,
+    ) -> Result<Option<Ty>, TypeError> {
+        if let Some(ty) = common_branch_ty(lt, rt) {
+            for (value, value_ty) in [(left, lt), (right, rt)] {
+                if *value_ty != ty {
+                    self.record_literal_materializations(value, value_ty, &ty)?;
+                }
+            }
+            return Ok(Some(ty));
+        }
+        // A type parameter is rigid in its body: a value converts to it
+        // only by being of it, which the common type above covers.
+        let converts = |value: &Expr, from: &Ty, to: &Ty| {
+            if matches!(to.kind(), TyKind::Param { .. }) {
+                Ok(false)
+            } else {
+                self.record_implicit_conversion(value, from, to)
+            }
+        };
+        if converts(right, rt, lt)? {
+            return Ok(Some(lt.clone()));
+        }
+        Ok(converts(left, lt, rt)?.then(|| rt.clone()))
+    }
+
+    /// Type `left and right` or `left or right` as upstream's `emitAndOr`
+    /// does: the left operand is tested through its `Bool(x)` truthiness,
+    /// a `Truthiness` mark on it where it is not a `Bool`, and the result is
+    /// the operand the test selects. Operands with a common type
+    /// ([`Self::coerce_to_each_other`]) yield that type (`n or 2` is an
+    /// `Int`), each place operand copied into the result; operands with
+    /// none are each converted to `Bool`, which is then the result, and
+    /// read in place for the conversion. A left operand converting to the
+    /// right's type is tested after its conversion here, where upstream
+    /// converts it in its arm, so only a literal's materialization is
+    /// accepted.
+    fn infer_short_circuit(
+        &self,
+        span: Option<SourceSpan>,
+        op: InfixOp,
+        left: &Expr,
+        right: &Expr,
+    ) -> Result<Ty, TypeError> {
+        let lt = self.infer(left)?;
+        let rt = self.infer(right)?;
+        if lt == TyKind::Bool && rt == TyKind::Bool {
+            return Ok(Ty::bool());
+        }
+        let Some(span) = span else {
+            return Err(bad_infix_operator(op, &lt, &rt));
+        };
+        let context = format!("operand of '{}'", op.symbol());
+        let Some(ty) = self.coerce_to_each_other(left, &lt, right, &rt)? else {
+            self.expect_bool(left, &context)?;
+            self.expect_bool(right, &context)?;
+            return Ok(Ty::bool());
+        };
+        if ty != lt && !matches!(lt.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) {
+            return Err(TypeError::Unsupported(format!(
+                "a left operand of '{}' converted to the right operand's type '{ty}' is \
+                 not supported yet (roadmap R1602)",
+                op.symbol()
+            )));
+        }
+        if self.condition_truthiness(&lt, &context)? {
+            self.record_at(left.source_span()).truthiness_condition = true;
+        }
+        for (operand, operand_ty) in [(left, &lt), (right, &rt)] {
+            if self.designates_place(operand) && self.is_copyable(operand_ty) {
+                if !self.is_implicitly_copyable(operand_ty) {
+                    return Err(TypeError::ImplicitCopy {
+                        ty: operand_ty.to_string(),
+                        context,
+                        transferable: true,
+                        copyable: true,
+                    });
+                }
+                self.record_at(operand.source_span()).copy_place_value_use = true;
+            }
+        }
+        if self.register_passability(&ty) == RegisterPassability::Proven {
+            self.record_at(span).register_passable_result = true;
+        }
+        Ok(ty)
     }
 
     /// The type a right `SIMDLength` operand takes beside a left `lt`:

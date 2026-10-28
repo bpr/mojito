@@ -1755,6 +1755,14 @@ impl Checker {
                     }
                 }
             }
+            // `a and b` / `a or b` over a non-`Bool` left operand: the
+            // operand `Bool(a)` selects ([`Self::short_circuit_value`]).
+            ExprKind::Infix(op @ (InfixOp::And | InfixOp::Or), left, right)
+                if let Ok(left) = build(left)
+                    && *left.meta() != MetaTy::bool() =>
+            {
+                self.short_circuit_value(*op, &left, &build(right)?)
+            }
             ExprKind::Infix(op, left, right) => self.infix_value(expr, *op, left, right, recording),
             _ => self.build_ct_rest(expr, recording),
         }
@@ -1874,6 +1882,94 @@ impl Checker {
                 .infix(op, &left_built, &right_built)
                 .map_err(param_error),
         }
+    }
+
+    /// The compile-time value of `left and right` or `left or right`, as
+    /// upstream folds the operator to `POC::Cond` on `Bool(left)`: `and`
+    /// selects `right` when `left` is true and `left` otherwise, `or` the
+    /// reverse. Operands of one type, or a literal beside the machine type
+    /// it materializes to, give that type; closed operands of any other
+    /// pair give the selected operand's `Bool`. A symbolic selection is the
+    /// `Cond` over an integer or `Bool` left operand's truth.
+    fn short_circuit_value(
+        &self,
+        op: InfixOp,
+        left: &ParamExpr,
+        right: &ParamExpr,
+    ) -> Result<ParamExpr, TypeError> {
+        let (left_ty, right_ty) = (left.meta().as_value(), right.meta().as_value());
+        let common = if left_ty == right_ty {
+            left_ty
+        } else {
+            [left_ty, right_ty]
+                .into_iter()
+                .flatten()
+                .find(|ty| !matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral))
+        };
+        let materialized = |value: &ParamExpr| match (value.as_constant(), common) {
+            (Some(constant), Some(ty)) => constant.clone().materialize_as(ty),
+            _ => None,
+        };
+        if let (Some(lhs), Some(rhs)) = (left.as_constant(), right.as_constant()) {
+            let truth = |value: &CtValue| {
+                ct_truth(value).ok_or_else(|| TypeError::TypeMismatch {
+                    expected: "Bool".to_string(),
+                    found: value.to_string(),
+                    context: format!("compile-time operand of '{}'", op.symbol()),
+                })
+            };
+            let take_right = truth(lhs)? == (op == InfixOp::And);
+            let (selected, value) = if take_right {
+                (rhs, right)
+            } else {
+                (lhs, left)
+            };
+            return match materialized(value) {
+                Some(value) => self.ct_param(value),
+                None => self.ct_param(CtValue::Bool(truth(selected)?)),
+            };
+        }
+        let unsupported = || {
+            TypeError::Unsupported(format!(
+                "'{}' over a symbolic parameter value of another type than its \
+                 other operand, or neither an integer nor a Bool, is not supported \
+                 yet (roadmap R1604)",
+                op.symbol()
+            ))
+        };
+        let operand = |value: &ParamExpr| -> Result<ParamExpr, TypeError> {
+            match value.as_constant() {
+                None if value.meta().as_value() == common => Ok(value.clone()),
+                None => Err(unsupported()),
+                Some(_) => materialized(value)
+                    .ok_or_else(unsupported)
+                    .and_then(|value| self.ct_param(value)),
+            }
+        };
+        let (left, right) = (operand(left)?, operand(right)?);
+        let condition = match common.map(Ty::kind) {
+            Some(TyKind::Bool) => left.clone(),
+            Some(TyKind::INT | TyKind::UINT | TyKind::Index) => {
+                let zero = CtValue::IntLiteral(0.into())
+                    .materialize_as(common.ok_or_else(unsupported)?)
+                    .ok_or_else(unsupported)?;
+                self.param_context
+                    .infix(InfixOp::Ne, &left, &self.ct_param(zero)?)
+                    .map_err(param_error)?
+            }
+            _ => return Err(unsupported()),
+        };
+        let (then, orelse) = if op == InfixOp::And {
+            (right, left)
+        } else {
+            (left, right)
+        };
+        self.param_context
+            .op(
+                mojito_types::param_expr::ParamOp::Cond,
+                &[condition, then, orelse],
+            )
+            .map_err(param_error)
     }
 
     /// The proposition a comparison `expr` of `left` and `right` states
@@ -5309,6 +5405,21 @@ fn module_alias_spelling(value: &Expr) -> Option<SourceType> {
 }
 
 /// Whether a generator's body names no parameter but its own.
+/// The truth `Bool(value)` gives a closed compile-time scalar or string:
+/// a nonzero number, a nonempty string. `None` for any other value.
+fn ct_truth(value: &CtValue) -> Option<bool> {
+    Some(match value {
+        CtValue::Bool(value) => *value,
+        CtValue::Int(value) | CtValue::Index(value) => *value != 0,
+        CtValue::UInt(value) => *value != 0,
+        CtValue::Float(bits) => f64::from_bits(*bits) != 0.0,
+        CtValue::IntLiteral(value) => !value.is_zero(),
+        CtValue::FloatLiteral(value) => !value.is_zero(),
+        CtValue::Str(value) => !value.is_empty(),
+        _ => return None,
+    })
+}
+
 fn generator_is_closed(generator: &mojito_types::ct::GeneratorValue) -> bool {
     let own: Vec<&mojito_types::param_expr::ParamId> =
         generator.params.iter().map(ParamDecl::id).collect();

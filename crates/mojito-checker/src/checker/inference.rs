@@ -1529,11 +1529,13 @@ impl Checker {
                         self.record_at(arm.source_span()).copy_place_value_use = true;
                     }
                 }
-                let ty = common_branch_ty(&tt, &et).ok_or_else(|| TypeError::TypeMismatch {
-                    expected: tt.to_string(),
-                    found: et.to_string(),
-                    context: "conditional-expression branches".to_string(),
-                })?;
+                let ty = self
+                    .coerce_to_each_other(then_branch, &tt, else_branch, &et)?
+                    .ok_or_else(|| TypeError::TypeMismatch {
+                        expected: tt.to_string(),
+                        found: et.to_string(),
+                        context: "conditional-expression branches".to_string(),
+                    })?;
                 // A result only possibly register-passable (a parameter, a
                 // conditional conformance) is stored, as upstream's
                 // parse-time `isRegisterPassable` does in a generator.

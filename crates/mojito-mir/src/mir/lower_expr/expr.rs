@@ -774,7 +774,7 @@ impl<'a> Flatten<'a> {
             CheckedOp::Prefix(op, value) => self.prefix_op(node, *op, operand(value)?),
             // `and`/`or` short-circuit — lowered to CFG blocks, not an eager BinOp.
             CheckedOp::Infix(op @ (InfixOp::And | InfixOp::Or), a, b) => {
-                self.short_circuit(*op, operand(a)?, operand(b)?, node.location())
+                self.short_circuit(node, *op, operand(a)?, operand(b)?)
             }
             // A checked nominal membership operation (a `SIMD`'s too) is an ordinary borrowed
             // `container.__contains__(value)` call.  Keeping it as a value-only

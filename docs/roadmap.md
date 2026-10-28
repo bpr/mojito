@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1602**.
+Next free ID: **R1605**.
 
 ## Ordered Work
 
@@ -1286,6 +1286,26 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: the shape above, as an `assets/ok` drop-order fixture.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R1603 A conditional's register-passable result that needs
+  destroying is dropped before its use**
+
+  `var p = Optional[Int](1) if c else Optional[Int](4)` fails with "invalid
+  checked program: … var.store ends owned register, which some path
+  reaching it has ended", where the pin prints the value.
+  - Drop elaboration (`mojito-analysis` `drops.rs`) places a `drop.reg`
+    of the `if`'s result register right after the `if`, ahead of the
+    `var.store` that consumes it, so the store ends a dead register.
+  - Only a result the checker proved register-passable is yielded as the
+    `if`'s value (`RegisterPassableResult`); a memory-only one goes
+    through a result slot and runs.
+  - Probe: a user `RegisterPassable` struct with a printing destructor,
+    `R(1) if c else R(2)`, fails the same way after `sroa`.
+  - Probe: `o or Optional[Int](4)` over `o: Optional[Int]` (R97's
+    `and`/`or` yield the same `if` result).
+  - Found while landing R97 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R473 A discard `_ = e` binds its value into a slot, so a place is
   copied or moved into it**
@@ -3787,25 +3807,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R97 `and`/`or` over a non-`Bool` operand is rejected**
+- [ ] **R1602 An `and`/`or` left operand that converts to the right
+  operand's type is rejected, where upstream tests it before converting it**
 
-  Problem: `n or 2` over `n: Int` prints `2` at the pin, and `if n and True:`
-  runs; Mojito rejects both with "operator 'or' is not defined for Int and
-  Int".
-  - The checker types `and`/`or` only over two `Bool` operands; a numeric
-    scalar or a `Boolable` struct never reaches the `Bool(x)` truthiness
-    conversion a bare condition now takes.
-  - Same-typed operands yield that type at the pin (Python's value-producing
-    `or`), so the fix is more than a condition mark.
-  - Found while accepting a numeric condition (2026-10-03).
-  - Probe: `m.reduce_and()` over a `bool` vector is `Scalar[DType.bool]`
-    at the pin (`SIMD[dtype, size_out]`), and Mojito types it `Bool` so
-    that `m.reduce_or() and not m.reduce_and()` checks: its MIR casts the
-    `simd.reduce` lane to `Bool`. Once `and`/`or` take the lane, the
-    method takes upstream's type and `size_out`.
-  - Probe: `v and True` and `v or False` over a 4-lane `int32` vector print
-    `True True` at the pin, which converts the vector through its declared
-    `__bool__` (R1550); Mojito rejects both.
+  `n or W(raw=50)`, with `n = 2` an `Int` and `W` taking an `@implicit`
+  `Int` constructor, prints `W20` at the pin; Mojito rejects it ("a left
+  operand of 'or' converted to the right operand's type").
+  - Upstream's `emitAndOr` tests the left operand's own `Bool`, then
+    converts it to the common type in its arm; Mojito's
+    `Flatten::expr_with_adjustments` applies a recorded conversion where
+    the operand is evaluated, so the test would read the converted value
+    (`W.__bool__`, giving `W50`).
+  - Fix: evaluate the left source unconverted (`expr_unconverted`), test
+    it, and apply its recorded conversion in its arm
+    (`Flatten::short_circuit`); drop the checker's rejection in
+    `Checker::infer_short_circuit`.
+  - Probe: `Int32(0) or v` and `Int32(2) or v` over a 4-lane `int32`
+    vector print `[1, 0, 3, 4] [2, 2, 2, 2]` at the pin, splatting the
+    tested scalar; Mojito rejects both the same way.
+  - Found while landing R97 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4242,6 +4262,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     R576 (natively, such a module constant fails IR verification) are the
     same annotation's other symptoms; one fix may close all three.
   - Found while planning R1552 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1604 A symbolic compile-time `and`/`or` takes only integer or
+  `Bool` operands of one type**
+
+  `def h[F: Float64, G: Float64 = F or 1.5]()` and `def k[N: Int, B: Bool
+  = N or False]()` print `1.5 2.0 False True` for `h[0.0]()`, `h[2.0]()`,
+  `k[0]()`, and `k[3]()` at the pin; Mojito rejects both ("over a
+  symbolic parameter value of another type").
+  - Upstream folds the operator to `POC::Cond` on the left operand's
+    `Bool`, after converting both operands to a common type or each to
+    `Bool`.
+  - `Checker::short_circuit_value` builds the test as `x != 0` over an
+    integer, so a float's test, and the `Bool` of each operand when the
+    types differ, have no symbolic form yet.
+  - Fix: build the symbolic test as the `Bool(x)` application the
+    elaborator folds per instance, as a closed operand's `ct_truth` does.
+  - Found while landing R97 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10279,6 +10318,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `__bool__`, `__int__`, and `__float__` are checker rules
     (`method_calls/mc_infer.rs`) over the numeric scalars, where upstream's
     `Bool.__init__[T: Boolable]` calls `StringLiteral.__bool__`.
+  - Probe: `if "":` and `"" or s` over a `String` are rejected ("expected
+    Bool, found StringLiteral"), where the pin tests the literal through
+    its `__bool__`: `Checker::condition_truthiness` admits a numeric scalar
+    or a struct declaring `__bool__`, and `StringLiteral` is neither here.
   - Probe (from R1109): `Int64(C[4](1))` runs `C.__int__` from its type
     through `simd.make` (`mir::TYPE_REACHED_MEMBERS`), so an `__int__`
     ignoring `self` keeps one instance per `n`, where `Int(C[n](1))`

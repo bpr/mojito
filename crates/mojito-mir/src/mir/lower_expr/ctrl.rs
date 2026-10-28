@@ -103,29 +103,60 @@ impl<'a> Flatten<'a> {
         dest
     }
 
-    /// Lower `a and b` / `a or b` as upstream's `hlcf.if` on `a`: for `and`
-    /// the then arm evaluates and yields `b` and the else arm yields `a`;
-    /// `or` swaps the arms. The right operand is evaluated only when needed,
-    /// which matters for observable side effects and for ownership, where a
-    /// moved operand on the not-taken side must not count as moved.
+    /// Lower `a and b` / `a or b` as upstream's `hlcf.if` on `a`'s truth:
+    /// for `and` the then arm evaluates and yields `b` and the else arm
+    /// yields `a`; `or` swaps the arms. The right operand is evaluated only
+    /// when needed, which matters for observable side effects and for
+    /// ownership, where a moved operand on the not-taken side must not
+    /// count as moved. A left operand the checker marked `Truthiness` is
+    /// tested through `Bool(a)`: when the result is `Bool` that conversion
+    /// is what its arm yields, and the right arm converts `b` likewise.
+    /// Otherwise the arm yields `a`'s own value: a scalar's directly, and
+    /// any other's from the slot it is held in for its `__bool__` to read
+    /// ([`Self::hold_tested_operand`]), moved out in its arm, or into a
+    /// result slot when the result is not register-passable.
     pub(in crate::mir) fn short_circuit(
         &mut self,
+        node: Node<'a>,
         op: InfixOp,
         a: Node<'a>,
         b: Node<'a>,
-        span: SourceSpan,
     ) -> Reg {
-        let ra = self.expr(a);
-        let rhs = self.region(|this| MirTerm::Yield(vec![this.expr(b)]));
-        let lhs = self.region(|_| MirTerm::Yield(vec![ra]));
-        let (then, orelse) = match op {
-            InfixOp::And => (rhs, lhs),
-            _ => (lhs, rhs),
+        let value_result = a
+            .adjustments()
+            .iter()
+            .any(|adjustment| matches!(adjustment, SemanticAdjustment::Truthiness))
+            && !node.ty().is_some_and(|ty| ty == TyKind::Bool);
+        if value_result && !node.register_passable_result() {
+            return self.short_circuit_into_slot(node, op, a, b);
+        }
+        let (cond, lhs) = if value_result {
+            let ra = self.expr(a);
+            let ty = self.f.reg_types.get(&ra.0).cloned().or_else(|| a.ty());
+            if ty
+                .as_ref()
+                .is_some_and(|ty| ScalarConversion::Bool.casts_from(ty))
+            {
+                let cond = self.bool_conversion(a.location(), ra, ty.as_ref());
+                (cond, self.region(|_| MirTerm::Yield(vec![ra])))
+            } else {
+                let (held, cond) = self.hold_tested_operand(a, ra, ty.as_ref());
+                let lhs = self.region(|this| {
+                    let moved = this.move_out_held(a, held, ty);
+                    MirTerm::Yield(vec![moved])
+                });
+                (cond, lhs)
+            }
+        } else {
+            let ra = self.condition_value(a);
+            (ra, self.region(|_| MirTerm::Yield(vec![ra])))
         };
-        let d = self.fresh(span, None);
+        let rhs = self.region(|this| MirTerm::Yield(vec![this.condition_value(b)]));
+        let (then, orelse) = short_circuit_arms(op, lhs, rhs);
+        let d = self.fresh(node.location(), None);
         self.emit(MirInstr::If {
             results: vec![d],
-            cond: ra,
+            cond,
             then,
             elifs: Vec::new(),
             else_args: Vec::new(),
@@ -213,6 +244,102 @@ impl<'a> Flatten<'a> {
         } else {
             ArmTest::Run(self.condition_value(cond))
         }
+    }
+
+    /// Lower `a and b` / `a or b` whose result is `a`'s type and not
+    /// register-passable, as upstream emits a memory-only result: `a` is
+    /// held for its `Bool(a)` test ([`Self::hold_tested_operand`]), and
+    /// each arm moves its operand into the result slot, which the consumer
+    /// receives as a forward.
+    fn short_circuit_into_slot(
+        &mut self,
+        node: Node<'a>,
+        op: InfixOp,
+        a: Node<'a>,
+        b: Node<'a>,
+    ) -> Reg {
+        let ra = self.expr(a);
+        let ty = self.f.reg_types.get(&ra.0).cloned().or_else(|| a.ty());
+        let (held, cond) = self.hold_tested_operand(a, ra, ty.as_ref());
+        let result = self.fresh_var();
+        let define = |this: &mut Self, src| {
+            this.emit(MirInstr::DefVar {
+                var: result,
+                src,
+                binding_ty: None,
+                in_place: false,
+            });
+            MirTerm::Yield(Vec::new())
+        };
+        let rhs = self.region(|this| {
+            let src = this.expr(b);
+            let src = if b.transfer_operand().is_some() {
+                src
+            } else {
+                this.move_out_of_temporary(b, src)
+            };
+            define(this, src)
+        });
+        let lhs = self.region(|this| {
+            let moved = this.move_out_held(a, held, ty);
+            define(this, moved)
+        });
+        let (then, orelse) = short_circuit_arms(op, lhs, rhs);
+        self.emit(MirInstr::If {
+            results: Vec::new(),
+            cond,
+            then,
+            elifs: Vec::new(),
+            else_args: Vec::new(),
+            orelse,
+        });
+        let d = self.fresh(node.location(), None);
+        self.emit(MirInstr::UseVar {
+            dest: d,
+            var: result,
+            mode: UseMode::Forward,
+            constructor: None,
+        });
+        d
+    }
+
+    /// Hold `value`, the owned value of `a`'s operand of type `ty`, in a
+    /// slot of its own and read it there for its `Bool(a)` test, as
+    /// upstream decays a non-trivial left operand of `and`/`or` to memory
+    /// so the test borrows it. Returns the slot and the test's `Bool`.
+    fn hold_tested_operand(&mut self, a: Node<'a>, value: Reg, ty: Option<&Ty>) -> (VarId, Reg) {
+        let held = self.fresh_var();
+        if let Some(ty) = ty {
+            self.var_types.insert(held, ty.clone());
+        }
+        self.emit(MirInstr::DefVar {
+            var: held,
+            src: value,
+            binding_ty: ty.cloned(),
+            in_place: false,
+        });
+        let read = self.fresh_typed(
+            a.location(),
+            Some(held),
+            ty.cloned().unwrap_or_else(Ty::error),
+        );
+        self.emit(MirInstr::LoadPlace {
+            dest: read,
+            place: MirPlace::root(held, ty.cloned()),
+        });
+        (held, self.bool_conversion(a.location(), read, ty))
+    }
+
+    /// Move `a`'s value out of `held`, the slot holding it, of type `ty`.
+    fn move_out_held(&mut self, a: Node<'a>, held: VarId, ty: Option<Ty>) -> Reg {
+        let moved = self.fresh_typed(a.location(), Some(held), ty.unwrap_or_else(Ty::error));
+        self.emit(MirInstr::UseVar {
+            dest: moved,
+            var: held,
+            mode: UseMode::Move,
+            constructor: None,
+        });
+        moved
     }
 
     /// Hold `src`, the owned temporary `value` evaluated to, in a slot of
@@ -1055,5 +1182,15 @@ fn is_field_chain(node: Node<'_>) -> bool {
         CheckedOp::Identifier(_) => true,
         CheckedOp::Member { .. } => node.member_object().is_some_and(is_field_chain),
         _ => false,
+    }
+}
+
+/// The then and else arms of `a and b` / `a or b`, from the arm yielding
+/// `a` and the one evaluating `b`: `and` evaluates `b` when `a` is true,
+/// `or` when it is false.
+const fn short_circuit_arms<T>(op: InfixOp, lhs: T, rhs: T) -> (T, T) {
+    match op {
+        InfixOp::And => (rhs, lhs),
+        _ => (lhs, rhs),
     }
 }

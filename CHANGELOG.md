@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `and`/`or` take operands that are not both `Bool`, as upstream's
+  `emitAndOr` (R97): the left operand is tested through `Bool(x)` and the
+  result is the operand the test selects, so `n or 2` over an `Int` prints
+  `2`, `s or "default"` is a `String`, `if n and True:` runs, `v and True`
+  over a vector is its `Bool`, and a pair with no common type (`n or
+  True`) yields `Bool`, where the checker stopped with "operator 'or' is
+  not defined". A non-register-passable left operand is held where its
+  `__bool__` reads it and the selected operand moves into the result once.
+  A compile-time `and`/`or` folds the same selection (`comptime K = 0 or
+  3`, `M: Int = N or 4`). A conditional expression's arms now take their
+  common type as upstream's `coerceTypesToEachOther`, so a literal arm
+  materializes (`f if c else 1.5` over a `Float64` printed `3/2`) and an
+  arm may convert implicitly to the other's type.
 - `max` and `min` are upstream's `std.math` overloads, a `SIMD` pair and
   a `Comparable` value followed by any number of others, exported from the
   prelude, and `SIMD.clamp` and `std.math.clamp` are upstream's library

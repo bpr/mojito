@@ -28,6 +28,8 @@ assets/ok/always_inline_nodebug_tuple_members.mojo	-	ineligible	no-scalar-entry-
 assets/ok/always_inline_nodebug_type_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_result_runs_no_move.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_small_calls.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/and_or_operand_lifecycle.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/and_or_value_operands.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/application_where_clause.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/arithmetic.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/array_comparable.mojo	-	ineligible	no-scalar-entry-shape
