@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1546**.
+Next free ID: **R1548**.
 
 ## Ordered Work
 
@@ -3313,6 +3313,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `k[dt: DType, s: String](x: Scalar[dt])`, and `z[T=P](Int8(1))`.
   - Once any parameter is spelled, the checker solves none of the rest from
     the arguments.
+  - Probe: the same holds for infer-only binders before a spelled one:
+    `rotate_left[1](v)` over `def rotate_left[dtype: DType, size:
+    SIMDLength, //, shift: Int](v: SIMD[dtype, size])` prints the rotation
+    at the pin and stops with "cannot infer type parameter 'dtype'".
+    `assets/ok/llvm_intrinsic_shuffles.mojo` spells every parameter instead.
   - Found while landing R477 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6551,6 +6556,25 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
+- [ ] **R1546 `__is_run_in_comptime_interpreter` is undefined**
+
+  Upstream's builtin is `True` while the comptime interpreter runs a body
+  and `False` in the compiled program, and Mojito stops with "Undefined
+  variable '__is_run_in_comptime_interpreter'".
+  - Mojito's comptime interpreter is the VM under CTFE fuel
+    (`Vm::ctfe_fuel`), so the VM can answer it per run, and Pliron lowers it
+    to `false`. No pass may fold it before the backend reads it.
+  - Probe: upstream's `math.iota` takes a `comptime for` branch in the
+    comptime interpreter, which cannot fold `llvm.stepvector`, so `comptime
+    c = iota[DType.int16, 4](3)` prints `[3, 4, 5, 6]` at the pin. Without
+    the branch both reject it ("LLVM could not constant fold intrinsic:
+    llvm.stepvector").
+  - Probe: upstream's `SIMD.slice`, `debug_assert`, `io.mojo`'s write
+    paths, `string_span.mojo`, and `_swisstable.mojo` read it.
+  - Found while landing R1519 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -9710,25 +9734,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1519 The subvector and shuffle LLVM intrinsics are outside
-  Mojito's intrinsic table**
+- [ ] **R1547 `_RegisterPackType` is undeclared, so
+  `llvm.vector.deinterleave2` has no result type**
 
-  `llvm_intrinsic` rejects `llvm.vector.extract`, `llvm.vector.insert`,
-  `llvm.vector.splice.left`/`right`, `llvm.vector.interleave2`,
-  `llvm.vector.deinterleave2`, and `llvm.stepvector`, which the pin calls.
-  - The table (`mojito_types::llvm_intrinsic::LlvmIntrinsic`) types an
-    intrinsic as elementwise or a reduction over one overloaded type.
-  - These take `immarg` index operands, overload on two types (a result
-    width that differs from the operand's), and `deinterleave2` returns a
-    struct of two vectors.
-  - The VM lane rule and Pliron's `lower_llvm_intrinsic` mangling both need
-    those shapes.
-  - Probe: upstream's `SIMD.slice`, `insert`, `interleave`, `deinterleave`,
-    `rotate_left`/`right`, and `shift_left`/`right` (`std/simd.mojo`), and
-    `math.iota` (`stepvector`).
-  - Found while landing R1394 (2026-10-27).
+  Upstream's `SIMD.deinterleave` calls `llvm.vector.deinterleave2` typed
+  `_RegisterPackType[SIMD[dt, n / 2], SIMD[dt, n / 2]]`, which Mojito
+  rejects ("module 'std.sys.intrinsics' has no declaration named
+  '_RegisterPackType'").
+  - Upstream's struct holds
+    ``__mlir_type[`!kgen.struct<`, ~Self.Ts.values, ` isParamPack>`]`` and
+    reads an element with ``__mlir_op.`kgen.struct.extract`[index=…]``.
+    Mojito spells neither (`mlir_applied_type`, `checker/method_calls/mlir_op.rs`).
+  - `mojito_types::llvm_intrinsic::LlvmIntrinsic` has no
+    `deinterleave2`: its result is a struct of two vectors, which
+    `signature_error`, the VM's lane rule (`runtime::llvm_intrinsic`), and
+    Pliron's `lower_llvm_intrinsic` all type as one `SIMD` vector today.
+  - Probe: `de(v)` over `def de(v: SIMD[DType.int32, 8])` returning
+    `res[0], res[1]` of that call prints `[0, 2, 4, 6] [1, 3, 5, 7]` at the
+    pin. Its `comptime` call fails there with "LLVM intrinsic has unknown
+    result type", so `compile_time_error` lists it too.
+  - Found while landing R1519 (2026-10-28).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1520 `!kgen.simd<n, address>` has no pointer lane**
 
@@ -9847,12 +9874,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `pop.simd.reduce_*` under `Bool(mlir_value=...)` as the reduction.
   - Upstream's method `reduce_and`/`reduce_or` bodies (and `reduce_max`
     and `reduce_min` off x86) are `llvm_intrinsic` calls of
-    `llvm.vector.reduce.*`, which run since R1394. Its subvector and
-    shuffle bodies need R1519.
+    `llvm.vector.reduce.*`, which run since R1394. Its `slice`, `insert`,
+    `interleave`, rotation, and shift bodies call intrinsics that run since
+    R1519. `deinterleave` needs `_RegisterPackType` (R1547), and `slice`
+    reads `__is_run_in_comptime_interpreter` (R1546).
+  - Those bodies also read `CurrentPlugin.lowers_subvector_intrinsics`
+    (`std/_plugin`), which is `True` on the CPU plugin. The port bundles
+    the CPU plugin's answer.
   - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R1522, R1526, R1539 (the
     length type), R382 (the width slot), R185 and R186 (so the port is
-    upstream's bodies with no leniency), R58, R1516, R1517, R1518, and
-    R1519.
+    upstream's bodies with no leniency), R58, R1516, R1517, R1518, R1519,
+    R1546, and R1547.
   - Model: Fable, Planned.
 
 - [ ] **R1398 The checker, VM, and Pliron keep `SIMD` member rules no

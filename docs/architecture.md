@@ -7058,6 +7058,15 @@ last two runs are not ported. Every pass reads the structured instance the
 elaborator emits; the VM runs it as it stands, and Pliron lowers it at its
 entry.
 
+After the pipeline and the last `eliminate-dead-symbols`, the driver
+refuses what upstream's LLVM translation refuses in the folded program
+(`SpecializedProgram::translated`, `mir::verify::llvm_translation_findings`,
+R1519): an `llvm_intrinsic` call whose `immarg` index no `const` defines,
+or whose index LLVM's verifier rejects. The index reaches the call as an
+element of the intrinsic's loaded pack, so it folds only because `sroa`
+splits a heterogeneous collector of trivial elements and `sccp` folds
+`Int64(n)`. With the pipeline off, nothing folds, and the check is skipped.
+
 `automatic-inline` (`analysis::AUTOMATIC_INLINE`,
 `analysis/automatic_inline.rs`, R1271) is upstream's `AutomaticInline`
 (`lib/Transforms/AutomaticInline.cpp`), a call-graph pass over the

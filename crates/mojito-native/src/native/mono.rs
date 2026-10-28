@@ -90,6 +90,28 @@ impl SpecializedProgram {
         })
     }
 
+    /// Refuse what LLVM translation rejects in the folded program
+    /// ([`mojito_mir::mir::verify::llvm_translation_findings`]), the first
+    /// finding of the first function holding one: the pin's verifier
+    /// rejects it once its pipeline has folded every instance, so neither
+    /// backend runs a call the pin cannot compile.
+    pub fn translated(self) -> Result<Self, MonoError> {
+        let finding = self.program.functions.iter().find_map(|(name, function)| {
+            mojito_mir::mir::verify::llvm_translation_findings(function)
+                .into_iter()
+                .next()
+                .map(|finding| (name.clone(), finding))
+        });
+        match finding {
+            None => Ok(self),
+            Some((function, construct)) => Err(MonoError {
+                kind: MonoErrorKind::Instantiation,
+                function: Some(function),
+                construct,
+            }),
+        }
+    }
+
     /// Run `eliminate`, a symbol pass that removes functions and
     /// declarations, those its roots do not reach or those identical to a
     /// function that stays, over the concrete program, rooted at `exports`

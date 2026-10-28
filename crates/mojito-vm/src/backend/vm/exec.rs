@@ -360,11 +360,20 @@ impl VmBackend {
                         "the LLVM intrinsic `{intrinsic:?}` is outside the subset"
                     ))
                 })?;
+                if self.ctfe_fuel.is_some()
+                    && let Some(reason) = called.compile_time_error()
+                {
+                    return Err(RuntimeError::Unsupported(reason));
+                }
                 let operands: Vec<Value> = args
                     .iter()
                     .map(|operand| regs[operand.0 as usize].clone())
                     .collect();
-                regs[dest.0 as usize] = crate::runtime::llvm_intrinsic(called, &operands)?;
+                regs[dest.0 as usize] = crate::runtime::llvm_intrinsic(
+                    called,
+                    prog.mir.functions[function].1.reg_types.get(&dest.0),
+                    &operands,
+                )?;
             }
             MirInstr::UseVar {
                 dest,

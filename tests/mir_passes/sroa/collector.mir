@@ -1,0 +1,47 @@
+mojito-mir 1.127
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+  ],
+  functions: [
+      fn {
+        name: lanes,
+        registers: 7,
+        vars: 2,
+        var_names: [args, loaded_pack],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: tuple([simd { dtype: int32, width: 8 }, simd { dtype: int64, width: 1 }]) }, var_type { var: $v1, type: tuple([simd { dtype: int32, width: 8 }, simd { dtype: int64, width: 1 }]) }],
+        return_type: present(simd { dtype: int32, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: simd { dtype: int64, width: 1 } }, reg_type { reg: %r1, type: simd { dtype: int32, width: 8 } }, reg_type { reg: %r2, type: tuple([simd { dtype: int32, width: 8 }, simd { dtype: int64, width: 1 }]) }, reg_type { reg: %r3, type: tuple([simd { dtype: int32, width: 8 }, simd { dtype: int64, width: 1 }]) }, reg_type { reg: %r4, type: simd { dtype: int32, width: 8 } }, reg_type { reg: %r5, type: simd { dtype: int64, width: 1 } }, reg_type { reg: %r6, type: simd { dtype: int32, width: 4 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: value(ct_simd { dtype: int64, lanes: [lane_int(4)] }) },
+              const { dest: %r1, value: value(ct_simd { dtype: int32, lanes: [lane_int(0), lane_int(1), lane_int(2), lane_int(3), lane_int(4), lane_int(5), lane_int(6), lane_int(7)] }) },
+              tuple.make { dest: %r2, elems: [%r1, %r0], element_types: present([simd { dtype: int32, width: 8 }, simd { dtype: int64, width: 1 }]) },
+              var.store { var: $v0, src: %r2, binding_type: present(tuple([simd { dtype: int32, width: 8 }, simd { dtype: int64, width: 1 }])), in_place: false },
+              var.use { dest: %r3, var: $v0, mode: copy },
+              var.store { var: $v1, src: %r3, binding_type: present(tuple([simd { dtype: int32, width: 8 }, simd { dtype: int64, width: 1 }])), in_place: false },
+              place.move { dest: %r4, place: place { root: $v1, root_type: present(tuple([simd { dtype: int32, width: 8 }, simd { dtype: int64, width: 1 }])), projections: [projection { op: const_index(0), type: simd { dtype: int32, width: 8 } }], type: present(simd { dtype: int32, width: 8 }), through: absent } },
+              place.move { dest: %r5, place: place { root: $v1, root_type: present(tuple([simd { dtype: int32, width: 8 }, simd { dtype: int64, width: 1 }])), projections: [projection { op: const_index(1), type: simd { dtype: int64, width: 1 } }], type: present(simd { dtype: int64, width: 1 }), through: absent } },
+              llvm.intrinsic { dest: %r6, intrinsic: value(ct_kgen_string("llvm.vector.extract")), has_side_effect: value(ct_bool(false)), args: [%r4, %r5], spread: absent }
+            ],
+            terminator: return { value: present(%r6) }
+          }
+        ]
+      }
+  ]
+}

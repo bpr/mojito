@@ -3267,7 +3267,8 @@ impl MirInstr {
     ///
     /// Only a built-in operator, a literal materialization to `Int`, `UInt`,
     /// `Float64`, or a one-lane SIMD type, a one-lane `simd.make` of a
-    /// literal, a wider `simd.make` with one element (upstream's splat
+    /// literal or of a host integer into an integer lane (`Int64(n)`, which
+    /// wraps), a wider `simd.make` with one element (upstream's splat
     /// `SIMD.__init__`) or one element per lane (upstream's
     /// `SIMD.__init__(*elems: Scalar[dtype])`), each a literal, a one-lane
     /// constant of its dtype, or a `Bool` into a `bool` vector, a built-in scalar conversion
@@ -3376,6 +3377,16 @@ impl MirInstr {
                         if width == 1 =>
                     {
                         literal.clone().materialize_as(reg_types.get(&dest.0)?)?
+                    }
+                    // A host integer into one integer lane wraps, as the
+                    // VM builds it (`Int64(n)` over a folded `n`).
+                    [value @ (CtValue::Int(_) | CtValue::UInt(_))]
+                        if width == 1 && dtype.is_integral() =>
+                    {
+                        CtValue::Simd {
+                            dtype: *dtype,
+                            lanes: vec![mojito_types::ct::CtLane::from_value(value, *dtype)?],
+                        }
                     }
                     _ if width == 1 => return None,
                     // A splat folds only the element a scalar construction
@@ -4971,6 +4982,12 @@ mod tests {
             Some(vec![CtLane::Bool(true); 4])
         );
         assert!(splat(Const::Bool(true), bool_ty, Dtype::Bool, 1).is_none());
+        let int = Ty::new(TyKind::INT.clone());
+        assert_eq!(
+            lanes_of(splat(Const::Int(300), int.clone(), Dtype::UInt8, 1)),
+            Some(vec![CtLane::Int(44)])
+        );
+        assert!(splat(Const::Int(3), int, Dtype::Float32, 1).is_none());
 
         let quad = canonical_simd_ty(Dtype::Int32, 4);
         let ones = Const::Value(CtValue::Simd {

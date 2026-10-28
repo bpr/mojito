@@ -46,6 +46,26 @@ pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<Str
     errors
 }
 
+/// What LLVM translation rejects in a folded function body.
+///
+/// The pin's verifier rejects it once upstream's pipeline has folded the
+/// instance: an LLVM intrinsic call whose `immarg` index
+/// ([`LlvmIntrinsic::index_is_immediate`]) no `const` defines ("immarg
+/// operand has non-immediate parameter"), or whose index
+/// [`LlvmIntrinsic::index_error`] refuses. Only a body the post-elaboration
+/// pipeline has folded answers it: before `sroa`, `mem-2-reg`, and `sccp`
+/// the index is still a pack element.
+///
+/// [`LlvmIntrinsic::index_is_immediate`]: mojito_types::llvm_intrinsic::LlvmIntrinsic::index_is_immediate
+/// [`LlvmIntrinsic::index_error`]: mojito_types::llvm_intrinsic::LlvmIntrinsic::index_error
+pub fn llvm_translation_findings(function: &MirFunction) -> Vec<String> {
+    let mut constants = HashMap::new();
+    integer_constants(&function.blocks, &mut constants);
+    let mut errors = Vec::new();
+    translation_blocks(function, &function.blocks, &constants, &mut errors);
+    errors
+}
+
 /// The program-wide concreteness findings: every function body, and every
 /// declaration the bodies are checked against. A declaration's availability
 /// clauses and conformance conditions are decided when it is instantiated,
@@ -510,6 +530,145 @@ fn reference_read(
     }
 }
 
+/// An LLVM intrinsic call as elaborated MIR carries it: its name and
+/// side-effect flag closed, the name in the table, no pack spread, and its
+/// register types a signature the intrinsic takes, as LLVM translation
+/// checks a reached call.
+fn concrete_llvm_intrinsic(
+    head: &str,
+    function: &MirFunction,
+    instruction: &MirInstr,
+    errors: &mut Vec<String>,
+) {
+    let MirInstr::CallLlvmIntrinsic {
+        dest,
+        intrinsic,
+        has_side_effect,
+        args,
+        spread,
+    } = instruction
+    else {
+        return;
+    };
+    if spread.is_some() {
+        errors.push(format!(
+            "{head} keeps an LLVM intrinsic call's pack spread in elaborated MIR"
+        ));
+    }
+    if !matches!(
+        has_side_effect,
+        Const::Value(mojito_types::ct::CtValue::Bool(_))
+    ) {
+        errors.push(format!(
+            "{head} keeps the side-effect flag `{has_side_effect:?}` of an LLVM intrinsic call in \
+             elaborated MIR"
+        ));
+    }
+    let Some(called) = intrinsic.llvm_intrinsic() else {
+        errors.push(format!(
+            "{head} calls `{intrinsic:?}`, which is no LLVM intrinsic Mojito computes"
+        ));
+        return;
+    };
+    let ty = |reg: &Reg| function.reg_types.get(&reg.0).cloned();
+    if let Some(result) = ty(dest)
+        && let Some(operands) = args.iter().map(ty).collect::<Option<Vec<_>>>()
+        && let Some(reason) = called.signature_error(&result, &operands)
+    {
+        errors.push(format!("{head}: {reason}"));
+    }
+}
+
+/// [`llvm_translation_findings`] over `blocks` and the regions they hold.
+fn translation_blocks(
+    function: &MirFunction,
+    blocks: &[MirBlock],
+    constants: &HashMap<u32, i128>,
+    errors: &mut Vec<String>,
+) {
+    for block in blocks {
+        for instruction in &block.instrs {
+            for region in crate::mir::instruction_regions(instruction) {
+                translation_blocks(function, region, constants, errors);
+            }
+            let MirInstr::CallLlvmIntrinsic {
+                dest,
+                intrinsic,
+                args,
+                ..
+            } = instruction
+            else {
+                continue;
+            };
+            let Some((called, position)) = intrinsic.llvm_intrinsic().and_then(|called| {
+                called
+                    .index_operand()
+                    .map(|(position, _)| (called, position))
+            }) else {
+                continue;
+            };
+            let head = format!("'{}'", called.name());
+            let Some(index) = args
+                .get(position)
+                .and_then(|reg| constants.get(&reg.0).copied())
+            else {
+                if called.index_is_immediate() {
+                    errors.push(format!(
+                        "{head}: immarg operand has non-immediate parameter"
+                    ));
+                }
+                continue;
+            };
+            let width = |reg: &Reg| {
+                function
+                    .reg_types
+                    .get(&reg.0)
+                    .and_then(|ty| mojito_types::types::simd_slots(ty.kind()))
+                    .and_then(|(_, width)| width.known())
+                    .and_then(|width| usize::try_from(width).ok())
+            };
+            let widths = args
+                .iter()
+                .enumerate()
+                .filter(|(operand, _)| *operand != position)
+                .map(|(_, reg)| width(reg))
+                .collect::<Option<Vec<_>>>();
+            if let (Some(result), Some(widths)) = (width(dest), widths)
+                && let Some(reason) = called.index_error(result, &widths, index)
+            {
+                errors.push(format!("{head}: {reason}"));
+            }
+        }
+    }
+}
+
+/// Record in `constants` the integer each `const` of one integer lane in
+/// `blocks` and the regions they hold defines, by register number.
+fn integer_constants(blocks: &[MirBlock], constants: &mut HashMap<u32, i128>) {
+    for block in blocks {
+        for instruction in &block.instrs {
+            for region in crate::mir::instruction_regions(instruction) {
+                integer_constants(region, constants);
+            }
+            let MirInstr::Const { dest, k } = instruction else {
+                continue;
+            };
+            let value = match k {
+                Const::Int(value) => Some(i128::from(*value)),
+                Const::Value(mojito_types::ct::CtValue::Simd { lanes, .. }) => {
+                    match lanes.as_slice() {
+                        [mojito_types::ct::CtLane::Int(value)] => Some(*value),
+                        _ => None,
+                    }
+                }
+                Const::Value(mojito_types::ct::CtValue::UInt(value)) => Some(i128::from(*value)),
+                _ => None,
+            };
+            constants.extend(value.map(|value| (dest.0, value)));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -648,54 +807,5 @@ mod tests {
             Ty::bool(),
         );
         assert!(concrete_function_findings("f", &function).is_empty());
-    }
-}
-
-/// An LLVM intrinsic call as elaborated MIR carries it: its name and
-/// side-effect flag closed, the name in the table, no pack spread, and its
-/// register types a signature the intrinsic takes, as LLVM translation
-/// checks a reached call.
-fn concrete_llvm_intrinsic(
-    head: &str,
-    function: &MirFunction,
-    instruction: &MirInstr,
-    errors: &mut Vec<String>,
-) {
-    let MirInstr::CallLlvmIntrinsic {
-        dest,
-        intrinsic,
-        has_side_effect,
-        args,
-        spread,
-    } = instruction
-    else {
-        return;
-    };
-    if spread.is_some() {
-        errors.push(format!(
-            "{head} keeps an LLVM intrinsic call's pack spread in elaborated MIR"
-        ));
-    }
-    if !matches!(
-        has_side_effect,
-        Const::Value(mojito_types::ct::CtValue::Bool(_))
-    ) {
-        errors.push(format!(
-            "{head} keeps the side-effect flag `{has_side_effect:?}` of an LLVM intrinsic call in \
-             elaborated MIR"
-        ));
-    }
-    let Some(called) = intrinsic.llvm_intrinsic() else {
-        errors.push(format!(
-            "{head} calls `{intrinsic:?}`, which is no LLVM intrinsic Mojito computes"
-        ));
-        return;
-    };
-    let ty = |reg: &Reg| function.reg_types.get(&reg.0).cloned();
-    if let Some(result) = ty(dest)
-        && let Some(operands) = args.iter().map(ty).collect::<Option<Vec<_>>>()
-        && let Some(reason) = called.signature_error(&result, &operands)
-    {
-        errors.push(format!("{head}: {reason}"));
     }
 }

@@ -874,7 +874,9 @@ impl FnLowering<'_> {
     /// mangled by the types [`LlvmIntrinsic::overloads`] names: a
     /// multi-lane operand or result is a vector, a width-one one the lane.
     /// The `ctlz`/`cttz` flag is the `immarg` constant `false`, whose
-    /// defined result for a zero lane the VM computes, and
+    /// defined result for a zero lane the VM computes; a shuffle's index
+    /// ([`LlvmIntrinsic::index_operand`]) is its register's value, which
+    /// LLVM's verifier rejects as an `immarg` unless it is a constant.
     /// `llvm.donothing` returns nothing.
     pub(super) fn lower_llvm_intrinsic(
         &mut self,
@@ -895,34 +897,47 @@ impl FnLowering<'_> {
             self.append(ctx, call.get_operation(), Some(dest));
             return Ok(());
         }
-        let dims = |reg: &Reg| self.func.reg_types.get(&reg.0).and_then(simd_dims);
-        let (Some(result), Some(operand)) = (dims(&dest), args.first().and_then(dims)) else {
-            return Err(self.unsupported_reg(
-                format!("`{}` over non-SIMD registers", intrinsic.name()),
-                dest,
-            ));
-        };
         let shaped = |(dtype, width): (Dtype, i64)| {
             (
                 dtype,
                 usize::try_from(width).ok().filter(|width| *width > 1),
             )
         };
-        let (result, operand) = (shaped(result), shaped(operand));
+        let dims = |reg: &Reg| {
+            self.func
+                .reg_types
+                .get(&reg.0)
+                .and_then(simd_dims)
+                .map(shaped)
+        };
+        let non_simd = |lowering: &Self| {
+            lowering.unsupported_reg(
+                format!("`{}` over non-SIMD registers", intrinsic.name()),
+                dest,
+            )
+        };
+        let Some(result) = dims(&dest) else {
+            return Err(non_simd(self));
+        };
+        let mut operand_shapes = Vec::with_capacity(args.len());
         let mut values = Vec::with_capacity(args.len());
         let mut types = Vec::with_capacity(args.len());
         for (position, arg) in args.iter().enumerate() {
             if intrinsic.is_flag(position) {
                 values.push(self.bool_constant(ctx, false));
                 types.push(IntegerType::get(ctx, 1, Signedness::Signless).into());
+                operand_shapes.push(None);
                 continue;
             }
-            let (dtype, shape) = dims(arg).map_or(operand, shaped);
+            let Some((dtype, shape)) = dims(arg) else {
+                return Err(non_simd(self));
+            };
             values.push(match shape {
                 Some(width) => self.simd_load_vector(ctx, *arg, dtype, width, dest)?,
                 None => self.reg_value(ctx, *arg, ScalarTy::of_dtype(dtype))?,
             });
             types.push(self.llvm_intrinsic_ty(ctx, dtype, shape));
+            operand_shapes.push(Some((dtype, shape)));
         }
         let result_ty = self.llvm_intrinsic_ty(ctx, result.0, result.1);
         let suffix = |(dtype, shape): (Dtype, Option<usize>)| match shape {
@@ -931,13 +946,18 @@ impl FnLowering<'_> {
         };
         let mut name = intrinsic.name().to_string();
         for slot in intrinsic.overloads() {
+            let shape = match slot {
+                OverloadSlot::Result => Some(result),
+                OverloadSlot::Operand(position) => operand_shapes.get(*position).copied().flatten(),
+            };
+            let Some(shape) = shape else {
+                return Err(self.unsupported_reg(
+                    format!("`{}` overloaded on a flag operand", intrinsic.name()),
+                    dest,
+                ));
+            };
             name.push('.');
-            name.push_str(&match slot {
-                OverloadSlot::Result => suffix(result),
-                OverloadSlot::Operand(position) => {
-                    suffix(args.get(*position).and_then(dims).map_or(operand, shaped))
-                }
-            });
+            name.push_str(&suffix(shape));
         }
         let fn_ty = FuncType::get(ctx, result_ty, types, false);
         let call = CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, values);

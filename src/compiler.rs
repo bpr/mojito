@@ -180,6 +180,7 @@ impl CompiledProgram {
                                 crate::analysis::eliminate_dead_concrete_symbols,
                             )
                         })
+                        .and_then(SpecializedProgram::translated)
                 } else {
                     concrete
                 };

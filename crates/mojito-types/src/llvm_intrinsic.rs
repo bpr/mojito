@@ -5,10 +5,12 @@
 //! or a signature the intrinsic does not take. Mojito computes a table of
 //! them: the checker rejects a closed name outside it, the elaborator a
 //! reached instance's, and the concrete verifier a signature
-//! [`LlvmIntrinsic::signature_error`] refuses. The VM computes a lane by
-//! [`int_lane`], [`float_lane`], [`reduce_ints`], and [`reduce_floats`], and
-//! the native backend calls the intrinsic, mangled by
-//! [`LlvmIntrinsic::overloads`].
+//! [`LlvmIntrinsic::signature_error`] refuses. A shuffle's index operand
+//! ([`LlvmIntrinsic::index_operand`]) must hold a value
+//! [`LlvmIntrinsic::index_error`] admits. The VM computes a lane by
+//! [`int_lane`], [`float_lane`], [`reduce_ints`], [`reduce_floats`],
+//! [`LlvmIntrinsic::shuffle_sources`], and [`step_lanes`], and the native
+//! backend calls the intrinsic, mangled by [`LlvmIntrinsic::overloads`].
 
 use crate::types::{SimdDtype, SimdWidth, Ty, TyKind, simd_slots};
 use mojito_ast::ast::Dtype;
@@ -27,6 +29,20 @@ pub enum LlvmIntrinsic {
     Sqrt,
     Donothing,
     VectorReduce(VectorReduction),
+    VectorExtract,
+    VectorInsert,
+    VectorSplice(SpliceDirection),
+    VectorInterleave2,
+    Stepvector,
+}
+
+/// The end of `llvm.vector.splice.left`/`right`'s operands' concatenation
+/// its offset counts from: the left one's first lane, or the right one's
+/// last.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub enum SpliceDirection {
+    Left,
+    Right,
 }
 
 /// An `llvm.vector.reduce.*` reduction of a vector to one lane.
@@ -52,7 +68,7 @@ pub enum OverloadSlot {
 
 impl LlvmIntrinsic {
     /// Every intrinsic in the table.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 24] = [
         Self::Ctlz,
         Self::Cttz,
         Self::Ctpop,
@@ -71,6 +87,12 @@ impl LlvmIntrinsic {
         Self::VectorReduce(VectorReduction::Umin),
         Self::VectorReduce(VectorReduction::Fmax),
         Self::VectorReduce(VectorReduction::Fmin),
+        Self::VectorExtract,
+        Self::VectorInsert,
+        Self::VectorSplice(SpliceDirection::Left),
+        Self::VectorSplice(SpliceDirection::Right),
+        Self::VectorInterleave2,
+        Self::Stepvector,
     ];
 
     /// The intrinsic LLVM spells `name`, if it is in the table.
@@ -101,6 +123,12 @@ impl LlvmIntrinsic {
             Self::VectorReduce(VectorReduction::Umin) => "llvm.vector.reduce.umin",
             Self::VectorReduce(VectorReduction::Fmax) => "llvm.vector.reduce.fmax",
             Self::VectorReduce(VectorReduction::Fmin) => "llvm.vector.reduce.fmin",
+            Self::VectorExtract => "llvm.vector.extract",
+            Self::VectorInsert => "llvm.vector.insert",
+            Self::VectorSplice(SpliceDirection::Left) => "llvm.vector.splice.left",
+            Self::VectorSplice(SpliceDirection::Right) => "llvm.vector.splice.right",
+            Self::VectorInterleave2 => "llvm.vector.interleave2",
+            Self::Stepvector => "llvm.stepvector",
         }
     }
 
@@ -116,10 +144,14 @@ impl LlvmIntrinsic {
     /// The number of operands the intrinsic takes.
     pub const fn arity(self) -> usize {
         match self {
-            Self::Donothing => 0,
+            Self::Donothing | Self::Stepvector => 0,
             Self::Ctpop | Self::Bitreverse | Self::Bswap | Self::Sqrt | Self::VectorReduce(_) => 1,
-            Self::Ctlz | Self::Cttz | Self::Copysign => 2,
-            Self::Fshl | Self::Fshr => 3,
+            Self::Ctlz
+            | Self::Cttz
+            | Self::Copysign
+            | Self::VectorExtract
+            | Self::VectorInterleave2 => 2,
+            Self::Fshl | Self::Fshr | Self::VectorInsert | Self::VectorSplice(_) => 3,
         }
     }
 
@@ -128,8 +160,117 @@ impl LlvmIntrinsic {
         match self {
             Self::Donothing => &[],
             Self::VectorReduce(_) => &[OverloadSlot::Operand(0)],
+            Self::VectorExtract => &[OverloadSlot::Result, OverloadSlot::Operand(0)],
+            Self::VectorInsert => &[OverloadSlot::Result, OverloadSlot::Operand(1)],
             _ => &[OverloadSlot::Result],
         }
+    }
+
+    /// The position of the one-lane integer operand a shuffle reads as a
+    /// lane index rather than as lanes, with the bit width LLVM declares
+    /// for it: the `i64` index of `vector.extract` and `vector.insert`,
+    /// and the `i32` offset of a splice.
+    pub const fn index_operand(self) -> Option<(usize, u32)> {
+        match self {
+            Self::VectorExtract => Some((1, 64)),
+            Self::VectorInsert => Some((2, 64)),
+            Self::VectorSplice(_) => Some((2, 32)),
+            _ => None,
+        }
+    }
+
+    /// Whether the [`Self::index_operand`] is an `immarg`, which LLVM
+    /// translation requires a constant: an extract's or an insert's index,
+    /// but not a splice's offset.
+    pub const fn index_is_immediate(self) -> bool {
+        matches!(self, Self::VectorExtract | Self::VectorInsert)
+    }
+
+    /// Why LLVM translation rejects a call whose [`Self::index_operand`]
+    /// is `index`, its result `result_width` lanes wide and its vector
+    /// operands `widths`, or `None` when it accepts it. An extract's or an
+    /// insert's index must be a multiple of the subvector's width that
+    /// keeps the subvector inside the vector, as LLVM's verifier requires;
+    /// a splice offset past the vector is a poison result, not an error.
+    pub fn index_error(self, result_width: usize, widths: &[usize], index: i128) -> Option<String> {
+        let index = index as u64;
+        let fits = |vector: usize, subvector: usize| {
+            usize::try_from(index)
+                .ok()
+                .and_then(|index| index.checked_add(subvector))
+                .is_some_and(|end| end <= vector)
+        };
+        let (vector, subvector, misaligned, overrun) = match (self, widths) {
+            (Self::VectorExtract, [vector]) => (
+                *vector,
+                result_width,
+                "vector_extract index must be a constant multiple of the result type's known \
+                 minimum vector length.",
+                "vector_extract would overrun.",
+            ),
+            (Self::VectorInsert, [vector, subvector]) => (
+                *vector,
+                *subvector,
+                "vector_insert index must be a constant multiple of the subvector's known \
+                 minimum vector length.",
+                "subvector operand of vector_insert would overrun the vector being inserted \
+                 into.",
+            ),
+            _ => return None,
+        };
+        let reason = if index.is_multiple_of(subvector as u64) {
+            (!fits(vector, subvector)).then_some(overrun)
+        } else {
+            Some(misaligned)
+        };
+        reason.map(str::to_string)
+    }
+
+    /// Where each lane of a shuffling intrinsic's `result_width`-lane
+    /// result comes from: the position of a lane among its vector
+    /// operands' lanes laid end to end (operands `widths` wide), or `None`
+    /// for a lane a splice offset past the vector leaves poison, which
+    /// Mojito computes as zero. `index` is the [`Self::index_operand`]'s
+    /// value; `None` is an intrinsic that does not shuffle.
+    pub fn shuffle_sources(
+        self,
+        result_width: usize,
+        widths: &[usize],
+        index: i128,
+    ) -> Option<Vec<Option<usize>>> {
+        let offset = |lane: usize| {
+            i128::try_from(lane)
+                .ok()
+                .and_then(|lane| lane.checked_add(index))
+                .and_then(|source| usize::try_from(source).ok())
+        };
+        let sources = match (self, widths) {
+            (Self::VectorExtract, [_]) => (0..result_width).map(offset).collect(),
+            (Self::VectorInsert, [vector, subvector]) => (0..*vector)
+                .map(|lane| {
+                    let inserted = usize::try_from(index)
+                        .ok()
+                        .and_then(|start| lane.checked_sub(start))
+                        .filter(|position| position < subvector);
+                    Some(inserted.map_or(lane, |position| vector + position))
+                })
+                .collect(),
+            (Self::VectorSplice(direction), [width, _]) => {
+                let lanes = i128::try_from(*width).ok()?;
+                let start = (0..=lanes).contains(&index).then(|| match direction {
+                    SpliceDirection::Left => index as usize,
+                    SpliceDirection::Right => (lanes - index) as usize,
+                });
+                (0..*width)
+                    .map(|lane| start.map(|start| start + lane))
+                    .collect()
+            }
+            (Self::VectorInterleave2, [width, _]) => (0..2 * width)
+                .map(|lane| Some(lane / 2 + if lane % 2 == 0 { 0 } else { *width }))
+                .collect(),
+            _ => return None,
+        };
+        Some(sources)
     }
 
     /// Whether operand `position` is the `i1` flag `ctlz` and `cttz` take
@@ -142,8 +283,10 @@ impl LlvmIntrinsic {
     /// LLVM translation rejects the call, or `None` when it does. Every
     /// type must be closed. A lane vector is a `SIMD` type (a width-one
     /// one is the scalar); the elementwise intrinsics give their operand's
-    /// type, the reductions one lane of a vector of at least two, and
-    /// `llvm.donothing` `NoneType`.
+    /// type, the reductions one lane of a vector of at least two, the
+    /// shuffles (`vector.extract`, `vector.insert`, the splices, and
+    /// `vector.interleave2`) and `llvm.stepvector` a vector of at least two
+    /// lanes, and `llvm.donothing` `NoneType`.
     pub fn signature_error(self, result: &Ty, operands: &[Ty]) -> Option<String> {
         if operands.len() != self.arity() {
             return Some(format!(
@@ -169,10 +312,32 @@ impl LlvmIntrinsic {
                     .join(", ")
             ))
         };
-        if self == Self::Donothing {
-            return (!matches!(result.kind(), TyKind::None))
-                .then(mismatch)
-                .flatten();
+        match self {
+            Self::Donothing => {
+                return (!matches!(result.kind(), TyKind::None))
+                    .then(mismatch)
+                    .flatten();
+            }
+            Self::Stepvector => {
+                return match lanes(result) {
+                    Some((Dtype::Bool, width)) if width >= 2 => Some(
+                        "stepvector only supported for vectors of integers with a bitwidth of \
+                         at least 8."
+                            .to_string(),
+                    ),
+                    Some((dtype, width)) if width >= 2 && dtype.is_integral() => None,
+                    _ => mismatch(),
+                };
+            }
+            Self::VectorExtract
+            | Self::VectorInsert
+            | Self::VectorSplice(_)
+            | Self::VectorInterleave2 => {
+                return (!self.shuffle_signature(result, operands))
+                    .then(mismatch)
+                    .flatten();
+            }
+            _ => {}
         }
         let Some((dtype, width)) = operands.first().and_then(lanes) else {
             return mismatch();
@@ -213,6 +378,79 @@ impl LlvmIntrinsic {
             return Some("bswap must be an even number of bytes".to_string());
         }
         None
+    }
+
+    /// Whether a shuffling intrinsic takes `operands` and gives `result`.
+    /// Its lanes are any dtype's, every vector at least two lanes wide (a
+    /// width-one `SIMD` lowers to the scalar), and its
+    /// [`Self::index_operand`] a one-lane integer of the width LLVM
+    /// declares: `vector.extract` gives a vector of its operand's lanes,
+    /// `vector.insert` its first operand's type from a vector of its lanes,
+    /// a splice its two operands' type, and `vector.interleave2` twice its
+    /// two operands' width.
+    fn shuffle_signature(self, result: &Ty, operands: &[Ty]) -> bool {
+        let vector = |ty: &Ty| match simd_slots(ty.kind()) {
+            Some((SimdDtype::Known(dtype), SimdWidth::Known(width))) if width >= 2 => {
+                Some((dtype, width))
+            }
+            _ => None,
+        };
+        let index = self.index_operand();
+        if let Some((position, bits)) = index
+            && !matches!(
+                operands.get(position).map(|ty| simd_slots(ty.kind())),
+                Some(Some((SimdDtype::Known(dtype), SimdWidth::Known(1))))
+                    if dtype.is_integral() && dtype.bit_width() == bits
+            )
+        {
+            return false;
+        }
+        let Some(vectors) = operands
+            .iter()
+            .enumerate()
+            .filter(|(position, _)| index.map(|(index, _)| index) != Some(*position))
+            .map(|(_, operand)| vector(operand))
+            .collect::<Option<Vec<_>>>()
+        else {
+            return false;
+        };
+        let Some((dtype, width)) = vector(result) else {
+            return false;
+        };
+        match (self, vectors.as_slice()) {
+            (Self::VectorExtract, [(lanes, _)]) => *lanes == dtype,
+            (Self::VectorInsert, [vector, (lanes, _)]) => {
+                *lanes == dtype && *vector == (dtype, width)
+            }
+            (Self::VectorSplice(_), [left, right]) => {
+                *left == (dtype, width) && *right == (dtype, width)
+            }
+            (Self::VectorInterleave2, [left, right]) => {
+                left == right && *left == (dtype, width / 2) && width % 2 == 0
+            }
+            _ => false,
+        }
+    }
+
+    /// Why the comptime interpreter cannot call the intrinsic, or `None`
+    /// when it can: it calls only what LLVM's constant folder folds, which
+    /// leaves out `llvm.donothing`, the float reductions, `vector.insert`,
+    /// the splices, and `llvm.stepvector`.
+    pub fn compile_time_error(self) -> Option<String> {
+        match self {
+            Self::Donothing => Some(format!(
+                "cannot constant fold zero-result LLVM intrinsic: {}",
+                self.name()
+            )),
+            Self::VectorReduce(VectorReduction::Fmax | VectorReduction::Fmin)
+            | Self::VectorInsert
+            | Self::VectorSplice(_)
+            | Self::Stepvector => Some(format!(
+                "LLVM could not constant fold intrinsic: {}",
+                self.name()
+            )),
+            _ => None,
+        }
     }
 
     /// Whether the intrinsic's lanes are floats rather than integers.
@@ -271,6 +509,14 @@ pub fn float_lane(intrinsic: LlvmIntrinsic, dtype: Dtype, lanes: &[f64]) -> Opti
         _ => return None,
     };
     Some(dtype.round_lane(lane))
+}
+
+/// The lanes of `llvm.stepvector` over `width` lanes of `dtype`: each its
+/// own position, wrapped to the lane.
+pub fn step_lanes(dtype: Dtype, width: usize) -> Vec<i128> {
+    (0..width)
+        .map(|lane| crate::ct::wrap_lane(dtype, lane as i128))
+        .collect()
 }
 
 /// The integer reduction of `lanes` of `dtype`, each held sign- or
@@ -421,5 +667,117 @@ mod tests {
             LlvmIntrinsic::Donothing.signature_error(&Ty::none(), &[]),
             None
         );
+    }
+
+    #[test]
+    fn shuffles_follow_the_pin() {
+        let sources = |intrinsic: LlvmIntrinsic, result, widths: &[usize], index| {
+            intrinsic
+                .shuffle_sources(result, widths, index)
+                .map(|sources| sources.into_iter().collect::<Option<Vec<_>>>())
+        };
+        assert_eq!(
+            sources(LlvmIntrinsic::VectorExtract, 4, &[8], 4),
+            Some(Some(vec![4, 5, 6, 7]))
+        );
+        assert_eq!(
+            sources(LlvmIntrinsic::VectorInsert, 8, &[8, 2], 2),
+            Some(Some(vec![0, 1, 8, 9, 4, 5, 6, 7]))
+        );
+        let left = LlvmIntrinsic::VectorSplice(SpliceDirection::Left);
+        let right = LlvmIntrinsic::VectorSplice(SpliceDirection::Right);
+        assert_eq!(sources(left, 4, &[4, 4], 1), Some(Some(vec![1, 2, 3, 4])));
+        assert_eq!(sources(right, 4, &[4, 4], 1), Some(Some(vec![3, 4, 5, 6])));
+        assert_eq!(sources(right, 4, &[4, 4], 0), Some(Some(vec![4, 5, 6, 7])));
+        assert_eq!(sources(left, 4, &[4, 4], 5), Some(None));
+        assert_eq!(
+            sources(LlvmIntrinsic::VectorInterleave2, 8, &[4, 4], 0),
+            Some(Some(vec![0, 4, 1, 5, 2, 6, 3, 7]))
+        );
+        assert_eq!(sources(LlvmIntrinsic::Ctpop, 4, &[4], 0), None);
+        assert_eq!(step_lanes(Dtype::UInt8, 3), vec![0, 1, 2]);
+        assert!(
+            LlvmIntrinsic::VectorExtract
+                .index_error(4, &[8], 2)
+                .is_some_and(|reason| reason.contains("constant multiple"))
+        );
+        assert_eq!(
+            LlvmIntrinsic::VectorExtract.index_error(4, &[8], 8),
+            Some("vector_extract would overrun.".to_string())
+        );
+        assert_eq!(LlvmIntrinsic::VectorInsert.index_error(8, &[8, 2], 6), None);
+        assert_eq!(left.index_error(4, &[4, 4], 9), None);
+    }
+
+    #[test]
+    fn shuffle_signatures_follow_llvm() {
+        let simd = |dtype, width| {
+            Ty::from(TyKind::Simd {
+                dtype: SimdDtype::Known(dtype),
+                width: SimdWidth::Known(width),
+            })
+        };
+        let (quad, octet) = (simd(Dtype::Int32, 4), simd(Dtype::Int32, 8));
+        let (index, offset) = (simd(Dtype::Int64, 1), simd(Dtype::Int32, 1));
+        assert_eq!(
+            LlvmIntrinsic::VectorExtract.signature_error(&quad, &[octet.clone(), index.clone()]),
+            None
+        );
+        assert!(
+            LlvmIntrinsic::VectorExtract
+                .signature_error(&quad, &[octet.clone(), offset.clone()])
+                .is_some()
+        );
+        assert!(
+            LlvmIntrinsic::VectorExtract
+                .signature_error(&simd(Dtype::Int32, 1), &[octet.clone(), index.clone()])
+                .is_some()
+        );
+        assert_eq!(
+            LlvmIntrinsic::VectorInsert
+                .signature_error(&octet, &[octet.clone(), quad.clone(), index]),
+            None
+        );
+        let left = LlvmIntrinsic::VectorSplice(SpliceDirection::Left);
+        assert_eq!(
+            left.signature_error(&quad, &[quad.clone(), quad.clone(), offset]),
+            None
+        );
+        assert_eq!(
+            LlvmIntrinsic::VectorInterleave2.signature_error(&octet, &[quad.clone(), quad.clone()]),
+            None
+        );
+        assert!(
+            LlvmIntrinsic::VectorInterleave2
+                .signature_error(&quad, &[quad.clone(), quad.clone()])
+                .is_some()
+        );
+        assert_eq!(LlvmIntrinsic::Stepvector.signature_error(&quad, &[]), None);
+        assert!(
+            LlvmIntrinsic::Stepvector
+                .signature_error(&simd(Dtype::Bool, 4), &[])
+                .is_some_and(|reason| reason.starts_with("stepvector only supported"))
+        );
+        assert!(
+            LlvmIntrinsic::Stepvector
+                .signature_error(&simd(Dtype::Float32, 4), &[])
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn compile_time_calls_follow_the_pin() {
+        assert_eq!(LlvmIntrinsic::Ctpop.compile_time_error(), None);
+        assert_eq!(LlvmIntrinsic::VectorExtract.compile_time_error(), None);
+        assert_eq!(LlvmIntrinsic::VectorInterleave2.compile_time_error(), None);
+        for intrinsic in [
+            LlvmIntrinsic::Donothing,
+            LlvmIntrinsic::VectorReduce(VectorReduction::Fmax),
+            LlvmIntrinsic::VectorInsert,
+            LlvmIntrinsic::VectorSplice(SpliceDirection::Right),
+            LlvmIntrinsic::Stepvector,
+        ] {
+            assert!(intrinsic.compile_time_error().is_some());
+        }
     }
 }

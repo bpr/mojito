@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `llvm_intrinsic` calls the shuffles upstream's `SIMD` and `math.iota`
+  call: `llvm.vector.extract`, `llvm.vector.insert`,
+  `llvm.vector.splice.left`/`right`, `llvm.vector.interleave2`, and
+  `llvm.stepvector`, computed by the VM and called natively, as at the pin
+  (R1519). They were rejected as outside the subset. An extract's or
+  insert's index must fold to a constant LLVM's verifier accepts once the
+  post-elaboration pipeline has run: `sroa` now splits a heterogeneous
+  collector of trivial elements, and `sccp` folds `Int64(n)` over a
+  constant `n`. The comptime interpreter now calls only the intrinsics
+  LLVM's constant folder folds, as the pin's does, so `llvm.donothing`,
+  the float reductions, `vector.insert`, the splices, and `stepvector`
+  fail there. `llvm.vector.deinterleave2` stays outside (R1547).
 - `__mlir_op` takes `pop.max` and `pop.min` (upstream's `std/math` SIMD
   `max` and `min` bodies: signed or unsigned by the lanes, `llvm.maxnum`
   and `llvm.minnum` over float lanes, or and and over `bool` lanes), a

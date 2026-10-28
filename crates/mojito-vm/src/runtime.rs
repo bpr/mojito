@@ -1245,13 +1245,15 @@ pub fn pop_op(op: mojito_types::mlir::PopOp, operands: &[Value]) -> Result<Value
     Ok(simd_value(dtype, lanes))
 }
 
-/// Call the LLVM intrinsic `intrinsic` over `operands`.
+/// Call the LLVM intrinsic `intrinsic` over `operands`, giving a `result`.
 ///
 /// Lanes are computed as `mojito_types::llvm_intrinsic` computes them: an
 /// elementwise intrinsic gives its first operand's type, a reduction one
-/// lane of it, and `llvm.donothing` `None`.
+/// lane of it, a shuffle the lanes its sources name, `llvm.stepvector` the
+/// result's lane positions, and `llvm.donothing` `None`.
 pub fn llvm_intrinsic(
     intrinsic: mojito_types::llvm_intrinsic::LlvmIntrinsic,
+    result: Option<&Ty>,
     operands: &[Value],
 ) -> Result<Value, RuntimeError> {
     use mojito_types::llvm_intrinsic::{self as llvm, LlvmIntrinsic};
@@ -1261,19 +1263,55 @@ pub fn llvm_intrinsic(
             intrinsic.name()
         ))
     };
-    if intrinsic == LlvmIntrinsic::Donothing {
-        return Ok(Value::None);
+    let result_lanes = || match result
+        .map(Ty::kind)
+        .and_then(mojito_types::types::simd_slots)
+    {
+        Some((
+            mojito_types::types::SimdDtype::Known(dtype),
+            mojito_types::types::SimdWidth::Known(width),
+        )) => usize::try_from(width).ok().map(|width| (dtype, width)),
+        _ => None,
+    };
+    match intrinsic {
+        LlvmIntrinsic::Donothing => return Ok(Value::None),
+        LlvmIntrinsic::Stepvector => {
+            let (dtype, width) = result_lanes().ok_or_else(mismatch)?;
+            return Ok(simd_value(
+                dtype,
+                SimdLanes::Int(llvm::step_lanes(dtype, width)),
+            ));
+        }
+        _ => {}
     }
+    let index = intrinsic.index_operand().map(|(position, _)| position);
     let parts = operands
         .iter()
         .enumerate()
-        .filter(|(position, _)| !intrinsic.is_flag(*position))
+        .filter(|(position, _)| !intrinsic.is_flag(*position) && index != Some(*position))
         .map(|(_, operand)| simd_parts(operand).ok_or_else(mismatch))
         .collect::<Result<Vec<_>, _>>()?;
     let (dtype, width) = match parts.first() {
         Some((dtype, lanes)) => (*dtype, lanes.width()),
         None => return Err(mismatch()),
     };
+    let index = match index {
+        Some(position) => match operands.get(position).and_then(simd_parts) {
+            Some((_, SimdLanes::Int(lanes))) if lanes.len() == 1 => lanes[0],
+            _ => return Err(mismatch()),
+        },
+        None => 0,
+    };
+    let result_width = result_lanes().map_or(width, |(_, width)| width);
+    let widths: Vec<usize> = parts.iter().map(|(_, lanes)| lanes.width()).collect();
+    if let Some(reason) = intrinsic.index_error(result_width, &widths, index) {
+        return Err(RuntimeError::Unsupported(reason));
+    }
+    if let Some(sources) = intrinsic.shuffle_sources(result_width, &widths, index) {
+        return shuffle_lanes(&parts, &sources)
+            .map(|lanes| simd_value(dtype, lanes))
+            .ok_or_else(mismatch);
+    }
     let lanes = match (intrinsic, &parts[0].1) {
         (LlvmIntrinsic::VectorReduce(reduction), SimdLanes::Int(lanes)) => SimdLanes::Int(vec![
             llvm::reduce_ints(reduction, dtype, lanes).ok_or_else(mismatch)?,
@@ -1607,6 +1645,33 @@ fn host_scalar_parts(value: &Value) -> Option<(Dtype, SimdLanes)> {
 /// Lane `index` of each operand's lanes, which `pick` reads, computed by
 /// `lane` over them in operand order, for each of `width` lanes; an operand
 /// `pick` refuses or a short one is `mismatch`.
+/// The lanes `sources` name among `parts`' lanes laid end to end, a `None`
+/// source a zero lane; `None` when the parts' lanes differ in kind or a
+/// source is past them.
+fn shuffle_lanes(parts: &[(Dtype, SimdLanes)], sources: &[Option<usize>]) -> Option<SimdLanes> {
+    fn pick<T: Copy>(
+        parts: &[(Dtype, SimdLanes)],
+        sources: &[Option<usize>],
+        lanes: fn(&SimdLanes) -> Option<&[T]>,
+        zero: T,
+    ) -> Option<Vec<T>> {
+        let concatenated = parts
+            .iter()
+            .map(|(_, part)| lanes(part))
+            .collect::<Option<Vec<_>>>()?
+            .concat();
+        sources
+            .iter()
+            .map(|source| source.map_or(Some(zero), |source| concatenated.get(source).copied()))
+            .collect()
+    }
+    Some(match parts.first().map(|(_, lanes)| lanes)? {
+        SimdLanes::Int(_) => SimdLanes::Int(pick(parts, sources, int_lanes, 0)?),
+        SimdLanes::Float(_) => SimdLanes::Float(pick(parts, sources, float_lanes, 0.0)?),
+        SimdLanes::Bool(_) => SimdLanes::Bool(pick(parts, sources, bool_lanes, false)?),
+    })
+}
+
 fn zip_lanes<T: Copy>(
     parts: &[(Dtype, SimdLanes)],
     width: usize,

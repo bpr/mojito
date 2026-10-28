@@ -27,6 +27,16 @@
 //!   and a `place.move` a `forward` read, so a nested struct's field slot
 //!   splits in the next round.
 //!
+//! A heterogeneous collector slot (upstream's loaded `!kgen.pack`) of
+//! trivially register-passable elements splits too, one slot per element,
+//! its places' `ConstIndex` steps naming them, when every whole store
+//! stores a `tuple.make` and no pack spread reads it whole: the store
+//! becomes one `var.store` per element of the `tuple.make`, which goes once
+//! nothing else reads it, and a whole read rebuilds the `tuple.make`. So a
+//! constant passed through an `llvm_intrinsic` pack folds to the immediate
+//! LLVM translation requires, as upstream's canonicalization extracts it
+//! from the promoted pack.
+//!
 //! Any other mention keeps the slot whole: a borrow, a capture, a loan
 //! interior, a `through` place, or a whole read that names a
 //! constructor, as any other user of upstream's allocation does. So does
@@ -54,8 +64,8 @@ use mojito_mir::mir::verify::{
 };
 use mojito_mir::mir::{
     MirBlock, MirCaptureMode, MirDeclarations, MirFunction, MirInstr, MirPlace, MirTerm, Proj, Reg,
-    UseMode, fresh_register, instruction_regions, instruction_regions_mut, instruction_slots,
-    retire_slots, terminator_regs,
+    UseMode, count_register_reads, fresh_register, instruction_regions, instruction_regions_mut,
+    instruction_slots, retire_slots, terminator_regs,
 };
 use mojito_types::types::{Ty, TyKind};
 use std::borrow::Cow;
@@ -103,7 +113,25 @@ pub fn sroa(_name: &str, function: &mut MirFunction, declarations: &MirDeclarati
             retired.insert(var);
         }
         let mut blocks = std::mem::take(&mut function.blocks);
-        Splitter { split, function }.rewrite(&mut blocks);
+        let makes = tuple_makes(&blocks);
+        let mut splitter = Splitter {
+            split,
+            makes,
+            stored: HashSet::new(),
+            function,
+        };
+        splitter.rewrite(&mut blocks);
+        let stored = splitter.stored;
+        if !stored.is_empty() {
+            let mut reads = vec![0; function.n_regs as usize];
+            count_register_reads(&mut blocks, &mut reads);
+            let dead: HashSet<u32> = stored
+                .into_iter()
+                .filter(|reg| reads.get(*reg as usize) == Some(&0))
+                .collect();
+            remove_tuple_makes(&mut blocks, &dead);
+            function.reg_types.retain(|reg, _| !dead.contains(reg));
+        }
         function.blocks = blocks;
     }
     if retired.is_empty() {
@@ -326,6 +354,22 @@ fn unkept_census(
     }
     let mut census = HashMap::new();
     take_census(&function.blocks, fields, &mut census);
+    let collectors: Vec<VarId> = census
+        .keys()
+        .copied()
+        .filter(|var| is_collector(function, *var))
+        .collect();
+    if !collectors.is_empty() {
+        let makes = tuple_makes(&function.blocks);
+        let mut spread = HashSet::new();
+        spread_packs(&function.blocks, &mut spread);
+        for var in collectors {
+            if let Some(entry) = census.get_mut(&var) {
+                entry.kept |= entry.stores.iter().any(|src| !makes.contains_key(&src.0))
+                    || entry.reads.iter().any(|dest| spread.contains(&dest.0));
+            }
+        }
+    }
     if fields.values().any(|(_, memory_only)| *memory_only) {
         let mut registers = Registers::default();
         registers.record(&function.blocks);
@@ -338,13 +382,31 @@ fn unkept_census(
 /// The fields of a slot of `ty` [`sroa`] may split, at its arguments
 /// ([`MirDeclarations::field_types`]): any declared struct whose fields
 /// they resolve, as upstream's only test is that the element types are,
-/// whatever its fields' types and whatever its drop runs. A struct with a
+/// whatever its fields' types and whatever its drop runs, and a
+/// heterogeneous collector of trivially register-passable elements, its
+/// fields named by position: upstream's loaded `!kgen.pack` is such a
+/// value, which `mem-2-reg` promotes and canonicalization extracts from,
+/// so a constant passed through the pack folds. A struct with a
 /// pointer or `ref` field is never one: the VM reads a place on
 /// a whole slot that holds a reference handle through the handle, and a
 /// place past a `ref` field's own slot would need that slot as its
 /// `through`, which the rewrite does not give it, so the field's own slot
 /// would not read as the field did.
 fn splittable_type<'a>(ty: &Ty, declarations: &'a MirDeclarations) -> Option<Fields<'a>> {
+    if let TyKind::Tuple(elements) = ty.kind() {
+        return elements
+            .iter()
+            .all(|element| declarations.copy_is_identity(element))
+            .then(|| {
+                Cow::Owned(
+                    elements
+                        .iter()
+                        .enumerate()
+                        .map(|(index, element)| (index.to_string(), element.clone()))
+                        .collect(),
+                )
+            });
+    }
     if !matches!(ty.kind(), TyKind::Struct(..)) {
         return None;
     }
@@ -462,16 +524,92 @@ fn ended_places(instruction: &MirInstr) -> impl Iterator<Item = &MirPlace> {
 
 /// The declared field `place` projects first, directly on its root.
 fn first_field<'a>(place: &MirPlace, declared: &'a [(String, Ty)]) -> Option<&'a str> {
-    let Some(Proj::Field(field)) = place.proj.first() else {
-        return None;
-    };
     if place.through.is_some() {
         return None;
     }
+    let field = projected_field(place.proj.first()?)?;
     declared
         .iter()
-        .find(|(name, _)| name == field)
+        .find(|(name, _)| *name == field)
         .map(|(name, _)| name.as_str())
+}
+
+/// The field a projection step names: a struct field by name, a
+/// collector's element by its position.
+fn projected_field(step: &Proj) -> Option<Cow<'_, str>> {
+    match step {
+        Proj::Field(field) => Some(Cow::Borrowed(field)),
+        Proj::ConstIndex(index) => Some(Cow::Owned(index.to_string())),
+        _ => None,
+    }
+}
+
+/// Whether `var` is a heterogeneous collector slot of `function`.
+fn is_collector(function: &MirFunction, var: VarId) -> bool {
+    function
+        .var_tys
+        .get(&var)
+        .is_some_and(|ty| matches!(ty.kind(), TyKind::Tuple(_)))
+}
+
+/// Record in `packs` each register a call or an LLVM intrinsic call in
+/// `blocks` or the regions they hold spreads, which the elaborator expands
+/// by reading the collector it was read from element by element.
+fn spread_packs(blocks: &[MirBlock], packs: &mut HashSet<u32>) {
+    for block in blocks {
+        for instruction in &block.instrs {
+            for region in instruction_regions(instruction) {
+                spread_packs(region, packs);
+            }
+            let (MirInstr::Call { spread, args, .. }
+            | MirInstr::MethodCall { spread, args, .. }
+            | MirInstr::CallIndirect { spread, args, .. }
+            | MirInstr::CallLlvmIntrinsic { spread, args, .. }) = instruction
+            else {
+                continue;
+            };
+            packs.extend(
+                spread
+                    .and_then(|position| args.get(position))
+                    .map(|pack| pack.0),
+            );
+        }
+    }
+}
+
+/// Remove each `tuple.make` in `blocks` and the regions they hold whose
+/// register is one of `dead`.
+fn remove_tuple_makes(blocks: &mut [MirBlock], dead: &HashSet<u32>) {
+    if dead.is_empty() {
+        return;
+    }
+    for block in blocks {
+        block.instrs.retain(
+            |instruction| !matches!(instruction, MirInstr::MakeTuple { dest, .. } if dead.contains(&dest.0)),
+        );
+        for instruction in &mut block.instrs {
+            for region in instruction_regions_mut(instruction) {
+                remove_tuple_makes(region, dead);
+            }
+        }
+    }
+}
+
+/// The elements of each register a `tuple.make` in `blocks` or the
+/// regions they hold defines, by register number.
+fn tuple_makes(blocks: &[MirBlock]) -> HashMap<u32, Vec<Reg>> {
+    let mut makes = HashMap::new();
+    for block in blocks {
+        for instruction in &block.instrs {
+            for region in instruction_regions(instruction) {
+                makes.extend(tuple_makes(region));
+            }
+            if let MirInstr::MakeTuple { dest, elems, .. } = instruction {
+                makes.insert(dest.0, elems.clone());
+            }
+        }
+    }
+    makes
 }
 
 /// The slot `instruction` mentions whole, and how, when a split slot
@@ -513,6 +651,13 @@ fn whole_mention(instruction: &MirInstr) -> Option<(VarId, Whole)> {
 /// One round's rewrite: each mention of a split slot becomes its fields'.
 struct Splitter<'a> {
     split: HashMap<VarId, Rc<[FieldSlot]>>,
+    /// The elements of each `tuple.make` register, which a split
+    /// collector's whole store stores per element.
+    makes: HashMap<u32, Vec<Reg>>,
+    /// The `tuple.make` registers split collectors' whole stores stored,
+    /// whose `tuple.make` goes once nothing else reads it, so each element
+    /// register is read by its own store alone, as `mem-2-reg` requires.
+    stored: HashSet<u32>,
     /// The function, its blocks taken out.
     function: &'a mut MirFunction,
 }
@@ -528,7 +673,8 @@ impl Splitter<'_> {
                 if let Some((var, whole)) = whole_mention(&instruction)
                     && let Some(fields) = self.split.get(&var).cloned()
                 {
-                    self.expand(whole, &fields, &mut out);
+                    let collector = is_collector(self.function, var);
+                    self.expand(whole, &fields, collector, &mut out);
                     continue;
                 }
                 self.reroot(&mut instruction);
@@ -539,9 +685,32 @@ impl Splitter<'_> {
     }
 
     /// The per-field instructions of the whole mention `whole` of a slot
-    /// split into `fields`, pushed onto `out`.
-    fn expand(&mut self, whole: Whole, fields: &[FieldSlot], out: &mut Vec<MirInstr>) {
+    /// split into `fields`, pushed onto `out`. A `collector` slot stores
+    /// the elements its `tuple.make` built and rebuilds a whole read with
+    /// one.
+    fn expand(
+        &mut self,
+        whole: Whole,
+        fields: &[FieldSlot],
+        collector: bool,
+        out: &mut Vec<MirInstr>,
+    ) {
         match whole {
+            Whole::Store(src) if collector => {
+                self.stored.insert(src.0);
+                let elements = self.makes.get(&src.0).cloned().unwrap_or_default();
+                out.extend(
+                    fields
+                        .iter()
+                        .zip(elements)
+                        .map(|(field, element)| MirInstr::DefVar {
+                            var: field.slot,
+                            src: element,
+                            binding_ty: Some(field.ty.clone()),
+                            in_place: false,
+                        }),
+                );
+            }
             Whole::Store(src) => {
                 for field in fields {
                     let value = self.fresh_register(&field.ty, src);
@@ -578,9 +747,17 @@ impl Splitter<'_> {
                         value
                     })
                     .collect();
-                out.push(MirInstr::MakeStruct {
-                    dest,
-                    fields: values,
+                out.push(if collector {
+                    MirInstr::MakeTuple {
+                        dest,
+                        elems: values,
+                        element_types: Some(fields.iter().map(|field| field.ty.clone()).collect()),
+                    }
+                } else {
+                    MirInstr::MakeStruct {
+                        dest,
+                        fields: values,
+                    }
                 });
             }
             Whole::Declare => out.extend(
@@ -614,10 +791,10 @@ impl Splitter<'_> {
             let Some(fields) = self.split.get(&place.root) else {
                 continue;
             };
-            let Some(Proj::Field(name)) = place.proj.first() else {
+            let Some(name) = place.proj.first().and_then(projected_field) else {
                 continue;
             };
-            let Some(field) = fields.iter().find(|field| field.name == *name) else {
+            let Some(field) = fields.iter().find(|field| field.name == name) else {
                 continue;
             };
             place.root = field.slot;

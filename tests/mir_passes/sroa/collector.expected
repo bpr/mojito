@@ -1,0 +1,38 @@
+  functions: [
+      fn {
+        name: lanes,
+        registers: 9,
+        vars: 4,
+        var_names: ["args.0", "args.1", "loaded_pack.0", "loaded_pack.1"],
+        params: 0,
+        param_types: [],
+        owned_params: [],
+        deinit_params: [],
+        ref_params: [],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: simd { dtype: int32, width: 8 } }, var_type { var: $v1, type: simd { dtype: int64, width: 1 } }, var_type { var: $v2, type: simd { dtype: int32, width: 8 } }, var_type { var: $v3, type: simd { dtype: int64, width: 1 } }],
+        return_type: present(simd { dtype: int32, width: 4 }),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: simd { dtype: int64, width: 1 } }, reg_type { reg: %r1, type: simd { dtype: int32, width: 8 } }, reg_type { reg: %r4, type: simd { dtype: int32, width: 8 } }, reg_type { reg: %r5, type: simd { dtype: int64, width: 1 } }, reg_type { reg: %r6, type: simd { dtype: int32, width: 4 } }, reg_type { reg: %r7, type: simd { dtype: int32, width: 8 } }, reg_type { reg: %r8, type: simd { dtype: int64, width: 1 } }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }, reg_loc { reg: %r8, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              const { dest: %r0, value: value(ct_simd { dtype: int64, lanes: [lane_int(4)] }) },
+              const { dest: %r1, value: value(ct_simd { dtype: int32, lanes: [lane_int(0), lane_int(1), lane_int(2), lane_int(3), lane_int(4), lane_int(5), lane_int(6), lane_int(7)] }) },
+              var.store { var: $v0, src: %r1, binding_type: present(simd { dtype: int32, width: 8 }), in_place: false },
+              var.store { var: $v1, src: %r0, binding_type: present(simd { dtype: int64, width: 1 }), in_place: false },
+              var.use { dest: %r7, var: $v0, mode: copy },
+              var.use { dest: %r8, var: $v1, mode: copy },
+              var.store { var: $v2, src: %r7, binding_type: present(simd { dtype: int32, width: 8 }), in_place: false },
+              var.store { var: $v3, src: %r8, binding_type: present(simd { dtype: int64, width: 1 }), in_place: false },
+              var.use { dest: %r4, var: $v2, mode: forward },
+              var.use { dest: %r5, var: $v3, mode: forward },
+              llvm.intrinsic { dest: %r6, intrinsic: value(ct_kgen_string("llvm.vector.extract")), has_side_effect: value(ct_bool(false)), args: [%r4, %r5], spread: absent }
+            ],
+            terminator: return { value: present(%r6) }
+          }
+        ]
+      }
+  ]
