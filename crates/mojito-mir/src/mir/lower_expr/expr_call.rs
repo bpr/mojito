@@ -484,33 +484,9 @@ impl<'a> Flatten<'a> {
         {
             return self.expr(object);
         }
-        // Parameterized SIMD methods (`v.cast[DType.<dt>]()`) carry
-        // their checker-resolved payload in the adjustment; the
-        // receiver is the member callee's object.
-        let simd_cast = node
-            .adjustments
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::SimdCast { dtype, width } => {
-                    Some((dtype.clone(), width.clone()))
-                }
-                _ => None,
-            });
-        if let Some((dtype, width)) = simd_cast
-            && let Some(object) = callee.member_object()
-        {
-            let value = self.expr(object);
-            let dest = self.fresh(call.location(), None);
-            self.emit(MirInstr::SimdCast {
-                dest,
-                value,
-                dtype,
-                width,
-            });
-            return dest;
-        }
-        // `v.to_bits[DType.<dt>]()` lowers like `cast`, as a lane-wise
-        // bit reinterpretation of the member callee's object.
+        // `v.to_bits[DType.<dt>]()` carries its checker-resolved payload
+        // in the adjustment: a lane-wise bit reinterpretation of the
+        // member callee's object.
         let simd_to_bits = node
             .adjustments
             .iter()

@@ -631,7 +631,9 @@ impl Checker {
         }
         // A scalar's `std.math` operation dunders are the methods upstream's
         // `SIMD` and `IntLiteral` declare for the trait owning each; the
-        // backends answer them intrinsically.
+        // backends answer them intrinsically. A `SIMD`'s `__abs__`,
+        // `__floor__`, `__ceil__`, and `__trunc__` are its declared members
+        // and never reach here, so for those only `IntLiteral` does.
         if kwargs.is_empty()
             && param_args.is_empty()
             && let Some(trait_name) = math_operation_requirement(method, args.len())

@@ -2361,33 +2361,19 @@ fn accepts_lanes_and_simd_methods_on_host_scalars() {
 
 #[test]
 fn accepts_simd_negation_select_and_reductions() {
-    ok(
+    check_with_std(
         "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var n: SIMD[DType.int32, 4] = -v\n    var total: Int32 = v.reduce_add()\n    var m = v.lt(SIMD[DType.int32, 4](3, 3, 3, 3))\n    var blended: SIMD[DType.int32, 4] = m.select(v, -v)\n    var splatted: SIMD[DType.int32, 4] = m.select(v, 0)\n    var all_set: Bool = m.reduce_and()\n    var any_set: Bool = m.reduce_or()\n    var i: Int = SIMD[DType.int, 2](1, 2).reduce_add()\n",
-    );
+    )
+    .expect("expected the program to type-check");
 }
 
 #[test]
 fn accepts_simd_dtype_cast() {
-    ok(
-        "def main():\n    var v = SIMD[DType.int32, 4](1, -2, 3, -300)\n    var u: SIMD[DType.uint8, 4] = v.cast[DType.uint8]()\n    var f: SIMD[DType.float32, 4] = v.cast[DType.float32]()\n    var back: SIMD[DType.int32, 4] = f.cast[DType.int32]()\n    var scalar: Int8 = Byte(200).cast[DType.int8]()\n",
-    );
-}
-
-#[test]
-fn rejects_bool_simd_dtype_casts() {
-    // Bool dtype casts are deferred in both directions.
-    assert!(matches!(
-        err(
-            "def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var bad = v.cast[DType.bool]()\n"
-        ),
-        TypeError::TypeMismatch { .. }
-    ));
-    assert!(matches!(
-        err(
-            "def main():\n    var m = SIMD[DType.int32, 2](1, 2).lt(SIMD[DType.int32, 2](2, 2))\n    var bad = m.cast[DType.int32]()\n"
-        ),
-        TypeError::TypeMismatch { .. }
-    ));
+    // `cast` is `SIMD`'s declared member, bool casts included.
+    check_with_std(
+        "def main():\n    var v = SIMD[DType.int32, 4](1, -2, 3, -300)\n    var u: SIMD[DType.uint8, 4] = v.cast[DType.uint8]()\n    var f: SIMD[DType.float32, 4] = v.cast[DType.float32]()\n    var back: SIMD[DType.int32, 4] = f.cast[DType.int32]()\n    var scalar: Int8 = Byte(200).cast[DType.int8]()\n    var m: SIMD[DType.bool, 4] = v.cast[DType.bool]()\n    var n: SIMD[DType.int8, 4] = m.cast[DType.int8]()\n",
+    )
+    .expect("expected the program to type-check");
 }
 
 #[test]
@@ -2451,18 +2437,15 @@ fn rejects_simd_mask_negation_and_shape_misuse() {
         ),
         TypeError::BadOperator { .. }
     ));
-    // `select` lives on the mask, not a numeric vector.
-    assert!(matches!(
-        err("def main():\n    var v = SIMD[DType.int32, 2](1, 2)\n    var bad = v.select(v, v)\n"),
-        TypeError::NoSuchMethod { .. }
-    ));
-    // The cases must share the mask's width.
-    assert!(matches!(
-        err(
+    // The cases of the declared `select` must share the mask's width (a
+    // non-`bool` mask fails its `comptime assert` in the instance:
+    // `assets/type_error/simd_select_non_bool_mask.mojo`).
+    assert!(
+        check_with_std(
             "def main():\n    var m = SIMD[DType.int32, 2](1, 2).lt(SIMD[DType.int32, 2](2, 2))\n    var bad = m.select(SIMD[DType.int32, 4](1, 2, 3, 4), 0)\n"
-        ),
-        TypeError::TypeMismatch { .. }
-    ));
+        )
+        .is_err()
+    );
     // The bitwise reductions take integer or bool lanes, as upstream's
     // `reduce_and` constrains them.
     ok(

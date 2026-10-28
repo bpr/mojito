@@ -198,10 +198,12 @@ point, as upstream's toolchain does.
   `floor`/`ceil`/`trunc`/`ceildiv`, each generic over its trait. The prelude
   exports `Absable`, `Powable`, and `Roundable`, as upstream's does; the rest
   must be imported (`from std.math import floor`). `abs`/`round`/`divmod` are
-  still compiler builtins (R1458). `Int`, `UInt`, and `Float64` conform
-  as upstream's `SIMD` declares and answer each requirement intrinsically;
-  other `SIMD` values conform only to the rounding traits, and only as float
-  scalars (R1457).
+  still compiler builtins (R1458). Every `SIMD` declares `Absable`,
+  `Ceilable`, `Floorable`, and `Truncable` in `std/simd.mojo`; for
+  `Powable`, `Roundable`, `DivModable`, and `CeilDivable`, `Int`, `UInt`, and
+  `Float64` conform as upstream's `SIMD` declares and answer each
+  requirement intrinsically, and other `SIMD` values do not yet (R1566,
+  R1567, R1582).
 - `std/span.mojo` — the prelude-exported borrowed view `Span[mut: Bool, //,
   T: AnyType, origin: Origin[mut=mut]]` (upstream's bound): a multi-element origin-bearing
   pointer (`Pointer[T, origin._get_owned_interior["element"]]`) plus a

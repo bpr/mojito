@@ -345,8 +345,8 @@ impl VmBackend {
                     self.store_at_call_place(frame_id, place, updated, regs, vars)?;
                     return Ok(Value::None);
                 }
-                // `Floorable`/`Ceilable`/`Truncable` — `x.__floor__()` etc.
-                // (roadmap milestone 7).
+                // `Floorable`/`Ceilable`/`Truncable` on an integer
+                // literal (`(5).__floor__()`).
                 ("__floor__" | "__ceil__" | "__trunc__", 0) => {
                     return crate::runtime::builtin_round_dir(method, &recv);
                 }

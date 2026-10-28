@@ -881,40 +881,14 @@ pub fn builtin_convert(target: ScalarConversion, v: Value) -> Result<Value, Runt
     }
 }
 
-/// The intrinsic behind `math.floor`/`ceil`/`trunc` — i.e. the `Floorable`/
-/// `Ceilable`/`Truncable` dunders on a built-in numeric value (roadmap
-/// milestone 7).
-///
-/// An integer is already whole, so it is returned unchanged; a `Float64`
-/// rounds toward the requested direction, preserving its type
-/// (`__floor__(self) -> Self`).
+/// `__floor__`/`__ceil__`/`__trunc__` on an integer literal, the one
+/// receiver that reaches them by name (a `SIMD`'s are its declared
+/// members): the value is already whole.
 pub fn builtin_round_dir(method: &str, v: &Value) -> Result<Value, RuntimeError> {
     match v {
-        Value::Int(_) | Value::UInt(_) => Ok(v.clone()),
-        Value::Float64(x) => Ok(Value::Float64(match method {
-            "__floor__" => x.floor(),
-            "__ceil__" => x.ceil(),
-            _ => x.trunc(), // "__trunc__"
-        })),
-        // A sized float scalar: its whole-valued result is representable at
-        // the lane's own precision.
-        Value::Simd {
-            dtype,
-            lanes: SimdLanes::Float(lanes),
-        } if lanes.len() == 1 => {
-            let x = lanes[0];
-            let rounded = match method {
-                "__floor__" => x.floor(),
-                "__ceil__" => x.ceil(),
-                _ => x.trunc(), // "__trunc__"
-            };
-            Ok(Value::Simd {
-                dtype: *dtype,
-                lanes: SimdLanes::Float(vec![rounded]),
-            })
-        }
+        Value::Int(_) | Value::UInt(_) | Value::IntLiteral(_) => Ok(v.clone()),
         other => Err(RuntimeError::TypeError(format!(
-            "{}() expects a numeric value, got {}",
+            "{}() expects an integer literal, got {}",
             method,
             type_name(other)
         ))),

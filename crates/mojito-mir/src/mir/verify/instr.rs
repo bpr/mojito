@@ -695,24 +695,7 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
                 errors,
             );
         }
-        // Two closed types a rebind names must already agree; the
-        // elaborator judges one over a parameter per instance, and one in a
-        // `comptime if` arm, which an instance may never take (an inlined
-        // `comptime if type == NoneType: return rebind[type](None)`).
-        MirInstr::Rebind { dest, value } => {
-            if let (Some(found), Some(expected)) = (cx.reg_ty(*value), cx.reg_ty(*dest))
-                && !types_compatible(found, expected)
-                && !cx
-                    .context
-                    .regions
-                    .iter()
-                    .any(|kind| matches!(kind, RegionKind::ComptimeIfArm(_)))
-            {
-                errors.push(format!(
-                    "{prefix}: rebinds {found} to {expected}, which never agree"
-                ));
-            }
-        }
+        MirInstr::Rebind { dest, value } => verify_rebind(cx, *dest, *value, errors),
         MirInstr::DefVar {
             src,
             binding_ty: Some(expected),
@@ -817,6 +800,29 @@ fn verify_value_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &m
             }
         }
         _ => {}
+    }
+}
+
+/// Two closed types a rebind names must already agree; the elaborator
+/// judges one over a parameter per instance, one in a `comptime if` arm,
+/// which an instance may never take (an inlined `comptime if type ==
+/// NoneType: return rebind[type](None)`), and one after a `comptime
+/// assert`, which an instance may fail first (an inlined `select` over a
+/// non-`bool` mask).
+fn verify_rebind(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec<String>) {
+    if let (Some(found), Some(expected)) = (cx.reg_ty(value), cx.reg_ty(dest))
+        && !types_compatible(found, expected)
+        && !cx.context.asserted
+        && !cx
+            .context
+            .regions
+            .iter()
+            .any(|kind| matches!(kind, RegionKind::ComptimeIfArm(_)))
+    {
+        errors.push(format!(
+            "{}: rebinds {found} to {expected}, which never agree",
+            cx.prefix
+        ));
     }
 }
 

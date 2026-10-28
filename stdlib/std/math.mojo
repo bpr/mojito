@@ -4,10 +4,12 @@
 # `Absable`, `Powable`, and `Roundable`, as upstream's does; `abs`/`round`/
 # `divmod` are still compiler builtins (R1458).
 #
-# Each helper is generic over the trait that supplies its dunder. The
-# compiler-modelled `Int`, `UInt`, and `Float64` conform as upstream's `SIMD`
-# declares, other `SIMD` values only in part (R1457), and each answers a
-# requirement intrinsically.
+# Each helper is generic over the trait that supplies its dunder. `SIMD`
+# declares `Absable`, `Ceilable`, `Floorable`, and `Truncable` in
+# `std.simd`; for the other operation traits the compiler-modelled `Int`,
+# `UInt`, and `Float64` conform as upstream's `SIMD` declares, other `SIMD`
+# values do not yet (R1566, R1567, R1582), and each answers a requirement
+# intrinsically.
 
 from std.sys import llvm_intrinsic
 

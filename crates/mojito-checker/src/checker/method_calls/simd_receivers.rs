@@ -4,7 +4,6 @@
 use super::*;
 use mojito_types::mlir::MlirOp;
 use mojito_types::types::LaneMask;
-use mojito_types::types::TyKind;
 
 impl Checker {
     /// `v.to_bits[DType.target]()`: the target must be unsigned and at least
@@ -98,10 +97,9 @@ impl Checker {
         } = call;
         let (dtype, width) = (dtype.clone(), width.clone());
         reject_kwargs(kwargs)?;
-        // Compiler-known SIMD methods: `cast` converts dtypes
-        // elementwise, `select` blends through a bool mask, the lane
-        // reductions collapse to the canonicalized width-1 scalar
-        // (`reduce_and`/`reduce_or` to `Bool`). A symbolic dtype licenses
+        // Compiler-known SIMD methods: the lane reductions collapse to
+        // the canonicalized width-1 scalar (`reduce_and`/`reduce_or` to
+        // `Bool`). A symbolic dtype licenses
         // every dtype-gated method, and a lane fact records the symbolic
         // slot: both are the instantiation's to check.
         match method {
@@ -112,63 +110,6 @@ impl Checker {
                     self.record_at(object.source_span()).copy_place_value_use = true;
                 }
                 Ok(obj_ty.clone())
-            }
-            "cast" if param_args.len() == 1 && args.is_empty() => {
-                let target = self.dtype_from_arg(&param_args[0])?;
-                // Bool casts are deferred: masks convert through
-                // `select`, and no numeric dtype casts to bool yet.
-                // (Not `NoSuchMethod`, which the Invoke path treats as
-                // fall-through to indirect-callable inference.)
-                if target.known() == Some(Dtype::Bool) || dtype.known() == Some(Dtype::Bool) {
-                    return Err(TypeError::TypeMismatch {
-                        expected: "a non-bool dtype cast".to_string(),
-                        found: format!("cast from {dtype} to {target}"),
-                        context: "SIMD.cast".to_string(),
-                    });
-                }
-                self.record_at(span.clone()).adjustment = Some(Box::new(
-                    mojito_checked::checked::SemanticAdjustment::SimdCast {
-                        dtype: target.clone(),
-                        width: width.clone(),
-                    },
-                ));
-                simd_of(target, width)
-            }
-            "select" if dtype.licenses(|d| d == Dtype::Bool) && args.len() == 2 => {
-                let true_case = self.infer(&args[0])?;
-                let false_case = self.infer(&args[1])?;
-                // Both cases share one dtype at the mask's width; a
-                // scalar/literal case splats, like an infix operand.
-                let payload = match (true_case.kind(), false_case.kind()) {
-                    (
-                        TyKind::Simd {
-                            dtype: d1,
-                            width: w1,
-                        },
-                        TyKind::Simd {
-                            dtype: d2,
-                            width: w2,
-                        },
-                    ) if d1 == d2 && w1 == w2 && *w1 == width => Some(d1.clone()),
-                    (TyKind::Simd { dtype: d, width: w }, other)
-                    | (other, TyKind::Simd { dtype: d, width: w })
-                        if *w == width && splats_to(other, d) =>
-                    {
-                        Some(d.clone())
-                    }
-                    _ => None,
-                };
-                match payload {
-                    Some(d) => {
-                        self.record_simd_receiver_op(span, MlirOp::PopSimdSelect);
-                        simd_of(d, width)
-                    }
-                    None => Err(TypeError::TypeMismatch {
-                        expected: format!("two width-{width} SIMD cases of one dtype"),
-                        found: format!("{true_case} and {false_case}"),
-                        context: "SIMD.select".to_string(),
-                    }),
-                }
             }
             "shuffle" if !param_args.is_empty() && args.is_empty() => {
                 self.infer_simd_shuffle(site, dtype, width)
@@ -207,17 +148,9 @@ impl Checker {
                     _ => Ok(Ty::bool()),
                 }
             }
-            // A float scalar's rounding dunders and its
-            // fused multiply-add (`k.__fma__(step, start)`, a float range
-            // element) are intrinsics at the scalar's own precision.
-            "__floor__" | "__ceil__" | "__trunc__"
-                if width.known() == Some(1)
-                    && dtype.licenses(Dtype::is_float)
-                    && args.is_empty()
-                    && param_args.is_empty() =>
-            {
-                Ok(obj_ty.clone())
-            }
+            // A float scalar's fused multiply-add (`k.__fma__(step,
+            // start)`, a float range element) is an intrinsic at the
+            // scalar's own precision.
             "__fma__"
                 if width.known() == Some(1)
                     && dtype.licenses(Dtype::is_float)

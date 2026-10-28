@@ -442,13 +442,7 @@ impl FnLowering<'_> {
             "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" if args.is_empty() => {
                 self.lower_simd_reduce(ctx, dest, recv, dtype, width, method)
             }
-            // A float scalar's rounding dunders and fused
-            // multiply-add (`runtime::builtin_round_dir`/`builtin_fma`).
-            "__floor__" | "__ceil__" | "__trunc__"
-                if width == 1 && dtype.is_float() && args.is_empty() =>
-            {
-                self.lower_round_dir(ctx, dest, recv, &canonical_simd_ty(dtype, 1), method)
-            }
+            // A float scalar's fused multiply-add (`runtime::builtin_fma`).
             "__fma__" if width == 1 && dtype.is_float() && args.len() == 2 => self.lower_fma(
                 ctx,
                 dest,

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD`'s `__abs__`, `__floor__`, `__ceil__`, `__trunc__`,
+  `is_power_of_two`, `select`, and `cast` are upstream's bodies in
+  `std.simd`, and `SIMD` declares `Absable`, `Ceilable`, `Floorable`, and
+  `Truncable` (R1554). `Int32(-3).__abs__()`, `v.is_power_of_two()`,
+  `floor(Int32(3))`, `T: Absable` over a vector, `v.cast[DType.bool]()`,
+  `m.cast[DType.int8]()`, and `m.select[DType.float32](f, g)`, which were
+  rejected, run as at the pin. `SIMD(mlir_value=v)` infers its parameters
+  from `v`, `(5).__floor__()` runs on the VM and natively, and a rebind
+  after a `comptime assert` is left to the elaborator, so the failing
+  assertion is reported, as at the pin. The rest of the entry is filed as
+  R1576–R1586.
 - `SIMD`'s `__eq__`, `__ne__`, `__gt__`, `__ge__`, `__lt__`, `__le__`, the
   elementwise `eq` through `le`, and their `_Mask` alias are upstream's
   `pop.cmp` bodies in `std.simd`, `SIMD` declares `Comparable` and

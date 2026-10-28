@@ -6,7 +6,7 @@
 //! and the elaborator ask the same predicate here.
 
 use crate::types::TyKind;
-use crate::types::{Ty, default_literal, scalar_simd_dtype, simd_shape, trivial_predicate_name};
+use crate::types::{Ty, default_literal, simd_shape, trivial_predicate_name};
 
 /// Mojo's built-in traits the compiler knows by name. A program may also
 /// declare a trait of one of these names; its declaration then decides.
@@ -267,10 +267,12 @@ pub fn leaf_conforms(
 /// `std.simd`, which the checker and the elaborator read instead.
 ///
 /// `SIMD` lists every `std.math` operation trait but `CeilDivableRaising`;
-/// a numeric literal answers as the scalar it materializes to. Only `Int`,
-/// `UInt`, and `Float64` conform here, and a float scalar `SIMD` to
-/// `Ceilable`, `Floorable`, and `Truncable`, since the backends compute
-/// the operations over no other `SIMD` (R1457).
+/// its `Absable`, `Ceilable`, `Floorable`, and `Truncable` are its
+/// declaration's, and `IntLiteral` lists `Ceilable`, `Floorable`, and
+/// `Truncable`. For `Powable`, `Roundable`, `DivModable`, and
+/// `CeilDivable` a numeric literal answers as the scalar it materializes
+/// to, and only `Int`, `UInt`, and `Float64` conform, since the backends
+/// compute those operations over no other `SIMD`.
 ///
 /// `SIMD`, `Bool`, `StringLiteral`, and `DType` list `Hashable`; none lists
 /// `Hasher`.
@@ -315,11 +317,9 @@ pub fn modelled_conformance(
             ty.kind(),
             TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral
         ),
-        "Ceilable" | "Floorable" | "Truncable" => {
-            is_numeric_like(ty)
-                || scalar_simd_dtype(ty).is_some_and(mojito_ast::ast::Dtype::is_float)
-        }
-        "Absable" | "Powable" | "Roundable" | "DivModable" | "CeilDivable" => is_numeric_like(ty),
+        "Ceilable" | "Floorable" | "Truncable" => *ty == TyKind::IntLiteral,
+        "Absable" => false,
+        "Powable" | "Roundable" | "DivModable" | "CeilDivable" => is_numeric_like(ty),
         "Hashable" => builtin_hashable_ty(ty),
         "Writable" => match ty.kind() {
             TyKind::Tuple(items) | TyKind::RuntimePack(items) | TyKind::Variant(items) => {

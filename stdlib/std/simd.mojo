@@ -7,12 +7,17 @@
 # their `_Mask` alias, the in-place `__iadd__`, `__isub__`, `__imul__`,
 # `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and `__irshift__`, the
 # reflected `__radd__`, `__rsub__`, `__rmul__`, `__rand__`, `__rxor__`,
-# `__ror__`, `__rlshift__`, and `__rrshift__`, and `__bool__`, `__int__`,
-# `__mlir_index__`, `__float__`, and `_refine`. The other members are
-# still served by the compiler (R184, R1554, R1555, R1566, R1567, R330,
-# R276), and the struct declares only the traits whose requirements are
-# ported here; as upstream's, its trait list has no `Floatable`. `Scalar`, `Int`, `UInt`,
-# the sized aliases, and `Byte` stay compiler names until R1557.
+# `__ror__`, `__rlshift__`, and `__rrshift__`, `__bool__`, `__int__`,
+# `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
+# `__abs__`, `_refine`, `cast`, `is_power_of_two`, and `select`. The other
+# members are still served by the compiler (R184, R1555, R1566, R1567,
+# R1578–R1582, R1585, R1586, R330, R276), and the struct declares only the
+# traits whose requirements are ported here; as upstream's, its trait list
+# has no `Floatable`. `Scalar`, `Int`, `UInt`, the sized aliases, and `Byte`
+# stay compiler names until R1557.
+# `cast` omits upstream's `is_nvidia_gpu()` and `bfloat16`-on-AMD branches
+# (R1562), and its float8, `float8_e8m0fnu`, and `_uint1`/`_uint2`/`_uint4`
+# branches (R65): Mojito has none of those targets or dtypes.
 # Omitted: the `@lldb_formatter_wrapping_type` decorator
 # (`std.utils._visualizers`) and `CoordLike`'s static `__len__`
 # (`std.utils.coord`).
@@ -46,6 +51,7 @@ components, including tensor operations, linear algebra routines, and
 domain-specific libraries for machine learning and scientific computing.
 """
 
+from std.math import Ceilable, Floorable, Truncable
 from std.sys.info import bit_width_of
 from std.builtin.simd_length import SIMDLength
 from std.builtin.dtype import _uint_type_of_width
@@ -58,13 +64,17 @@ from std.builtin.dtype import _uint_type_of_width
 
 @stable(since="1.1")
 struct SIMD[dtype: DType, length: SIMDLength](
+    Absable,
     Boolable,
+    Ceilable,
     Comparable,
     Equatable,
+    Floorable,
     Indexer,
     Intable,
     Sized,
     TrivialRegisterPassable,
+    Truncable,
 ):
     """Represents a vector type that leverages hardware acceleration to process
     multiple data elements with a single operation.
@@ -972,6 +982,46 @@ struct SIMD[dtype: DType, length: SIMDLength](
         comptime assert Self.length == 1, "expected a scalar type"
         return self._refine[new_size=1]().cast[DType.float64]()
 
+
+    @always_inline("builtin")
+    def __floor__(self) -> Self:
+        """Performs elementwise floor on the elements of a SIMD vector.
+
+        Returns:
+            The elementwise floor of this SIMD vector.
+        """
+        return Self(mlir_value=__mlir_op.`pop.floor`(self._mlir_value))
+
+    @always_inline("builtin")
+    def __ceil__(self) -> Self:
+        """Performs elementwise ceiling on the elements of a SIMD vector.
+
+        Returns:
+            The elementwise ceiling of this SIMD vector.
+        """
+        return Self(mlir_value=__mlir_op.`pop.ceil`(self._mlir_value))
+
+    @always_inline("builtin")
+    def __trunc__(self) -> Self:
+        """Performs elementwise truncation on the elements of a SIMD vector.
+
+        Returns:
+            The elementwise truncated values of this SIMD vector.
+        """
+        return Self(mlir_value=__mlir_op.`pop.trunc`(self._mlir_value))
+
+    @always_inline("builtin")
+    def __abs__(self) -> Self:
+        """Defines the absolute value operation.
+
+        For signed integral element types, the absolute value of the minimum
+        representable value is the minimum value itself.
+
+        Returns:
+            The absolute value of this SIMD vector.
+        """
+        return Self(mlir_value=__mlir_op.`pop.abs`(self._mlir_value))
+
     # ===------------------------------------------------------------------=== #
     # Methods
     # ===------------------------------------------------------------------=== #
@@ -990,3 +1040,111 @@ struct SIMD[dtype: DType, length: SIMDLength](
             The same SIMD vector with the specified element type and size.
         """
         return rebind[SIMD[new_dtype, new_size]](self)
+
+    @inline(.nodebug)
+    def cast[target: DType](self) -> SIMD[target, Self.length]:
+        """Casts the elements of the SIMD vector to the target element type.
+
+        Parameters:
+            target: The target DType.
+
+        Returns:
+            A new SIMD vector whose elements have been cast to the target
+            element type.
+
+        Casting behavior:
+
+        ```mojo
+        # Basic casting preserves value within range
+        Int8(UInt8(127)) == Int8(127)
+
+        # Numbers above signed max wrap to negative using two's complement
+        Int8(UInt8(128)) == Int8(-128)
+        Int8(UInt8(129)) == Int8(-127)
+        Int8(UInt8(256)) == Int8(0)
+
+        # Negative signed cast to unsigned using two's complement
+        UInt8(Int8(-128)) == UInt8(128)
+        UInt8(Int8(-127)) == UInt8(129)
+        UInt8(Int8(-1)) == UInt8(255)
+
+        # Truncate precision after downcast and upcast
+        Float64(Float32(Float64(123456789.123456789))) == Float64(123456792.0)
+
+        # Rightmost bits of significand become 0's on upcast
+        Float64(Float32(0.3)) == Float64(0.30000001192092896)
+
+        # Numbers equal after truncation of float literal and cast truncation
+        Float32(Float64(123456789.123456789)) == Float32(123456789.123456789)
+
+        # Float to int/uint floors
+        Int64(Float64(42.2)) == Int64(42)
+        ```
+        """
+
+        comptime if Self.dtype == target:
+            return self._refine[target]()
+
+        comptime if Self.dtype == DType.bool:
+            return self.select[target](1, 0)
+        elif target == DType.bool:
+            return self.ne(0)._refine[target]()
+
+        var res = __mlir_op.`pop.cast`[
+            _type=SIMD[target, Self.length]._mlir_type,
+            fastmathFlags=__mlir_attr.`#pop.fmf<fast>`,
+        ](self._mlir_value)
+        return SIMD(mlir_value=res)
+
+    @always_inline("builtin")
+    def is_power_of_two(self) -> SIMD[.bool, Self.length]:
+        """Checks if the input value is a power of 2 for each element of a SIMD vector.
+
+        Constraints:
+            The element type of the input vector must be integral.
+
+        Returns:
+            A SIMD value where the element at position `i` is True if the integer at
+            position `i` of the input value is a power of 2, False otherwise.
+        """
+        comptime assert Self.dtype.is_integral(), "must be integral"
+
+        return self.gt(0) & (self & (self - 1)).eq(0)
+
+    # ===------------------------------------------------------------------=== #
+    # select
+    # ===------------------------------------------------------------------=== #
+
+    # TODO (7748): always_inline required to WAR LLVM codegen bug
+    @inline(.nodebug)
+    def select[
+        _dtype: DType
+    ](
+        self,
+        true_case: SIMD[_dtype, Self.length],
+        false_case: SIMD[_dtype, Self.length],
+    ) -> SIMD[_dtype, Self.length]:
+        """Selects the values of the `true_case` or the `false_case` based on
+        the current boolean values of the SIMD vector.
+
+        Parameters:
+            _dtype: The element type of the input and output SIMD vectors.
+
+        Args:
+            true_case: The values selected if the positional value is True.
+            false_case: The values selected if the positional value is False.
+
+        Constraints:
+            The element type of the vector must be boolean.
+
+        Returns:
+            A new vector of the form
+            `[true_case[i] if elem else false_case[i] for i, elem in enumerate(self)]`.
+        """
+        comptime assert Self.dtype == DType.bool, "the simd type must be bool"
+        var res = __mlir_op.`pop.simd.select`(
+            self._refine[DType.bool]()._mlir_value,
+            true_case._mlir_value,
+            false_case._mlir_value,
+        )
+        return SIMD(mlir_value=res)

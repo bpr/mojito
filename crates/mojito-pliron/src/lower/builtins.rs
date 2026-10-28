@@ -464,10 +464,9 @@ impl FnLowering<'_> {
         }
     }
 
-    /// `__floor__`/`__ceil__`/`__trunc__` on a scalar receiver — the VM's
-    /// `builtin_round_dir`: integers are already whole (identity), floats
-    /// round toward the requested direction. A `Float16` rounds its exact f64
-    /// view, since the half-precision libm entries do not exist.
+    /// `__floor__`/`__ceil__`/`__trunc__` on an integer literal receiver —
+    /// the VM's `builtin_round_dir`: the value is already whole (identity).
+    /// A `SIMD`'s are its declared members.
     pub(super) fn lower_round_dir(
         &mut self,
         ctx: &mut Context,
@@ -476,54 +475,18 @@ impl FnLowering<'_> {
         recv_ty: &Ty,
         method: &str,
     ) -> Result<(), PlironError> {
-        match recv_ty.kind() {
-            TyKind::INT | TyKind::UINT => {
-                let scalar = if matches!(recv_ty.kind(), TyKind::UINT) {
-                    ScalarTy::UInt
-                } else {
-                    ScalarTy::Int
-                };
-                let value = self.reg_value(ctx, recv, scalar)?;
-                self.reg_values.insert(dest.0, value);
-                Ok(())
-            }
-            ty if scalar_simd_dtype(ty) == Some(Dtype::Float32) => {
-                let intrinsic = match method {
-                    "__floor__" => "llvm.floor.f32",
-                    "__ceil__" => "llvm.ceil.f32",
-                    _ => "llvm.trunc.f32",
-                };
-                let value = self.reg_value(ctx, recv, ScalarTy::Sized(Dtype::Float32))?;
-                let f32_ty: TypeHandle = FP32Type::get(ctx).into();
-                let result = self.float_intrinsic(ctx, intrinsic, f32_ty, vec![value], dest);
-                self.reg_values.insert(dest.0, result);
-                Ok(())
-            }
-            ty if scalar_simd_dtype(ty) == Some(Dtype::Float16) => {
-                let intrinsic = match method {
-                    "__floor__" => "llvm.floor.f64",
-                    "__ceil__" => "llvm.ceil.f64",
-                    _ => "llvm.trunc.f64",
-                };
-                let value = self.reg_value(ctx, recv, ScalarTy::Sized(Dtype::Float16))?;
-                let wide = self.widen_float_lane(ctx, value, dest);
-                let wide = self.float_unary(ctx, intrinsic, wide, dest);
-                let result = self.round_float_lane(ctx, Dtype::Float16, wide, dest);
-                self.reg_values.insert(dest.0, result);
-                Ok(())
-            }
+        let scalar = match recv_ty.kind() {
+            TyKind::INT | TyKind::IntLiteral => ScalarTy::Int,
+            TyKind::UINT => ScalarTy::UInt,
             _ => {
-                let intrinsic = match method {
-                    "__floor__" => "llvm.floor.f64",
-                    "__ceil__" => "llvm.ceil.f64",
-                    _ => "llvm.trunc.f64",
-                };
-                let value = self.reg_value(ctx, recv, ScalarTy::Float64)?;
-                let result = self.float_unary(ctx, intrinsic, value, dest);
-                self.reg_values.insert(dest.0, result);
-                Ok(())
+                return Err(
+                    self.unsupported_reg(format!("`{method}` over a non-integer receiver"), dest)
+                );
             }
-        }
+        };
+        let value = self.reg_value(ctx, recv, scalar)?;
+        self.reg_values.insert(dest.0, value);
+        Ok(())
     }
 
     /// `__fma__` on a float scalar receiver — the VM's `builtin_fma`: the

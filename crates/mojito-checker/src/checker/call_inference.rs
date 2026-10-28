@@ -221,6 +221,10 @@ impl Checker {
                 self.record_bracket_attributes(span.clone(), attributes);
                 self.infer_storage_construction(span, name, &ty, &kwargs[0])
             }
+            // `SIMD(mlir_value=v)`, both parameters inferred from `v`.
+            "SIMD" if let Some(storage) = lone_storage_keyword(param_args, args, kwargs) => {
+                self.infer_inferred_storage_construction(span, name, storage)
+            }
             // `Bool(value=b)`: upstream's initializer from an `i1`, which
             // Mojito holds as the `Bool` itself.
             "Bool"
@@ -764,6 +768,24 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction,
         ));
         Ok(ty.clone())
+    }
+
+    /// `SIMD(mlir_value=v)`: the storage construction whose type is the
+    /// vector of `v`'s `!kgen.simd` type.
+    fn infer_inferred_storage_construction(
+        &self,
+        span: SourceSpan,
+        name: &str,
+        storage: &mojito_ast::ast::KwArg,
+    ) -> Result<Ty, TypeError> {
+        let found = self.infer(&storage.value)?;
+        let ty =
+            mojito_types::types::storage_simd(&found).ok_or_else(|| TypeError::TypeMismatch {
+                expected: "`!kgen.simd` storage".to_string(),
+                found: found.to_string(),
+                context: format!("argument 'mlir_value' of '{name}'"),
+            })?;
+        self.infer_storage_construction(span, name, &ty, storage)
     }
 
     /// `Name(mlir_value=v)` on a SIMD type, or `Bool(value=b)`: upstream's
@@ -2537,4 +2559,19 @@ fn reject_generic_function_value(
         });
     }
     Ok(())
+}
+
+/// The lone `mlir_value=` keyword of a bracketless storage construction
+/// (`SIMD(mlir_value=v)`).
+fn lone_storage_keyword<'a>(
+    param_args: &[mojito_ast::ast::ParamArg],
+    args: &[Expr],
+    kwargs: &'a [mojito_ast::ast::KwArg],
+) -> Option<&'a mojito_ast::ast::KwArg> {
+    match kwargs {
+        [keyword] if keyword.name == "mlir_value" && args.is_empty() && param_args.is_empty() => {
+            Some(keyword)
+        }
+        _ => None,
+    }
 }

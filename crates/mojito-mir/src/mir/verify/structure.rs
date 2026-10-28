@@ -371,7 +371,11 @@ fn verify_region(
     }
     let mut regions = cx.context.regions.clone();
     regions.push(kind);
-    let context = RegionContext { regions, protected };
+    let context = RegionContext {
+        regions,
+        protected,
+        asserted: cx.context.asserted,
+    };
     verify_blocks(
         cx.name,
         cx.function,

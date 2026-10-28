@@ -960,18 +960,12 @@ pub enum SemanticAdjustment {
         text: String,
         ty: Ty,
     },
-    /// `v.cast[DType.target]()` — elementwise dtype conversion of a SIMD
-    /// value. The target dtype and lane width are the checker's slots, known
-    /// or a generator's parameter expressions; MIR carries them so the VM
-    /// never derives semantics from a runtime value.
-    SimdCast {
-        dtype: SimdDtype,
-        width: SimdWidth,
-    },
     /// `v.to_bits[DType.target]()` — lane-wise bit reinterpretation of a
     /// SIMD value as the unsigned `dtype` (at least as wide as the source
-    /// lane; narrower sources zero-extend). Resolved at checking like
-    /// `SimdCast`.
+    /// lane; narrower sources zero-extend). The target dtype and lane width
+    /// are the checker's slots, known or a generator's parameter
+    /// expressions; MIR carries them so the VM never derives semantics
+    /// from a runtime value.
     SimdToBits {
         dtype: SimdDtype,
         width: SimdWidth,

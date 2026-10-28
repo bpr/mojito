@@ -176,6 +176,7 @@ impl ReferencePermission {
 
 /// Where a block sits: the function's top level, or one region of a region
 /// op (with its handler-protection status).
+#[derive(Clone)]
 struct RegionContext {
     /// The kind of each region from the function's top level in, this
     /// region's last: a region terminator is checked against the regions
@@ -184,6 +185,9 @@ struct RegionContext {
     /// Whether a raise from this position reaches an `except` handler before
     /// leaving the function.
     protected: bool,
+    /// Whether a `comptime assert` precedes this position, so that an
+    /// instance failing it never reaches it.
+    asserted: bool,
 }
 
 impl RegionContext {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1576**.
+Next free ID: **R1587**.
 
 ## Ordered Work
 
@@ -2762,6 +2762,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1584 A function type in a trait composition does not parse**
+
+  `F: ImplicitlyCopyable & RegisterPassable & def[width:
+  SIMDLength](SIMD[DType.int32, width]) -> SIMD[DType.int32, width], //`
+  is a parse error ("Expected a trait name after '&'"), where the pin
+  binds `F` to the function's type and runs `func[4](x)`.
+  - The composition parser reads only trait names after `&`; upstream's
+    reads a function type there as one more requirement of the binder.
+  - `docs/grammar.md` first, then parser tests.
+  - Upstream's closure overload of `SIMD.reduce` spells its binder this
+    way (R1585).
+  - Found while planning R1554 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1502 `Pointer` and `StringLiteral` are not `TrivialRegisterPassable`**
 
   Upstream declares both `TrivialRegisterPassable`, but the modelled
@@ -4415,6 +4430,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     bracket arguments, not a resolved type.
   - Upstream's `Tuple.reverse` and `Tuple.concat` read
     `type_of(result).__len__()` (R343).
+  - Probe: a construction through `type_of`, `type_of(v)(Float32(2))`,
+    stops with "Undefined variable 'type_of'" too. Upstream's
+    `SIMD.__hash__` reads `type_of(bits)(neg_zero)` (R1579).
   - Found while landing R1369 (2026-10-27).
   - Depends on R1371, which classifies the receiver by what it denotes.
   - Model: Opus, Not Planned.
@@ -5555,7 +5573,52 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     same way; `g[1](Tag[0]())` runs at the pin. Its body is foldable (a
     builtin `pick(c: Bool, a: Int, b: Int)` over the same `pop.select`
     applies), so only the type parameter `T` blocks it.
+  - Probe: a parameter default applied over an earlier `DType` binder,
+    `def f[dtype: DType, _dtype: DType = w[dtype]()]()` over `def
+    w[dt: DType]() -> DType`, stops with "not a compile-time Int constant:
+    not an associated comptime expression", as does a method's `_dtype:
+    DType = w[Self.dtype]()`; the pin prints `32`. Only an `Int`, `UInt`,
+    `Bool`, `Float64`, or `index` binder is applicable. Upstream's
+    `SIMD.to_bits` default spells it (R1578).
   - Found while landing the callee shapes a signature applies (2026-10-06).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1576 A `comptime assert False` arm does not end a return path**
+
+  `def k[dt: DType]() -> DType` whose `comptime if` returns in each arm but
+  an `else: comptime assert False, "…"` is rejected ("'k' does not return
+  a value on every path"), where the pin prints `int32` for
+  `k[DType.float32]()`.
+  - The checker's return-path rule checks the template, where the pin
+    checks each instance after resolving its `comptime if`: a constant
+    `False` assertion never falls off the end of an instance that reaches
+    it.
+  - Treat a `comptime assert` whose condition is the constant `False` as
+    a diverging statement in the return-path rule.
+  - Upstream's `_integral_type_of` and `_unsigned_integral_type_of`
+    (`std/builtin/dtype.mojo`) end this way (R1578).
+  - Found while planning R1554 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1577 A compile-time application whose argument is a lifted
+  `comptime` value fails elaboration**
+
+  `_uint_type_of_width[bit_width_of[DType.int16]()]()`, and
+  `_uint_type_of_width[w]()` over a local `comptime w =
+  bit_width_of[dt]()`, stop with "unsupported compile-time application
+  `$comptime$…_uint_type_of_width$c0` reads an unresolved value
+  `$comptime$main$c0()`", where the pin prints `uint16` and `uint32`.
+  - `Specializer::demand_application` (`mono/specializer.rs`) values each
+    argument by `eval_ct` or `applied`, and `applied` demands only an
+    application of a declared function: the check's lifted thunk
+    (`lifted_check_name`) is not one, so its value stays open.
+  - Demand the lifted thunk's value as the elaborator does for its own
+    `comptime` reads, then apply the outer function.
+  - Upstream's `_unsigned_integral_type_of` and `to_bits`'s default read
+    `_uint_type_of_width[bit_width_of[…]()]()` (R1578).
+  - Found while planning R1554 (2026-10-28).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -5806,6 +5869,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A `def`'s own `Ts[i]` annotation resolves to the dependent element
     (`assets/ok/pack_element_alias_served.mojo`); the `Self.Ts[i]` spelling
     has no such form.
+  - Probe: a member alias over an unbound `_`, `comptime _T =
+    SIMD[Self.dtype, _]` read as `Self._T[1]`, fails with the same
+    message, where the pin prints `1`. Upstream's `SIMD.reduce` reads it
+    (R1585).
   - Found while landing R252 (2026-10-04).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5921,6 +5988,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     fails the same way, where the pin prints `3` for `x = 2`.
   - A bare reference to a generic `def` (`apply(as_int, 3)`, `var g =
     as_int`) is rejected at the pin too, so it is not part of this entry.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1583 A call through a callable binder does not convert its
+  parameter arguments**
+
+  `func[4](x)` over `func: def[width: SIMDLength](SIMD[DType.int32,
+  width]) thin -> SIMD[DType.int32, width]` bound to a generic `dbl` stops
+  with "in `dbl`: unsupported value parameter `width` is not compile-time
+  constant", where the pin prints `[2, 4, 6, 8]`.
+  - With `width: Int` the same call runs, so the `4` reaches `dbl`'s
+    instance unconverted: R1533 applies `SIMDLength`'s `@implicit
+    __init__` to a direct call's struct value-parameter argument, and the
+    callable-binder application skips that conversion.
+  - Upstream's `SIMD.reduce` takes such a binder (`func: def[width:
+    SIMDLength](SIMD[Self.dtype, width], SIMD[Self.dtype, width]) ->
+    SIMD[Self.dtype, width]`, R1585).
+  - Found while planning R1554 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -8620,35 +8705,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1457 A `SIMD` value other than `Int`, `UInt`, or `Float64`
-  conforms to none of the `std.math` operation traits**
-
-  `abs(Float32(-1.5))` through `T: Absable`, `round(v)` over a
-  `SIMD[DType.float32, 4]`, and `floor(Int32(3))` are rejected ("does not
-  conform to trait"), where the pin prints `1.5`, the rounded lanes, and
-  `3`.
-  - Upstream's `SIMD` declares `Absable`, `Powable`, `Roundable`,
-    `DivModable`, `Ceilable`, `Floorable`, `Truncable`, and `CeilDivable`
-    at every dtype and width, each a lanewise method.
-  - Cause: the backends compute these only over `Int`, `UInt`, and
-    `Float64`, and floor/ceil/trunc over a float scalar (the VM's
-    `builtin_abs`, `builtin_round`, `builtin_round_dir`, `builtin_ceildiv`,
-    and Pliron's `lower_abs_builtin`, `lower_round_builtin`,
-    `lower_round_dir`, `lower_ceildiv`), so `modelled_declares` holds the
-    eight back from every other `SIMD`.
-  - Probe: `conforms_to(SIMD[DType.int32, 4], Absable)` is `False`, where
-    the pin answers `True`.
-  - Probe: the method spelling `Int32(-3).__abs__()` is rejected ("has no
-    method '__abs__'"), where the pin prints `3`; `Int(-3).__abs__()`
-    runs.
-  - Shrinks R66 (`abs` over a scalar alias).
-  - Done when `SIMD`'s declaration in `std.simd` lists the eight, which
-    `Checker::conformance` and `Specializer::decide_type_conforms` answer
-    from it (R1550).
-  - Found while landing R1361 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1458 `abs`, `round`, and `divmod` are compiler builtins, and
   `pow` is missing, where upstream's `std/math` declares library functions**
 
@@ -9937,7 +9993,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     in `stdlib/std/sys/info.mojo`.
   - Restore the `target: CompilationTarget = CompilationTarget.current()`
     parameter of `bit_width_of` and `size_of` (dropped in R1550).
-  - R330 and R1554 read `CompilationTarget.current().stdlib_plugin`.
+  - R330 reads `CompilationTarget.current().stdlib_plugin`, and R1585
+    reads `CompilationTarget.is_x86()`.
   - Split it if one session cannot land the type and the folds together.
   - Depends on nothing.
   - Model: Fable, Planned.
@@ -9953,9 +10010,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     them as `+` is routed (`Checker::infer_infix`).
   - Port `__ifloordiv__` (`simd.mojo:1722`) and `__imod__` (`:1735`)
     too, so `//=` and `%=` call them, as R1552 routes `+=`.
-  - The bodies need `and` over masks (R97), `trunc` over a float vector
-    (R1554), `Self._Mask(fill=…)` at a symbolic width (R1555), `any`
-    (R1568), and `Self()` and `Self(1)` inside the struct.
+  - The bodies need `and` over masks (R97), `Self._Mask(fill=…)` at a
+    symbolic width (R1555), `any` (R1568), and `Self()` and `Self(1)`
+    inside the struct; `trunc` and `cast` over a vector are its declared
+    members.
+  - List `DivModable` and `CeilDivable` in `SIMD`'s declaration, and drop
+    their `modelled_conformance` arms for `SIMD`.
   - `assets/runtime_error/pliron_trap_{div,mod,uint_div}_zero.mojo` then
     run: move them to `assets/ok` with the pin's output, drop their
     errors-ledger rows, and update `docs/non-goals.md`'s trap sentence.
@@ -9983,29 +10043,140 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Retire the `__pow__` arms of `math_operation_requirement` and the
     elaborator's `__pow__` rewrite (`mono/specializer.rs`).
   - Removes `pliron_float_pow.mojo` from R171.
+  - List `Powable` in `SIMD`'s declaration, and drop its
+    `modelled_conformance` arm for `SIMD`.
   - Depends on R1566, R1561, R1562, R330, and R1568.
   - Model: Fable, Planned.
 
-- [ ] **R1554 `SIMD`'s `cast`, bit views, reductions, and math dunders are
-  checker rules, where upstream's are library bodies**
+- [ ] **R1578 `SIMD.to_bits` is a checker rule and `std.memory.bitcast` is
+  missing, where upstream's are library bodies over `pop.bitcast`**
 
-  `infer_simd_method`, `resolve_builtin_method`'s `__hash__` and math
-  arms, and the backends' `"reduce_*"`/`"__floor__"` dispatch serve these
-  members by name.
-  - Port `cast`, `to_bits`, `from_bits`, `select`, `reduce_*`,
-    `reduce_bit_count`, `clamp`, `fma`, `is_power_of_two`, `__abs__`,
-    `__floor__`, `__ceil__`, `__trunc__`, `__round__`, and `__hash__`.
-  - Bundle `std.memory.bitcast`.
+  `infer_simd_to_bits`, `SemanticAdjustment::SimdToBits`, and the
+  `to_bits` arms of `expr_method.rs` and `expr_call.rs` serve `to_bits`
+  by name.
+  - Admit `pop.bitcast` (`MlirOp`). Give `MirInstr::SimdBitcast`
+    `pop.bitcast`'s meaning, the same total bit width with a lane count
+    that may differ, in the VM (`runtime::simd_to_bits`) and Pliron
+    (`lower_simd_bitcast`): a MIR minor and package bump.
+  - Bundle `std/memory/unsafe.mojo`'s `bitcast` (its GPU guard omitted,
+    R1562) and `pack_bits`.
   - Bundle `_integral_type_of` and `_unsigned_integral_type_of` into
-    `stdlib/std/builtin/dtype.mojo` for `to_bits`/`from_bits`.
-  - Upstream's `reduce_and`/`reduce_or` (and `reduce_max`/`reduce_min`
-    off x86) call `llvm.vector.reduce.*`, which run since R1394.
+    `stdlib/std/builtin/dtype.mojo`, then port `to_bits` and
+    `_to_bits_signed`.
+  - Probe: `bitcast[DType.uint8, 4](UInt32(4631))` prints `[23, 18, 0,
+    0]` at the pin.
+  - `bitcast`'s asserts compare `src_dtype == .float16` (R1238).
+  - `to_bits`'s default `_uint_type_of_width[bit_width_of[Self.dtype]()]()`
+    is an application over a `DType` binder (R397) whose argument is a
+    lifted value (R1577).
+  - Depends on R1576, R1577, R397, and R1238.
+  - Model: Fable, Planned.
+
+- [ ] **R1579 `SIMD.__hash__` is a hash-leaf rule, where upstream's is a
+  library body**
+
+  `resolve_builtin_method`'s `__hash__` arm and the backends' hash leaves
+  serve a `SIMD`'s hash by name.
+  - Port `__hash__` (`simd.mojo:2182`) and list `Hashable`.
+  - Retire `builtin_hashable_ty`'s `SIMD` arms, the `SIMD` leaves of the
+    VM (`backend/vm/invoke.rs`), Pliron (`lower_hash_leaf`), and mono
+    (`enqueue_hash_leaf_instances`), and `runtime::hash_leaf_value`'s
+    float fold. The `Bool`, `DType`, and `StringLiteral` leaves stay.
+  - The body reads `type_of(bits)(neg_zero)`, a construction through
+    `type_of` (R1509).
   - Probe (from R1109): the hash leaf reaches `__hash__` and a hasher's
     `_update_with_simd` from the value's type
     (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores.
-    Upstream's `SIMD.__hash__` calls `_update_with_simd` in library code.
-  - Closes R1457 and R187 (upstream's reduction tree).
-  - Depends on R1553.
+    Upstream's `SIMD.__hash__` calls `_update_with_simd` in library code;
+    the `Bool`, `DType`, and `StringLiteral` leaves keep both members
+    type-reached until they are library code too.
+  - Depends on R1578 and R1509.
+  - Model: Fable, Planned.
+
+- [ ] **R1580 `SIMD.fma` is missing and `__fma__` is a Mojito-only rule,
+  where upstream's `fma` takes a `FastMathFlag`**
+
+  `v.fma(a, b)` is rejected ("has no method"), and the bundled
+  `std/range.mojo` calls a Mojito-only `__fma__` that the checker, VM, and
+  Pliron serve by name.
+  - Port `FastMathFlag` (`simd.mojo:342`) and `fma` (`:2689`), whose
+    `pop.fma[fastmathFlags=flag._mlir_attr()]` needs a computed
+    `!kgen.deferred` attribute: `pop_ops.rs` admits a literal `#pop.fmf<…>`
+    only.
+  - Bundle `std.math.fma`, move `std/range.mojo` to it, and retire the
+    `__fma__` arms (`simd_receivers.rs`, the VM's `invoke.rs`, Pliron's
+    `methods.rs` and `simd.rs`, and `INTRINSIC_METHODS`).
+  - Depends on nothing.
+  - Model: Fable, Planned.
+
+- [ ] **R1581 `SIMD.clamp` and `std.math`'s `SIMD` `max` and `min` are
+  missing**
+
+  `v.clamp(lo, hi)` is rejected ("has no method"), and `max(min(self,
+  hi), lo)` over `SIMD[dtype, length]` reports "operator 'min' is not
+  defined", where the pin runs both.
+  - `min` and `max` are `Checker::infer_min_max` rules. Upstream's `SIMD`
+    overloads (`def max[dtype: DType, //](x: SIMD[dtype, _], y:
+    type_of(x), /) -> type_of(x)`) need R1508.
+  - Port both overloads into `stdlib/std/math.mojo`, then `clamp`
+    (`simd.mojo:2670`). `infer_min_max` keeps the literal cases until
+    upstream's variadic overload lands.
+  - Depends on R1508.
+  - Model: Opus, Planned.
+
+- [ ] **R1582 `SIMD.__round__` is a builtin rule and `SIMD` does not
+  declare `Roundable`**
+
+  `round(v)` over a `SIMD[DType.float32, 4]` is rejected ("does not
+  conform to trait"), where the pin prints the rounded lanes, and
+  `resolve_builtin_method` serves `__round__` on `Int`, `UInt`, and
+  `Float64` by name.
+  - Port both overloads together: once the declaration has a
+    `__round__`, every `__round__` call reads it, so a lone `__round__()`
+    breaks `Float64(x).__round__(2)`.
+  - The `ndigits` overload computes `Self(10) ** ndigits` (R1567).
+  - List `Roundable`, and drop its `modelled_conformance` arm for
+    `SIMD`.
+  - Depends on R1567.
+  - Model: Fable, Planned.
+
+- [ ] **R1585 `SIMD`'s reductions are checker rules, where upstream's are
+  a `reduce` tree**
+
+  `infer_simd_method`'s `reduce_*` arm, `runtime::simd_method`, Pliron's
+  `lower_simd_reduce`, and `INTRINSIC_METHODS` serve `reduce_add`,
+  `reduce_mul`, `reduce_max`, and `reduce_min` by name.
+  - Port both `reduce` overloads (`simd.mojo:3107`, `:3135`), then
+    `reduce_add`, `reduce_mul`, `reduce_max`, and `reduce_min`.
+  - Their bodies read `comptime _T = SIMD[Self.dtype, _]` as `Self._T[n]`
+    (R296), apply a callable binder at a `SIMDLength` (R1583), spell the
+    closure overload's binder as a trait composition with a function type
+    (R1584), and call `split()` (R330).
+  - `reduce_max` and `reduce_min` take `llvm.vector.reduce.*` only off
+    x86 (`CompilationTarget.is_x86()`, R1562); the host is x86_64, so the
+    tree runs.
+  - Closes R187: `reduce_mul` over the sixteen `float32` lanes `1.1, 2.3,
+    3.7, 4.9, 5.3, 6.1, 7.7, 8.3, 9.9, 10.1, 11.3, 12.7, 13.9, 14.1, 15.3,
+    16.7` prints `68104130000000.0` at the pin and `68104122007552.0`
+    here.
+  - Depends on R296, R1583, R1584, R330, and R1562.
+  - Model: Fable, Planned.
+
+- [ ] **R1586 `reduce_and` and `reduce_or` are checker rules and
+  `reduce_bit_count` is missing**
+
+  `infer_simd_method` types `reduce_and` and `reduce_or` as `Bool` through
+  `SemanticAdjustment::SimdReceiverOp`, where upstream's return
+  `SIMD[Self.dtype, size_out]`.
+  - Port both and `reduce_bit_count`, with `pack_bits` (R1578) and
+    `std.bit.pop_count`.
+  - Each body holds `self.reduce[size_out](…)` under `comptime if
+    size_out > 1`, which a template checks too (R1585).
+  - The result type needs `and`/`or` over a lane (R97); `__contains__`'s
+    `-> Bool` return then converts it.
+  - Retire `SemanticAdjustment::SimdReceiverOp` and
+    `record_simd_receiver_op`.
+  - Depends on R1585, R1578, and R97.
   - Model: Fable, Planned.
 
 - [ ] **R1555 `SIMD`'s initializers are checker rules, where upstream's
@@ -10024,7 +10195,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The `IntLiteral` initializer stays the checker's coercion until R1507:
     upstream's `#pop.int_literal_convert` needs a parametric
     `IntLiteral[value]`.
-  - Depends on R1554.
+  - Port `__init__(out self, *, from_bits: SIMD[int_dtype,
+    Self.length])` (`simd.mojo:991`), which calls `bitcast` (R1578).
+  - The `call_inference.rs` `SIMD(mlir_value=v)` arm, which infers both
+    parameters from `v`'s `!kgen.simd` type, stands in for the
+    `mlir_value=` overload and retires with it.
+  - Depends on R1554 and R1578.
   - Model: Fable, Planned.
 
 - [ ] **R1574 A compile-time call of `SIMD`'s comparison members runs a
@@ -10106,8 +10282,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     of the VM's `load_place`/`store_place`, and Pliron's
     `try_lower_simd_lane_store` and lane addressing too.
   - Done when `rg simd_method crates` finds nothing.
-  - Depends on R1555, R330, and R276, which port the last members, and
-    R1561, which retires the lane subscript.
+  - Depends on R1555, R1578, R1579, R1580, R1581, R1582, R1585, R1586,
+    R330, and R276, which port the last members, and R1561, which retires
+    the lane subscript.
   - Model: Opus, Not Planned.
 
 - [ ] **R1399 `Int(x)`, `UInt(x)`, and `Float64(x)` are checker built-ins,

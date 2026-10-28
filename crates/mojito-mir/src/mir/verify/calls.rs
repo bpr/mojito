@@ -14,6 +14,7 @@ pub(super) fn verify_blocks(
     errors: &mut Vec<String>,
 ) {
     for (block_index, block) in blocks.iter().enumerate() {
+        let mut asserted = None;
         for (index, instruction) in block.instrs.iter().enumerate() {
             verify_instruction(
                 name,
@@ -21,9 +22,18 @@ pub(super) fn verify_blocks(
                 declarations,
                 block_index,
                 instruction,
-                context,
+                asserted.as_ref().unwrap_or(context),
                 errors,
             );
+            if asserted.is_none()
+                && !context.asserted
+                && matches!(instruction, MirInstr::ComptimeAssert { .. })
+            {
+                asserted = Some(RegionContext {
+                    asserted: true,
+                    ..context.clone()
+                });
+            }
             verify_in_place_binding(
                 name,
                 block_index,
@@ -743,6 +753,7 @@ pub(super) fn verify_function(
     let context = RegionContext {
         regions: vec![RegionKind::Function],
         protected: false,
+        asserted: false,
     };
     verify_blocks(
         name,
