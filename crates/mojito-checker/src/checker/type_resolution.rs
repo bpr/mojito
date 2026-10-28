@@ -364,17 +364,17 @@ impl Checker {
         Ok(Ty::generator(decls, result))
     }
 
-    /// The source spelling `StringLiteral`: upstream parameterizes the type
-    /// by the literal's value, so the bare spelling is concrete only as a
-    /// whole parameter annotation, where the value infers per call.
-    pub(super) fn bare_string_literal(&self) -> Result<Ty, TypeError> {
-        if self.bare_string_literal_parameter.get() {
-            Ok(Ty::string_literal())
+    /// The bare source spelling `name` of the literal type `ty`
+    /// (`StringLiteral`, `IntLiteral`): upstream parameterizes the type by
+    /// the literal's value, so the bare spelling is concrete only as a whole
+    /// parameter annotation, where the value infers per call.
+    pub(super) fn bare_literal(&self, ty: Ty, name: &str) -> Result<Ty, TypeError> {
+        if self.bare_literal_parameter.get() {
+            Ok(ty)
         } else {
-            Err(TypeError::Unsupported(
-                "'StringLiteral[_]' is not concrete, use '[]' to bind missing parameters"
-                    .to_string(),
-            ))
+            Err(TypeError::Unsupported(format!(
+                "'{name}[_]' is not concrete, use '[]' to bind missing parameters"
+            )))
         }
     }
 
@@ -417,7 +417,9 @@ impl Checker {
             SourceType::Int => Ty::int(),
             SourceType::UInt => Ty::uint(),
             SourceType::Bool => Ty::bool(),
-            SourceType::StringLiteral => self.bare_string_literal()?,
+            SourceType::StringLiteral => {
+                self.bare_literal(Ty::string_literal(), "StringLiteral")?
+            }
             SourceType::ClosedStringLiteral => Ty::string_literal(),
             SourceType::TypeOf(operand) => self.type_of_operand(operand)?,
             SourceType::Float64 => Ty::float64(),
@@ -1335,7 +1337,14 @@ impl Checker {
             return self.applied_type_at_depth("StringSpan", args).map(Some);
         }
         if name == "StringLiteral" && args.is_empty() {
-            return self.bare_string_literal().map(|ty| Some((ty, Vec::new())));
+            return self
+                .bare_literal(Ty::string_literal(), name)
+                .map(|ty| Some((ty, Vec::new())));
+        }
+        if name == "IntLiteral" && args.is_empty() {
+            return self
+                .bare_literal(Ty::int_literal(), name)
+                .map(|ty| Some((ty, Vec::new())));
         }
         if args.is_empty()
             && let Some(parameter) = self.lookup_tparam(name)

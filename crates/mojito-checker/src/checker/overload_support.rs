@@ -647,7 +647,7 @@ pub(super) fn overload_rank(
     generic: bool,
 ) -> usize {
     const SIGNATURE_LENGTH_MAX: usize = 255;
-    conversions * CONVERSION_RANK
+    conversions * LITERAL_DEFAULT_RANK
         + usize::from(variadic) * VARIADIC_RANK
         + signature_len.min(SIGNATURE_LENGTH_MAX) * SIGNATURE_LENGTH_RANK
         + usize::from(generic)
@@ -790,25 +790,32 @@ impl ArgumentBinding {
 }
 
 /// The conversion cost of an argument a type pack absorbs. The pack element
-/// is the argument's materialized type, so a string literal costs what its
-/// conversion to `String` costs a regular parameter.
+/// is the argument's materialized type, so a literal costs what its
+/// materialization costs a regular parameter: a string literal its
+/// conversion to `String`, a numeric one the unit of its default type.
 pub(super) fn pack_element_conversion_count(actual: &Ty) -> usize {
-    usize::from(matches!(actual.kind(), TyKind::StringLiteral))
+    match actual.kind() {
+        TyKind::StringLiteral => CONVERSION_UNIT,
+        TyKind::IntLiteral | TyKind::FloatLiteral => 1,
+        _ => 0,
+    }
 }
 
-/// The conversion cost of one argument: 0 for an exact match or a numeric
-/// literal at its contextual default type, 1 for an implicit conversion. A
-/// string literal converting to anything but the nominal `String` costs 2:
+/// The conversion cost of one argument, in `CONVERSION_UNIT`s: 0 for an
+/// exact match, one unit for a numeric literal at its contextual default
+/// type, and one whole conversion for an implicit conversion. A string
+/// literal converting to anything but the nominal `String` costs two:
 /// `String` is the literal's contextual default type, so it ranks above the
 /// literal's other converting constructors (`StringSpan`), keeping
 /// `s.__eq__("x")` selecting the `String`-typed overload beside the view one.
 pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
-    if actual == expected
-        || matches!(actual.kind(), TyKind::IntLiteral) && matches!(expected.kind(), TyKind::INT)
+    if actual == expected {
+        0
+    } else if matches!(actual.kind(), TyKind::IntLiteral) && matches!(expected.kind(), TyKind::INT)
         || matches!(actual.kind(), TyKind::FloatLiteral)
             && matches!(expected.kind(), TyKind::FLOAT64)
     {
-        0
+        1
     } else if matches!(actual.kind(), TyKind::StringLiteral)
         && !matches!(
             expected.kind(),
@@ -816,9 +823,9 @@ pub(super) fn conversion_count(actual: &Ty, expected: &Ty) -> usize {
                 if args.is_empty() && mojito_symbol::symbol::is_stdlib_string_struct(name)
         )
     {
-        2
+        2 * CONVERSION_UNIT
     } else {
-        1
+        CONVERSION_UNIT
     }
 }
 

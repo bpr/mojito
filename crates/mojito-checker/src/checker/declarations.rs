@@ -302,6 +302,14 @@ pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
     }
 }
 
+/// Whether a parameter annotation is a bare value-parameterized literal type
+/// ([`is_string_literal_annotation`], or exactly `IntLiteral`), whose value
+/// the parameter infers per call.
+pub(super) fn is_literal_annotation(annotation: &SourceType) -> bool {
+    is_string_literal_annotation(annotation)
+        || matches!(annotation, SourceType::Named(name, args) if name == "IntLiteral" && args.is_empty())
+}
+
 /// The collector part of a method signature — its `*args` and `**kwargs`
 /// collectors and the keyword-only boundary a `*args` collector sets — built
 /// alike for a struct method and a trait requirement, so a witness compares
@@ -1662,15 +1670,15 @@ impl Checker {
             // placeholder marks the slot explicitly inferred (a bare
             // `Pointer[T, _]` is concrete here only).
             self.resolving_parameter_annotation.set(true);
-            self.bare_string_literal_parameter
-                .set(is_string_literal_annotation(&p.ty));
+            self.bare_literal_parameter
+                .set(is_literal_annotation(&p.ty));
             let generated = self.generated_declaration.get();
             self.generated_declaration
                 .set(generated || m.name.contains('$'));
             let resolved =
                 self.resolve_storage_annotation(&p.ty, super::StorageStrictness::AllowBare);
             self.generated_declaration.set(generated);
-            self.bare_string_literal_parameter.set(false);
+            self.bare_literal_parameter.set(false);
             self.resolving_parameter_annotation.set(false);
             let mut pty = resolved?;
             pty = match p.kind {
@@ -3008,7 +3016,7 @@ impl Checker {
                         };
                         if coerces(&actual, &expected) {
                             if actual != expected {
-                                score += 1;
+                                score += CONVERSION_UNIT;
                             }
                         } else if self
                             .implicit_conversion_target(&actual, &expected)?
@@ -3016,7 +3024,7 @@ impl Checker {
                         {
                             // An implicit conversion ranks below any direct
                             // coercion so exact overloads keep winning.
-                            score += 2;
+                            score += 2 * CONVERSION_UNIT;
                         } else {
                             ok = false;
                             break;

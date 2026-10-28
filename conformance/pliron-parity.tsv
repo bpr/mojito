@@ -409,6 +409,7 @@ assets/ok/inplace_subscript_value.mojo	main	exe-differential	sanitized
 assets/ok/inplace_var.mojo	main	exe-differential	sanitized
 assets/ok/input.mojo	main	exe-differential	sanitized
 assets/ok/instance_constructor_symbols.mojo	main	exe-differential	sanitized
+assets/ok/int_literal_parameter_overload.mojo	main	exe-differential	sanitized
 assets/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
 assets/ok/invert_operator.mojo	main	exe-differential	sanitized
 assets/ok/joint_map.mojo	main	exe-differential	sanitized

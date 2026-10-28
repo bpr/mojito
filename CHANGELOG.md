@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A parameter may be annotated `IntLiteral`, upstream's `IntLiteral[_]`,
+  and beside an `Int` overload a literal argument selects it while an `Int`
+  value selects the `Int` one, through an `@implicit` conversion or a
+  direct call, as at the pin (R1532): `var a: L = 3` runs
+  `L.__init__(IntLiteral)` and `var b: L = n` runs `L.__init__(Int)`. The
+  annotation was an unknown type before. Elsewhere the bare spelling is
+  rejected as not concrete, as a bare `StringLiteral` is.
 - A parameter of type `__mlir_type.index` now binds a compile-time `index`,
   upstream's `N : index` attribute, on a struct or a `def`, with or
   without a default, as at the pin (R1531): `S[Int(3).__mlir_index__()]`

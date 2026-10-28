@@ -1457,6 +1457,10 @@ fn ty_raw_in(ty: &Ty, self_ty: Option<&Ty>, mode: KeyMode) -> String {
         return "Self".to_string();
     }
     match ty.kind() {
+        // An `IntLiteral` parameter is an overload of its own beside an
+        // `Int` one, as upstream's `IntLiteral[_]` is; an instance argument
+        // materializes the literal.
+        TyKind::IntLiteral if mode == KeyMode::Overload => "IntLiteral".to_string(),
         TyKind::INT | TyKind::IntLiteral => "Int".to_string(),
         TyKind::UINT => "UInt".to_string(),
         TyKind::FLOAT64 | TyKind::FloatLiteral => "Float64".to_string(),

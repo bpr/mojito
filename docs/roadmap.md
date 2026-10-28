@@ -3369,28 +3369,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R1532 `IntLiteral` names no type, so a constructor cannot take a
-  literal apart from an `Int`**
-
-  `def __init__(out self, value: IntLiteral, /)` is rejected with "unknown
-  type 'IntLiteral'", where the pin declares it and selects it for a
-  literal argument over an `Int` overload.
-  - Probe: a struct `L` with `@implicit` `__init__(IntLiteral)` storing
-    `100 + Int(value)` and `@implicit` `__init__(Int)` storing the value,
-    then `var a: L = 3` and `var b: L = n` over `var n = 4`, prints `103 4`
-    at the pin.
-  - Upstream's `SIMDLength` takes a literal this way (R1535).
-  - `checker/annotations.rs` resolves no `IntLiteral` annotation, and
-    `symbol::ty_raw_in` keys `TyKind::IntLiteral` as `Int`, so the two
-    overloads would also share one symbol.
-  - Lever: resolve a bare `IntLiteral` annotation to `TyKind::IntLiteral`
-    (upstream's `IntLiteral[_]`, whose value parameter is R1507's), key it
-    apart from `Int`, and rank the exact literal match above the `Int`
-    conversion.
-  - Found while planning R336 (2026-10-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R382 An `Int` binder is not inferred from a vector width spelled by
   an `Int` expression**
 
@@ -6107,6 +6085,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     and rejects it too.
   - R1397's `#pop.int_literal_convert` needs the same parametric
     `IntLiteral[value]`.
+  - Probe: `def f(x: IntLiteral)` binds a run-time `IntLiteral` register
+    rather than inferring `x.value` per call, so `f(n)` over `var n = 3`
+    reports "expected Int, found Int" where the pin says "cannot be
+    converted from 'Int' to 'IntLiteral[x.value]'"
+    (`assets/type_error/int_literal_parameter_int_argument.mojo`).
   - Found while landing R1369 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.

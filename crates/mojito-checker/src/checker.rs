@@ -751,9 +751,10 @@ pub struct Checker {
     /// placeholder elsewhere as not concrete).
     resolving_parameter_annotation: std::cell::Cell<bool>,
     /// Set while resolving a parameter annotation that is exactly
-    /// `StringLiteral`: upstream's value-parameterized literal type infers
-    /// its parameter there and is not concrete anywhere else.
-    bare_string_literal_parameter: std::cell::Cell<bool>,
+    /// `StringLiteral` or `IntLiteral`: upstream's value-parameterized
+    /// literal types infer their parameter there and are not concrete
+    /// anywhere else.
+    bare_literal_parameter: std::cell::Cell<bool>,
     /// Set while a subscript's getter is resolved only to learn its element
     /// type (upstream's `filterOverloadSet` in `emitGetterSetterAccess`):
     /// nothing is emitted, so its `raises` is no effect of the body.
@@ -1087,7 +1088,7 @@ impl Checker {
             transfer_frames: RefCell::new(Vec::new()),
             transfer_effects: RefCell::new(transfer_effects.into()),
             resolving_parameter_annotation: std::cell::Cell::new(false),
-            bare_string_literal_parameter: std::cell::Cell::new(false),
+            bare_literal_parameter: std::cell::Cell::new(false),
             resolving_accessor_only: std::cell::Cell::new(false),
             effect_observations: RefCell::new(HashMap::new()),
             call_through_effects: RefCell::new(call_through_seed.into()),
@@ -1767,15 +1768,23 @@ impl Checker {
             })
             .collect::<Vec<_>>();
         // Several converting constructors may accept the source; one whose
-        // parameter is exactly the source type (a literal at its default
-        // type) wins, as in current Mojo.
-        let source = mojito_types::types::default_literal(from);
-        let exact = matches
-            .iter()
-            .filter(|sig| substitute(&sig.params[0], &subst) == source)
-            .copied()
-            .collect::<Vec<_>>();
-        let matches = if exact.len() == 1 { exact } else { matches };
+        // parameter is exactly the source type wins, and failing that one
+        // whose parameter is the literal's default type, as in current Mojo
+        // (a literal selects an `IntLiteral` constructor over an `Int` one).
+        let exactly = |source: &Ty| {
+            matches
+                .iter()
+                .filter(|sig| substitute(&sig.params[0], &subst) == *source)
+                .copied()
+                .collect::<Vec<_>>()
+        };
+        let matches = [
+            exactly(from),
+            exactly(&mojito_types::types::default_literal(from)),
+        ]
+        .into_iter()
+        .find(|exact| exact.len() == 1)
+        .unwrap_or(matches);
         match matches.as_slice() {
             [] => Ok(None),
             [sig] => {
@@ -3016,14 +3025,24 @@ pub enum StorageStrictness {
 /// significant term first, as the pinned Mojo orders them:
 ///
 /// ```text
-/// bits 25+   conversions            CONVERSION_RANK
+/// bits 31+   conversions            CONVERSION_UNIT units
+/// bits 25-30 literal materializations  LITERAL_DEFAULT_RANK
 /// bit  24    variadic use           VARIADIC_RANK
 /// bit  23    empty collector        EMPTY_COLLECTOR_RANK   (variadic only)
 /// bits 18-22 copies into `var`      COPY_RANK              (every candidate)
 /// bits 10-17 signature length       SIGNATURE_LENGTH_RANK
 /// bits 0-9   ArgumentBinding's low word and the generic bit
 /// ```
-const CONVERSION_RANK: usize = 1 << 25;
+const LITERAL_DEFAULT_RANK: usize = 1 << 25;
+
+/// The units of a candidate's conversion cost, ranked from
+/// `LITERAL_DEFAULT_RANK` up: an argument converting to its parameter costs
+/// one whole `CONVERSION_UNIT`, and a literal materialized at its default
+/// type (an `IntLiteral` bound to an `Int`) costs one unit, so it decides
+/// only between candidates that convert alike, as an exact `IntLiteral`
+/// parameter beside an `Int` one. Six bits: a candidate materializing more
+/// literals than that ties with one converting once more.
+const CONVERSION_UNIT: usize = 1 << 6;
 
 const VARIADIC_RANK: usize = 1 << 24;
 
