@@ -836,7 +836,10 @@ impl Iterator for Lexer<'_> {
                     continue;
                 }
                 '<' => {
-                    if self.remainder().starts_with("<<") {
+                    if self.remainder().starts_with("<<=") {
+                        self.pos += 3;
+                        self.emit(Token::ShlEq);
+                    } else if self.remainder().starts_with("<<") {
                         self.pos += 2;
                         self.emit(Token::Shl);
                     } else if self.remainder().starts_with("<=") {
@@ -849,7 +852,10 @@ impl Iterator for Lexer<'_> {
                     continue;
                 }
                 '>' => {
-                    if self.remainder().starts_with(">>") {
+                    if self.remainder().starts_with(">>=") {
+                        self.pos += 3;
+                        self.emit(Token::ShrEq);
+                    } else if self.remainder().starts_with(">>") {
                         self.pos += 2;
                         self.emit(Token::Shr);
                     } else if self.remainder().starts_with(">=") {

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1538**.
+Next free ID: **R1540**.
 
 ## Ordered Work
 
@@ -3396,8 +3396,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     argument (2026-10-06).
   - At the pin both widths are `SIMDLength(n)`, so `SIMDLength(w)` against
     `SIMDLength(n)` solves structurally once the width slot holds the
-    struct (R1535).
-  - Depends on R1535.
+    struct (R1539).
+  - Depends on R1539.
   - Model: Opus, Not Planned.
 
 - [ ] **R53 A list literal does not reach a `List` built over a binder**
@@ -4191,6 +4191,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Lever: `parse_type` admits an empty argument list on `Tuple`, and the
     checker resolves it to the zero-element tuple.
   - Found at the 2026-10-17 re-pin (Mojo 1.2.0.dev2026101705).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1538 An annotated `comptime` binding does not convert its value
+  through the annotation's `@implicit` constructor**
+
+  `comptime w: L = 4`, where `L` declares `@implicit __init__(out self,
+  value: IntLiteral, /)`, keeps the literal `4` as the binding's
+  compile-time value, where the pin binds `L(4)`.
+  - Probe: `comptime w: L = 4; f[w]()` in `main`, over `def f[w: L]()`,
+    fails with "not a compile-time Int constant: w". The pin prints `4`.
+  - Probe: module `comptime W: L = 4` and `f[W]()` fail with "type
+    mismatch for value parameter 'w': expected L, found 4". The pin
+    prints `4`.
+  - Cause, module: `Checker::fold_module_constants`
+    (`checker/constraints.rs`) folds the initializer to an `IntLiteral`
+    before any struct registers, ignoring the annotation, and the later
+    passes declare the constant `IntLiteral`.
+  - Cause, local: the annotated arm of the `Comptime` statement
+    (`checker/statements.rs`) records the folded literal in `comptimes`
+    and binds no compile-time value of the annotation's type.
+  - Lever: once the annotation resolves to a struct the value is not,
+    bind `Checker::implicit_parameter_application` of the value, as a
+    parameter argument (R1533) and an application's argument already
+    convert.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -9417,7 +9442,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `stdlib/std/builtin/variadics.mojo`, as `TypeList` already declares
     its own, read under the raw-list gate
     (`Checker::bundled_raw_list_operand`).
-  - Upstream's index parameter is `idx: SIMDLength` (R1535), so the port
+  - Upstream's index parameter is `idx: SIMDLength` (R1539), so the port
     spells it `Int`, as `TypeList`'s does, and says so in the module
     header.
   - Probe: `comptime e = vs.__getitem_param__[1]` in `def go[*vs: Int]()`
@@ -9779,7 +9804,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and `reduce_min` off x86) are `llvm_intrinsic` calls of
     `llvm.vector.reduce.*`, which run since R1394. Its subvector and
     shuffle bodies need R1519.
-  - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R1522, R1526, R1535 (the
+  - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R1522, R1526, R1539 (the
     length type), R185 and R186 (so the port is upstream's bodies with no
     leniency), R58, R1516, R1517, R1518, and R1519.
   - Model: Fable, Planned.
@@ -10051,7 +10076,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1535 `SIMDLength` is `Int` in Mojito, told apart only where a
+- [ ] **R1539 `SIMDLength` is `Int` in Mojito, told apart only where a
   width binder is inferred**
 
   Upstream declares `SIMD[dtype: DType, length: SIMDLength]` over its
@@ -10064,23 +10089,33 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `PACKAGE_FORMAT`.
   - `SIMDLength` is typed `Int` by name in `checker/annotations.rs`,
     `mojito-comptime/src/comptime.rs`, and `comptime/params.rs`.
-  - Lever: bundle upstream's struct verbatim, type the width slot by it
-    (a literal or an `Int` converted through its `@implicit` `__init__`),
-    let the solver read the declaration, delete the table, and convert a
-    `SIMDLength` back to `SIMD` as upstream's `@implicit
-    __init__(SIMDLength)` does.
+  - Lever: bundle upstream's struct verbatim, let the width slot hold the
+    `Int` image of a `SIMDLength` (a literal or an `Int` converted through
+    its `@implicit` `__init__`), let the solver read the slot's shape,
+    delete the table, and convert a `SIMDLength` to `SIMD` as upstream's
+    `@implicit __init__(SIMDLength)` does.
+  - The bundled struct checks only with that conversion in place:
+    `__rshift__`'s `select(rhs < 0, 0, …)` and `__pow__`'s `res *= x`
+    convert a `SIMDLength` to `Int`. So the struct, the slot, the solver,
+    and the conversion land together.
   - Probe: `print(v.length)`, `print(x)` over `x: SIMDLength`, and
     `print(w)` over a `w: SIMDLength` binder print here, where the pin
     rejects each: `SIMDLength` is not `Writable`.
   - Probe: `var t: Tag[SIMDLength(1) + SIMDLength(2)] = Tag[SIMDLength(3)]()`
     prints `ok` at the pin.
+  - Probe: `show[w: Int](x: SIMD[DType.int32, w])` called with a
+    `SIMD[DType.int32, n]` or `SIMD[DType.int32, n * 2]` in `def f[n:
+    Int]()` binds `w` at the pin. This closes R382.
+  - `comptime k: SIMDLength = 4` also needs R1538. Leave it out of this
+    entry's fixture until that lands.
   - Must keep `assets/ok/simd_lane_binders_inferred.mojo`,
     `hashlib_values.mojo`, `simd_mlir_storage.mojo`, and
     `assets/type_error/simd_int_width_binder_not_inferred.mojo` as they are.
-  - Plan: `R336-simdlength-is-int-in-mojito-told-plan.md`, slices S1–S5.
+  - Plan: `R1535-simdlength-is-int-in-mojito-told-plan.md`, slices S1–S5.
+    Its prerequisites N1–N3 and N4's application-argument half landed with
+    R1535. N4's annotated-binding half is R1538.
   - Found while landing R259 (2026-10-05).
-  - Depends on R1532 (its `IntLiteral` constructor), R1533 (a width
-    argument converts to it), and R1534 (its `__rshift__`).
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string

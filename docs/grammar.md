@@ -163,7 +163,7 @@ seq_target: target_item | '*' target_item                 # at most one star
 declared_display: display_target                           # leaves are NAME | '_' | nested displays
 declared_item: NAME | '_' | declared_display
 augmented_assignment: assign_target aug_op expression
-aug_op: '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**=' | '&=' | '|=' | '^='
+aug_op: '+=' | '-=' | '*=' | '/=' | '//=' | '%=' | '**=' | '&=' | '|=' | '^=' | '<<=' | '>>='
 assign_target: conditional                         # any expression; the checker rejects a non-lvalue
 target: assign_target                              # a destructuring leaf, likewise any expression
 comptime_stmt: 'comptime' NAME [params_decl] [':' type] where_clause* '=' expression

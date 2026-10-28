@@ -1408,10 +1408,15 @@ impl ParamContext {
     /// coefficient is kept and each atom maps to its cast, a cast of the
     /// inverse cast being its operand, so `(k + j).__mlir_index__()` and
     /// `k.__mlir_index__() + j.__mlir_index__()` are one node and a round
-    /// trip is the identity.
+    /// trip is the identity. A symbolic `IntLiteral` operand casts from the
+    /// literal domain, as `IntLiteral.__mlir_index__()` does at the pin.
     fn build_cast(&self, op: ParamOp, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
         let (from, to, inverse) = if op == ParamOp::CastToBuiltin {
-            (IntDomain::Int, IntDomain::Index, ParamOp::CastFromBuiltin)
+            let from = match IntDomain::of(operand.meta()) {
+                Some(IntDomain::Literal) if operand.as_constant().is_none() => IntDomain::Literal,
+                _ => IntDomain::Int,
+            };
+            (from, IntDomain::Index, ParamOp::CastFromBuiltin)
         } else {
             (IntDomain::Index, IntDomain::Int, ParamOp::CastToBuiltin)
         };

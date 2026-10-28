@@ -1731,16 +1731,26 @@ impl Checker {
     }
 
     /// `value` as the argument of a parameter of type `ty`. A literal is the
-    /// value the parameter holds, so that `h(2)` is `h(n)` at `n = 2`.
+    /// value the parameter holds, so that `h(2)` is `h(n)` at `n = 2`. A
+    /// value of another type converts to a struct `ty` through its
+    /// `@implicit` constructor, as the run-time argument does, so `L(4) + 1`
+    /// over `__add__(self, rhs: Self)` applies `__add__` to `L(4)` and
+    /// `L(1)` ([`Self::implicit_parameter_application`]).
     pub(super) fn applied_value(&self, value: CtValue, ty: &Ty) -> Option<ParamExpr> {
-        let argument = match value {
-            CtValue::Expr(argument) => argument,
-            closed => self
-                .param_context
-                .constant(closed.materialize_as(ty)?)
-                .ok()?,
+        let argument = match &value {
+            CtValue::Expr(argument) => Some(argument.clone()),
+            closed => closed
+                .clone()
+                .materialize_as(ty)
+                .and_then(|closed| self.param_context.constant(closed).ok()),
         };
-        (argument.meta().as_value() == Some(ty)).then_some(argument)
+        if let Some(argument) = argument.filter(|argument| argument.meta().as_value() == Some(ty)) {
+            return Some(argument);
+        }
+        let source = self.ct_value_ty(&value, ty).filter(|source| source != ty)?;
+        self.implicit_parameter_application(&source, ty, |slot| self.applied_value(value, slot))
+            .ok()
+            .flatten()
     }
 
     /// The application of the function MIR lifts for `expr`, an expression

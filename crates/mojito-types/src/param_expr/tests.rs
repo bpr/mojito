@@ -736,6 +736,35 @@ fn builtin_casts_distribute_and_cancel() {
     assert!(context.cast_to_builtin(&i).is_err());
 }
 
+/// A symbolic `IntLiteral` slot casts to `index` from the literal domain, as
+/// `IntLiteral.__mlir_index__()` does at the pin, so a literal bound to it
+/// later folds to the `index` an `Int` of the same value casts to
+/// (`assets/ok/int_literal_index_constructor.mojo`).
+#[test]
+fn literal_slot_cast_folds_like_an_int_cast() {
+    let context = ParamContext::new();
+    let value = context.register(
+        ParamId::new("SL.__init__", 0),
+        "value",
+        MetaTy::value(Ty::int_literal()),
+    );
+    let cast = context
+        .cast_to_builtin(&value)
+        .expect("an IntLiteral casts");
+    assert_eq!(cast.meta(), &MetaTy::value(Ty::index()));
+    let mut bindings = ParamBindings::new();
+    bindings.bind(
+        value.as_decl_ref().expect("a reference").id.clone(),
+        literal(&context, 3),
+    );
+    let bound = context.replace(&cast, &bindings).expect("replacement");
+    let three = context.constant(CtValue::Int(3)).expect("a constant");
+    assert_eq!(
+        bound,
+        context.cast_to_builtin(&three).expect("an Int casts")
+    );
+}
+
 /// A `DType` float query over a binder is an application `replace` keeps
 /// and a required value answers: the format's width at a float dtype, and
 /// the pin's failed constraint at any other.
@@ -915,7 +944,7 @@ fn type_comparison_is_a_bool_decided_by_type_identity() {
     let same = infix(&context, InfixOp::Eq, &t, &int);
     assert_eq!(*same.meta(), MetaTy::bool());
     let mut bindings = ParamBindings::new();
-    bindings.bind(ParamId::new("g", 0), int.clone());
+    bindings.bind(ParamId::new("g", 0), int);
     let folded = context.replace(&same, &bindings).expect("replaces");
     assert_eq!(folded.as_constant(), Some(&CtValue::Bool(true)));
 

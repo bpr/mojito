@@ -8,6 +8,24 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `<<=` and `>>=` are augmented assignments, shifting a builtin integer in
+  place and calling a struct's `__ilshift__`/`__irshift__`, as at the pin.
+  They did not lex.
+- A compile-time call's argument of another type now converts to its
+  struct parameter through the struct's `@implicit` constructor, as the
+  run-time argument does: `f[L(4) + 1]()` and `f[w + 1]()` over
+  `__add__(self, rhs: Self)` apply `__add__` to `L(1)`, as at the pin.
+  Such calls were rejected as applying no builtin operator method.
+- `value.__mlir_index__()` over an `IntLiteral` parameter folds, so an
+  `@always_inline("builtin")` constructor from `IntLiteral` storing it
+  folds and `Tag[L(1) + L(2)]` is `Tag[L(3)]`, as at the pin.
+- A `TrivialRegisterPassable` struct passed as a read argument beside its
+  own `mut` borrow (`x *= x`) is an independent copy, as the pin passes it
+  in a register. It was rejected as an aliasing violation.
+- These four are what upstream's `std/builtin/simd_length.mojo` needs to
+  check and fold. `SIMDLength` itself is still typed `Int`: its port is
+  refiled as R1539.
+
 - ``__mlir_op.`pop.select`(cond.__mlir_bool__(), lhs, rhs)`` now chooses one
   of two trivially register-passable values, and upstream's
   `std.utils._select` is bundled, so `_select_register_value` runs on the

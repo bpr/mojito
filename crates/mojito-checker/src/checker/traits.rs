@@ -2610,9 +2610,12 @@ impl Checker {
     /// Whether a shared call argument is materialized independently before
     /// within-call exclusivity is checked. Upstream keeps nominal memory values
     /// (including `String`) as overlapping reads even when their type conforms
-    /// to `ImplicitlyCopyable`; register-like values may be disarmed as copies.
+    /// to `ImplicitlyCopyable`; register-like values may be disarmed as copies,
+    /// and so may a `TrivialRegisterPassable` struct, which the pin passes in
+    /// a register.
     pub(super) fn call_read_is_independent_copy(&self, ty: &Ty) -> bool {
-        self.is_implicitly_copyable(ty) && !matches!(ty.kind(), TyKind::Struct(..))
+        self.is_implicitly_copyable(ty)
+            && (!matches!(ty.kind(), TyKind::Struct(..)) || self.is_trivial_register_passable(ty))
     }
 
     /// Every initialized value of a concrete type is movable by default; only

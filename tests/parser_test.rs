@@ -2970,6 +2970,8 @@ fn parses_augmented_assignment() {
         ("x &= 1\n", InfixOp::BitAnd),
         ("x |= 2\n", InfixOp::BitOr),
         ("x ^= 3\n", InfixOp::BitXor),
+        ("x <<= 4\n", InfixOp::Shl),
+        ("x >>= 5\n", InfixOp::Shr),
     ] {
         assert!(matches!(
             &parse(source)[0].kind,

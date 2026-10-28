@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	844
+# swept-count	845
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -710,6 +710,7 @@ assets/type_error/reflected_field_type_needs_proof.mojo	compile-reject	agree	err
 assets/type_error/reflected_type_argument_is_anytype.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'T' has 'Copyable' type, but value has type 'AnyType'
 assets/type_error/reflection_runtime_query_unknown_field.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/reflection_template_unknown_field.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/register_passable_self_alias.mojo	compile-reject	agree	error: aliasing values passed mutably to 'self' argument and passed immutably to 'rhs' argument in '__imul__' call
 assets/type_error/reserved_word_function_name.mojo	compile-reject	agree	error: 'del' cannot be used as a function name in this context
 assets/type_error/result_origin_mut_register_passable.mojo	compile-reject	agree	error: cannot return 'items's origin, because it has RegisterPassable type 'Int'
 assets/type_error/result_origin_read_register_passable.mojo	compile-reject	agree	error: value of type 'P' doesn't have a memory origin in origin specifier

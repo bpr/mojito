@@ -46,6 +46,7 @@ assets/ok/associated_trait_self_element.mojo	main	exe-differential	sanitized
 assets/ok/associated_type_return.mojo	main	exe-differential	sanitized
 assets/ok/associated_value_self_read.mojo	main	exe-differential	sanitized
 assets/ok/augmented_bitwise_assignment.mojo	main	exe-differential	sanitized
+assets/ok/augmented_shift_assignment.mojo	main	exe-differential	sanitized
 assets/ok/augmented_store_copies_nothing.mojo	main	exe-differential	sanitized
 assets/ok/bit_count_ops.mojo	main	exe-differential	sanitized
 assets/ok/bitwise_shift_precedence.mojo	main	exe-differential	sanitized
@@ -390,6 +391,7 @@ assets/ok/imm_origin_cast_view.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_bound_on_declaration.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_exact_source.mojo	main	exe-differential	sanitized
+assets/ok/implicit_conversion_in_application.mojo	main	exe-differential	sanitized
 assets/ok/implicit_conversion_raising.mojo	main	exe-differential	sanitized
 assets/ok/implicit_copy_last_use_forwards.mojo	main	exe-differential	sanitized
 assets/ok/implicit_value_parameter_conversion.mojo	main	exe-differential	sanitized
@@ -410,6 +412,7 @@ assets/ok/inplace_subscript_value.mojo	main	exe-differential	sanitized
 assets/ok/inplace_var.mojo	main	exe-differential	sanitized
 assets/ok/input.mojo	main	exe-differential	sanitized
 assets/ok/instance_constructor_symbols.mojo	main	exe-differential	sanitized
+assets/ok/int_literal_index_constructor.mojo	main	exe-differential	sanitized
 assets/ok/int_literal_parameter_overload.mojo	main	exe-differential	sanitized
 assets/ok/interior_dest_rebind_releases_loans.mojo	main	exe-differential	sanitized
 assets/ok/invert_operator.mojo	main	exe-differential	sanitized
@@ -1184,6 +1187,7 @@ assets/ok/transfer_into_read_parameter_borrows.mojo	main	exe-differential	saniti
 assets/ok/transferred_carrier_keeps_source_alive.mojo	main	exe-differential	sanitized
 assets/ok/transferred_view_loan_stays_shared.mojo	main	exe-differential	sanitized
 assets/ok/trivial_register_passable_copy_forwarded.mojo	main	exe-differential	sanitized
+assets/ok/trivial_register_passable_self_alias.mojo	main	exe-differential	sanitized
 assets/ok/trivial_register_transfer_copies.mojo	main	exe-differential	sanitized
 assets/ok/try_break_continue.mojo	main	exe-differential	sanitized
 assets/ok/try_else_raise_crosses_finally.mojo	main	exe-differential	sanitized

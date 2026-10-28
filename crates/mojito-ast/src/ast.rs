@@ -2426,6 +2426,8 @@ impl InfixOp {
             Self::BitAnd => "__iand__",
             Self::BitOr => "__ior__",
             Self::BitXor => "__ixor__",
+            Self::Shl => "__ilshift__",
+            Self::Shr => "__irshift__",
             _ => return None,
         })
     }

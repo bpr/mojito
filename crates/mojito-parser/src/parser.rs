@@ -209,6 +209,8 @@ const fn aug_assign_op(tok: &Token) -> Option<InfixOp> {
         Token::AmpEq => InfixOp::BitAnd,
         Token::PipeEq => InfixOp::BitOr,
         Token::CaretEq => InfixOp::BitXor,
+        Token::ShlEq => InfixOp::Shl,
+        Token::ShrEq => InfixOp::Shr,
         _ => return None,
     })
 }

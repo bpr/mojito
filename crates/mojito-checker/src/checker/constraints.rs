@@ -1904,8 +1904,8 @@ impl Checker {
     /// value, `Int(mlir_value=s)` the scalar its storage `s` holds, and
     /// ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
     /// ([`super::builtin_fold::mlir_op_operator`]). Between an `Int` and the
-    /// MLIR builtin `index`, `x.__mlir_index__()` (`pop.cast_to_builtin`)
-    /// and `Int(mlir_value=i)` over an `index` (`pop.cast_from_builtin`)
+    /// MLIR builtin `index`, `x.__mlir_index__()` (`pop.cast_to_builtin`,
+    /// of an `Int` or an `IntLiteral`) and `Int(mlir_value=i)` over an `index` (`pop.cast_from_builtin`)
     /// are the parameter domain's casts. `None` for any other expression.
     fn scalar_storage_expression(
         &self,
@@ -1939,7 +1939,10 @@ impl Checker {
                     Some(CtValue::UInt(bits)) => self.ct_param(CtValue::Int(*bits as i64)).ok()?,
                     _ => value,
                 };
-                if value.meta().as_value() != Some(&Ty::int()) {
+                if !matches!(
+                    value.meta().as_value().map(Ty::kind),
+                    Some(TyKind::INT | TyKind::IntLiteral)
+                ) {
                     return None;
                 }
                 Some(

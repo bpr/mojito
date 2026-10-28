@@ -415,9 +415,9 @@ fn lexes_stropped_identifiers_without_keyword_or_punctuation_meaning() {
 
 #[test]
 fn lexes_augmented_assignment_operators() {
-    let tokens = lex_all("+= -= *= /= //= %= **= &= |= ^=");
+    let tokens = lex_all("+= -= *= /= //= %= **= &= |= ^= <<= >>=");
     assert_eq!(
-        &tokens[..10],
+        &tokens[..12],
         &[
             Token::PlusEq,
             Token::MinusEq,
@@ -429,6 +429,8 @@ fn lexes_augmented_assignment_operators() {
             Token::AmpEq,
             Token::PipeEq,
             Token::CaretEq,
+            Token::ShlEq,
+            Token::ShrEq,
         ]
     );
 }
@@ -448,6 +450,12 @@ fn disambiguates_aug_ops_from_longer_operators() {
     assert_eq!(lex_all("a |= b")[1], Token::PipeEq);
     assert_eq!(lex_all("a ^ b")[1], Token::Caret);
     assert_eq!(lex_all("a ^= b")[1], Token::CaretEq);
+    assert_eq!(lex_all("a << b")[1], Token::Shl);
+    assert_eq!(lex_all("a <<= b")[1], Token::ShlEq);
+    assert_eq!(lex_all("a <= b")[1], Token::Le);
+    assert_eq!(lex_all("a >> b")[1], Token::Shr);
+    assert_eq!(lex_all("a >>= b")[1], Token::ShrEq);
+    assert_eq!(lex_all("a >= b")[1], Token::Ge);
 }
 
 // --- Walrus operator ---
