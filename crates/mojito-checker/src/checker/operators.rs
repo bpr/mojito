@@ -84,7 +84,7 @@ impl Checker {
                 .map(|(_, sig, _)| sig);
             if let Some(error) = signature.and_then(dunder_error) {
                 self.record_call_effect(span, error.clone());
-                self.require_error(format!("raising operator '{}'", prefix_symbol(op)), error)?;
+                self.require_error(format!("raising operator '{}'", op.symbol()), error)?;
             }
             let convention = signature.map(|sig| sig.self_convention);
             if convention.is_some_and(reads) {
@@ -97,7 +97,7 @@ impl Checker {
             return require_dunder_ret(ret, &Ty::bool(), "__bool__");
         }
         Err(TypeError::BadOperator {
-            op: prefix_symbol(op).to_string(),
+            op: op.symbol().to_string(),
             operands: t.to_string(),
         })
     }
@@ -132,7 +132,7 @@ impl Checker {
             return self
                 .infer_operator_call(span, op, left, right, &lt, None)?
                 .ok_or_else(|| TypeError::BadOperator {
-                    op: infix_symbol(op).to_string(),
+                    op: op.symbol().to_string(),
                     operands: format!("{lt} and a leading-dot operand"),
                 });
         }
@@ -333,7 +333,7 @@ impl Checker {
             let site = (!membership).then(|| span.clone());
             if self.infer_infix(site, *op, left, right)? != TyKind::Bool {
                 return Err(TypeError::BadOperator {
-                    op: infix_symbol(*op).to_string(),
+                    op: op.symbol().to_string(),
                     operands: "a chained comparison must compare to Bool".to_string(),
                 });
             }
@@ -480,7 +480,7 @@ impl Checker {
             return r.and_then(|ret| require_dunder_ret(ret, &Ty::bool(), "__contains__"));
         }
         Err(TypeError::BadOperator {
-            op: infix_symbol(op).to_string(),
+            op: op.symbol().to_string(),
             operands: format!("{lt} and {rt}"),
         })
     }
@@ -498,7 +498,7 @@ impl Checker {
             Sub,
         };
         let bad = || TypeError::BadOperator {
-            op: infix_symbol(op).to_string(),
+            op: op.symbol().to_string(),
             operands: format!("{lt} and {rt}"),
         };
         // Determine the common SIMD type, allowing a numeric literal on one
@@ -946,46 +946,6 @@ impl Checker {
     }
 }
 
-/// A readable symbol for an infix operator, for error messages.
-pub(super) const fn infix_symbol(op: InfixOp) -> &'static str {
-    match op {
-        InfixOp::Add => "+",
-        InfixOp::Sub => "-",
-        InfixOp::Mul => "*",
-        InfixOp::Div => "/",
-        InfixOp::FloorDiv => "//",
-        InfixOp::Mod => "%",
-        InfixOp::MatMul => "@",
-        InfixOp::Shl => "<<",
-        InfixOp::Shr => ">>",
-        InfixOp::BitAnd => "&",
-        InfixOp::BitOr => "|",
-        InfixOp::BitXor => "^",
-        InfixOp::Pow => "**",
-        InfixOp::Eq => "==",
-        InfixOp::Ne => "!=",
-        InfixOp::Lt => "<",
-        InfixOp::Gt => ">",
-        InfixOp::Le => "<=",
-        InfixOp::Ge => ">=",
-        InfixOp::And => "and",
-        InfixOp::Or => "or",
-        InfixOp::In => "in",
-        InfixOp::NotIn => "not in",
-        InfixOp::Is => "is",
-        InfixOp::IsNot => "is not",
-    }
-}
-
-/// A readable symbol for a prefix operator, for error messages.
-pub(super) const fn prefix_symbol(op: PrefixOp) -> &'static str {
-    match op {
-        PrefixOp::Neg => "-",
-        PrefixOp::Not => "not",
-        PrefixOp::Invert => "~",
-    }
-}
-
 /// Whether `ty` is an archetype whose methods its bounds' requirements
 /// declare: a type parameter or an associated projection of one.
 fn is_bound_archetype(ty: &Ty) -> bool {
@@ -1002,7 +962,7 @@ fn bad_infix_operator(op: InfixOp, lt: &Ty, rt: &Ty) -> TypeError {
         ));
     }
     TypeError::BadOperator {
-        op: infix_symbol(op).to_string(),
+        op: op.symbol().to_string(),
         operands: format!("{lt} and {rt}"),
     }
 }

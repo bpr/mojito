@@ -827,7 +827,7 @@ impl Checker {
         operand_ty: &Ty,
     ) -> Result<mojito_checked::checked::CheckedCallContract, TypeError> {
         let missing = || TypeError::MissingInPlaceOperator {
-            op: infix_symbol(op).to_string(),
+            op: op.symbol().to_string(),
             ty: operand_ty.to_string(),
         };
         let dunder = op.inplace_dunder().ok_or_else(missing)?;

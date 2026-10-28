@@ -33,8 +33,6 @@ use mojito_checked::fact_store::{FactMap, FactSet, FactVec};
 use mojito_types::types::TyKind;
 use mojito_types::types::{FuncTy, GenericFuncTy, TransferSet, VariantIndex};
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
-use operators::*;
-#[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use origins::*;
 #[allow(clippy::wildcard_imports, reason = "pages of this split module")]
 use overload_support::*;

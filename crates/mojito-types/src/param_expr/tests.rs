@@ -526,6 +526,16 @@ fn replacement_keeps_opaque_atoms_unfolded_and_evaluation_folds_them() {
             .as_constant(),
         Some(&CtValue::Int(9))
     );
+    // A negation folds over a constant operand, as the pin's `-n` at
+    // `n = 8` is `-8`.
+    let negated = context.neg(&n).expect("negation");
+    assert_eq!(
+        context
+            .replace(&negated, &bindings)
+            .expect("replacement")
+            .as_constant(),
+        Some(&CtValue::Int(-8))
+    );
 }
 
 /// `param_list.get` over a pack that is still a parameter is a residual
@@ -668,6 +678,27 @@ fn struct_value_identity_is_its_fields() {
         .answer_applications(&replaced, &mut |_, _| Ok(Some(frozen.clone())))
         .expect("answers");
     assert_eq!(answered.as_constant(), Some(&frozen));
+}
+
+/// An operator method's application displays as its operator, as the pin
+/// shows a folded struct operator: forward, reflected, and unary.
+#[test]
+fn dunder_application_displays_as_its_operator() {
+    let context = ParamContext::new();
+    let point = MetaTy::value(TyKind::Struct("L".to_string(), Vec::new()).into());
+    let n = int_param(&context, "f", 0, "n");
+    let left = context.apply("L.__init__", std::slice::from_ref(&n), point.clone());
+    let right = context.apply("L.__init__", &[literal(&context, 1)], point.clone());
+    let added = context.apply("L.__add__", &[left.clone(), right.clone()], point.clone());
+    assert_eq!(added.to_string(), "(L(n) + L(1))");
+    let reflected = context.apply("L.__radd__", &[left.clone(), n], point.clone());
+    assert_eq!(reflected.to_string(), "(n + L(n))");
+    let negated = context.apply("L.__neg__$1", std::slice::from_ref(&left), point);
+    assert_eq!(negated.to_string(), "-L(n)");
+    let compared = context.apply("L.__lt__", &[left.clone(), right], MetaTy::bool());
+    assert_eq!(compared.to_string(), "(L(n) < L(1))");
+    let method = context.apply("L.doubled", std::slice::from_ref(&left), MetaTy::int());
+    assert_eq!(method.to_string(), "L.doubled(L(n))");
 }
 
 /// A `DType` float query over a binder is an application `replace` keeps

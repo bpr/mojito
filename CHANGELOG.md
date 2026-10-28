@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call of an `@always_inline("builtin")` method with `self` in a type or
+  a parameter argument is now its body's expression over the receiver, as
+  at the pin (R1526): `L(n).doubled()` over `return self.v + self.v` is
+  `2 * n`, and `l.doubled()` over a binder `l: L` reads `l.v`. A struct
+  operator there applies its builtin dunder (forward, reflected, unary, and
+  comparisons, which also decide a `where` clause and a `comptime if`), so
+  `(L(n) + L(1)).get()` is `n + 1` and `Tagged[L(n) + L(1)]` is
+  `Tagged[L(n + 1)]`, shown as `Tagged[(L(n) + L(1))]`. A `Self` parameter
+  or result is admitted, and `Self(...)` folds in a builtin body. Builtin
+  `self` members the pin rejects are now rejected: on a struct that is not
+  trivially register-passable, a `mut`, `var`, `ref`, or `deinit` `self`,
+  and a call of a non-builtin method of `self`. The bundled `Span` is now
+  `TrivialRegisterPassable`, as upstream's is. A negation over a substituted
+  constant now folds (`Tagged[-n]` at `n = 2` is `Tagged[-2]`), as at the
+  pin. The package format moves to `mojito-package 124`.
 - `Self(...)` inside a struct's method now constructs the struct over its
   own parameters, by position or keyword, as at the pin (R58): the
   checker reads `Self` as the struct's alias and spells the call as the

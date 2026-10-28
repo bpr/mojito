@@ -532,7 +532,8 @@ base denotes (`Tuple[*Ts.reverse()]`). A `Self`-rooted
 chain an operator continues (`storage[Self.Ts.length - 1 - i]`) is the value
 expression it starts, and `Self.Ts.values` is a value argument like a `def`'s
 own `Ts.values`. A call on a type is a value expression too: `Self.width()`
-calls a static method of the enclosing struct, and an applied type is a
+calls a static method of the enclosing struct, a call ending a `Self`-rooted
+member chain (`Self.l.doubled()`) calls a method of that member, and an applied type is a
 subscript expression like any other (`Grid[n]`), which a member continues as
 the postfix chain it starts (`Grid[n].cells()`).
 

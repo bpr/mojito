@@ -54,6 +54,7 @@ struct Span[mut: Bool, //, T: AnyType, origin: Origin[mut=mut]](
     Iterable where conforms_to(T, Copyable),
     Movable,
     Sized,
+    TrivialRegisterPassable,
     Writable where conforms_to(T, Writable),
 ):
     comptime Element = Self.T

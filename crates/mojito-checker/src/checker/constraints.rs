@@ -1703,13 +1703,7 @@ impl Checker {
                 Ok(member)
             }
             ExprKind::Prefix(PrefixOp::Neg, operand) => {
-                let operand = build(operand)?;
-                match operand.as_constant() {
-                    Some(value) => mojito_types::param_expr::fold::fold_neg(value)
-                        .map_err(param_error)
-                        .and_then(|value| self.ct_param(value)),
-                    None => context.neg(&operand).map_err(param_error),
-                }
+                self.negated_value(expr, operand, recording)
             }
             // `not b` over a compile-time `Bool`; any other operand is the
             // ordinary rejection below.
@@ -1754,22 +1748,154 @@ impl Checker {
                     }
                 }
             }
-            // `left op right`: closed operands fold through the shared
-            // folder; a residual operand builds the canonical expression, so
-            // `Self.n + 1` stays symbolic in a template.
-            ExprKind::Infix(op, left, right) => {
-                let (left, right) = (build(left)?, build(right)?);
-                match (left.as_constant(), right.as_constant()) {
-                    (Some(left), Some(right)) => {
-                        mojito_types::param_expr::fold::fold_infix(*op, left, right)
-                            .map_err(param_error)
-                            .and_then(|value| self.ct_param(value))
-                    }
-                    _ => context.infix(*op, &left, &right).map_err(param_error),
-                }
-            }
+            ExprKind::Infix(op, left, right) => self.infix_value(expr, *op, left, right, recording),
             _ => self.build_ct_rest(expr, recording),
         }
+    }
+
+    /// The parameter expression of `-operand`, the negation `expr` spells:
+    /// a closed operand folds, a struct one applies its `__neg__`
+    /// ([`Self::struct_operator_value`]), any other is the negation.
+    fn negated_value(
+        &self,
+        expr: &Expr,
+        operand: &Expr,
+        recording: Recording,
+    ) -> Result<ParamExpr, TypeError> {
+        let built = self.build_ct(operand, recording)?;
+        if struct_valued(&built) {
+            return self.struct_operator_value(
+                expr,
+                PrefixOp::Neg.symbol(),
+                &[(operand, PrefixOp::Neg.dunder(), None)],
+            );
+        }
+        match built.as_constant() {
+            Some(value) => mojito_types::param_expr::fold::fold_neg(value)
+                .map_err(param_error)
+                .and_then(|value| self.ct_param(value)),
+            None => self.param_context.neg(&built).map_err(param_error),
+        }
+    }
+
+    /// The parameter expression of `left op right`, which `expr` spells:
+    /// closed operands fold through the shared folder; a residual operand
+    /// builds the canonical expression, so `Self.n + 1` stays symbolic in a
+    /// template. A struct operand applies the operator's dunder on the
+    /// left operand, else its reflected dunder on the right one
+    /// ([`Self::struct_operator_value`]), as Mojo's parser spells `a + b`
+    /// as `a.__add__(b)`.
+    fn infix_value(
+        &self,
+        expr: &Expr,
+        op: InfixOp,
+        left: &Expr,
+        right: &Expr,
+        recording: Recording,
+    ) -> Result<ParamExpr, TypeError> {
+        let (left_built, right_built) = (
+            self.build_ct(left, recording)?,
+            self.build_ct(right, recording)?,
+        );
+        if struct_valued(&left_built) || struct_valued(&right_built) {
+            let mut candidates = Vec::new();
+            if struct_valued(&left_built)
+                && let Some(dunder) = op.dunder()
+            {
+                candidates.push((left, dunder, Some(right)));
+            }
+            if struct_valued(&right_built)
+                && let Some(dunder) = op.reflected_dunder()
+            {
+                candidates.push((right, dunder, Some(left)));
+            }
+            return self.struct_operator_value(expr, op.symbol(), &candidates);
+        }
+        match (left_built.as_constant(), right_built.as_constant()) {
+            (Some(left), Some(right)) => {
+                mojito_types::param_expr::fold::fold_infix(op, left, right)
+                    .map_err(param_error)
+                    .and_then(|value| self.ct_param(value))
+            }
+            _ => self
+                .param_context
+                .infix(op, &left_built, &right_built)
+                .map_err(param_error),
+        }
+    }
+
+    /// The proposition a comparison `expr` of `left` and `right` states
+    /// when either builds to a struct value: the `Bool` its operator
+    /// method's application folds to ([`Self::infix_value`]) is true, as
+    /// the pin decides `where L(n) < L(3)` by the builtin `__lt__`. `None`
+    /// when neither operand is a struct value.
+    fn struct_comparison(
+        &self,
+        expr: &Expr,
+        left: &Expr,
+        right: &Expr,
+    ) -> Option<Result<GenericConstraint, TypeError>> {
+        let _lifting = self.lifting_position();
+        let struct_operand = |operand: &Expr| {
+            self.compile_dependent_ct_expr(operand)
+                .is_ok_and(|built| struct_valued(&built))
+        };
+        if !struct_operand(left) && !struct_operand(right) {
+            return None;
+        }
+        // A struct value compares through an ordinary operator method (a
+        // user `__eq__`) only by running it: the comparison is a value the
+        // elaborator evaluates, not a proposition over the operands.
+        Some(
+            self.compile_dependent_ct_expr(expr)
+                .ok()
+                .filter(|compared| *compared.meta() == MetaTy::bool())
+                .map(|compared| {
+                    GenericConstraint::Eq(
+                        compared.as_constant().map_or_else(
+                            || ConstraintOperand::Expr(compared.clone()),
+                            |value| ConstraintOperand::Value(value.clone()),
+                        ),
+                        ConstraintOperand::Value(CtValue::Bool(true)),
+                    )
+                })
+                .ok_or_else(struct_comparison_rejection),
+        )
+    }
+
+    /// The application of the first of `candidates`, each a receiver, the
+    /// dunder called on it, and its operand, that a compile-time call
+    /// applies ([`Self::called_application`]): the operator `symbol` that
+    /// `expr` spells over a struct value is its dunder's call. A struct
+    /// operand no candidate applies to is no compile-time value, rather
+    /// than an arithmetic node over a struct.
+    fn struct_operator_value(
+        &self,
+        expr: &Expr,
+        symbol: &str,
+        candidates: &[(&Expr, &str, Option<&Expr>)],
+    ) -> Result<ParamExpr, TypeError> {
+        candidates
+            .iter()
+            .find_map(|(receiver, dunder, operand)| {
+                let mut call = Expr::new(
+                    ExprKind::MethodCall {
+                        object: Box::new((*receiver).clone()),
+                        method: (*dunder).to_string(),
+                        args: operand.iter().map(|operand| (*operand).clone()).collect(),
+                        kwargs: Vec::new(),
+                    },
+                    expr.span,
+                );
+                call.source.clone_from(&expr.source);
+                self.called_application(&call)
+            })
+            .ok_or_else(|| {
+                TypeError::NotComptime(format!(
+                    "operator '{symbol}' over a struct value applies no \
+                     '@always_inline(\"builtin\")' operator method"
+                ))
+            })
     }
 
     /// The parameter expression of a compile-time scalar's storage read, as
@@ -2813,15 +2939,12 @@ impl Checker {
             ),
             ExprKind::Infix(op, left, right) => {
                 self.reject_type_parameter_comparison(*op, left, right)?;
+                if let Some(compared) = self.struct_comparison(expr, left, right) {
+                    return compared;
+                }
                 let (left, right) = binary(left, right)?;
-                // A struct value compares through its operator method (a
-                // user `__eq__`), which only running it answers: the
-                // comparison is a value the elaborator evaluates, not a
-                // proposition over the operands.
                 if [&left, &right].into_iter().any(struct_valued_operand) {
-                    return Err(TypeError::Unsupported(
-                        "a comparison of struct values is no generic proposition".to_string(),
-                    ));
+                    return Err(struct_comparison_rejection());
                 }
                 // A KGEN string implements no comparison, which the shared
                 // folder reports (`"a".value == "a".value`).
@@ -4537,6 +4660,20 @@ enum ModuleConstant<'a> {
 
 /// Whether `value` is an `Int`, `UInt`, `Bool`, or `Float64` value: a
 /// width-one vector, whose `_mlir_value` storage is the value itself.
+/// The rejection of a comparison of struct values as a generic
+/// proposition ([`Checker::struct_comparison`]).
+fn struct_comparison_rejection() -> TypeError {
+    TypeError::Unsupported("a comparison of struct values is no generic proposition".to_string())
+}
+
+/// Whether `value` is a struct-typed compile-time value.
+fn struct_valued(value: &ParamExpr) -> bool {
+    value
+        .meta()
+        .as_value()
+        .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+}
+
 fn is_scalar_value(value: &ParamExpr) -> bool {
     value.meta().as_value().is_some_and(|ty| {
         matches!(

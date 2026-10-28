@@ -2213,6 +2213,15 @@ pub enum PrefixOp {
 }
 
 impl PrefixOp {
+    /// The operator as source spells it.
+    pub const fn symbol(self) -> &'static str {
+        match self {
+            Self::Neg => "-",
+            Self::Not => "not",
+            Self::Invert => "~",
+        }
+    }
+
     /// The dunder a prefix operator dispatches to on a user `struct` operand
     /// (`-x` → `x.__neg__()`, `not x` → `not x.__bool__()`). Shared by the
     /// checker (typing) and the VM (runtime dispatch) so they agree.
@@ -2260,6 +2269,80 @@ pub enum InfixOp {
 }
 
 impl InfixOp {
+    /// Every binary operator.
+    pub const ALL: [Self; 25] = [
+        Self::Add,
+        Self::Sub,
+        Self::Mul,
+        Self::Div,
+        Self::FloorDiv,
+        Self::Mod,
+        Self::MatMul,
+        Self::Shl,
+        Self::Shr,
+        Self::BitAnd,
+        Self::BitOr,
+        Self::BitXor,
+        Self::Pow,
+        Self::Eq,
+        Self::Ne,
+        Self::Lt,
+        Self::Gt,
+        Self::Le,
+        Self::Ge,
+        Self::And,
+        Self::Or,
+        Self::In,
+        Self::NotIn,
+        Self::Is,
+        Self::IsNot,
+    ];
+
+    /// The operator as source spells it.
+    pub const fn symbol(self) -> &'static str {
+        match self {
+            Self::Add => "+",
+            Self::Sub => "-",
+            Self::Mul => "*",
+            Self::Div => "/",
+            Self::FloorDiv => "//",
+            Self::Mod => "%",
+            Self::MatMul => "@",
+            Self::Shl => "<<",
+            Self::Shr => ">>",
+            Self::BitAnd => "&",
+            Self::BitOr => "|",
+            Self::BitXor => "^",
+            Self::Pow => "**",
+            Self::Eq => "==",
+            Self::Ne => "!=",
+            Self::Lt => "<",
+            Self::Gt => ">",
+            Self::Le => "<=",
+            Self::Ge => ">=",
+            Self::And => "and",
+            Self::Or => "or",
+            Self::In => "in",
+            Self::NotIn => "not in",
+            Self::Is => "is",
+            Self::IsNot => "is not",
+        }
+    }
+
+    /// The operator whose [`Self::dunder`] is `method`, or whose
+    /// [`Self::reflected_dunder`] is when the flag is set.
+    pub fn of_dunder(method: &str) -> Option<(Self, bool)> {
+        Self::ALL.into_iter().find_map(|op| {
+            if op.dunder() == Some(method) {
+                Some((op, false))
+            } else if op.reflected_dunder() == Some(method) {
+                Some((op, true))
+            } else {
+                None
+            }
+        })
+    }
+
     /// The dunder method a binary operator dispatches to on a user `struct` left
     /// operand (`a + b` → `a.__add__(b)`), or `None` for operators that don't
     /// dispatch this way (`and`/`or` short-circuit; `in`/`not in` dispatch to

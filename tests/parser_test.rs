@@ -3315,6 +3315,20 @@ fn parses_a_static_call_on_a_type_as_a_parameter_argument() {
                 && args.is_empty()),
         "got {on_self:?}"
     );
+    // A call ending a `Self`-rooted member chain is the method call on the
+    // chain's last member.
+    let on_member = arguments("SIMD[DType.int8, Self.l.doubled()]");
+    assert!(
+        matches!(&on_member[1], ParamArg::Value(Expr {
+                kind: ExprKind::MethodCall { object, method, args, .. },
+                ..
+            }) if matches!(&object.kind, ExprKind::Member { object, field }
+                if field == "l"
+                    && matches!(&object.kind, ExprKind::Identifier(name) if name == "Self"))
+                && method == "doubled"
+                && args.is_empty()),
+        "got {on_member:?}"
+    );
     let on_instance = arguments("SIMD[DType.int32, Grid[n].cells(2) + 1]");
     let ParamArg::Value(Expr {
         kind: ExprKind::Infix(_, call, _),

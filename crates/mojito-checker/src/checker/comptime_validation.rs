@@ -135,10 +135,11 @@ pub(super) struct ForwardedPack {
 
 /// A callable a compile-time call applies by name
 /// ([`Checker::called_application`]): a module `def`, a static method of a
-/// struct, or a struct's `__init__`, whose own compile-time parameters and
-/// runtime parameters are each an `Int`, a `UInt`, a `Bool`, or a
-/// `Float64`, and which returns one or a named struct. A `where` clause it declares binds a call as a runtime
-/// call's does.
+/// struct, a struct's `__init__`, or an `@always_inline("builtin")` method
+/// taking `self`, whose own compile-time parameters and runtime parameters
+/// are each an `Int`, a `UInt`, a `Bool`, a `Float64`, or its struct's
+/// `Self`, and which returns one or a named struct. A `where` clause it
+/// declares binds a call as a runtime call's does.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
     /// The MIR declaration the elaborator runs.
@@ -147,9 +148,8 @@ pub(in crate::checker) struct ApplicableFunction {
     /// which is applied to the instance it is called on, or constructs,
     /// before any other argument.
     on_instance: bool,
-    /// Whether it is an `__init__`, the synthesized fieldwise one included,
-    /// whose `out self` is its result: the instance a call constructs.
-    constructs: bool,
+    /// What its `self` is, if it has one.
+    self_slot: SelfSlot,
     /// The callable's own compile-time parameters, in declared order.
     binders: Vec<(String, Ty)>,
     /// Its runtime parameters, in declared order.
@@ -157,7 +157,8 @@ pub(in crate::checker) struct ApplicableFunction {
     positional_only: Option<usize>,
     keyword_only: Option<usize>,
     /// The declared result: an `Int`, a `UInt`, a `Bool`, or a `Float64`, or
-    /// a named struct the check resolves where a call applies it.
+    /// a named struct or `Self`, which the check resolves where a call
+    /// applies it.
     result: SourceType,
     /// Whether it is declared `raises`, which no type or parameter argument
     /// may call.
@@ -195,26 +196,37 @@ impl ApplicableFunction {
         &self.symbol
     }
 
-    /// The compile-time parameters and then the runtime ones, each with its
-    /// type, in [`Checker::called_application`]'s argument order. A
-    /// method's struct parameters are no slot: its body reads them as its
-    /// struct's own binders, which a call binds from the instance.
-    pub(in crate::checker) fn argument_slots(&self) -> Vec<(&str, &Ty)> {
+    /// The compile-time parameters, then `self`, then the runtime
+    /// parameters, each with its type, in [`Checker::called_application`]'s
+    /// argument order, `self` and a `Self` parameter typed `owner`: the
+    /// struct template in its own scope, the instance at a call. A method's
+    /// struct parameters are no slot: its body reads them as its struct's
+    /// own binders, which a call binds from the instance. `None` for a slot
+    /// typed `Self` without an `owner`.
+    pub(in crate::checker) fn argument_slots(&self, owner: Option<&Ty>) -> Option<Vec<(&str, Ty)>> {
+        let receiver =
+            (self.self_slot == SelfSlot::Receiver).then(|| Some(("self", owner?.clone())));
         self.binders
             .iter()
-            .map(|(name, ty)| (name.as_str(), ty))
+            .map(|(name, ty)| Some((name.as_str(), ty.clone())))
+            .chain(receiver)
             .chain(
                 self.params
                     .iter()
-                    .map(|param| (param.name.as_str(), &param.ty)),
+                    .map(|param| Some((param.name.as_str(), param.ty.resolved(owner)?.clone()))),
             )
             .collect()
     }
 
     /// Whether it is an `__init__`, whose result is the instance it
     /// constructs.
-    pub(in crate::checker) const fn constructs(&self) -> bool {
-        self.constructs
+    pub(in crate::checker) fn constructs(&self) -> bool {
+        self.self_slot == SelfSlot::Constructed
+    }
+
+    /// Whether it is a method taking `self`.
+    fn takes_self(&self) -> bool {
+        self.self_slot == SelfSlot::Receiver
     }
 
     /// Whether it is declared `raises`.
@@ -325,14 +337,14 @@ pub(super) fn applicable_declarations<'a>(
                     overloads,
                     constants,
                 );
-                declarations.extend(shape.applicable(symbol, false, false).map(|function| {
-                    ApplicableDeclaration {
+                declarations.extend(shape.applicable(symbol, false, SelfSlot::None).map(
+                    |function| ApplicableDeclaration {
                         name: name.clone(),
                         function,
                         body,
                         owner: None,
-                    }
-                }));
+                    },
+                ));
             }
             StmtKind::Struct {
                 name,
@@ -383,7 +395,7 @@ pub(super) fn applicable_declarations<'a>(
                     let symbol = format!("{name}.__init__");
                     list(
                         name.clone(),
-                        shape.applicable(symbol, on_instance, true),
+                        shape.applicable(symbol, on_instance, SelfSlot::Constructed),
                         &[],
                     );
                 }
@@ -410,12 +422,24 @@ pub(super) fn applicable_declarations<'a>(
                         );
                         list(
                             name.clone(),
-                            shape.applicable(symbol, on_instance, true),
+                            shape.applicable(symbol, on_instance, SelfSlot::Constructed),
                             &method.body,
                         );
                         continue;
                     }
-                    let Some(ret) = method.ret.as_ref().filter(|_| !method.has_self) else {
+                    // A method with `self` applies only when builtin, its
+                    // receiver taken `imm`, as the pin folds it; an ordinary
+                    // one is a run-time call.
+                    let Some(ret) = method.ret.as_ref().filter(|_| {
+                        !method.has_self
+                            || (matches!(
+                                mojito_checked::declaration::InlineLevel::of(&method.decorators),
+                                Ok(mojito_checked::declaration::InlineLevel::Builtin)
+                            ) && matches!(
+                                method.self_convention,
+                                None | Some(ArgConvention::Imm)
+                            ))
+                    }) else {
                         continue;
                     };
                     let shape = ApplicableShape {
@@ -438,7 +462,15 @@ pub(super) fn applicable_declarations<'a>(
                     );
                     list(
                         source,
-                        shape.applicable(symbol, on_instance, false),
+                        shape.applicable(
+                            symbol,
+                            on_instance,
+                            if method.has_self {
+                                SelfSlot::Receiver
+                            } else {
+                                SelfSlot::None
+                            },
+                        ),
                         &method.body,
                     );
                 }
@@ -1109,7 +1141,10 @@ impl Checker {
     /// instance, so `G[1].plus(n)` over `return n + Self.k` is `n + 1`. A
     /// builtin `__init__`'s call is the struct value of the fields its body
     /// stores, spelled as the application, so `L(n).v` over `self.v = v` is
-    /// `n`.
+    /// `n`. A builtin method's call on a compile-time struct value binds
+    /// `self` to the receiver, so `L(n).doubled()` over `return self.v +
+    /// self.v` is `2 * n`, and a struct value its body builds is spelled as
+    /// the method's call.
     /// `None` for a callee that is
     /// no such callable ([`applicable_functions`]), a call that selects no
     /// one overload, or an argument that denotes no parameter expression.
@@ -1125,7 +1160,9 @@ impl Checker {
             ..
         } = selected;
         let result = match &instance {
-            Some(instance) if function.constructs => Some(instance.clone()),
+            Some(instance) if function.constructs() || function.result == SourceType::SelfType => {
+                Some(instance.clone())
+            }
             _ => self.ty_from_anno(&function.result).ok(),
         }
         .filter(|ty| {
@@ -1181,7 +1218,9 @@ impl Checker {
                     })
             };
             let folded = match body {
-                FoldedBody::Value(value) => replaced(value),
+                FoldedBody::Value(value) => replaced(value).map(|folded| {
+                    respelled_struct_value(&self.param_context, folded, &application)
+                }),
                 FoldedBody::Fields(fields) => fields
                     .iter()
                     .map(|(name, value)| Some((name.clone(), replaced(value)?)))
@@ -1251,32 +1290,55 @@ impl Checker {
     }
 
     /// The callable a compile-time call applies, the struct instance a
-    /// static method is called on, and the parameter expressions of its
-    /// arguments: the one overload under the spelled name the arguments
-    /// bind and type, whose `where` clauses have compiled.
+    /// static method is called on, or a method's receiver and its type,
+    /// and the parameter expressions of its arguments: the one overload
+    /// under the spelled name the arguments bind and type, whose `where`
+    /// clauses have compiled. `Self(...)` in a struct's member is the
+    /// construction of the struct over its own parameters, as the check
+    /// spells it ([`Self::self_instance_spelling`]).
     fn selected_application(&self, expr: &Expr) -> Option<Selected<'_>> {
-        let (name, instance, param_args, args, kwargs) = match &expr.kind {
+        let self_spelling;
+        let (name, instance, receiver, param_args, args, kwargs) = match &expr.kind {
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "Self" && self.lookup("Self").is_none() => {
+                let (owner, spelled) = self.self_instance_spelling()?;
+                self_spelling = spelled;
+                let param_args = if param_args.is_empty() {
+                    self_spelling.as_slice()
+                } else {
+                    param_args.as_slice()
+                };
+                (owner, None, None, param_args, args, kwargs)
+            }
             // A local of the name shadows the module function.
             ExprKind::Call {
                 name,
                 param_args,
                 args,
                 kwargs,
-            } if self.binding_scope(name).is_none_or(|scope| scope == 0) => {
-                (name.clone(), None, param_args.as_slice(), args, kwargs)
-            }
+            } if self.binding_scope(name).is_none_or(|scope| scope == 0) => (
+                name.clone(),
+                None,
+                None,
+                param_args.as_slice(),
+                args,
+                kwargs,
+            ),
             ExprKind::MethodCall {
                 object,
                 method,
                 args,
                 kwargs,
             } => {
-                let (owner, instance) = self.applied_owner(object, method)?;
-                let name = format!("{owner}.{method}");
-                (name, Some(instance), [].as_slice(), args, kwargs)
+                let (name, instance, receiver) = self.applied_receiver(object, method)?;
+                (name, Some(instance), receiver, [].as_slice(), args, kwargs)
             }
-            // A static method given its own compile-time arguments
-            // (`S.t[n]()`).
+            // A method given its own compile-time arguments (`S.t[n]()`,
+            // `l.scaled[2]()`).
             ExprKind::Invoke {
                 callee,
                 param_args,
@@ -1286,9 +1348,15 @@ impl Checker {
                 let ExprKind::Member { object, field } = &callee.kind else {
                     return None;
                 };
-                let (owner, instance) = self.applied_owner(object, field)?;
-                let name = format!("{owner}.{field}");
-                (name, Some(instance), param_args.as_slice(), args, kwargs)
+                let (name, instance, receiver) = self.applied_receiver(object, field)?;
+                (
+                    name,
+                    Some(instance),
+                    receiver,
+                    param_args.as_slice(),
+                    args,
+                    kwargs,
+                )
             }
             _ => return None,
         };
@@ -1296,11 +1364,12 @@ impl Checker {
             .applicable_functions
             .get(&name)?
             .iter()
+            .filter(|function| function.takes_self() == receiver.is_some())
             .filter_map(|function| {
                 // A generic struct's construction is bracketed by the
                 // instance it constructs (`G[2](n)`), not by binders of its
                 // `__init__`.
-                let (instance, param_args) = match (function.constructs, function.on_instance) {
+                let (instance, param_args) = match (function.constructs(), function.on_instance) {
                     (true, true) if !param_args.is_empty() => (
                         self.ty_from_anno(&SourceType::Named(name.clone(), param_args.to_vec()))
                             .ok(),
@@ -1311,15 +1380,61 @@ impl Checker {
                 if (function.on_instance && instance.is_none()) || function.constraints.is_none() {
                     return None;
                 }
+                // A `Self` slot takes the instance a call is made on, or the
+                // struct a non-generic one constructs.
+                let owner = instance.clone().or_else(|| {
+                    function
+                        .constructs()
+                        .then(|| {
+                            self.ty_from_anno(&SourceType::Named(name.clone(), Vec::new()))
+                                .ok()
+                        })
+                        .flatten()
+                });
+                let mut arguments =
+                    self.applied_arguments(function, owner.as_ref(), param_args, args, kwargs)?;
+                if let Some(receiver) = &receiver {
+                    arguments.insert(function.binders.len(), receiver.clone());
+                }
                 Some(Selected {
                     name: name.clone(),
                     function,
                     instance,
-                    arguments: self.applied_arguments(function, param_args, args, kwargs)?,
+                    arguments,
                 })
             });
         let application = selected.next()?;
         selected.next().is_none().then_some(application)
+    }
+
+    /// The name a call of `method` on `object` spells, the struct instance
+    /// it is called on, and the receiver it binds to `self`: a static
+    /// method of a type `object` names ([`Self::applied_owner`]), or a
+    /// method with `self` of a compile-time struct value `object` builds
+    /// (`L(n).doubled()`, `l.doubled()` over a binder `l: L`), as the pin
+    /// calls a method on a parameter value.
+    fn applied_receiver(
+        &self,
+        object: &Expr,
+        method: &str,
+    ) -> Option<(String, Ty, Option<ParamExpr>)> {
+        if let Some((owner, instance)) = self.applied_owner(object, method) {
+            return Some((format!("{owner}.{method}"), instance, None));
+        }
+        let receiver = {
+            let _lifting = self.lifting_position();
+            self.compile_dependent_ct_expr(object).ok()?
+        };
+        let instance = receiver.meta().as_value()?.clone();
+        let TyKind::Struct(owner, _) = instance.kind() else {
+            return None;
+        };
+        let name = format!("{}.{method}", template_name(owner));
+        self.applicable_functions
+            .get(&name)?
+            .iter()
+            .any(ApplicableFunction::takes_self)
+            .then_some((name, instance, Some(receiver)))
     }
 
     /// The rejection of `selected`'s call by a `where` clause of its
@@ -1333,13 +1448,13 @@ impl Checker {
         let symbol = &selected.function.symbol;
         let slots: Vec<ParamDecl> = selected
             .function
-            .argument_slots()
+            .argument_slots(selected.instance.as_ref())?
             .into_iter()
             .enumerate()
             .map(|(slot, (name, ty))| ParamDecl::Value {
                 id: super::annotations::builtin_body_binder(symbol, slot, name).id,
                 name: name.to_string(),
-                ty: ty.clone(),
+                ty,
                 default: None,
                 callable_default: None,
                 infer_only: false,
@@ -1418,12 +1533,13 @@ impl Checker {
     }
 
     /// The parameter expressions a call's arguments give `function`, its
-    /// compile-time parameters first; `None` when they do not bind its
-    /// parameters or one is not a compile-time value of its parameter's
-    /// type.
+    /// compile-time parameters first, a `Self` parameter typed `owner`;
+    /// `None` when they do not bind its parameters or one is not a
+    /// compile-time value of its parameter's type.
     fn applied_arguments(
         &self,
         function: &ApplicableFunction,
+        owner: Option<&Ty>,
         param_args: &[ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
@@ -1475,12 +1591,11 @@ impl Checker {
         )
         .ok()?;
         for (slot, param) in matched.slots.iter().zip(&function.params) {
+            let ty = param.ty.resolved(owner)?;
             arguments.push(match slot {
-                ArgSlot::Positional(index) => self.applied_argument(&args[*index], &param.ty)?,
-                ArgSlot::Keyword(index) => {
-                    self.applied_argument(&kwargs[*index].value, &param.ty)?
-                }
-                ArgSlot::Default => self.applied_default(param.default.as_ref()?, &param.ty)?,
+                ArgSlot::Positional(index) => self.applied_argument(&args[*index], ty)?,
+                ArgSlot::Keyword(index) => self.applied_argument(&kwargs[*index].value, ty)?,
+                ArgSlot::Default => self.applied_default(param.default.as_ref()?, ty)?,
             });
         }
         Some(arguments)
@@ -3947,18 +4062,51 @@ struct Selected<'a> {
     name: String,
     function: &'a ApplicableFunction,
     /// The struct instance a static method is called on (`G[1]` in
-    /// `G[1].plus(n)`).
+    /// `G[1].plus(n)`), or the type of a method's receiver.
     instance: Option<Ty>,
     /// The parameter expressions of its own compile-time arguments, then of
-    /// its runtime ones.
+    /// a method's receiver, then of its runtime arguments.
     arguments: Vec<ParamExpr>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct ApplicableParameter {
     name: String,
-    ty: Ty,
+    ty: SlotType,
     default: Option<Expr>,
+}
+
+/// What an [`ApplicableFunction`]'s `self` is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum SelfSlot {
+    /// It has none: a module `def` or a static method.
+    None,
+    /// An `__init__`'s `out self`, the synthesized fieldwise one's
+    /// included: its result, the instance a call constructs.
+    Constructed,
+    /// A method's `self`, which a call binds to its receiver, after its
+    /// own compile-time parameters and before its runtime ones, as its MIR
+    /// declaration orders them.
+    Receiver,
+}
+
+/// The type of an [`ApplicableParameter`].
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+enum SlotType {
+    /// An `Int`, a `UInt`, a `Bool`, or a `Float64`.
+    Scalar(Ty),
+    /// `Self`, the struct a call's instance or receiver resolves.
+    Owner,
+}
+
+impl SlotType {
+    /// The type, `Self` resolved to `owner`.
+    const fn resolved<'a>(&'a self, owner: Option<&'a Ty>) -> Option<&'a Ty> {
+        match self {
+            Self::Scalar(ty) => Some(ty),
+            Self::Owner => owner,
+        }
+    }
 }
 
 /// The signature of a `def` or a static method, as its declaration spells
@@ -3975,19 +4123,20 @@ struct ApplicableShape<'a> {
 }
 
 impl ApplicableShape<'_> {
-    /// The callable under `symbol`, when a compile-time call can apply it:
-    /// an `__init__` when it `constructs`.
+    /// The callable under `symbol`, when a compile-time call can apply it,
+    /// whose `self` is `self_slot`.
     fn applicable(
         &self,
         symbol: String,
         on_instance: bool,
-        constructs: bool,
+        self_slot: SelfSlot,
     ) -> Option<ApplicableFunction> {
-        let scalar = |ty: &SourceType| match ty {
-            SourceType::Int => Some(Ty::int()),
-            SourceType::UInt => Some(Ty::uint()),
-            SourceType::Bool => Some(Ty::bool()),
-            SourceType::Float64 => Some(Ty::float64()),
+        let slot = |ty: &SourceType| match ty {
+            SourceType::Int => Some(SlotType::Scalar(Ty::int())),
+            SourceType::UInt => Some(SlotType::Scalar(Ty::uint())),
+            SourceType::Bool => Some(SlotType::Scalar(Ty::bool())),
+            SourceType::Float64 => Some(SlotType::Scalar(Ty::float64())),
+            SourceType::SelfType => Some(SlotType::Owner),
             _ => None,
         };
         let binders = self
@@ -4021,7 +4170,7 @@ impl ApplicableShape<'_> {
                     );
                 Some(ApplicableParameter {
                     name: param.name.clone(),
-                    ty: scalar(&param.ty).filter(|_| passed_by_value)?,
+                    ty: slot(&param.ty).filter(|_| passed_by_value)?,
                     default: param.default.clone(),
                 })
             })
@@ -4029,7 +4178,7 @@ impl ApplicableShape<'_> {
         Some(ApplicableFunction {
             symbol,
             on_instance,
-            constructs,
+            self_slot,
             binders,
             params,
             positional_only: self.positional_only,
@@ -4039,6 +4188,7 @@ impl ApplicableShape<'_> {
                 | SourceType::UInt
                 | SourceType::Bool
                 | SourceType::Float64
+                | SourceType::SelfType
                 | SourceType::Named(..) => self.ret.clone(),
                 _ => return None,
             },
@@ -4052,8 +4202,21 @@ impl ApplicableShape<'_> {
     }
 }
 
-/// The name a struct was declared under, whichever instance clone `name`
-/// spells.
+/// `folded`, a builtin body's value, as the value of the call
+/// `application`: a struct value it builds is spelled as the call, which
+/// the pin displays and the elaborator answers (`L(n) + L(1)` for the
+/// `Self(...)` its `__add__` returns).
+fn respelled_struct_value(
+    context: &mojito_types::param_expr::ParamContext,
+    folded: ParamExpr,
+    application: &ParamExpr,
+) -> ParamExpr {
+    match folded.kind() {
+        ParamKind::StructValue { fields, .. } => context.struct_value(fields, application),
+        _ => folded,
+    }
+}
+
 /// Whether a folded builtin method body still reads a struct parameter
 /// its instance binds to anything but the parameter itself, by a reference
 /// or by a pack query the replacement did not resolve: such a fold is no
@@ -4084,6 +4247,8 @@ fn reads_rebound_binder(folded: &ParamExpr, decls: &[ParamDecl], arguments: &[Ty
     reads
 }
 
+/// The name a struct was declared under, whichever instance clone `name`
+/// spells.
 fn template_name(name: &str) -> &str {
     mojito_symbol::symbol::specialization_template(name).unwrap_or(name)
 }

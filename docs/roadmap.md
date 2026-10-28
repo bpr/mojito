@@ -182,6 +182,14 @@ which names the upstream pass each one follows. Each is measured by the
     `assets/ok/value_parameter_string_aggregate.mojo` and `ints[N(8,
     In(9))]()` in `assets/ok/value_parameter_field_read.mojo`. Delete that
     arm here.
+  - Probe: a non-builtin `ord(self) -> Int` in `SIMD[DType.int8,
+    L(n).ord()]` is an application at the pin (`L(Int(1)).ord()` in its
+    message), where Mojito says "not an associated comptime expression".
+    `SIMD[DType.int8, Self.l.get()]` over a non-builtin `get` in a method
+    of `struct Tagged[l: L]` fails the same way; the pin prints `1` for
+    `Tagged[L(1)]`. A method with `self` is listed only when builtin
+    (`applicable_declarations`): list every one once a struct argument
+    applies, its receiver the struct value the elaborator thaws.
   - Probe: `TB[Box[Int](6)]` and `TB[Box(5)]` over `@fieldwise_init struct
     Box[T: ImplicitlyCopyable & Deinitable]` with `var v: Self.T` stop with
     "not an associated comptime expression": the constructor's parameter
@@ -9625,33 +9633,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1394 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1526 A call of an `@always_inline("builtin")` method with `self`
-  is not folded in a parameter expression**
-
-  `L(n).doubled()` over a builtin `doubled(self) -> Int` returning
-  `self.v + self.v`, `l.doubled()` over a binder `l: L`, and `(L(n) +
-  L(1)).get()` over a builtin `__add__(self, rhs: Self) -> Self` print
-  `[1, 1]` at the pin in `SIMD[DType.int8, …]` signatures, where Mojito
-  says "not a compile-time Int constant".
-  - `applicable_declarations` skips a method with `self`. The fold needs a
-    `self` slot typed `Self`, `Self`-typed runtime parameters, method
-    dispatch on a struct-valued compile-time receiver in `build_ct`, and a
-    struct operator folded through its builtin dunder.
-  - Upstream's `SIMD.__add__`, `SIMDLength.__add__`, and
-    `SIMDLength.is_power_of_two` (`_simd_construction_checks`) are such
-    methods. R851's "could not simplify operator shr" belongs to the folded
-    `pop.shr` once `SIMD.__rshift__` is library code.
-  - The pin rejects a builtin `self` or `out self` on a struct that is not
-    register-passable: "does not support this argument convention". The
-    bundled `Span` carries builtin members but is not
-    `TrivialRegisterPassable`, where upstream's is, so it changes first.
-  - Probe: `L(n).doubled()` over a `@fieldwise_init` `L` is rejected at
-    the pin naming the folded `Int((mul L(n).v, 2))`, which names the
-    field read of the folded construction R1525 builds.
-  - Found while landing R1522 (2026-10-27).
-  - Depends on R1525 and R58.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1524 A one-field `RegisterPassable` struct with lifecycle
   members is a boxed struct value in the VM**

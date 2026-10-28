@@ -750,6 +750,11 @@ which a diagnostic shows and the elaborator answers. The package format
 moves to `mojito-package 123`, since a package's compile-time-applicable
 `__init__` may carry its folded body as the field list it stores.
 
+The package format moves to `mojito-package 124` when a package's
+compile-time-applicable callables include `@always_inline("builtin")`
+methods with `self`, whose `self` and `Self`-typed slots and `Self` result
+take the instance a call is made on (R1526). The MIR schema is unchanged.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

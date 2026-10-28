@@ -29,6 +29,9 @@ impl Checker {
     ///
     /// [`ApplicableFunction`]: comptime_validation::ApplicableFunction
     pub(super) fn fold_builtin_bodies(&mut self, stmts: &[Stmt]) -> Result<(), TypeError> {
+        if let Some(error) = self.builtin_convention_rejection(stmts) {
+            return Err(error);
+        }
         let declarations: Vec<_> =
             applicable_declarations(stmts, &*self.overload_sets, &*self.program_constants)
                 .into_iter()
@@ -87,24 +90,72 @@ impl Checker {
         self.in_owner_scope(declaration, |checker| {
             let function = &declaration.function;
             let symbol = function.symbol();
+            let slots = function.argument_slots(checker.self_ty.as_ref())?;
             checker.push_param_scope(&[]);
             let level = checker.tparams.len() - 1;
             if let Some(scope) = checker.vparams.last_mut() {
-                scope.extend(function.argument_slots().iter().enumerate().map(
-                    |(slot, (name, ty))| {
-                        let binder = super::annotations::builtin_body_binder(symbol, slot, name);
-                        (
-                            (*name).to_string(),
-                            super::annotations::value_binder_expr(binder.id, name, ty),
-                        )
-                    },
-                ));
+                scope.extend(slots.iter().enumerate().map(|(slot, (name, ty))| {
+                    let binder = super::annotations::builtin_body_binder(symbol, slot, name);
+                    (
+                        (*name).to_string(),
+                        super::annotations::value_binder_expr(binder.id, name, ty),
+                    )
+                }));
             }
             checker.local_comptime_parameters.push(HashMap::new());
             let result = f(checker, level);
             checker.local_comptime_parameters.pop();
             checker.tparams.pop();
-            result
+            Some(result)
+        })
+        .flatten()
+    }
+
+    /// The pin's rejection of a builtin method's receiver, judged for every
+    /// builtin member `stmts` declare, applicable or not: a `mut`, `var`,
+    /// `ref`, or `deinit` `self`, or any `self` (an `__init__`'s `out self`
+    /// included) of a struct that is not trivially register-passable.
+    fn builtin_convention_rejection(&mut self, stmts: &[Stmt]) -> Option<TypeError> {
+        stmts.iter().find_map(|statement| {
+            let StmtKind::Struct { methods, .. } = &statement.kind else {
+                return None;
+            };
+            let builtin: Vec<_> = methods
+                .iter()
+                .filter(|method| {
+                    method.has_self
+                        && matches!(
+                            InlineLevel::of(&method.decorators),
+                            Ok(InlineLevel::Builtin)
+                        )
+                })
+                .collect();
+            if builtin.is_empty() {
+                return None;
+            }
+            let trivial = self
+                .in_struct_scope(statement, |checker| {
+                    checker
+                        .self_ty
+                        .clone()
+                        .is_some_and(|self_ty| checker.is_trivial_register_passable(&self_ty))
+                })
+                .unwrap_or(true);
+            builtin
+                .iter()
+                .any(|method| {
+                    !trivial
+                        || matches!(
+                            method.self_convention,
+                            Some(
+                                ArgConvention::Mut
+                                    | ArgConvention::Var
+                                    | ArgConvention::Ref
+                                    | ArgConvention::Deinit
+                            )
+                        )
+                })
+                .then(|| builtin_rejection("does not support this argument convention"))
         })
     }
 
@@ -150,19 +201,52 @@ impl Checker {
                     "does not support MLIR operation lit.loop",
                 )),
                 StmtKind::For { .. } => Some(non_builtin_call()),
-                _ => self.non_builtin_operation(statement),
+                _ => self.non_builtin_operation(declaration, statement),
             })
     }
 
-    /// The first operation of `statement` that calls a callable the pin's
-    /// fold cannot inline: an applicable function or static method not
-    /// declared builtin (`h(n)`, `Self.ok(n)`, `G[1].ok(n)`), `//`, `%`, or `**` over a non-literal operand
-    /// (upstream's `SIMD` declares none of the three builtin), or
-    /// arithmetic converting a `FloatLiteral` operand.
-    fn non_builtin_operation(&self, statement: &Stmt) -> Option<TypeError> {
+    /// The first operation of `statement`, in `declaration`'s body, that
+    /// calls a callable the pin's fold cannot inline: an applicable
+    /// function or static method not declared builtin (`h(n)`,
+    /// `Self.ok(n)`, `G[1].ok(n)`), a method of `self` or of a `Self`
+    /// parameter no overload of which is builtin (`self.ord()`), `//`,
+    /// `%`, or `**` over a non-literal operand (upstream's `SIMD` declares
+    /// none of the three builtin), or arithmetic converting a
+    /// `FloatLiteral` operand.
+    fn non_builtin_operation(
+        &self,
+        declaration: &ApplicableDeclaration<'_>,
+        statement: &Stmt,
+    ) -> Option<TypeError> {
         struct Operations<'a> {
             checker: &'a Checker,
+            /// The names of the body's operands typed `Self`.
+            receivers: Vec<&'a str>,
+            /// The methods of the struct declaring the body.
+            methods: &'a [mojito_ast::ast::Method],
             found: bool,
+        }
+        impl Operations<'_> {
+            /// Whether `object.method(...)` calls a method of a `Self`
+            /// operand no overload of which is builtin.
+            fn calls_ordinary_method(&self, object: &Expr, method: &str) -> bool {
+                let ExprKind::Identifier(name) = &object.kind else {
+                    return false;
+                };
+                let overloads: Vec<_> = self
+                    .methods
+                    .iter()
+                    .filter(|declared| declared.name == method)
+                    .collect();
+                self.receivers.contains(&name.as_str())
+                    && !overloads.is_empty()
+                    && overloads.iter().all(|declared| {
+                        !matches!(
+                            InlineLevel::of(&declared.decorators),
+                            Ok(InlineLevel::Builtin)
+                        )
+                    })
+            }
         }
         impl mojito_ast::visit::Visitor for Operations<'_> {
             fn visit_expr(&mut self, expr: &Expr) {
@@ -186,10 +270,12 @@ impl Checker {
                     ExprKind::Call { name, .. } => self.checker.calls_ordinary_function(name),
                     ExprKind::MethodCall { object, method, .. } => {
                         self.checker.calls_ordinary_static_method(object, method)
+                            || self.calls_ordinary_method(object, method)
                     }
                     ExprKind::Invoke { callee, .. } => match &callee.kind {
                         ExprKind::Member { object, field } => {
                             self.checker.calls_ordinary_static_method(object, field)
+                                || self.calls_ordinary_method(object, field)
                         }
                         _ => false,
                     },
@@ -197,8 +283,28 @@ impl Checker {
                 };
             }
         }
+        let methods = match declaration.owner.map(|owner| &owner.kind) {
+            Some(StmtKind::Struct { methods, .. }) => methods.as_slice(),
+            _ => &[],
+        };
+        let receivers = self
+            .self_ty
+            .as_ref()
+            .and_then(|self_ty| {
+                let slots = declaration.function.argument_slots(Some(self_ty))?;
+                Some(
+                    slots
+                        .into_iter()
+                        .filter(|(_, ty)| ty == self_ty)
+                        .map(|(name, _)| name)
+                        .collect(),
+                )
+            })
+            .unwrap_or_default();
         let mut operations = Operations {
             checker: self,
+            receivers,
+            methods,
             found: false,
         };
         mojito_ast::visit::walk_stmt(&mut operations, statement);
@@ -244,12 +350,78 @@ impl Checker {
                     .folded_construction(declaration, level)
                     .map(FoldedBody::Fields);
             }
-            let result = checker.ty_from_anno(declaration.function.result()).ok()?;
+            let self_ty = checker.self_ty.clone();
+            if let Some(self_ty) = &self_ty {
+                checker.bind_struct_slots(declaration, level, self_ty)?;
+            }
+            let result = match declaration.function.result() {
+                SourceType::SelfType => self_ty?,
+                result => checker.ty_from_anno(result).ok()?,
+            };
             checker
                 .folded_statements(declaration.body, level, &result)
                 .map(FoldedBody::Value)
         })
         .flatten()
+    }
+
+    /// Bind each argument slot of `declaration` typed `self_ty` (`self`, a
+    /// `Self` parameter) at `level` to the struct value of its fields read
+    /// off the slot, as upstream extracts a field of a struct-typed
+    /// operand: the body reads them before its struct's field types are
+    /// resolved, and a call's receiver replaces the slot under them.
+    fn bind_struct_slots(
+        &mut self,
+        declaration: &ApplicableDeclaration<'_>,
+        level: usize,
+        self_ty: &Ty,
+    ) -> Option<()> {
+        let symbol = declaration.function.symbol();
+        let slots = declaration.function.argument_slots(Some(self_ty))?;
+        if slots.iter().all(|(_, ty)| ty != self_ty) {
+            return Some(());
+        }
+        let fields = self.declared_fields(declaration)?;
+        for (slot, (name, ty)) in slots.iter().enumerate() {
+            if ty != self_ty {
+                continue;
+            }
+            let operand = super::annotations::value_binder_expr(
+                super::annotations::builtin_body_binder(symbol, slot, name).id,
+                name,
+                ty,
+            );
+            let read = fields
+                .iter()
+                .map(|(field, field_ty)| {
+                    let value = self
+                        .param_context
+                        .field(&operand, field, MetaTy::value(field_ty.clone()))
+                        .ok()?;
+                    Some((field.clone(), value))
+                })
+                .collect::<Option<Vec<_>>>()?;
+            let value = self.param_context.struct_value(&read, &operand);
+            self.local_comptime_parameters
+                .last_mut()?
+                .insert((*name).to_string(), (level, value));
+        }
+        Some(())
+    }
+
+    /// The fields the struct declaring `declaration` declares, in order,
+    /// each with its type, resolved in its member scope.
+    fn declared_fields(
+        &self,
+        declaration: &ApplicableDeclaration<'_>,
+    ) -> Option<Vec<(String, Ty)>> {
+        let StmtKind::Struct { fields, .. } = &declaration.owner?.kind else {
+            return None;
+        };
+        fields
+            .iter()
+            .map(|field| Some((field.name.clone(), self.ty_from_anno(&field.ty).ok()?)))
+            .collect()
     }
 
     /// `f` run in the member scope of the struct declaring `declaration`,
@@ -261,11 +433,21 @@ impl Checker {
         declaration: &ApplicableDeclaration<'_>,
         f: impl FnOnce(&mut Self) -> T,
     ) -> Option<T> {
-        let Some(owner) = declaration.owner else {
-            return Some(f(self));
-        };
+        match declaration.owner {
+            Some(owner) => self.in_struct_scope(owner, f),
+            None => Some(f(self)),
+        }
+    }
+
+    /// `f` run in the member scope of the struct `statement` declares;
+    /// `None` when its shell is not yet registered.
+    fn in_struct_scope<T>(
+        &mut self,
+        statement: &Stmt,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> Option<T> {
         let (_, saved) = self
-            .enter_struct_scope(&overload_support::struct_declaration(owner)?)
+            .enter_struct_scope(&overload_support::struct_declaration(statement)?)
             .ok()?;
         let result = f(self);
         self.exit_struct_scope(saved);
@@ -298,25 +480,19 @@ impl Checker {
         declaration: &ApplicableDeclaration<'_>,
         level: usize,
     ) -> Option<Vec<(String, ParamExpr)>> {
-        let StmtKind::Struct { fields, .. } = &declaration.owner?.kind else {
-            return None;
-        };
-        let declared: Vec<(String, Ty)> = fields
-            .iter()
-            .map(|field| Some((field.name.clone(), self.ty_from_anno(&field.ty).ok()?)))
-            .collect::<Option<_>>()?;
+        let declared = self.declared_fields(declaration)?;
         let self_ty = self.self_ty.clone()?;
         let symbol = declaration.function.symbol();
         let mut slots: Vec<ParamExpr> = declaration
             .function
-            .argument_slots()
+            .argument_slots(Some(&self_ty))?
             .into_iter()
             .enumerate()
             .map(|(slot, (name, ty))| {
                 super::annotations::value_binder_expr(
                     super::annotations::builtin_body_binder(symbol, slot, name).id,
                     name,
-                    ty,
+                    &ty,
                 )
             })
             .collect();

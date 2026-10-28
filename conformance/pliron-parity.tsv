@@ -13,6 +13,7 @@ assets/ok/add.mojo	main	exe-differential	sanitized
 assets/ok/allocation_tracked_unsafe_ptr.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_builtin_init_fold.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_builtin_parameter_fold.mojo	main	exe-differential	sanitized
+assets/ok/always_inline_builtin_self_method_fold.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_builtin_struct_static_fold.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_nodebug_binders.mojo	main	exe-differential	sanitized
 assets/ok/always_inline_nodebug_calls.mojo	main	exe-differential	sanitized

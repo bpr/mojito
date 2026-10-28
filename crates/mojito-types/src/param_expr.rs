@@ -26,7 +26,7 @@ pub mod fold;
 use crate::ct::CtValue;
 use crate::types::TyKind;
 use crate::types::{PackPredicateRef, TrivialLifecycle, Ty};
-use mojito_ast::ast::InfixOp;
+use mojito_ast::ast::{InfixOp, PrefixOp};
 use mojito_common::literal::IntLiteral;
 use mojito_common::token::SourceSpan;
 use std::cmp::Ordering;
@@ -245,9 +245,10 @@ impl ParamContext {
 
     /// Rebuild `op` over `operands` as the canonical constructors kept it:
     /// an opaque atom stays unfolded even over constants, as
-    /// [`Self::replace`] keeps it, and a product by a constant zero keeps a
-    /// monomial holding a partial atom, as a cancellation keeps it. Every
-    /// other operator is [`Self::op`]. A node the canonical constructors
+    /// [`Self::replace`] keeps it, save a negation, which the pin folds
+    /// over a constant (`-n` at `n = 2` is `-2`), and a product by a
+    /// constant zero keeps a monomial holding a partial atom, as a
+    /// cancellation keeps it. Every other operator is [`Self::op`]. A node the canonical constructors
     /// built is a fixed point, so an importer rebuilding one from its
     /// operands keeps its identity.
     pub fn rebuild(&self, op: ParamOp, operands: &[ParamExpr]) -> Result<ParamExpr, ParamError> {
@@ -263,6 +264,7 @@ impl ParamContext {
             .collect::<Vec<_>>();
         match op {
             ParamOp::Add | ParamOp::Mul => self.build_ring_with(op, operands, ZeroTerms::Keep),
+            ParamOp::Neg if operands[0].as_constant().is_some() => self.op(op, &operands),
             _ if op.is_atom() => {
                 let meta = op.result_meta(&operands)?;
                 Ok(self.make(meta, ParamKind::Op { op, operands }))
@@ -3874,6 +3876,46 @@ const fn source_operator(op: ParamOp) -> &'static str {
     }
 }
 
+/// Write the application of an operator method over its operands, as the
+/// pin shows it: `__add__` over `a` and `b` as `(a + b)`, its reflected
+/// `__radd__` over `self` and `lhs` as `(lhs + self)`, and `__neg__` over
+/// `a` as `-a`. `false`, writing nothing, for any other application.
+fn write_operator_application(
+    f: &mut fmt::Formatter<'_>,
+    function: &str,
+    values: &[&ParamExpr],
+) -> Result<bool, fmt::Error> {
+    let Some((_, method)) = function
+        .split('$')
+        .next()
+        .and_then(|symbol| symbol.rsplit_once('.'))
+    else {
+        return Ok(false);
+    };
+    match (InfixOp::of_dunder(method), values) {
+        (Some((op, reflected)), [first, second]) => {
+            let (left, right) = if reflected {
+                (second, first)
+            } else {
+                (first, second)
+            };
+            write!(f, "({left} {} {right})", op.symbol())?;
+            return Ok(true);
+        }
+        (None, [operand]) => {
+            for op in [PrefixOp::Neg, PrefixOp::Invert] {
+                if op.dunder() == method {
+                    write!(f, "{}", op.symbol())?;
+                    write_expr(f, operand, precedence(ParamOp::Neg))?;
+                    return Ok(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(false)
+}
+
 fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::Result {
     match expr.kind() {
         ParamKind::Constant(CtValue::Bool(value)) => {
@@ -3989,6 +4031,9 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             let (mut types, values): (Vec<_>, Vec<_>) = args
                 .iter()
                 .partition(|arg| matches!(arg.meta(), MetaTy::Type));
+            if write_operator_application(f, function, &values)? {
+                return Ok(());
+            }
             let constructed = crate::symbol_ref::member_owner(function, "__init__")
                 .filter(|_| !function.starts_with('$'));
             match constructed {

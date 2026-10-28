@@ -151,10 +151,12 @@ required value uses. They differ, because the pin does:
 | `var b: Buf[8 // 2] = Buf[4](1)` | accepts — a literal expression folds when written |
 | `where n // -2 == -4`, applied at `n = 7` | **rejects**: lacking evidence |
 | `struct Holder[n: Int, m: Int = n // -2]`, `Holder[7]` | accepts, `m` is `-4` |
+| `def f[n: Int](x: Tagged[-n])`, called `f[2](Tagged[-2]())` | accepts — a negation folds |
 
 So replacement rebuilds the polynomial through the canonicalizing constructors
 and rebuilds an opaque atom **without folding it**, even once its operands are
-constants. A type argument and a `where` operand replace. A default, a
+constants, save a negation, which folds over a constant operand
+(`ParamContext::rebuild`). A type argument and a `where` operand replace. A default, a
 dependent index, the MIR verifier's dependent instantiation, and native
 monomorphization evaluate (`replace`, then `fold`).
 `assets/type_error/param_expr_{unfolded_atom,where_unfolded_atom}.mojo` and
@@ -420,6 +422,11 @@ the elaborator answers the node by running it. A field read through the
 node is the stored field. Because interning shares equal nodes, the node
 is a decoration `intern` does not share, so each construction keeps its
 own spelling.
+
+A builtin method with `self` whose body builds a struct value (R1526), an
+operator's dunder among them, folds to that value respelled as the method's
+own `Apply` (`respelled_struct_value`), which `Display` shows in operator
+form for a dunder (`(L(n) + L(1))`), as the pin shows the call.
 
 ## Pack elements
 

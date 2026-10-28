@@ -556,14 +556,25 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     self.parse_expression_from(atom, Precedence::Lowest)?,
                 ));
             }
-            // `Self.width()` calls a static method of the enclosing struct.
-            if let Type::SelfParam(method) = &ty
+            // `Self.width()` calls a static method of the enclosing struct,
+            // and a call ending a `Self`-rooted member chain
+            // (`Self.l.doubled()`) a method of the chain's last member.
+            let receiver = match &ty {
+                Type::SelfParam(method) => Some((
+                    Expr::new(
+                        ExprKind::Identifier("Self".to_string()),
+                        (start, self.last_span.1),
+                    ),
+                    method,
+                )),
+                Type::Assoc { base, name, args } if args.is_empty() => self
+                    .rematerialize_self_param_chain(base, start)
+                    .map(|object| (object, name)),
+                _ => None,
+            };
+            if let Some((object, method)) = receiver
                 && matches!(self.peek_token()?, Some(Token::LParen))
             {
-                let object = Expr::new(
-                    ExprKind::Identifier("Self".to_string()),
-                    (start, self.last_span.1),
-                );
                 self.next_token()?;
                 let (args, kwargs) = self.parse_call_args()?;
                 self.expect(&Token::RParen, "Expected ')' after arguments")?;

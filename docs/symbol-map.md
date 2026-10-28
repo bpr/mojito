@@ -1858,7 +1858,26 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   which `called_application` binds from the instance through
   `Checker::bind_declared` (a `Tuple`'s element-wise arguments regrouped by
   `types::declared_pack_arguments`), keeping the application when the fold
-  still reads a rebound binder (`reads_rebound_binder`); `build_ct` reads the body's
+  still reads a rebound binder (`reads_rebound_binder`). A builtin method
+  with `self` is listed with `ApplicableFunction::takes_self`, its `self`
+  and `Self` parameter slots typed `SlotType::Owner`, which
+  `ApplicableFunction::argument_slots` resolves to the template in its
+  struct's scope and to the instance at a call; the fold binds each such
+  slot to the struct value of its fields read off it
+  (`Checker::bind_struct_slots`, over `declared_fields`), and
+  `selected_application` selects a call on a compile-time struct value
+  (`applied_receiver`, after `applied_owner`) and maps `Self(...)` through
+  `self_instance_spelling`. A folded struct result is respelled as the
+  method's call (`respelled_struct_value`). `build_ct`'s operators
+  (`Checker::infix_value`, `negated_value`, `checker/constraints.rs`) call
+  an operand's builtin dunder through `struct_operator_value`, and a
+  `where` comparison of struct values compiles through it
+  (`struct_comparison`); `param_expr::write_operator_application` shows
+  such a call in operator form. `builtin_convention_rejection`
+  (`checker/builtin_fold.rs`) rejects a builtin receiver the pin refuses,
+  and `non_builtin_operation` a call of a non-builtin method of a `Self`
+  operand. The elaborator's `Specializer::demand_application` passes a
+  method's receiver as its first runtime argument. `build_ct` reads the body's
   ``__mlir_op`` arithmetic through `builtin_fold::mlir_op_operator` (over
   `MlirOp::lowering`), a scalar's `_mlir_value`, and `Int(mlir_value=)`, and
   `constraint_operand` takes a folded call as a `where` operand. A

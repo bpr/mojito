@@ -1505,7 +1505,11 @@ impl<'a> Specializer<'a> {
         let own_decls = &declaration.param_decls[instance.map_or(0, |(owner, _)| {
             owner_covered_prefix(&owner.param_decls, &declaration.param_decls)
         })..];
-        let parameters = own_decls.len() + declaration.param_types.len();
+        // A method's receiver is its first runtime argument; an
+        // `__init__`'s `out self` is its result.
+        let receives = declaration.has_receiver
+            && declaration.receiver_convention != Some(mojito_ast::ast::ArgConvention::Out);
+        let parameters = own_decls.len() + usize::from(receives) + declaration.param_types.len();
         if parameters != args.len() {
             return Err(self.error(
                 Some(template),
