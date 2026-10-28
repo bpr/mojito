@@ -90,7 +90,9 @@ point, as upstream's toolchain does.
   `FloatLiteral` are `Floatable`; `SIMD` and `IntLiteral` are `Indexer`.
   Only a scalar `SIMD` is `Intable`, and only an integral one `Indexer`,
   since upstream's methods assert as much (R1397). A scalar answers a
-  requirement through its builtin conversion.
+  requirement through its builtin conversion. `bool.mojo` also holds
+  upstream's `SIMD` overloads of `any` and `all`, which the prelude
+  exports; the `Iterable` overloads wait on R1605.
 - `std/builtin/simd_length.mojo` — upstream's `SIMDLength`, verbatim, the
   type of `SIMD`'s width: a wrapper of the MLIR `index` that a literal or an
   `Int` converts to, and that converts to any `SIMD` through the compiler

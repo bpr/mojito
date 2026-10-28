@@ -3524,7 +3524,7 @@ enum DisplayConstructor {
 }
 
 /// The first member name after the leading dot, for diagnostics.
-fn contextual_member_name(expression: &Expr) -> String {
+pub(super) fn contextual_member_name(expression: &Expr) -> String {
     let mut current = expression;
     let mut member = String::from("member");
     loop {
@@ -3548,7 +3548,7 @@ fn contextual_member_name(expression: &Expr) -> String {
 /// A clone of `expression` whose `$contextual` chain root is replaced by the
 /// resolved base type name. Spans and syntax ids are untouched, so recorded
 /// facts key identically to the original nodes.
-fn with_contextual_root(expression: &Expr, base: &ExprKind) -> Expr {
+pub(super) fn with_contextual_root(expression: &Expr, base: &ExprKind) -> Expr {
     fn replace(expression: &mut Expr, base: &ExprKind) {
         match &mut expression.kind {
             ExprKind::Identifier(name) if name == mojito_ast::ast::CONTEXTUAL_SENTINEL => {

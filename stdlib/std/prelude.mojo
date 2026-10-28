@@ -15,7 +15,7 @@ from std.collections.dict import Dict
 from std.collections.optional import Optional, OptionalReg
 from std.builtin.len import Sized, SizedRaising, len
 from std.builtin.comparable import Comparable, Equatable
-from std.builtin.bool import Boolable
+from std.builtin.bool import Boolable, all, any
 from std.builtin.floatable import Floatable, FloatableRaising
 from std.builtin.identifiable import Identifiable
 from std.builtin.value import (

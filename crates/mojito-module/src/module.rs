@@ -1801,6 +1801,8 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "Equatable",
     "Comparable",
     "Boolable",
+    "any",
+    "all",
     "Floatable",
     "FloatableRaising",
     "Identifiable",

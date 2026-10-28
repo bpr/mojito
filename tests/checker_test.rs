@@ -8690,6 +8690,25 @@ fn initializer_list_without_a_contextual_type_is_rejected() {
 }
 
 #[test]
+fn leading_dot_bracket_argument_takes_its_parameter_type() {
+    let source = "def name_of[d: DType]() -> String:\n    return String(d)\n\ndef twice[n: Int]() -> Int:\n    return n * 2\n\n";
+    check_with_std(&format!(
+        "{source}def main():\n    print(name_of[.bool]())\n"
+    ))
+    .expect("a leading-dot DType argument checks");
+    let error = check_with_std(&format!(
+        "{source}def main():\n    print(twice[.nosuch]())\n"
+    ))
+    .expect_err("an Int parameter supplies no leading-dot member");
+    assert!(
+        error
+            .to_string()
+            .contains("cannot resolve leading '.nosuch'"),
+        "{error}"
+    );
+}
+
+#[test]
 fn value_parameter_field_read_is_a_parameter_value() {
     let source = "@fieldwise_init\nstruct Q(ImplicitlyCopyable):\n    var a: Int\n\n    def __deinit__(deinit self):\n        pass\n\ndef f[q: Q]():\n    print(q.a)\n\ndef main():\n    f[Q(8)]()\n";
     let checked = check_program(&parse(source).expect("parse")).expect("check");

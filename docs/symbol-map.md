@@ -1680,7 +1680,7 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
   (`desugar_simd_wildcard_parameters`: an infer-only `DType` or
   `SIMDLength` binder per `_` slot of a `SIMD` parameter of a `def`,
-  method, or trait requirement), the vector-alias bound fold, and the value reading
+  method, or trait requirement, a bare `SIMD` holding two such slots), the vector-alias bound fold, and the value reading
   of a `Self.`-spelled `materialize` operand
   (`read_materialize_self_operands`: `materialize[Self.n]()`,
   `materialize[Self.values[i]]()`).

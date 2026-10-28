@@ -2821,6 +2821,35 @@ impl Checker {
             ParamDecl::Value { ty, .. } if matches!(ty.kind(), TyKind::Generator(_)) => {
                 self.resolve_generator_param_arg(decl, ty, arg)
             }
+            // A leading-dot argument (`f[.bool]()`) names a member of the
+            // parameter's declared type, as upstream resolves it against
+            // the parameter's type.
+            ParamDecl::Value { ty, .. }
+                if let ParamArg::Value(expr) = arg
+                    && super::inference::contextual_root_span(expr).is_some() =>
+            {
+                let base = match ty.kind() {
+                    TyKind::Struct(name, arguments) if arguments.is_empty() => name.clone(),
+                    TyKind::Dtype => "DType".to_string(),
+                    other => {
+                        return Err(TypeError::ContextualMember {
+                            member: super::inference::contextual_member_name(expr),
+                            reason: format!(
+                                "the parameter type '{other}' does not supply struct members; \
+                                 write the base type explicitly"
+                            ),
+                        });
+                    }
+                };
+                let rewritten =
+                    super::inference::with_contextual_root(expr, &ExprKind::Identifier(base));
+                let resolved = self.resolve_param_arg(decl, &ParamArg::Value(rewritten))?;
+                // The argument's own nodes are typed against the parameter,
+                // so a later read of the bracket takes the resolved base.
+                let _position = self.comptime_position();
+                self.infer_with_expected(expr, ty, true)?;
+                Ok(resolved)
+            }
             ParamDecl::Value { name, ty, .. } => match arg {
                 ParamArg::Value(expr) => {
                     // Function values are compile-time parameters in source, but

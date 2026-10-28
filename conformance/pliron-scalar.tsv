@@ -445,6 +445,7 @@ assets/ok/lane_template_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/late_initialized_local.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/later_argument_converts_to_bound_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/layout_allocation.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/leading_dot_bracket_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/leading_dot_equality_operand.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/len_library_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/library_declared_conformances.mojo	-	ineligible	no-scalar-entry-shape
@@ -912,6 +913,7 @@ assets/ok/shadowing_constants.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/signature_builtin_select_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/signature_generic_application.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_abi_crossings.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_any_all.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_arithmetic_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bitwise_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bool_masks.mojo	-	ineligible	no-scalar-entry-shape

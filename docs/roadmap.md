@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1605**.
+Next free ID: **R1607**.
 
 ## Ordered Work
 
@@ -3116,6 +3116,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The bundled `std/builtin/_stubs.mojo` omits upstream's clause on
     `paramfor_has_next` and `paramfor_next_iter` for this reason. Restore
     it when this lands.
+  - Probe: `where conforms_to(IterableType.IteratorType[
+    origin_of(iterable)].Element, Boolable & Deinitable)`, the clause of
+    upstream's `Iterable` overloads of `any` and `all` (R1605), rejects
+    with "conforms_to requires a parameter name".
   - The constraint compiler is `compile_generic_constraint`
     (`crates/mojito-checker/src/checker/constraints.rs`).
   - Probe: `comptime if conforms_to(T.E, Writable):` over a projection is
@@ -4345,6 +4349,26 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     bind `Checker::implicit_parameter_application` of the value, as a
     parameter argument (R1533) and an application's argument already
     convert.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1606 Automatic parameterization covers only a `SIMD` argument**
+
+  `def f(x: List) -> Int` and `def h(x: List[_]) -> Int` reject their
+  calls, where the pin parameterizes each over the unbound parameters and
+  `print(f([1, 2]), h([1, 2, 3]))` prints `2 3`.
+  - Upstream's automatic parameterization turns each unbound parameter of
+    an argument's type (bare, `_`, or `...`) into an infer-only binder of
+    the callee.
+  - Mojito desugars only `SIMD` (`desugar_simd_wildcard_parameters`,
+    `crates/mojito-comptime/src/comptime/synth.rs`), whose two binders it
+    names by hand.
+  - Probe: the bare `List` reports "expected List[_], found List[Int]";
+    `List[_]` reports "type '_' for parameter 'T' does not conform to
+    trait 'AnyType'".
+  - The lever: build the binders from the struct's declared parameters,
+    so the `SIMD` case becomes one instance of the general rule.
+  - Found while landing R1568 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -11135,15 +11159,26 @@ recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
 
-- [ ] **R1568 The free functions `any` and `all` are undefined**
+- [ ] **R1605 The `Iterable` overloads of `any` and `all` are missing**
 
-  `any(mask)` over a `SIMD` mask stops with "Undefined variable 'any'",
-  where the pin reduces the lanes.
-  - Bundle upstream's `any`/`all` overloads from `std/builtin/bool.mojo`:
-    the `Iterable` ones and the `SIMD` ones
-    (`value.cast[.bool]().reduce_or()`).
-  - `SIMD.__divmod__` and `__floordiv__` call `any` (R1566).
-  - Depends on nothing.
+  `any(xs)` and `all(xs)` over a `List[Bool]` or a `List[String]` reach
+  only the `SIMD` overload, which reports "cannot infer type parameter
+  '$dtype_value'", where the pin reduces the elements' truthiness.
+  - Bundle upstream's two `Iterable` overloads from
+    `std/builtin/bool.mojo` beside the `SIMD` ones in
+    `stdlib/std/builtin/bool.mojo`.
+  - Their clause, `where conforms_to(IterableType.IteratorType[
+    origin_of(iterable)].Element, Boolable & Deinitable)`, takes a
+    projection subject (R792), and it reads the value parameter
+    `iterable` through `origin_of`, which a `where` clause must resolve
+    the way R1508's signature scope resolves an earlier argument.
+  - The body's `if item:` needs that clause's fact to refine the loop
+    item, whose type is the iterator's `Element` only once R178 lands.
+  - Probe: `any([True, False])`, `all([True, False])`, `any(List[Int]())`,
+    `all(List[Int]())`, `any(["a", "", "b"])`, and `all([1, 2, 3])`
+    print `True False False True True True` at the pin.
+  - Found while landing R1568 (2026-10-28).
+  - Depends on R792, R178.
   - Model: Opus, Not Planned.
 
 - [ ] **R1421 `Optional` stores its value in a heap allocation, where

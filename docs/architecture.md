@@ -1320,8 +1320,8 @@ callable value binder is still a slot the elaborator rewrites by name
 **One check.** `prepare` normalizes declarations
 without selecting an arm, unrolling a loop, stubbing a template, or minting a
 clone (pack qualification, the synthesized `copy`/`__hash__` methods, the
-`SIMD[_, _]` parameter desugar of each `_` slot into an infer-only dtype
-or `SIMDLength` binder, SIMD alias-bound folding). The elaborator keeps every
+`SIMD[_, _]` parameter desugar of each `_` slot, or of a bare `SIMD`'s
+two, into an infer-only dtype or `SIMDLength` binder, SIMD alias-bound folding). The elaborator keeps every
 `comptime if` and `comptime for` of every function body, plain or generic
 (`comptime/elab.rs:def_body`), and the one check types every body once with its declaration's
 parameters left symbolic (`checker/comptime_validation.rs`): each condition

@@ -463,8 +463,9 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
 }
 
 /// Desugar each `_` of upstream's `value: SIMD[_, _]` or `SIMD[dtype, _]`
-/// parameter spelling on a `def`, a struct method, or a trait requirement
-/// into the parameter it stands for: an infer-only `DType` binder for the
+/// parameter spelling on a `def`, a struct method, or a trait requirement,
+/// and the bare `value: SIMD` that leaves both unbound, into the parameter
+/// it stands for: an infer-only `DType` binder for the
 /// element, an infer-only width binder of SIMD's own width type for the
 /// length, as upstream's automatic parameterization does. The argument's
 /// vector type solves each at each call, so the template serves
@@ -472,20 +473,21 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
 /// the binders unspellable in source.
 pub(super) fn desugar_simd_wildcard_parameters(program: &mut [Stmt]) {
     for statement in program {
+        let span = statement.span;
         match &mut statement.kind {
             StmtKind::Def {
                 type_params,
                 params,
                 ..
-            } => desugar_wildcard_parameters(type_params, params),
+            } => desugar_wildcard_parameters(type_params, params, span),
             StmtKind::Struct { methods, .. } => {
                 for method in methods.iter_mut() {
-                    desugar_wildcard_parameters(&mut method.type_params, &mut method.params);
+                    desugar_wildcard_parameters(&mut method.type_params, &mut method.params, span);
                 }
             }
             StmtKind::Trait { methods, .. } => {
                 for method in methods.iter_mut() {
-                    desugar_wildcard_parameters(&mut method.type_params, &mut method.params);
+                    desugar_wildcard_parameters(&mut method.type_params, &mut method.params, span);
                 }
             }
             _ => {}
@@ -551,13 +553,22 @@ fn conformance_reaches(
 fn desugar_wildcard_parameters(
     type_params: &mut Vec<TypeParam>,
     params: &mut [mojito_ast::ast::FnParam],
+    span: Span,
 ) {
     let mut binders = Vec::new();
     for parameter in params.iter_mut() {
         let Type::Named(name, arguments) = &mut parameter.ty else {
             continue;
         };
-        if name != "SIMD" || arguments.len() != 2 {
+        if name != "SIMD" {
+            continue;
+        }
+        // A bare `SIMD` leaves both of its parameters unbound.
+        if arguments.is_empty() {
+            let hole = || ParamArg::Value(Expr::new(ExprKind::Identifier("_".to_string()), span));
+            *arguments = vec![hole(), hole()];
+        }
+        if arguments.len() != 2 {
             continue;
         }
         let slots = [

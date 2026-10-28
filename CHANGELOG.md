@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `any` and `all` over a `SIMD` value are upstream's `std/builtin/bool.mojo`
+  overloads, exported from the prelude (R1568): `any(mask)`, `all(v.gt(0))`,
+  and `any(Int8(0))` reduce the lanes' truthiness as at the pin, where they
+  stopped with "Undefined variable 'any'". A leading-dot bracket argument
+  now takes its parameter's declared type as its base, so `v.cast[.bool]()`
+  and `f[.int8]()` run instead of matching no overload, and a bare
+  `value: SIMD` parameter binds both of its parameters per call, as
+  upstream's automatic parameterization does. The `Iterable` overloads
+  remain open (R1605).
 - `and`/`or` take operands that are not both `Bool`, as upstream's
   `emitAndOr` (R97): the left operand is tested through `Bool(x)` and the
   result is the operand the test selects, so `n or 2` over an `Int` prints
