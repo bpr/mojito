@@ -497,9 +497,26 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match instance.kind() {
+            // `mlir_value=` and `copy=` are the checker's rules for the
+            // instance, as for a spelled `SIMD[dt, n]`.
+            TyKind::Simd { .. }
+                if args.is_empty()
+                    && let [keyword] = kwargs
+                    && matches!(keyword.name.as_str(), "mlir_value" | "copy") =>
+            {
+                let name = mojito_types::types::SIMD_TYPE_NAME;
+                if keyword.name == "copy" {
+                    self.infer_builtin_copy_construction(span.clone(), name, instance, keyword)
+                } else {
+                    self.infer_storage_construction(span.clone(), name, instance, keyword)
+                }
+            }
             TyKind::Simd { dtype, width } => self
                 .declared_simd_construction(span, Some(instance), &[], args, kwargs)
-                .unwrap_or_else(|| self.construct_simd(span, dtype, width, args)),
+                .unwrap_or_else(|| {
+                    super::calls::reject_kwargs(kwargs)?;
+                    self.construct_simd(span, dtype, width, args)
+                }),
             // An origin slot the arguments leave open is the instance's.
             TyKind::Struct(name, expected) => self
                 .infer_construction_of(span, name, Some(instance), &[], args, kwargs)

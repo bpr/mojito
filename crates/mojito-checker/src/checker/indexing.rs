@@ -1740,6 +1740,14 @@ impl Checker {
                 return Ok(ty);
             }
         }
+        // A type `type_of` denotes has no member of that name; it is never
+        // read as a value.
+        if let Some(instance) = self.type_of_receiver(object) {
+            return Err(TypeError::NoSuchField {
+                object_type: instance?.to_string(),
+                field: field.to_string(),
+            });
+        }
         let obj_ty = self.infer(object)?;
         // Projecting a field through a reference-returning expression borrows
         // that referent for the projection; it does not first create an owned
@@ -1960,6 +1968,9 @@ impl Checker {
                 ExprKind::Identifier(name) | ExprKind::TypeApply { name, .. } => Some(name),
                 _ => None,
             }
+        }
+        if let Some(instance) = self.type_of_receiver(object) {
+            return Some(instance);
         }
         let root = match &object.kind {
             ExprKind::Identifier(name) => Some(name),

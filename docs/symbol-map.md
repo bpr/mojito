@@ -454,12 +454,17 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ComptimeAlias::value`) (a
   call, a static call, a member read) over that parameter expression, a
   call as the type's construction, and records the spelling the same way;
-  `infer_type_of_read` does the same for a `type_of(value)` receiver or
-  callee, over the spelling of the type it denotes in scope
-  (`scope_type_spelling`: each parameter by its name, `Self.T` for the
-  struct's own, each symbolic value through
-  `bound_defaults.rs:spelled_parameter_value`) (`over_receiver` is the
-  read both rebuild around the spelled receiver);
+  `infer_type_of_read` spells a call of `type_of(value)` as the
+  construction of the type it denotes, and a receiver over a type
+  parameter as its binder (`binder_spelling`; `over_receiver` is the read
+  both rebuild around the spelled receiver); any other `type_of` receiver
+  is the type itself (`type_of_receiver`), which
+  `indexing.rs:member_type_operand_resolution` reads members on and
+  `method_calls/type_receivers.rs:infer_instance_receiver_call` calls
+  statics on (`infer_struct_static_method`'s receiver instance solves the
+  struct's parameters through `constructed_unification`; MIR's
+  `type_receiver_name` names the static by the instance recorded on the
+  `type_of` node);
   `Self(...)` in a struct's body is spelled as the construction of the
   struct over its own parameters (`self_instance_spelling`, which the
   static call through `Self` shares). Together they own method-call inference (including the inverted write:

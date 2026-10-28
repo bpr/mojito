@@ -280,7 +280,7 @@ impl Checker {
         let ty = self.infer_struct_static_method(
             span.clone(),
             mojito_symbol::symbol::STDLIB_FORMAT_UTILS_STRUCT,
-            &[],
+            (&[], None),
             mojito_symbol::symbol::FORMAT_LITERAL_METHOD,
             MethodCallArguments {
                 args: &arguments,

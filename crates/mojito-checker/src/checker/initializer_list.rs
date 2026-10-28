@@ -103,17 +103,15 @@ impl Checker {
         }
     }
 
-    /// Type an expression headed by `type_of(operand)` as the same
-    /// expression over the type the call denotes, as upstream reads
-    /// `type_of`'s result as that type: a call of it constructs the type
+    /// Type a call of `type_of(operand)` as the construction of the type the
+    /// call denotes, as upstream reads `type_of`'s result as that type
     /// (`type_of(v)(2)` over a `Float32` `v` is `SIMD[DType.float32,
-    /// 1](2)`), and a static call, a member read, or an applied member
-    /// through it is the type's (`type_of(t).__len__()`). The checked arena
-    /// hands HIR the spelling in the expression's place. `None` when no
-    /// `type_of` heads `expression`.
+    /// 1](2)`), and a receiver through it over a type parameter as that
+    /// parameter's binder. The checked arena hands HIR the spelling in the
+    /// expression's place. Any other receiver is the type itself
+    /// ([`Self::type_of_receiver`]). `None` when no `type_of` heads
+    /// `expression`.
     pub(super) fn infer_type_of_read(&self, expression: &Expr) -> Option<Result<Ty, TypeError>> {
-        let is_type_of =
-            |head: &Expr| matches!(&head.kind, ExprKind::Call { name, .. } if name == "type_of");
         if let ExprKind::Invoke {
             callee,
             param_args,
@@ -140,27 +138,27 @@ impl Checker {
         if !is_type_of(head) {
             return None;
         }
-        let receiver = self
-            .denoted_type(head, "the receiver 'type_of'")
-            .and_then(|ty| {
-                self.scope_type_spelling(&ty, head)
-                    .and_then(|spelling| spelling.expression_spelling(head.span))
-                    .ok_or_else(|| {
-                        TypeError::Unsupported(format!(
-                            "a receiver through 'type_of': '{ty}' has no spelling"
-                        ))
-                    })
-            })
-            .map(|spelling| derived_receiver(expression, &spelling));
-        Some(receiver.and_then(|receiver| {
-            let spelled = over_receiver(expression, |object| {
+        let ty = match self.denoted_type(head, "the receiver 'type_of'") {
+            Ok(ty) => ty,
+            Err(error) => return Some(Err(error)),
+        };
+        let receiver = derived_receiver(expression, &self.binder_spelling(&ty, head.span)?);
+        Some(
+            over_receiver(expression, |object| {
                 std::ptr::eq(object, head.as_ref()).then(|| receiver.clone())
             })
             .ok_or_else(|| {
                 TypeError::InvariantViolation("a 'type_of' receiver lost its read".to_string())
-            })?;
-            self.infer_spelled(expression, spelled)
-        }))
+            })
+            .and_then(|spelled| self.infer_spelled(expression, spelled)),
+        )
+    }
+
+    /// The type `object` denotes when it is `type_of(operand)`: a receiver
+    /// bound to the type value itself, on which upstream looks a member up.
+    /// `None` for any other expression.
+    pub(super) fn type_of_receiver(&self, object: &Expr) -> Option<Result<Ty, TypeError>> {
+        is_type_of(object).then(|| self.denoted_type(object, "the receiver 'type_of'"))
     }
 
     /// The struct the enclosing declaration's `Self` names, and the bracket
@@ -552,87 +550,34 @@ impl Checker {
         Ok(derived_construction(expression, kind))
     }
 
-    /// The source spelling of `ty` read at `at`: a closed type's own, and a
-    /// type over the parameters in scope with each parameter by its name
-    /// (`T`, `*Ts`; `Self.T` for the struct's own) and each symbolic value
-    /// as the source meaning it (`Scalar[dt]` is `SIMD[dt, 1]`). `None` when
-    /// some part of it has no spelling in scope.
-    fn scope_type_spelling(&self, ty: &Ty, at: &Expr) -> Option<SourceType> {
-        use mojito_ast::ast::ParamArg;
-        if let Some(closed) = mojito_types::ct::source_type(ty, at.span) {
-            return Some(closed);
-        }
-        let value = |value: &CtValue| match value {
-            CtValue::Expr(value) => self.spelled_parameter_value(value, at),
-            closed => closed.materialize(at.span),
+    /// A read of the binder of `ty`, a type parameter in scope: `Self.T`
+    /// for the struct's own, `T` (or the pack `Ts`) for the declaration's.
+    /// `None` for any other type.
+    fn binder_spelling(&self, ty: &Ty, at: mojito_common::token::Span) -> Option<Expr> {
+        let TyKind::Param { binder, .. } = ty.kind() else {
+            return None;
         };
-        match ty.kind() {
-            TyKind::Param { binder, .. } => {
-                let name = binder.name.to_string();
-                let binds = |declared: &ParamId| *declared == binder.id;
-                if self.self_decls.iter().any(
-                    |declaration| matches!(declaration, ParamDecl::Type { id, .. } if binds(id)),
-                ) {
-                    return Some(SourceType::SelfParam(name));
-                }
-                self.tparams
-                    .iter()
-                    .rev()
-                    .find_map(|scope| {
-                        scope
-                            .get(&name)
-                            .or_else(|| scope.get(name.trim_start_matches('*')))
-                    })
-                    .filter(|scoped| {
-                        matches!(scoped.kind(), TyKind::Param { binder, .. } if binds(&binder.id))
-                    })
-                    .map(|_| SourceType::Named(name, Vec::new()))
-            }
-            TyKind::Simd { dtype, width } => {
-                let dtype = match dtype {
-                    mojito_types::types::SimdDtype::Known(dtype) => {
-                        CtValue::Dtype(*dtype).materialize(at.span)
-                    }
-                    mojito_types::types::SimdDtype::Expr(dtype) => {
-                        self.spelled_parameter_value(dtype, at)
-                    }
-                }?;
-                let width = match width {
-                    mojito_types::types::SimdWidth::Known(width) => {
-                        CtValue::Int(*width).materialize(at.span)
-                    }
-                    mojito_types::types::SimdWidth::Expr(width) => {
-                        self.spelled_parameter_value(width, at)
-                    }
-                }?;
-                Some(SourceType::Named(
-                    mojito_types::types::SIMD_TYPE_NAME.to_string(),
-                    vec![ParamArg::Value(dtype), ParamArg::Value(width)],
-                ))
-            }
-            TyKind::Struct(name, arguments) => {
-                let (name, arguments) = match mojito_types::types::tuple_elements(ty) {
-                    Some(elements) if name != mojito_types::types::TUPLE_TYPE_NAME => (
-                        mojito_types::types::TUPLE_TYPE_NAME,
-                        elements.into_iter().cloned().map(TyArg::Ty).collect(),
-                    ),
-                    _ => (name.as_str(), arguments.clone()),
-                };
-                let arguments = arguments
-                    .iter()
-                    .map(|argument| match argument {
-                        TyArg::Ty(ty) => self.scope_type_spelling(ty, at).map(ParamArg::Type),
-                        TyArg::Val(spelled) => value(spelled).map(ParamArg::Value),
-                        TyArg::Origin(_) => Some(ParamArg::Value(Expr::new(
-                            ExprKind::Identifier("_".to_string()),
-                            at.span,
-                        ))),
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                Some(SourceType::Named(name.to_string(), arguments))
-            }
-            _ => None,
+        let name = binder.name.to_string();
+        let binds = |declared: &ParamId| *declared == binder.id;
+        if self
+            .self_decls
+            .iter()
+            .any(|declaration| matches!(declaration, ParamDecl::Type { id, .. } if binds(id)))
+        {
+            return SourceType::SelfParam(name).expression_spelling(at);
         }
+        self.tparams
+            .iter()
+            .rev()
+            .find_map(|scope| {
+                scope
+                    .get(&name)
+                    .or_else(|| scope.get(name.trim_start_matches('*')))
+            })
+            .filter(
+                |scoped| matches!(scoped.kind(), TyKind::Param { binder, .. } if binds(&binder.id)),
+            )
+            .map(|_| Expr::new(ExprKind::Identifier(name), at))
     }
 
     /// The construction of `instance`, a type no source spelling names
@@ -853,4 +798,9 @@ fn pack_index_expression(
         ));
     }
     index.as_constant()?.materialize(span)
+}
+
+/// Whether `expression` is a call of `type_of`.
+fn is_type_of(expression: &Expr) -> bool {
+    matches!(&expression.kind, ExprKind::Call { name, .. } if name == "type_of")
 }

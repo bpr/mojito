@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1601**.
+Next free ID: **R1602**.
 
 ## Ordered Work
 
@@ -403,6 +403,28 @@ which names the upstream pass each one follows. Each is measured by the
     there too, a `_DictKeyIter` slot typed with `_REMOVED_ARG` arguments
     its caller declares concretely.
   - Found while landing R1427 (2026-10-25).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1601 A VM struct value names the instance whose body built it, so
+  one an erased (`_REMOVED_ARG`) clone returns finds no member of its
+  caller's instance**
+
+  `print(B[T, n].make(x))` in `def g[T: ..., n: Int]`, over `struct B[T:
+  ImplicitlyCopyable & Writable & Deinitable, n: Int]` with a static
+  `make(v: Self.T) -> Self`, stops the VM with "`B$mono$TString$V$REMOVED$ARG`
+  has no `write_to` instance to display it", where the pin and the Pliron
+  backend print `B(a)`.
+  - `remove-unused-params` removes `n` from `make`, so its clone builds a
+    `B[String, _REMOVED_ARG]`. The VM's display looks `write_to` up by
+    that name (`struct_member_instances`, `vm/dispatch.rs`), and only the
+    concrete `B[String, 3]` has one.
+  - Upstream's struct value is its layout, which an unread parameter does
+    not change. Lever: key a VM struct value's members by its template and
+    layout, or retype the erased clone's result to its caller's instance.
+  - `MOJITO_PRE_ELABORATION=0` runs it; `print(b.v)` on the result runs.
+  - The same through `type_of(b).make(b.v)`.
+  - Found while landing R1599 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3965,42 +3987,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - The conformance check does not see the synthesized initializer.
   - Found while landing `T(copy=x)` (2026-10-04).
   - Probe: `conformance/probes/fieldwise_init_satisfies_trait_init.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1599 A `type_of` receiver is respelled as source, so a type
-  with no source spelling cannot be read through it**
-
-  Problem: `type_of(y).length` over `y: TypeList.of[Trait=AnyType, Int,
-  Bool]` fails with "a receiver through 'type_of': 'TypeList[AnyType,
-  (Int, Bool)]' has no spelling", where the pin prints `2`.
-  - Upstream reads `type_of(x)` as the type value itself, then looks the
-    member up on that type.
-  - `Checker::infer_type_of_read` (`checker/initializer_list.rs`) instead
-    rewrites the receiver to a source spelling of the type
-    (`scope_type_spelling`), checked again as a type expression.
-  - A construction through `type_of` already builds the type itself
-    (`instance_construction`); a static call or member read needs the same:
-    a receiver bound to the resolved type, not a respelling.
-  - Probe: in `def f[*Ts: AnyType]`, `type_of(x).length` over `x:
-    TypeList[Trait=AnyType, Ts.values]` fails the same way: a raw list
-    over a pack has no spelling either.
-  - Probe: a construction through `type_of` is respelled too
-    (`initializer_list_construction` over `ct::source_type`). In `def
-    m[dtype: DType, w: SIMDLength, //](x: SIMD[dtype, w], ...)`,
-    ``type_of(x)(mlir_value=__mlir_op.`pop.max`(x._mlir_value,
-    y._mlir_value))`` fails MIR verification ("place rooted at slot 0 lacks
-    complete checked type metadata"; `comptime T = type_of(x)` then `T(...)`
-    alike), and `var v = ...` then `type_of(x)(mlir_value=v)` over a
-    four-lane argument stops the VM with "cannot use SIMD[DType.int32, 4]
-    as an integer SIMD element". `SIMD[dtype, w](mlir_value=...)` runs
-    both.
-  - Probe: an initializer list at such a type takes the same path. In
-    `def m[dtype: DType, //](x: SIMD[dtype, _], y: type_of(x), /) ->
-    type_of(x)`, ``return {mlir_value = __mlir_op.`pop.max`(x._mlir_value,
-    y._mlir_value)}`` (upstream's `std/math` `max`) fails MIR verification
-    alike ("register r2 has no checked type").
-  - Found while landing R495 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10135,8 +10121,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `max_finite` needs `~Scalar[_unsigned_integral_type_of[dtype]()](0)
     >> 1`.
   - `Int32.MAX` also needs R66's scalar alias read as a type.
-  - Probe: `type_of(v).MAX` over a `Float32` `v` reads `SIMD[DType.float32,
-    1].MAX` and stops the same way.
+  - Probe: `type_of(v).MAX` over a `Float32` `v` reads the member on the
+    type and reports "type 'Float32' has no field 'MAX'".
   - Found while landing R1555 (2026-10-28).
   - Depends on R66.
   - Model: Fable, Not Planned.

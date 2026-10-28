@@ -81,7 +81,13 @@ impl Checker {
                 .and_then(|info| info.methods.get(method))
                 .is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self))
         {
-            let ty = self.infer_struct_static_method(span.clone(), &owner, &targs, method, call)?;
+            let ty = self.infer_struct_static_method(
+                span.clone(),
+                &owner,
+                (&targs, None),
+                method,
+                call,
+            )?;
             self.record_static_receiver(object, &owner, &targs);
             // The receiver spells no struct name for lowering to compose
             // the symbol from.
@@ -114,8 +120,13 @@ impl Checker {
                 .filter(|_| !pointer)
                 .and_then(|info| info.methods.get(method));
             if signatures.is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self)) {
-                let ty =
-                    self.infer_struct_static_method(span.clone(), name, &targs, method, call)?;
+                let ty = self.infer_struct_static_method(
+                    span.clone(),
+                    name,
+                    (&targs, None),
+                    method,
+                    call,
+                )?;
                 self.record_static_receiver(object, name, &targs);
                 return Ok(Some(ty));
             }
@@ -140,10 +151,58 @@ impl Checker {
                     .map(Some);
             }
         }
+        if let Some(instance) = self.type_of_receiver(object) {
+            return self.infer_instance_receiver_call(span, object, &instance?, method, call);
+        }
         if let ExprKind::Identifier(sname) = &object.kind {
             return self.infer_struct_name_call(span, sname, method, call);
         }
         Ok(None)
+    }
+
+    /// Type a call through `object`, a receiver bound to the type `instance`
+    /// rather than spelling one (`type_of(t).__len__()`), as upstream looks
+    /// the method up on the type value itself: a static of the instance, or
+    /// an instance method taking its receiver as the first argument. The
+    /// type is never read as a value.
+    fn infer_instance_receiver_call(
+        &self,
+        span: &SourceSpan,
+        object: &Expr,
+        instance: &Ty,
+        method: &str,
+        call: MethodCallArguments<'_>,
+    ) -> Result<Option<Ty>, TypeError> {
+        let no_such_method = || TypeError::NoSuchMethod {
+            object_type: instance.to_string(),
+            method: method.to_string(),
+        };
+        let (name, arguments) =
+            mojito_types::types::nominal_parts(instance).ok_or_else(no_such_method)?;
+        let signatures = self
+            .structs
+            .get(name)
+            .and_then(|info| info.methods.get(method))
+            .ok_or_else(no_such_method)?;
+        if signatures.iter().any(|sig| !sig.has_self) {
+            let ty = self.infer_struct_static_method(
+                span.clone(),
+                name,
+                (&[], Some(instance)),
+                method,
+                call,
+            )?;
+            // Lowering names the static by, and hands the elaborator, the
+            // instance the receiver denotes.
+            self.record_at(object.source_span()).ty =
+                Some(TyKind::Struct(name.to_string(), arguments.into_owned()).into());
+            return Ok(Some(ty));
+        }
+        if call.args.is_empty() {
+            return Err(no_such_method());
+        }
+        self.infer_type_receiver_instance_call(span.clone(), (name, &[], None), method, call)
+            .map(Some)
     }
 
     /// Type `Name.method(...)` on a bare struct name: a parametric struct's
@@ -176,7 +235,7 @@ impl Checker {
         // established path below.
         if !info.decls.is_empty() && signatures.iter().any(|sig| !sig.has_self) {
             return self
-                .infer_struct_static_method(span.clone(), sname, &[], method, call)
+                .infer_struct_static_method(span.clone(), sname, (&[], None), method, call)
                 .map(Some);
         }
         // The bare type name (never an expression binding) with only

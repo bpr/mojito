@@ -2467,7 +2467,7 @@ impl Checker {
     /// struct's parameters from: its bound arguments', led by the struct at
     /// its own binders against `constructed`, the instance the construction
     /// builds when one is known before the overloads are matched.
-    fn constructed_unification(
+    pub(super) fn constructed_unification(
         &self,
         name: &str,
         constructed: Option<&Ty>,

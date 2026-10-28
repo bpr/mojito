@@ -228,7 +228,7 @@ impl Checker {
         &self,
         span: SourceSpan,
         sname: &str,
-        struct_targs: &[mojito_ast::ast::ParamArg],
+        (struct_targs, receiver): (&[mojito_ast::ast::ParamArg], Option<&Ty>),
         method: &str,
         call: MethodCallArguments<'_>,
     ) -> Result<Ty, TypeError> {
@@ -282,7 +282,7 @@ impl Checker {
                 method,
                 &info.decls,
                 sig,
-                forwarded,
+                (forwarded, receiver),
                 args,
                 kwargs,
             ) {
@@ -440,17 +440,23 @@ impl Checker {
                 Some(selected.param_decls.clone());
         }
         if let Some(arguments) = &selected.instantiation {
-            // An explicit receiver instance (`Box[Int].has[Bool]()`) keys the
-            // request by the instance, like a method call on one.
-            let receiver_targs = (!struct_targs.is_empty())
-                .then(|| {
-                    self.structs.get(sname).and_then(|info| {
-                        self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
-                            .ok()
-                            .map(|bound| bound.arguments)
-                    })
+            // An explicit receiver instance (`Box[Int].has[Bool]()`, or the
+            // type `type_of(b)` denotes) keys the request by the instance,
+            // like a method call on one.
+            let receiver_targs = receiver
+                .and_then(mojito_types::types::nominal_parts)
+                .map(|(_, arguments)| arguments.to_vec())
+                .or_else(|| {
+                    (!struct_targs.is_empty())
+                        .then(|| {
+                            self.structs.get(sname).and_then(|info| {
+                                self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
+                                    .ok()
+                                    .map(|bound| bound.arguments)
+                            })
+                        })
+                        .flatten()
                 })
-                .flatten()
                 .unwrap_or_default();
             let owner_arguments = self
                 .instance_arguments(sname, &receiver_targs)
@@ -479,7 +485,9 @@ impl Checker {
         }
         // An explicit receiver instance (`Dict[String, Int].fromkeys(...)`)
         // records its instantiation.
-        if !struct_targs.is_empty()
+        if let Some((_, tyargs)) = receiver.and_then(mojito_types::types::nominal_parts) {
+            self.record_struct_instantiation(sname, &tyargs, span.source.as_deref());
+        } else if !struct_targs.is_empty()
             && let Ok(BoundParameters {
                 arguments: tyargs, ..
             }) = self.resolve_use_params(sname, &info.decls, forwarded, &[], &[])
@@ -666,7 +674,7 @@ impl Checker {
         method: &str,
         decls: &[ParamDecl],
         sig: &MethodSig,
-        struct_targs: &[mojito_ast::ast::ParamArg],
+        (struct_targs, receiver): (&[mojito_ast::ast::ParamArg], Option<&Ty>),
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Vec<TyArg>, TypeError> {
@@ -716,6 +724,10 @@ impl Checker {
                 actuals.push(self.infer(&kwargs[position].value)?);
             }
         }
+        // A receiver bound to its instance solves the struct's parameters
+        // as a construction's instance does.
+        let (patterns, actuals) =
+            self.constructed_unification(sname, receiver, &patterns, &actuals);
         Ok(self
             .resolve_use_params(sname, decls, struct_targs, &patterns, &actuals)?
             .arguments)

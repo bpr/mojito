@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `type_of(x)` receiver is the type itself, as upstream looks a member
+  up on the type value (R1599): `type_of(y).length` over a `TypeList`
+  over a raw list or over a pack, a value member, `dtype`, and `length`
+  read on the instance, and a static call (`type_of(b).make(v)`,
+  `type_of(b).twice[3]()`) binds the generic struct's parameters from it,
+  where the checker respelled the receiver as source and stopped with "has
+  no spelling". A construction through `type_of` at a symbolic `SIMD`
+  takes the `mlir_value=` and `copy=` initializers, so upstream's
+  `std/math` `max` body ``return {mlir_value = __mlir_op.`pop.max`(...)}``
+  and `type_of(x)(mlir_value=v)` run instead of failing MIR verification
+  or misreading the lanes.
 - An initializer list takes keyword entries, as upstream's does (R342):
   `take({1, kw=2})` is `take(P(1, kw=2))`, and a returned `{unsafe_ptr =
   p, length = n}` constructs the function's `Span`, where the parser
