@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	895
+# swept-count	898
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -784,6 +784,9 @@ assets/type_error/simd_storage_passed_as_simd.mojo	compile-reject	agree	error: i
 assets/type_error/simd_subscript_indexer.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from 'Offset' to 'Int'
 assets/type_error/simd_symbolic_scalar_operand_rejected.mojo	compile-reject	agree	error: invalid call to '__mul__': value passed to 'rhs' cannot be converted from 'Int' to 'Scalar[dt]'
 assets/type_error/simd_symbolic_width_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[dt, width]' value to 'SIMD[dt, 4]'
+assets/type_error/simd_to_bits_narrower_target.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_to_bits_signed_bool.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_to_bits_signed_target.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_vector_ordered_symbolic_width.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_vector_ordered_through_bound.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_vector_strict_inequality.mojo	compile-reject	agree	error: function instantiation failed

@@ -865,6 +865,11 @@ package format moves to `mojito-package 140`, since `__mlir_op` admits
 `pop.bitcast` and the bundled library gains `std.memory.unsafe` and
 `std.builtin.dtype`'s `_integral_type_of` and `_unsigned_integral_type_of`.
 
+The package format moves to `mojito-package 141`, with the schema still
+1.131: `to_bits` and `_to_bits_signed` are now library members of the
+bundled `std.simd`, upstream's bodies over `bitcast`, and the checked
+`SimdToBits` adjustment is gone.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

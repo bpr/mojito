@@ -12,9 +12,10 @@
 # reflected `__radd__`, `__rsub__`, `__rmul__`, `__rand__`, `__rxor__`,
 # `__ror__`, `__rlshift__`, and `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
-# `__abs__`, `_refine`, `cast`, `is_power_of_two`, and `select`. The other
+# `__abs__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
+# `_to_bits_signed`, and `select`. The other
 # members are still served by the compiler (R184, R1566, R1567, R1579–R1582,
-# R1585, R1586, R1589, R1596, R330, R276), and so are the other initializers:
+# R1585, R1586, R1596, R330, R276), and so are the other initializers:
 # `mlir_value=` (R1591), the element list (R1592), `from_bits=` (R1593),
 # `Bool`, `fill=`, and `Int` from an `index` (R1595), `IntLiteral` and
 # `FloatLiteral` (R1507), and the `Intable`, `IntableRaising`, `Floatable`,
@@ -64,7 +65,12 @@ domain-specific libraries for machine learning and scientific computing.
 from std.math import Ceilable, Floorable, Truncable
 from std.sys.info import bit_width_of
 from std.builtin.simd_length import SIMDLength
-from std.builtin.dtype import _uint_type_of_width
+from std.memory import bitcast
+from std.builtin.dtype import (
+    _integral_type_of,
+    _uint_type_of_width,
+    _unsigned_integral_type_of,
+)
 from std.builtin.int import _FromInt
 
 
@@ -1280,6 +1286,37 @@ struct SIMD[dtype: DType, length: SIMDLength](
         comptime assert Self.dtype.is_integral(), "must be integral"
 
         return self.gt(0) & (self & (self - 1)).eq(0)
+
+    @inline(.always)
+    def to_bits[
+        _dtype: DType = _uint_type_of_width[bit_width_of[Self.dtype]()]()
+    ](self) -> SIMD[_dtype, Self.length]:
+        """Bitcasts the SIMD vector to an integer SIMD vector.
+
+        Parameters:
+            _dtype: The integer type to cast to.
+
+        Returns:
+            An integer representation of the floating-point value.
+        """
+        comptime assert (
+            _dtype.is_unsigned()
+        ), "the target type must be unsigned integral"
+        comptime assert (
+            bit_width_of[_dtype]() >= bit_width_of[Self.dtype]()
+        ), "the target type must be at least as wide as the source type"
+
+        comptime if Self.dtype == DType.bool:
+            return self.cast[DType.uint8]().to_bits[_dtype]()
+        else:
+            comptime uint = _unsigned_integral_type_of[Self.dtype]()
+            return bitcast[uint, Self.length](self).cast[_dtype]()
+
+    @inline(.always)
+    def _to_bits_signed(
+        self,
+    ) -> SIMD[_integral_type_of[Self.dtype](), Self.length]:
+        return bitcast[_integral_type_of[Self.dtype](), Self.length](self)
 
     # ===------------------------------------------------------------------=== #
     # select

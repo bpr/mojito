@@ -404,6 +404,7 @@ assets/ok/infer_only_parameter_by_keyword.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/init_out_self.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/init_raise_destroys_initialized_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/initializer_list_contextual.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/inlined_bitcast_application_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inlined_constructor_unread_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_field.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inplace_raises_try.mojo	-	ineligible	no-scalar-entry-shape
@@ -950,6 +951,7 @@ assets/ok/simd_symbolic_width_hooks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_symbolic_width_literal_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_to_bits.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_to_bits_default_symbolic.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_to_bits_signed.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_wide_widths.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/size_of_builtin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sized_generic_views.mojo	-	ineligible	no-scalar-entry-shape

@@ -1419,7 +1419,7 @@ trait bound: every dtype-gated operator and method is licensed through
 upstream defers `constrained[...]`), an integer or float literal splats into
 it where a concrete scalar does not (`types::splats_to`), and a lane fact the
 checker records for lowering (a construction's dimensions, `SimdLength`,
-`DtypeConstant`, a cast or `to_bits` adjustment) carries the slots
+`DtypeConstant`, a cast adjustment) carries the slots
 themselves, known or symbolic; a shuffle, slice, or join is recorded only at
 a known width, since its mask is the width's. Applying a `DType`-keyed struct
 in a validated body closes its `Scalar[Self.dt]` members under the

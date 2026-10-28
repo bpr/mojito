@@ -1483,6 +1483,7 @@ impl<'a> Specializer<'a> {
         args: &[ParamExpr],
         bindings: &Bindings,
     ) -> Result<CtValue, MonoError> {
+        self.answer_type_argument_applications(template, args, bindings)?;
         let declaration = self.declarations.get(function).ok_or_else(|| {
             self.error(
                 Some(template),
@@ -4048,6 +4049,36 @@ impl<'a> Specializer<'a> {
                 Ok((reg, capture.place.clone()))
             })
             .collect()
+    }
+
+    /// Answer every application nested in a type argument (`bitcast[uint,
+    /// 1]` with `uint` an application) before the instance it is passed to
+    /// is keyed, innermost first, keeping the caller's pending entries.
+    fn answer_type_argument_applications(
+        &mut self,
+        template: &str,
+        args: &[ParamExpr],
+        bindings: &Bindings,
+    ) -> Result<(), MonoError> {
+        let record = |args: &[ParamExpr]| {
+            for arg in args {
+                if let ParamKind::TypeShape(ty) | ParamKind::Constant(CtValue::Type(ty)) =
+                    arg.kind()
+                {
+                    substitute_ty(ty, bindings).ok();
+                }
+            }
+        };
+        let outer = std::mem::take(&mut *self.applications.pending.borrow_mut());
+        record(args);
+        let answered = loop {
+            match self.answer_pending(template, bindings) {
+                Ok(true) => record(args),
+                done => break done,
+            }
+        };
+        self.applications.pending.borrow_mut().extend(outer);
+        answered.map(|_| ())
     }
 
     #[allow(

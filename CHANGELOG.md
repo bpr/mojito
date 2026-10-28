@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.simd` declares upstream's `to_bits` and `_to_bits_signed` as
+  library bodies over `bitcast`, replacing the checker's `to_bits` rule
+  (R1589). `Float64(-0.0)._to_bits_signed()` prints
+  `-9223372036854775808`, which was "type 'Float64' has no method
+  '_to_bits_signed'", and a signed or narrower `to_bits` target fails
+  upstream's `comptime assert` per instance. The elaborator now answers a
+  compile-time application inside a type argument before keying the
+  instance it is passed to, so `bitcast[_unsigned_integral_type_of[dt](),
+  1](x)` runs, which failed with "a symbolic type has no layout".
 - `std.simd` declares upstream's `_simd_construction_checks` and five
   `SIMD` initializers: `__init__(out self)`, the cast from
   `SIMD[other_dtype, Self.length]`, the `SIMDLength` splat, `from_int=`,

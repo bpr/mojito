@@ -404,6 +404,7 @@ assets/ok/infer_only_parameter_by_keyword.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized
 assets/ok/init_raise_destroys_initialized_fields.mojo	main	exe-differential	sanitized
 assets/ok/initializer_list_contextual.mojo	main	exe-differential	sanitized
+assets/ok/inlined_bitcast_application_argument.mojo	main	exe-differential	sanitized
 assets/ok/inlined_constructor_unread_struct_parameter.mojo	main	exe-differential	sanitized
 assets/ok/inplace_field.mojo	main	exe-differential	sanitized
 assets/ok/inplace_raises_try.mojo	main	exe-differential	sanitized
@@ -950,6 +951,7 @@ assets/ok/simd_symbolic_width_hooks.mojo	main	exe-differential	sanitized
 assets/ok/simd_symbolic_width_literal_binding.mojo	main	exe-differential	sanitized
 assets/ok/simd_to_bits.mojo	main	exe-differential	sanitized
 assets/ok/simd_to_bits_default_symbolic.mojo	main	exe-differential	sanitized
+assets/ok/simd_to_bits_signed.mojo	main	exe-differential	sanitized
 assets/ok/simd_wide_widths.mojo	main	exe-differential	sanitized
 assets/ok/size_of_builtin.mojo	main	exe-differential	sanitized
 assets/ok/sized_generic_views.mojo	main	exe-differential	sanitized

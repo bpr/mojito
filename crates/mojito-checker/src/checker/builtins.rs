@@ -14,7 +14,6 @@ pub(super) use mojito_types::conformance::{
     builtin_hashable_ty, is_numeric, is_scalar, simd_valued_ty,
 };
 pub(super) use mojito_types::types::default_literal;
-pub(super) use mojito_types::types::{symbolic_unsigned_dtype_of, unsigned_dtype_of_width};
 
 /// Upstream's `print` rejection: its variadic `*values` pack element does not
 /// conform to `Writable`.

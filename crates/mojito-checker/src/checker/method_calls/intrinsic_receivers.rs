@@ -33,22 +33,6 @@ impl Checker {
         {
             return Ok(Some(ty));
         }
-        // `v.to_bits[DType.target]()` — upstream's lane-wise bit
-        // reinterpretation of a SIMD value (the native scalars are width-1
-        // vectors; `Bool` has no `to_bits` upstream, `Scalar[DType.bool]`
-        // does). The target must be unsigned and at least as wide as the
-        // source lane; it defaults to the unsigned dtype of the source width.
-        if method == "to_bits"
-            && args.is_empty()
-            && param_args.len() <= 1
-            && !matches!(
-                obj_ty.kind(),
-                TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral
-            )
-            && let Some((source, width)) = simd_slots(obj_ty)
-        {
-            return self.infer_simd_to_bits(site, &source, width).map(Some);
-        }
         if *obj_ty == TyKind::Dtype && mojito_ast::ast::DTYPE_PREDICATES.contains(&method) {
             return self.infer_dtype_predicate(site).map(Some);
         }

@@ -9990,30 +9990,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1566, R1561, R1562, R330, and R1568.
   - Model: Fable, Planned.
 
-- [ ] **R1589 `SIMD.to_bits` is a checker rule, where upstream's is a
-  library body over `bitcast`**
-
-  `infer_simd_to_bits`, `SemanticAdjustment::SimdToBits`, and the
-  `to_bits` arms of `expr_method.rs` and `expr_call.rs` serve `to_bits`
-  by name, lowered to upstream's body shape by
-  `Flatten::lower_simd_to_bits`.
-  - Port `to_bits` and `_to_bits_signed` (`simd.mojo:2522`, `:2547`) over
-    the bundled `bitcast`, `_integral_type_of`, and
-    `_unsigned_integral_type_of`, importing `bitcast` into `std.simd`.
-  - Retire `infer_simd_to_bits`, the `"to_bits"` arm of
-    `intrinsic_receivers.rs`, `types::{unsigned_dtype_of_width,
-    symbolic_unsigned_dtype_of}`, `SemanticAdjustment::SimdToBits`,
-    `lower_simd_to_bits`, and the rule's narrower-target instance
-    assertion: a package bump.
-  - Trap: `template_value_shaped_operations_run_per_instance` and the two
-    `template_method_simd_leaf_default_bits*` tests compile through
-    `compile_unlinked`; confirm `std.simd`'s members are linked there.
-  - Probe: `Float64(-0.0)._to_bits_signed()` prints
-    `-9223372036854775808` at the pin and is "type 'Float64' has no
-    method '_to_bits_signed'" here.
-  - Depends on R376.
-  - Model: Fable, Planned.
-
 - [ ] **R1579 `SIMD.__hash__` is a hash-leaf rule, where upstream's is a
   library body**
 

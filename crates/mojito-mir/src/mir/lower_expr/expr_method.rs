@@ -377,25 +377,6 @@ impl<'a> Flatten<'a> {
             });
             return Some(d);
         }
-        // `v.to_bits()` with the default target arrives as an ordinary
-        // method call; the parameterized spelling takes the invoke
-        // path above. Both lower to upstream's body shape.
-        if method == "to_bits"
-            && args.is_empty()
-            && kwargs.is_empty()
-            && let Some((dtype, width)) =
-                node.adjustments
-                    .iter()
-                    .find_map(|adjustment| match adjustment {
-                        mojito_checked::checked::SemanticAdjustment::SimdToBits {
-                            dtype,
-                            width,
-                        } => Some((dtype.clone(), width.clone())),
-                        _ => None,
-                    })
-        {
-            return Some(self.lower_simd_to_bits(&call.location(), object, dtype, &width));
-        }
         // `v.set(init_with=…)` infers its alternative from the factory
         // (no explicit type parameter), so it arrives as an ordinary
         // method call rather than a parameterized invoke.

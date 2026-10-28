@@ -484,22 +484,6 @@ impl<'a> Flatten<'a> {
         {
             return self.expr(object);
         }
-        // `v.to_bits[DType.<dt>]()` carries its checker-resolved payload
-        // in the adjustment, lowered over the member callee's object.
-        let simd_to_bits = node
-            .adjustments
-            .iter()
-            .find_map(|adjustment| match adjustment {
-                mojito_checked::checked::SemanticAdjustment::SimdToBits { dtype, width } => {
-                    Some((dtype.clone(), width.clone()))
-                }
-                _ => None,
-            });
-        if let Some((dtype, width)) = simd_to_bits
-            && let Some(object) = callee.member_object()
-        {
-            return self.lower_simd_to_bits(&call.location(), object, dtype, &width);
-        }
         let simd_shuffle = node
             .adjustments
             .iter()
