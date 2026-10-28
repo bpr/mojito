@@ -4049,8 +4049,10 @@ pub fn struct_argument_substitution(decls: &[ParamDecl], arguments: &[TyArg]) ->
 /// Upstream's `!kgen.struct` element types are the field types at the
 /// struct's arguments. Each type and value binder `decls` declares is bound
 /// to its argument and replaced through [`replace_parameters`] (a lane slot
-/// or value argument re-canonicalizes); the fields are borrowed when none
-/// names a binder. Origin arguments are left as declared.
+/// or value argument re-canonicalizes), and a type pack bound whole to its
+/// element types is expanded in their place (`Tuple([*Ts])` at `Ts = [A, B]`
+/// is `Tuple([A, B])`); the fields are borrowed when none names a binder.
+/// Origin arguments are left as declared.
 ///
 /// `None` when a field still names one of the struct's own binders: a
 /// missing, erased (`CtValue::RemovedArg`), or unbindable argument, or a
@@ -4067,10 +4069,16 @@ pub fn struct_field_types<'a>(
     }
     let context = ParamContext::detached();
     let bindings = struct_argument_bindings(&context, decls, arguments);
+    let packs = struct_pack_arguments(decls, arguments);
     fields
         .iter()
         .map(|(name, field)| {
-            replace_parameters(&context, field, &bindings, 0)
+            let field = if packs.is_empty() {
+                std::borrow::Cow::Borrowed(field)
+            } else {
+                std::borrow::Cow::Owned(substitute_packs(field, &TySubst::new(), &packs, &[]))
+            };
+            replace_parameters(&context, &field, &bindings, 0)
                 .ok()
                 .filter(|field| !names_own_binder(field))
                 .map(|field| (name.clone(), field))
@@ -5749,6 +5757,40 @@ fn write_callable(
     Ok(())
 }
 
+/// The element types a struct application's `arguments` bind each of its
+/// declared type packs `decls` to, where the pack is bound whole, as its
+/// element tuple or runtime pack, to types none of which spreads another
+/// pack. A struct applied element by element (`Tuple[A, B]`) binds none.
+fn struct_pack_arguments(decls: &[ParamDecl], arguments: &[TyArg]) -> HashMap<ParamId, Vec<Ty>> {
+    decls
+        .iter()
+        .zip(arguments)
+        .filter_map(|(decl, argument)| {
+            let ParamDecl::Type { variadic: true, .. } = decl else {
+                return None;
+            };
+            let elements = match argument {
+                TyArg::Val(CtValue::Tuple(values)) => values
+                    .iter()
+                    .map(|value| match value {
+                        CtValue::Type(ty) => Some(ty.clone()),
+                        _ => None,
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+                TyArg::Ty(pack) => match pack.kind() {
+                    TyKind::RuntimePack(elements) => elements.clone(),
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            elements
+                .iter()
+                .all(|element| pack_spread(std::slice::from_ref(element)).is_none())
+                .then(|| (decl.binder().id, elements))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod simd_slot_tests {
     use super::*;
@@ -6296,6 +6338,41 @@ mod struct_field_types_tests {
             struct_field_types(&[], &[], &concrete),
             Some(Cow::Borrowed(_))
         ));
+    }
+
+    #[test]
+    fn a_type_pack_bound_whole_expands_in_a_field() {
+        let pack = ParamDecl::Type {
+            id: ParamId::new("Pack", 0),
+            name: "*Ts".to_string(),
+            bounds: vec!["TrivialRegisterPassable".to_string()],
+            trait_param: None,
+            callable_bound: None,
+            default: None,
+            infer_only: false,
+            variadic: true,
+            constraints: Vec::new(),
+        };
+        let fields = vec![(
+            "_mlir_value".to_string(),
+            Ty::new(TyKind::Tuple(vec![Ty::new(TyKind::Param {
+                binder: pack.binder(),
+                bounds: vec!["TrivialRegisterPassable".to_string()],
+                callable_bound: None,
+            })])),
+        )];
+        let at = |arguments: &[TyArg]| {
+            struct_field_types(std::slice::from_ref(&pack), arguments, &fields)
+                .map(|fields| fields[0].1.clone())
+        };
+        let elements = vec![Ty::int(), Ty::bool()];
+        assert_eq!(
+            at(&[TyArg::Val(CtValue::Tuple(
+                elements.iter().cloned().map(CtValue::Type).collect()
+            ))]),
+            Some(Ty::new(TyKind::Tuple(elements)))
+        );
+        assert_eq!(at(&[]), None);
     }
 }
 

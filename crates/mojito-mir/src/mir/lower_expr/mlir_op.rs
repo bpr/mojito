@@ -1,7 +1,8 @@
 //! The `pop` and `index` `__mlir_op` expressions, and the `SIMD` methods
 //! whose upstream bodies are one `pop.simd` lane op, lowered to the
 //! instruction that computes each (`mojito_types::mlir::MlirOp::lowering`),
-//! `pop.call_llvm_intrinsic`, lowered to `llvm.intrinsic`, and the
+//! `pop.call_llvm_intrinsic`, lowered to `llvm.intrinsic`,
+//! `kgen.struct.extract`, lowered to a tuple-storage element read, and the
 //! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
 //! and `Int`, lowered to `builtin.cast`.
 
@@ -39,6 +40,48 @@ impl<'a> Flatten<'a> {
                 }),
                 _ => None,
             })
+    }
+
+    /// The element index the checker recorded on `call`, if it is a
+    /// `kgen.struct.extract` `__mlir_op`.
+    pub(super) fn checked_kgen_struct_extract(call: Node<'a>) -> Option<ParamExpr> {
+        call.adjustments()
+            .iter()
+            .find_map(|adjustment| match adjustment {
+                mojito_checked::checked::SemanticAdjustment::KgenStructExtract { index } => {
+                    Some(index.clone())
+                }
+                _ => None,
+            })
+    }
+
+    /// Lower the checked `kgen.struct.extract` `call` of element `index` of
+    /// its one operand, a literal struct held as compiler-private tuple
+    /// storage, to that storage's element read at the index's constant (a
+    /// template's parameter constant, which the elaborator closes).
+    pub(super) fn lower_kgen_struct_extract(
+        &mut self,
+        call: Node<'a>,
+        index: ParamExpr,
+        args: &[Node<'a>],
+    ) -> Reg {
+        let [operand] = args else {
+            unreachable!("a checked `kgen.struct.extract` has one operand")
+        };
+        let base = self.expr(*operand);
+        let index = self.param_value_register_at(call.location(), Some(Ty::int()), index);
+        let ty = call.ty().expect("a checked `__mlir_op` has a type");
+        let dest = self.fresh_typed(call.location(), None, ty);
+        self.emit(MirInstr::Index {
+            dest,
+            base,
+            index,
+            base_place: None,
+            index_place: None,
+            call: None,
+            intrinsic: Some(MirIntrinsicSubscript::TupleStorage),
+        });
+        dest
     }
 
     /// Lower the checked LLVM intrinsic call `call` over `args` to

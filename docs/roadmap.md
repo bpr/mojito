@@ -5733,6 +5733,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     and `self.n` the binder, as `Self.n` is.
   - Probe: `self.f` in a method of `struct T[s: String, f: Float64]`, and
     `t.s` on an instance (pin: `2.5` and `a` for `T["a", 2.5]`).
+  - Probe: a pack parameter read off an instance or its type, `len(r.Ts)`
+    over a `_RegisterPackType[SIMD[DType.int32, 4], SIMD[DType.int32, 4]]`
+    value `r`, or `len(P[Int, Bool].Ts)` over `struct P[*Ts: Movable]`,
+    fails with "no overload matches" for `len`, where the pin prints `2`
+    (found while landing R1547).
   - Found while landing R1401 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9745,29 +9750,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1547 `_RegisterPackType` is undeclared, so
-  `llvm.vector.deinterleave2` has no result type**
-
-  Upstream's `SIMD.deinterleave` calls `llvm.vector.deinterleave2` typed
-  `_RegisterPackType[SIMD[dt, n / 2], SIMD[dt, n / 2]]`, which Mojito
-  rejects ("module 'std.sys.intrinsics' has no declaration named
-  '_RegisterPackType'").
-  - Upstream's struct holds
-    ``__mlir_type[`!kgen.struct<`, ~Self.Ts.values, ` isParamPack>`]`` and
-    reads an element with ``__mlir_op.`kgen.struct.extract`[index=…]``.
-    Mojito spells neither (`mlir_applied_type`, `checker/method_calls/mlir_op.rs`).
-  - `mojito_types::llvm_intrinsic::LlvmIntrinsic` has no
-    `deinterleave2`: its result is a struct of two vectors, which
-    `signature_error`, the VM's lane rule (`runtime::llvm_intrinsic`), and
-    Pliron's `lower_llvm_intrinsic` all type as one `SIMD` vector today.
-  - Probe: `de(v)` over `def de(v: SIMD[DType.int32, 8])` returning
-    `res[0], res[1]` of that call prints `[0, 2, 4, 6] [1, 3, 5, 7]` at the
-    pin. Its `comptime` call fails there with "LLVM intrinsic has unknown
-    result type", so `compile_time_error` lists it too.
-  - Found while landing R1519 (2026-10-28).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1520 `!kgen.simd<n, address>` has no pointer lane**
 
   ``__mlir_type[`!kgen.simd<`, size._mlir_value, `, address>`]`` is
@@ -9887,8 +9869,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and `reduce_min` off x86) are `llvm_intrinsic` calls of
     `llvm.vector.reduce.*`, which run since R1394. Its `slice`, `insert`,
     `interleave`, rotation, and shift bodies call intrinsics that run since
-    R1519. `deinterleave` needs `_RegisterPackType` (R1547), and `slice`
-    reads `__is_run_in_comptime_interpreter` (R1546).
+    R1519, and its `deinterleave` body's `llvm.vector.deinterleave2` into
+    a `_RegisterPackType` runs since R1547. `slice` reads
+    `__is_run_in_comptime_interpreter` (R1546).
   - Those bodies also read `CurrentPlugin.lowers_subvector_intrinsics`
     (`std/_plugin`), which is `True` on the CPU plugin. The port bundles
     the CPU plugin's answer.

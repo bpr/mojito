@@ -372,11 +372,13 @@ impl VmBackend {
                     .iter()
                     .map(|operand| regs[operand.0 as usize].clone())
                     .collect();
-                regs[dest.0 as usize] = crate::runtime::llvm_intrinsic(
-                    called,
-                    prog.mir.functions[function].1.reg_types.get(&dest.0),
-                    &operands,
-                )?;
+                let result = prog.mir.functions[function]
+                    .1
+                    .reg_types
+                    .get(&dest.0)
+                    .map(|ty| prog.mir.declarations.translated_type(ty));
+                regs[dest.0 as usize] =
+                    crate::runtime::llvm_intrinsic(called, result.as_ref(), &operands)?;
             }
             MirInstr::UseVar {
                 dest,

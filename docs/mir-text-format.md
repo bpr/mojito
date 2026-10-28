@@ -819,6 +819,11 @@ compiled program. The VM answers it per run, under CTFE fuel or not; a
 native backend writes `False`; no pass folds it. The package format moves
 to `mojito-package 132`, since the checked op vocabulary grows.
 
+The package format moves to `mojito-package 133` (R1547), since the checked
+adjustments gain `KgenStructExtract`, upstream's `kgen.struct.extract` of a
+literal struct's element, which MIR lowers to the tuple-storage `index.get`
+it already has; the MIR schema does not change.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

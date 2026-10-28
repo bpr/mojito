@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	869
+# swept-count	872
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -512,6 +512,9 @@ assets/type_error/list_element_not_hashable.mojo	compile-reject	agree	error: no 
 assets/type_error/list_explicit_params_with_elements.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/list_slice_assigned_over_source.mojo	compile-reject	agree	error: aliasing values passed immutably to 'v' argument and constructed as a result in 'rebuild' call
 assets/type_error/llvm_intrinsic_bswap_odd_bytes.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
+assets/type_error/llvm_intrinsic_deinterleave_at_compile_time.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/llvm_intrinsic_deinterleave_vector_result.mojo	compile-reject	agree	error: call intrinsic signature <4 x i32> (<8 x i32>) to overloaded intrinsic "llvm.vector.deinterleave2" : !kgen.string does not match any of the overloads: intrinsic return type expected literal non-packed struct with 2 elements, but got <4 x i32>
+assets/type_error/llvm_intrinsic_deinterleave_width.mojo	compile-reject	agree	error: call intrinsic signature { <8 x i32>, <8 x i32> } (<8 x i32>) to overloaded intrinsic "llvm.vector.deinterleave2" : !kgen.string does not match any of the overloads: intrinsic return struct element 0 type (1/nth (n=2) elements vector of overload type 0) expected <4 x i32> (overload type 0 is <8 x i32>), but got <8 x i32>
 assets/type_error/llvm_intrinsic_extract_misaligned.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
 assets/type_error/llvm_intrinsic_immarg_not_constant.mojo	compile-reject	agree	error: failed to lower module to LLVM IR for archive compilation, translate module to LLVMIR failed
 assets/type_error/llvm_intrinsic_insert_at_compile_time.mojo	compile-reject	agree	error: function instantiation failed

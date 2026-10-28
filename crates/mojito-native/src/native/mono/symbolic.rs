@@ -329,7 +329,7 @@ pub(super) fn ensure_concrete_function(
     name: &str,
     function: &MirFunction,
 ) -> Result<(), MonoError> {
-    let findings = mojito_mir::mir::verify::concrete_function_findings(name, function);
+    let findings = mojito_mir::mir::verify::concrete_function_findings(name, function, None);
     if findings.is_empty() {
         Ok(())
     } else {

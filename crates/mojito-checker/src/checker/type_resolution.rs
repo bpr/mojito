@@ -1188,8 +1188,59 @@ impl Checker {
                     .ok_or_else(|| mlir_operand_mismatch("!kgen.dtype", "DType"))?;
                 simd_of(self.dtype_from_arg(&dtype)?, power_of_two_width(width)?)
             }
+            ("!kgen.struct<{}isParamPack>", [elements]) => self.mlir_param_pack_struct(elements),
             _ => Err(unsupported_mlir_type()),
         }
+    }
+
+    /// The literal struct `!kgen.struct<~Ts.values isParamPack>` of a type
+    /// list's elements, which Mojito holds as the compiler-private tuple
+    /// storage (`TyKind::Tuple`) of the same elements, exactly as
+    /// `__RuntimeTuple[*Ts]` builds them.
+    fn mlir_param_pack_struct(
+        &self,
+        elements: &mojito_ast::ast::ParamArg,
+    ) -> Result<Ty, TypeError> {
+        use mojito_ast::ast::{ParamArg, PrefixOp};
+        let ParamArg::Value(
+            invert @ Expr {
+                kind: ExprKind::Prefix(PrefixOp::Invert, values),
+                ..
+            },
+        ) = elements
+        else {
+            return Err(unsupported_mlir_type());
+        };
+        let ExprKind::Member { object, field } = &values.kind else {
+            return Err(unsupported_mlir_type());
+        };
+        if field != "values" {
+            return Err(unsupported_mlir_type());
+        }
+        // An enclosing pack (`Self.Ts`, `Ts`) spreads as `*Self.Ts` does,
+        // and any other type list by its elements.
+        let pack = match &object.kind {
+            ExprKind::Member {
+                object: owner,
+                field,
+            } if matches!(&owner.kind, ExprKind::Identifier(name) if name == "Self") => {
+                Some(ParamArg::Type(SourceType::SelfParam(format!("*{field}"))))
+            }
+            ExprKind::Identifier(name) => Some(ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(format!("*{name}")),
+                ..(**object).clone()
+            })),
+            _ => None,
+        }
+        .filter(|pack| self.pack_spread_argument(pack).is_some());
+        let spread = pack.unwrap_or_else(|| {
+            ParamArg::Value(Expr {
+                kind: ExprKind::Spread(object.clone()),
+                ..invert.clone()
+            })
+        });
+        let (elements, _) = self.tuple_element_types(std::slice::from_ref(&spread))?;
+        Ok(TyKind::Tuple(elements).into())
     }
 
     /// The raw parameter list `!kgen.param_list<element>` holds.
@@ -4473,9 +4524,9 @@ fn unsupported_mlir_type() -> TypeError {
         "this MLIR type spelling is outside the supported subset; only \
          '__mlir_type.index', '__mlir_type.`!kgen.scalar<index>`', \
          '__mlir_type.`!kgen.type`', '__mlir_type.`!kgen.string`', \
-         '__mlir_type[`!kgen.param_list<`, T, `>`]', and \
-         '__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value, `>`]' \
-         are accepted"
+         '__mlir_type[`!kgen.param_list<`, T, `>`]', \
+         '__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value, `>`]', \
+         and '__mlir_type[`!kgen.struct<`, ~Ts.values, ` isParamPack>`]' are accepted"
             .to_string(),
     )
 }

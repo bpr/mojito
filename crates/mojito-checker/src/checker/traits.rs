@@ -2299,6 +2299,11 @@ impl Checker {
         mut register_passable: Vec<GenericConstraint>,
     ) -> Option<Vec<GenericConstraint>> {
         use mojito_types::types::TrivialLifecycle;
+        // An unconditional `TrivialRegisterPassable` proves every facet at
+        // every instance, whatever its fields' binders leave open.
+        if register_passable.contains(&GenericConstraint::Bool(true)) {
+            return Some(vec![GenericConstraint::Bool(true)]);
+        }
         let hook = info
             .associated
             .get(mojito_types::types::trivial_hook_name(kind));

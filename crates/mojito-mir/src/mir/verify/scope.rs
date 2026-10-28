@@ -1065,7 +1065,7 @@ mod tests {
             ],
         );
         assert_eq!(findings(&function, &declarations), Vec::<String>::new());
-        let concrete = super::super::concrete_function_findings("f", &function);
+        let concrete = super::super::concrete_function_findings("f", &function, None);
         assert!(
             concrete
                 .iter()

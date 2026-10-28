@@ -85,7 +85,11 @@ pub fn verify_concrete_function_in(
     declarations: &MirDeclarations,
 ) -> Vec<String> {
     let mut errors = verify_function_in(name, function, declarations);
-    errors.extend(concrete_function_findings(name, function));
+    errors.extend(concrete_function_findings(
+        name,
+        function,
+        Some(declarations),
+    ));
     errors
 }
 

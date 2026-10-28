@@ -7075,6 +7075,16 @@ element of the intrinsic's loaded pack, so it folds only because `sroa`
 splits a heterogeneous collector of trivial elements and `sccp` folds
 `Int64(n)`. With the pipeline off, nothing folds, and the check is skipped.
 
+An intrinsic's signature is checked on the result type LLVM translation
+sees, `MirDeclarations::translated_type` (R1547): a struct
+`register_field` answers is its field, as `LowerKGENToLLVM` unwraps it, and
+a `TyKind::Tuple` (upstream's `!kgen.struct<…isParamPack>`, which the check
+resolves to tuple storage) is LLVM's literal struct, never unwrapped. The
+elaborator asks it of an instance's template, since the instance struct is
+declared only once its body is discovered; the concrete verifier, the VM,
+and Pliron ask the program's declarations. `kgen.struct.extract` lowers to
+the tuple-storage `index.get` MIR already has.
+
 `automatic-inline` (`analysis::AUTOMATIC_INLINE`,
 `analysis/automatic_inline.rs`, R1271) is upstream's `AutomaticInline`
 (`lib/Transforms/AutomaticInline.cpp`), a call-graph pass over the

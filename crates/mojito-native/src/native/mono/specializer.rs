@@ -2017,7 +2017,8 @@ impl<'a> Specializer<'a> {
     /// Close an LLVM intrinsic call's name and side-effect flag for the
     /// instance, and, once it is reached, reject a name outside the table
     /// or a signature the intrinsic does not take, as LLVM translation
-    /// rejects the reached call.
+    /// rejects the reached call, on the result type it sees
+    /// ([`Self::translated_type`]).
     fn close_llvm_intrinsic(
         &mut self,
         template: &str,
@@ -2070,7 +2071,7 @@ impl<'a> Specializer<'a> {
         let ty = |reg: &Reg| reg_types.get(&reg.0).cloned();
         if let Some(result) = ty(dest)
             && let Some(operands) = args.iter().map(ty).collect::<Option<Vec<_>>>()
-            && let Some(reason) = called.signature_error(&result, &operands)
+            && let Some(reason) = called.signature_error(&self.translated_type(&result), &operands)
         {
             return Err(MonoError {
                 kind: MonoErrorKind::Instantiation,
@@ -2078,6 +2079,21 @@ impl<'a> Specializer<'a> {
             });
         }
         Ok(())
+    }
+
+    /// The type LLVM translation sees for a value of `ty`
+    /// (`MirDeclarations::translated_type`), asked of a struct instance's
+    /// template at the instance's arguments, since the instance is
+    /// declared only once its body is discovered.
+    fn translated_type(&self, ty: &Ty) -> Ty {
+        let template = match ty.kind() {
+            TyKind::Struct(name, arguments) => Ty::new(TyKind::Struct(
+                name.split("$mono").next().unwrap_or(name).to_string(),
+                arguments.clone(),
+            )),
+            _ => ty.clone(),
+        };
+        self.source.declarations.translated_type(&template)
     }
 
     fn param_constant(

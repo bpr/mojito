@@ -17,7 +17,10 @@ impl Checker {
     /// may be a heterogeneous collector, upstream's loaded `!kgen.pack`,
     /// whose elements the instance passes. A closed name outside the table
     /// is outside the subset, and closed operand types are checked against
-    /// the intrinsic's signature, as LLVM translation checks them.
+    /// the intrinsic's signature, as LLVM translation checks them. A struct
+    /// result is checked where it is elaborated, since LLVM translation
+    /// sees a one-field register-passable struct as its field
+    /// (`MirDeclarations::translated_type`).
     pub(super) fn infer_llvm_intrinsic_op(
         &self,
         span: &SourceSpan,
@@ -102,6 +105,7 @@ impl Checker {
             .and_then(closed_intrinsic_name)
             .and_then(LlvmIntrinsic::parse)
             && spread.is_none()
+            && !matches!(result.kind(), TyKind::Struct(..))
             && std::iter::once(&result)
                 .chain(&operands)
                 .all(|ty| !mojito_types::types::has_free_parameters(ty))

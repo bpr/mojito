@@ -20,7 +20,15 @@ use mojito_types::types::TyKind;
 /// for`, or a terminator of their regions. Runtime structured control flow
 /// is concrete, as upstream's elaborator emits `hlcf`: the VM runs it as it
 /// stands, and Pliron lowers it to LLVM blocks as `LowerControlFlow` does.
-pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<String> {
+/// With the program's `declarations`, an LLVM intrinsic call's signature is
+/// checked too, on the result type LLVM translation sees
+/// ([`MirDeclarations::translated_type`]); the elaborator, which checks it
+/// as it closes the call, passes none.
+pub fn concrete_function_findings(
+    name: &str,
+    function: &MirFunction,
+    declarations: Option<&MirDeclarations>,
+) -> Vec<String> {
     let mut errors = Vec::new();
     let head = format!("MIR function '{name}'");
     let signature = function
@@ -42,7 +50,7 @@ pub fn concrete_function_findings(name: &str, function: &MirFunction) -> Vec<Str
     for (register, ty) in registers {
         require_concrete(&head, &format!("register r{register}"), ty, &mut errors);
     }
-    concrete_blocks(name, function, &function.blocks, &mut errors);
+    concrete_blocks(name, function, declarations, &function.blocks, &mut errors);
     errors
 }
 
@@ -74,7 +82,11 @@ pub fn llvm_translation_findings(function: &MirFunction) -> Vec<String> {
 /// witness tables, which name template members, are gone.
 pub(super) fn verify_concrete_program(program: &MirProgram, errors: &mut Vec<String>) {
     for (name, function) in &program.functions {
-        errors.extend(concrete_function_findings(name, function));
+        errors.extend(concrete_function_findings(
+            name,
+            function,
+            Some(&program.declarations),
+        ));
     }
     for declaration in &program.declarations.functions {
         let head = format!("MIR function '{}' declaration", declaration.lowered_name);
@@ -224,6 +236,7 @@ fn require_no_parameter_slots(head: &str, slots: &[MirParamArg], errors: &mut Ve
 fn concrete_blocks(
     name: &str,
     function: &MirFunction,
+    declarations: Option<&MirDeclarations>,
     blocks: &[MirBlock],
     errors: &mut Vec<String>,
 ) {
@@ -242,13 +255,13 @@ fn concrete_blocks(
                     _ => {}
                 }
                 for region in regions {
-                    concrete_blocks(name, function, region, errors);
+                    concrete_blocks(name, function, declarations, region, errors);
                 }
                 continue;
             }
             concrete_instruction(&head, instruction, errors);
             reference_read(&head, function, instruction, errors);
-            concrete_llvm_intrinsic(&head, function, instruction, errors);
+            concrete_llvm_intrinsic(&head, function, declarations, instruction, errors);
         }
         if matches!(
             block.term,
@@ -531,12 +544,13 @@ fn reference_read(
 }
 
 /// An LLVM intrinsic call as elaborated MIR carries it: its name and
-/// side-effect flag closed, the name in the table, no pack spread, and its
-/// register types a signature the intrinsic takes, as LLVM translation
-/// checks a reached call.
+/// side-effect flag closed, the name in the table, no pack spread, and,
+/// given the program's `declarations`, its register types a signature the
+/// intrinsic takes, as LLVM translation checks a reached call.
 fn concrete_llvm_intrinsic(
     head: &str,
     function: &MirFunction,
+    declarations: Option<&MirDeclarations>,
     instruction: &MirInstr,
     errors: &mut Vec<String>,
 ) {
@@ -571,9 +585,11 @@ fn concrete_llvm_intrinsic(
         return;
     };
     let ty = |reg: &Reg| function.reg_types.get(&reg.0).cloned();
-    if let Some(result) = ty(dest)
+    if let Some(declarations) = declarations
+        && let Some(result) = ty(dest)
         && let Some(operands) = args.iter().map(ty).collect::<Option<Vec<_>>>()
-        && let Some(reason) = called.signature_error(&result, &operands)
+        && let Some(reason) =
+            called.signature_error(&declarations.translated_type(&result), &operands)
     {
         errors.push(format!("{head}: {reason}"));
     }
@@ -719,7 +735,7 @@ mod tests {
             dest: Reg(0),
             place: MirPlace::root(0, Some(ref_int())),
         };
-        concrete_function_findings("f", &function_with(instruction, dest_ty))
+        concrete_function_findings("f", &function_with(instruction, dest_ty), None)
     }
 
     fn use_var(mode: UseMode) -> Vec<String> {
@@ -729,7 +745,7 @@ mod tests {
             mode,
             constructor: None,
         };
-        concrete_function_findings("f", &function_with(instruction, ref_int()))
+        concrete_function_findings("f", &function_with(instruction, ref_int()), None)
     }
 
     #[test]
@@ -773,7 +789,8 @@ mod tests {
             "ownership.mark_initialized",
             "ownership.mark_destroyed",
         ]) {
-            let findings = concrete_function_findings("f", &function_with(marker, Ty::none()));
+            let findings =
+                concrete_function_findings("f", &function_with(marker, Ty::none()), None);
             assert_eq!(findings.len(), 1, "{findings:?}");
             assert!(findings[0].contains(&format!("keeps the lifetime marker `{mnemonic}`")));
         }
@@ -806,6 +823,6 @@ mod tests {
             },
             Ty::bool(),
         );
-        assert!(concrete_function_findings("f", &function).is_empty());
+        assert!(concrete_function_findings("f", &function, None).is_empty());
     }
 }

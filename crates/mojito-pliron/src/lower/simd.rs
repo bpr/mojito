@@ -18,6 +18,8 @@ use super::*;
 use mojito_types::llvm_intrinsic::{LlvmIntrinsic, OverloadSlot};
 use mojito_types::mlir::PopOp;
 use mojito_types::types::TyKind;
+use pliron_llvm::ops::ExtractValueOp;
+use pliron_llvm::types::{StructLayout, StructType};
 
 impl FnLowering<'_> {
     /// Construct a SIMD value with the VM's per-lane conversions. Width-one
@@ -877,7 +879,11 @@ impl FnLowering<'_> {
     /// defined result for a zero lane the VM computes; a shuffle's index
     /// ([`LlvmIntrinsic::index_operand`]) is its register's value, which
     /// LLVM's verifier rejects as an `immarg` unless it is a constant.
-    /// `llvm.donothing` returns nothing.
+    /// `llvm.donothing` returns nothing. A result LLVM translation sees as a
+    /// literal struct (`MirDeclarations::translated_type`, a
+    /// `_RegisterPackType`'s) is LLVM's literal struct of its elements'
+    /// vectors, each extracted into the destination's storage at its
+    /// offset.
     pub(super) fn lower_llvm_intrinsic(
         &mut self,
         ctx: &mut Context,
@@ -916,7 +922,22 @@ impl FnLowering<'_> {
                 dest,
             )
         };
-        let Some(result) = dims(&dest) else {
+        let elements = match self
+            .func
+            .reg_types
+            .get(&dest.0)
+            .map(|ty| self.mir_declarations.translated_type(ty))
+            .as_ref()
+            .map(Ty::kind)
+        {
+            Some(TyKind::Tuple(elements)) => Some(elements.clone()),
+            _ => None,
+        };
+        let result = match &elements {
+            Some(elements) => elements.first().and_then(simd_dims).map(shaped),
+            None => dims(&dest),
+        };
+        let Some(result) = result else {
             return Err(non_simd(self));
         };
         let mut operand_shapes = Vec::with_capacity(args.len());
@@ -939,7 +960,13 @@ impl FnLowering<'_> {
             types.push(self.llvm_intrinsic_ty(ctx, dtype, shape));
             operand_shapes.push(Some((dtype, shape)));
         }
-        let result_ty = self.llvm_intrinsic_ty(ctx, result.0, result.1);
+        let result_ty = match &elements {
+            Some(elements) => {
+                let fields = vec![self.llvm_intrinsic_ty(ctx, result.0, result.1); elements.len()];
+                StructType::get_unnamed(ctx, (fields, StructLayout::Unpacked)).into()
+            }
+            None => self.llvm_intrinsic_ty(ctx, result.0, result.1),
+        };
         let suffix = |(dtype, shape): (Dtype, Option<usize>)| match shape {
             Some(width) => simd_mangle(dtype, width),
             None => lane_suffix(dtype),
@@ -963,12 +990,55 @@ impl FnLowering<'_> {
         let call = CallIntrinsicOp::new(ctx, StringAttr::new(name), fn_ty, values);
         self.append(ctx, call.get_operation(), Some(dest));
         let value = call.get_result(ctx);
+        if let Some(elements) = elements {
+            return self.store_struct_result(ctx, dest, &elements, value);
+        }
         match result.1 {
             Some(width) => self.simd_store_vector(ctx, dest, result.0, width, value),
             None => {
                 self.reg_values.insert(dest.0, value);
             }
         }
+        Ok(())
+    }
+
+    /// Store each vector of an intrinsic's literal-struct result `value`
+    /// into fresh storage laid out as `elements`, and define `dest` as it.
+    fn store_struct_result(
+        &mut self,
+        ctx: &mut Context,
+        dest: Reg,
+        elements: &[Ty],
+        value: Value,
+    ) -> Result<(), PlironError> {
+        let composed = self.struct_layout_of(elements, dest)?;
+        let storage = self.entry_alloca(
+            ctx,
+            composed.layout.size.max(1),
+            composed.layout.align.max(1),
+        );
+        for (index, (element, offset)) in elements.iter().zip(&composed.offsets).enumerate() {
+            let Some((dtype, width)) = simd_dims(element)
+                .and_then(|(dtype, width)| Some((dtype, usize::try_from(width).ok()?)))
+            else {
+                return Err(self.unsupported_reg(
+                    format!("an LLVM intrinsic struct element of type `{element}`"),
+                    dest,
+                ));
+            };
+            let extract = ExtractValueOp::new(ctx, value, vec![index as u32]).map_err(|error| {
+                self.unsupported_reg(format!("LLVM intrinsic struct result ({error})"), dest)
+            })?;
+            self.append(ctx, extract.get_operation(), Some(dest));
+            let address = if *offset == 0 {
+                storage
+            } else {
+                self.gep_byte(ctx, storage, *offset, dest)
+            };
+            let element = extract.get_result(ctx);
+            self.simd_store_vector_to(ctx, address, dtype, width, element, dest);
+        }
+        self.reg_values.insert(dest.0, storage);
         Ok(())
     }
 

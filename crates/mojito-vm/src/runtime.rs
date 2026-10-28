@@ -1250,7 +1250,10 @@ pub fn pop_op(op: mojito_types::mlir::PopOp, operands: &[Value]) -> Result<Value
 /// Lanes are computed as `mojito_types::llvm_intrinsic` computes them: an
 /// elementwise intrinsic gives its first operand's type, a reduction one
 /// lane of it, a shuffle the lanes its sources name, `llvm.stepvector` the
-/// result's lane positions, and `llvm.donothing` `None`.
+/// result's lane positions, and `llvm.donothing` `None`. `result` is the
+/// type LLVM translation sees (`MirDeclarations::translated_type`): a
+/// literal struct result (`vector.deinterleave2`'s) is the tuple of its
+/// elements' lanes, each a slice of the sources.
 pub fn llvm_intrinsic(
     intrinsic: mojito_types::llvm_intrinsic::LlvmIntrinsic,
     result: Option<&Ty>,
@@ -1263,7 +1266,13 @@ pub fn llvm_intrinsic(
             intrinsic.name()
         ))
     };
-    let result_lanes = || match result
+    let elements = match result.map(Ty::kind) {
+        Some(mojito_types::types::TyKind::Tuple(elements)) => Some(elements.as_slice()),
+        _ => None,
+    };
+    let result_lanes = || match elements
+        .and_then(<[Ty]>::first)
+        .or(result)
         .map(Ty::kind)
         .and_then(mojito_types::types::simd_slots)
     {
@@ -1308,6 +1317,17 @@ pub fn llvm_intrinsic(
         return Err(RuntimeError::Unsupported(reason));
     }
     if let Some(sources) = intrinsic.shuffle_sources(result_width, &widths, index) {
+        if elements.is_some() {
+            return sources
+                .chunks(result_width.max(1))
+                .map(|element| {
+                    shuffle_lanes(&parts, element)
+                        .map(|lanes| simd_value(dtype, lanes))
+                        .ok_or_else(mismatch)
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(Value::Tuple);
+        }
         return shuffle_lanes(&parts, &sources)
             .map(|lanes| simd_value(dtype, lanes))
             .ok_or_else(mismatch);

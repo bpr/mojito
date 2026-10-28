@@ -1168,37 +1168,8 @@ impl Checker {
             TyKind::Tuple(elements) => Some(elements.iter().collect()),
             _ => None,
         });
-        // Storage over a pack that is still a parameter: the dependent
-        // element at a compile-time index.
-        if let Some([pack]) = tuple_elements.as_deref()
-            && let TyKind::Param { binder, .. } = pack.kind()
-            && binder.name.starts_with('*')
-            && let Some(elems) = &tuple_elements
-        {
-            return self.pack_element_type(elems[0], index);
-        }
-        if let Some(elems) = tuple_elements {
-            let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
-                expected: "a compile-time Int index".to_string(),
-                found: "a runtime value".to_string(),
-                context: "tuple index".to_string(),
-            })?;
-            let i = exact.to_i64().ok_or_else(|| TypeError::TypeMismatch {
-                expected: format!("a tuple index in 0..{}", elems.len()),
-                found: exact.to_string(),
-                context: "tuple index".to_string(),
-            })?;
-            if i < 0 || i as usize >= elems.len() {
-                return Err(TypeError::TypeMismatch {
-                    expected: format!("a tuple index in 0..{}", elems.len()),
-                    found: i.to_string(),
-                    context: "tuple index".to_string(),
-                });
-            }
-            return Ok(match elems[i as usize].kind() {
-                TyKind::Ref(reference) => reference.referent.clone(),
-                _ => elems[i as usize].clone(),
-            });
+        if let Some(elements) = tuple_elements {
+            return self.tuple_storage_element(&elements, index);
         }
         // A homogeneous runtime variadic collector is compiler-private Tuple
         // storage with one repeated element type. Unlike a heterogeneous pack,
@@ -1327,6 +1298,44 @@ impl Checker {
         Ok(match result.kind() {
             TyKind::Ref(reference) => reference.referent.clone(),
             _ => result,
+        })
+    }
+
+    /// The type of element `index` of heterogeneous storage holding
+    /// `elements`: over a pack that is still a parameter, the dependent
+    /// element at a compile-time index, and otherwise the element a
+    /// compile-time `Int` in range selects, read through a reference.
+    pub(super) fn tuple_storage_element(
+        &self,
+        elements: &[&Ty],
+        index: &Expr,
+    ) -> Result<Ty, TypeError> {
+        if let [pack] = elements
+            && let TyKind::Param { binder, .. } = pack.kind()
+            && binder.name.starts_with('*')
+        {
+            return self.pack_element_type(pack, index);
+        }
+        let exact = self.eval_ct(index).map_err(|_| TypeError::TypeMismatch {
+            expected: "a compile-time Int index".to_string(),
+            found: "a runtime value".to_string(),
+            context: "tuple index".to_string(),
+        })?;
+        let i = exact.to_i64().ok_or_else(|| TypeError::TypeMismatch {
+            expected: format!("a tuple index in 0..{}", elements.len()),
+            found: exact.to_string(),
+            context: "tuple index".to_string(),
+        })?;
+        if i < 0 || i as usize >= elements.len() {
+            return Err(TypeError::TypeMismatch {
+                expected: format!("a tuple index in 0..{}", elements.len()),
+                found: i.to_string(),
+                context: "tuple index".to_string(),
+            });
+        }
+        Ok(match elements[i as usize].kind() {
+            TyKind::Ref(reference) => reference.referent.clone(),
+            _ => elements[i as usize].clone(),
         })
     }
 

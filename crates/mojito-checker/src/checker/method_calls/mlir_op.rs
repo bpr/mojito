@@ -1,8 +1,9 @@
 //! The `__mlir_op` forms Mojito admits: upstream's
 //! `lit.ownership.mark_initialized` and `lit.ownership.mark_destroyed` over a
 //! place, which the bundled standard library spells before writing a value's
-//! storage through pointers and after moving it out through them, the `pop`
-//! and `index` ops of `pop_ops.rs`, and the LLVM intrinsic call of
+//! storage through pointers and after moving it out through them,
+//! `kgen.struct.extract` of an element of a literal struct, the `pop` and
+//! `index` ops of `pop_ops.rs`, and the LLVM intrinsic call of
 //! `llvm_intrinsic.rs`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -16,8 +17,9 @@ impl Checker {
     /// value without destroying it, after its storage was moved out through
     /// pointers (`Tuple.consume_elements`). Each is accepted only in the
     /// bundled modules that reach compiler-private storage. Every other
-    /// spelling is an LLVM intrinsic call ([`Self::infer_llvm_intrinsic_op`])
-    /// or a `pop` or `index` op ([`Self::infer_pop_op`]). The
+    /// spelling is an LLVM intrinsic call ([`Self::infer_llvm_intrinsic_op`]),
+    /// a struct element read ([`Self::infer_kgen_struct_extract_op`]), or a
+    /// `pop` or `index` op ([`Self::infer_pop_op`]). The
     /// statement's checked record is `SemanticAdjustment::MarkInitialized`
     /// or `SemanticAdjustment::MarkDestroyed`.
     pub(super) fn infer_mlir_op(
@@ -29,8 +31,12 @@ impl Checker {
         const INITIALIZED: &str = "lit.ownership.mark_initialized";
         const DESTROYED: &str = "lit.ownership.mark_destroyed";
         const LLVM_INTRINSIC: &str = "pop.call_llvm_intrinsic";
+        const STRUCT_EXTRACT: &str = "kgen.struct.extract";
         if method == LLVM_INTRINSIC {
             return self.infer_llvm_intrinsic_op(span, method, call);
+        }
+        if method == STRUCT_EXTRACT {
+            return self.infer_kgen_struct_extract_op(span, method, call);
         }
         if !matches!(method, INITIALIZED | DESTROYED) {
             return self.infer_pop_op(span, method, call);
@@ -87,5 +93,89 @@ impl Checker {
             mojito_checked::checked::SemanticAdjustment::MarkDestroyed
         }));
         Ok(Ty::none())
+    }
+
+    /// Type ``__mlir_op.`kgen.struct.extract`[index=i.__mlir_index__()](s)``,
+    /// recording it as `SemanticAdjustment::KgenStructExtract`: element `i`
+    /// of the literal struct `s` (`!kgen.struct<…>`, a `TyKind::Tuple`),
+    /// typed as a compile-time subscript of that storage types it. The
+    /// `index` attribute is a compile-time `Int`'s `__mlir_index__()`, as
+    /// upstream's `_RegisterPackType.__getitem_param__` spells it.
+    fn infer_kgen_struct_extract_op(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        call: MethodCallArguments<'_>,
+    ) -> Result<Ty, TypeError> {
+        let MethodCallArguments {
+            param_args,
+            args,
+            kwargs,
+            ..
+        } = call;
+        let invalid = |reason: &str| TypeError::BadCall {
+            func: name.to_string(),
+            reason: reason.to_string(),
+        };
+        if !kwargs.is_empty() {
+            return Err(invalid("op operands are positional"));
+        }
+        let mut index = None;
+        for argument in param_args {
+            match argument {
+                mojito_ast::ast::ParamArg::Named {
+                    name: attribute,
+                    value,
+                } if attribute == "index" => index = Some(value.as_ref()),
+                mojito_ast::ast::ParamArg::Named {
+                    name: attribute, ..
+                } => {
+                    return Err(invalid(&format!(
+                        "attribute '{attribute}' is not an inherent attribute of '{name}'"
+                    )));
+                }
+                _ => return Err(invalid("op attributes are named")),
+            }
+        }
+        let index = match index {
+            Some(mojito_ast::ast::ParamArg::Value(Expr {
+                kind:
+                    ExprKind::MethodCall {
+                        object,
+                        method,
+                        args,
+                        kwargs,
+                    },
+                ..
+            })) if method == "__mlir_index__" && args.is_empty() && kwargs.is_empty() => object,
+            Some(_) => {
+                return Err(TypeError::Unsupported(format!(
+                    "'{name}' takes its 'index' attribute as a compile-time \
+                     'Int.__mlir_index__()'"
+                )));
+            }
+            None => return Err(invalid("op requires attribute 'index'")),
+        };
+        let [operand] = args else {
+            return Err(invalid(&format!(
+                "op takes 1 operand(s), got {}",
+                args.len()
+            )));
+        };
+        let operand_ty = self.infer(operand)?;
+        let TyKind::Tuple(elements) = operand_ty.kind() else {
+            return Err(invalid(&format!(
+                "operand #0 must be a '!kgen.struct', but got '{operand_ty}'"
+            )));
+        };
+        let built = self.compile_dependent_ct_expr(index)?;
+        if !matches!(built.meta().as_value().map(Ty::kind), Some(TyKind::INT)) {
+            return Err(invalid("attribute 'index' takes a compile-time 'Int'"));
+        }
+        let result = self.tuple_storage_element(&elements.iter().collect::<Vec<_>>(), index)?;
+        self.record_at(span.clone()).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::KgenStructExtract { index: built },
+        ));
+        Ok(result)
     }
 }

@@ -1151,6 +1151,14 @@ pub enum SemanticAdjustment {
         has_side_effect: mojito_types::param_expr::ParamExpr,
         spread: Option<usize>,
     },
+    /// ``__mlir_op.`kgen.struct.extract`[index=i.__mlir_index__()](s)``:
+    /// element `index` (the compile-time `Int` the attribute casts) of the
+    /// literal struct `s`, upstream's `!kgen.struct`, which Mojito holds as
+    /// compiler-private tuple storage. MIR reads it as that storage's
+    /// element.
+    KgenStructExtract {
+        index: mojito_types::param_expr::ParamExpr,
+    },
     /// A sugar written as the construction it stands for: an initializer
     /// list `{}` / `{a, b}` at the type its context expects (upstream's
     /// set-initializer literal, emitted as the construction `T(a, b)` of that

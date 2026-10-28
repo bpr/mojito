@@ -469,6 +469,24 @@ impl MirDeclarations {
         }
     }
 
+    /// The type LLVM translation sees for a value of `ty`: a struct
+    /// [`Self::register_field`] answers for is its one field at the struct's
+    /// arguments ([`Self::field_types`]), unwrapped again while the field is
+    /// such a struct, as upstream's `LowerKGENToLLVM` lowers it; any other
+    /// type is itself. A literal struct (`TyKind::Tuple`, upstream's
+    /// `!kgen.struct`) is never unwrapped, even of one element.
+    pub fn translated_type(&self, ty: &Ty) -> Ty {
+        let mut translated = ty.clone();
+        while let TyKind::Struct(name, _) = translated.kind()
+            && self.register_field(name).is_some()
+            && let Some(fields) = self.field_types(&translated)
+            && let [(_, field)] = fields.as_ref()
+        {
+            translated = field.clone();
+        }
+        translated
+    }
+
     /// Whether a value of `ty` is register-passable, as upstream's
     /// `getRegisterPassability` answers anything but `MemoryOnly`: a type
     /// whose copy is the value itself ([`Self::copy_is_identity`]), a

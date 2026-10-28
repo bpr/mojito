@@ -1089,9 +1089,11 @@ impl<'p> Linker<'p> {
             // as `from std.collections.list import List` deliberately re-export
             // that binding even though the same public identity is also implicit.
             // The prelude module itself is built before this table is populated,
-            // so its deliberate imports remain public exports as well.
-            if !name.starts_with('_')
-                && !exports.contains_key(&name)
+            // so its deliberate imports remain public exports as well. A
+            // leading underscore does not hide a named import, as at the pin
+            // (`std.sys` re-exports `_RegisterPackType`); only a wildcard
+            // import skips such names.
+            if !exports.contains_key(&name)
                 && (!implicit_bindings.contains_key(&name) || explicit_exports.contains(&name))
             {
                 exports.insert(name, target);

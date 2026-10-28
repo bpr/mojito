@@ -33,6 +33,7 @@ pub enum LlvmIntrinsic {
     VectorInsert,
     VectorSplice(SpliceDirection),
     VectorInterleave2,
+    VectorDeinterleave2,
     Stepvector,
 }
 
@@ -68,7 +69,7 @@ pub enum OverloadSlot {
 
 impl LlvmIntrinsic {
     /// Every intrinsic in the table.
-    pub const ALL: [Self; 24] = [
+    pub const ALL: [Self; 25] = [
         Self::Ctlz,
         Self::Cttz,
         Self::Ctpop,
@@ -92,6 +93,7 @@ impl LlvmIntrinsic {
         Self::VectorSplice(SpliceDirection::Left),
         Self::VectorSplice(SpliceDirection::Right),
         Self::VectorInterleave2,
+        Self::VectorDeinterleave2,
         Self::Stepvector,
     ];
 
@@ -128,6 +130,7 @@ impl LlvmIntrinsic {
             Self::VectorSplice(SpliceDirection::Left) => "llvm.vector.splice.left",
             Self::VectorSplice(SpliceDirection::Right) => "llvm.vector.splice.right",
             Self::VectorInterleave2 => "llvm.vector.interleave2",
+            Self::VectorDeinterleave2 => "llvm.vector.deinterleave2",
             Self::Stepvector => "llvm.stepvector",
         }
     }
@@ -145,7 +148,12 @@ impl LlvmIntrinsic {
     pub const fn arity(self) -> usize {
         match self {
             Self::Donothing | Self::Stepvector => 0,
-            Self::Ctpop | Self::Bitreverse | Self::Bswap | Self::Sqrt | Self::VectorReduce(_) => 1,
+            Self::Ctpop
+            | Self::Bitreverse
+            | Self::Bswap
+            | Self::Sqrt
+            | Self::VectorReduce(_)
+            | Self::VectorDeinterleave2 => 1,
             Self::Ctlz
             | Self::Cttz
             | Self::Copysign
@@ -159,10 +167,21 @@ impl LlvmIntrinsic {
     pub const fn overloads(self) -> &'static [OverloadSlot] {
         match self {
             Self::Donothing => &[],
-            Self::VectorReduce(_) => &[OverloadSlot::Operand(0)],
+            Self::VectorReduce(_) | Self::VectorDeinterleave2 => &[OverloadSlot::Operand(0)],
             Self::VectorExtract => &[OverloadSlot::Result, OverloadSlot::Operand(0)],
             Self::VectorInsert => &[OverloadSlot::Result, OverloadSlot::Operand(1)],
             _ => &[OverloadSlot::Result],
+        }
+    }
+
+    /// The number of elements of the literal struct LLVM gives as the
+    /// intrinsic's result: two, a vector of the even lanes and one of the
+    /// odd, for `vector.deinterleave2`, and one, the result itself, for
+    /// every other intrinsic.
+    pub const fn result_elements(self) -> usize {
+        match self {
+            Self::VectorDeinterleave2 => 2,
+            _ => 1,
         }
     }
 
@@ -230,8 +249,10 @@ impl LlvmIntrinsic {
     /// result comes from: the position of a lane among its vector
     /// operands' lanes laid end to end (operands `widths` wide), or `None`
     /// for a lane a splice offset past the vector leaves poison, which
-    /// Mojito computes as zero. `index` is the [`Self::index_operand`]'s
-    /// value; `None` is an intrinsic that does not shuffle.
+    /// Mojito computes as zero. `vector.deinterleave2`'s result is its
+    /// [`Self::result_elements`], each `result_width` lanes, laid end to
+    /// end. `index` is the [`Self::index_operand`]'s value; `None` is an
+    /// intrinsic that does not shuffle.
     pub fn shuffle_sources(
         self,
         result_width: usize,
@@ -268,6 +289,9 @@ impl LlvmIntrinsic {
             (Self::VectorInterleave2, [width, _]) => (0..2 * width)
                 .map(|lane| Some(lane / 2 + if lane % 2 == 0 { 0 } else { *width }))
                 .collect(),
+            (Self::VectorDeinterleave2, [_]) => (0..2 * result_width)
+                .map(|lane| Some(lane % result_width * 2 + lane / result_width))
+                .collect(),
             _ => return None,
         };
         Some(sources)
@@ -286,7 +310,14 @@ impl LlvmIntrinsic {
     /// type, the reductions one lane of a vector of at least two, the
     /// shuffles (`vector.extract`, `vector.insert`, the splices, and
     /// `vector.interleave2`) and `llvm.stepvector` a vector of at least two
-    /// lanes, and `llvm.donothing` `NoneType`.
+    /// lanes, `vector.deinterleave2` a literal struct of two, and
+    /// `llvm.donothing` `NoneType`.
+    ///
+    /// `result` is the type as LLVM translation sees it: a one-field
+    /// register-passable struct is its field, as upstream's KGEN-to-LLVM
+    /// lowering unwraps it, and the caller unwraps it before asking. A
+    /// literal struct is a `TyKind::Tuple`, upstream's
+    /// `!kgen.struct<…isParamPack>`, which is never unwrapped.
     pub fn signature_error(self, result: &Ty, operands: &[Ty]) -> Option<String> {
         if operands.len() != self.arity() {
             return Some(format!(
@@ -329,10 +360,18 @@ impl LlvmIntrinsic {
                     _ => mismatch(),
                 };
             }
+            Self::VectorDeinterleave2 if !matches!(result.kind(), TyKind::Tuple(elements) if elements.len() == 2) =>
+            {
+                return Some(
+                    "intrinsic return type expected literal non-packed struct with 2 elements"
+                        .to_string(),
+                );
+            }
             Self::VectorExtract
             | Self::VectorInsert
             | Self::VectorSplice(_)
-            | Self::VectorInterleave2 => {
+            | Self::VectorInterleave2
+            | Self::VectorDeinterleave2 => {
                 return (!self.shuffle_signature(result, operands))
                     .then(mismatch)
                     .flatten();
@@ -386,8 +425,9 @@ impl LlvmIntrinsic {
     /// [`Self::index_operand`] a one-lane integer of the width LLVM
     /// declares: `vector.extract` gives a vector of its operand's lanes,
     /// `vector.insert` its first operand's type from a vector of its lanes,
-    /// a splice its two operands' type, and `vector.interleave2` twice its
-    /// two operands' width.
+    /// a splice its two operands' type, `vector.interleave2` twice its two
+    /// operands' width, and `vector.deinterleave2` two vectors of half its
+    /// operand's width.
     fn shuffle_signature(self, result: &Ty, operands: &[Ty]) -> bool {
         let vector = |ty: &Ty| match simd_slots(ty.kind()) {
             Some((SimdDtype::Known(dtype), SimdWidth::Known(width))) if width >= 2 => {
@@ -414,6 +454,17 @@ impl LlvmIntrinsic {
         else {
             return false;
         };
+        if let TyKind::Tuple(halves) = result.kind() {
+            return self == Self::VectorDeinterleave2
+                && match (halves.as_slice(), vectors.as_slice()) {
+                    ([even, odd], [(lanes, width)]) => {
+                        even == odd
+                            && vector(even).is_some_and(|half| half == (*lanes, width / 2))
+                            && width % 2 == 0
+                    }
+                    _ => false,
+                };
+        }
         let Some((dtype, width)) = vector(result) else {
             return false;
         };
@@ -435,8 +486,12 @@ impl LlvmIntrinsic {
     /// Why the comptime interpreter cannot call the intrinsic, or `None`
     /// when it can: it calls only what LLVM's constant folder folds, which
     /// leaves out `llvm.donothing`, the float reductions, `vector.insert`,
-    /// the splices, and `llvm.stepvector`.
+    /// the splices, and `llvm.stepvector`, and it types no struct result,
+    /// which leaves out `vector.deinterleave2`.
     pub fn compile_time_error(self) -> Option<String> {
+        if self.result_elements() > 1 {
+            return Some("LLVM intrinsic has unknown result type".to_string());
+        }
         match self {
             Self::Donothing => Some(format!(
                 "cannot constant fold zero-result LLVM intrinsic: {}",
@@ -694,6 +749,10 @@ mod tests {
             sources(LlvmIntrinsic::VectorInterleave2, 8, &[4, 4], 0),
             Some(Some(vec![0, 4, 1, 5, 2, 6, 3, 7]))
         );
+        assert_eq!(
+            sources(LlvmIntrinsic::VectorDeinterleave2, 4, &[8], 0),
+            Some(Some(vec![0, 2, 4, 6, 1, 3, 5, 7]))
+        );
         assert_eq!(sources(LlvmIntrinsic::Ctpop, 4, &[4], 0), None);
         assert_eq!(step_lanes(Dtype::UInt8, 3), vec![0, 1, 2]);
         assert!(
@@ -752,6 +811,32 @@ mod tests {
                 .signature_error(&quad, &[quad.clone(), quad.clone()])
                 .is_some()
         );
+        let deinterleave = LlvmIntrinsic::VectorDeinterleave2;
+        let halves = |half: &Ty| Ty::from(TyKind::Tuple(vec![half.clone(), half.clone()]));
+        assert_eq!(
+            deinterleave.signature_error(&halves(&quad), std::slice::from_ref(&octet)),
+            None
+        );
+        assert!(
+            deinterleave
+                .signature_error(&quad, std::slice::from_ref(&octet))
+                .is_some_and(|reason| reason.contains("expected literal non-packed struct"))
+        );
+        assert!(
+            deinterleave
+                .signature_error(&halves(&octet), std::slice::from_ref(&octet))
+                .is_some()
+        );
+        assert!(
+            deinterleave
+                .signature_error(&halves(&simd(Dtype::Int32, 1)), &[simd(Dtype::Int32, 2)])
+                .is_some()
+        );
+        assert!(
+            LlvmIntrinsic::VectorInterleave2
+                .signature_error(&halves(&quad), &[quad.clone(), quad.clone()])
+                .is_some()
+        );
         assert_eq!(LlvmIntrinsic::Stepvector.signature_error(&quad, &[]), None);
         assert!(
             LlvmIntrinsic::Stepvector
@@ -776,6 +861,7 @@ mod tests {
             LlvmIntrinsic::VectorInsert,
             LlvmIntrinsic::VectorSplice(SpliceDirection::Right),
             LlvmIntrinsic::Stepvector,
+            LlvmIntrinsic::VectorDeinterleave2,
         ] {
             assert!(intrinsic.compile_time_error().is_some());
         }

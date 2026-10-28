@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `llvm_intrinsic` calls `llvm.vector.deinterleave2`, typed as at the pin
+  by upstream's `_RegisterPackType` of its two halves (the even lanes and
+  the odd), on the VM and natively (R1547). `std.sys` bundles
+  `_RegisterPackType` verbatim, which needs `__mlir_type[`!kgen.struct<`,
+  ~Ts.values, ` isParamPack>`]` (Mojito's tuple storage of the list's
+  elements) and `__mlir_op.`kgen.struct.extract`[index=i.__mlir_index__()]`,
+  both now admitted in any module. An intrinsic's result type is checked
+  as LLVM translation sees it, a one-field `TrivialRegisterPassable`
+  struct as its field. The comptime interpreter refuses the call ("LLVM
+  intrinsic has unknown result type"), as the pin's does. A named import
+  of an underscore-prefixed name is now re-exported, as at the pin, and a
+  struct declaring `TrivialRegisterPassable` unconditionally is trivially
+  copyable, movable, and destructible whatever its fields' binders leave
+  open, so it gets no synthesized lifecycle member. The package format
+  moves to `mojito-package 133`.
 - `__is_run_in_comptime_interpreter` is upstream's keyword: a `Bool` that
   is `True` while the comptime interpreter runs a body and `False` in the
   compiled program, on the VM and natively, as at the pin (R1546). It was
@@ -28,7 +43,7 @@ to evolve under the `0.x` compatibility rules.
   constant `n`. The comptime interpreter now calls only the intrinsics
   LLVM's constant folder folds, as the pin's does, so `llvm.donothing`,
   the float reductions, `vector.insert`, the splices, and `stepvector`
-  fail there. `llvm.vector.deinterleave2` stays outside (R1547).
+  fail there.
 - `__mlir_op` takes `pop.max` and `pop.min` (upstream's `std/math` SIMD
   `max` and `min` bodies: signed or unsigned by the lanes, `llvm.maxnum`
   and `llvm.minnum` over float lanes, or and and over `bool` lanes), a

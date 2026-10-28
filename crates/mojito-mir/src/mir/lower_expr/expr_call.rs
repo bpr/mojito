@@ -463,6 +463,9 @@ impl<'a> Flatten<'a> {
         if let Some(called) = Self::checked_llvm_intrinsic(call) {
             return self.lower_llvm_intrinsic(call, called, args);
         }
+        if let Some(index) = Self::checked_kgen_struct_extract(call) {
+            return self.lower_kgen_struct_extract(call, index, args);
+        }
         // `pointer.unsafe_origin_cast[...]()` retypes provenance only: the
         // runtime value is the receiver, unchanged, and the origin
         // parameter argument never lowers (origins erase).

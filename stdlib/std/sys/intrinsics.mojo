@@ -12,6 +12,8 @@
 # - `args.get_loaded_kgen_pack()` is served by the compiler on the
 #   collector, which is compiler storage rather than upstream's nominal
 #   `VariadicPack` (roadmap R1302).
+# `_RegisterPackType` is upstream's, verbatim: its `!kgen.struct` field is
+# Mojito's compiler-private tuple storage of the same elements.
 # Omitted: the gather, scatter, masked load and store, prefetch,
 # `assume`/`expect`, and GPU intrinsics.
 """Defines intrinsics.
@@ -65,3 +67,30 @@ def llvm_intrinsic[
             _type=type,
             hasSideEffects=has_side_effect.__mlir_i1__(),
         ](loaded_pack)
+
+
+# ===----------------------------------------------------------------------=== #
+# Transitional type used for llvm_intrinsic
+# ===----------------------------------------------------------------------=== #
+
+
+struct _RegisterPackType[*Ts: TrivialRegisterPassable](TrivialRegisterPassable):
+    comptime _mlir_type = __mlir_type[
+        `!kgen.struct<`, ~Self.Ts.values, ` isParamPack>`
+    ]
+
+    var _mlir_value: Self._mlir_type
+
+    @inline(.nodebug)
+    def __getitem_param__[i: Int](self) -> Self.Ts[i]:
+        """Get the element.
+
+        Parameters:
+            i: The element index.
+
+        Returns:
+            The tuple element at the requested index.
+        """
+        return __mlir_op.`kgen.struct.extract`[index=i.__mlir_index__()](
+            self._mlir_value
+        )
