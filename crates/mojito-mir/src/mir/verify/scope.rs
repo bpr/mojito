@@ -575,7 +575,8 @@ impl ScopeCx<'_> {
                     self.expr(role, "lane", expr, &MetaTy::value(Ty::dtype()), nested);
                 }
                 if let SimdWidth::Expr(expr) = width {
-                    self.expr(role, "width", expr, &MetaTy::int(), nested);
+                    let length = MetaTy::value(mojito_types::types::simd_length_ty());
+                    self.expr(role, "width", expr, &length, nested);
                 }
             }
             TyKind::Struct(name, args) => {
@@ -943,6 +944,16 @@ mod tests {
         }
     }
 
+    /// `SIMDLength(lanes)`, the length a vector of `lanes` lanes holds.
+    fn length_of(lanes: &ParamExpr) -> ParamExpr {
+        mojito_types::types::simd_length_converted(
+            &ParamContext::detached(),
+            "SIMDLength.__init__$ov$Int",
+            lanes,
+        )
+        .expect("an Int converts")
+    }
+
     fn function_with(reg_types: Vec<Ty>) -> MirFunction {
         MirFunction {
             blocks: vec![MirBlock {
@@ -1043,7 +1054,7 @@ mod tests {
         let width = context.decl_ref(ParamId::new("f", 1), "width", MetaTy::int());
         let symbolic = TyKind::Simd {
             dtype: SimdDtype::Expr(dt),
-            width: SimdWidth::Expr(width),
+            width: SimdWidth::Expr(length_of(&width)),
         };
         let function = function_with(vec![symbolic.into()]);
         let declarations = declarations(
@@ -1074,7 +1085,7 @@ mod tests {
         let unbound = function_with(vec![
             TyKind::Simd {
                 dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-                width: SimdWidth::Expr(foreign),
+                width: SimdWidth::Expr(length_of(&foreign)),
             }
             .into(),
         ]);
@@ -1093,7 +1104,7 @@ mod tests {
         assert!(
             findings(&mistyped, &declarations)
                 .iter()
-                .any(|finding| finding.contains("of kind `Bool`, not `Int`")),
+                .any(|finding| finding.contains("of kind `Bool`, not `SIMDLength`")),
         );
         let misdeclared = function_with(vec![
             TyKind::Param {
@@ -1189,7 +1200,7 @@ mod tests {
         let mut read = function_with(vec![
             TyKind::Simd {
                 dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-                width: SimdWidth::Expr(n),
+                width: SimdWidth::Expr(length_of(&n)),
             }
             .into(),
         ]);
@@ -1218,11 +1229,11 @@ mod tests {
         let width = |argument: &ParamExpr| {
             TyKind::Simd {
                 dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-                width: SimdWidth::Expr(context.apply(
+                width: SimdWidth::Expr(length_of(&context.apply(
                     lifted,
                     std::slice::from_ref(argument),
                     MetaTy::int(),
-                )),
+                ))),
             }
             .into()
         };
@@ -1368,7 +1379,7 @@ mod tests {
             TyKind::Dependent(DependentType::Parameter(element)).into(),
             TyKind::Simd {
                 dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-                width: SimdWidth::Expr(callable),
+                width: SimdWidth::Expr(length_of(&callable)),
             }
             .into(),
         ]);

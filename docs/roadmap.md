@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1541**.
+Next free ID: **R1542**.
 
 ## Ordered Work
 
@@ -3378,45 +3378,31 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Planned.
 
-- [ ] **R382 An `Int` binder is not inferred from a vector width spelled by
-  an `Int` expression**
+- [ ] **R1541 A compound value-parameter pattern solves no binder**
 
-  Problem: `show[w: Int](x: SIMD[DType.int32, w])` called as `show(a)` with
-  `a = SIMD[DType.int32, n](1)` in `def f[n: Int]()` is rejected with
-  "cannot infer type parameter 'w' of 'show' from the arguments", where the
-  pin binds `w` to `n` and prints.
-  - Cause: the SIMD width slot holds a `SIMDLength`'s `Int` lane count
-    (`types::simd_length_image`), where the pin's holds the `SIMDLength`
-    value its construction spelled, `SIMDLength(n)`.
-  - The pin solves an `Int` binder by unifying that construction,
-    `SIMDLength(w)` against `SIMDLength(n)`, never the canonical value. The
-    image is canonical, so no rule over it can match, and
-    `solve_value_args` (`checker/generics.rs`) and `mono/unify.rs` solve the
-    slot only for a `SIMDLength` binder.
-  - Lever: hold the `SIMDLength`-typed expression in `SimdWidth::Expr` (a
-    decl ref, or a `StructValue` whose `spelling` is the `__init__`
-    application); readers needing a lane count call `simd_length_image`,
-    and the width arm becomes the struct-valued arm, whose
-    `solve_applied_args` already unifies spellings. It touches every
-    `SimdWidth::Expr` site, the MIR verifier's width meta, and the width's
-    MIR text (a `VERSION_MINOR` bump).
-  - Probe: the pin solves `w` from `n` and `n * 2` over `def f[n: Int]()`,
-    from `Int(m) + 1` and `Int(m) * 2` over `m: SIMDLength`, and from an
-    explicit `SIMD[_, SIMDLength(n)]`.
-  - Probe: the pin rejects `m`, `m + 1`, and `Int(m)` over `m: SIMDLength`,
-    a literal width, `SIMDLength(n) + 2`, a module `comptime K: Int = 4`,
-    and `comptime L = SIMDLength(n)` then `SIMD[_, L]`.
-  - Probe: `SIMD[dt, m + 2]` and `SIMD[dt, Int(m) + 2]` are one type at the
-    pin, so identity stays on the value.
-  - Risk: a `StructValue` over `m._mlir_value` and the decl ref `m` are
-    unequal unless the context eta-reduces; probe `SIMD[dt, m]` against
-    `SIMD[dt, SIMDLength(mlir_value=m._mlir_value)]` at the pin first.
-  - Must keep `assets/type_error/simd_int_width_binder_not_inferred.mojo`
-    rejected (a literal width).
-  - Found while landing a display binding read in a type or a parameter
-    argument (2026-10-06).
+  Problem: `g[w: Int](x: B[w * 2])` called as `g(B[n * 2]())` in `def
+  f[n: Int]()` is rejected with "cannot infer type parameter 'w' of 'g'
+  from the arguments", where the pin unifies the two expressions node by
+  node, binds `w` to `n`, and prints `2`.
+  - Cause: `solve_value_args` and `solve_applied_args`
+    (`checker/generics.rs`) bind only a bare binder or the arguments of two
+    applications of one function. Any other pattern (`w * 2`, `w + 1`) is
+    left for the substituted signature to compare, so its binder stays
+    unsolved.
+  - Lever: unify a canonical `ParamKind::Op` pattern against an actual of
+    the same operator and arity operand by operand, binding a binder
+    operand and requiring every other operand equal.
+  - Probe: `B[w + 1]` against `B[n + 1]` solves `w = n` at the pin.
+  - Probe: `show[w: Int](x: SIMD[DType.int32, w * 2])` against
+    `SIMD[DType.int32, n * 2]` solves `w = n` and prints `2 [1, 1, 1, 1]`
+    at the pin. Its slot holds `SIMDLength(w * 2)`, so the rule applies to
+    the construction's argument.
+  - Probe: the pin rejects `B[w * 2]` against a closed `B[4]`: it unifies
+    structure and never inverts an operation.
+  - Found while landing R382 (2026-10-27).
   - Depends on nothing.
-  - Model: Fable, Not Planned.
+  - Model: Opus, Not Planned.
+
 - [ ] **R53 A list literal does not reach a `List` built over a binder**
 
   Problem: `count([1, 2])` for `def count[T: …](extra: List[T])` reports
@@ -5508,6 +5494,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     argument: `var x: T[W(3)] = T[W(4)]()` over `struct T[w: W]` is
     "cannot implicitly convert 'T[Int(4)]' value to 'T[Int(3)]'", where
     Mojito prints `T[W(4)]`.
+  - A local `comptime L = W(n)` alias of a struct value prints as the
+    application of its lifted function, `B[$comptime$f$c0(n)]`, where the
+    pin prints `B[L]` and notes "'L' is aka 'W(n)'".
   - The application holds the MIR declaration's name and every argument in
     one list (`ParamKind::Apply`, `param_expr.rs`), so the printer knows
     neither the source name nor which arguments are compile-time ones.
@@ -9841,9 +9830,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     and `reduce_min` off x86) are `llvm_intrinsic` calls of
     `llvm.vector.reduce.*`, which run since R1394. Its subvector and
     shuffle bodies need R1519.
-  - The width slot holds a `SIMDLength`'s `Int` lane count, where the
-    ported `SIMD[dtype, length: SIMDLength]` holds the length itself
-    (R382).
   - Depends on R1390, R1392, R1393, R1394, R1395, R1396, R1522, R1526, R1539 (the
     length type), R382 (the width slot), R185 and R186 (so the port is
     upstream's bodies with no leniency), R58, R1516, R1517, R1518, and

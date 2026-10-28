@@ -1540,7 +1540,14 @@ impl Checker {
                 ) =>
             {
                 let target = scalar_type_name(name).expect("guard established a scalar type");
-                match ct_transport(build(&args[0])?) {
+                let operand = build(&args[0])?;
+                // `Int(m)` of a `SIMDLength` is its lane count: upstream's
+                // builtin `SIMD.__init__(SIMDLength)` folded.
+                if is_simd_length_value(&operand) && matches!(target.kind(), TyKind::INT) {
+                    return mojito_types::types::simd_length_image(context, &operand)
+                        .map_err(param_error);
+                }
+                match ct_transport(operand) {
                     CtValue::Expr(operand) => (*operand.meta() == MetaTy::value(target))
                         .then_some(operand.clone())
                         .ok_or_else(|| {

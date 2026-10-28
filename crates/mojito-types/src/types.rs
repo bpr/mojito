@@ -188,14 +188,20 @@ impl fmt::Display for SimdDtype {
     }
 }
 
-/// The lane count of a [`TyKind::Simd`]: a concrete width, or an `Int`-valued
-/// parameter expression while the enclosing declaration is still symbolic
-/// (`SIMD[dt, width]`, `SIMD[dt, 2 * n]`).
+/// The length of a [`TyKind::Simd`]: a concrete lane count, or the
+/// `SIMDLength` value the slot holds while the declaration is symbolic.
+///
+/// Upstream's slot is `SIMD[dtype, length: SIMDLength]`. The value is
+/// a `SIMDLength` binder (`w` of `SIMD[dt, w]`), or a struct value spelled by
+/// the construction that converted the width (`SIMDLength(n * 2)` for
+/// `SIMD[dt, n * 2]`): its fields are its identity and its spelling what a
+/// binder is solved from. Its lane count is its [`simd_length_image`]
+/// ([`SimdWidth::lanes`]), which the slot displays.
 ///
 /// The `SIMD[dt, _]` inference wildcard is an unbound typed hole, so it is
-/// told apart from every lane count a program can name and from a binder the
-/// instantiation still owes a value. `Expr` is never a closed expression:
-/// [`simd_ty_from_slots`] folds one to `Known`.
+/// told apart from every length a program can name and from a binder the
+/// instantiation still owes a value. `Expr` never holds a length whose lane
+/// count is closed: [`SimdWidth::of_length`] makes one `Known`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SimdWidth {
     Known(i64),
@@ -206,15 +212,39 @@ impl SimdWidth {
     /// The `SIMD[dt, _]` inference wildcard. The construction that spells it
     /// solves the hole from its argument count, so no later phase sees one.
     pub fn inferred(context: &ParamContext) -> Self {
-        Self::Expr(context.hole(HoleKind::Unbound, MetaTy::int()))
+        Self::Expr(context.hole(HoleKind::Unbound, MetaTy::value(simd_length_ty())))
     }
 
-    /// The lane count a concrete use reads: a known slot's, or the value an
+    /// The slot holding the `SIMDLength` value `length`: `Known` once its
+    /// lane count is closed.
+    pub fn of_length(context: &ParamContext, length: ParamExpr) -> Result<Self, ParamError> {
+        if !length.meta().as_value().is_some_and(is_simd_length) {
+            return Err(ParamError::TypeMismatch {
+                operation: "SIMD width".to_string(),
+                expected: SIMD_LENGTH_TYPE_NAME.to_string(),
+                found: length.meta().to_string(),
+            });
+        }
+        Ok(simd_length_image(context, &length)?
+            .as_i64()
+            .map_or(Self::Expr(length), Self::Known))
+    }
+
+    /// The lane count, an `Int`: a known slot's constant, or the image of
+    /// the length the slot holds.
+    pub fn lanes(&self, context: &ParamContext) -> Result<ParamExpr, ParamError> {
+        match self {
+            Self::Known(width) => context.constant(CtValue::Int(*width)),
+            Self::Expr(length) => simd_length_image(context, length),
+        }
+    }
+
+    /// The lane count a concrete use reads: a known slot's, or the one an
     /// evaluated application in the slot established.
     pub fn known(&self) -> Option<i64> {
         match self {
             Self::Known(width) => Some(*width),
-            Self::Expr(expr) => expr.as_i64(),
+            Self::Expr(_) => self.lanes(&ParamContext::detached()).ok()?.as_i64(),
         }
     }
 
@@ -238,9 +268,17 @@ impl fmt::Display for SimdWidth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Known(width) => write!(f, "{width}"),
-            Self::Expr(expr) => write!(f, "{expr}"),
+            Self::Expr(length) => match self.lanes(&ParamContext::detached()) {
+                Ok(lanes) => write!(f, "{lanes}"),
+                Err(_) => write!(f, "{length}"),
+            },
         }
     }
+}
+
+/// Upstream's `SIMDLength`, the type of a `SIMD` width slot.
+pub fn simd_length_ty() -> Ty {
+    TyKind::Struct(SIMD_LENGTH_TYPE_NAME.to_string(), Vec::new()).into()
 }
 
 /// Whether `ty` is upstream's `SIMDLength`.
@@ -272,6 +310,26 @@ pub fn simd_length_value(lanes: i64) -> CtValue {
             CtValue::Index(lanes),
         )],
     }
+}
+
+/// The `SIMDLength` upstream's implicit `SIMDLength.__init__(Int)`, the
+/// overload `conversion`, converts the lane count `lanes` to: the struct
+/// value of its one `index` field, spelled by that application.
+pub fn simd_length_converted(
+    context: &ParamContext,
+    conversion: &str,
+    lanes: &ParamExpr,
+) -> Result<ParamExpr, ParamError> {
+    let spelling = context.apply(
+        conversion,
+        std::slice::from_ref(lanes),
+        MetaTy::value(simd_length_ty()),
+    );
+    let field = (
+        crate::ct::MLIR_VALUE_FIELD.to_string(),
+        context.cast_to_builtin(lanes)?,
+    );
+    Ok(context.struct_value(&[field], &spelling))
 }
 
 /// The `SIMDLength` whose lane count `lanes` is, when `lanes` is that
@@ -421,10 +479,10 @@ impl LaneMask {
                 start: f(start)?,
                 count: match count {
                     SimdWidth::Known(_) => count.clone(),
-                    SimdWidth::Expr(expr) => {
-                        let expr = f(expr)?;
-                        expr.as_i64()
-                            .map_or(SimdWidth::Expr(expr), SimdWidth::Known)
+                    SimdWidth::Expr(length) => {
+                        let length = f(length)?;
+                        SimdWidth::of_length(&ParamContext::detached(), length.clone())
+                            .unwrap_or(SimdWidth::Expr(length))
                     }
                 },
             },
@@ -442,7 +500,11 @@ impl LaneMask {
                 .unwrap_or_else(|| expr.clone())
         };
         let width = |width: &SimdWidth| match width {
-            SimdWidth::Expr(slot) => close(slot).map_or_else(|| width.clone(), SimdWidth::Known),
+            SimdWidth::Expr(_) => width
+                .lanes(&context)
+                .ok()
+                .and_then(|lanes| close(&lanes))
+                .map_or_else(|| width.clone(), SimdWidth::Known),
             SimdWidth::Known(_) => width.clone(),
         };
         match self {
@@ -2983,18 +3045,7 @@ pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, Para
         known @ SimdDtype::Known(_) => known,
     };
     let width = match width {
-        SimdWidth::Expr(expr) => match expr.as_constant() {
-            Some(value) => SimdWidth::Known(
-                crate::param_expr::fold::integer_value(value)
-                    .and_then(|width| width.to_i64())
-                    .ok_or_else(|| ParamError::TypeMismatch {
-                        operation: "SIMD width".to_string(),
-                        expected: "Int".to_string(),
-                        found: value.to_string(),
-                    })?,
-            ),
-            None => SimdWidth::Expr(expr),
-        },
+        SimdWidth::Expr(length) => SimdWidth::of_length(&ParamContext::detached(), length)?,
         known @ SimdWidth::Known(_) => known,
     };
     Ok(match (dtype, width) {
@@ -5656,8 +5707,12 @@ mod simd_slot_tests {
         context.decl_ref(ParamId::new("f", 0), "dt", MetaTy::value(Ty::dtype()))
     }
 
+    /// `SIMDLength(width)` over the `Int` binder `width`, as `SIMD[dt,
+    /// width]` holds it.
     fn width_binder(context: &ParamContext) -> ParamExpr {
-        context.decl_ref(ParamId::new("f", 1), "width", MetaTy::int())
+        let width = context.decl_ref(ParamId::new("f", 1), "width", MetaTy::int());
+        simd_length_converted(context, "SIMDLength.__init__$ov$Int", &width)
+            .expect("an Int converts")
     }
 
     #[test]
@@ -5671,6 +5726,8 @@ mod simd_slot_tests {
             Ty::float64()
         );
         let one = context.constant(CtValue::Int(1)).expect("a constant");
+        let one = simd_length_converted(&context, "SIMDLength.__init__$ov$Int", &one)
+            .expect("an Int converts");
         assert_eq!(
             simd_ty_from_slots(SimdDtype::Known(Dtype::Int32), SimdWidth::Expr(one))
                 .expect("closed"),
@@ -6133,7 +6190,10 @@ mod struct_field_types_tests {
 
     /// `SIMD[DType.int64, n]` over the value binder `decl`.
     fn lanes_over(decl: &ParamDecl) -> Ty {
-        let width = ParamContext::detached().decl_ref(decl.id().clone(), "n", decl.binder_meta());
+        let context = ParamContext::detached();
+        let width = context.decl_ref(decl.id().clone(), "n", decl.binder_meta());
+        let width = simd_length_converted(&context, "SIMDLength.__init__$ov$Int", &width)
+            .expect("an Int converts");
         simd_ty_from_slots(SimdDtype::Known(Dtype::Int64), SimdWidth::Expr(width))
             .expect("a symbolic SIMD type")
     }

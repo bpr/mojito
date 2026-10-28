@@ -33,8 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	846
-assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
+# swept-count	849
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -253,12 +252,14 @@ assets/type_error/closure_storage_reference_parameter_argument.mojo	compile-reje
 assets/type_error/collection_display_default_element_mismatch.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/comprehension_binder_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/comptime_alias_constraint_message.mojo	compile-reject	agree	error: violated constraint
+assets/type_error/comptime_alias_struct_value_opaque.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'B[L]' to 'B[W(k)]', it depends on an unresolved parameter 'k'
 assets/type_error/comptime_alias_value_where_violated.mojo	compile-reject	agree	error: violated constraint
 assets/type_error/comptime_annotated_constant_conversion.mojo	compile-reject	agree	error: cannot implicitly convert 'Int' value to 'Float64'
 assets/type_error/comptime_annotation_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'IntLiteral[1]' value to 'String'
 assets/type_error/comptime_application_computed_type_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': 'g' parameter 'e' has 'Int' type, but value has type 'Float64'
 assets/type_error/comptime_application_identity.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int32, (n * Int(2))]' value to 'SIMD[.int32, h(n)]'
 assets/type_error/comptime_application_runtime_operand.mojo	compile-reject	agree	error: cannot use a dynamic value in call argument
+assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 assets/type_error/comptime_assert_closed_false.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/comptime_assert_dynamic_value.mojo	compile-reject	agree	error: cannot use a dynamic value in 'comptime assert' expression
 assets/type_error/comptime_assert_fails_at_instance.mojo	compile-reject	agree	error: function instantiation failed
@@ -730,6 +731,8 @@ assets/type_error/setter_without_getter.mojo	compile-reject	agree	error: 'Sink' 
 assets/type_error/simd_bool_positional_splat.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_generic_width_rejected.mojo	compile-reject	agree	error: SIMD vector length must be a power of two between 1 and 2^15, found '!kgen.simd<3, si32>'
 assets/type_error/simd_inferred_width_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int64, 4]' value to 'SIMD[.int32, _]'
+assets/type_error/simd_int_width_binder_from_alias.mojo	compile-reject	agree	error: invalid call to 'show': value passed to 'x' cannot be converted from 'SIMD[.int32, L]' to 'SIMD[.int32, w]', it depends on an unresolved parameter 'w'
+assets/type_error/simd_int_width_binder_from_length.mojo	compile-reject	agree	error: invalid call to 'show': value passed to 'x' cannot be converted from 'SIMD[.int32, m]' to 'SIMD[.int32, w]', it depends on an unresolved parameter 'w'
 assets/type_error/simd_int_width_binder_not_inferred.mojo	compile-reject	agree	error: invalid call to 'lanes': value passed to 'v' cannot be converted from 'SIMD[.int32, 4]' to 'SIMD[.int32, n]', it depends on an unresolved parameter 'n'
 assets/type_error/simd_length_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'SIMDLength' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
 assets/type_error/simd_scalar_splat_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Int32' value to 'SIMD[.int64, 4]'

@@ -2181,6 +2181,7 @@ impl Checker {
                     expression.meta(),
                     mojito_types::param_expr::MetaTy::ParamList(_)
                 );
+            let expression = self.alias_value(value, expression);
             if let Some(scope) = self.local_comptime_parameters.last_mut() {
                 scope.insert(name.to_string(), (level, expression));
             }
@@ -2531,6 +2532,31 @@ impl Checker {
             .filter(|expression| expression.as_constant().is_none())?;
         self.record_compiled_expression(value, &expression);
         Some(expression)
+    }
+
+    /// The value a local `comptime` binding of `value` holds, given the
+    /// `expression` it denotes: a struct value keeps its fields, its
+    /// identity, but is spelled by the binding's lifted application, as
+    /// upstream's alias reference stands for the folded value. A binder is
+    /// then never solved through the construction the alias hides
+    /// (`comptime L = SIMDLength(n)` does not solve `w` of `SIMDLength(w)`).
+    /// Any other expression is held as it is.
+    fn alias_value(&self, value: &Expr, expression: ParamExpr) -> ParamExpr {
+        let mojito_types::param_expr::ParamKind::StructValue { fields, .. } = expression.kind()
+        else {
+            return expression;
+        };
+        let Some(alias) = expression
+            .meta()
+            .as_value()
+            .and_then(|ty| self.named_application(value, &names_read(value), ty.clone()))
+        else {
+            return expression;
+        };
+        self.lifted_expressions
+            .borrow_mut()
+            .insert(value.source_span(), alias.clone());
+        self.param_context.struct_value(fields, &alias)
     }
 
     /// The constant value a closed local `comptime` binding builds to

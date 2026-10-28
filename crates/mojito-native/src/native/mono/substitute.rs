@@ -558,8 +558,11 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
                 SimdDtype::Known(known) => SimdDtype::Known(*known),
             },
             width: match width {
-                SimdWidth::Expr(expr) => match eval_ct(expr, bindings) {
-                    Ok(CtValue::Int(known)) => SimdWidth::Known(known),
+                SimdWidth::Expr(_) => match width
+                    .lanes(&ParamContext::detached())
+                    .map(|lanes| eval_ct(&lanes, bindings))
+                {
+                    Ok(Ok(CtValue::Int(known))) => SimdWidth::Known(known),
                     _ => width.clone(),
                 },
                 SimdWidth::Known(known) => SimdWidth::Known(*known),

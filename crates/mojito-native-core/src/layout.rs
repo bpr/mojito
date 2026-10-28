@@ -523,7 +523,14 @@ mod tests {
             TyKind::SelfType,
             TyKind::Simd {
                 dtype: mojito_types::types::SimdDtype::Known(Dtype::Int32),
-                width: mojito_types::types::SimdWidth::Expr(width.clone()),
+                width: mojito_types::types::SimdWidth::Expr(
+                    mojito_types::types::simd_length_converted(
+                        &mojito_types::param_expr::ParamContext::detached(),
+                        "SIMDLength.__init__$ov$Int",
+                        &width,
+                    )
+                    .expect("an Int converts"),
+                ),
             },
             TyKind::Struct(
                 "Buf".into(),

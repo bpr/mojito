@@ -451,11 +451,10 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                 actual,
                 bindings,
             )?;
-            // A `SIMDLength` binder's lane count binds the binder to the
-            // length of the argument's lanes.
-            if let Some(length) = width_expr(width)
-                .and_then(mojito_types::types::simd_length_of_image)
-                .and_then(ParamExpr::as_decl_ref)
+            // A `SIMDLength` binder binds to the length of the argument's
+            // lanes; an `Int` one the slot converted (`SIMDLength(n)`) is its
+            // lane count.
+            if let Some(length) = width_expr(width).and_then(ParamExpr::as_decl_ref)
                 && let Some(lanes) = actual_width.known()
             {
                 return bind_value(
@@ -464,8 +463,9 @@ pub(super) fn unify(pattern: &Ty, actual: &Ty, bindings: &mut Bindings) -> Resul
                     bindings,
                 );
             }
+            let lanes = width_expr(width).and_then(|_| width.lanes(&ParamContext::detached()).ok());
             unify_simd_slot(
-                width.is_expr().then(|| width_expr(width)).flatten(),
+                lanes.as_ref(),
                 width.known().map(CtValue::Int),
                 actual_width.known().map(CtValue::Int),
                 pattern,

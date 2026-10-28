@@ -3689,12 +3689,7 @@ impl Checker {
         // argument types.
         let mut value_solutions = HashMap::new();
         for (pat, act) in patterns.iter().zip(actuals) {
-            solve_value_args(
-                pat,
-                act,
-                &|lanes| self.simd_length_of_lanes(lanes),
-                &mut value_solutions,
-            );
+            solve_value_args(pat, act, &mut value_solutions);
         }
         for (pat, act) in patterns.iter().zip(actuals) {
             if let TyKind::Param { binder, bounds, .. } = pat.kind()

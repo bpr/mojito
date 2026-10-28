@@ -347,27 +347,21 @@ pub(super) fn solved_value_bindings(
 /// binds to the actual's value argument in the same slot (`Array[T, length]`
 /// against `Array[Int, 3]` solves `length = 3`). First solution wins; a
 /// structural mismatch contributes nothing, exactly like `unify`.
-/// `length_of_lanes` is the `SIMDLength` whose lane count a width slot
-/// holds, the value a vector's width slot binds a `SIMDLength` binder to.
-pub(super) fn solve_value_args(
-    pattern: &Ty,
-    actual: &Ty,
-    length_of_lanes: &dyn Fn(&SimdWidth) -> Option<CtValue>,
-    out: &mut HashMap<String, CtValue>,
-) {
+pub(super) fn solve_value_args(pattern: &Ty, actual: &Ty, out: &mut HashMap<String, CtValue>) {
     match (pattern.kind(), actual.kind()) {
         // A symbolic lane binds to the actual's own dtype (`Scalar[dt]`
         // against `Scalar[DType.int32]` solves `dt`), and a numeric literal
         // binds it at the literal's default type (`kind(3)` solves
         // `DType.int`, `kind(2.5)` `DType.float64`), as upstream materializes
         // it. A `Bool` is no SIMD but converts into `Scalar[DType.bool]`, so
-        // it binds `DType.bool`. The width slot holds a `SIMDLength`'s lane
-        // count, so it solves a binder of SIMD's own width type (`SIMD[dt,
-        // w]` with `w: SIMDLength` against a four-lane vector, a scalar at
-        // width one) to the length of the actual's lanes. An `Int` binder
-        // there is solved at the pin by the width's construction, which the
-        // slot does not keep. A slot the actual leaves open (the caller's
-        // own `SIMD[dt, n]`) binds its expression.
+        // it binds `DType.bool`. The width slot holds a `SIMDLength`, so it
+        // is a struct value argument: a `SIMDLength` binder (`SIMD[dt, w]`
+        // with `w: SIMDLength`) binds to the actual's length, `SIMDLength(4)`
+        // for a four-lane vector, and an `Int` binder is solved from the
+        // construction that converted the actual's width, `SIMDLength(w)`
+        // against `SIMDLength(n)`, as at the pin. A known width, or a length
+        // no conversion spells (`m`, `m + 1`, an alias), solves no `Int`
+        // binder.
         (TyKind::Simd { dtype, width }, _) => {
             let actual_slots = match actual.kind() {
                 TyKind::Bool => Some((SimdDtype::Known(Dtype::Bool), SimdWidth::Known(1))),
@@ -385,15 +379,20 @@ pub(super) fn solve_value_args(
                 };
                 out.entry(reference.name.to_string()).or_insert(value);
             }
-            if let (SimdWidth::Expr(lanes), SimdWidth::Expr(actual)) = (width, &actual_width) {
-                solve_applied_args(lanes, actual, length_of_lanes, out);
-            }
-            if let SimdWidth::Expr(lanes) = width
-                && let Some(reference) = mojito_types::types::simd_length_of_image(lanes)
-                    .and_then(ParamExpr::as_decl_ref)
-                && let Some(value) = length_of_lanes(&actual_width)
-            {
+            let SimdWidth::Expr(length) = width else {
+                return;
+            };
+            if let Some(reference) = length.as_decl_ref() {
+                let value = match actual_width {
+                    SimdWidth::Known(count) => mojito_types::types::simd_length_value(count),
+                    SimdWidth::Expr(actual) => actual
+                        .as_constant()
+                        .cloned()
+                        .unwrap_or(CtValue::Expr(actual)),
+                };
                 out.entry(reference.name.to_string()).or_insert(value);
+            } else if let SimdWidth::Expr(actual) = &actual_width {
+                solve_applied_args(length, actual, out);
             }
         }
         // A spread of a pack that is still a parameter (`Tuple[*Self.Ts]`
@@ -447,24 +446,19 @@ pub(super) fn solve_value_args(
                             out.entry(reference.name.to_string())
                                 .or_insert_with(|| value.clone());
                         } else if let CtValue::Expr(actual) = value {
-                            solve_applied_args(expr, actual, length_of_lanes, out);
+                            solve_applied_args(expr, actual, out);
                         }
                     }
-                    (TyArg::Ty(p), TyArg::Ty(a)) => solve_value_args(p, a, length_of_lanes, out),
+                    (TyArg::Ty(p), TyArg::Ty(a)) => solve_value_args(p, a, out),
                     _ => {}
                 }
             }
         }
         (TyKind::Ref(pattern_reference), TyKind::Ref(actual_reference)) => {
-            solve_value_args(
-                &pattern_reference.referent,
-                &actual_reference.referent,
-                length_of_lanes,
-                out,
-            );
+            solve_value_args(&pattern_reference.referent, &actual_reference.referent, out);
         }
         (TyKind::Ref(pattern_reference), _) => {
-            solve_value_args(&pattern_reference.referent, actual, length_of_lanes, out);
+            solve_value_args(&pattern_reference.referent, actual, out);
         }
         _ => {}
     }
@@ -681,12 +675,7 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
 /// to is matched by the construction it folded from, as the pin infers
 /// through the call and not through the fields. First solution wins; any
 /// other pair of expressions contributes nothing.
-fn solve_applied_args(
-    pattern: &ParamExpr,
-    actual: &ParamExpr,
-    length_of_lanes: &dyn Fn(&SimdWidth) -> Option<CtValue>,
-    out: &mut HashMap<String, CtValue>,
-) {
+fn solve_applied_args(pattern: &ParamExpr, actual: &ParamExpr, out: &mut HashMap<String, CtValue>) {
     let construction = |expr: &ParamExpr| match expr.kind() {
         ParamKind::StructValue { spelling, .. } => spelling.0.clone(),
         _ => expr.clone(),
@@ -719,8 +708,8 @@ fn solve_applied_args(
             (
                 ParamKind::TypeShape(pattern),
                 ParamKind::TypeShape(actual) | ParamKind::Constant(CtValue::Type(actual)),
-            ) => solve_value_args(pattern, actual, length_of_lanes, out),
-            _ => solve_applied_args(arg, actual, length_of_lanes, out),
+            ) => solve_value_args(pattern, actual, out),
+            _ => solve_applied_args(arg, actual, out),
         }
     }
 }

@@ -680,6 +680,40 @@ fn struct_value_identity_is_its_fields() {
     assert_eq!(answered.as_constant(), Some(&frozen));
 }
 
+/// A construction from a value's own fields is that value, as the pin
+/// shows `SIMDLength(mlir_value=m._mlir_value)` as `m`; fields of another
+/// value, or a construction of another type, are not.
+#[test]
+fn struct_value_of_own_fields_is_the_value() {
+    let context = ParamContext::new();
+    let length = MetaTy::value(TyKind::Struct("L".to_string(), Vec::new()).into());
+    let other = MetaTy::value(TyKind::Struct("K".to_string(), Vec::new()).into());
+    let m = context.register(ParamId::new("f", 0), "m", length.clone());
+    let k = context.register(ParamId::new("f", 1), "k", length.clone());
+    let read = |base: &ParamExpr| {
+        context
+            .field(base, "v", MetaTy::int())
+            .expect("a field read")
+    };
+    let spelled = |meta: &MetaTy, field: &ParamExpr| {
+        let spelling = context.apply("L.__init__", std::slice::from_ref(field), meta.clone());
+        context.struct_value(&[("v".to_string(), field.clone())], &spelling)
+    };
+    let constructed = |value: &ParamExpr| matches!(value.kind(), ParamKind::StructValue { .. });
+    assert_eq!(spelled(&length, &read(&m)), m);
+    assert!(constructed(&spelled(&other, &read(&m))));
+    let mixed = context.struct_value(
+        &[("v".to_string(), read(&m)), ("w".to_string(), read(&k))],
+        &context.apply("L.__init__", &[read(&m), read(&k)], length.clone()),
+    );
+    assert!(constructed(&mixed));
+    let misnamed = context.struct_value(
+        &[("w".to_string(), read(&m))],
+        &context.apply("L.__init__", &[read(&m)], length),
+    );
+    assert!(constructed(&misnamed));
+}
+
 /// An operator method's application displays as its operator, as the pin
 /// shows a folded struct operator: forward, reflected, and unary.
 #[test]

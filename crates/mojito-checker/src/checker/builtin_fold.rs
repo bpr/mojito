@@ -401,7 +401,7 @@ impl Checker {
                     Some((field.clone(), value))
                 })
                 .collect::<Option<Vec<_>>>()?;
-            let value = self.param_context.struct_value(&read, &operand);
+            let value = self.param_context.construction(&read, &operand);
             self.local_comptime_parameters
                 .last_mut()?
                 .insert((*name).to_string(), (level, value));

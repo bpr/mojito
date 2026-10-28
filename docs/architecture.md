@@ -1394,12 +1394,15 @@ vector width naming its own parameter (`def total[dt: DType, width:
 Int](v: SIMD[dt, width])`, a struct field `SIMD[Self.dt, Self.width]`), is
 validated like any other. `TyKind::Simd` holds typed slots (`SimdDtype`,
 `SimdWidth`): a slot is a known dtype or width, or the parameter expression
-the template names (`dtype_from_arg`, `simd_width` in the checker), and the
-one constructor of a symbolic vector type (`types::simd_ty_from_slots`) folds
+the template names (`dtype_from_arg`, `simd_width` in the checker). A
+symbolic width is the `SIMDLength` upstream's slot holds, an `Int` width
+the struct value of its implicit `SIMDLength(n)` conversion: its fields are
+its identity and its spelling what an `Int` binder is solved from. The one
+constructor of a symbolic vector type (`types::simd_ty_from_slots`) folds
 a closed slot to its constant and two known slots to the canonical type, so
 slot equality is type identity in the pin's normal form (`SIMD[dt, n + 1]`
-is `SIMD[dt, 1 + n]`; `v.join(v)` is `SIMD[dt, 2 * width]`; a guard narrows
-nothing). A symbolic lane's capabilities are the SIMD surface itself, not a
+is `SIMD[dt, 1 + n]`; `v.join(v)` is `SIMD[dt, SIMDLength(2 * width)]`; a
+guard narrows nothing). A symbolic lane's capabilities are the SIMD surface itself, not a
 trait bound: every dtype-gated operator and method is licensed through
 `SimdDtype::licenses` (the constraint is the instantiation's to check, as
 upstream defers `constrained[...]`), an integer or float literal splats into

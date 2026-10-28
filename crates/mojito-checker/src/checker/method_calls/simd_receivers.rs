@@ -337,7 +337,9 @@ impl Checker {
                             return Err(TypeError::BadSimdWidth(count.to_string()));
                         }
                         Some(count) => SimdWidth::Known(count),
-                        None => SimdWidth::Expr(count),
+                        // Upstream's `output_width: Int` converts into the
+                        // result's `SIMDLength` slot.
+                        None => self.width_of_lanes(&count)?,
                     });
                 }
                 mojito_ast::ast::ParamArg::Named { name, value } if name == "offset" => {
@@ -402,18 +404,28 @@ impl Checker {
                 }
                 SimdWidth::Known(joined)
             }
-            // `SIMD[dt, 2 * width]`, in the pin's normal form.
-            SimdWidth::Expr(width) => {
+            // Upstream's `SIMD[Self.dtype, 2 * Int(Self.length)]`.
+            SimdWidth::Expr(_) => {
                 let context = &self.param_context;
                 let two = context.constant(CtValue::Int(2)).map_err(param_error)?;
-                SimdWidth::Expr(
-                    context
-                        .infix(InfixOp::Mul, width, &two)
+                let lanes = width.lanes(context).map_err(param_error)?;
+                self.width_of_lanes(
+                    &context
+                        .infix(InfixOp::Mul, &lanes, &two)
                         .map_err(param_error)?,
-                )
+                )?
             }
         };
         simd_of(dtype, joined)
+    }
+
+    /// The width slot of the symbolic lane count `lanes`, an `Int`
+    /// converted to the `SIMDLength` the slot holds.
+    fn width_of_lanes(&self, lanes: &ParamExpr) -> Result<SimdWidth, TypeError> {
+        let length = self
+            .simd_length_of_lanes(lanes)
+            .ok_or_else(|| TypeError::BadSimdWidth(lanes.to_string()))?;
+        SimdWidth::of_length(&self.param_context, length).map_err(param_error)
     }
 
     /// A gather's compile-time `Int` argument: its constant, or the

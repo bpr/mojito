@@ -543,7 +543,14 @@ mod tests {
                     vec![
                         TyKind::Simd {
                             dtype: SimdDtype::Known(mojito_ast::ast::Dtype::Int64),
-                            width: SimdWidth::Expr(width),
+                            width: SimdWidth::Expr(
+                                mojito_types::types::simd_length_converted(
+                                    &ParamContext::detached(),
+                                    "SIMDLength.__init__$ov$Int",
+                                    &width,
+                                )
+                                .expect("an Int converts"),
+                            ),
                         }
                         .into(),
                     ],

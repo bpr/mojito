@@ -903,6 +903,7 @@ assets/ok/simd_floats.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floordiv_mod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_generic_width.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_inferred_width_binding.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_int_width_binder_inferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_int_wrap_native_int.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_binders_inferred.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_lane_dynamic.mojo	compute	differential	ret=Int

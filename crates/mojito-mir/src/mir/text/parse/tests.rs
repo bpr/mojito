@@ -10,6 +10,18 @@ fn int_parameter(owner: &str, slot: usize, name: &str) -> ParamExpr {
     ParamContext::detached().decl_ref(ParamId::new(owner, slot), name, MetaTy::int())
 }
 
+/// The width slot of `lanes` lanes: `SIMDLength(lanes)`.
+fn width_of(lanes: &ParamExpr) -> mojito_types::types::SimdWidth {
+    mojito_types::types::SimdWidth::Expr(
+        mojito_types::types::simd_length_converted(
+            &ParamContext::detached(),
+            "SIMDLength.__init__$ov$Int",
+            lanes,
+        )
+        .expect("an Int converts"),
+    )
+}
+
 /// A test binder's identity: one declaration owns every test binder, each
 /// spelling its own slot, so round trips compare identities as well as names.
 fn test_id(name: &str) -> ParamId {
@@ -1322,7 +1334,7 @@ fn instruction_families_reprint_byte_identically() {
             other: None,
             mask: LaneMask::Slice {
                 start: constant(CtValue::Int(1)),
-                count: mojito_types::types::SimdWidth::Expr(int_parameter("f", 1, "w")),
+                count: width_of(&int_parameter("f", 1, "w")),
             },
         },
         MirInstr::SimdShuffle {
@@ -2097,7 +2109,7 @@ fn symbolic_simd_slots_round_trip() {
     let dtype = context.decl_ref(ParamId::new("f", 1), "dt", MetaTy::value(Ty::dtype()));
     let symbolic = Ty::new(TyKind::Simd {
         dtype: mojito_types::types::SimdDtype::Expr(dtype),
-        width: mojito_types::types::SimdWidth::Expr(width),
+        width: width_of(&width),
     });
     let program = program_with(vec![(
         "main".into(),
@@ -3241,11 +3253,11 @@ fn param_apply_list_get_and_reflect_round_trip() {
         TyKind::Dependent(DependentType::Parameter(reflected)),
         TyKind::Simd {
             dtype: mojito_types::types::SimdDtype::Known(Dtype::Float32),
-            width: mojito_types::types::SimdWidth::Expr(applied),
+            width: width_of(&applied),
         },
         TyKind::Simd {
             dtype: mojito_types::types::SimdDtype::Known(Dtype::Float32),
-            width: mojito_types::types::SimdWidth::Expr(static_method),
+            width: width_of(&static_method),
         },
     ]
     .into_iter()

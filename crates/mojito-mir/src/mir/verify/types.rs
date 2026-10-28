@@ -692,7 +692,14 @@ mod tests {
         let symbolic = |width: mojito_types::param_expr::ParamExpr| {
             Ty::new(TyKind::Simd {
                 dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Int32),
-                width: mojito_types::types::SimdWidth::Expr(width),
+                width: mojito_types::types::SimdWidth::Expr(
+                    mojito_types::types::simd_length_converted(
+                        &context,
+                        "SIMDLength.__init__$ov$Int",
+                        &width,
+                    )
+                    .expect("an Int converts"),
+                ),
             })
         };
         assert!(

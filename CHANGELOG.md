@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An `Int` width binder is solved from a vector whose width an `Int`
+  expression spells: `show(a)` over `show[w: Int](x: SIMD[DType.int32, w])`
+  and `a = SIMD[DType.int32, n](1)` binds `w` to `n`, as at the pin, where it
+  was rejected with "cannot infer type parameter". The width slot holds the
+  `SIMDLength` value, an `Int` width its implicit `SIMDLength(n)`
+  conversion, and the binder is solved from that construction, so `n * 2`,
+  `Int(m) * 2`, `join`'s and `slice`'s results, and an explicit
+  `SIMDLength(n)` solve, while a literal width, `m`, `m + 1`, `Int(m)`, and
+  a `comptime L = SIMDLength(n)` alias stay unresolved, as at the pin. MIR
+  text moves to 1.126 and the package format to `mojito-package 129`.
+- `Int(m)` of a `SIMDLength` folds to its lane count in a parameter
+  position, so `SIMD[dt, Int(m)]` is `SIMD[dt, m]` and `SIMD[dt, Int(m) + 2]`
+  is `SIMD[dt, m + 2]`, as at the pin. They were distinct types.
+- A builtin-folded struct value built from a value's own fields is that
+  value (`SIMDLength(mlir_value=m._mlir_value)` is `m`), and a local
+  `comptime L = W(n)` alias no longer exposes its construction: `g(B[L]())`
+  for `g[k: Int](x: B[W(k)])` is rejected, as at the pin, where it ran.
 - `SIMDLength` is upstream's library struct, bundled verbatim from
   `std/builtin/simd_length.mojo` and exported by the prelude, where it was
   typed `Int`. A `[w: SIMDLength]` binder is struct-typed, a vector's width

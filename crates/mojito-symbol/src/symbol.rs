@@ -104,6 +104,10 @@ pub const SCALAR_SPLAT_CONVERSION: &str = "SIMD.__init__$splat";
 /// vector's dtype, then splat across its lanes.
 pub const SIMD_LENGTH_CONVERSION: &str = "SIMD.__init__$simd_length";
 
+/// The symbol of upstream's `@implicit SIMDLength.__init__(Int)`, which
+/// spells the length a vector's `Int` width converts to.
+pub const SIMD_LENGTH_FROM_INT: &str = "SIMDLength.__init__$ov$Int";
+
 /// Whether a `**` on these operand types calls [`POW_INT_SYMBOL`].
 ///
 /// Every pair the native lowering routes to its integer arms does, which is

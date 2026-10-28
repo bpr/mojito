@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.125
+mojito-mir 1.126
 ```
 
-The writer emits 1.125. The reader accepts 1.0 through 1.125; *Schema 1.0*
+The writer emits 1.126. The reader accepts 1.0 through 1.126; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -788,6 +788,13 @@ unchanged (R1539): the bundled library gains upstream's
 checked adjustments gain `SimdFromLength` and rename `LiteralConstruction`
 to `ConvertedArgument`.
 
+Schema 1.126 holds a symbolic `simd` width as the `SIMDLength` value
+upstream's `SIMD[dtype, length: SIMDLength]` slot holds, not its `Int` lane
+count (R382): a `SIMDLength` binder, or the `param_struct_value` an `Int`
+width converts to, spelled by `SIMDLength.__init__$ov$Int`. A 1.125 or older
+artifact's `Int` width is read as that conversion of it. The package format
+moves to `mojito-package 129`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1328,7 +1335,7 @@ ref { referent, origin, mutability }
 operators/conventions use their lowercase source-independent enum names;
 conventions are `read`, `var`, `mut`, `out`, `ref`, and `deinit`. A `simd`
 slot is a dtype or an integer, or `ct_expr(<param-expr>)` for a lane still
-symbolic; the verifier keeps a symbolic slot out of every artifact, so that
+symbolic, a width's expression the `SIMDLength` it holds (schema 1.126); the verifier keeps a symbolic slot out of every artifact, so that
 form only serves lossless round trips, and a closed expression folds back to
 the canonical concrete type on read.
 

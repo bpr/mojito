@@ -905,8 +905,20 @@ impl ParamContext {
     /// The struct value `spelling`, an application of an
     /// `@always_inline("builtin")` `__init__`, folds to: `fields` in
     /// declaration order, typed as the construction is. A field read through
-    /// it is the field.
+    /// it is the field. A construction from a value's own fields, in order,
+    /// is that value (`SIMDLength(mlir_value=m._mlir_value)` is `m`), as the
+    /// `struct.create` of a struct's own extracts canonicalizes to it.
     pub fn struct_value(&self, fields: &[(String, ParamExpr)], spelling: &ParamExpr) -> ParamExpr {
+        match own_fields_base(fields) {
+            Some(base) if base.meta() == spelling.meta() => base.clone(),
+            _ => self.construction(fields, spelling),
+        }
+    }
+
+    /// The struct value of `fields` spelled `spelling`, kept a construction
+    /// even over a value's own fields: a builtin body's struct-typed slot,
+    /// whose field reads resolve before its struct's field types do.
+    pub fn construction(&self, fields: &[(String, ParamExpr)], spelling: &ParamExpr) -> ParamExpr {
         let fields = fields
             .iter()
             .map(|(name, value)| (name.clone(), self.intern(value)))
@@ -4263,6 +4275,17 @@ fn rebuilt_fields(
         .iter()
         .map(|(name, value)| Ok((name.clone(), rebuild(value)?)))
         .collect()
+}
+
+/// The one value every field of a construction reads its own field of, in
+/// order (`fields` are `x.a, x.b`): the construction is `x` itself.
+fn own_fields_base(fields: &[(String, ParamExpr)]) -> Option<&ParamExpr> {
+    let mut bases = fields.iter().map(|(name, value)| match value.kind() {
+        ParamKind::Field { base, name: read } if read == name => Some(base),
+        _ => None,
+    });
+    let first = bases.next()??;
+    bases.all(|base| base == Some(first)).then_some(first)
 }
 
 fn write_operands(f: &mut fmt::Formatter<'_>, operands: &[&ParamExpr]) -> fmt::Result {

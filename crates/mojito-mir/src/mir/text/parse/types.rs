@@ -649,16 +649,33 @@ impl Decoder {
         }
     }
 
-    /// A vector's width slot: a lane count, or `ct_expr(...)` while symbolic.
+    /// A vector's width slot: a lane count, or `ct_expr(...)` of the
+    /// `SIMDLength` it holds while symbolic.
     pub(super) fn simd_width_slot(
         &mut self,
         value: &Value,
     ) -> Option<mojito_types::types::SimdWidth> {
-        match &value.kind {
-            ValueKind::Positional(tag, inner) if tag == "ct_expr" => self
-                .param_expr(inner)
-                .map(mojito_types::types::SimdWidth::Expr),
-            _ => self.int64(value).map(mojito_types::types::SimdWidth::Known),
+        use mojito_types::types::{SimdWidth, is_simd_length};
+        let ValueKind::Positional(tag, inner) = &value.kind else {
+            return self.int64(value).map(SimdWidth::Known);
+        };
+        if tag != "ct_expr" {
+            return self.int64(value).map(SimdWidth::Known);
+        }
+        let length = self.param_expr(inner)?;
+        // Schema 1.125 and older held the lane count, an `Int`: the
+        // `SIMDLength` the slot holds is upstream's `__init__(Int)` of it.
+        let length = if self.minor <= 125 && !length.meta().as_value().is_some_and(is_simd_length) {
+            legacy_lane_count_length(&self.context, &length)
+        } else {
+            Ok(length)
+        };
+        match length.and_then(|length| SimdWidth::of_length(&self.context, length)) {
+            Ok(width) => Some(width),
+            Err(error) => {
+                self.error(value.span, format!("SIMD width: {error}"));
+                None
+            }
         }
     }
 
@@ -1442,4 +1459,17 @@ fn legacy_marker(name: &str) -> Option<CtMarker> {
         _ => return None,
     };
     Some(CtMarker::TupleOrigin { id, mutability })
+}
+
+/// The `SIMDLength` a schema 1.125 width's lane count `lanes` is:
+/// upstream's `SIMDLength.__init__(Int)` of it.
+fn legacy_lane_count_length(
+    context: &mojito_types::param_expr::ParamContext,
+    lanes: &ParamExpr,
+) -> Result<ParamExpr, mojito_types::param_expr::ParamError> {
+    mojito_types::types::simd_length_converted(
+        context,
+        mojito_symbol::symbol::SIMD_LENGTH_FROM_INT,
+        lanes,
+    )
 }

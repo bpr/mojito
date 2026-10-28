@@ -587,7 +587,7 @@ parametric verifier's rule is `crates/mojito-mir/src/mir/verify/scope.rs`):
 | A type binder | `Ty::Param { binder: ParamRef }` | `Type`, or `ParamList(Type)` for a variadic binder's spread |
 | A dependent type | `Ty::Dependent(DependentType::Parameter(expr))`: a finite `Select`, a pack element `ListGet`, a reflected field `Reflect` | `Type` |
 | A vector lane | `Ty::Simd { dtype: SimdDtype::Expr(expr), .. }` | `Value(DType)` |
-| A vector width | `Ty::Simd { width: SimdWidth::Expr(expr), .. }` | `Value(Int)` |
+| A vector width | `Ty::Simd { width: SimdWidth::Expr(expr), .. }` | `Value(SIMDLength)`: the length the slot holds (MIR 1.126; an `Int` before) |
 | A struct's value argument | `TyArg::Val(CtValue::Expr(expr))` at slot *i* | `Value(T)` for the struct's declared value parameter *i* of type `T` |
 | An associated projection | `Ty::Assoc { base, .. }` | the base is one of the above |
 | A compile-time application | `ParamKind::Apply { function, args, evaluated }`, in any of the slots | a `Value` kind: the callee's declared result |

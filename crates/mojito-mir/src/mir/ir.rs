@@ -4171,6 +4171,12 @@ mod tests {
                 "n",
                 width.binder_meta(),
             );
+            let width = mojito_types::types::simd_length_converted(
+                &mojito_types::param_expr::ParamContext::detached(),
+                "SIMDLength.__init__$ov$Int",
+                &width,
+            )
+            .expect("an Int converts");
             mojito_types::types::simd_ty_from_slots(
                 mojito_types::types::SimdDtype::Known(Dtype::Int32),
                 mojito_types::types::SimdWidth::Expr(width),
