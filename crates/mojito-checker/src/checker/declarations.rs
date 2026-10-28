@@ -2519,8 +2519,11 @@ impl Checker {
         // every binder below sees origin-free arguments, and the explicit
         // origins are checked against the arguments binding those slots
         // once a constructor is selected.
-        let partitioned =
+        let mut partitioned =
             self.partition_struct_origin_args(name, &info.source_params, param_args)?;
+        if let Some(instance) = constructed {
+            bind_instance_origins(&mut partitioned, &info.source_params, instance);
+        }
         let param_args: &[mojito_ast::ast::ParamArg] = &partitioned.forwarded;
         // An `ImmOrigin(o)` argument binds its slot immutably whatever the
         // source allows; the binding site keeps that fact for writes, and a
@@ -4898,4 +4901,51 @@ struct ConstructorExclusivity<'a> {
     bound: Vec<Ty>,
     nested_origins: NestedOrigins,
     gathered: CollectedArguments<'a>,
+}
+
+/// Bind each origin slot `partitioned` leaves open to the one `instance`
+/// binds, as a spelled bracket's origin argument does: the construction of
+/// an instance with no source spelling (the initializer list `{...}` at
+/// `Span[T, o]`) is `Span[T, o](...)`, never a construction whose arguments
+/// pick the origin. A slot the instance binds to the receiver's symbolic
+/// origin (`origin_of(self)` in a signature) is the receiver argument's to
+/// bind, as it names no place of its own.
+fn bind_instance_origins(
+    partitioned: &mut super::type_resolution::PartitionedStructArgs,
+    source_params: &[mojito_ast::ast::TypeParam],
+    instance: &Ty,
+) {
+    use mojito_types::origin::{Origin, OriginParamId};
+    let TyKind::Struct(_, arguments) = instance.kind() else {
+        return;
+    };
+    let origins = arguments.iter().filter_map(|argument| match argument {
+        TyArg::Origin(origin) => Some(origin),
+        _ => None,
+    });
+    let slots = source_params
+        .iter()
+        .enumerate()
+        .filter(|(_, param)| !param.infer_only && super::is_origin_type_param(param));
+    for (tail, ((slot, _), origin)) in slots.zip(origins).enumerate() {
+        let id = OriginParamId(u32::try_from(slot).unwrap_or(u32::MAX));
+        if matches!(origin, Origin::Unbound | Origin::SelfParam)
+            || partitioned
+                .explicit_origins
+                .iter()
+                .any(|explicit| explicit.id == id)
+        {
+            continue;
+        }
+        partitioned
+            .explicit_origins
+            .push(super::type_resolution::ExplicitStructOrigin {
+                id,
+                origin: origin.clone(),
+                mutability: None,
+            });
+        if let Some(entry) = partitioned.tail.get_mut(tail) {
+            *entry = origin.clone();
+        }
+    }
 }

@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	901
+# swept-count	902
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -461,6 +461,7 @@ assets/type_error/indexer_returns_int_value.mojo	compile-reject	agree	error: can
 assets/type_error/indexer_undeclared_subscript.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/infer_only_keyword_argument_converts.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'StringLiteral["a"]' to 'Int'
 assets/type_error/initializer_arguments_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'Tuple[Span[Int, origin_of(xs)], Span[Int, origin_of(xs)]]' initializer call
+assets/type_error/initializer_list_keyword_without_context.mojo	compile-reject	agree	error: cannot emit initializer list without a contextual type
 assets/type_error/inline_level_conflict_rejected.mojo	compile-reject	agree	error: function has conflicting inline level from a previous '@no_inline' decorator
 assets/type_error/inline_level_missing_operand_rejected.mojo	compile-reject	agree	error: '@inline' decorator takes exactly 1 argument, found 0
 assets/type_error/inline_level_unknown_member_rejected.mojo	compile-reject	agree	error: 'InlineLevel' value has no attribute 'builtin'

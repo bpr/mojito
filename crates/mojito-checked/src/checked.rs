@@ -1442,6 +1442,12 @@ pub enum CheckedOp {
     Transfer(CheckedNodeId),
     ListLit(Vec<CheckedNodeId>),
     BraceLit(Vec<(CheckedNodeId, Option<CheckedNodeId>)>),
+    /// An initializer list with a keyword entry, kept only where the check
+    /// spelled no construction for it.
+    InitializerList {
+        args: Vec<CheckedNodeId>,
+        kwargs: Vec<CheckedKwArg>,
+    },
     Comprehension {
         kind: CollectionKind,
         key: Option<CheckedNodeId>,
@@ -1563,6 +1569,13 @@ impl CheckedOp {
                     operands.push(*key);
                     operands.extend(value);
                 }
+            }
+            Self::InitializerList {
+                args,
+                kwargs: keywords,
+            } => {
+                operands.extend(args);
+                kwargs(&mut operands, keywords);
             }
             Self::Comprehension {
                 key,
@@ -1772,6 +1785,13 @@ impl CheckedOp {
                     .map(|(key, value)| (map.expression(*key), optional(map, value)))
                     .collect(),
             ),
+            Self::InitializerList {
+                args,
+                kwargs: keywords,
+            } => Self::InitializerList {
+                args: values(map, args),
+                kwargs: kwargs(map, keywords),
+            },
             Self::Comprehension {
                 kind,
                 key,
@@ -5494,11 +5514,14 @@ impl<'a> ArenaBuilder<'a> {
     /// lowers the construction where the sugar was written (an
     /// initializer list, a t-string, a value pack read as its
     /// `ParameterList`, a scalar `range` call, a `comptime for` iterable read
-    /// as its `__iter__()` call).
+    /// as its `__iter__()` call). A sugar the check lifted as a compile-time
+    /// application (a module constant's initializer list) lifts its
+    /// construction.
     fn spelled_construction(&mut self, expression: &Expr) -> Option<CheckedNodeId> {
         if !matches!(
             expression.kind,
             ExprKind::BraceLit(_)
+                | ExprKind::InitializerList { .. }
                 | ExprKind::ListLit(_)
                 | ExprKind::TString { .. }
                 | ExprKind::Identifier(_)
@@ -5511,12 +5534,26 @@ impl<'a> ArenaBuilder<'a> {
         ) {
             return None;
         }
-        let SemanticAdjustment::SpelledConstruction { construction } = self
+        let (construction, lifted) = match self
             .facts(&expression.source_span())
             .adjustment
             .as_deref()?
-        else {
-            return None;
+        {
+            SemanticAdjustment::SpelledConstruction { construction } => (construction, None),
+            SemanticAdjustment::ComptimeApplication {
+                operation: Some(operation),
+                application,
+            } => match &**operation {
+                SemanticAdjustment::SpelledConstruction { construction } => (
+                    construction,
+                    Some(SemanticAdjustment::ComptimeApplication {
+                        operation: None,
+                        application: application.clone(),
+                    }),
+                ),
+                _ => return None,
+            },
+            _ => return None,
         };
         let node = self.expr(&construction.0);
         // A conversion the sugar takes converts its construction, a `for`
@@ -5537,6 +5574,7 @@ impl<'a> ArenaBuilder<'a> {
             .collect();
         self.nodes[node.0 as usize].adjustments.extend(conversions);
         self.nodes[node.0 as usize].adjustments.extend(loops);
+        self.nodes[node.0 as usize].adjustments.extend(lifted);
         Some(node)
     }
 
@@ -5632,6 +5670,10 @@ impl<'a> ArenaBuilder<'a> {
                     })
                     .collect(),
             ),
+            ExprKind::InitializerList { args, kwargs } => CheckedOp::InitializerList {
+                args: values(self, args),
+                kwargs: self.kwargs(kwargs),
+            },
             ExprKind::Comprehension {
                 kind,
                 key,
@@ -6549,6 +6591,7 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
                 | ExprKind::Index { .. }
                 | ExprKind::ListLit(_)
                 | ExprKind::BraceLit(_)
+                | ExprKind::InitializerList { .. }
                 | ExprKind::TupleLit(_)
                 | ExprKind::Comprehension { .. }
         )

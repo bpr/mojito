@@ -431,8 +431,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `mojito-ast`'s `named_result` / `FnParam::is_named_result` by
   `declarations.rs:method_sig`, `check_method_inner`, and MIR's method
   lowering alike. `checker/initializer_list.rs` owns the
-  initializer list: `infer_initializer_list` spells `{}` / `{a, b}` at the
-  contextual type as that type's construction under an identity derived
+  initializer list: `infer_initializer_list` spells `{}` / `{a, b}` (a
+  `BraceLit`) or `{a, kw=b}` (the parser's `ExprKind::InitializerList`) at
+  the contextual type as that type's construction under an identity derived
   from the brace's, checks it, and records
   `SemanticAdjustment::SpelledConstruction` (`record_spelled_construction`,
   shared with t-strings), which `mojito-checked`'s arena builder answers at

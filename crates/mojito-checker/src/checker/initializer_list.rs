@@ -1,10 +1,11 @@
-//! Initializer lists: `{}` and `{a, b}` at the type their context expects,
-//! upstream's set-initializer literal emitted as the construction `T(a, b)`
-//! of that type; and the recording every sugar the checker spells as a
+//! Initializer lists: `{}`, `{a, b}`, and `{a, kw=b}` at the type their
+//! context expects, upstream's initializer list emitted as the construction
+//! `T(a, kw=b)` of that type; and the recording every sugar the checker spells as a
 //! construction shares.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
+use mojito_ast::ast::KwArg;
 use mojito_types::types::TyKind;
 
 impl Checker {
@@ -17,11 +18,12 @@ impl Checker {
     pub(super) fn infer_initializer_list(
         &self,
         expression: &Expr,
-        entries: &[Expr],
+        (args, kwargs): (Vec<Expr>, Vec<KwArg>),
         expected: &Ty,
         record: bool,
     ) -> Result<Ty, TypeError> {
-        let construction = self.initializer_list_construction(expression, entries, expected)?;
+        let construction =
+            self.initializer_list_construction(expression, args, kwargs, expected)?;
         let ty = self.infer_with_expected(&construction, expected, record)?;
         self.record_spelled_construction(expression, construction, &ty);
         Ok(ty)
@@ -278,20 +280,12 @@ impl Checker {
             ));
         }
         let Some((callee, param_args)) = alias_application(value) else {
-            return self
-                .initializer_list_construction(expression, args, ty)
-                .map(|mut construction| {
-                    if let ExprKind::Call {
-                        kwargs: spelled, ..
-                    }
-                    | ExprKind::Invoke {
-                        kwargs: spelled, ..
-                    } = &mut construction.kind
-                    {
-                        spelled.extend_from_slice(kwargs);
-                    }
-                    construction
-                });
+            return self.initializer_list_construction(
+                expression,
+                args.to_vec(),
+                kwargs.to_vec(),
+                ty,
+            );
         };
         Ok(derived_construction(
             expression,
@@ -466,10 +460,10 @@ impl Checker {
     fn initializer_list_construction(
         &self,
         expression: &Expr,
-        entries: &[Expr],
+        args: Vec<Expr>,
+        kwargs: Vec<KwArg>,
         expected: &Ty,
     ) -> Result<Expr, TypeError> {
-        let args = entries.to_vec();
         let unspellable = || {
             TypeError::Unsupported(format!(
                 "cannot emit initializer list for '{expected}': the type has no construction \
@@ -481,7 +475,7 @@ impl Checker {
                 name: binder.name.to_string(),
                 param_args: Vec::new(),
                 args,
-                kwargs: Vec::new(),
+                kwargs,
             },
             TyKind::Dependent(dependent)
                 if let Some((list, index)) = dependent.pack_element()
@@ -510,7 +504,7 @@ impl Checker {
                     callee: Box::new(Expr::new(callee, expression.span)),
                     param_args: vec![mojito_ast::ast::ParamArg::Value(index)],
                     args,
-                    kwargs: Vec::new(),
+                    kwargs,
                 }
             }
             // An origin argument has no source spelling of its own: the
@@ -521,7 +515,7 @@ impl Checker {
                     .any(|argument| matches!(argument, TyArg::Origin(_))) =>
             {
                 return self
-                    .instance_construction(expression, expected, args)
+                    .instance_construction(expression, expected, args, kwargs)
                     .ok_or_else(unspellable);
             }
             _ => {
@@ -533,7 +527,7 @@ impl Checker {
                                 name,
                                 param_args,
                                 args,
-                                kwargs: Vec::new(),
+                                kwargs,
                             },
                         ));
                     }
@@ -543,7 +537,7 @@ impl Checker {
                     Some(SourceType::Float64) => "Float64",
                     _ => {
                         return self
-                            .instance_construction(expression, expected, args)
+                            .instance_construction(expression, expected, args, kwargs)
                             .ok_or_else(unspellable);
                     }
                 };
@@ -551,7 +545,7 @@ impl Checker {
                     name: name.to_string(),
                     param_args: Vec::new(),
                     args,
-                    kwargs: Vec::new(),
+                    kwargs,
                 }
             }
         };
@@ -651,6 +645,7 @@ impl Checker {
         expression: &Expr,
         instance: &Ty,
         args: Vec<Expr>,
+        kwargs: Vec<KwArg>,
     ) -> Option<Expr> {
         let name = match instance.kind() {
             TyKind::Struct(name, _) => name.clone(),
@@ -664,7 +659,7 @@ impl Checker {
                 name,
                 param_args: Vec::new(),
                 args,
-                kwargs: Vec::new(),
+                kwargs,
             },
         );
         self.spelled_instances

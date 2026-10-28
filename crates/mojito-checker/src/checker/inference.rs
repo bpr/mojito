@@ -1124,6 +1124,9 @@ impl Checker {
                 }
                 Ok(ret)
             }
+            ExprKind::InitializerList { .. } => Err(TypeError::Unsupported(
+                "cannot emit initializer list without a contextual type".to_string(),
+            )),
             ExprKind::BraceLit(entries) => {
                 if entries.is_empty() {
                     return Err(TypeError::Unsupported(
@@ -2244,6 +2247,16 @@ impl Checker {
             }
             return Ok(ty);
         }
+        // A brace with a keyword entry is upstream's initializer list at any
+        // expected type: the construction of that type from its entries.
+        if let ExprKind::InitializerList { args, kwargs } = &expression.kind {
+            return self.infer_initializer_list(
+                expression,
+                (args.clone(), kwargs.clone()),
+                expected,
+                record,
+            );
+        }
         // Reference-typed values normally read through to their referents in
         // expression position.  A reference-typed parameter is a storage
         // context, just like a reference field: infer and forward the handle
@@ -2495,8 +2508,8 @@ impl Checker {
             && dict_elements(expected).is_none()
             && entries.iter().all(|(_, value)| value.is_none())
         {
-            let entries: Vec<Expr> = entries.iter().map(|(key, _)| key.clone()).collect();
-            return self.infer_initializer_list(expression, &entries, expected, record);
+            let args = entries.iter().map(|(key, _)| key.clone()).collect();
+            return self.infer_initializer_list(expression, (args, Vec::new()), expected, record);
         }
         let Some(elements) = elements else {
             return self.infer(expression);

@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An initializer list takes keyword entries, as upstream's does (R342):
+  `take({1, kw=2})` is `take(P(1, kw=2))`, and a returned `{unsafe_ptr =
+  p, length = n}` constructs the function's `Span`, where the parser
+  stopped with "Expected '}' after brace literal". A `comptime` binding's
+  annotation is its brace's contextual type at module and function scope,
+  so `comptime t: Tuple[Int, Int] = {1, 2}` is a `Tuple` rather than a
+  `Set`. An initializer list at a type that binds an origin
+  (`Span[Int, origin_of(xs)]`) now constructs that origin's instance, and
+  the bundled `List.__getitem__(ContiguousSlice)` returns upstream's
+  `{unsafe_ptr = ..., length = ...}`.
 - A signature's `type_of` reads the parameters declared before it, as
   upstream resolves each signature type with the earlier arguments in
   scope (R1508): `def f(x: Int, y: type_of(x)) -> type_of(x)` and a

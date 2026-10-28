@@ -355,6 +355,14 @@ fn rewrite_expr(
                 rewrite_expr(value, names, namespaces);
             }
         }
+        ExprKind::InitializerList { args, kwargs } => {
+            for arg in args {
+                rewrite_expr(arg, names, namespaces);
+            }
+            for arg in kwargs {
+                rewrite_expr(&mut arg.value, names, namespaces);
+            }
+        }
         ExprKind::BraceLit(entries) => {
             for (key, value) in entries {
                 rewrite_expr(key, names, namespaces);

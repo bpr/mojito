@@ -518,6 +518,30 @@ fn parses_var_loop_binding_and_collection_comprehensions() {
 }
 
 #[test]
+fn parses_initializer_list_keyword_entries() {
+    let ExprKind::InitializerList { args, kwargs } = parse_expr("{1, kw = 2, other=3,}\n").kind
+    else {
+        panic!("expected an initializer list");
+    };
+    assert_eq!(args.len(), 1);
+    let names: Vec<_> = kwargs.iter().map(|kwarg| kwarg.name.as_str()).collect();
+    assert_eq!(names, ["kw", "other"]);
+    assert!(matches!(
+        parse_expr("{mlir_value = v}\n").kind,
+        ExprKind::InitializerList { ref args, ref kwargs } if args.is_empty() && kwargs.len() == 1
+    ));
+    // An equality is an entry, never a keyword.
+    assert!(matches!(
+        parse_expr("{a == 1}\n").kind,
+        ExprKind::BraceLit(_)
+    ));
+    for source in ["{kw=1, 2}\n", "{a: 1, b=2}\n", "{a=1, b: 2}\n"] {
+        let mut parser = Parser::new(Lexer::new(source));
+        assert!(parser.parse_program().is_err(), "{source:?} parsed");
+    }
+}
+
+#[test]
 fn parses_explicit_reference_loop_bindings() {
     let loop_statement = parse("for ref item in values:\n    pass\n");
     assert!(matches!(

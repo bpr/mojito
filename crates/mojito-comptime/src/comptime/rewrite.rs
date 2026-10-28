@@ -303,6 +303,12 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
                 rewrite_expr(&mut argument.value, subs);
             }
         }
+        ExprKind::InitializerList { args, kwargs } => {
+            rewrite_exprs(args, subs);
+            for argument in kwargs {
+                rewrite_expr(&mut argument.value, subs);
+            }
+        }
         ExprKind::BraceLit(entries) => {
             for (key, value) in entries {
                 rewrite_expr(key, subs);
@@ -1841,6 +1847,12 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
         } => {
             retype_expr(callee, subs);
             retype_param_args(param_args, subs);
+            retype_exprs(args, subs);
+            for k in kwargs {
+                retype_expr(&mut k.value, subs);
+            }
+        }
+        ExprKind::InitializerList { args, kwargs } => {
             retype_exprs(args, subs);
             for k in kwargs {
                 retype_expr(&mut k.value, subs);

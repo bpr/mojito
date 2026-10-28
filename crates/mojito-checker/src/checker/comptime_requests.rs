@@ -98,7 +98,8 @@ pub fn applies_callable(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
 /// `$comptime$<declaration>$c<k>`.
 ///
 /// It is when it applies a callable ([`applies_callable`]), when it is a
-/// collection display (`[1, 2]`, `{"a": 1}`), or when it calls a dictionary
+/// collection display (`[1, 2]`, `{"a": 1}`) or an initializer list
+/// (`{1, kw=2}`), or when it calls a dictionary
 /// or set's literal constructor (`Dict[K, V, H](keys, values, None)`): the
 /// pin constructs each by running its initializer (it names `[1, 2]` an
 /// `Array[Int, Int(2)]`), never folds one as an attribute.
@@ -106,7 +107,7 @@ pub fn lifts_comptime_value(expression: &Expr, oracle: &impl CalleeOracle) -> bo
     applies_callable(expression, oracle)
         || matches!(
             expression.kind,
-            ExprKind::ListLit(_) | ExprKind::BraceLit(_)
+            ExprKind::ListLit(_) | ExprKind::BraceLit(_) | ExprKind::InitializerList { .. }
         )
         || (matches!(expression.kind, ExprKind::Call { .. })
             && is_keyed_display(expression, oracle))
@@ -132,6 +133,7 @@ pub fn computes_value(expression: &Expr, oracle: &impl CalleeOracle) -> bool {
                 | ExprKind::ListLit(_)
                 | ExprKind::TupleLit(_)
                 | ExprKind::BraceLit(_)
+                | ExprKind::InitializerList { .. }
         ),
     }
 }

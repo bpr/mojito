@@ -2513,7 +2513,8 @@ impl Checker {
                 return Ok(true);
             }
         }
-        if let Some((element, ty, construction)) = self.evaluated_display_binding(value) {
+        if let Some((element, ty, construction)) = self.evaluated_display_binding(value, annotation)
+        {
             // The name is typed for the compile-time expressions that read
             // it, and its statement binding is the one a lifted function
             // binds the display to.
@@ -2681,7 +2682,12 @@ impl Checker {
         // A display takes its annotation as its contextual type, as a `var`
         // initializer does.
         let expected = annotation
-            .filter(|_| matches!(value.kind, ExprKind::ListLit(_) | ExprKind::BraceLit(_)))
+            .filter(|_| {
+                matches!(
+                    value.kind,
+                    ExprKind::ListLit(_) | ExprKind::BraceLit(_) | ExprKind::InitializerList { .. }
+                )
+            })
             .map(|annotation| {
                 self.resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
             })
@@ -2900,11 +2906,27 @@ impl Checker {
     /// or a list display of closed aggregates (`[(1, n), (n, 2)]`),
     /// which the elaborator evaluates per instance. Gives the element its
     /// sequence lists, the display's own type, and its checked construction;
-    /// `None` for any other binding, which the ordinary path types.
+    /// `None` for any other binding, which the ordinary path types. A brace
+    /// annotated with any type but a set or dictionary is that type's
+    /// initializer list (`comptime t: Tuple[Int, Int] = {1, 2}`), so the
+    /// ordinary path types it too.
     fn evaluated_display_binding(
         &self,
         value: &Expr,
+        annotation: Option<&SourceType>,
     ) -> Option<(Ty, Ty, mojito_checked::checked::SemanticAdjustment)> {
+        if matches!(value.kind, ExprKind::BraceLit(_))
+            && let Some(annotation) = annotation
+            && self
+                .resolve_storage_annotation(annotation, super::StorageStrictness::AllowBare)
+                .ok()
+                .is_none_or(|ty| {
+                    mojito_types::types::set_element(&ty).is_none()
+                        && mojito_types::types::dict_elements(&ty).is_none()
+                })
+        {
+            return None;
+        }
         let element = self.display_listed_element(value)?;
         if !self.evaluated_display(value, &element) {
             return None;

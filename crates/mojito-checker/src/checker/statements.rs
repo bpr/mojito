@@ -2291,10 +2291,23 @@ impl Checker {
                     // (`-> View[origin_of(self.items)]` takes a view over
                     // `self.items`, not one over `self`) and then carries
                     // the signature's spelling of that origin.
-                    Some(e) => self.reconcile_return_origin_tails(
-                        &self.infer_with_expected(e, expected, true)?,
-                        expected,
-                    )?,
+                    // An initializer list constructs that annotation itself.
+                    Some(e) => {
+                        let contextual = matches!(
+                            e.kind,
+                            ExprKind::BraceLit(_) | ExprKind::InitializerList { .. }
+                        )
+                        .then(|| self.body_return_type())
+                        .flatten();
+                        self.reconcile_return_origin_tails(
+                            &self.infer_with_expected(
+                                e,
+                                contextual.as_ref().unwrap_or(expected),
+                                true,
+                            )?,
+                            expected,
+                        )?
+                    }
                     None if self.named_result_context.last() == Some(&true) => expected.clone(),
                     None => Ty::none(),
                 };

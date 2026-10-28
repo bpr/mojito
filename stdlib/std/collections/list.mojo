@@ -370,10 +370,10 @@ struct List[T: AnyType](
         var start = slice.start.or_else(0)
         var end = slice.end.or_else(self.size)
         check_slice_bounds(start, end, self.size)
-        return Span[Self.T, origin_of(self)._get_owned_interior["element"]](
-            unsafe_ptr=self.unsafe_ptr().unsafe_offset(start),
-            length=end - start,
-        )
+        return {
+            unsafe_ptr = self.unsafe_ptr().unsafe_offset(start),
+            length = end - start,
+        }
 
     # Upstream's `List` has no `__setitem__`: `xs[i] = v` stores through the
     # reference `__getitem__` returns, which is declared read-only over nested

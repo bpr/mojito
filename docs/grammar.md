@@ -981,6 +981,7 @@ list_literal:
 brace_literal:
     | '{' '}'                              # empty Dict or Set in a collection context; elsewhere the initializer list `T()` of the contextual type
     | '{' ','.expression+ [','] '}'        # Set display; the initializer list `T(a, b)` at any other contextual type
+    | '{' [','.expression+ ','] ','.(NAME '=' expression)+ [','] '}' # initializer list `T(a, kw=b)` of the contextual type
     | '{' ','.(expression ':' expression)+ [','] '}' # Dict display
     | '{' expression comprehension_clauses '}'       # Set comprehension
     | '{' expression ':' expression comprehension_clauses '}' # Dict comprehension

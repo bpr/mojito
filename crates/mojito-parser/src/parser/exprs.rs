@@ -329,6 +329,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                     return Ok(self.node(ExprKind::BraceLit(Vec::new()), start));
                 }
                 let first_key = self.parse_expression(Precedence::Lowest)?;
+                if let Some(name) = self.keyword_entry(&first_key)? {
+                    return self.parse_initializer_list(start, Vec::new(), name);
+                }
                 let first_value = if matches!(self.peek_token()?, Some(Token::Colon)) {
                     self.next_token()?;
                     Some(self.parse_expression(Precedence::Lowest)?)
@@ -366,6 +369,10 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
                         break;
                     }
                     let key = self.parse_expression(Precedence::Lowest)?;
+                    if !dictionary && let Some(name) = self.keyword_entry(&key)? {
+                        let args = entries.into_iter().map(|(key, _)| key).collect();
+                        return self.parse_initializer_list(start, args, name);
+                    }
                     let value = if matches!(self.peek_token()?, Some(Token::Colon)) {
                         self.next_token()?;
                         Some(self.parse_expression(Precedence::Lowest)?)
@@ -585,5 +592,50 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
         // precedence so equal-precedence operators don't get reabsorbed.
         let right = self.parse_expression(infix_precedence(op))?;
         Ok(self.node(ExprKind::Infix(op, Box::new(left), Box::new(right)), start))
+    }
+
+    /// The keyword of a brace entry `name = value` when `entry` is its
+    /// name and `=` follows, leaving the `=` unconsumed.
+    fn keyword_entry(&mut self, entry: &Expr) -> Result<Option<String>, ParseError> {
+        Ok(match &entry.kind {
+            ExprKind::Identifier(name) if matches!(self.peek_token()?, Some(Token::Assign)) => {
+                Some(name.clone())
+            }
+            _ => None,
+        })
+    }
+
+    /// The rest of an initializer list from its first keyword entry `name`
+    /// (whose `=` is next) after the positional entries `args`: keyword
+    /// entries only, as a call's keyword arguments follow its positional
+    /// ones.
+    fn parse_initializer_list(
+        &mut self,
+        start: usize,
+        args: Vec<Expr>,
+        mut name: String,
+    ) -> Result<Expr, ParseError> {
+        let mut kwargs = Vec::new();
+        loop {
+            self.next_token()?; // consume '='
+            let value = self.parse_expression(Precedence::Lowest)?;
+            kwargs.push(KwArg { name, value });
+            if !matches!(self.peek_token()?, Some(Token::Comma)) {
+                break;
+            }
+            self.next_token()?;
+            if matches!(self.peek_token()?, Some(Token::RBrace)) {
+                break;
+            }
+            let entry = self.parse_expression(Precedence::Lowest)?;
+            name = self.keyword_entry(&entry)?.ok_or_else(|| {
+                ParseError::UnexpectedToken(
+                    Token::Comma,
+                    "a positional entry cannot follow a keyword entry".into(),
+                )
+            })?;
+        }
+        self.expect(&Token::RBrace, "Expected '}' after initializer list")?;
+        Ok(self.node(ExprKind::InitializerList { args, kwargs }, start))
     }
 }

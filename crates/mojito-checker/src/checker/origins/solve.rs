@@ -19,6 +19,23 @@ impl Checker {
         self.owner_scope(owner).is_some_and(|scope| scope < base)
     }
 
+    /// The enclosing body's return annotation resolved over the body's own
+    /// places (`-> Span[T, origin_of(self.items)]` over the receiver's
+    /// field), the type a returned initializer list constructs as upstream
+    /// spells it in the body. `None` outside a body or where the annotation
+    /// does not resolve so.
+    pub(in crate::checker) fn body_return_type(&self) -> Option<Ty> {
+        let Some(Some((annotation, generated))) = self.return_annotations.last() else {
+            return None;
+        };
+        if *generated {
+            self.resolve_generated_return_annotation(annotation)
+        } else {
+            self.resolve_return_annotation(annotation)
+        }
+        .ok()
+    }
+
     /// Judge the struct origin tails of a returned value against the
     /// enclosing body's return annotation resolved over the body's own
     /// places, where `origin_of(self.items)` names the receiver's field and

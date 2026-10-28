@@ -404,6 +404,7 @@ assets/ok/infer_only_parameter_by_keyword.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/init_out_self.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/init_raise_destroys_initialized_fields.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/initializer_list_contextual.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/initializer_list_keyword_entries.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/initializer_list_symbolic_type.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inlined_bitcast_application_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/inlined_constructor_unread_struct_parameter.mojo	-	ineligible	no-scalar-entry-shape

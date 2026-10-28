@@ -734,6 +734,9 @@ impl<'a> Flatten<'a> {
         Some(match node.op() {
             CheckedOp::ListLit(_) => self.list_literal(node),
             CheckedOp::BraceLit(entries) => self.brace_literal(node, entries)?,
+            CheckedOp::InitializerList { .. } => {
+                self.display_without_plan(node, "an initializer list")
+            }
             CheckedOp::Comprehension {
                 clauses,
                 key,

@@ -3968,26 +3968,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R342 An initializer list with keyword entries, or bound by a
-  `comptime` statement, is rejected**
-
-  Problem: `take({1, kw=2})` and `comptime e: Tuple[Int, Int] = {}` are
-  valid Mojo, the initializer list being the construction `T(1, kw=2)`,
-  where Mojito's parser has no keyword entry in `brace_literal` and the
-  elaborator reports `an empty '{}' display needs a Dict[K, V] type
-  annotation` for the binding.
-  - `{}` and `{a, b}` at a runtime contextual type landed on 2026-10-05
-    (`checker/initializer_list.rs`).
-  - The parser's `brace_literal` and `comptime/elab.rs` are the two sites.
-  - The bundled `List.__getitem__(ContiguousSlice)` spells
-    `Span[...](unsafe_ptr=..., length=...)` where upstream returns
-    `{unsafe_ptr = ..., length = ...}`.
-  - Probe: upstream's `std/math` SIMD `max` returns ``{mlir_value =
-    __mlir_op.`pop.max`(x._mlir_value, y._mlir_value)}``, which stops in
-    the parser with "Expected '}' after brace literal".
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1599 A `type_of` receiver is respelled as source, so a type
   with no source spelling cannot be read through it**
 
@@ -4015,6 +3995,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     four-lane argument stops the VM with "cannot use SIMD[DType.int32, 4]
     as an integer SIMD element". `SIMD[dtype, w](mlir_value=...)` runs
     both.
+  - Probe: an initializer list at such a type takes the same path. In
+    `def m[dtype: DType, //](x: SIMD[dtype, _], y: type_of(x), /) ->
+    type_of(x)`, ``return {mlir_value = __mlir_op.`pop.max`(x._mlir_value,
+    y._mlir_value)}`` (upstream's `std/math` `max`) fails MIR verification
+    alike ("register r2 has no checked type").
   - Found while landing R495 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9990,12 +9975,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `min` and `max` are `Checker::infer_min_max` rules. Upstream's `SIMD`
     overloads (`def max[dtype: DType, //](x: SIMD[dtype, _], y:
     type_of(x), /) -> type_of(x)`) resolve since R1508. Their body
-    ``return {mlir_value = __mlir_op.`pop.max`(...)}`` needs R342's
-    keyword initializer list (or R1599's `type_of` construction).
+    ``return {mlir_value = __mlir_op.`pop.max`(...)}`` parses since R342
+    but needs R1599's construction at a `type_of` type.
   - Port both overloads into `stdlib/std/math.mojo`, then `clamp`
     (`simd.mojo:2670`). `infer_min_max` keeps the literal cases until
     upstream's variadic overload lands.
-  - Depends on R342.
+  - Depends on R342, R1599.
   - Model: Opus, Planned.
 
 - [ ] **R1582 `SIMD.__round__` is a builtin rule and `SIMD` does not

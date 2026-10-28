@@ -2137,6 +2137,14 @@ pub enum ExprKind {
     /// value (`key: value`). All entries must consistently be set elements or
     /// dictionary pairs; `{}` is the empty dictionary display.
     BraceLit(Vec<(Expr, Option<Expr>)>),
+    /// A brace display with a keyword entry (`{1, kw=2}`): upstream's
+    /// initializer list, which only the construction `T(1, kw=2)` of the
+    /// type its context expects can mean. A brace without one stays a
+    /// [`ExprKind::BraceLit`] until its context decides it.
+    InitializerList {
+        args: Vec<Expr>,
+        kwargs: Vec<KwArg>,
+    },
     /// A Python-style collection comprehension. Clauses are retained in source
     /// order because each iterable/filter can observe effects from all clauses
     /// to its left. `key` is present only for a dictionary comprehension; `value`
@@ -2535,6 +2543,14 @@ pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
             }
         }
         ExprKind::TypeApply { args, .. } => lambdas_in_param_args(args, out),
+        ExprKind::InitializerList { args, kwargs } => {
+            for arg in args {
+                lambdas_in_expr(arg, out);
+            }
+            for arg in kwargs {
+                lambdas_in_expr(&arg.value, out);
+            }
+        }
         ExprKind::ListLit(items) | ExprKind::TupleLit(items) => {
             for item in items {
                 lambdas_in_expr(item, out);
@@ -2901,6 +2917,14 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                     }
                 }
                 ExprKind::TypeApply { args, .. } => self.param_args(args),
+                ExprKind::InitializerList { args, kwargs } => {
+                    for arg in args {
+                        self.expr(arg);
+                    }
+                    for arg in kwargs {
+                        self.expr(&mut arg.value);
+                    }
+                }
                 ExprKind::ListLit(values) | ExprKind::TupleLit(values) => {
                     for value in values {
                         self.expr(value);
