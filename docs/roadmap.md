@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1574**.
+Next free ID: **R1576**.
 
 ## Ordered Work
 
@@ -962,6 +962,26 @@ How much generic instantiation multiplies a program, and proof that a pass
 which shrinks it changes no program's behavior. The passes it serves are in
 the `pmir` track, staged in
 [`docs/pre-elaboration-optimization-plan.md`](pre-elaboration-optimization-plan.md).
+
+- [ ] **R1575 Each infix operator over a `SIMD` checks and inlines its
+  dunder chain per site, where upstream's parser folds a builtin call**
+
+  Since R1553, `assets/ok/simd_compare_all_dtypes.mojo` takes 360 ms where
+  it took 223 ms, and the corpus sweep's CPU time rose by about a fifth.
+  - `check_program.bodies` grows from 15 to 34 ms there: each comparison
+    resolves `__lt__` as an overloaded method call, its operand conversion
+    included.
+  - `inline-parametric` grows from 53 to 115 ms: each instance splices
+    `__lt__`, then `lt`, then `__bool__`, all `@always_inline("builtin")`.
+  - Upstream's `foldInlineBuiltinFunction` folds a builtin callee's body at
+    the call once per instance.
+  - Lever: memoize the dunder selection per operand types in the checker,
+    and the spliced builtin body per instance in `inline-parametric`.
+  - Measure with `--timings` on that fixture and on `b_cmp`-style loops;
+    R1551's `+` and R1552's `&` pay the same cost.
+  - Found while landing R1553 (2026-10-28).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 ### Native Backend
 
@@ -3042,25 +3062,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1456 A `SIMD` vector is neither `Equatable` nor `Comparable`**
-
-  Upstream's `SIMD` declares both at every width, and its `__eq__` and
-  `__ne__` return a `Bool` reducing every lane, where Mojito's comparison
-  through a bound over a vector instance is a lane mask the elaborator
-  converts through `Bool(mask)` (the mask conversion after the operator
-  rewrite in `Specializer`, `native/mono/specializer.rs`).
-  - So `modelled_declares` (`mojito-types::conformance`) answers both traits
-    for a scalar `SIMD` only, and a vector fails the bound.
-  - The lever: a comparison through `Equatable` on a vector calls a reducing
-    `__eq__`/`__ne__`, as upstream's `SIMD` declares them; ordering stays
-    constrained to scalars, as upstream's `__lt__` is.
-  - Probe: `same[T: Equatable](a, b)` returning `a == b` over two
-    `SIMD[DType.float32, 4]` values prints `True False` at the pin, where
-    Mojito says "does not conform to trait 'Equatable'".
-  - Found while landing R705 (2026-10-26).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R792 `conforms_to` takes only a parameter name and one trait**
 
   Problem: `where conforms_to(IteratorType.Element, Movable & Deinitable)`
@@ -3599,10 +3600,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a construction through a non-generic struct's member alias,
     `S.V(1)` over `comptime V = SIMD[DType.int64, Self.w]`, fails with
     "Undefined variable 'S'", where the pin prints `[1, 1, 1, 1]`.
-  - Probe: through `Self`, `Self.Next()` over a member `comptime Next =
-    Sized[3]` in a method of `struct Outer[n: Int]` reports "Undefined
-    variable 'Self'", where the pin prints `3`; the annotation `var x:
-    Self.Next` runs (found by R1400, 2026-10-26).
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
@@ -3776,25 +3773,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `v and True` and `v or False` over a 4-lane `int32` vector print
     `True True` at the pin, which converts the vector through its declared
     `__bool__` (R1550); Mojito rejects both.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1543 A vector has no truth value, where upstream's
-  `SIMD.__bool__` reduces its lanes**
-
-  `if v:` over `v = SIMD[DType.int32, 4](0, 0, 1, 0)` prints `truthy` at
-  the pin, where Mojito says "type mismatch for if condition: expected
-  Bool, found SIMD[DType.int32, 4]".
-  - Upstream's `__bool__` is `reduce_or` of `self != 0`, with no
-    one-lane assertion, and `SIMD` declares `Boolable` at every width.
-  - The checker's truthiness conversion takes a scalar only, and it
-    serves no `__bool__` member on a vector.
-  - Probe: `Bool(v)` fails with "expected a numeric or Bool value".
-  - Probe: `not v` fails with "operator 'not' is not defined".
-  - Probe: `v.__bool__()` fails with "has no method '__bool__'".
-  - The lowering is `mir::simd_comparison_dunder`'s shape: a `binary ne`
-    against zero, `simd.reduce or`, and `scalar.cast` to `Bool`.
-  - Found while landing R185 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7638,28 +7616,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1542 A literal left operand of a sized-scalar comparison
-  converts, where upstream's `SIMD` declares no reflected comparison**
-
-  `3 < UInt(4)`, `3 == UInt(3)`, `3 < Float64(2.5)`, `2 < u` over `u:
-  UInt8`, and `3.0 < f` over `f: Float32` print results here. The pin
-  rejects each with "no matching method in call to '__lt__'" (or
-  `'__eq__'`).
-  - Upstream spells `a < b` as `a.__lt__(b)`, and `SIMD` has no `__rlt__`
-    or `__req__`. The literal's own dunder is tried, and the vector does
-    not convert to the literal's type.
-  - `3 < n` over `n: Int` and `3.0 < Float64(2.5)` stay legal at the pin:
-    the literal's dunder takes its own materialized type.
-  - The leniency is the checker's operand unification: `types::splats_to`
-    admits a literal on either side in `infer_simd_infix`, and the host
-    scalar path's `common_numeric` does the same.
-  - Arithmetic keeps the reflected spelling: `3 + UInt(4)` is
-    `UInt.__radd__` at the pin too.
-  - Ledger name: `literal-left-comparison`.
-  - Found while landing R185 (2026-10-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R187 `reduce_mul` over `Float32` lanes folds left at lane precision,
   where the pin reduces pairwise**
 
@@ -10030,21 +9986,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1566, R1561, R1562, R330, and R1568.
   - Model: Fable, Planned.
 
-- [ ] **R1553 `SIMD`'s comparisons are builtin dunders, where upstream's
-  are `pop.cmp` in library bodies**
-
-  R185's rules type `==` … `>=` over a `SIMD` and the specializer rewrites
-  the mask, where upstream's `__eq__` … `__le__` and `eq` … `le` are
-  `pop.cmp` bodies.
-  - Port them, and `__bool__`'s `pop.cmp`.
-  - `builtin_fold.rs` does not fold `pop.cmp`: an infix comparison is the
-    reducing dunder, so it cannot be rewritten to one. Fold `pop.cmp`
-    elementwise (`param_expr::fold::fold_infix`) and
-    `pop.simd.reduce_*` under `Bool(mlir_value=…)` as the reduction.
-  - Retire R185's dunder rules in `operators.rs` and the mask rewrite.
-  - Depends on R1552.
-  - Model: Fable, Planned.
-
 - [ ] **R1554 `SIMD`'s `cast`, bit views, reductions, and math dunders are
   checker rules, where upstream's are library bodies**
 
@@ -10084,6 +10025,28 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     upstream's `#pop.int_literal_convert` needs a parametric
     `IntLiteral[value]`.
   - Depends on R1554.
+  - Model: Fable, Planned.
+
+- [ ] **R1574 A compile-time call of `SIMD`'s comparison members runs a
+  lifted thunk, where upstream folds their `pop.cmp` bodies**
+
+  `comptime m = v.lt(w)`, `v.__eq__(v)`, and `Bool(v)` over a parameter
+  `v` are lifted into a `$comptime$` function the VM runs, where upstream's
+  `foldInlineBuiltinFunction` folds the `@always_inline("builtin")` body.
+  - `builtin_fold.rs` declines `pop.cmp` and `pop.simd.reduce_and`/
+    `reduce_or`, so `eq` … `le`, `__eq__`, `__ne__`, and `__bool__` have no
+    template.
+  - Lever: elementwise `ParamOp`s for `pop.cmp` (predicates normalized to
+    `eq`/`ne`/`lt`/`le` by swapping operands) and for the two reductions,
+    built in `scalar_storage_expression` (`constraints.rs`) beside
+    `mlir_op_operator`, with `Bool(mlir_value=…)` read as the value.
+  - Canonicalize so the dunders collapse to today's nodes:
+    `reduce_and(cmp_eq(a, b))` is `Eq(a, b)`, `reduce_or(cmp_lt(a, b))` is
+    `Lt(a, b)`, `cmp_ne(m, splat(False))` over a mask is `m`, and a
+    one-lane reduction is the identity, so `where n < 3` keeps its form.
+  - The new `ParamOp` spellings bump the MIR minor and the package format.
+  - Found while landing R1553 (2026-10-28).
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R1556 Code outside `mojito-types` matches `TyKind::Simd` and

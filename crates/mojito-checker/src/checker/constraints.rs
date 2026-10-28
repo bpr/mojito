@@ -223,10 +223,11 @@ impl Checker {
         let mut value_types = HashMap::new();
         let mut constraints = HashMap::new();
         let mut parameterized = HashMap::new();
-        let struct_name = match self.self_ty.as_ref().map(Ty::kind) {
-            Some(TyKind::Struct(name, _)) => name.clone(),
-            _ => "Self".to_string(),
-        };
+        let struct_name = self
+            .self_ty
+            .as_ref()
+            .and_then(mojito_types::types::nominal_parts)
+            .map_or_else(|| "Self".to_string(), |(name, _)| name.to_string());
         let members: Vec<&StructComptime> = associated.iter().chain(&defaults).collect();
         for member in read_order(&members) {
             if out.contains_key(&member.name) || parameterized.contains_key(&member.name) {
@@ -351,6 +352,12 @@ impl Checker {
                         if let Some(ty) = value_types.get(&member.name) {
                             info.associated_value_types
                                 .insert(member.name.clone(), ty.clone());
+                        }
+                        if matches!(value, CtValue::Type(_))
+                            && let Ok(spelling) = assoc_body_source_type(&member.value)
+                        {
+                            info.associated_spellings
+                                .insert(member.name.clone(), spelling);
                         }
                         if let Some(compiled) = constraints.get(&member.name) {
                             info.associated_constraints

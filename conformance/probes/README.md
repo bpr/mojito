@@ -40,6 +40,7 @@ probes of their own:
 |---|---|---|
 | `for_else_over_range.mojo` | Does a `for ... else` over `range` run its `else` when the loop completes? | **differs**: the previous pin and Mojito print `range else`; `46f49943` skips it (a `List` loop's `else` still runs). `cases.tsv` carries `loop-completion` as `output-diff` until this prints `range else` again. |
 | `tuple_explicit_pack_application.mojo` | Does `Tuple[*Ts](*args^)` construct from a `*Ts: Movable` pack? | **differs**: the previous pin and Mojito print `2` twice; `46f49943` rejects ("cannot unpack a pack of type 'Movable' ('Ts.values') into a call that expects a pack of type 'AnyType'") for every bound tried, while `Tuple(*args^)` runs. Every fixture spells the inferred form until this runs again. |
+| `nan_truth_folded.mojo` | Is `Bool` of a NaN the same whether or not the pin folds the compare? | **differs** (found 2026-10-28): the pin prints `True` for a NaN its folder sees and `False` for one made at run time, as its `pop.cmp ne` lowers to the ordered `fcmp one`; Mojito prints `False` twice. `assets/ok/pliron_convert_bool.mojo` makes its NaN at run time. |
 
 Hand checks the same day: `match`, `case`, `class`, `del`, and `yield` are
 keywords (a binding named by one fails to parse with "escape keyword

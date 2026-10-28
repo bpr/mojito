@@ -425,20 +425,6 @@ pub fn replace_register_reads<S: std::hash::BuildHasher>(
     }
 }
 
-/// The position past the instruction at `index` of `instrs` and, when it
-/// raises, past its error region: where an instruction reading its results
-/// goes, on the normal path alone.
-pub fn past_error_region(instrs: &[MirInstr], index: usize) -> usize {
-    instrs[index]
-        .raise_edge()
-        .and_then(|raises| {
-            instrs[index + 1..].iter().position(
-                |instruction| matches!(instruction, MirInstr::If { cond, .. } if *cond == raises.flag),
-            )
-        })
-        .map_or(index + 1, |offset| index + offset + 2)
-}
-
 /// Every compile-time argument slot an instruction carries, mutably.
 ///
 /// They are a call's bracket arguments, a subscript call's, and a
@@ -501,72 +487,6 @@ pub fn dunder_method_call(
         spread: None,
         refined_bound: None,
     }
-}
-
-/// The body of upstream's builtin `SIMD` comparison dunder over `a` and
-/// `b`, vectors of `width` lanes, its `Bool` into `dest`.
-///
-/// Each register it defines comes from `fresh` at its type: the lane mask
-/// `pop.cmp` is (a `binary`), reduced unless it has one lane (`reduce_and`
-/// for `__eq__`, `reduce_or` for an ordered dunder's `__bool__`), read as a
-/// `Bool`, and negated for `__ne__`, which is `not self == rhs`. An ordered
-/// dunder's `comptime assert` of one lane is the caller's.
-pub fn simd_comparison_dunder(
-    op: InfixOp,
-    dest: Reg,
-    a: Reg,
-    b: Reg,
-    width: &mojito_types::types::SimdWidth,
-    fresh: &mut dyn FnMut(Ty) -> Reg,
-) -> Vec<MirInstr> {
-    let mask_of = |width: mojito_types::types::SimdWidth| -> Ty {
-        TyKind::Simd {
-            dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Bool),
-            width,
-        }
-        .into()
-    };
-    let negated = op == InfixOp::Ne;
-    let mask = fresh(mask_of(width.clone()));
-    let mut instructions = vec![MirInstr::BinOp {
-        op: if negated { InfixOp::Eq } else { op },
-        dest: mask,
-        a,
-        b,
-        resolved: None,
-        raises: None,
-        refined_bound: None,
-    }];
-    let lane = if matches!(width, mojito_types::types::SimdWidth::Known(1)) {
-        mask
-    } else {
-        let lane = fresh(mask_of(mojito_types::types::SimdWidth::Known(1)));
-        instructions.push(MirInstr::SimdReduce {
-            dest: lane,
-            value: mask,
-            op: if matches!(op, InfixOp::Eq | InfixOp::Ne) {
-                mojito_types::mlir::SimdReduction::And
-            } else {
-                mojito_types::mlir::SimdReduction::Or
-            },
-        });
-        lane
-    };
-    let equal = if negated { fresh(Ty::bool()) } else { dest };
-    instructions.push(MirInstr::ScalarCast {
-        dest: equal,
-        value: lane,
-        target: mojito_types::ct::ScalarConversion::Bool,
-    });
-    if negated {
-        instructions.push(MirInstr::UnOp {
-            op: PrefixOp::Not,
-            dest,
-            a: equal,
-            raises: None,
-        });
-    }
-    instructions
 }
 
 /// Rewrite a subscript store `instruction` into the call it is; returns
@@ -3248,26 +3168,71 @@ impl MirInstr {
 
     /// The operand this instruction's result always equals, when it folds to
     /// one: MLIR's `fold` returning an operand, after which upstream's
-    /// `Canonicalizer` replaces the result's uses with it.
+    /// `Canonicalizer` replaces the result's uses with it. `constant` gives
+    /// an operand's folded constant.
     ///
-    /// Only a `value.copy` folds, and only when its source and destination are
-    /// typed alike by a type whose copy is the identity
+    /// A `value.copy` folds when its source and destination are typed alike
+    /// by a type whose copy is the identity
     /// ([`MirDeclarations::copy_is_identity`]): a one-register value, or a
     /// register-passable trivial one, which upstream's parser loads into an
     /// SSA value its copies are. A widening copy changes its readers'
     /// operand type, and a `rebind` is an assertion the elaborator judges
     /// per instance.
+    ///
+    /// Over SIMD values held alike, `pop.simd.reduce` of one lane is that
+    /// lane, and `pop.cmp ne m, False` (or `eq m, True`) over `bool` lanes
+    /// is `m`, as `arith.cmpi` folds over `i1`: the shape of upstream's
+    /// `__bool__` of a comparison's mask.
     pub fn forwarded_operand(
         &self,
+        constant: &dyn Fn(Reg) -> Option<Const>,
         reg_types: &HashMap<u32, Ty>,
         declarations: &MirDeclarations,
     ) -> Option<Reg> {
-        let Self::CopyValue { dest, value, .. } = self else {
-            return None;
-        };
-        let source = reg_types.get(&value.0)?;
-        (reg_types.get(&dest.0) == Some(source) && declarations.copy_is_identity(source))
-            .then_some(*value)
+        let held = |reg: &Reg| reg_types.get(&reg.0).map(mojito_types::types::held_simd_ty);
+        let held_alike =
+            |dest: &Reg, operand: &Reg| held(dest).is_some() && held(dest) == held(operand);
+        match self {
+            Self::CopyValue { dest, value, .. } => {
+                let source = reg_types.get(&value.0)?;
+                (reg_types.get(&dest.0) == Some(source) && declarations.copy_is_identity(source))
+                    .then_some(*value)
+            }
+            Self::SimdReduce { dest, value, .. }
+                if held_alike(dest, value)
+                    && held(value).is_some_and(|ty| {
+                        mojito_types::types::simd_shape(ty.kind())
+                            .is_some_and(|(_, width)| width == 1)
+                    }) =>
+            {
+                Some(*value)
+            }
+            Self::BinOp {
+                op: op @ (InfixOp::Eq | InfixOp::Ne),
+                dest,
+                a,
+                b,
+                resolved: None,
+                raises: None,
+                ..
+            } if held_alike(dest, a) => {
+                let identity = *op == InfixOp::Eq;
+                let ty = reg_types.get(&b.0)?;
+                match const_ct_value(&constant(*b)?, &mojito_types::types::held_simd_ty(ty))? {
+                    CtValue::Simd {
+                        dtype: Dtype::Bool,
+                        lanes,
+                    } if lanes
+                        .iter()
+                        .all(|lane| *lane == mojito_types::ct::CtLane::Bool(identity)) =>
+                    {
+                        Some(*a)
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// The constant this instruction's one result always equals when its
@@ -3291,10 +3256,11 @@ impl MirInstr {
     /// `Const::Value`.
     /// An operator over `UInt` or SIMD lanes folds by the VM's own lane rule
     /// (`mojito_types::ct::int_lane_binop` and its siblings), and a lane
-    /// comparison folds to a `bool` mask. The fold is the compile-time
-    /// folder's; where it and the VM could disagree (a zero scalar divisor,
-    /// an out-of-range shift, an overflowing `**`, a NaN or infinite scalar
-    /// comparison, `Float64` `//`, `%`, `**`, float-lane `//`, `%`, `**`, and
+    /// comparison folds to a `bool` mask. A scalar comparison of a NaN or an
+    /// infinity folds by `pop.cmp`'s ordered predicates, as the VM runs it.
+    /// The fold is the compile-time folder's; where it and the VM could
+    /// disagree (a zero scalar divisor, an out-of-range shift, an
+    /// overflowing `**`, `Float64` `//`, `%`, `**`, float-lane `//`, `%`, `**`, and
     /// `Bool` operators other than `==`/`!=`, a float converted to `Int` or
     /// `UInt` out of range or not finite), nothing folds and the run-time
     /// operation stays. A scalar conversion folds by the VM's own rule
@@ -3382,6 +3348,14 @@ impl MirInstr {
                     .map(|element| operand(*element))
                     .collect::<Option<Vec<_>>>()?;
                 let folded = match values.as_slice() {
+                    // Upstream's `IntLiteral` initializer of a `bool` lane:
+                    // a nonzero literal is `True` (`Self(0)` in `__bool__`).
+                    [CtValue::IntLiteral(literal)] if width == 1 && *dtype == Dtype::Bool => {
+                        CtValue::Simd {
+                            dtype: Dtype::Bool,
+                            lanes: vec![mojito_types::ct::CtLane::Bool(!literal.is_zero())],
+                        }
+                    }
                     [literal @ (CtValue::IntLiteral(_) | CtValue::FloatLiteral(_))]
                         if width == 1 =>
                     {
@@ -3413,7 +3387,7 @@ impl MirInstr {
             }
             Self::CopyValue { dest, .. } => (
                 dest,
-                operand(self.forwarded_operand(reg_types, declarations)?)?,
+                operand(self.forwarded_operand(&constant, reg_types, declarations)?)?,
             ),
             Self::ScalarCast {
                 dest,
@@ -4138,7 +4112,7 @@ mod tests {
                 value: Reg(0),
                 constructor: None,
             }
-            .forwarded_operand(&reg_types, &MirDeclarations::default())
+            .forwarded_operand(&|_| None, &reg_types, &MirDeclarations::default())
         };
         assert_eq!(folds(Ty::int(), Ty::int()), Some(Reg(0)));
         assert_eq!(folds(lane(1), lane(1)), Some(Reg(0)));
@@ -4155,7 +4129,7 @@ mod tests {
             value: Reg(0),
         };
         assert_eq!(
-            rebind.forwarded_operand(&reg_types, &MirDeclarations::default()),
+            rebind.forwarded_operand(&|_| None, &reg_types, &MirDeclarations::default()),
             None
         );
     }

@@ -263,8 +263,12 @@ pub fn float_lane_binop(
     Some(dtype.round_lane(lane))
 }
 
-/// A lane comparison, or `None` for an operator that is not one. An
-/// unordered pair (a `NaN` lane) compares unequal and nothing else.
+/// A lane comparison under `pop.cmp`'s ordered predicates, or `None` for an
+/// operator that is not one.
+///
+/// An unordered pair (a `NaN` lane) compares true under no predicate, `ne`
+/// included (`fcmp one`); upstream's `!=` is `not ==`, which a `NaN` makes
+/// true.
 pub fn lane_compare<T: PartialOrd + Copy>(
     op: mojito_ast::ast::InfixOp,
     a: T,
@@ -275,7 +279,7 @@ pub fn lane_compare<T: PartialOrd + Copy>(
     let order = a.partial_cmp(&b);
     Some(match op {
         InfixOp::Eq => order == Some(Equal),
-        InfixOp::Ne => order != Some(Equal),
+        InfixOp::Ne => matches!(order, Some(Less | Greater)),
         InfixOp::Lt => order == Some(Less),
         InfixOp::Gt => order == Some(Greater),
         InfixOp::Le => matches!(order, Some(Less | Equal)),
@@ -373,7 +377,8 @@ impl ScalarConversion {
 ///
 /// An integer converts by wrapping (or rounding to `Float64`), a float
 /// truncates toward zero with Rust's saturating casts (`fptosi.sat`), a
-/// `bool` is 0/1, and `Bool(x)` is `x != 0`, so `NaN` is `True`.
+/// `bool` is 0/1, and `Bool(x)` is `__bool__`'s ordered `pop.cmp ne` with
+/// zero, so `NaN` is `False`.
 pub fn convert_lane(lane: &CtLane, target: ScalarConversion) -> CtValue {
     match (lane, target) {
         (CtLane::Int(n), ScalarConversion::Int) => CtValue::Int(*n as i64),
@@ -386,7 +391,7 @@ pub fn convert_lane(lane: &CtLane, target: ScalarConversion) -> CtValue {
                 ScalarConversion::Int => CtValue::Int(x as i64),
                 ScalarConversion::UInt => CtValue::UInt(x as u64),
                 ScalarConversion::Float64 => CtValue::Float(*bits),
-                ScalarConversion::Bool => CtValue::Bool(x != 0.0),
+                ScalarConversion::Bool => CtValue::Bool(x != 0.0 && !x.is_nan()),
             }
         }
         (CtLane::Bool(b), ScalarConversion::Int) => CtValue::Int(i64::from(*b)),
@@ -1703,7 +1708,7 @@ mod tests {
             None
         );
         assert_eq!(lane_compare(InfixOp::Eq, f64::NAN, f64::NAN), Some(false));
-        assert_eq!(lane_compare(InfixOp::Ne, f64::NAN, f64::NAN), Some(true));
+        assert_eq!(lane_compare(InfixOp::Ne, f64::NAN, f64::NAN), Some(false));
         assert_eq!(lane_compare(InfixOp::Lt, f64::NAN, f64::NAN), Some(false));
         assert_eq!(bool_lane_binop(InfixOp::Lt, false, true), Some(true));
         assert_eq!(bool_lane_binop(InfixOp::Add, false, true), None);

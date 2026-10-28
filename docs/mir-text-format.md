@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.129
+mojito-mir 1.130
 ```
 
-The writer emits 1.129. The reader accepts 1.0 through 1.129; *Schema 1.0*
+The writer emits 1.130. The reader accepts 1.0 through 1.130; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -839,6 +839,17 @@ library gains `std.sys.info` and `std.builtin.dtype`, `SIMD` declares its
 conversion members and their traits, and an overload that takes no run-time
 parameter keys its compile-time parameter names into its symbol; the MIR
 schema does not change.
+
+Schema 1.130 gives `binary { op: ne }` over float operands upstream's
+`pop.cmp ne` meaning, the ordered predicate (`fcmp one`): a NaN operand is
+unequal to nothing, as no other comparison holds over one either, and a
+float `scalar.cast` to `Bool` is `__bool__`'s ordered `pop.cmp ne` against
+zero, so a NaN is `False` (R1553). A source `!=` is `__ne__`, `not ==`, and
+lowers to no `binary ne`. A 1.129 artifact's float `binary ne` is read with
+the 1.130 meaning. The package format moves to `mojito-package 137`, since
+`SIMD` declares its comparison members, `Comparable`, and `Equatable`, an
+infix comparison beside a `SIMD` is its dunder's call, and
+`CheckedCompareLink` loses R185's `assertions`.
 
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:

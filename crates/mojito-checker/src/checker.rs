@@ -2473,6 +2473,11 @@ struct StructInfo {
     /// has this type.
     #[serde(serialize_with = "interface::sorted")]
     associated_value_types: HashMap<String, Ty>,
+    /// The source spelling of each `associated` type alias whose body
+    /// names a type (`comptime _Mask = SIMD[.bool, Self.length]`), which a
+    /// construction through the alias (`Self._Mask(mlir_value=v)`) calls.
+    #[serde(serialize_with = "interface::sorted")]
+    associated_spellings: HashMap<String, mojito_ast::ast::Type>,
     /// Availability constraints for monomorphic associated members, one entry
     /// per trailing `where` clause. They are evaluated against the enclosing
     /// struct arguments at projection time.

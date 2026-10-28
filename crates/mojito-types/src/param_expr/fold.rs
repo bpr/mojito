@@ -18,7 +18,8 @@
 //! [`float_lane_binop`], [`lane_compare`], [`bool_lane_binop`]): a literal or
 //! a width-1 operand beside a lane splats through
 //! [`CtLane::of_int_literal`]/[`CtLane::of_float_literal`], and a comparison
-//! gives a `bool` mask.
+//! is `pop.cmp`, which gives a `bool` mask under the ordered predicates
+//! (a NaN lane is unequal to nothing).
 
 use super::ParamError;
 use crate::ct::{
@@ -185,10 +186,19 @@ pub fn compare(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<bool, Par
             )),
         };
     }
-    let (Some(left), Some(right)) = (exact(left), exact(right)) else {
-        return Err(unsupported("numeric comparison expects numeric operands"));
+    let (Some(exact_left), Some(exact_right)) = (exact(left), exact(right)) else {
+        // A NaN or an infinity has no exact value: it compares as
+        // `pop.cmp`'s ordered predicates do.
+        let float = |value: &CtValue| match value {
+            CtValue::Float(bits) => Some(f64::from_bits(*bits)),
+            _ => machine_float(value).ok(),
+        };
+        return float(left)
+            .zip(float(right))
+            .and_then(|(left, right)| lane_compare(op, left, right))
+            .ok_or_else(|| unsupported("numeric comparison expects numeric operands"));
     };
-    let ordering = left.as_rational().cmp(right.as_rational());
+    let ordering = exact_left.as_rational().cmp(exact_right.as_rational());
     Ok(match op {
         Eq => ordering.is_eq(),
         Ne => !ordering.is_eq(),
@@ -204,23 +214,28 @@ pub fn compare(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<bool, Par
 /// `SIMD.__eq__`/`__ne__`/`__lt__` family, to a `Bool`.
 ///
 /// [`fold_infix`] is `pop.cmp`, elementwise over SIMD lanes; the dunder
-/// reads its mask as a `Bool`: `==` when every lane holds, `!=` as `not ==`
-/// (so a NaN lane makes it hold), and an ordered operator when any lane
-/// holds, as a folded call drops its `comptime assert` that the operands be
-/// scalars. Any other operator, and a non-SIMD comparison, folds as
-/// [`fold_infix`] folds it.
+/// reads its mask as a `Bool`: `==` when every lane holds, and an ordered
+/// operator when any lane holds, as a folded call drops its `comptime
+/// assert` that the operands be scalars. `!=` is `not ==` over every
+/// operand kind, so a NaN makes it hold where `pop.cmp ne` does not. Any
+/// other operator, and a non-SIMD comparison, folds as [`fold_infix`]
+/// folds it.
 pub fn fold_comparison(
     op: InfixOp,
     left: &CtValue,
     right: &CtValue,
 ) -> Result<CtValue, ParamError> {
     use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
+    if op == Ne
+        && let CtValue::Bool(equal) = fold_comparison(Eq, left, right)?
+    {
+        return Ok(CtValue::Bool(!equal));
+    }
     let simd = matches!(left, CtValue::Simd { .. }) || matches!(right, CtValue::Simd { .. });
-    if !simd || !matches!(op, Eq | Ne | Lt | Gt | Le | Ge) {
+    if !simd || !matches!(op, Eq | Lt | Gt | Le | Ge) {
         return fold_infix(op, left, right);
     }
-    let lane_op = if op == Ne { Eq } else { op };
-    let CtValue::Simd { lanes, .. } = fold_infix(lane_op, left, right)? else {
+    let CtValue::Simd { lanes, .. } = fold_infix(op, left, right)? else {
         return Err(unsupported("a SIMD comparison expects a mask"));
     };
     let mut mask = lanes.iter().map(|lane| match lane {
@@ -229,7 +244,6 @@ pub fn fold_comparison(
     });
     Ok(CtValue::Bool(match op {
         Eq => mask.try_fold(true, |all, lane| lane.map(|lane| all && lane))?,
-        Ne => !mask.try_fold(true, |all, lane| lane.map(|lane| all && lane))?,
         _ => mask.try_fold(false, |any, lane| lane.map(|lane| any || lane))?,
     }))
 }
@@ -591,5 +605,14 @@ mod tests {
         };
         assert_eq!(fold(InfixOp::Ne, &nan, &nan), Some(CtValue::Bool(true)));
         assert_eq!(fold(InfixOp::Eq, &nan, &nan), Some(CtValue::Bool(false)));
+        let scalar_nan = CtValue::Float(f64::NAN.to_bits());
+        assert_eq!(
+            fold(InfixOp::Ne, &scalar_nan, &scalar_nan),
+            Some(CtValue::Bool(true))
+        );
+        let CtValue::Simd { lanes, .. } = fold_infix(InfixOp::Ne, &nan, &nan).unwrap() else {
+            panic!("an elementwise `pop.cmp ne` is a mask");
+        };
+        assert_eq!(lanes, vec![CtLane::Bool(false); 2]);
     }
 }

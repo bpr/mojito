@@ -257,8 +257,8 @@ pub fn unsigned_predicate(op: InfixOp) -> ICmpPredicateAttr {
 pub fn float_predicate(op: InfixOp) -> FCmpPredicateAttr {
     match op {
         InfixOp::Eq => FCmpPredicateAttr::OEQ,
-        // Rust `!=` on f64 is true for NaN operands: unordered-or-unequal.
-        InfixOp::Ne => FCmpPredicateAttr::UNE,
+        // `pop.cmp ne` is ordered: a NaN operand is unequal to nothing.
+        InfixOp::Ne => FCmpPredicateAttr::ONE,
         InfixOp::Lt => FCmpPredicateAttr::OLT,
         InfixOp::Le => FCmpPredicateAttr::OLE,
         InfixOp::Gt => FCmpPredicateAttr::OGT,

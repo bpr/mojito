@@ -307,8 +307,8 @@ impl FnLowering<'_> {
                 let cmp = ICmpOp::new(ctx, predicate, lhs, rhs);
                 self.define(ctx, dest, cmp.get_operation(), cmp.get_result(ctx))
             }
-            // Rust f64 comparisons: `!=` is true for NaN operands (UNE), the
-            // ordered comparisons are false (`runtime::float_op`).
+            // `pop.cmp`'s ordered predicates: every comparison, `!=`
+            // included, is false for a NaN operand (`runtime::float_op`).
             ScalarTy::Float64 | ScalarTy::Sized(Dtype::Float16 | Dtype::Float32) => {
                 let cmp = self.fcmp(ctx, float_predicate(op), lhs, rhs);
                 self.define(ctx, dest, cmp.get_operation(), cmp.get_result(ctx))

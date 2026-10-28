@@ -547,12 +547,12 @@ fn checks_method_body_against_field_types() {
 
 #[test]
 fn accepts_float64_arithmetic_and_division() {
-    ok("var x: Float64 = 1.5 + 2.0 * 3.0\nvar y: Float64 = 10.0 / 4.0\nvar ok: Bool = x < y\n");
+    ok_std("var x: Float64 = 1.5 + 2.0 * 3.0\nvar y: Float64 = 10.0 / 4.0\nvar ok: Bool = x < y\n");
 }
 
 #[test]
 fn accepts_uint_via_conversion() {
-    ok("var u: UInt = UInt(0)\nu = u + UInt(1)\nvar ok: Bool = u < UInt(10)\n");
+    ok_std("var u: UInt = UInt(0)\nu = u + UInt(1)\nvar ok: Bool = u < UInt(10)\n");
 }
 
 #[test]
@@ -714,7 +714,7 @@ fn rejects_assigning_a_closure() {
 
 #[test]
 fn accepts_if_elif_else() {
-    ok(
+    ok_std(
         "var x: Int = 3\nif x > 0:\n    var a: Int = 1\nelif x == 0:\n    var b: Int = 2\nelse:\n    var c: Int = 3\n",
     );
 }
@@ -737,41 +737,41 @@ fn accepts_range_with_one_two_or_three_args() {
 
 #[test]
 fn accepts_break_and_continue_inside_loop() {
-    ok("for i in range(10):\n    if i == 5:\n        break\n    continue\n");
+    ok_std("for i in range(10):\n    if i == 5:\n        break\n    continue\n");
 }
 
 #[test]
 fn checks_owned_iteration_and_collection_comprehensions() {
     let move_only = "struct Item:\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n\n";
-    ok(&format!(
+    ok_std(&format!(
         "{move_only}def main():\n    var values: List[Item] = [Item(1), Item(2)]\n    for var item in values^:\n        print(item.value)\n"
     ));
     // Binding convention and source mode are independent: a `var` target over a
     // borrowed source binds a mutable copy, and an immutable target over a
     // consumed source is accepted. Neither the old `var`-requires-transfer nor
     // transfer-requires-`var` coupling exists any longer.
-    ok(
+    ok_std(
         "def main():\n    var values: List[Int] = [1, 2]\n    for var item in values:\n        item += 1\n        print(item)\n",
     );
-    ok(
+    ok_std(
         "def main():\n    var values: List[Int] = [1, 2]\n    for item in values^:\n        print(item)\n",
     );
     // An unadorned target is immutable regardless of the source mode, so
     // mutating it is rejected.
     assert!(matches!(
-        err("def main():\n    var values: List[Int] = [1, 2]\n    for item in values:\n        item += 1\n"),
+        err_std("def main():\n    var values: List[Int] = [1, 2]\n    for item in values:\n        item += 1\n"),
         TypeError::ImmutableInPlaceDestination(name) if name == "item"
     ));
 
-    ok(
-        "def main():\n    var xs = [x * x for x in range(5) if x % 2 == 0]\n    var s = {x % 3 for x in range(8)}\n    var d = {x: x * x for x in range(4)}\n    print(len(xs), len(s), d[3])\n",
+    ok_std(
+        "def main() raises:\n    var xs = [x * x for x in range(5) if x % 2 == 0]\n    var s = {x % 3 for x in range(8)}\n    var d = {x: x * x for x in range(4)}\n    print(len(xs), len(s), d[3])\n",
     );
 
     // Current Mojo bounds owned iteration at `Movable & Deinitable` elements:
     // a linear List rejects even when the loop would exhaust the source.
     let linear = "@explicit_destroy(\"close Item\")\nstruct Linear(Deinitable where False):\n    var value: Int\n    def __init__(out self, value: Int):\n        self.value = value\n    def close(deinit self):\n        pass\n\n";
     assert!(matches!(
-        err(&format!(
+        err_std(&format!(
             "{linear}def main():\n    var values: List[Linear] = [Linear(1), Linear(2)]\n    for var item in values^:\n        item^.close()\n"
         )),
         TypeError::Unsupported(message) if message.contains("requires 'Movable & Deinitable' elements")
@@ -1224,7 +1224,7 @@ fn fixed_immutable_origin_iterator_still_binds_immutably() {
     // Loop-site resolution touches only parametric mutability: a declared
     // `Origin[mut=False]` iterator yields immutable references even over a
     // mutable source, so a `for ref` write is rejected.
-    let error = err(
+    let error = err_std(
         "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct FrozenIter[o: Origin[mut=False]]:\n    var src: ref[o] List[Int]\n    var index: Int\n\n    def __next__(mut self) raises StopIteration -> ref[Self.o] Int:\n        if self.index >= len(self.src):\n            raise StopIteration()\n        var r = self.index\n        self.index += 1\n        return self.src[r]\n\nstruct Numbers:\n    var items: List[Int]\n\n    def __init__(out self):\n        self.items = [1, 2]\n\n    def __iter__(ref self) -> FrozenIter[origin_of(self.items)]:\n        ref items = self.items\n        return FrozenIter(items, 0)\n\ndef main():\n    var nums = Numbers()\n    for ref x in nums:\n        x += 1\n",
     );
     assert!(
@@ -1404,7 +1404,7 @@ fn accepts_trait_conformance_and_bounded_call() {
 
 #[test]
 fn accepts_self_type_in_trait_requirement() {
-    ok(
+    ok_std(
         "trait Eq2:\n    def same(self, other: Self) -> Bool:\n        ...\n\n@fieldwise_init\nstruct P(Eq2):\n    var x: Int\n\n    def same(self, other: Self) -> Bool:\n        return self.x == other.x\n\nvar a: P = P(1)\nvar r: Bool = a.same(P(2))\n",
     );
 }
@@ -2115,16 +2115,17 @@ fn accepts_simd_splat_construction() {
 
 #[test]
 fn accepts_simd_comparison_mask() {
-    ok(
+    ok_std(
         "var v: SIMD[DType.float32, 4] = SIMD[DType.float32, 4](1.0, 2.0, 3.0, 4.0)\nvar m: SIMD[DType.bool, 4] = v.lt(v)\n",
     );
 }
 
 #[test]
 fn simd_comparison_types_the_reducing_dunder() {
-    // `==` over vectors is a `Bool`, and an ordered comparison's one-lane
-    // assertion is the reached instance's, so an uncalled body may spell it.
-    ok(
+    // `==` over vectors is `SIMD.__eq__`, a `Bool`, and an ordered
+    // comparison's one-lane assertion is the reached instance's, so an
+    // uncalled body may spell it.
+    ok_std(
         "def never(v: SIMD[DType.int32, 4]) -> Bool:\n    return v < v\n\ndef main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var same: Bool = v == v\n    var chained: Bool = Int32(1) < Int32(2) < Int32(3) or False\n",
     );
 }
@@ -2274,7 +2275,7 @@ fn comptime_not_and_conditional_compile_to_parameter_operators() {
         def negated[n: Int]() -> Flag[not (n == 9)]:\n    return Flag[n != 9]()\n\n\
         def chosen[n: Int]() -> SIMD[DType.int32, n if n > 2 else h(n)]:\n    \
         return SIMD[DType.int32, n if n > 2 else h(n)](7)\n\n";
-    ok(&format!(
+    ok_std(&format!(
         "{prefix}def main():\n    var t: Flag[True] = negated[1]()\n    \
          var f: Flag[not (9 == 9)] = negated[9]()\n    \
          var taken: SIMD[DType.int32, 4] = chosen[4]()\n    \
@@ -2282,16 +2283,18 @@ fn comptime_not_and_conditional_compile_to_parameter_operators() {
     ));
     // The untaken arm's application stays an application.
     assert!(
-        check_source(&format!(
+        check_with_std(&format!(
             "{prefix}def main():\n    var other: SIMD[DType.int32, 2] = chosen[1]()\n"
         ))
         .is_err()
     );
     // The negation of a comparison is not the comparison that decides the
     // same.
-    let respelled = err("struct Flag[b: Bool]:\n    var x: Int\n\n\
+    let respelled = err_std(
+        "struct Flag[b: Bool]:\n    var x: Int\n\n\
          \x20   def __init__(out self):\n        self.x = 0\n\n\
-         def negated[n: Int]() -> Flag[not (n > 9)]:\n    return Flag[n <= 9]()\n");
+         def negated[n: Int]() -> Flag[not (n > 9)]:\n    return Flag[n <= 9]()\n",
+    );
     assert!(matches!(respelled, TypeError::TypeMismatch { .. }));
 }
 
@@ -2525,7 +2528,7 @@ fn distinct_simd_widths_are_distinct_types() {
 #[test]
 fn accepts_return_on_all_if_paths() {
     // Every arm (including else) returns.
-    ok(
+    ok_std(
         "def sign(n: Int) -> Int:\n    if n > 0:\n        return 1\n    elif n < 0:\n        return -1\n    else:\n        return 0\n",
     );
 }
@@ -2550,7 +2553,7 @@ fn rejects_falling_off_the_end() {
 #[test]
 fn rejects_if_without_else() {
     // No `else`, so a path falls through without returning.
-    let e = err("def f(n: Int) -> Int:\n    if n > 0:\n        return 1\n");
+    let e = err_std("def f(n: Int) -> Int:\n    if n > 0:\n        return 1\n");
     assert_eq!(e, TypeError::MissingReturn("f".into()));
 }
 
@@ -3852,7 +3855,9 @@ fn enforces_trailing_where_constraints_and_type_equality() {
         "def positive[n: Int]() -> Int where n > 0:\n    return n\n\ndef comparable[T: AnyType](value: T) -> Int where conforms_to(T, Comparable) and T == Int:\n    return 1\n\nvar a = positive[2]()\nvar b = comparable(3)\n",
     );
     assert!(matches!(
-        err("def positive[n: Int]() -> Int where n > 0:\n    return n\n\nvar a = positive[0]()\n"),
+        err_std(
+            "def positive[n: Int]() -> Int where n > 0:\n    return n\n\nvar a = positive[0]()\n"
+        ),
         TypeError::BadCall { .. }
     ));
     assert!(matches!(
@@ -4182,12 +4187,12 @@ fn ternary_chained_comparison_and_unpacking_type_check() {
 
 #[test]
 fn accepts_decorators_and_plain_dunders() {
-    ok("@always_inline\ndef f(x: Int) -> Int:\n    return x\n\nvar z: Int = f(1)\n");
-    ok(
+    ok_std("@always_inline\ndef f(x: Int) -> Int:\n    return x\n\nvar z: Int = f(1)\n");
+    ok_std(
         "@doc_hidden\n@stable(since=\"1.0\")\n@deprecated(\"old\")\n@fieldwise_init\nstruct P:\n    var x: Int\n\nvar p: P = P(1)\n",
     );
     // A dunder method with a plain `self` type-checks like any method.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct V:\n    var x: Int\n\n    def __eq__(self, o: V) -> Bool:\n        return self.x == o.x\n",
     );
 }
@@ -5409,25 +5414,25 @@ fn len_dunder_must_return_int() {
 fn setitem_dunder_typing_and_errors() {
     // `c[i] = e` without `__setitem__` writes through the getter's result,
     // which a value getter does not offer.
-    let e = err(
+    let e = err_std(
         "@fieldwise_init\nstruct P:\n    var a: Int\n    def __getitem__(self, i: Int) -> Int:\n        return self.a\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
     );
     assert!(matches!(e, TypeError::ImmutableBinding(_)), "got {e:?}");
     // A setter needs a getter: its result is the stored value's type.
-    let e = err(
+    let e = err_std(
         "@fieldwise_init\nstruct P:\n    var a: Int\n    def __setitem__(mut self, i: Int, v: Int):\n        self.a = v\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
     );
     assert!(matches!(e, TypeError::SetterWithoutGetter(_)), "got {e:?}");
     // The getter is resolved over the indices, so its arity is checked.
-    let e = err(
+    let e = err_std(
         "@fieldwise_init\nstruct P:\n    var a: Int\n    def __getitem__(self, i: Int, j: Int) -> Int:\n        return self.a\n    def __setitem__(mut self, i: Int, v: Int):\n        self.a = v\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
     );
     assert!(matches!(e, TypeError::BadCall { .. }), "got {e:?}");
     // A well-formed `__setitem__` type-checks, whatever its `self` convention.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct P:\n    var a: Int\n    def __getitem__(self, i: Int) -> Int:\n        return self.a\n    def __setitem__(mut self, i: Int, v: Int):\n        self.a = v\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
     );
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct P:\n    var a: Int\n    def __getitem__(self, i: Int) -> Int:\n        return self.a\n    def __setitem__(self, i: Int, v: Int):\n        pass\n\ndef main():\n    var p: P = P(1)\n    p[0] = 9\n",
     );
 
@@ -5447,7 +5452,7 @@ fn setitem_dunder_typing_and_errors() {
     );
 
     // Generic setter parameters are inferred from the element-typed value.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct Sink:\n    var value: Int\n    def __getitem__(self, index: Int) -> Bool:\n        return self.value != 0\n    def __setitem__[T: Copyable & Deinitable](mut self, index: Int, value: T):\n        self.value = index\n\ndef main():\n    var sink = Sink(0)\n    sink[42] = True\n",
     );
 }
@@ -5718,13 +5723,13 @@ fn subscript_contract_rejects_overlapping_mutable_receiver_and_argument() {
 #[test]
 fn user_iterator_protocol_typing() {
     // A struct with a valid `__iter__` → iterator (a raising `__next__`) is iterable.
-    ok(
+    ok_std(
         "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct I:\n    var c: Int\n    var s: Int\n    def __next__(mut self) raises StopIteration -> Int:\n        if self.c >= self.s:\n            raise StopIteration()\n        var v: Int = self.c\n        self.c = self.c + 1\n        return v\n\n@fieldwise_init\nstruct C:\n    var n: Int\n    def __iter__(self) -> I:\n        return I(0, self.n)\n\ndef main():\n    for x in C(3):\n        print(x)\n",
     );
     // A nonraising `__next__` is upstream's removed bounded protocol, even
     // beside a `__len__`.
     assert!(matches!(
-        err(
+        err_std(
             "@fieldwise_init\nstruct I:\n    var c: Int\n    var s: Int\n    def __len__(self) -> Int:\n        return self.s - self.c\n    def __next__(mut self) -> Int:\n        var v: Int = self.c\n        self.c = self.c + 1\n        return v\n\n@fieldwise_init\nstruct C:\n    var n: Int\n    def __iter__(self) -> I:\n        return I(0, self.n)\n\ndef main():\n    for x in C(3):\n        print(x)\n"
         ),
         TypeError::IteratorProtocol(ref message)
@@ -5732,14 +5737,14 @@ fn user_iterator_protocol_typing() {
     ));
     // No `__iter__` → not iterable.
     assert!(matches!(
-        err(
+        err_std(
             "@fieldwise_init\nstruct P:\n    var x: Int\n\ndef main():\n    for i in P(1):\n        print(i)\n"
         ),
         TypeError::NoSuchMethod { .. }
     ));
     // The iterator's `__next__` must be `mut self` (it advances).
     assert!(matches!(
-        err(
+        err_std(
             "@fieldwise_init\nstruct StopIteration:\n    pass\n\n@fieldwise_init\nstruct I:\n    var c: Int\n    def __next__(self) raises StopIteration -> Int:\n        raise StopIteration()\n        return 0\n@fieldwise_init\nstruct C:\n    var n: Int\n    def __iter__(self) -> I:\n        return I(0)\n\ndef main():\n    for x in C(1):\n        print(x)\n"
         ),
         TypeError::TypeMismatch { .. }
@@ -8327,7 +8332,7 @@ fn pop_and_index_ops_type_as_their_verifiers_do() {
     // `pop.simd.splat` the `_type` they name, `pop.max` takes `bool` lanes,
     // and an `index` op takes and gives `__mlir_type.index` values, a
     // signed or unsigned compare an `i1`.
-    ok(
+    ok_std(
         "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var s = SIMD[DType.int32, 4](mlir_value=__mlir_op.`pop.add`(a._mlir_value, a._mlir_value))\n    var m = SIMD[DType.bool, 4](mlir_value=__mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<lt>`](a._mlir_value, s._mlir_value))\n    var f = SIMD[DType.float32, 4](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type, fastmathFlags=__mlir_attr.`#pop.fmf<fast>`](a._mlir_value))\n    var t = SIMD[DType.float32, 4](mlir_value=__mlir_op.`pop.simd.splat`[_type=SIMD[DType.float32, 4]._mlir_type](Float32(2.5)._mlir_value))\n    var c = SIMD[DType.bool, 4](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.bool, 4]._mlir_type](a._mlir_value))\n    var w = SIMD[DType.float32, 4](mlir_value=__mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type](c._mlir_value))\n    var h = SIMD[DType.bool, 4](mlir_value=__mlir_op.`pop.max`(m._mlir_value, c._mlir_value))\n    var x = Int(3).__mlir_index__()\n    var y = __mlir_op.`index.add`(x, x)\n    var b: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<slt>`](x, y)\n    var u: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<ult>`](x, y)\n    print(s, m, f, t, c, w, h, Int(mlir_value=y), Bool(value=b), Bool(value=u))\n",
     );
 }

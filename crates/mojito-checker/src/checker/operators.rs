@@ -143,22 +143,40 @@ impl Checker {
         if matches!(op, In | NotIn) {
             return self.infer_membership(span, op, left, right, &lt, &rt);
         }
-        // `+`, `-`, `*`, the bitwise operators, and the shifts beside a
-        // `SIMD` operand, a scalar's included, are `SIMD`'s declared
-        // dunders, `a.__add__(b)` else the reflected `b.__radd__(a)`, as
-        // upstream's `emitBinOpCall` resolves them.
+        // `+`, `-`, `*`, the bitwise operators, the shifts, and the
+        // comparisons beside a `SIMD` operand, a scalar's included, are
+        // `SIMD`'s declared dunders, `a.__add__(b)` else the reflected
+        // `b.__radd__(a)`, as upstream's `emitBinOpCall` resolves them. A
+        // comparison has no reflected dunder, so a literal left operand
+        // materializes to its default type (`Int`, `Float64`), whose dunder
+        // takes the right one. In a compile-time position a comparison is
+        // the dunder folded instead (`infix_value`), which asserts nothing.
+        // An unlinked program (a phase test's) declares no `SIMD`, so its
+        // scalar comparisons stay the built-in ones below.
         let pointer_or_archetype =
             |ty: &Ty| matches!(ty.kind(), TyKind::Pointer { .. }) || is_bound_archetype(ty);
+        let comparison = matches!(op, Eq | Ne | Lt | Gt | Le | Ge);
         if let Some(span) = &span
-            && matches!(op, Add | Sub | Mul | BitAnd | BitOr | BitXor | Shl | Shr)
+            && (matches!(op, Add | Sub | Mul | BitAnd | BitOr | BitXor | Shl | Shr)
+                || (comparison
+                    && self.comptime_positions.get() == 0
+                    && self.structs.contains_key("SIMD")))
             && (matches!(lt.kind(), TyKind::Simd { .. })
                 || matches!(rt.kind(), TyKind::Simd { .. }))
             && !pointer_or_archetype(&lt)
             && !pointer_or_archetype(&rt)
         {
+            let receiver = if comparison {
+                mojito_types::types::default_literal(&lt)
+            } else {
+                lt.clone()
+            };
+            if receiver != lt {
+                self.record_literal_materializations(left, &lt, &receiver)?;
+            }
             return self
-                .infer_operator_call(span, op, left, right, &lt, Some(&rt))?
-                .ok_or_else(|| bad_infix_operator(op, &lt, &rt));
+                .infer_operator_call(span, op, left, right, &receiver, Some(&rt))?
+                .ok_or_else(|| bad_infix_operator(op, &receiver, &rt));
         }
         // The other SIMD operators are elementwise (handled before the
         // scalar-numeric path, which `Int`, `UInt`, and `Float64` operands
@@ -168,7 +186,7 @@ impl Checker {
                 && !mojito_types::types::has_host_scalar_value(ty.kind())
         };
         if vector(&lt) || vector(&rt) {
-            return self.infer_simd_infix(span.as_ref(), op, &lt, &rt);
+            return simd_infix(op, &lt, &rt);
         }
         // Arithmetic and identity comparison reason about allocation layout,
         // which an origin-bearing pointer to a single checked value does not
@@ -402,14 +420,10 @@ impl Checker {
             {
                 self.borrow_operator_operand(left, &self.chain_operand_ty(left)?);
             }
-            let assertions = self
-                .clear_fact(&span, |facts| facts.instance_assertions.take())
-                .unwrap_or_default();
             links.push(CheckedCompareLink {
                 target,
                 call,
                 instantiated_args,
-                assertions,
             });
             left = right;
         }
@@ -542,71 +556,34 @@ impl Checker {
         })
     }
 
-    /// Type a SIMD operator that is not yet a declared dunder: `//`, `%`,
-    /// `/`, and the comparisons. Both operands must be the same SIMD type,
-    /// except a numeric *literal* splats to the other operand's type.
-    /// Arithmetic is elementwise and keeps the operand type; a comparison is
-    /// upstream's builtin dunder, a `Bool`: `==` when every lane is equal,
-    /// `!=` its negation, and an ordered operator over `Scalar`s only, whose
-    /// `comptime assert` a run-time position at `span` records for the
-    /// instance to judge ([`Self::record_instance_assertion`]).
-    pub(super) fn infer_simd_infix(
+    /// Record the value of `expr`, the comparison `left op right` of a
+    /// `SIMD` vector in a compile-time position, as the node's parameter
+    /// value: upstream's dunder folded (`infix_value`), whose `comptime
+    /// assert` the fold drops, never an operator over lanes.
+    pub(super) fn record_folded_comparison(
         &self,
-        span: Option<&SourceSpan>,
+        expr: &Expr,
         op: InfixOp,
-        lt: &Ty,
-        rt: &Ty,
-    ) -> Result<Ty, TypeError> {
-        use InfixOp::{Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Ne};
-        let bad = || TypeError::BadOperator {
-            op: op.symbol().to_string(),
-            operands: format!("{lt} and {rt}"),
+        left: &Expr,
+        right: &Expr,
+    ) {
+        use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
+        if self.comptime_positions.get() == 0 || !matches!(op, Eq | Ne | Lt | Gt | Le | Ge) {
+            return;
+        }
+        let vector = |operand: &Expr| {
+            self.compile_dependent_ct_expr(operand)
+                .ok()
+                .and_then(|built| built.meta().as_value().cloned())
+                .is_some_and(|ty| {
+                    matches!(ty.kind(), TyKind::Simd { .. })
+                        && !mojito_types::types::has_host_scalar_value(ty.kind())
+                })
         };
-        // Determine the common SIMD type, allowing a numeric literal on one
-        // side. The slots may be symbolic: identity is structural, and a
-        // dtype gate a symbolic lane cannot answer is the instantiation's.
-        let (dtype, width) = match (lt.kind(), rt.kind()) {
-            (
-                TyKind::Simd {
-                    dtype: d1,
-                    width: w1,
-                },
-                TyKind::Simd {
-                    dtype: d2,
-                    width: w2,
-                },
-            ) if d1 == d2 && w1 == w2 => (d1.clone(), w1.clone()),
-            (TyKind::Simd { dtype, width }, other) | (other, TyKind::Simd { dtype, width })
-                if splats_to(other, dtype) =>
-            {
-                (dtype.clone(), width.clone())
-            }
-            _ => return Err(bad()),
-        };
-        let same = || simd_of(dtype.clone(), width.clone());
-        match op {
-            // Floor division on numeric lanes (`pop.floordiv`); remainder on
-            // integer lanes (upstream defines it on float lanes too, a
-            // recorded gap).
-            FloorDiv if dtype.licenses(|d| d != Dtype::Bool) => same(),
-            Mod if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
-            // True division is defined on float lanes only.
-            Div if dtype.licenses(Dtype::is_float) => same(),
-            // `__eq__` reduces the lanes, `__ne__` is `not __eq__`.
-            Eq | Ne | Lt | Gt | Le | Ge => {
-                // A `Bool` operand converts to the mask first, asserting the
-                // one lane the ordered dunders assert too.
-                let message = if *lt == TyKind::Bool || *rt == TyKind::Bool {
-                    Some(mojito_types::types::BOOL_MASK_CONVERSION_MESSAGE)
-                } else {
-                    mojito_types::types::scalar_comparison_message(op)
-                };
-                if let (Some(span), Some(message)) = (span, message) {
-                    self.record_instance_assertion(span, &width, message)?;
-                }
-                Ok(Ty::bool())
-            }
-            _ => Err(bad()),
+        if (vector(left) || vector(right))
+            && let Ok(value) = self.compile_dependent_ct_expr(expr)
+        {
+            self.record_member_value(expr.source_span(), value);
         }
     }
 
@@ -1217,4 +1194,52 @@ fn union_subtree_place(
         root: first.root,
         path,
     })
+}
+
+/// Type a SIMD operator that is not yet a declared dunder (`//`, `%`,
+/// `/`, R1566 and R184), or a comparison in a compile-time position,
+/// which is the dunder folded, a `Bool`. Both operands must be the same
+/// SIMD type, except a numeric *literal* splats to the other operand's
+/// type. Arithmetic is elementwise and keeps the operand type.
+fn simd_infix(op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
+    use InfixOp::{Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Ne};
+    let bad = || TypeError::BadOperator {
+        op: op.symbol().to_string(),
+        operands: format!("{lt} and {rt}"),
+    };
+    // Determine the common SIMD type, allowing a numeric literal on one
+    // side. The slots may be symbolic: identity is structural, and a
+    // dtype gate a symbolic lane cannot answer is the instantiation's.
+    let (dtype, width) = match (lt.kind(), rt.kind()) {
+        (
+            TyKind::Simd {
+                dtype: d1,
+                width: w1,
+            },
+            TyKind::Simd {
+                dtype: d2,
+                width: w2,
+            },
+        ) if d1 == d2 && w1 == w2 => (d1.clone(), w1.clone()),
+        (TyKind::Simd { dtype, width }, other) | (other, TyKind::Simd { dtype, width })
+            if splats_to(other, dtype) =>
+        {
+            (dtype.clone(), width.clone())
+        }
+        _ => return Err(bad()),
+    };
+    let same = || simd_of(dtype.clone(), width.clone());
+    match op {
+        // Floor division on numeric lanes (`pop.floordiv`); remainder on
+        // integer lanes (upstream defines it on float lanes too, a
+        // recorded gap).
+        FloorDiv if dtype.licenses(|d| d != Dtype::Bool) => same(),
+        Mod if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
+        // True division is defined on float lanes only.
+        Div if dtype.licenses(Dtype::is_float) => same(),
+        // A comparison in a compile-time position is the dunder folded
+        // ([`Checker::record_folded_comparison`]), a `Bool`.
+        Eq | Ne | Lt | Gt | Le | Ge => Ok(Ty::bool()),
+        _ => Err(bad()),
+    }
 }

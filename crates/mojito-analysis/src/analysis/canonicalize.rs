@@ -37,6 +37,7 @@ pub(super) use hlcf::erased_results;
 
 use super::fold;
 use super::pre_elaboration::BodyPass;
+use mojito_ast::ast::InfixOp;
 use mojito_common::timing;
 use mojito_mir::mir::verify::instruction_result_regs;
 use mojito_mir::mir::{
@@ -44,8 +45,9 @@ use mojito_mir::mir::{
     MirFunctionDeclaration, MirInstr, MirPlace, Proj, Reg, count_register_reads, fresh_register,
     instruction_regions_mut, instruction_regs_mut, terminator_regs_mut,
 };
+use mojito_types::ct::ScalarConversion;
 use mojito_types::origin::{CaptureAccess, OriginSeg};
-use mojito_types::types::{Ty, TyKind};
+use mojito_types::types::{Ty, TyKind, has_host_scalar_value};
 use std::collections::{HashMap, HashSet};
 
 /// The pass, under MLIR's flag spelling.
@@ -175,18 +177,7 @@ pub(super) fn definition_counts(blocks: &mut [MirBlock], n_regs: u32) -> Vec<u32
 fn fold_constants(function: &mut MirFunction, declarations: &MirDeclarations) -> usize {
     let mut folded = 0;
     loop {
-        let definitions = definition_counts(&mut function.blocks, function.n_regs);
-        let mut constants = HashMap::new();
-        visit_blocks(&mut function.blocks, &mut |block| {
-            for instruction in &block.instrs {
-                if let MirInstr::Const { dest, k } = instruction
-                    && k.is_folded()
-                    && definitions.get(dest.0 as usize) == Some(&1)
-                {
-                    constants.insert(dest.0, k.clone());
-                }
-            }
-        });
+        let constants = folded_constants(function);
         let constant = |reg: Reg| constants.get(&reg.0).cloned();
         let round = fold::replace_folded(
             &mut function.blocks,
@@ -199,6 +190,23 @@ fn fold_constants(function: &mut MirFunction, declarations: &MirDeclarations) ->
         }
         folded += round;
     }
+}
+
+/// The folded constant each singly defined register of `function` holds.
+fn folded_constants(function: &mut MirFunction) -> HashMap<u32, Const> {
+    let definitions = definition_counts(&mut function.blocks, function.n_regs);
+    let mut constants = HashMap::new();
+    visit_blocks(&mut function.blocks, &mut |block| {
+        for instruction in &block.instrs {
+            if let MirInstr::Const { dest, k } = instruction
+                && k.is_folded()
+                && definitions.get(dest.0 as usize) == Some(&1)
+            {
+                constants.insert(dest.0, k.clone());
+            }
+        }
+    });
+    constants
 }
 
 /// Call `visit` on every block of `blocks`, then on the blocks of the `try`
@@ -225,6 +233,8 @@ fn visit_blocks(blocks: &mut [MirBlock], visit: &mut impl FnMut(&mut MirBlock)) 
 /// forwarded only when the fold is its operand's sole reader: a reader may
 /// consume such a value, so it keeps exactly the fold's readers.
 fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) -> usize {
+    let constants = folded_constants(function);
+    let constant = |reg: Reg| constants.get(&reg.0).cloned();
     let MirFunction {
         blocks,
         reg_types,
@@ -237,9 +247,29 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
     let mut closures = HashSet::new();
     let mut creates = HashMap::new();
     let mut extracts = HashMap::new();
+    let mut host_comparisons = HashSet::new();
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
             match instruction {
+                MirInstr::BinOp {
+                    op:
+                        InfixOp::Eq
+                        | InfixOp::Ne
+                        | InfixOp::Lt
+                        | InfixOp::Le
+                        | InfixOp::Gt
+                        | InfixOp::Ge,
+                    dest,
+                    a,
+                    resolved: None,
+                    raises: None,
+                    ..
+                } if reg_types
+                    .get(&a.0)
+                    .is_some_and(|ty| has_host_scalar_value(ty.kind())) =>
+                {
+                    host_comparisons.insert(dest.0);
+                }
                 MirInstr::MakeClosure { dest, .. } if instruction.would_be_trivially_dead() => {
                     closures.insert(dest.0);
                 }
@@ -268,15 +298,34 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
         }
         _ => None,
     };
+    // A host scalar's comparison defines its `Bool` directly (`Int`'s
+    // `__lt__` inlined is `Bool` of its one-lane mask): the cast that is the
+    // comparison's sole reader goes, the comparison retyped `Bool`.
+    let comparison_bool = |instruction: &MirInstr| match instruction {
+        MirInstr::ScalarCast {
+            value,
+            target: ScalarConversion::Bool,
+            ..
+        } if host_comparisons.contains(&value.0) && reads.get(value.0 as usize) == Some(&1) => {
+            Some(*value)
+        }
+        _ => None,
+    };
     let mut folds = HashMap::new();
     let mut copies = HashMap::new();
+    let mut retyped = Vec::new();
     visit_blocks(blocks, &mut |block| {
         for instruction in &block.instrs {
             let mut results = Vec::new();
             instruction_result_regs(instruction, &mut results);
+            if let (Some(comparison), [dest]) = (comparison_bool(instruction), results.as_slice()) {
+                folds.insert(dest.0, comparison);
+                retyped.push(comparison);
+                continue;
+            }
             if let (Some(operand), [dest]) = (
                 instruction
-                    .forwarded_operand(reg_types, declarations)
+                    .forwarded_operand(&constant, reg_types, declarations)
                     .or_else(|| copied_closure(instruction))
                     .or_else(|| structs.extracted(instruction)),
                 results.as_slice(),
@@ -332,6 +381,11 @@ fn forward_copies(function: &mut MirFunction, declarations: &MirDeclarations) ->
             None
         })
         .collect();
+    for comparison in retyped {
+        if roots.values().any(|root| *root == comparison) {
+            reg_types.insert(comparison.0, Ty::bool());
+        }
+    }
     forward(blocks, &roots);
     reg_types.retain(|reg, _| !roots.contains_key(reg));
     function.spans.0.retain(|reg, _| !roots.contains_key(reg));

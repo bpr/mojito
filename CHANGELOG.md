@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD`'s `__eq__`, `__ne__`, `__gt__`, `__ge__`, `__lt__`, `__le__`, the
+  elementwise `eq` through `le`, and their `_Mask` alias are upstream's
+  `pop.cmp` bodies in `std.simd`, `SIMD` declares `Comparable` and
+  `Equatable`, and `==` through `>=` beside any `SIMD`, `Int` and `Float64`
+  included, call them (R1553). `Int32(1).__lt__(Int32(2))` and
+  `v.__eq__(w)`, which were rejected, run. `pop.cmp ne` over float lanes is
+  the ordered predicate the pin lowers, so `Bool(nan)` and `if nan:` are
+  `False` and `nan.ne(nan)` is `False`, while `nan != nan` stays `True`. A
+  literal left operand materializes to `Int` or `Float64`, so `3 <
+  UInt(4)` and `0 == Int32(0)`, which ran, are rejected as at the pin
+  (R1542). `Self.Next()` through a member alias constructs, a symbolic
+  `SIMDLength(w)` argument of a spliced assertion evaluates, so
+  `v.__float__()` over `SIMD[DType.float32, w]` runs, and `canonicalize`
+  folds the inlined dunder's mask chain, so a comparison runs as fast as it
+  did.
 - `SIMD`'s `__and__`, `__or__`, `__xor__`, `__lshift__`, `__rshift__`,
   `__invert__`, their reflected forms, and the in-place `__iadd__`,
   `__isub__`, `__imul__`, `__iand__`, `__ior__`, `__ixor__`, `__ilshift__`,

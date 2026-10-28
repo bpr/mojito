@@ -1569,8 +1569,9 @@ pointer to storage its context uniques (`mojito_types::types`):
   Above the waist the three keep a scalar operator path behind one
   predicate (`types::has_host_scalar_value`) for their true division,
   `**`, and literal materialization; below it, their `binary` comparison
-  defines a `Bool` directly, where any other vector's comparison is
-  upstream's builtin dunder (`mir::simd_comparison_dunder`).
+  defines a `Bool` directly, so `canonicalize` folds the `scalar.cast` to
+  `Bool` that ends their inlined comparison dunder away, where any other
+  vector's comparison keeps it.
 - A write is explicit: `Ty::update` unshares the node and refreshes its
   facts, and a rewriting walk rebuilds through `Ty::reusing`, which keeps
   the handle it read when the rebuilt variant is equal.
@@ -6122,6 +6123,16 @@ point where a slot declared in a loop is uninitialized again.
   (`StructExtractOp::fold`), and a `struct.create` whose operands are the
   fields of one value of its type, read in order by extracts each read only
   there and its only readers, is that value (`foldTrivialStructCopy`).
+  The shape of an inlined `SIMD` comparison dunder folds the same way:
+  `pop.simd.reduce` of one lane is that lane, `pop.cmp ne m, False` (or
+  `eq m, True`) over `bool` lanes is `m`, as `arith.cmpi` folds over `i1`,
+  a `simd.make` of an `IntLiteral` into one `bool` lane is a `const`, and a
+  host scalar's comparison that only a `scalar.cast` to `Bool` reads is
+  retyped `Bool` and replaces the cast, so `i < n` over `Int` is one
+  `binary` again (`tests/mir_passes/canonicalize/simd_comparison_mask.mir`).
+  `HoistYieldResults` skips a result nothing reads, which
+  `RemoveUnusedResults` removes, so the two never trade one rewrite
+  forever (`hoist_yield_unread_result.mir`).
   Only a result with one definition whose source has at most one is
   forwarded, so the source's definition dominates every reader. A
   register-passable trivial source may gain readers, since a register is a

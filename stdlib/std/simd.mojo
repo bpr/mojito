@@ -2,14 +2,16 @@
 # its instance `__len__`, `__getitem__`, `__setitem__`, `__contains__`,
 # `__add__`, `__sub__`, `__mul__`, `__pos__`, `__neg__`, `__and__`,
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
-# in-place `__iadd__`, `__isub__`, `__imul__`, `__iand__`, `__ixor__`,
-# `__ior__`, `__ilshift__`, and `__irshift__`, the reflected `__radd__`,
-# `__rsub__`, `__rmul__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`,
-# and `__rrshift__`, and `__bool__`, `__int__`, `__mlir_index__`,
-# `__float__`, and `_refine`. The other members are still served by the
-# compiler (R184, R1553–R1555, R1566, R1567, R330, R276), and the struct
-# declares only the traits whose requirements are ported here; as
-# upstream's, its trait list has no `Floatable`. `Scalar`, `Int`, `UInt`,
+# comparisons `__eq__`, `__ne__`, `__gt__`, `__ge__`, `__lt__`, and
+# `__le__`, the elementwise `eq`, `ne`, `gt`, `ge`, `lt`, and `le` with
+# their `_Mask` alias, the in-place `__iadd__`, `__isub__`, `__imul__`,
+# `__iand__`, `__ixor__`, `__ior__`, `__ilshift__`, and `__irshift__`, the
+# reflected `__radd__`, `__rsub__`, `__rmul__`, `__rand__`, `__rxor__`,
+# `__ror__`, `__rlshift__`, and `__rrshift__`, and `__bool__`, `__int__`,
+# `__mlir_index__`, `__float__`, and `_refine`. The other members are
+# still served by the compiler (R184, R1554, R1555, R1566, R1567, R330,
+# R276), and the struct declares only the traits whose requirements are
+# ported here; as upstream's, its trait list has no `Floatable`. `Scalar`, `Int`, `UInt`,
 # the sized aliases, and `Byte` stay compiler names until R1557.
 # Omitted: the `@lldb_formatter_wrapping_type` decorator
 # (`std.utils._visualizers`) and `CoordLike`'s static `__len__`
@@ -57,6 +59,8 @@ from std.builtin.dtype import _uint_type_of_width
 @stable(since="1.1")
 struct SIMD[dtype: DType, length: SIMDLength](
     Boolable,
+    Comparable,
+    Equatable,
     Indexer,
     Intable,
     Sized,
@@ -198,6 +202,12 @@ struct SIMD[dtype: DType, length: SIMDLength](
 
     var _mlir_value: Self._mlir_type
     """The underlying storage for the vector."""
+
+    # ===-------------------------------------------------------------------===#
+    # Aliases
+    # ===-------------------------------------------------------------------===#
+
+    comptime _Mask = SIMD[.bool, Self.length]
 
     # ===-------------------------------------------------------------------===#
     # Operator dunders
@@ -427,6 +437,211 @@ struct SIMD[dtype: DType, length: SIMDLength](
         ), "must be an integral or bool type"
 
         return self ^ -1
+
+    # ===------------------------------------------------------------------=== #
+    # Boolean comparison operations.
+    # ===------------------------------------------------------------------=== #
+
+    @always_inline("builtin")
+    @stable(since="1.1")
+    def __eq__(self, rhs: Self) -> Bool:
+        """Compares two SIMD vectors for equality.
+
+        Args:
+            rhs: The SIMD vector to compare with.
+
+        Returns:
+            True if all elements of the SIMD vectors are equal, False otherwise.
+        """
+        return Bool(
+            mlir_value=__mlir_op.`pop.simd.reduce_and`(self.eq(rhs)._mlir_value)
+        )
+
+    @stable(since="1.1")
+    @always_inline("builtin")
+    def __ne__(self, rhs: Self) -> Bool:
+        """Compares two SIMD vectors for inequality.
+
+        Args:
+            rhs: The SIMD vector to compare with.
+
+        Returns:
+            True if any elements of the SIMD vectors are not equal, False
+            otherwise.
+        """
+        return not self == rhs
+
+    @always_inline("builtin")
+    def __gt__(self, rhs: Self) -> Bool:
+        """Compares two Scalars using greater-than comparison.
+
+        Args:
+            rhs: The Scalar to compare with.
+
+        Returns:
+            True if `self` is greater than `rhs`, False otherwise.
+        """
+        comptime assert Self.length == 1, (
+            "Strict inequality is only defined for `Scalar`s; "
+            "did you mean to use `SIMD.gt(...)`?"
+        )
+        return self.gt(rhs).__bool__()
+
+    @always_inline("builtin")
+    def __ge__(self, rhs: Self) -> Bool:
+        """Compares two Scalars using greater-than-or-equal comparison.
+
+        Args:
+            rhs: The Scalar to compare with.
+
+        Returns:
+            True if `self` is greater than or equal to `rhs`, False otherwise.
+        """
+        comptime assert Self.length == 1, (
+            "Greater than or equal is only defined for `Scalar`s; "
+            "did you mean to use `SIMD.ge(...)`?"
+        )
+        return self.ge(rhs).__bool__()
+
+    @always_inline("builtin")
+    def __lt__(self, rhs: Self) -> Bool:
+        """Compares two Scalars using less-than comparison.
+
+        Args:
+            rhs: The Scalar to compare with.
+
+        Returns:
+            True if `self` is less than `rhs`, False otherwise.
+        """
+        comptime assert Self.length == 1, (
+            "Strict inequality is only defined for `Scalar`s; "
+            "did you mean to use `SIMD.lt(...)`?"
+        )
+        return self.lt(rhs).__bool__()
+
+    @always_inline("builtin")
+    def __le__(self, rhs: Self) -> Bool:
+        """Compares two Scalars using less-than-or-equal comparison.
+
+        Args:
+            rhs: The Scalar to compare with.
+
+        Returns:
+            True if `self` is less than or equal to `rhs`, False otherwise.
+        """
+        comptime assert Self.length == 1, (
+            "Less than or equal is only defined for `Scalar`s; "
+            "did you mean to use `SIMD.le(...)`?"
+        )
+        return self.le(rhs).__bool__()
+
+    # ===------------------------------------------------------------------=== #
+    # Elementwise comparison operations.
+    # ===------------------------------------------------------------------=== #
+
+    @always_inline("builtin")
+    def eq(self, rhs: Self) -> Self._Mask:
+        """Compares two SIMD vectors using elementwise equality.
+
+        Args:
+            rhs: The SIMD vector to compare with.
+
+        Returns:
+            A new bool SIMD vector of the same size whose element at position
+            `i` is the value of `self[i] == rhs[i]`.
+        """
+
+        var res = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<eq>`](
+            self._mlir_value, rhs._mlir_value
+        )
+        return Self._Mask(mlir_value=res)
+
+    @always_inline("builtin")
+    def ne(self, rhs: Self) -> Self._Mask:
+        """Compares two SIMD vectors using elementwise inequality.
+
+        Args:
+            rhs: The SIMD vector to compare with.
+
+        Returns:
+            A new bool SIMD vector of the same size whose element at position
+            `i` is the value of `self[i] != rhs[i]`.
+        """
+
+        var res = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<ne>`](
+            self._mlir_value, rhs._mlir_value
+        )
+        return Self._Mask(mlir_value=res)
+
+    @always_inline("builtin")
+    def gt(self, rhs: Self) -> Self._Mask:
+        """Compares two SIMD vectors using elementwise greater-than comparison.
+
+        Args:
+            rhs: The SIMD vector to compare with.
+
+        Returns:
+            A new bool SIMD vector of the same size whose element at position
+            `i` is the value of `self[i] > rhs[i]`.
+        """
+
+        var res = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<gt>`](
+            self._mlir_value, rhs._mlir_value
+        )
+        return Self._Mask(mlir_value=res)
+
+    @always_inline("builtin")
+    def ge(self, rhs: Self) -> Self._Mask:
+        """Compares two SIMD vectors using elementwise greater-than-or-equal
+        comparison.
+
+        Args:
+            rhs: The SIMD vector to compare with.
+
+        Returns:
+            A new bool SIMD vector of the same size whose element at position
+            `i` is the value of `self[i] >= rhs[i]`.
+        """
+
+        var res = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<ge>`](
+            self._mlir_value, rhs._mlir_value
+        )
+        return Self._Mask(mlir_value=res)
+
+    @always_inline("builtin")
+    def lt(self, rhs: Self) -> Self._Mask:
+        """Compares two SIMD vectors using elementwise less-than comparison.
+
+        Args:
+            rhs: The SIMD vector to compare with.
+
+        Returns:
+            A new bool SIMD vector of the same size whose element at position
+            `i` is the value of `self[i] < rhs[i]`.
+        """
+
+        var res = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<lt>`](
+            self._mlir_value, rhs._mlir_value
+        )
+        return Self._Mask(mlir_value=res)
+
+    @always_inline("builtin")
+    def le(self, rhs: Self) -> Self._Mask:
+        """Compares two SIMD vectors using elementwise less-than-or-equal
+        comparison.
+
+        Args:
+            rhs: The SIMD vector to compare with.
+
+        Returns:
+            A new bool SIMD vector of the same size whose element at position
+            `i` is the value of `self[i] <= rhs[i]`.
+        """
+
+        var res = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<le>`](
+            self._mlir_value, rhs._mlir_value
+        )
+        return Self._Mask(mlir_value=res)
 
     # ===------------------------------------------------------------------=== #
     # In place operations.

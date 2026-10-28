@@ -627,9 +627,10 @@ impl Walk<'_> {
     /// `HoistYieldResults`: when every body arm is a bare `yield`, a result
     /// all arms yield one value for becomes that value, and with two arms
     /// yielding constant true and false a `Bool` result becomes the
-    /// condition. An `if` left without a read result goes, its elif
-    /// condition regions with it, as upstream erases the op whole: the pin
-    /// skips a call in such a condition.
+    /// condition. A result nothing reads has no use to replace, which
+    /// `RemoveUnusedResults` removes instead. An `if` left without a read
+    /// result goes, its elif condition regions with it, as upstream erases
+    /// the op whole: the pin skips a call in such a condition.
     fn hoist_yield_results(&mut self, block: &mut MirBlock, index: usize) -> bool {
         let MirInstr::If {
             results,
@@ -661,6 +662,9 @@ impl Walk<'_> {
             if self.replaced.contains_key(&result.0) {
                 continue;
             }
+            if self.reads.get(result.0 as usize) == Some(&0) {
+                continue;
+            }
             let first = yields[0][at];
             let flag = |values: &Vec<Reg>| self.constants.get(&values[at].0).copied();
             let replacement = if yields.len() == 2
@@ -680,7 +684,7 @@ impl Walk<'_> {
                     self.replaced.insert(result.0, value);
                     changed = true;
                 }
-                None => unread &= self.reads.get(result.0 as usize) == Some(&0),
+                None => unread = false,
             }
         }
         if unread {

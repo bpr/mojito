@@ -20,8 +20,8 @@ impl FnLowering<'_> {
     /// The `scalar.cast` of `arg` to `conversion` (`Int(x)` / `UInt(x)` /
     /// `Float64(x)` / `Bool(x)`), mirroring `runtime::builtin_convert`:
     /// float-to-integer saturates (NaN becomes 0), integer reinterpretations
-    /// are bit-exact, and `Bool` is a non-zero test (`fcmp une` — `Bool(NaN)`
-    /// is `True`).
+    /// are bit-exact, and `Bool` is `__bool__`'s ordered non-zero test
+    /// (`fcmp one` — `Bool(NaN)` is `False`).
     pub(super) fn lower_convert(
         &mut self,
         ctx: &mut Context,
@@ -151,7 +151,8 @@ impl FnLowering<'_> {
             }
             (ScalarTy::Float64, ScalarTy::Bool) => {
                 let zero = self.float_constant(ctx, 0.0);
-                let cmp = self.fcmp(ctx, FCmpPredicateAttr::UNE, value, zero);
+                // `__bool__`'s ordered `pop.cmp ne`: a NaN is `False`.
+                let cmp = self.fcmp(ctx, FCmpPredicateAttr::ONE, value, zero);
                 self.define(ctx, dest, cmp.get_operation(), cmp.get_result(ctx))
             }
             (ScalarTy::Ptr, _) | (_, ScalarTy::Ptr) => {

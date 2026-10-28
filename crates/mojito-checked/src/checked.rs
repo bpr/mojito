@@ -549,9 +549,6 @@ pub struct CheckedCompareLink {
     pub target: Option<String>,
     pub call: Option<Box<CheckedCallContract>>,
     pub instantiated_args: Vec<mojito_types::types::TyArg>,
-    /// The `comptime assert`s of the builtin `SIMD` dunder the link
-    /// applies ([`SemanticAdjustment::InstanceAssertion`]).
-    pub assertions: Vec<mojito_types::types::GenericConstraint>,
 }
 
 /// How a `^` transfer takes its source, as upstream's `emitTransfer`

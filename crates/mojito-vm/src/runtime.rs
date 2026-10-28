@@ -2044,9 +2044,9 @@ pub fn simd_shuffle(
     Ok(simd_value(dtype, gathered))
 }
 
-/// Dispatch a method call on a SIMD receiver: the elementwise comparisons
-/// and the numeric lane reductions. The checker validated shapes; an
-/// unknown name is a clean has-no-method error.
+/// Dispatch a method call on a SIMD receiver: the numeric lane
+/// reductions. The checker validated shapes; an unknown name is a clean
+/// has-no-method error.
 pub fn simd_method(
     dtype: Dtype,
     lanes: &SimdLanes,
@@ -2054,41 +2054,6 @@ pub fn simd_method(
     args: &[Value],
 ) -> Result<Value, RuntimeError> {
     match method {
-        // `ne` is the ordered predicate upstream answers at run time: a NaN
-        // on either side is unequal to nothing. The infix `!=` stays IEEE.
-        "ne" if args.len() == 1 && dtype.is_float() => {
-            let width = lanes.width();
-            let xs = to_float_lanes(&simd_value(dtype, lanes.clone()), dtype, width)?;
-            let ys = to_float_lanes(&args[0], dtype, width)?;
-            Ok(simd_value(
-                Dtype::Bool,
-                SimdLanes::Bool(
-                    xs.iter()
-                        .zip(&ys)
-                        .map(|(a, b)| a.partial_cmp(b).is_some_and(std::cmp::Ordering::is_ne))
-                        .collect(),
-                ),
-            ))
-        }
-        // The elementwise comparisons, which upstream spells as methods
-        // because its infix `<`/`<=`/`>`/`>=` are `Scalar`-only.
-        "lt" | "le" | "gt" | "ge" | "eq" | "ne" if args.len() == 1 => {
-            let op = match method {
-                "lt" => InfixOp::Lt,
-                "le" => InfixOp::Le,
-                "gt" => InfixOp::Gt,
-                "ge" => InfixOp::Ge,
-                "eq" => InfixOp::Eq,
-                _ => InfixOp::Ne,
-            };
-            // The receiver stays lanes even at width one, so a host-scalar
-            // argument splats against it.
-            let receiver = Value::Simd {
-                dtype,
-                lanes: lanes.clone(),
-            };
-            simd_binop(op, &receiver, &args[0])
-        }
         "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max" if args.is_empty() => {
             simd_reduce(dtype, lanes, method)
         }
@@ -2482,7 +2447,8 @@ fn float_op(op: InfixOp, x: f64, y: f64) -> Result<Value, RuntimeError> {
         Le => Value::Bool(x <= y),
         Ge => Value::Bool(x >= y),
         Eq => Value::Bool(x == y),
-        Ne => Value::Bool(x != y),
+        // `pop.cmp ne` is the ordered predicate: a NaN is unequal to nothing.
+        Ne => Value::Bool(x.partial_cmp(&y).is_some_and(std::cmp::Ordering::is_ne)),
         Div | MatMul | Shl | Shr | BitAnd | BitOr | BitXor | And | Or | In | NotIn | Is | IsNot => {
             return Err(RuntimeError::TypeError(format!(
                 "operator '{op:?}' is invalid for float dispatch"

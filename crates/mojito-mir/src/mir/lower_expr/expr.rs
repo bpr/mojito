@@ -21,10 +21,6 @@ pub(in crate::mir) struct OperatorDispatch {
     /// one: its receiver convention, its compile-time parameter
     /// declarations, and the arguments the call solved for them.
     pub(in crate::mir) contract: Option<OperatorContract>,
-    /// The `comptime assert`s of the builtin `SIMD` dunder a chained
-    /// comparison's link applies; a lone operator's are its node's
-    /// ([`Flatten::expr_unconverted`]).
-    pub(in crate::mir) assertions: Vec<mojito_types::types::GenericConstraint>,
 }
 
 /// What a chained comparison's link records of its dunder's method call.
@@ -36,18 +32,24 @@ pub(in crate::mir) struct OperatorContract {
     pub(in crate::mir) refined_bound: Option<Vec<String>>,
 }
 
-/// The method struct value `receiver` answers a chained comparison's link
-/// `op` with, as upstream's parser spells the link: `a < b` is
-/// `a.__lt__(b)`. `None` for any other receiver, whose link stays a
+/// The method a struct or `SIMD` value `receiver` answers a chained
+/// comparison's link `op` with, as upstream's parser spells the link: `a <
+/// b` is `a.__lt__(b)`. `None` for any other receiver, whose link stays a
 /// `binary`.
 pub(in crate::mir) fn struct_operator_method(
     op: InfixOp,
     receiver: Node<'_>,
 ) -> Option<&'static str> {
     crate::mir::operator_method(op).filter(|_| {
-        receiver
-            .ty()
-            .is_some_and(|ty| matches!(ty.kind(), TyKind::Struct(..)))
+        receiver.ty().is_some_and(|ty| {
+            matches!(
+                ty.kind(),
+                TyKind::Struct(..)
+                    | TyKind::Simd { .. }
+                    | TyKind::IntLiteral
+                    | TyKind::FloatLiteral
+            )
+        })
     })
 }
 
@@ -357,19 +359,15 @@ impl<'a> Flatten<'a> {
             raises: node.raises(),
             method: None,
             contract: None,
-            assertions: Vec::new(),
         };
         self.emit_comparison(node.location(), op, ra, rb, dispatch)
     }
 
     /// Emit one dispatched operator over `a` and `b`: the dunder the
     /// checker selected for a struct receiver is called as a method, as
-    /// upstream's parser spells `a + b` as `a.__add__(b)`; a comparison of
-    /// a `SIMD` operand other than a host scalar is its builtin dunder's
-    /// body, after a chain link's `comptime assert`
-    /// ([`simd_comparison_dunder`]); any other operator is a `binary`,
-    /// whose `resolved` names a bound's requirement the elaborator answers
-    /// per instance.
+    /// upstream's parser spells `a + b` as `a.__add__(b)`; any other
+    /// operator is a `binary`, whose `resolved` names a bound's requirement
+    /// the elaborator answers per instance.
     pub(in crate::mir) fn emit_comparison(
         &mut self,
         location: SourceSpan,
@@ -383,40 +381,7 @@ impl<'a> Flatten<'a> {
             raises,
             method,
             contract,
-            assertions,
         } = dispatch;
-        if resolved.is_none()
-            && matches!(
-                op,
-                InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Le | InfixOp::Gt | InfixOp::Ge
-            )
-            && let Some(width) = [a, b].iter().find_map(|operand| {
-                let kind = self.f.reg_types.get(&operand.0)?.kind();
-                match kind {
-                    TyKind::Simd { width, .. }
-                        if !mojito_types::types::has_host_scalar_value(kind) =>
-                    {
-                        Some(width.clone())
-                    }
-                    _ => None,
-                }
-            })
-        {
-            for cond in assertions {
-                self.emit(MirInstr::ComptimeAssert {
-                    cond: Box::new(cond),
-                });
-            }
-            let dest = self.fresh_typed(location.clone(), None, Ty::bool());
-            let instructions =
-                crate::mir::simd_comparison_dunder(op, dest, a, b, &width, &mut |ty| {
-                    self.fresh_typed(location.clone(), None, ty)
-                });
-            for instruction in instructions {
-                self.emit(instruction);
-            }
-            return dest;
-        }
         let raises = self.raises(raises, location.clone());
         let d = self.fresh(location, None);
         let (contract, refined_bound) = contract.map_or((None, None), |mut contract| {

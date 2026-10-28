@@ -1521,24 +1521,41 @@ impl<'a> Specializer<'a> {
             ));
         }
         let (args, called) = args.split_at(own_decls.len());
+        // A function the check applied by its own name takes the values of
+        // its arguments as a call does, an argument's own applications
+        // demanded first (`SIMDLength(w)`'s `w.__mlir_index__()`).
+        let mut called_values = Vec::with_capacity(called.len());
+        for arg in called {
+            let value = match arg.kind() {
+                ParamKind::DeclRef(reference) => bindings.values.get(reference).cloned(),
+                _ if let Some(value) =
+                    eval_ct(arg, bindings).ok().or_else(|| arg.frozen_struct()) =>
+                {
+                    Some(value)
+                }
+                _ => {
+                    let applied = self.applied(template, arg, bindings)?;
+                    eval_ct(&applied, bindings)
+                        .ok()
+                        .or_else(|| applied.frozen_struct())
+                }
+            };
+            called_values.push(value.ok_or_else(|| {
+                self.error(
+                    Some(template),
+                    format!(
+                        "compile-time application `{function}` reads an unresolved value `{arg}`"
+                    ),
+                )
+            })?);
+        }
+        let called = called_values;
         let unresolved = |what: &str, arg: &ParamExpr| {
             self.error(
                 Some(template),
                 format!("compile-time application `{function}` reads {what} `{arg}`"),
             )
         };
-        // A function the check applied by its own name takes the values of
-        // its arguments as a call does.
-        let called = called
-            .iter()
-            .map(|arg| {
-                match arg.kind() {
-                    ParamKind::DeclRef(reference) => bindings.values.get(reference).cloned(),
-                    _ => eval_ct(arg, bindings).ok().or_else(|| arg.frozen_struct()),
-                }
-                .ok_or_else(|| unresolved("an unresolved value", arg))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         let mut instance_bindings = self.base_bindings();
         if let Some((owner, instance)) = instance {
             let ty = match instance.kind() {
@@ -2510,9 +2527,6 @@ impl<'a> Specializer<'a> {
             // Argument loads a devirtualized capturing call needs, spliced in
             // ahead of the call once the walk over this block is done.
             let mut preludes: Vec<(usize, Vec<MirInstr>)> = Vec::new();
-            // What converts an operator's result to the `Bool` its template
-            // declared, spliced in after the operator the same way.
-            let mut conversions: Vec<(usize, Vec<MirInstr>)> = Vec::new();
             for (index, instruction) in block.instrs.iter_mut().enumerate() {
                 let regions = mojito_mir::mir::instruction_regions_mut(instruction);
                 if !regions.is_empty() {
@@ -2689,7 +2703,8 @@ impl<'a> Specializer<'a> {
                 }
                 // A comparison requirement called on a builtin instance
                 // (`a.__lt__(b)`, or `a < b` through a bound) is the
-                // builtin's own comparison.
+                // builtin's own comparison; a `SIMD` instance's is its
+                // declared dunder, which the witness resolves.
                 if let MirInstr::MethodCall {
                     dest,
                     recv,
@@ -2708,7 +2723,7 @@ impl<'a> Specializer<'a> {
                     && let Some(op) = comparison_of_dunder(method)
                     && !matches!(
                         (function.reg_types.get(&recv.0).map(peel_refs)).map(Ty::kind),
-                        Some(TyKind::Struct(..)) | None
+                        Some(TyKind::Struct(..) | TyKind::Simd { .. }) | None
                     )
                 {
                     *instruction = MirInstr::BinOp {
@@ -2720,49 +2735,6 @@ impl<'a> Specializer<'a> {
                         raises: raises.take(),
                         refined_bound: None,
                     };
-                }
-                // A comparison a template typed `Bool` through its bound is
-                // the builtin `SIMD` dunder at a vector instance, as MIR
-                // lowers one whose operands are spelled: an ordered one
-                // asserts its scalar here, the instance's width closed.
-                if let MirInstr::BinOp { op, dest, a, b, .. } = instruction
-                    && matches!(
-                        op,
-                        mojito_ast::ast::InfixOp::Eq
-                            | mojito_ast::ast::InfixOp::Ne
-                            | mojito_ast::ast::InfixOp::Lt
-                            | mojito_ast::ast::InfixOp::Le
-                            | mojito_ast::ast::InfixOp::Gt
-                            | mojito_ast::ast::InfixOp::Ge
-                    )
-                    && function.reg_types.get(&dest.0) == Some(&Ty::bool())
-                    && let Some(operand) = function.reg_types.get(&a.0).map(peel_refs).cloned()
-                    && let TyKind::Simd { width, .. } = operand.kind()
-                    && !mojito_types::types::has_host_scalar_value(operand.kind())
-                {
-                    if let Some(message) = mojito_types::types::scalar_comparison_message(*op)
-                        && width.known() != Some(1)
-                    {
-                        return Err(MonoError {
-                            kind: MonoErrorKind::Instantiation,
-                            ..self.error(Some(owner), format!("constraint failed: {message}"))
-                        });
-                    }
-                    let mut dunder = mojito_mir::mir::simd_comparison_dunder(
-                        *op,
-                        *dest,
-                        *a,
-                        *b,
-                        width,
-                        &mut |ty| {
-                            let reg = Reg(function.n_regs);
-                            function.n_regs += 1;
-                            function.reg_types.insert(reg.0, ty);
-                            reg
-                        },
-                    );
-                    *instruction = dunder.remove(0);
-                    conversions.push((index, dunder));
                 }
                 // `**` on Int/UInt and the expansions that display a scalar
                 // call bundled bodies without naming them, so the
@@ -3534,24 +3506,8 @@ impl<'a> Specializer<'a> {
                 }
             }
             block.instrs.iter_mut().for_each(drop_parameter_slots);
-            // A conversion follows instruction `index`, past its error region
-            // when it raises, and a prelude precedes it, so at one position
-            // the conversion comes first.
-            let mut insertions: Vec<(usize, bool, Vec<MirInstr>)> = conversions
-                .into_iter()
-                .map(|(index, conversion)| {
-                    let position = mojito_mir::mir::past_error_region(&block.instrs, index);
-                    (position, false, conversion)
-                })
-                .chain(
-                    preludes
-                        .into_iter()
-                        .map(|(index, prelude)| (index, true, prelude)),
-                )
-                .collect();
-            insertions.sort_by_key(|(position, prelude, _)| (*position, *prelude));
-            for (position, _, instructions) in insertions.into_iter().rev() {
-                block.instrs.splice(position..position, instructions);
+            for (index, prelude) in preludes.into_iter().rev() {
+                block.instrs.splice(index..index, prelude);
             }
         }
         Ok(())

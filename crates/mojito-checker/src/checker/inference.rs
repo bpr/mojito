@@ -1266,7 +1266,9 @@ impl Checker {
             }
             ExprKind::Prefix(op, operand) => self.infer_prefix(expr.source_span(), *op, operand),
             ExprKind::Infix(op, left, right) => {
-                self.infer_infix(Some(expr.source_span()), *op, left, right)
+                let ty = self.infer_infix(Some(expr.source_span()), *op, left, right)?;
+                self.record_folded_comparison(expr, *op, left, right);
+                Ok(ty)
             }
             ExprKind::Call {
                 name,
@@ -1285,6 +1287,18 @@ impl Checker {
                 let member = self.infer_member(expr.source_span(), object, field);
                 *self.projected_object.borrow_mut() = projected;
                 member
+            }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if matches!(&object.kind, ExprKind::Identifier(name) if name == "Self")
+                && self.lookup("Self").is_none()
+                && let Some(construction) =
+                    self.infer_self_alias_construction(expr, method, args, kwargs) =>
+            {
+                construction
             }
             ExprKind::MethodCall {
                 object,

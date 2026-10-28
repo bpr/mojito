@@ -527,6 +527,7 @@ impl Checker {
                 field_origin_arguments: HashMap::new(),
                 associated: HashMap::new(),
                 associated_value_types: HashMap::new(),
+                associated_spellings: HashMap::new(),
                 associated_constraints: HashMap::new(),
                 parameterized_associated: HashMap::new(),
                 methods: HashMap::new(),

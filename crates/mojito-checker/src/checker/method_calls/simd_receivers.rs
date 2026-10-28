@@ -183,28 +183,6 @@ impl Checker {
             "join" if args.len() == 1 && param_args.is_empty() => {
                 self.infer_simd_join(site, dtype, &width)
             }
-            // The elementwise comparisons. Upstream's infix `<`/`<=`/
-            // `>`/`>=` are `Scalar`-only and its `==`/`!=` compare whole
-            // vectors, so a mask comes from these methods.
-            "lt" | "le" | "gt" | "ge" | "eq" | "ne" if args.len() == 1 => {
-                let other = self.infer(&args[0])?;
-                // A `Scalar` of the receiver's dtype converts to `Self`
-                // through upstream's `@implicit` splat initializer.
-                let compatible = match other.kind() {
-                    TyKind::Simd { dtype: d, width: w } => {
-                        *d == dtype && (*w == width || w.known() == Some(1))
-                    }
-                    _ => splats_to(&other, &dtype),
-                };
-                if !compatible {
-                    return Err(TypeError::TypeMismatch {
-                        expected: format!("a width-{width} SIMD of the receiver's dtype"),
-                        found: other.to_string(),
-                        context: format!("SIMD.{method}"),
-                    });
-                }
-                simd_of(SimdDtype::Known(Dtype::Bool), width)
-            }
             "reduce_add" | "reduce_mul" | "reduce_min" | "reduce_max"
                 if dtype.licenses(|d| d != Dtype::Bool) && args.is_empty() =>
             {

@@ -905,6 +905,7 @@ assets/ok/simd_cast_float_thresholds.mojo	main	exe-differential	sanitized
 assets/ok/simd_cast_matrix.mojo	main	exe-differential	sanitized
 assets/ok/simd_compare_all_dtypes.mojo	main	exe-differential	sanitized
 assets/ok/simd_comparison_dunders.mojo	main	exe-differential	sanitized
+assets/ok/simd_comparison_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_conversion_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_declared_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtype_alias.mojo	main	exe-differential	sanitized

@@ -15,7 +15,7 @@ use crate::param_expr::{
     HoleKind, MetaTy, ParamBindings, ParamContext, ParamError, ParamExpr, ParamId, ParamKind,
     ParamRef,
 };
-use mojito_ast::ast::{ArgConvention, Dtype, InfixOp};
+use mojito_ast::ast::{ArgConvention, Dtype};
 
 /// A loan-transfer effect inferred from a callable's body: an accepted store
 /// into an outliving destination (`self` or a parameter) whose loan roots at
@@ -3244,28 +3244,6 @@ pub const fn is_scalar_simd(ty: &TyKind) -> bool {
 /// other vector's defines a lane mask.
 pub const fn has_host_scalar_value(ty: &TyKind) -> bool {
     matches!(ty, TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
-}
-
-/// The message of the `comptime assert Self.length == 1` that upstream's
-/// ordered `SIMD` comparison dunder (`__lt__`, `__le__`, `__gt__`,
-/// `__ge__`) states, verbatim; `None` for any other operator.
-pub const fn scalar_comparison_message(op: InfixOp) -> Option<&'static str> {
-    match op {
-        InfixOp::Lt => Some(
-            "Strict inequality is only defined for `Scalar`s; did you mean to use `SIMD.lt(...)`?",
-        ),
-        InfixOp::Gt => Some(
-            "Strict inequality is only defined for `Scalar`s; did you mean to use `SIMD.gt(...)`?",
-        ),
-        InfixOp::Le => Some(
-            "Less than or equal is only defined for `Scalar`s; did you mean to use `SIMD.le(...)`?",
-        ),
-        InfixOp::Ge => Some(
-            "Greater than or equal is only defined for `Scalar`s; did you mean to use \
-             `SIMD.ge(...)`?",
-        ),
-        _ => None,
-    }
 }
 
 /// The message of the `comptime assert Self.length == 1` of upstream's

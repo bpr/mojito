@@ -1,4 +1,4 @@
-# expect: function instantiation of `at_least` failed: constraint failed: Greater than or equal is only defined for `Scalar`s; did you mean to use `SIMD.ge(...)`?
+# expect: constraint failed: Greater than or equal is only defined for `Scalar`s; did you mean to use `SIMD.ge(...)`?
 # A four-lane vector is `Comparable`, so it binds `T`, and the bound's `>=`
 # is its `SIMD.__ge__`, whose one-lane assertion the instance fails.
 

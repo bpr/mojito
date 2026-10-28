@@ -358,6 +358,37 @@ impl Checker {
         Some(construction.and_then(|construction| self.infer_spelled(expression, construction)))
     }
 
+    /// Type `Self.<alias>(args)`, a construction through a type alias the
+    /// enclosing struct declares (`Self._Mask(mlir_value=v)`), as the
+    /// construction of the type the alias spells. `None` when `alias` is no
+    /// such member.
+    pub(super) fn infer_self_alias_construction(
+        &self,
+        expression: &Expr,
+        alias: &str,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let (owner, _) = mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?;
+        let info = self.structs.get(owner)?;
+        if info.methods.contains_key(alias) {
+            return None;
+        }
+        let SourceType::Named(name, param_args) = info.associated_spellings.get(alias)? else {
+            return None;
+        };
+        let construction = derived_construction(
+            expression,
+            ExprKind::Call {
+                name: name.clone(),
+                param_args: param_args.clone(),
+                args: args.to_vec(),
+                kwargs: kwargs.to_vec(),
+            },
+        );
+        Some(self.infer_spelled(expression, construction))
+    }
+
     /// The keyword spelling of `ty`, a struct over a raw parameter list
     /// that the type member application `applied` names
     /// (`ParameterList.of[4, 5]`): a type parameter as its type, a value

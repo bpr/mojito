@@ -1,0 +1,47 @@
+mojito-mir 1.129
+artifact {
+  features: [],
+  files: [
+  ],
+  traits: [],
+  structs: [
+  ],
+  decls: [
+    decl { lowered_name: less, param_names: [x, y], param_types: [Int, Int], defaults: [absent, absent], required: [true, true], variadic: absent, variadic_convention: absent, variadic_index: absent, kw_variadic: absent, kw_variadic_convention: absent, kw_variadic_index: absent, positional_only: absent, keyword_only: absent, param_decls: [], has_receiver: false, receiver_convention: absent, param_conventions: [absent, absent], return_type: Bool, returns_reference: false, raises: false, error_type: absent, ref_params: [false, false], param_writes: [false, false], availability: [], enclosing: absent, region_binders: [] }
+  ],
+  functions: [
+      fn {
+        name: less,
+        registers: 8,
+        vars: 2,
+        var_names: [x, y],
+        params: 2,
+        param_types: [Int, Int],
+        owned_params: [false, false],
+        deinit_params: [false, false],
+        ref_params: [false, false],
+        returns_reference: false,
+        var_types: [var_type { var: $v0, type: Int }, var_type { var: $v1, type: Int }],
+        return_type: present(Bool),
+        raises: false,
+        error_type: absent,
+        register_types: [reg_type { reg: %r0, type: Int }, reg_type { reg: %r1, type: Int }, reg_type { reg: %r2, type: simd { dtype: bool, width: 1 } }, reg_type { reg: %r3, type: IntLiteral }, reg_type { reg: %r4, type: simd { dtype: bool, width: 1 } }, reg_type { reg: %r5, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r6, type: kgen_simd { dtype: bool, width: 1 } }, reg_type { reg: %r7, type: Bool }],
+        locations: [reg_loc { reg: %r0, location: absent }, reg_loc { reg: %r1, location: absent }, reg_loc { reg: %r2, location: absent }, reg_loc { reg: %r3, location: absent }, reg_loc { reg: %r4, location: absent }, reg_loc { reg: %r5, location: absent }, reg_loc { reg: %r6, location: absent }, reg_loc { reg: %r7, location: absent }],
+        blocks: [
+          bb0 {
+            instructions: [
+              var.use { dest: %r0, var: $v0, mode: copy },
+              var.use { dest: %r1, var: $v1, mode: copy },
+              binary { op: lt, dest: %r2, a: %r0, b: %r1, resolved: absent, raises: absent },
+              const { dest: %r3, value: int_literal(0) },
+              simd.make { dest: %r4, dtype: bool, width: 1, elems: [%r3] },
+              binary { op: ne, dest: %r5, a: %r2, b: %r4, resolved: absent, raises: absent },
+              simd.reduce { dest: %r6, value: %r5, op: or },
+              scalar.cast { dest: %r7, value: %r6, target: Bool }
+            ],
+            terminator: return { value: present(%r7) }
+          }
+        ]
+      }
+  ]
+}

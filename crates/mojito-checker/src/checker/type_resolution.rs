@@ -2277,47 +2277,7 @@ impl Checker {
     ) -> Result<Ty, TypeError> {
         match base.kind() {
             TyKind::Struct(sname, targs) => {
-                let info = self
-                    .structs
-                    .get(sname)
-                    .ok_or_else(|| TypeError::UnknownType(sname.clone()))?;
-                // A parameterized associated member instantiated by a conforming
-                // struct: substitute the application's arguments into its template.
-                if let Some(member) = info.parameterized_associated.get(name) {
-                    let member = member.clone();
-                    let decls = info.decls.clone();
-                    let targs = targs.clone();
-                    return self
-                        .resolve_parameterized_member(base, name, &member, &decls, &targs, args);
-                }
-                let value =
-                    info.associated
-                        .get(name)
-                        .ok_or_else(|| TypeError::NoSuchAssociatedType {
-                            object_type: base.to_string(),
-                            member: name.to_string(),
-                        })?;
-                if let Some(constraints) = info.associated_constraints.get(name) {
-                    let environment = ConstraintEnvironment::declared(&info.decls, targs);
-                    if !environment.arguments().any(tyarg_is_symbolic) {
-                        for constraint in constraints {
-                            self.validate_constraint_in_environment(
-                                &format!("{base}.{name}"),
-                                constraint,
-                                &environment,
-                            )?;
-                        }
-                    }
-                }
-                let CtValue::Type(ty) = value else {
-                    return Err(TypeError::NoSuchAssociatedType {
-                        object_type: base.to_string(),
-                        member: name.to_string(),
-                    });
-                };
-                // The member's type names the struct's own parameters of
-                // every kind; the instance binds them all at once.
-                Ok(self.resolve_assoc_ty(&substitute_at(ty, info, targs)))
+                self.declared_associated_type(base, sname, targs, name, args)
             }
             TyKind::Param { .. } => {
                 let bounds = self.refined_bound(base).unwrap_or_default();
@@ -2345,11 +2305,72 @@ impl Checker {
             TyKind::Simd { .. } if name == "_mlir_type" && args.is_empty() => {
                 Ok(mojito_types::types::simd_storage(base).unwrap_or_else(|| base.clone()))
             }
+            // A member alias `SIMD` declares, over the vector's parameters.
+            TyKind::Simd { .. }
+                if let Some((sname, targs)) = self.nominal_struct(base)
+                    && self.structs.get(sname).is_some_and(|info| {
+                        info.associated.contains_key(name)
+                            || info.parameterized_associated.contains_key(name)
+                    }) =>
+            {
+                self.declared_associated_type(base, sname, &targs, name, args)
+            }
             _ => Err(TypeError::NoSuchAssociatedType {
                 object_type: base.to_string(),
                 member: name.to_string(),
             }),
         }
+    }
+
+    /// The associated member `name` of the declared struct `sname` applied to
+    /// `targs`, as `base` spells it.
+    fn declared_associated_type(
+        &self,
+        base: &Ty,
+        sname: &str,
+        targs: &[TyArg],
+        name: &str,
+        args: &[TyArg],
+    ) -> Result<Ty, TypeError> {
+        let info = self
+            .structs
+            .get(sname)
+            .ok_or_else(|| TypeError::UnknownType(sname.to_string()))?;
+        // A parameterized associated member instantiated by a conforming
+        // struct: substitute the application's arguments into its template.
+        if let Some(member) = info.parameterized_associated.get(name) {
+            let member = member.clone();
+            let decls = info.decls.clone();
+            return self.resolve_parameterized_member(base, name, &member, &decls, targs, args);
+        }
+        let value = info
+            .associated
+            .get(name)
+            .ok_or_else(|| TypeError::NoSuchAssociatedType {
+                object_type: base.to_string(),
+                member: name.to_string(),
+            })?;
+        if let Some(constraints) = info.associated_constraints.get(name) {
+            let environment = ConstraintEnvironment::declared(&info.decls, targs);
+            if !environment.arguments().any(tyarg_is_symbolic) {
+                for constraint in constraints {
+                    self.validate_constraint_in_environment(
+                        &format!("{base}.{name}"),
+                        constraint,
+                        &environment,
+                    )?;
+                }
+            }
+        }
+        let CtValue::Type(ty) = value else {
+            return Err(TypeError::NoSuchAssociatedType {
+                object_type: base.to_string(),
+                member: name.to_string(),
+            });
+        };
+        // The member's type names the struct's own parameters of
+        // every kind; the instance binds them all at once.
+        Ok(self.resolve_assoc_ty(&substitute_at(ty, info, targs)))
     }
 
     /// Expand a generic comptime alias application (`Alias[args]`) into the

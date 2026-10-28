@@ -256,17 +256,15 @@ pub fn leaf_conforms(
 /// How the compiler-modelled type `ty` conforms to the library trait
 /// `trait_name`, as the upstream struct it stands in for declares.
 ///
-/// Upstream's `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`. `SIMD` and
-/// `Bool` list `Equatable` and `Comparable`, and `DType` lists `Equatable`;
-/// a numeric literal answers as the scalar it materializes to. A vector
-/// conforms at every width: its `__eq__` reduces the lanes, and its
-/// ordered dunders assert a scalar where an instance reaches them.
+/// Upstream's `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`.
+/// `Bool` and the numeric literals list `Equatable` and `Comparable`, and
+/// `DType` lists `Equatable`.
 ///
 /// `Bool` and the literal structs list `Boolable`; `Bool` and the numeric
 /// literals `Intable`; `Bool` and `FloatLiteral` `Floatable`; `IntLiteral`
-/// `Indexer`; none lists `Identifiable`. `SIMD`'s `Boolable`, `Intable`,
-/// `Indexer`, and `Sized` are its declaration's in `std.simd`, which the
-/// checker and the elaborator read instead.
+/// `Indexer`; none lists `Identifiable`. `SIMD`'s `Boolable`, `Comparable`,
+/// `Equatable`, `Intable`, `Indexer`, and `Sized` are its declaration's in
+/// `std.simd`, which the checker and the elaborator read instead.
 ///
 /// `SIMD` lists every `std.math` operation trait but `CeilDivableRaising`;
 /// a numeric literal answers as the scalar it materializes to. Only `Int`,
@@ -309,16 +307,14 @@ pub fn modelled_conformance(
         ),
         "Floatable" => matches!(ty.kind(), TyKind::Bool | TyKind::FloatLiteral),
         "Indexer" => *ty == TyKind::IntLiteral,
-        "Equatable" => {
-            is_numeric_like(ty)
-                || matches!(
-                    ty.kind(),
-                    TyKind::Bool | TyKind::Dtype | TyKind::Simd { .. }
-                )
-        }
-        "Comparable" => {
-            is_numeric_like(ty) || matches!(ty.kind(), TyKind::Bool | TyKind::Simd { .. })
-        }
+        "Equatable" => matches!(
+            ty.kind(),
+            TyKind::Bool | TyKind::Dtype | TyKind::IntLiteral | TyKind::FloatLiteral
+        ),
+        "Comparable" => matches!(
+            ty.kind(),
+            TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral
+        ),
         "Ceilable" | "Floorable" | "Truncable" => {
             is_numeric_like(ty)
                 || scalar_simd_dtype(ty).is_some_and(mojito_ast::ast::Dtype::is_float)
