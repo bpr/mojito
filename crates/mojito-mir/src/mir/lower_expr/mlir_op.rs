@@ -1,7 +1,9 @@
 //! The `pop` and `index` `__mlir_op` expressions, and the `SIMD` methods
 //! whose upstream bodies are one `pop.simd` lane op, lowered to the
 //! instruction that computes each (`mojito_types::mlir::MlirOp::lowering`),
-//! and `pop.call_llvm_intrinsic`, lowered to `llvm.intrinsic`.
+//! `pop.call_llvm_intrinsic`, lowered to `llvm.intrinsic`, and the
+//! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
+//! and `Int`, lowered to `builtin.cast`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -133,6 +135,15 @@ impl<'a> Flatten<'a> {
         dest
     }
 
+    /// Retype `value` as `ty` with upstream's `pop.cast_to_builtin` (an
+    /// `Int` to its `index`) or `pop.cast_from_builtin` (back), whichever
+    /// `ty` names.
+    pub(in crate::mir) fn builtin_cast(&mut self, location: SourceSpan, value: Reg, ty: Ty) -> Reg {
+        let dest = self.fresh_typed(location, None, ty);
+        self.emit(MirInstr::BuiltinCast { dest, value });
+        dest
+    }
+
     /// Emit the instruction computing `op` over `operands` at `location`,
     /// its destination of type `ty`.
     fn emit_mlir_op(
@@ -204,6 +215,10 @@ impl<'a> Flatten<'a> {
                 op,
             },
             (MlirLowering::Pop(op), _) => MirInstr::Pop { dest, op, operands },
+            (MlirLowering::BuiltinCast, [value]) => MirInstr::BuiltinCast {
+                dest,
+                value: *value,
+            },
             _ => unreachable!("the checker admits `{}` with its arity", op.name()),
         });
         dest

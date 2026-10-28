@@ -86,6 +86,7 @@ pub(super) fn verify_instruction(
             value,
             target,
         } => verify_scalar_cast(&cx, *dest, *value, *target, errors),
+        MirInstr::BuiltinCast { dest, value } => verify_builtin_cast(&cx, *dest, *value, errors),
         MirInstr::Pop { dest, op, operands } => verify_pop(&cx, *dest, *op, operands, errors),
         MirInstr::CallLlvmIntrinsic { args, spread, .. } => {
             verify_llvm_intrinsic(&cx, args, *spread, errors);
@@ -1038,7 +1039,7 @@ fn verify_simd_lane_instruction(
     let index_ok = |register: Reg| {
         cx.reg_ty(register).is_none_or(|ty| {
             types_compatible(ty, &Ty::int())
-                || matches!(ty.kind(), TyKind::UINT | TyKind::IntLiteral)
+                || matches!(ty.kind(), TyKind::UINT | TyKind::IntLiteral | TyKind::Index)
         })
     };
     match *instruction {
@@ -1230,7 +1231,8 @@ fn verify_pop(
     let Some(result) = cx.reg_ty(dest) else {
         return;
     };
-    if mojito_types::types::simd_slots(result.kind()).is_none() {
+    // `index.divs` divides `index` values.
+    if mojito_types::types::simd_slots(result.kind()).is_none() && *result != Ty::index() {
         errors.push(format!(
             "{prefix}: pop.{} defines a register of the non-SIMD type {result}",
             op.mnemonic()
@@ -1299,6 +1301,22 @@ fn verify_scalar_cast(
         errors.push(format!(
             "{prefix}: scalar cast to {} defines a register of type {found}",
             target.name()
+        ));
+    }
+}
+
+/// A `builtin.cast` retypes an `index` as its `Int` storage or back, so
+/// exactly one side is an `index` and the other an `Int`.
+fn verify_builtin_cast(cx: &InstrCx<'_>, dest: Reg, value: Reg, errors: &mut Vec<String>) {
+    let (Some(to), Some(from)) = (cx.reg_ty(dest), cx.reg_ty(value)) else {
+        return;
+    };
+    let index = Ty::index();
+    let int = Ty::int();
+    if !((*from == index && *to == int) || (*from == int && *to == index)) {
+        errors.push(format!(
+            "{}: builtin cast from {from} to {to} is not between `index` and `Int`",
+            cx.prefix
         ));
     }
 }

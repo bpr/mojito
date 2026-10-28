@@ -353,7 +353,7 @@ fn opaque_trait_bound_dispatches_indexing() {
 #[test]
 fn indexer_values_normalize_once_for_nominal_collection_reads_and_writes() {
     let actual = output(
-        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"normalize\", self.value)\n        return self.value\n\ndef main():\n    var values: List[Int] = [3, 7, 11]\n    values[Offset(1)] = 9\n    print(values[Offset(1)])\n",
+        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"normalize\", self.value)\n        return self.value.__mlir_index__()\n\ndef main():\n    var values: List[Int] = [3, 7, 11]\n    values[Offset(1)] = 9\n    print(values[Offset(1)])\n",
     );
     assert_eq!(actual, "normalize 1\nnormalize 1\n9\n");
 }
@@ -361,7 +361,7 @@ fn indexer_values_normalize_once_for_nominal_collection_reads_and_writes() {
 #[test]
 fn a_user_indexer_overload_receives_the_source_value_without_normalization() {
     let actual = output(
-        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"unexpected normalization\")\n        return self.value\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __getitem__(self, offset: Offset) -> Int:\n        return self.value + offset.value\n\ndef main():\n    print(Bag(3)[Offset(4)])\n",
+        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"unexpected normalization\")\n        return self.value.__mlir_index__()\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __getitem__(self, offset: Offset) -> Int:\n        return self.value + offset.value\n\ndef main():\n    print(Bag(3)[Offset(4)])\n",
     );
     assert_eq!(actual, "7\n");
 }
@@ -369,7 +369,7 @@ fn a_user_indexer_overload_receives_the_source_value_without_normalization() {
 #[test]
 fn a_user_setitem_index_type_receives_the_source_value_without_normalization() {
     let actual = output(
-        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"unexpected normalization\")\n        return self.value\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __getitem__(self, offset: Offset) -> Int:\n        return self.value\n    def __setitem__(mut self, offset: Offset, value: Int):\n        self.value = value + offset.value\n\ndef main():\n    var bag = Bag(0)\n    bag[Offset(3)] = 7\n    print(bag.value)\n",
+        "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        print(\"unexpected normalization\")\n        return self.value.__mlir_index__()\n\n@fieldwise_init\nstruct Bag:\n    var value: Int\n    def __getitem__(self, offset: Offset) -> Int:\n        return self.value\n    def __setitem__(mut self, offset: Offset, value: Int):\n        self.value = value + offset.value\n\ndef main():\n    var bag = Bag(0)\n    bag[Offset(3)] = 7\n    print(bag.value)\n",
     );
     assert_eq!(actual, "10\n");
 }

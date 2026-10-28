@@ -488,6 +488,7 @@ fn source_type_from_ty_with_origins(
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         TyKind::KgenString => kgen_string_source_type(),
+        TyKind::Index => mlir_source_type("index"),
         // A callable has no source spelling a clone could carry.
         TyKind::Func(_) | TyKind::GenericFunc(_) => return None,
         TyKind::ComptimeList(element) => Type::Named(
@@ -649,9 +650,14 @@ fn scalar_type_name(name: &str) -> Option<Ty> {
 /// The source spelling of upstream's `!kgen.string` type,
 /// `` __mlir_type.`!kgen.string` ``.
 fn kgen_string_source_type() -> Type {
+    mlir_source_type("!kgen.string")
+}
+
+/// The `` __mlir_type.`name` `` spelling.
+fn mlir_source_type(name: &str) -> Type {
     Type::Assoc {
         base: Box::new(Type::Named("__mlir_type".to_string(), Vec::new())),
-        name: "!kgen.string".to_string(),
+        name: name.to_string(),
         args: Vec::new(),
     }
 }

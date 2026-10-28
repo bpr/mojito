@@ -272,6 +272,10 @@ impl FnLowering<'_> {
                 value,
                 target,
             } => self.lower_convert(ctx, *dest, *target, *value),
+            // `index` and its `Int` storage are one i64.
+            MirInstr::BuiltinCast { dest, value } => {
+                self.lower_copy_value(ctx, *dest, *value, None)
+            }
             MirInstr::Pop { dest, op, operands } => self.lower_pop(ctx, *dest, *op, operands),
             MirInstr::CallLlvmIntrinsic {
                 dest,

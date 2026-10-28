@@ -1496,10 +1496,10 @@ impl Checker {
         })
     }
 
-    /// Whether a value can be normalized to the VM's index representation.
-    /// Numeric literals/Int use the identity path; an `Indexer` type
-    /// parameter or struct supplies `__mlir_index__() -> __mlir_type.index`
-    /// (represented as `Int`).
+    /// Whether a value can be normalized to an `Int` index. A numeric
+    /// literal or `Int` is one already; an `Indexer` type parameter or
+    /// struct supplies `__mlir_index__() -> __mlir_type.index`, which
+    /// upstream's `index()` casts to `Int`.
     pub(super) fn is_index_type(&self, ty: &Ty) -> bool {
         coerces(ty, &Ty::int())
             || matches!(ty.kind(), TyKind::Param { .. } | TyKind::Struct(..))
@@ -1518,8 +1518,7 @@ impl Checker {
                 let selected = methods.iter().find(|method| {
                     method.has_self
                         && method.params.is_empty()
-                        && method.ret_mlir_index
-                        && substitute(&method.ret, &substitution) == *TyKind::INT
+                        && substitute(&method.ret, &substitution) == Ty::index()
                 })?;
                 Some(if methods.len() == 1 {
                     format!("{name}.__mlir_index__")
@@ -1537,7 +1536,7 @@ impl Checker {
                     self.lookup_trait_methods(&self.refined_bound(ty)?, "__mlir_index__", 0);
                 let selected = methods
                     .iter()
-                    .find(|method| method.params.is_empty() && method.ret == *TyKind::INT)?;
+                    .find(|method| method.params.is_empty() && method.ret == Ty::index())?;
                 Some(method_lowered_name(
                     "__trait_dispatch",
                     "__mlir_index__",

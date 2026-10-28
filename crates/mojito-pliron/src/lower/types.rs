@@ -135,6 +135,8 @@ pub fn lower_ty(
     match ty.kind() {
         TyKind::Bool => Ok(LowerTy::Scalar(ScalarTy::Bool)),
         TyKind::Dtype => Ok(LowerTy::Scalar(ScalarTy::Dtype)),
+        // The MLIR builtin `index` is held as the `Int` it casts from.
+        TyKind::Index => Ok(LowerTy::Scalar(ScalarTy::Int)),
         ty if let Some(dtype) = scalar_simd_dtype(ty) => {
             Ok(LowerTy::Scalar(ScalarTy::of_dtype(dtype)))
         }

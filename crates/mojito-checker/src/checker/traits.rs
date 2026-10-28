@@ -381,7 +381,6 @@ impl Checker {
                     keyword_only: collectors.keyword_only,
                     conventions: regular.iter().map(|(_, param)| param.convention).collect(),
                     ret,
-                    ret_mlir_index: super::type_resolution::spells_mlir_index(m.ret.as_ref()),
                     raises: error.as_ref().is_some_and(|ty| *ty != TyKind::Never),
                     error,
                     self_convention: m.self_convention,
@@ -1427,7 +1426,6 @@ impl Checker {
             keyword_only: req_sig.keyword_only,
             conventions: req_sig.conventions.clone(),
             ret: self.requirement_ty_at(&req_sig.ret, self_ty),
-            ret_mlir_index: req_sig.ret_mlir_index,
             raises: req_sig.raises,
             error: req_sig
                 .error

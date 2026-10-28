@@ -581,6 +581,12 @@ pub enum TyKind {
     /// [`CtValue::KgenString`](crate::ct::CtValue::KgenString). It is
     /// compile-time only; no runtime register holds one.
     KgenString,
+    /// Upstream's MLIR builtin `index` (`__mlir_type.index`), what
+    /// `Indexer.__mlir_index__` returns, displayed `__mlir_type.index`.
+    /// `pop.cast_from_builtin` and `pop.cast_to_builtin` convert it to and
+    /// from an `Int`'s `!kgen.scalar<index>` storage. Both backends hold it
+    /// as they hold an `Int`.
+    Index,
     /// Upstream's generator type `!kgen.generator`, spelled
     /// `__generator_type[idx: Int] Int`: the type of a parameterized
     /// `comptime` declaration read unapplied, and of a parameter that takes
@@ -718,6 +724,8 @@ dataless_types! {
     dtype => Dtype,
     /// `Self` inside a trait.
     self_type => SelfType,
+    /// The MLIR builtin `index`.
+    index => Index,
     /// `Error`.
     error => Error,
 }
@@ -1094,6 +1102,10 @@ pub const TYPE_OF_ALL_TYPES: &str = "__TypeOfAllTypes";
 /// as the pin prints it.
 pub const KGEN_STRING_TYPE_SPELLING: &str = "__mlir_type.`!kgen.string`";
 
+/// The spelling of upstream's MLIR builtin `index` type ([`TyKind::Index`]),
+/// as the pin prints it.
+pub const MLIR_INDEX_TYPE_SPELLING: &str = "__mlir_type.index";
+
 pub const TSTRING_TYPE_NAME: &str = "TString";
 /// The public `Variant` struct's name.
 pub const VARIANT_TYPE_NAME: &str = "Variant";
@@ -1109,12 +1121,17 @@ pub const SCALAR_RANGE_FAMILY: [&str; 3] =
 /// which iterates by index through a fused multiply-add rather than by value.
 pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 
-/// The KGEN type an `` __mlir_type.`name` `` spelling names.
+/// The MLIR type an `` __mlir_type.`name` `` spelling names.
 ///
-/// It is one of the compile-time-only types the subset reads: `!kgen.type`
-/// ([`TyKind::TypeType`]) or `!kgen.string` ([`TyKind::KgenString`]).
-pub fn kgen_type_named(name: &str) -> Option<Ty> {
+/// It is one of the types the subset reads: the builtin `index`
+/// ([`TyKind::Index`]), an `Int`'s `!kgen.scalar<index>` storage (which is
+/// `Int` itself until a scalar's storage is a type of its own, R1397), or
+/// the compile-time-only `!kgen.type` ([`TyKind::TypeType`]) and
+/// `!kgen.string` ([`TyKind::KgenString`]).
+pub fn mlir_type_named(name: &str) -> Option<Ty> {
     match name {
+        "index" => Some(Ty::index()),
+        "!kgen.scalar<index>" => Some(Ty::int()),
         "!kgen.type" => Some(TyKind::TypeType.into()),
         "!kgen.string" => Some(TyKind::KgenString.into()),
         _ => None,
@@ -2508,6 +2525,7 @@ impl fmt::Display for TyKind {
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::TypeType => write!(f, "{TYPE_OF_ALL_TYPES}"),
             Self::KgenString => f.write_str(KGEN_STRING_TYPE_SPELLING),
+            Self::Index => f.write_str(MLIR_INDEX_TYPE_SPELLING),
             Self::Generator(generator) => {
                 f.write_str("__generator_type")?;
                 if !generator.params.is_empty() {
@@ -3039,7 +3057,9 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         (TyKind::ParamList(a), TyKind::ParamList(b)) => a == b,
         (TyKind::AnyTrait(a), TyKind::AnyTrait(b)) => a == b,
         (TyKind::Trait(a), TyKind::Trait(b)) => a == b,
-        (TyKind::TypeType, TyKind::TypeType) | (TyKind::KgenString, TyKind::KgenString) => true,
+        (TyKind::TypeType, TyKind::TypeType)
+        | (TyKind::KgenString, TyKind::KgenString)
+        | (TyKind::Index, TyKind::Index) => true,
         (
             TyKind::Pointer {
                 element: a,
@@ -3313,6 +3333,7 @@ pub const fn copy_is_identity(ty: &TyKind) -> bool {
         ty,
         TyKind::Bool
             | TyKind::Dtype
+            | TyKind::Index
             | TyKind::IntLiteral
             | TyKind::FloatLiteral
             | TyKind::None
@@ -4281,6 +4302,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::KgenString
+        | TyKind::Index
         | TyKind::SelfType
         | TyKind::Error => ty.clone(),
     })
@@ -4800,6 +4822,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::KgenString
+        | TyKind::Index
         | TyKind::Bool
         | TyKind::StringLiteral
         | TyKind::None
@@ -5167,7 +5190,12 @@ fn closed_argument(argument: &TyArg) -> bool {
 /// Whether a variant is closed, from its children's cached closedness.
 fn closed_kind(kind: &TyKind) -> bool {
     match kind {
-        TyKind::Bool | TyKind::None | TyKind::Never | TyKind::Dtype | TyKind::Error => true,
+        TyKind::Bool
+        | TyKind::None
+        | TyKind::Never
+        | TyKind::Dtype
+        | TyKind::Index
+        | TyKind::Error => true,
         TyKind::Simd { dtype, width } => !dtype.is_expr() && !width.is_expr(),
         TyKind::Struct(_, arguments) => arguments.iter().all(closed_argument),
         TyKind::Tuple(elements) | TyKind::RuntimePack(elements) | TyKind::Variant(elements) => {

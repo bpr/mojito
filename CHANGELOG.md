@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- Upstream's MLIR builtin `__mlir_type.index` is now a type of its own,
+  apart from `Int`, as at the pin (R1516). `Int.__mlir_index__()` (after a
+  `UInt`'s cast to `Int`) is upstream's `pop.cast_to_builtin`,
+  `Int(mlir_value=i)` over an `index` its `pop.cast_from_builtin`, and an
+  `Indexer` subscript casts the `index` it gets back to `Int`, as
+  upstream's `index(idx)` does. The two casts are admitted as `__mlir_op`s
+  and lower to the new MIR `builtin.cast`, and
+  ``__mlir_type.`!kgen.scalar<index>` `` names an `Int`'s storage. Leniencies
+  the pin rejects are withdrawn: an `index` op over an `Int`'s
+  `_mlir_value`, a `pop` op over an `index`, an `index` bound to an `Int`
+  or printed, and an `Indexer` returning an `Int` value; `conforms_to`
+  over `index` is `False`. A parameter of type `__mlir_type.index` is now
+  rejected as outside the subset (R1531). The MIR schema moves to 1.123 and
+  the package format to `mojito-package 125`.
 - A call of an `@always_inline("builtin")` method with `self` in a type or
   a parameter argument is now its body's expression over the receiver, as
   at the pin (R1526): `L(n).doubled()` over `return self.v + self.v` is

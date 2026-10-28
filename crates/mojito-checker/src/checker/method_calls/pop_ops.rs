@@ -1,7 +1,9 @@
 //! The `pop` and `index` `__mlir_op` expressions: upstream's elementwise
-//! ops over `!kgen.simd` storage, its `pop.simd` lane ops, and its `index`
-//! ops, typed as their MLIR verifiers type them, with the `pred`, `fastmathFlags`, and `_type`
-//! attributes they take. The admitted set is `mojito_types::mlir::MlirOp`.
+//! ops over `!kgen.simd` storage, its `pop.simd` lane ops, its `index` ops,
+//! and its `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between
+//! `index` and `!kgen.scalar<index>`, typed as their MLIR verifiers type
+//! them, with the `pred`, `fastmathFlags`, and `_type` attributes they
+//! take. The admitted set is `mojito_types::mlir::MlirOp`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
@@ -12,10 +14,11 @@ impl Checker {
     /// or `index` op, recording it as `SemanticAdjustment::MlirOp`. A `pop`
     /// op takes `!kgen.simd` operands of one type (`Int`, `UInt`, and
     /// `Float64` are width-one vectors), an `index` op `__mlir_type.index`
-    /// ones (`Int`). Arithmetic keeps the operand type, `pop.cmp` gives the
+    /// ones. Arithmetic keeps the operand type, `pop.cmp` gives the
     /// `bool` mask of the operand width, `index.cmp` an `i1` (`Bool`), and
     /// `pop.cast` and `pop.simd.splat` the type their `_type` attribute
-    /// names. The lane ops are typed by [`lane_op_result`].
+    /// names. The lane ops are typed by [`lane_op_result`], the casts
+    /// between `index` and its storage by [`builtin_cast_result`].
     pub(super) fn infer_pop_op(
         &self,
         span: &SourceSpan,
@@ -101,7 +104,15 @@ impl Checker {
             .iter()
             .map(|argument| self.infer(argument))
             .collect::<Result<Vec<_>, _>>()?;
-        let result = if op.is_index() {
+        let result = if op.is_builtin_cast() {
+            let result_type = result_type.expect("a builtin cast names its result type");
+            builtin_cast_result(op, &operands, result_type).map_err(|error| match error {
+                PopTypeError::Verifier(reason) => invalid(reason),
+                PopTypeError::Subset(reason) => {
+                    TypeError::Unsupported(format!("'{name}' {reason}"))
+                }
+            })?
+        } else if op.is_index() {
             index_op_result(op, &operands).map_err(invalid)?
         } else if op.is_lane() {
             lane_op_result(op, &operands).map_err(invalid)?
@@ -155,29 +166,78 @@ enum PopTypeError {
     Subset(String),
 }
 
-/// The result of an `index` op: every operand is an `index` (`Int`); the
-/// compare gives an `i1` (`Bool`), the rest an `index`.
+/// How an MLIR verifier spells `ty`: the builtin `index` as `index`, and an
+/// `Int` as its `!kgen.scalar<index>` storage.
+fn mlir_spelling(ty: &Ty) -> String {
+    match ty.kind() {
+        TyKind::Index => "index".to_string(),
+        TyKind::INT => "!kgen.scalar<index>".to_string(),
+        _ => ty.to_string(),
+    }
+}
+
+/// The result of an `index` op: every operand is an `index`; the compare
+/// gives an `i1` (`Bool`), the rest an `index`.
 fn index_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
     if let Some((position, found)) = operands
         .iter()
         .enumerate()
-        .find(|(_, operand)| **operand != Ty::int())
+        .find(|(_, operand)| **operand != Ty::index())
     {
         return Err(format!(
-            "op operand #{position} must be index, but got '{found}'"
+            "op operand #{position} must be index, but got '{}'",
+            mlir_spelling(found)
         ));
     }
     Ok(if matches!(op, MlirOp::IndexCmp(_)) {
         Ty::bool()
     } else {
-        Ty::int()
+        Ty::index()
     })
+}
+
+/// The result of `pop.cast_from_builtin` (an `index` to the `_type`
+/// storage `!kgen.scalar<index>`, an `Int`) or `pop.cast_to_builtin` (that
+/// storage to the `_type` builtin `index`), as upstream's verifier types
+/// them. The pin's other builtin pairs (`i1` and `!kgen.scalar<bool>`) are
+/// outside the subset.
+fn builtin_cast_result(op: MlirOp, operands: &[Ty], target: Ty) -> Result<Ty, PopTypeError> {
+    let operand = &operands[0];
+    let outside = || {
+        PopTypeError::Subset(format!(
+            "from '{}' to '{}' is outside the subset: Mojito admits the casts between              'index' and '!kgen.scalar<index>'",
+            mlir_spelling(operand),
+            mlir_spelling(&target)
+        ))
+    };
+    if op == MlirOp::PopCastFromBuiltin {
+        if target != Ty::int() {
+            return Err(outside());
+        }
+        if *operand != Ty::index() {
+            return Err(PopTypeError::Verifier(format!(
+                "op cannot convert to scalar dtype index from '{}'",
+                mlir_spelling(operand)
+            )));
+        }
+    } else {
+        if !matches!(operand.kind(), TyKind::Simd { .. }) {
+            return Err(PopTypeError::Verifier(format!(
+                "op operand #0 must be parameterized SIMD vector type, but got '{}'",
+                mlir_spelling(operand)
+            )));
+        }
+        if target != Ty::index() || *operand != Ty::int() {
+            return Err(outside());
+        }
+    }
+    Ok(target)
 }
 
 /// The result of a `pop.simd` lane op, as upstream's verifier types it:
 /// `select` takes a `bool` mask and two cases of one vector type at the
 /// mask's width and gives that type; `extractelement` takes a vector and an
-/// `index` (`Int`) and gives the lane, a width-one vector of its dtype
+/// `index` and gives the lane, a width-one vector of its dtype
 /// (`!kgen.scalar<dt>`); `insertelement` takes a vector, a lane of its
 /// dtype, and an `index` and gives the vector's type; and `reduce_and` and
 /// `reduce_or` take integer or `bool` lanes and give one lane of them.
@@ -186,17 +246,17 @@ fn lane_op_result(op: MlirOp, operands: &[Ty]) -> Result<Ty, String> {
         simd_slots(operands[position].kind()).ok_or_else(|| {
             format!(
                 "op operand #{position} must be SIMD type, but got '{}'",
-                operands[position]
+                mlir_spelling(&operands[position])
             )
         })
     };
     let index = |position: usize| {
-        (operands[position] == Ty::int())
+        (operands[position] == Ty::index())
             .then_some(())
             .ok_or_else(|| {
                 format!(
                     "op operand #{position} must be index, but got '{}'",
-                    operands[position]
+                    mlir_spelling(&operands[position])
                 )
             })
     };
@@ -268,7 +328,8 @@ fn pop_op_result(op: MlirOp, operands: &[Ty], result_type: Option<Ty>) -> Result
         .find(|(_, operand)| !matches!(operand.kind(), TyKind::Simd { .. }))
     {
         return Err(PopTypeError::Verifier(format!(
-            "op operand #{position} must be SIMD type, but got '{operand}'"
+            "op operand #{position} must be SIMD type, but got '{}'",
+            mlir_spelling(operand)
         )));
     }
     let Some((dtype, width)) = operands

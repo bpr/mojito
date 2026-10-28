@@ -338,12 +338,13 @@ impl<'a> Flatten<'a> {
             // The source Indexer is evaluated exactly once. The checked target
             // may be concrete or an abstract trait-dispatch symbol; MethodCall
             // already retargets the latter from the runtime receiver while
-            // preserving the selected signature.
+            // preserving the selected signature. The `index` it returns
+            // casts to `Int`, as upstream's `index(idx)` does.
             let recv = self.expr_unconverted(e);
             if let Some(source) = e.ty() {
                 self.f.reg_types.entry(recv.0).or_insert(source);
             }
-            let dest = self.fresh_typed(e.location(), None, Ty::int());
+            let dest = self.fresh_typed(e.location(), None, Ty::index());
             self.emit(MirInstr::MethodCall {
                 dest,
                 recv,
@@ -366,7 +367,7 @@ impl<'a> Flatten<'a> {
                 spread: None,
                 refined_bound: None,
             });
-            return dest;
+            return self.builtin_cast(e.location(), dest, Ty::int());
         }
         if let Some(target) = e.literal_materialization() {
             let value = self.expr_unconverted(e);

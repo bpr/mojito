@@ -504,6 +504,7 @@ assets/ok/method_simd_pattern_beside_bare.mojo	main	exe-differential	sanitized
 assets/ok/method_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/method_unused_receiver.mojo	main	exe-differential	sanitized
 assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
+assets/ok/mlir_builtin_casts.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_simd_lane_ops.mojo	main	exe-differential	sanitized

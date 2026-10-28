@@ -825,14 +825,11 @@ impl<'a> Flatten<'a> {
                     });
                     dest
                 }
+                // Upstream's `index(idx)`: `Int(mlir_value=idx.__mlir_index__())`.
                 mojito_checked::checked::CheckedCallValueAdjustment::IndexNormalization {
                     target,
                 } => {
-                    let dest = self.fresh_typed(
-                        site.clone(),
-                        None,
-                        parameter_ty.clone().unwrap_or_else(Ty::int),
-                    );
+                    let dest = self.fresh_typed(site.clone(), None, Ty::index());
                     self.emit(MirInstr::MethodCall {
                         dest,
                         recv: value,
@@ -855,7 +852,7 @@ impl<'a> Flatten<'a> {
                         spread: None,
                         refined_bound: None,
                     });
-                    dest
+                    self.builtin_cast(site.clone(), dest, Ty::int())
                 }
                 mojito_checked::checked::CheckedCallValueAdjustment::MaterializeLiteral {
                     target,

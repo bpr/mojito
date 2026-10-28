@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1531**.
+Next free ID: **R1532**.
 
 ## Ordered Work
 
@@ -6402,6 +6402,33 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1531 A compile-time `index` has no value, so a parameter of type
+  `__mlir_type.index` is rejected**
+
+  Mojito holds the MLIR builtin `index` (`TyKind::Index`) only at run time:
+  no `CtValue` is an `index`, so `Checker::value_param_decl`
+  (`checker/declarations.rs`) rejects a parameter of that type as outside
+  the subset, where the pin binds one.
+  - Probe: `struct S[n: __mlir_type.index]` with a `show` printing
+    `Int(mlir_value=Self.n)`, applied as `S[Int(3).__mlir_index__()]`,
+    prints `3` at the pin and is rejected here; so is `def f[n:
+    __mlir_type.index]()`.
+  - Probe: upstream's `TypeList._raw_length` (a `comptime` of type
+    `__mlir_type.index` from `` `#kgen.param_list.size<...> : index` ``)
+    and `_get_type_at_index[idx: __mlir_type.index]`
+    (`std/builtin/variadics.mojo`) are left out of the bundled `TypeList`.
+  - Probe: `_MLIR.POPArrayType[size: __mlir_type.index, ...]` (R1315) and
+    `VariadicList`'s `Int(mlir_value=size)` (R1317) read such a binder.
+  - A local `comptime i: __mlir_type.index = Int(4).__mlir_index__()`
+    already runs, since the VM computes it.
+  - Lever: a compile-time `index` value, built and folded through
+    `__mlir_index__`, `pop.cast_to_builtin`, and `pop.cast_from_builtin` by
+    the parameter builder (`checker/constraints.rs`,
+    `checker/builtin_fold.rs`), which `value_param_decl` then admits.
+  - Found while landing R1516 (2026-10-27).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
 Track: `divergences`.
@@ -8606,7 +8633,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The size needs the `Known`/`Expr` shape `SimdWidth` has, substituted
     by the elaborator and refused symbolic by the concrete verifier.
   - Found while landing R1304 (2026-10-23).
-  - Depends on nothing.
+  - Depends on R1531 (a parameter of type `__mlir_type.index`).
   - Model: Fable, Not Planned.
 
 - [ ] **R1316 `!lit.ref` and `!kgen.pointer` values have no spelling**
@@ -8633,14 +8660,16 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   Int(0).__mlir_index__())`` and reads its size parameter with
   `Int(mlir_value=size)`, and Mojito's `__mlir_op` admits only the two
   ownership markers (`checker/method_calls/mlir_op.rs`).
-  - `__mlir_type.index` already resolves to `Int`, so `__mlir_index__` and
-    `Int(mlir_value=)` are identities here.
+  - `Int(0).__mlir_index__()` and `Int(mlir_value=size)` are upstream's
+    builtin casts, which run since R1516; the size is a parameter of type
+    `__mlir_type.index` (R1531).
   - The gep would be a `ref.make` of the array's element place, as the
     call's builder takes the span's pointer today
     (`mir::variadic_list::build_variadic_list`).
   - Found while landing R1304 (2026-10-23).
-  - Depends on R1316 (the `!kgen.pointer` operand) and R221 (the
-    constructor's `unsafe_bitcast` of the element pointer).
+  - Depends on R1316 (the `!kgen.pointer` operand), R221 (the
+    constructor's `unsafe_bitcast` of the element pointer), and R1531 (the
+    `index` size parameter).
   - Model: Opus, Not Planned.
 
 - [ ] **R1314 The call builds a `VariadicList`'s span itself, where
@@ -9536,30 +9565,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1516 `index` and `!kgen.scalar<index>` are both `Int`, so the
-  builtin casts between them cannot be typed**
-
-  Mojito types `__mlir_type.index`, an `Int`'s `_mlir_value`
-  (`!kgen.scalar<index>`), and the `Int` itself as one type, where upstream
-  converts between the builtin `index` and the `!kgen.scalar` storage with
-  `pop.cast_from_builtin` and `pop.cast_to_builtin`.
-  - Probe: upstream's `SIMD.__init__(Int)` and `SIMD.__int__`
-    (`std/simd.mojo`) and `SIMDLength.__init__`
-    (`std/builtin/simd_length.mojo`) spell the two casts, which are rejected
-    as outside the subset.
-  - Probe: ``__mlir_op.`index.add`(a._mlir_value, a._mlir_value)`` over an
-    `Int` `a = 7` prints `14`, where the pin rejects "'index.add' op operand
-    #0 must be index, but got '!kgen.scalar<index>'".
-  - Probe: ``__mlir_op.`pop.add`(x, x)`` over `x = Int(7).__mlir_index__()`
-    prints `14`, where the pin rejects "'pop.add' op operand #0 must be SIMD
-    type ... but got 'index'".
-  - Lever: give `index` a `TyKind` of its own, which both backends hold as
-    the `Int` they hold today. Type the two casts in
-    `checker/method_calls/pop_ops.rs` and lower them as copies.
-  - Found while landing R1392 (2026-10-27).
-  - Depends on R1392.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1517 `pop.max`, `pop.min`, `bool`-lane casts, unsigned `index`
   compares, and float bit logic have no MIR instruction**
 
@@ -9698,6 +9703,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     SIMD[DType.int32, 2])` and `Int(mlir_value=n)` over an `Int` `n` run,
     where the pin rejects a `!kgen.simd` passed as `SIMD` and `SIMD` passed
     as storage. The port's distinct struct type closes both.
+  - Probe: ``__mlir_type.`!kgen.scalar<index>` `` is `Int` itself
+    (`types::mlir_type_named`), so `print(s)` over `var s:
+    __mlir_type.`!kgen.scalar<index>` = Int(4)._mlir_value` prints `4`,
+    where the pin rejects the storage as not `Writable`.
   - Probe: ``__mlir_op.`pop.add`(a, a)`` over a `SIMD` value `a`, not its
     `_mlir_value`, runs, where the pin rejects "'pop.add' op operand #0
     must be SIMD type ... but got '!lit.struct<...SIMD...>'". The same

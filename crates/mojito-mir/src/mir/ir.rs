@@ -829,7 +829,8 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(dest),
         MirInstr::MaterializeLiteral { dest, value, .. }
-        | MirInstr::ScalarCast { dest, value, .. } => out.extend([dest, value]),
+        | MirInstr::ScalarCast { dest, value, .. }
+        | MirInstr::BuiltinCast { dest, value } => out.extend([dest, value]),
         MirInstr::StoreToMem { dest, src } => out.extend([dest, src]),
         MirInstr::UseVar { dest, .. } => out.push(dest),
         MirInstr::DefVar { src, .. } => out.push(src),
@@ -2134,6 +2135,14 @@ pub enum MirInstr {
         value: Reg,
         target: ScalarConversion,
     },
+    /// Upstream's `pop.cast_from_builtin` or `pop.cast_to_builtin`: the
+    /// operand's bits retyped between the MLIR builtin `index` and its
+    /// `!kgen.scalar<index>` storage, an `Int`. Exactly one of `dest` and
+    /// `value` is an `index`, which names the direction.
+    BuiltinCast {
+        dest: Reg,
+        value: Reg,
+    },
     /// An upstream `pop` lane op no built-in operator computes, over
     /// `operands` of the destination's type: `pop.div` and `pop.rem`
     /// (truncating; `index.divs`), `pop.abs` (wrapping), `pop.round` (half
@@ -3064,6 +3073,7 @@ impl MirInstr {
             Self::Const { .. }
             | Self::MaterializeLiteral { .. }
             | Self::ScalarCast { .. }
+            | Self::BuiltinCast { .. }
             | Self::SizeOf { .. }
             | Self::TypeName { .. }
             | Self::ParamListAddress { .. }

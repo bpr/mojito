@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.122
+mojito-mir 1.123
 ```
 
-The writer emits 1.122. The reader accepts 1.0 through 1.122; *Schema 1.0*
+The writer emits 1.123. The reader accepts 1.0 through 1.123; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -755,6 +755,16 @@ compile-time-applicable callables include `@always_inline("builtin")`
 methods with `self`, whose `self` and `Self`-typed slots and `Self` result
 take the instance a call is made on (R1526). The MIR schema is unchanged.
 
+Schema 1.123 adds the type `index`, upstream's MLIR builtin
+`__mlir_type.index`, and `builtin.cast { dest, value }`, upstream's
+`pop.cast_from_builtin` and `pop.cast_to_builtin`, which retype an `index`
+as its `!kgen.scalar<index>` storage (an `Int`) or back (R1516).
+`Int.__mlir_index__()`, `Int(mlir_value=i)` over an `index`, and an
+`Indexer` subscript's normalization each lower to one, and `pop` over
+`index` registers is `index.divs`. The package format moves to
+`mojito-package 125`, since the checked type and `MlirOp` vocabularies
+grow.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1323,6 +1333,10 @@ it types records the bound `__TypeOfAllTypes`.
 type of a `StringLiteral`'s `value` parameter, whose values are
 `ct_kgen_string`. It is compile-time only, as `any_trait` is.
 
+`index` (schema 1.123) is upstream's MLIR builtin `__mlir_type.index`, what
+`Indexer.__mlir_index__` returns and an `index` op computes over. Both
+backends hold it as the `Int` a `builtin.cast` gives it from.
+
 `generator { params: [param-decl...], result }` (schema 1.112) is
 upstream's generator type `!kgen.generator`, spelled `__generator_type[Idx:
 Int] Int`: the type of a `ct_generator` and of a parameter taking one. Its
@@ -1484,6 +1498,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `MakeClosure` / `KeepAlive` | `closure.make` / `lifetime.keep_alive` (`lifetime.keep_alive` as `interiors.invalidate`: `lower-lit` erases it; schema 1.71: a `closure_capture` of mode `move` carries `constructor: "<symbol>"` after its `mode` when it names the `__moveinit__` it runs, as `var.use` does; schema 1.73: an owned capture carries `destructor: "<symbol>"` after its `constructor` when it names the `__deinit__` its value runs at the closure's death, as `drop.var` does; schema 1.106 withdraws mode `copy`: a capture is a `reference` or a lambda's storage moved in) |
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
+| `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): exactly one of `dest` and `value` is an `index`, the other an `Int`; the bits are unchanged |
 | `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, or `fma`, taking 2, 2, 1, 1, 1, 1, 1, or 3 operands of the destination's SIMD type; an integer division by zero traps |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |

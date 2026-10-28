@@ -747,7 +747,7 @@ fn self_value_operand(operand: &Type, span: Span) -> Option<Expr> {
 fn spelled_kgen_type(expr: &Expr) -> Option<Ty> {
     match &expr.kind {
         ExprKind::Member { object, field } if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type") => {
-            mojito_types::types::kgen_type_named(field)
+            mojito_types::types::mlir_type_named(field)
         }
         _ => None,
     }
@@ -770,7 +770,7 @@ impl KgenTypeFold<'_> {
             Some(Type::Assoc { base, name, args }) if args.is_empty() => match base.as_ref() {
                 Type::Named(base, base_args) if base_args.is_empty() => {
                     if base == "__mlir_type" {
-                        mojito_types::types::kgen_type_named(name)
+                        mojito_types::types::mlir_type_named(name)
                     } else {
                         self.members.get(base)?.get(name).cloned()
                     }

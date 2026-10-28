@@ -2246,7 +2246,7 @@ fn index_write_lowers_to_a_store_with_an_index_projection() {
 
 #[test]
 fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
-    let source = "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value\n\ndef main():\n    var values: List[Int] = [3, 7, 11]\n    values[Offset(1)] = 9\n    print(values[Offset(1)])\n";
+    let source = "@fieldwise_init\nstruct Offset(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value.__mlir_index__()\n\ndef main():\n    var values: List[Int] = [3, 7, 11]\n    values[Offset(1)] = 9\n    print(values[Offset(1)])\n";
     let compiler = Compiler::default().with_snippet_module_scope();
     let compiled = compiler
         .compile_source(source, Path::new("mir_test.mojo"))
@@ -2294,9 +2294,25 @@ fn checked_indexer_normalization_becomes_explicit_typed_mir_calls() {
         .collect::<Vec<_>>();
     assert_eq!(calls.len(), 2, "{:#?}", main.blocks);
     assert!(calls.iter().all(|(dest, resolved, args)| {
-        main.reg_types.get(&dest.0) == Some(&Ty::int())
+        main.reg_types.get(&dest.0) == Some(&Ty::index())
             && resolved.as_deref() == Some("Offset.__mlir_index__")
             && args.is_empty()
+    }));
+    // Each `index` casts to the `Int` the subscript takes, as upstream's
+    // `index(idx)` does.
+    let casts = main
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instrs)
+        .filter_map(|instruction| match instruction {
+            MirInstr::BuiltinCast { dest, value } => Some((dest, value)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(calls.iter().all(|(call, ..)| {
+        casts
+            .iter()
+            .any(|(dest, value)| value == call && main.reg_types.get(&dest.0) == Some(&Ty::int()))
     }));
 }
 

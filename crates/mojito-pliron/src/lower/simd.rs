@@ -832,7 +832,10 @@ impl FnLowering<'_> {
         op: PopOp,
         operands: &[Reg],
     ) -> Result<(), PlironError> {
-        let Some((dtype, width)) = self.func.reg_types.get(&dest.0).and_then(simd_dims) else {
+        // `index.divs` divides `index` values, held as `Int` lanes.
+        let Some((dtype, width)) = self.func.reg_types.get(&dest.0).and_then(|ty| {
+            simd_dims(ty).or_else(|| (*ty == Ty::index()).then_some((Dtype::Int, 1)))
+        }) else {
             return Err(self.unsupported_reg("`pop` over a non-SIMD register".to_string(), dest));
         };
         let shape = usize::try_from(width).ok().filter(|width| *width > 1);

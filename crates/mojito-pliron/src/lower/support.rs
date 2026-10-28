@@ -204,6 +204,7 @@ pub fn scalar_type(
     match ty.kind() {
         TyKind::Bool => Ok(ScalarTy::Bool),
         TyKind::Dtype => Ok(ScalarTy::Dtype),
+        TyKind::Index => Ok(ScalarTy::Int),
         ty if let Some(dtype) = scalar_simd_dtype(ty) => Ok(ScalarTy::of_dtype(dtype)),
         TyKind::Pointer { .. } | TyKind::Ref(_) => Ok(ScalarTy::Ptr),
         other => Err(PlironError {
@@ -293,6 +294,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::ConstructType { .. } => "ConstructType",
         MirInstr::MaterializeLiteral { .. } => "MaterializeLiteral",
         MirInstr::ScalarCast { .. } => "ScalarCast",
+        MirInstr::BuiltinCast { .. } => "BuiltinCast",
         MirInstr::Pop { .. } => "Pop",
         MirInstr::CallLlvmIntrinsic { .. } => "CallLlvmIntrinsic",
         MirInstr::UseVar { .. } => "UseVar",

@@ -2,7 +2,9 @@
 //!
 //! These are upstream's elementwise `pop` ops over `!kgen.simd` storage,
 //! its `pop.simd` lane ops (select, extract, insert, and the `bool`
-//! reductions), and the `index` ops over `__mlir_type.index`, with the
+//! reductions), the `index` ops over `__mlir_type.index`, and the
+//! `pop.cast_from_builtin` and `pop.cast_to_builtin` casts between `index`
+//! and its `!kgen.scalar<index>` storage, with the
 //! `__mlir_attr` spellings their attributes take. The checker verifies an op's operands
 //! as upstream's op verifier does and records the [`MlirOp`]. MIR lowering
 //! reads [`MlirOp::lowering`], and the backends compute a [`PopOp`] lane by
@@ -40,6 +42,8 @@ pub enum MlirOp {
     PopSimdInsertElement,
     PopSimdReduceAnd,
     PopSimdReduceOr,
+    PopCastFromBuiltin,
+    PopCastToBuiltin,
     IndexAdd,
     IndexSub,
     IndexMul,
@@ -100,6 +104,8 @@ impl MlirOp {
             "pop.simd.insertelement" => Self::PopSimdInsertElement,
             "pop.simd.reduce_and" => Self::PopSimdReduceAnd,
             "pop.simd.reduce_or" => Self::PopSimdReduceOr,
+            "pop.cast_from_builtin" => Self::PopCastFromBuiltin,
+            "pop.cast_to_builtin" => Self::PopCastToBuiltin,
             "index.add" => Self::IndexAdd,
             "index.sub" => Self::IndexSub,
             "index.mul" => Self::IndexMul,
@@ -143,6 +149,8 @@ impl MlirOp {
             Self::PopSimdInsertElement => "pop.simd.insertelement",
             Self::PopSimdReduceAnd => "pop.simd.reduce_and",
             Self::PopSimdReduceOr => "pop.simd.reduce_or",
+            Self::PopCastFromBuiltin => "pop.cast_from_builtin",
+            Self::PopCastToBuiltin => "pop.cast_to_builtin",
             Self::IndexAdd => "index.add",
             Self::IndexSub => "index.sub",
             Self::IndexMul => "index.mul",
@@ -180,9 +188,19 @@ impl MlirOp {
         )
     }
 
+    /// Whether this is `pop.cast_from_builtin` or `pop.cast_to_builtin`,
+    /// which convert between an MLIR builtin type and its `!kgen.scalar`
+    /// storage.
+    pub const fn is_builtin_cast(self) -> bool {
+        matches!(self, Self::PopCastFromBuiltin | Self::PopCastToBuiltin)
+    }
+
     /// Whether the op names its result type with a `_type` attribute.
     pub const fn takes_result_type(self) -> bool {
-        matches!(self, Self::PopCast | Self::PopSplat)
+        matches!(
+            self,
+            Self::PopCast | Self::PopSplat | Self::PopCastFromBuiltin | Self::PopCastToBuiltin
+        )
     }
 
     /// The number of operands the op takes.
@@ -192,6 +210,7 @@ impl MlirOp {
             MlirLowering::Negate
             | MlirLowering::Splat
             | MlirLowering::Cast
+            | MlirLowering::BuiltinCast
             | MlirLowering::Reduce(_) => 1,
             MlirLowering::Extract => 2,
             MlirLowering::Select | MlirLowering::Insert => 3,
@@ -241,6 +260,7 @@ impl MlirOp {
             Self::PopNeg => MlirLowering::Negate,
             Self::PopSplat => MlirLowering::Splat,
             Self::PopCast => MlirLowering::Cast,
+            Self::PopCastFromBuiltin | Self::PopCastToBuiltin => MlirLowering::BuiltinCast,
             Self::PopDiv | Self::IndexDivs => MlirLowering::Pop(PopOp::Div),
             Self::PopRem => MlirLowering::Pop(PopOp::Rem),
             Self::PopAbs => MlirLowering::Pop(PopOp::Abs),
@@ -294,14 +314,16 @@ impl LaneKinds {
 /// That is the built-in operator whose lane semantics are the op's
 /// (`binary`/`unary`), a construction or cast carrying the `_type`
 /// attribute's slots, the `pop` instruction for an op no operator
-/// computes, or the `simd.select`, `simd.extract`, `simd.insert`, or
-/// `simd.reduce` lane instruction.
+/// computes, the `simd.select`, `simd.extract`, `simd.insert`, or
+/// `simd.reduce` lane instruction, or the `builtin.cast` that retypes an
+/// `index` as its `!kgen.scalar<index>` storage or back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MlirLowering {
     Binary(InfixOp),
     Negate,
     Splat,
     Cast,
+    BuiltinCast,
     Pop(PopOp),
     Select,
     Extract,
@@ -554,6 +576,8 @@ mod tests {
             "pop.simd.insertelement",
             "pop.simd.reduce_and",
             "pop.simd.reduce_or",
+            "pop.cast_from_builtin",
+            "pop.cast_to_builtin",
             "index.add",
             "index.sub",
             "index.mul",

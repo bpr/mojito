@@ -104,9 +104,9 @@ impl Checker {
         };
         // An element of an unbound pack dispatches through its bounds.
         let obj_ty = self.opaque_element(&obj_ty).unwrap_or(obj_ty);
-        // `Int.__mlir_index__()` is upstream's identity conversion to the
-        // index type (spelled inside a user `Indexer`'s own
-        // `__mlir_index__`); the VM represents the index as `Int`.
+        // `Int.__mlir_index__()` is upstream's `pop.cast_to_builtin` of the
+        // `Int`'s storage to the builtin `index`, after a `UInt`'s
+        // `pop.cast` to `Int` or a literal's materialization.
         if method == "__mlir_index__"
             && args.is_empty()
             && kwargs.is_empty()
@@ -116,7 +116,7 @@ impl Checker {
                 TyKind::INT | TyKind::IntLiteral | TyKind::UINT
             )
         {
-            return Ok(Ty::int());
+            return Ok(Ty::index());
         }
         // `Bool.__mlir_i1__()` is upstream's conversion to the builtin `i1`,
         // which is `Bool` while `Bool` is a compiler type.

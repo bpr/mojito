@@ -696,6 +696,7 @@ impl ScopeCx<'_> {
             | TyKind::Trait(_)
             | TyKind::TypeType
             | TyKind::KgenString
+            | TyKind::Index
             | TyKind::SelfType
             | TyKind::Error => {}
         }

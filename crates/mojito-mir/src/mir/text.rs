@@ -171,7 +171,7 @@ pub fn disassemble_functions(program: &MirProgram) -> Result<String, Disassemble
 
 pub const MAGIC: &str = "mojito-mir";
 pub const VERSION_MAJOR: u16 = 1;
-pub const VERSION_MINOR: u16 = 122;
+pub const VERSION_MINOR: u16 = 123;
 
 pub const INSTRUCTION_MNEMONICS: &[&str] = &[
     "loans.establish",
@@ -356,6 +356,7 @@ pub const fn instruction_mnemonic(instruction: &MirInstr) -> &'static str {
         MirInstr::ConstructType { .. } => "type.construct_expr",
         MirInstr::MaterializeLiteral { .. } => "literal.materialize",
         MirInstr::ScalarCast { .. } => "scalar.cast",
+        MirInstr::BuiltinCast { .. } => "builtin.cast",
         MirInstr::Pop { .. } => "pop",
         MirInstr::CallLlvmIntrinsic { .. } => "llvm.intrinsic",
         MirInstr::UseVar { .. } => "var.use",
@@ -516,6 +517,7 @@ pub fn type_spelling(ty: &Ty) -> &'static str {
         TyKind::Trait(_) => "trait_type",
         TyKind::TypeType => "TypeType",
         TyKind::KgenString => "KgenString",
+        TyKind::Index => "index",
         TyKind::Generator(_) => "generator",
         TyKind::Tuple(_) => "tuple",
         TyKind::PopArray { .. } => "pop_array",

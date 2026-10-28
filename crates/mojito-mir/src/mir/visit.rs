@@ -396,6 +396,7 @@ pub fn walk_instruction_mut<V: MutTypeVisitor + ?Sized>(
         | I::KeepAlive { .. }
         | I::StoreToMem { .. }
         | I::ScalarCast { .. }
+        | I::BuiltinCast { .. }
         | I::Pop { .. }
         | I::SimdSelect { .. }
         | I::SimdExtract { .. }

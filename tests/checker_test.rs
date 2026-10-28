@@ -5537,7 +5537,7 @@ fn augmented_subscript_freezes_distinct_getter_and_setter_value_adjustments() {
 fn augmented_subscript_freezes_setter_only_index_normalization() {
     use mojito::checked::CheckedCallValueAdjustment;
 
-    let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(self, index: Axis) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\ndef main():\n    var box = Box(1)\n    var axis = Axis(0)\n    box[axis] += 2\n";
+    let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value.__mlir_index__()\n\n@fieldwise_init\nstruct Box:\n    var value: Int\n    def __getitem__(self, index: Axis) -> Int:\n        return self.value\n    def __setitem__(mut self, index: Int, value: Int):\n        self.value = value + index\n\ndef main():\n    var box = Box(1)\n    var axis = Axis(0)\n    box[axis] += 2\n";
     let checked = checked_with_std(source).expect("check");
     let pair = checked
         .expressions()
@@ -5622,7 +5622,7 @@ fn augmented_subscript_rejects_an_immutable_reference_getter() {
 
 #[test]
 fn multi_indexer_normalization_uses_each_argument_position() {
-    let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n    def __setitem__(mut self, row: Axis, column: Int, value: Int):\n        self.value = row.value + column + value\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Axis(2)])\n    grid[Axis(3), Axis(4)] = 5\n";
+    let source = "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value.__mlir_index__()\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n    def __setitem__(mut self, row: Axis, column: Int, value: Int):\n        self.value = row.value + column + value\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Axis(2)])\n    grid[Axis(3), Axis(4)] = 5\n";
     let checked = checked_with_std(source).expect("check");
     let normalizations = checked
         .expressions()
@@ -5634,7 +5634,7 @@ fn multi_indexer_normalization_uses_each_argument_position() {
 
     assert!(matches!(
         err_std(
-            "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value\n\n@fieldwise_init\nstruct Plain:\n    var value: Int\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Plain(2)])\n"
+            "@fieldwise_init\nstruct Axis(Indexer):\n    var value: Int\n    def __mlir_index__(self) -> __mlir_type.index:\n        return self.value.__mlir_index__()\n\n@fieldwise_init\nstruct Plain:\n    var value: Int\n\n@fieldwise_init\nstruct Grid:\n    var value: Int\n    def __getitem__(self, row: Axis, column: Int) -> Int:\n        return row.value + column\n\ndef main():\n    var grid = Grid(0)\n    print(grid[Axis(1), Plain(2)])\n"
         ),
         TypeError::BadCall { .. }
     ));
@@ -8300,7 +8300,7 @@ fn pop_and_index_ops_type_as_their_verifiers_do() {
     // gives the mask, `pop.cast` and `pop.simd.splat` the `_type` they
     // name, and an `index` op takes and gives `__mlir_type.index` values.
     ok(
-        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var s: SIMD[DType.int32, 4] = __mlir_op.`pop.add`(a._mlir_value, a._mlir_value)\n    var m: SIMD[DType.bool, 4] = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<lt>`](a._mlir_value, s._mlir_value)\n    var f: SIMD[DType.float32, 4] = __mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type, fastmathFlags=__mlir_attr.`#pop.fmf<fast>`](a._mlir_value)\n    var t: SIMD[DType.float32, 4] = __mlir_op.`pop.simd.splat`[_type=SIMD[DType.float32, 4]._mlir_type](Float32(2.5)._mlir_value)\n    var x = Int(3).__mlir_index__()\n    var y: Int = __mlir_op.`index.add`(x, x)\n    var b: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<slt>`](x, y)\n    print(s, m, f, t, y, Bool(value=b))\n",
+        "def main():\n    var a = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var s: SIMD[DType.int32, 4] = __mlir_op.`pop.add`(a._mlir_value, a._mlir_value)\n    var m: SIMD[DType.bool, 4] = __mlir_op.`pop.cmp`[pred=__mlir_attr.`#kgen.cmp_pred<lt>`](a._mlir_value, s._mlir_value)\n    var f: SIMD[DType.float32, 4] = __mlir_op.`pop.cast`[_type=SIMD[DType.float32, 4]._mlir_type, fastmathFlags=__mlir_attr.`#pop.fmf<fast>`](a._mlir_value)\n    var t: SIMD[DType.float32, 4] = __mlir_op.`pop.simd.splat`[_type=SIMD[DType.float32, 4]._mlir_type](Float32(2.5)._mlir_value)\n    var x = Int(3).__mlir_index__()\n    var y = __mlir_op.`index.add`(x, x)\n    var b: Bool = __mlir_op.`index.cmp`[pred=__mlir_attr.`#index.cmp_predicate<slt>`](x, y)\n    print(s, m, f, t, Int(mlir_value=y), Bool(value=b))\n",
     );
 }
 

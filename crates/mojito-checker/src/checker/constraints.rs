@@ -1647,7 +1647,7 @@ impl Checker {
             // __mlir_type.`!kgen.string``).
             ExprKind::Member { object, field }
                 if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type")
-                    && let Some(ty) = mojito_types::types::kgen_type_named(field) =>
+                    && let Some(ty) = mojito_types::types::mlir_type_named(field) =>
             {
                 Ok(context.type_shape(ty))
             }

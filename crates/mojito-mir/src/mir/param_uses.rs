@@ -300,6 +300,7 @@ pub fn has_no_destructor(ty: &Ty) -> bool {
             | TyKind::IntLiteral
             | TyKind::FloatLiteral
             | TyKind::Dtype
+            | TyKind::Index
             | TyKind::Simd { .. }
     )
 }

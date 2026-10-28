@@ -741,7 +741,8 @@ impl Checker {
     /// `Name(mlir_value=v)` on a SIMD type, or `Bool(value=b)`: upstream's
     /// initializer from the `!kgen.simd` storage or the `i1`, which is the
     /// value itself, so the argument must already be a value of the type,
-    /// never a literal or another width or dtype converted to it.
+    /// never a literal or another width or dtype converted to it. `Int`'s
+    /// overload from an `index` casts it to that storage.
     fn infer_storage_construction(
         &self,
         span: SourceSpan,
@@ -750,6 +751,16 @@ impl Checker {
         storage: &mojito_ast::ast::KwArg,
     ) -> Result<Ty, TypeError> {
         let found = self.infer(&storage.value)?;
+        // `Int(mlir_value=i)` over an `index` is upstream's
+        // `pop.cast_from_builtin` to the `Int`'s storage.
+        if *ty == Ty::int() && found == Ty::index() {
+            self.record_at(span).adjustment = Some(Box::new(
+                mojito_checked::checked::SemanticAdjustment::MlirOp(
+                    mojito_types::mlir::MlirOp::PopCastFromBuiltin,
+                ),
+            ));
+            return Ok(Ty::int());
+        }
         if found != *ty {
             return Err(TypeError::TypeMismatch {
                 expected: ty.to_string(),

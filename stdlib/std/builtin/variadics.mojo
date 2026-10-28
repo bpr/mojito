@@ -11,7 +11,8 @@
 # subscript of the struct's own raw list, admitted in this module alone.
 # Omitted: `_mlir_type` (a member applying `_MLIR.KGENParamListType` is not
 # yet an associated comptime expression here), `_raw_length` and
-# `_get_type_at_index` (`__mlir_type.index` values are outside the subset),
+# `_get_type_at_index` (compile-time `__mlir_type.index` values are outside
+# the subset, R1531),
 # the `@implicit` upcast constructor (`#kgen.upcast`,
 # `#kgen.is_refined_type`), and the list vocabulary (`tabulate`, `splat`,
 # `_concat`, `reduce`, `any`, `all`, `all_conforms_to`, `contains`, `map`,

@@ -99,7 +99,7 @@ impl LayoutCx<'_> {
                 .map(|s| s.layout);
         }
         match ty.kind() {
-            TyKind::INT | TyKind::UINT | TyKind::FLOAT64 => Ok(Layout::new(8, 8)),
+            TyKind::INT | TyKind::UINT | TyKind::FLOAT64 | TyKind::Index => Ok(Layout::new(8, 8)),
             // A `DType` is its one-byte upstream code.
             TyKind::Bool | TyKind::Dtype => Ok(Layout::new(1, 1)),
             TyKind::None => Ok(Layout::ZERO),

@@ -96,6 +96,7 @@ accessed; the compact notation omits this analysis-only field.
 | `add` through `not_in` | `BinOp` | Binary arithmetic, comparison, logic, or membership |
 | `literal.materialize` | `MaterializeLiteral` | Convert an exact numeric literal once to its checked runtime scalar type |
 | `scalar.cast` | `ScalarCast` | `Int(x)`, `UInt(x)`, `Float64(x)`, or `Bool(x)` of a scalar operand |
+| `builtin.cast` | `BuiltinCast` | Retype an `index` as its `Int` storage or back |
 
 ### Calls
 
@@ -256,6 +257,18 @@ the named scalar (`runtime::builtin_convert`): an integer wraps or rounds to
 its address. It is upstream's inlined `SIMD.__init__` (`pop.cast`) or
 `Bool.__init__` (a compare). The verifier rejects any other operand type and
 a destination not of the target type.
+
+### `builtin.cast` — Builtin Type Cast
+
+```text
+builtin.cast %dest, %value
+```
+
+Upstream's `pop.cast_from_builtin` (an `index` to its `!kgen.scalar<index>`
+storage, an `Int`) or `pop.cast_to_builtin` (back). The register keeps its
+bits; both backends hold an `index` as the `Int` it casts from. The verifier
+requires exactly one of the two registers to be an `index` and the other an
+`Int`.
 
 ### `var.copy` — Copy Variable
 

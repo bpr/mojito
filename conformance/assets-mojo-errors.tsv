@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	829
+# swept-count	835
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -451,6 +451,7 @@ assets/type_error/implicit_two_param_ref_rejected.mojo	compile-reject	agree	erro
 assets/type_error/indexed_copyable_element_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/indexer_int_return.mojo	compile-reject	agree	error: 'Offset' does not implement all requirements for 'Indexer'
 assets/type_error/indexer_missing_conversion.mojo	compile-reject	agree	error: 'BadIndex' does not implement all requirements for 'Indexer'
+assets/type_error/indexer_returns_int_value.mojo	compile-reject	agree	error: cannot implicitly convert 'Int' value to '__mlir_type.index' in return value
 assets/type_error/indexer_undeclared_subscript.mojo	compile-reject	agree	error: no matching method in call to '__getitem__'
 assets/type_error/infer_only_keyword_argument_converts.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'StringLiteral["a"]' to 'Int'
 assets/type_error/initializer_arguments_share_mutable_origin.mojo	compile-reject	agree	error: aliasing values passed mutably to 'args' argument and passed mutably to 'args' argument in 'Tuple[Span[Int, origin_of(xs)], Span[Int, origin_of(xs)]]' initializer call
@@ -555,9 +556,14 @@ assets/type_error/method_result_pointer_field_read_self_write.mojo	compile-rejec
 assets/type_error/method_two_named_results.mojo	compile-reject	agree	error: function may not have multiple 'out' arguments
 assets/type_error/mlir_call_llvm_intrinsic_literal_name.mojo	compile-reject	agree	error: 'pop.call_llvm_intrinsic' op attribute 'intrin' failed to satisfy constraint: TypedAttr instance String type for parameters
 assets/type_error/mlir_call_llvm_intrinsic_without_side_effects.mojo	compile-reject	agree	error: 'pop.call_llvm_intrinsic' op requires attribute 'hasSideEffects'
+assets/type_error/mlir_cast_from_builtin_storage_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cast_from_builtin' op cannot convert to scalar dtype index from '!kgen.scalar<index>'
+assets/type_error/mlir_cast_to_builtin_index_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cast_to_builtin' op operand #0 must be parameterized SIMD vector type, but got 'index'
+assets/type_error/mlir_index_not_int.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to 'Int'
+assets/type_error/mlir_index_op_storage_operand.mojo	compile-reject	agree	error: MLIR verification error: 'index.add' op operand #0 must be index, but got '!kgen.scalar<index>'
 assets/type_error/mlir_op_cmp_without_predicate.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cmp' op requires attribute 'pred'
 assets/type_error/mlir_op_operand_types_differ.mojo	compile-reject	agree	error: MLIR verification error: 'pop.add' op requires the same type for all operands and results
 assets/type_error/mlir_op_select_mask_not_bool.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.select' op operand #0 must be !kgen.simd<N, bool>, but got '!kgen.simd<4, si32>'
+assets/type_error/mlir_pop_op_index_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.add' op operand #0 must be SIMD type whose element type is either unbound, index, uindex, integer or float dtype, but got 'index'
 assets/type_error/mlir_simd_int_length_operand.mojo	compile-reject	agree	error: invalid MLIR type: !kgen.simd<#lit.struct.extract<:!lit.struct<@std::@simd::@SIMD<:!lit.struct<@std::@builtin::@dtype::@DType> {:dtype index}, :!lit.struct<@std::@builtin::@simd_length::@SIMDLength> {1}>> length, "_mlir_value"> : !kgen.scalar<index>, #lit.struct.extract<:!lit.struct<@std::@builtin::@dtype::@DType> dtype, "_mlir_value"> : !kgen.dtype>
 assets/type_error/mlir_type_unsupported.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to '__mlir_type.i64' in return value
 assets/type_error/movable_where_false_transfer.mojo	compile-reject	agree	error: cannot transfer value into destination, because 'Pinned' doesn't conform to 'Movable'

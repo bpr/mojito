@@ -23,6 +23,7 @@ impl Decoder {
                 "DType" => Ty::dtype(),
                 "TypeType" => TyKind::TypeType.into(),
                 "KgenString" => TyKind::KgenString.into(),
+                "index" => Ty::index(),
                 "Self" => Ty::self_type(),
                 "Error" => Ty::error(),
                 other => {

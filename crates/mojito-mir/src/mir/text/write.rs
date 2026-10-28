@@ -892,6 +892,10 @@ fn instruction_value(instruction: &MirInstr) -> String {
                 ("target", ty_value(target)),
             ],
         ),
+        MirInstr::BuiltinCast { dest, value } => record(
+            tag,
+            &[("dest", reg_value(*dest)), ("value", reg_value(*value))],
+        ),
         MirInstr::ScalarCast {
             dest,
             value,
@@ -2098,6 +2102,7 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::Dtype => "DType".into(),
         TyKind::TypeType => "TypeType".into(),
         TyKind::KgenString => "KgenString".into(),
+        TyKind::Index => "index".into(),
         TyKind::SelfType => "Self".into(),
         TyKind::Error => "Error".into(),
         TyKind::Func(func) => {

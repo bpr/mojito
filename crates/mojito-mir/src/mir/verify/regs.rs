@@ -20,6 +20,7 @@ pub fn instruction_result_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         | MirInstr::ConstructType { dest, .. }
         | MirInstr::MaterializeLiteral { dest, .. }
         | MirInstr::ScalarCast { dest, .. }
+        | MirInstr::BuiltinCast { dest, .. }
         | MirInstr::Pop { dest, .. }
         | MirInstr::CallLlvmIntrinsic { dest, .. }
         | MirInstr::StoreToMem { dest, .. }
@@ -130,6 +131,7 @@ pub fn instruction_operand_regs(instruction: &MirInstr, out: &mut Vec<Reg>) {
         MirInstr::WriteRef { reference, value } => out.extend([*reference, *value]),
         MirInstr::MaterializeLiteral { value, .. }
         | MirInstr::ScalarCast { value, .. }
+        | MirInstr::BuiltinCast { value, .. }
         | MirInstr::StoreToMem { src: value, .. } => {
             out.push(*value);
         }

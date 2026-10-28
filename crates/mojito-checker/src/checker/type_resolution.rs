@@ -631,20 +631,20 @@ impl Checker {
                 Some(ty) => ty.clone(),
                 None => return Err(TypeError::UnknownSelfParam("Self".to_string())),
             },
-            // Upstream's `Indexer` requirement returns `__mlir_type.index`;
-            // the VM represents that index as `Int`. `!kgen.type` is the
-            // metatype of every type, and `!kgen.string` a `StringLiteral`'s
-            // parameter type. Every other MLIR type spelling is outside the
+            // The MLIR types the subset reads (`mlir_type_named`): the
+            // builtin `index` upstream's `Indexer` requirement returns, an
+            // `Int`'s `!kgen.scalar<index>` storage, the metatype
+            // `!kgen.type`, and a `StringLiteral`'s parameter type
+            // `!kgen.string`. Every other MLIR type spelling is outside the
             // subset.
             SourceType::Assoc { base, name, args }
                 if matches!(base.as_ref(), SourceType::Named(base, base_args)
                     if base == "__mlir_type" && base_args.is_empty()) =>
             {
-                match (name.as_str(), args.is_empty()) {
-                    ("index", true) => Ty::int(),
-                    (name, true) if let Some(ty) = mojito_types::types::kgen_type_named(name) => ty,
-                    _ => return Err(unsupported_mlir_type()),
-                }
+                args.is_empty()
+                    .then(|| mojito_types::types::mlir_type_named(name))
+                    .flatten()
+                    .ok_or_else(unsupported_mlir_type)?
             }
             SourceType::Assoc { base, name, args } => self.member_type(base, name, args)?,
             // A compile-time value is a type only through a subscript, as at
@@ -4264,6 +4264,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::KgenString
+        | TyKind::Index
         | TyKind::Error => false,
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty
             .callable()
@@ -4365,8 +4366,8 @@ fn origin_has_subtree_tail(origin: &mojito_types::origin::PointerOrigin) -> bool
 fn unsupported_mlir_type() -> TypeError {
     TypeError::Unsupported(
         "this MLIR type spelling is outside the supported subset; only \
-         '__mlir_type.index', '__mlir_type.`!kgen.type`', \
-         '__mlir_type.`!kgen.string`', \
+         '__mlir_type.index', '__mlir_type.`!kgen.scalar<index>`', \
+         '__mlir_type.`!kgen.type`', '__mlir_type.`!kgen.string`', \
          '__mlir_type[`!kgen.param_list<`, T, `>`]', and \
          '__mlir_type[`!kgen.simd<`, length._mlir_value, `, `, dtype._mlir_value, `>`]' \
          are accepted"
@@ -4535,19 +4536,6 @@ fn syntactic_origin_argument(argument: &mojito_ast::ast::ParamArg) -> bool {
         }
         _ => false,
     }
-}
-
-/// Whether a return annotation is spelled `__mlir_type.index`, the exact
-/// return type upstream's `Indexer.__mlir_index__` requirement demands.
-pub(super) fn spells_mlir_index(annotation: Option<&SourceType>) -> bool {
-    matches!(
-        annotation,
-        Some(SourceType::Assoc { base, name, args })
-            if name == "index"
-                && args.is_empty()
-                && matches!(base.as_ref(), SourceType::Named(base, base_args)
-                    if base == "__mlir_type" && base_args.is_empty())
-    )
 }
 
 /// The first of a generator's own binders a read value names

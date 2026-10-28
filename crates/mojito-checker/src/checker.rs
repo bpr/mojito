@@ -2290,9 +2290,6 @@ struct MethodSig {
     keyword_only: Option<usize>,
     conventions: Vec<Option<ArgConvention>>,
     ret: Ty,
-    /// The return annotation is spelled `__mlir_type.index` (represented as
-    /// `Int`): what upstream's `Indexer.__mlir_index__` requirement demands.
-    ret_mlir_index: bool,
     raises: bool,
     error: Option<Ty>,
     /// Receiver convention. `None` means plain read-only `self`; explicit
@@ -2354,7 +2351,6 @@ impl MethodSig {
             keyword_only: None,
             conventions: vec![None; len],
             ret,
-            ret_mlir_index: false,
             raises: false,
             error: None,
             self_convention: None,

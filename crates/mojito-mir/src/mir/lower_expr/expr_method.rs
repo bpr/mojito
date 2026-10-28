@@ -259,12 +259,13 @@ impl<'a> Flatten<'a> {
             });
             return Some(dest);
         }
-        // `x.__mlir_index__()` on an integer is the identity
-        // conversion to the index representation (`Int`).
+        // `x.__mlir_index__()` on an integer is upstream's
+        // `pop.cast_to_builtin` of an `Int`: a `UInt` is `pop.cast` to
+        // `Int` first, and a literal materializes as one.
         if method == "__mlir_index__"
             && args.is_empty()
             && kwargs.is_empty()
-            && object.ty().is_some_and(|ty| {
+            && let Some(found) = object.ty().filter(|ty| {
                 matches!(
                     ty.kind(),
                     mojito_types::types::TyKind::INT
@@ -273,7 +274,23 @@ impl<'a> Flatten<'a> {
                 )
             })
         {
-            return Some(self.expr(object));
+            let value = self.expr(object);
+            let value = match found.kind() {
+                mojito_types::types::TyKind::IntLiteral => {
+                    self.materialize_literal(value, &Ty::int(), call.location())
+                }
+                mojito_types::types::TyKind::UINT => {
+                    let dest = self.fresh_typed(call.location(), None, Ty::int());
+                    self.emit(MirInstr::ScalarCast {
+                        dest,
+                        value,
+                        target: ScalarConversion::Int,
+                    });
+                    dest
+                }
+                _ => value,
+            };
+            return Some(self.builtin_cast(call.location(), value, Ty::index()));
         }
         // `b.__mlir_i1__()` on a `Bool` is the identity conversion to the
         // builtin `i1` (`Bool`), and a heterogeneous collector's

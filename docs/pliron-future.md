@@ -201,7 +201,9 @@ loop changes.
 - **No stdlib compatibility gain.** Upstream's stdlib is written against the
   closed `pop`/`kgen`/`lit` ops through `__mlir_op`. Pliron clones of those
   dialects still would not let Mojito compile upstream stdlib source. Mojito
-  accepts only `__mlir_type.index`.
+  accepts only a handful of `__mlir_type` spellings (`index`,
+  `!kgen.scalar<index>`, `!kgen.type`, `!kgen.string`, and the applied
+  `!kgen.param_list` and `!kgen.simd`).
 - **Compile time.** The A1 shadow, which adds a core module beside MIR and
   round-trips its canonical text, adds 0.15 to 0.21 ms per operation of the
   specialized closure in a release build: nothing visible on Hello World,
