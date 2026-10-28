@@ -2496,7 +2496,7 @@ impl<'a> Specializer<'a> {
             let mut preludes: Vec<(usize, Vec<MirInstr>)> = Vec::new();
             // What converts an operator's result to the `Bool` its template
             // declared, spliced in after the operator the same way.
-            let mut conversions: Vec<(usize, MirInstr)> = Vec::new();
+            let mut conversions: Vec<(usize, Vec<MirInstr>)> = Vec::new();
             for (index, instruction) in block.instrs.iter_mut().enumerate() {
                 let regions = mojito_mir::mir::instruction_regions_mut(instruction);
                 if !regions.is_empty() {
@@ -2695,10 +2695,11 @@ impl<'a> Specializer<'a> {
                         refined_bound: None,
                     };
                 }
-                // A comparison a template typed `Bool` through its bound
-                // yields a mask over sized scalars: convert it, as the
-                // checker does where the operands are spelled.
-                if let MirInstr::BinOp { op, dest, a, .. } = instruction
+                // A comparison a template typed `Bool` through its bound is
+                // the builtin `SIMD` dunder at a vector instance, as MIR
+                // lowers one whose operands are spelled: an ordered one
+                // asserts its scalar here, the instance's width closed.
+                if let MirInstr::BinOp { op, dest, a, b, .. } = instruction
                     && matches!(
                         op,
                         mojito_ast::ast::InfixOp::Eq
@@ -2713,26 +2714,29 @@ impl<'a> Specializer<'a> {
                     && let TyKind::Simd { width, .. } = operand.kind()
                     && !mojito_types::types::has_host_scalar_value(operand.kind())
                 {
-                    let mask = Reg(function.n_regs);
-                    function.n_regs += 1;
-                    function.reg_types.insert(
-                        mask.0,
-                        TyKind::Simd {
-                            dtype: mojito_types::types::SimdDtype::Known(
-                                mojito_ast::ast::Dtype::Bool,
-                            ),
-                            width: width.clone(),
-                        }
-                        .into(),
-                    );
-                    conversions.push((
-                        index,
-                        MirInstr::ScalarCast {
-                            dest: std::mem::replace(dest, mask),
-                            value: mask,
-                            target: mojito_types::ct::ScalarConversion::Bool,
+                    if let Some(message) = mojito_types::types::scalar_comparison_message(*op)
+                        && width.known() != Some(1)
+                    {
+                        return Err(MonoError {
+                            kind: MonoErrorKind::Instantiation,
+                            ..self.error(Some(owner), format!("constraint failed: {message}"))
+                        });
+                    }
+                    let mut dunder = mojito_mir::mir::simd_comparison_dunder(
+                        *op,
+                        *dest,
+                        *a,
+                        *b,
+                        width,
+                        &mut |ty| {
+                            let reg = Reg(function.n_regs);
+                            function.n_regs += 1;
+                            function.reg_types.insert(reg.0, ty);
+                            reg
                         },
-                    ));
+                    );
+                    *instruction = dunder.remove(0);
+                    conversions.push((index, dunder));
                 }
                 // `**` on Int/UInt and the expansions that display a scalar
                 // call bundled bodies without naming them, so the
@@ -3509,7 +3513,7 @@ impl<'a> Specializer<'a> {
                 .into_iter()
                 .map(|(index, conversion)| {
                     let position = mojito_mir::mir::past_error_region(&block.instrs, index);
-                    (position, false, vec![conversion])
+                    (position, false, conversion)
                 })
                 .chain(
                     preludes

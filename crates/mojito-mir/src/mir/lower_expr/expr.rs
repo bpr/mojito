@@ -21,6 +21,10 @@ pub(in crate::mir) struct OperatorDispatch {
     /// one: its receiver convention, its compile-time parameter
     /// declarations, and the arguments the call solved for them.
     pub(in crate::mir) contract: Option<OperatorContract>,
+    /// The `comptime assert`s of the builtin `SIMD` dunder a chained
+    /// comparison's link applies; a lone operator's are its node's
+    /// ([`Flatten::expr_unconverted`]).
+    pub(in crate::mir) assertions: Vec<mojito_types::types::GenericConstraint>,
 }
 
 /// What a chained comparison's link records of its dunder's method call.
@@ -51,6 +55,14 @@ impl<'a> Flatten<'a> {
     /// Lower `node` without its adjustments, by the family its op names:
     /// each reads its operands off the handle.
     pub(in crate::mir) fn expr_unconverted(&mut self, node: Node<'a>) -> Reg {
+        // The `comptime assert`s of the builtin dunders and constructors
+        // `node` applies, for each reached instance to judge.
+        for adjustment in node.adjustments() {
+            if let mojito_checked::checked::SemanticAdjustment::InstanceAssertion(cond) = adjustment
+            {
+                self.emit(MirInstr::ComptimeAssert { cond: cond.clone() });
+            }
+        }
         if let Some(value) = self
             .literal_or_name(node)
             .or_else(|| self.call_family(node))
@@ -345,15 +357,19 @@ impl<'a> Flatten<'a> {
             raises: node.raises(),
             method: None,
             contract: None,
+            assertions: Vec::new(),
         };
         self.emit_comparison(node.location(), op, ra, rb, dispatch)
     }
 
     /// Emit one dispatched operator over `a` and `b`: the dunder the
     /// checker selected for a struct receiver is called as a method, as
-    /// upstream's parser spells `a + b` as `a.__add__(b)`; any other
-    /// operator is a `binary`, whose `resolved` names a bound's
-    /// requirement the elaborator answers per instance.
+    /// upstream's parser spells `a + b` as `a.__add__(b)`; a comparison of
+    /// a `SIMD` operand other than a host scalar is its builtin dunder's
+    /// body, after a chain link's `comptime assert`
+    /// ([`simd_comparison_dunder`]); any other operator is a `binary`,
+    /// whose `resolved` names a bound's requirement the elaborator answers
+    /// per instance.
     pub(in crate::mir) fn emit_comparison(
         &mut self,
         location: SourceSpan,
@@ -367,7 +383,40 @@ impl<'a> Flatten<'a> {
             raises,
             method,
             contract,
+            assertions,
         } = dispatch;
+        if resolved.is_none()
+            && matches!(
+                op,
+                InfixOp::Eq | InfixOp::Ne | InfixOp::Lt | InfixOp::Le | InfixOp::Gt | InfixOp::Ge
+            )
+            && let Some(width) = [a, b].iter().find_map(|operand| {
+                let kind = self.f.reg_types.get(&operand.0)?.kind();
+                match kind {
+                    TyKind::Simd { width, .. }
+                        if !mojito_types::types::has_host_scalar_value(kind) =>
+                    {
+                        Some(width.clone())
+                    }
+                    _ => None,
+                }
+            })
+        {
+            for cond in assertions {
+                self.emit(MirInstr::ComptimeAssert {
+                    cond: Box::new(cond),
+                });
+            }
+            let dest = self.fresh_typed(location.clone(), None, Ty::bool());
+            let instructions =
+                crate::mir::simd_comparison_dunder(op, dest, a, b, &width, &mut |ty| {
+                    self.fresh_typed(location.clone(), None, ty)
+                });
+            for instruction in instructions {
+                self.emit(instruction);
+            }
+            return dest;
+        }
         let raises = self.raises(raises, location.clone());
         let d = self.fresh(location, None);
         let (contract, refined_bound) = contract.map_or((None, None), |mut contract| {

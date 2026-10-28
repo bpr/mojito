@@ -71,7 +71,7 @@ const SIMD_SURFACE: &str = "\
 def compute() -> Int:
     var v = SIMD[DType.int32, 4](1, 2, 3, 4)
     var w = v * 3 + SIMD[DType.int32, 4](7)
-    var m = w > 10
+    var m = w.gt(10)
     var picked = m.select(w, -v)
     var f = picked.cast[DType.float64]() / 2.0
     var g = f.shuffle[3, 2, 1, 0]()
@@ -174,7 +174,7 @@ def total(v: SIMD[DType.int32, 8]) -> Int32:
     return (v << 1).reduce_add()
 
 def mask_sum(v: SIMD[DType.float32, 8], limit: Float32) -> Float32:
-    var m = v > limit
+    var m = v.gt(limit)
     return m.select(v, 0.0).reduce_add()
 
 def prefix(v: SIMD[DType.int32, 8]) -> SIMD[DType.int32, 8]:

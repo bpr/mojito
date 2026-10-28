@@ -1567,8 +1567,10 @@ pointer to storage its context uniques (`mojito_types::types`):
   a value encoding, not a type: both backends serve a lane method or lane
   subscript on it as on any one-lane vector (`runtime::simd_parts`).
   Above the waist the three keep a scalar operator path behind one
-  predicate (`types::has_host_scalar_value`) until a width-one comparison
-  is a `Bool` (R185).
+  predicate (`types::has_host_scalar_value`) for their true division,
+  `**`, and literal materialization; below it, their `binary` comparison
+  defines a `Bool` directly, where any other vector's comparison is
+  upstream's builtin dunder (`mir::simd_comparison_dunder`).
 - A write is explicit: `Ty::update` unshares the node and refreshes its
   facts, and a rewriting walk rebuilds through `Ty::reusing`, which keeps
   the handle it read when the rebuilt variant is equal.

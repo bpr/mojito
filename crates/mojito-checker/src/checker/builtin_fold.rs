@@ -656,6 +656,9 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
             }],
         },
         _ if typed => return None,
+        // `pop.cmp` is elementwise, where an infix comparison is the
+        // reducing dunder.
+        _ if matches!(op, MlirOp::PopCmp(_)) => return None,
         (MlirLowering::Binary(op), [left, right]) => {
             ExprKind::Infix(op, Box::new(left.clone()), Box::new(right.clone()))
         }

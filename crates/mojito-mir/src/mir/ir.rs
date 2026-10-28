@@ -503,6 +503,72 @@ pub fn dunder_method_call(
     }
 }
 
+/// The body of upstream's builtin `SIMD` comparison dunder over `a` and
+/// `b`, vectors of `width` lanes, its `Bool` into `dest`.
+///
+/// Each register it defines comes from `fresh` at its type: the lane mask
+/// `pop.cmp` is (a `binary`), reduced unless it has one lane (`reduce_and`
+/// for `__eq__`, `reduce_or` for an ordered dunder's `__bool__`), read as a
+/// `Bool`, and negated for `__ne__`, which is `not self == rhs`. An ordered
+/// dunder's `comptime assert` of one lane is the caller's.
+pub fn simd_comparison_dunder(
+    op: InfixOp,
+    dest: Reg,
+    a: Reg,
+    b: Reg,
+    width: &mojito_types::types::SimdWidth,
+    fresh: &mut dyn FnMut(Ty) -> Reg,
+) -> Vec<MirInstr> {
+    let mask_of = |width: mojito_types::types::SimdWidth| -> Ty {
+        TyKind::Simd {
+            dtype: mojito_types::types::SimdDtype::Known(mojito_ast::ast::Dtype::Bool),
+            width,
+        }
+        .into()
+    };
+    let negated = op == InfixOp::Ne;
+    let mask = fresh(mask_of(width.clone()));
+    let mut instructions = vec![MirInstr::BinOp {
+        op: if negated { InfixOp::Eq } else { op },
+        dest: mask,
+        a,
+        b,
+        resolved: None,
+        raises: None,
+        refined_bound: None,
+    }];
+    let lane = if matches!(width, mojito_types::types::SimdWidth::Known(1)) {
+        mask
+    } else {
+        let lane = fresh(mask_of(mojito_types::types::SimdWidth::Known(1)));
+        instructions.push(MirInstr::SimdReduce {
+            dest: lane,
+            value: mask,
+            op: if matches!(op, InfixOp::Eq | InfixOp::Ne) {
+                mojito_types::mlir::SimdReduction::And
+            } else {
+                mojito_types::mlir::SimdReduction::Or
+            },
+        });
+        lane
+    };
+    let equal = if negated { fresh(Ty::bool()) } else { dest };
+    instructions.push(MirInstr::ScalarCast {
+        dest: equal,
+        value: lane,
+        target: mojito_types::ct::ScalarConversion::Bool,
+    });
+    if negated {
+        instructions.push(MirInstr::UnOp {
+            op: PrefixOp::Not,
+            dest,
+            a: equal,
+            raises: None,
+        });
+    }
+    instructions
+}
+
 /// Rewrite a subscript store `instruction` into the call it is; returns
 /// whether it was one.
 ///

@@ -151,7 +151,7 @@ impl Checker {
                 && !mojito_types::types::has_host_scalar_value(ty.kind())
         };
         if vector(&lt) || vector(&rt) {
-            return self.infer_simd_infix(op, &lt, &rt);
+            return self.infer_simd_infix(span.as_ref(), op, &lt, &rt);
         }
         // Arithmetic and identity comparison reason about allocation layout,
         // which an origin-bearing pointer to a single checked value does not
@@ -377,10 +377,14 @@ impl Checker {
             {
                 self.borrow_operator_operand(left, &self.chain_operand_ty(left)?);
             }
+            let assertions = self
+                .clear_fact(&span, |facts| facts.instance_assertions.take())
+                .unwrap_or_default();
             links.push(CheckedCompareLink {
                 target,
                 call,
                 instantiated_args,
+                assertions,
             });
             left = right;
         }
@@ -509,14 +513,20 @@ impl Checker {
         })
     }
 
-    /// Type an elementwise SIMD operator. Both operands must be the same SIMD
-    /// type, except a numeric *literal* splats to the other operand's type.
-    /// Arithmetic keeps the operand type; comparisons return a `bool` mask.
-    #[allow(
-        clippy::unused_self,
-        reason = "TODO: make an associated function or use the receiver"
-    )]
-    pub(super) fn infer_simd_infix(&self, op: InfixOp, lt: &Ty, rt: &Ty) -> Result<Ty, TypeError> {
+    /// Type a SIMD operator. Both operands must be the same SIMD type,
+    /// except a numeric *literal* splats to the other operand's type.
+    /// Arithmetic is elementwise and keeps the operand type; a comparison is
+    /// upstream's builtin dunder, a `Bool`: `==` when every lane is equal,
+    /// `!=` its negation, and an ordered operator over `Scalar`s only, whose
+    /// `comptime assert` a run-time position at `span` records for the
+    /// instance to judge ([`Self::record_instance_assertion`]).
+    pub(super) fn infer_simd_infix(
+        &self,
+        span: Option<&SourceSpan>,
+        op: InfixOp,
+        lt: &Ty,
+        rt: &Ty,
+    ) -> Result<Ty, TypeError> {
         use InfixOp::{
             Add, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Mul, Ne, Shl, Shr,
             Sub,
@@ -547,7 +557,6 @@ impl Checker {
             _ => return Err(bad()),
         };
         let same = || simd_of(dtype.clone(), width.clone());
-        let mask = || simd_of(SimdDtype::Known(Dtype::Bool), width.clone());
         match op {
             // Elementwise arithmetic on numeric lanes preserves the type.
             Add | Sub | Mul if dtype.licenses(|d| d != Dtype::Bool) => same(),
@@ -560,11 +569,52 @@ impl Checker {
             Shl | Shr if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
             // True division is defined on float lanes only.
             Div if dtype.licenses(Dtype::is_float) => same(),
-            // Equality on any lanes; ordering on numeric lanes — a bool mask.
-            Eq | Ne => mask(),
-            Lt | Gt | Le | Ge if dtype.licenses(|d| d != Dtype::Bool) => mask(),
+            // `__eq__` reduces the lanes, `__ne__` is `not __eq__`.
+            Eq | Ne | Lt | Gt | Le | Ge => {
+                // A `Bool` operand converts to the mask first, asserting the
+                // one lane the ordered dunders assert too.
+                let message = if *lt == TyKind::Bool || *rt == TyKind::Bool {
+                    Some(mojito_types::types::BOOL_MASK_CONVERSION_MESSAGE)
+                } else {
+                    mojito_types::types::scalar_comparison_message(op)
+                };
+                if let (Some(span), Some(message)) = (span, message) {
+                    self.record_instance_assertion(span, &width, message)?;
+                }
+                Ok(Ty::bool())
+            }
             _ => Err(bad()),
         }
+    }
+
+    /// Record at `span` the `comptime assert Self.length == 1, message` of
+    /// the builtin `SIMD` dunder or constructor applied there, over `width`
+    /// lanes, for each reached instance to judge. A width-one application
+    /// holds it already, and a compile-time position folds the application,
+    /// dropping it, as the pin's fold of a builtin call does.
+    pub(super) fn record_instance_assertion(
+        &self,
+        span: &SourceSpan,
+        width: &SimdWidth,
+        message: &str,
+    ) -> Result<(), TypeError> {
+        if matches!(width, SimdWidth::Known(1)) || self.comptime_positions.get() != 0 {
+            return Ok(());
+        }
+        let lanes = match width {
+            SimdWidth::Known(lanes) => ConstraintOperand::Value(CtValue::Int(*lanes)),
+            SimdWidth::Expr(_) => {
+                ConstraintOperand::Expr(width.lanes(&self.param_context).map_err(param_error)?)
+            }
+        };
+        let holds = GenericConstraint::Eq(lanes, ConstraintOperand::Value(CtValue::Int(1)));
+        let assertion = GenericConstraint::WithMessage(Box::new(holds), message.to_string());
+        let mut record = self.record_at(span.clone());
+        let assertions = record.instance_assertions.get_or_insert_with(Vec::new);
+        if !assertions.contains(&assertion) {
+            assertions.push(assertion);
+        }
+        Ok(())
     }
 
     /// Type `SIMD[DType.<dt>, width](args)`: `width` element arguments, or a

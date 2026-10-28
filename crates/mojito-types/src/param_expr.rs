@@ -3867,7 +3867,11 @@ fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamEr
                 found: operands.len(),
             })?;
             rest.iter().try_fold((*first).clone(), |left, right| {
-                fold::fold_infix(infix, &left, right)
+                if matches!(op, ParamOp::Eq | ParamOp::Lt | ParamOp::Le) {
+                    fold::fold_comparison(infix, &left, right)
+                } else {
+                    fold::fold_infix(infix, &left, right)
+                }
             })
         }
         _ => Err(ParamError::Arity {

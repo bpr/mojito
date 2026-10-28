@@ -228,7 +228,8 @@ span-parameter-bare-element	reject	conformance/fixtures/span_parameter_bare_elem
 len-string-units	reject	assets/type_error/string_len_ambiguous.mojo
 subtree-origin-cast	mojito-only	conformance/fixtures/subtree_origin_cast.mojo
 simd-size-removed	reject	assets/type_error/simd_size_removed_alias.mojo
-simd-infix-comparison	mojito-only	conformance/fixtures/simd_infix_comparison.mojo
+simd-infix-comparison	reject	conformance/fixtures/simd_infix_comparison.mojo
+literal-left-comparison	mojito-only	conformance/fixtures/literal_left_comparison.mojo
 simd-shuffle-width-change	reject	conformance/fixtures/simd_shuffle_width_change.mojo
 simd-bool-fill	run	conformance/fixtures/simd_bool_fill.mojo
 simd-comparison-methods	run	assets/ok/simd_methods.mojo

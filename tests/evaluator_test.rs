@@ -918,7 +918,7 @@ fn width_one_simd_operand_splats_across_a_vector() {
     // A width-1 SIMD value (an `Int32`-typed scalar) beside a multi-lane
     // vector splats like a bare scalar instead of narrowing the result.
     let actual = output(
-        "def bump(v: SIMD[DType.int32, 4], by: Int32) -> SIMD[DType.int32, 4]:\n    return v + by\n\ndef main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var k: Int32 = 10\n    print(bump(v, k), k - v, v * k, v < k, (v > k).select(v, k))\n",
+        "def bump(v: SIMD[DType.int32, 4], by: Int32) -> SIMD[DType.int32, 4]:\n    return v + by\n\ndef main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var k: Int32 = 10\n    print(bump(v, k), k - v, v * k, v.lt(k), v.gt(k).select(v, k))\n",
     );
     assert_eq!(
         actual,
@@ -940,7 +940,7 @@ fn simd_shuffle_gathers_lanes() {
 #[test]
 fn simd_negation_select_and_reductions_execute() {
     let e = run(
-        "var v = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar n = -v\nvar m = v < SIMD[DType.int32, 4](3, 3, 3, 3)\nvar blended = m.select(v, -v)\nvar total = v.reduce_add()\nvar product = v.reduce_mul()\nvar wrapped = SIMD[DType.uint8, 2](200, 100).reduce_add()\nvar all_set = m.reduce_and()\nvar any_set = m.reduce_or()\nvar canon: Int = SIMD[DType.int, 2](5, 6).reduce_add()\n",
+        "var v = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar n = -v\nvar m = v.lt(SIMD[DType.int32, 4](3, 3, 3, 3))\nvar blended = m.select(v, -v)\nvar total = v.reduce_add()\nvar product = v.reduce_mul()\nvar wrapped = SIMD[DType.uint8, 2](200, 100).reduce_add()\nvar all_set = m.reduce_and()\nvar any_set = m.reduce_or()\nvar canon: Int = SIMD[DType.int, 2](5, 6).reduce_add()\n",
     );
     assert_eq!(binding(&e, "n").to_string(), "[-1, -2, -3, -4]");
     assert_eq!(binding(&e, "blended").to_string(), "[1, 2, -3, -4]");
@@ -983,7 +983,7 @@ fn scalar_dtype_construction_wraps_and_canonicalizes() {
 #[test]
 fn simd_comparison_yields_bool_mask() {
     let e = run(
-        "var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar w: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](4, 3, 2, 1)\nvar m: SIMD[DType.bool, 4] = v < w\n",
+        "var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\nvar w: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](4, 3, 2, 1)\nvar m: SIMD[DType.bool, 4] = v.lt(w)\n",
     );
     assert_eq!(binding(&e, "m").to_string(), "[True, True, False, False]");
 }

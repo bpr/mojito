@@ -549,6 +549,9 @@ pub struct CheckedCompareLink {
     pub target: Option<String>,
     pub call: Option<Box<CheckedCallContract>>,
     pub instantiated_args: Vec<mojito_types::types::TyArg>,
+    /// The `comptime assert`s of the builtin `SIMD` dunder the link
+    /// applies ([`SemanticAdjustment::InstanceAssertion`]).
+    pub assertions: Vec<mojito_types::types::GenericConstraint>,
 }
 
 /// How a `^` transfer takes its source, as upstream's `emitTransfer`
@@ -1129,6 +1132,12 @@ pub enum SemanticAdjustment {
     /// reductions. A scalar or literal case of `select` splats to the
     /// result type first, as upstream's implicit `SIMD` constructor does.
     SimdReceiverOp(mojito_types::mlir::MlirOp),
+    /// The `comptime assert` of the builtin `SIMD` dunder or constructor
+    /// this node applies (`__lt__`'s `Self.length == 1`, or the implicit
+    /// `Bool` to `SIMD[DType.bool, n]` conversion's), judged per reached
+    /// instance. A compile-time position folds the application and drops
+    /// it, so the check records none there.
+    InstanceAssertion(Box<mojito_types::types::GenericConstraint>),
     /// ``__mlir_op.`pop.call_llvm_intrinsic`[intrin=…, _type=…,
     /// hasSideEffects=…](operands)``: a call of the LLVM intrinsic
     /// `intrinsic` names (a `!kgen.string`), with the `Bool` side-effect
@@ -6563,6 +6572,11 @@ fn node_adjustments(facts: &NodeFacts, expression: &Expr) -> Vec<SemanticAdjustm
             dest: assertion.dest.clone(),
         });
     }
+    for assertion in facts.instance_assertions.iter().flatten() {
+        adjustments.push(SemanticAdjustment::InstanceAssertion(Box::new(
+            assertion.clone(),
+        )));
+    }
     if let Some((dtype, width)) = &facts.simd_construction {
         adjustments.push(SemanticAdjustment::ConstructSimd {
             dtype: dtype.clone(),
@@ -6818,6 +6832,10 @@ node_facts! {
         /// A reference read as a value: whether it is writable.
         reference_value_use: bool,
         rebind_assertion: RebindAssertion,
+        /// The `comptime assert`s of the builtin dunders and constructors
+        /// the occurrence applies, in application order
+        /// ([`SemanticAdjustment::InstanceAssertion`]).
+        instance_assertions: Vec<mojito_types::types::GenericConstraint>,
         /// What each bracket argument of a call or type application
         /// resolved to, in source order: `Some` for a type-shaped one or a
         /// value-shaped one the check bound to a type, an origin, or a raw

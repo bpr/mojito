@@ -2099,7 +2099,16 @@ fn accepts_simd_splat_construction() {
 #[test]
 fn accepts_simd_comparison_mask() {
     ok(
-        "var v: SIMD[DType.float32, 4] = SIMD[DType.float32, 4](1.0, 2.0, 3.0, 4.0)\nvar m: SIMD[DType.bool, 4] = v < v\n",
+        "var v: SIMD[DType.float32, 4] = SIMD[DType.float32, 4](1.0, 2.0, 3.0, 4.0)\nvar m: SIMD[DType.bool, 4] = v.lt(v)\n",
+    );
+}
+
+#[test]
+fn simd_comparison_types_the_reducing_dunder() {
+    // `==` over vectors is a `Bool`, and an ordered comparison's one-lane
+    // assertion is the reached instance's, so an uncalled body may spell it.
+    ok(
+        "def never(v: SIMD[DType.int32, 4]) -> Bool:\n    return v < v\n\ndef main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var same: Bool = v == v\n    var chained: Bool = Int32(1) < Int32(2) < Int32(3) or False\n",
     );
 }
 
@@ -2333,7 +2342,7 @@ fn accepts_lanes_and_simd_methods_on_host_scalars() {
 #[test]
 fn accepts_simd_negation_select_and_reductions() {
     ok(
-        "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var n: SIMD[DType.int32, 4] = -v\n    var total: Int32 = v.reduce_add()\n    var m = v < SIMD[DType.int32, 4](3, 3, 3, 3)\n    var blended: SIMD[DType.int32, 4] = m.select(v, -v)\n    var splatted: SIMD[DType.int32, 4] = m.select(v, 0)\n    var all_set: Bool = m.reduce_and()\n    var any_set: Bool = m.reduce_or()\n    var i: Int = SIMD[DType.int, 2](1, 2).reduce_add()\n",
+        "def main():\n    var v = SIMD[DType.int32, 4](1, 2, 3, 4)\n    var n: SIMD[DType.int32, 4] = -v\n    var total: Int32 = v.reduce_add()\n    var m = v.lt(SIMD[DType.int32, 4](3, 3, 3, 3))\n    var blended: SIMD[DType.int32, 4] = m.select(v, -v)\n    var splatted: SIMD[DType.int32, 4] = m.select(v, 0)\n    var all_set: Bool = m.reduce_and()\n    var any_set: Bool = m.reduce_or()\n    var i: Int = SIMD[DType.int, 2](1, 2).reduce_add()\n",
     );
 }
 
@@ -2355,7 +2364,7 @@ fn rejects_bool_simd_dtype_casts() {
     ));
     assert!(matches!(
         err(
-            "def main():\n    var m = SIMD[DType.int32, 2](1, 2) < SIMD[DType.int32, 2](2, 2)\n    var bad = m.cast[DType.int32]()\n"
+            "def main():\n    var m = SIMD[DType.int32, 2](1, 2).lt(SIMD[DType.int32, 2](2, 2))\n    var bad = m.cast[DType.int32]()\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
@@ -2418,7 +2427,7 @@ fn rejects_simd_mask_negation_and_shape_misuse() {
     // A bool mask does not negate.
     assert!(matches!(
         err(
-            "def main():\n    var m = SIMD[DType.int32, 2](1, 2) < SIMD[DType.int32, 2](2, 2)\n    var bad = -m\n"
+            "def main():\n    var m = SIMD[DType.int32, 2](1, 2).lt(SIMD[DType.int32, 2](2, 2))\n    var bad = -m\n"
         ),
         TypeError::BadOperator { .. }
     ));
@@ -2430,7 +2439,7 @@ fn rejects_simd_mask_negation_and_shape_misuse() {
     // The cases must share the mask's width.
     assert!(matches!(
         err(
-            "def main():\n    var m = SIMD[DType.int32, 2](1, 2) < SIMD[DType.int32, 2](2, 2)\n    var bad = m.select(SIMD[DType.int32, 4](1, 2, 3, 4), 0)\n"
+            "def main():\n    var m = SIMD[DType.int32, 2](1, 2).lt(SIMD[DType.int32, 2](2, 2))\n    var bad = m.select(SIMD[DType.int32, 4](1, 2, 3, 4), 0)\n"
         ),
         TypeError::TypeMismatch { .. }
     ));
@@ -3126,7 +3135,7 @@ fn float64_and_simd_float64_1_are_the_same_type() {
 #[test]
 fn accepts_float64_vectors_and_lane_ops() {
     ok(
-        "var v: SIMD[DType.float64, 4] = SIMD[DType.float64, 4](1.0, 2.0, 3.0, 4.0)\nvar d: SIMD[DType.float64, 4] = v + v\nvar q: SIMD[DType.float64, 4] = v / SIMD[DType.float64, 4](2.0)\nvar lane: Float64 = v[2]\nv[0] = 9.0\nv[1] += 1.0\nvar m: SIMD[DType.bool, 4] = v < d\n",
+        "var v: SIMD[DType.float64, 4] = SIMD[DType.float64, 4](1.0, 2.0, 3.0, 4.0)\nvar d: SIMD[DType.float64, 4] = v + v\nvar q: SIMD[DType.float64, 4] = v / SIMD[DType.float64, 4](2.0)\nvar lane: Float64 = v[2]\nv[0] = 9.0\nv[1] += 1.0\nvar m: SIMD[DType.bool, 4] = v.lt(d)\n",
     );
 }
 

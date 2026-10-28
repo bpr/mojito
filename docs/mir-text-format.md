@@ -795,6 +795,14 @@ width converts to, spelled by `SIMDLength.__init__$ov$Int`. A 1.125 or older
 artifact's `Int` width is read as that conversion of it. The package format
 moves to `mojito-package 129`.
 
+The package format moves to `mojito-package 130` with the schema unchanged
+(R185): an infix `SIMD` comparison is upstream's builtin dunder, a `Bool`
+whose body is the `binary` lane mask, a `simd.reduce` unless it has one
+lane, and a `scalar.cast` to `Bool` (negated for `!=`), and the checked
+adjustments gain `InstanceAssertion`, the dunder's or the implicit `Bool`
+to mask constructor's `comptime assert` of one lane, which MIR emits as a
+`comptime.assert` before the node.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

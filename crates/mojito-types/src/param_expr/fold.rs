@@ -200,19 +200,46 @@ pub fn compare(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<bool, Par
     })
 }
 
-/// Whether the comparison `left op right` holds, as [`fold_infix`] folds it.
+/// Fold the source comparison `left op right`, upstream's folded
+/// `SIMD.__eq__`/`__ne__`/`__lt__` family, to a `Bool`.
 ///
-/// A scalar comparison gives its `Bool`, and a one-lane SIMD comparison its
-/// mask as `SIMD.__bool__` reads it. `None` when the folder refuses the
-/// operands or the mask has more than one lane, an elementwise vector
-/// comparison the pin does not spell infix.
+/// [`fold_infix`] is `pop.cmp`, elementwise over SIMD lanes; the dunder
+/// reads its mask as a `Bool`: `==` when every lane holds, `!=` as `not ==`
+/// (so a NaN lane makes it hold), and an ordered operator when any lane
+/// holds, as a folded call drops its `comptime assert` that the operands be
+/// scalars. Any other operator, and a non-SIMD comparison, folds as
+/// [`fold_infix`] folds it.
+pub fn fold_comparison(
+    op: InfixOp,
+    left: &CtValue,
+    right: &CtValue,
+) -> Result<CtValue, ParamError> {
+    use InfixOp::{Eq, Ge, Gt, Le, Lt, Ne};
+    let simd = matches!(left, CtValue::Simd { .. }) || matches!(right, CtValue::Simd { .. });
+    if !simd || !matches!(op, Eq | Ne | Lt | Gt | Le | Ge) {
+        return fold_infix(op, left, right);
+    }
+    let lane_op = if op == Ne { Eq } else { op };
+    let CtValue::Simd { lanes, .. } = fold_infix(lane_op, left, right)? else {
+        return Err(unsupported("a SIMD comparison expects a mask"));
+    };
+    let mut mask = lanes.iter().map(|lane| match lane {
+        CtLane::Bool(value) => Ok(*value),
+        _ => Err(unsupported("a SIMD comparison expects a bool mask")),
+    });
+    Ok(CtValue::Bool(match op {
+        Eq => mask.try_fold(true, |all, lane| lane.map(|lane| all && lane))?,
+        Ne => !mask.try_fold(true, |all, lane| lane.map(|lane| all && lane))?,
+        _ => mask.try_fold(false, |any, lane| lane.map(|lane| any || lane))?,
+    }))
+}
+
+/// Whether the source comparison `left op right` holds, as
+/// [`fold_comparison`] folds it; `None` when the folder refuses the
+/// operands.
 pub fn comparison_holds(op: InfixOp, left: &CtValue, right: &CtValue) -> Option<bool> {
-    match fold_infix(op, left, right).ok()? {
+    match fold_comparison(op, left, right).ok()? {
         CtValue::Bool(value) => Some(value),
-        CtValue::Simd { lanes, .. } => match lanes.as_slice() {
-            [CtLane::Bool(value)] => Some(*value),
-            _ => None,
-        },
         _ => None,
     }
 }
@@ -496,7 +523,7 @@ fn unsupported(message: &str) -> ParamError {
 
 #[cfg(test)]
 mod tests {
-    use super::fold_infix;
+    use super::{fold_comparison, fold_infix};
     use crate::ct::{CtLane, CtValue};
     use mojito_ast::ast::{Dtype, InfixOp};
     use mojito_common::literal::{FloatLiteral, IntLiteral};
@@ -533,5 +560,36 @@ mod tests {
         );
         assert!(fold_infix(InfixOp::FloorDiv, &single(7.5), &two).is_err());
         assert!(fold_infix(InfixOp::Add, &byte(1), &two).is_err());
+    }
+
+    #[test]
+    fn fold_comparison_reads_the_mask_as_the_dunder() {
+        let ints = |lanes: [i64; 4]| CtValue::Simd {
+            dtype: Dtype::Int32,
+            lanes: lanes
+                .into_iter()
+                .map(|value| CtLane::Int(i128::from(value)))
+                .collect(),
+        };
+        let three = CtValue::IntLiteral(IntLiteral::from(3i64));
+        let fold = |op, left: &CtValue, right: &CtValue| fold_comparison(op, left, right).ok();
+        assert_eq!(
+            fold(InfixOp::Lt, &ints([4, 1, 4, 4]), &three),
+            Some(CtValue::Bool(true))
+        );
+        assert_eq!(
+            fold(InfixOp::Lt, &ints([4, 4, 4, 4]), &three),
+            Some(CtValue::Bool(false))
+        );
+        assert_eq!(
+            fold(InfixOp::Eq, &ints([1, 2, 3, 4]), &ints([1, 2, 3, 5])),
+            Some(CtValue::Bool(false))
+        );
+        let nan = CtValue::Simd {
+            dtype: Dtype::Float32,
+            lanes: vec![CtLane::Float(f64::NAN.to_bits()); 2],
+        };
+        assert_eq!(fold(InfixOp::Ne, &nan, &nan), Some(CtValue::Bool(true)));
+        assert_eq!(fold(InfixOp::Eq, &nan, &nan), Some(CtValue::Bool(false)));
     }
 }

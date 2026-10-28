@@ -961,6 +961,7 @@ impl<'a> Flatten<'a> {
                     refined_bound: call.refined_bound.clone(),
                 })
             }),
+            assertions: link.map(|link| link.assertions.clone()).unwrap_or_default(),
         };
         let cmp = self.emit_comparison(sp.clone(), op, left, cur, dispatch);
         if index + 1 == rest.len() {

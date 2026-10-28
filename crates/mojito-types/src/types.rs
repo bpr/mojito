@@ -15,7 +15,7 @@ use crate::param_expr::{
     HoleKind, MetaTy, ParamBindings, ParamContext, ParamError, ParamExpr, ParamId, ParamKind,
     ParamRef,
 };
-use mojito_ast::ast::{ArgConvention, Dtype};
+use mojito_ast::ast::{ArgConvention, Dtype, InfixOp};
 
 /// A loan-transfer effect inferred from a callable's body: an accepted store
 /// into an outliving destination (`self` or a parameter) whose loan roots at
@@ -3111,13 +3111,42 @@ pub const fn is_scalar_simd(ty: &TyKind) -> bool {
 /// Whether `ty` is `Int`, `UInt`, or `Float64`: a width-one `int`, `uint`,
 /// or `float64` vector, whose value both backends hold as a host scalar.
 ///
-/// It exists only because those three keep an infix operator path of their
-/// own above the waist where upstream's are ordinary `SIMD` instances: a
-/// width-one comparison types as a lane mask where upstream's is a `Bool`
-/// (R185).
+/// Above the waist those three keep an infix operator path of their own
+/// where upstream's are ordinary `SIMD` instances: it serves their true
+/// division and `**` and materializes a literal operand. Below it, a host
+/// scalar's `binary` comparison defines its `Bool` directly, where any
+/// other vector's defines a lane mask.
 pub const fn has_host_scalar_value(ty: &TyKind) -> bool {
     matches!(ty, TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
 }
+
+/// The message of the `comptime assert Self.length == 1` that upstream's
+/// ordered `SIMD` comparison dunder (`__lt__`, `__le__`, `__gt__`,
+/// `__ge__`) states, verbatim; `None` for any other operator.
+pub const fn scalar_comparison_message(op: InfixOp) -> Option<&'static str> {
+    match op {
+        InfixOp::Lt => Some(
+            "Strict inequality is only defined for `Scalar`s; did you mean to use `SIMD.lt(...)`?",
+        ),
+        InfixOp::Gt => Some(
+            "Strict inequality is only defined for `Scalar`s; did you mean to use `SIMD.gt(...)`?",
+        ),
+        InfixOp::Le => Some(
+            "Less than or equal is only defined for `Scalar`s; did you mean to use `SIMD.le(...)`?",
+        ),
+        InfixOp::Ge => Some(
+            "Greater than or equal is only defined for `Scalar`s; did you mean to use \
+             `SIMD.ge(...)`?",
+        ),
+        _ => None,
+    }
+}
+
+/// The message of the `comptime assert Self.length == 1` of upstream's
+/// implicit `SIMD.__init__(out self: SIMD[DType.bool, Self.length], value:
+/// Bool)`, verbatim.
+pub const BOOL_MASK_CONVERSION_MESSAGE: &str =
+    "must be a scalar; use the `fill` keyword instead for explicit splatting";
 
 /// The known dtype of a width-one `TyKind::Simd`.
 pub const fn scalar_simd_dtype(ty: &TyKind) -> Option<Dtype> {
@@ -3286,6 +3315,16 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
                 width: SimdWidth::Known(1),
             },
         ) if splats_to(from, dtype) => true,
+        // Upstream's `@implicit SIMD.__init__(out self: SIMD[.bool,
+        // Self.length], value: Bool)`, whose `comptime assert` of one lane
+        // each reached instance judges.
+        (
+            TyKind::Bool,
+            TyKind::Simd {
+                dtype: SimdDtype::Known(Dtype::Bool),
+                width,
+            },
+        ) if !width.is_inferred() => true,
         // Upstream's `@implicit SIMD.__init__(IntLiteral)` and
         // `(FloatLiteral)` splat an exact literal across every lane, a
         // symbolic lane count included.
@@ -5785,7 +5824,7 @@ mod simd_slot_tests {
         assert!(coerces(&Ty::int_literal(), &float32x4));
         assert!(coerces(&Ty::float_literal(), &float32x4));
         assert!(!coerces(&Ty::float_literal(), &int32x4));
-        assert!(!coerces(&Ty::bool(), &canonical_simd_ty(Dtype::Bool, 4)));
+        assert!(coerces(&Ty::bool(), &canonical_simd_ty(Dtype::Bool, 4)));
         assert!(!coerces(&canonical_simd_ty(Dtype::Int32, 1), &int32x4));
         assert!(!coerces(&Ty::int(), &canonical_simd_ty(Dtype::Int, 4)));
     }

@@ -257,9 +257,9 @@ pub fn leaf_conforms(
 /// Upstream's `SIMD` (whose scalars `Int`, `UInt`, and `Float64` are),
 /// `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`. `SIMD` and
 /// `Bool` list `Equatable` and `Comparable`, and `DType` lists `Equatable`;
-/// a numeric literal answers as the scalar it materializes to. Only a
-/// scalar `SIMD` conforms here, since a vector's comparison through the
-/// bound is not yet its reducing `__eq__`.
+/// a numeric literal answers as the scalar it materializes to. A vector
+/// conforms at every width: its `__eq__` reduces the lanes, and its
+/// ordered dunders assert a scalar where an instance reaches them.
 ///
 /// `SIMD`, `Bool`, and the literal structs list `Boolable`; `SIMD`, `Bool`,
 /// and the numeric literals `Intable`; `Bool` and `FloatLiteral`
@@ -314,10 +314,14 @@ pub fn modelled_conformance(
         }
         "Equatable" => {
             is_numeric_like(ty)
-                || is_scalar_simd(ty)
-                || matches!(ty.kind(), TyKind::Bool | TyKind::Dtype)
+                || matches!(
+                    ty.kind(),
+                    TyKind::Bool | TyKind::Dtype | TyKind::Simd { .. }
+                )
         }
-        "Comparable" => is_numeric_like(ty) || is_scalar_simd(ty) || *ty == TyKind::Bool,
+        "Comparable" => {
+            is_numeric_like(ty) || matches!(ty.kind(), TyKind::Bool | TyKind::Simd { .. })
+        }
         "Ceilable" | "Floorable" | "Truncable" => {
             is_numeric_like(ty)
                 || scalar_simd_dtype(ty).is_some_and(mojito_ast::ast::Dtype::is_float)

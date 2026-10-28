@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1542**.
+Next free ID: **R1544**.
 
 ## Ordered Work
 
@@ -3699,14 +3699,30 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Same-typed operands yield that type at the pin (Python's value-producing
     `or`), so the fix is more than a condition mark.
   - Found while accepting a numeric condition (2026-10-03).
-  - A width-1 bool lane (`a == b or c < d` over `UInt64`s) rejects the same
-    way, though `if`/`while` accept one through the `Bool(x)` truthiness
-    conversion. Workaround: nest the tests.
   - Probe: `m.reduce_and()` over a `bool` vector is `Scalar[DType.bool]`
     at the pin (`SIMD[dtype, size_out]`), and Mojito types it `Bool` so
     that `m.reduce_or() and not m.reduce_and()` checks: its MIR casts the
     `simd.reduce` lane to `Bool`. Once `and`/`or` take the lane, the
     method takes upstream's type and `size_out`.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1543 A vector has no truth value, where upstream's
+  `SIMD.__bool__` reduces its lanes**
+
+  `if v:` over `v = SIMD[DType.int32, 4](0, 0, 1, 0)` prints `truthy` at
+  the pin, where Mojito says "type mismatch for if condition: expected
+  Bool, found SIMD[DType.int32, 4]".
+  - Upstream's `__bool__` is `reduce_or` of `self != 0`, with no
+    one-lane assertion, and `SIMD` declares `Boolable` at every width.
+  - The checker's truthiness conversion takes a scalar only, and it
+    serves no `__bool__` member on a vector.
+  - Probe: `Bool(v)` fails with "expected a numeric or Bool value".
+  - Probe: `not v` fails with "operator 'not' is not defined".
+  - Probe: `v.__bool__()` fails with "has no method '__bool__'".
+  - The lowering is `mir::simd_comparison_dunder`'s shape: a `binary ne`
+    against zero, `simd.reduce or`, and `scalar.cast` to `Bool`.
+  - Found while landing R185 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7423,38 +7439,27 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R185 Infix SIMD comparisons are elementwise at every width, where
-  the pin limits `<` and friends to `Scalar` and gives `==` whole-vector
-  meaning**
+- [ ] **R1542 A literal left operand of a sized-scalar comparison
+  converts, where upstream's `SIMD` declares no reflected comparison**
 
-  Problem: Mojito's `<`/`<=`/`>`/`>=` are elementwise at every width and its
-  `==`/`!=` compare lane by lane. The pin constrains the strict
-  inequalities to `Scalar` and gives `==`/`!=` whole-vector meaning,
-  pointing at `SIMD.lt(...)`.
-  - Mojito has had `SIMD.lt(...)`, along with `le`/`gt`/`ge`/`eq`/`ne`,
-    since 2026-09-13.
-  - Six corpus fixtures were respelled onto the methods.
-  - Withdrawing the infix spelling is a leniency to remove, with fallout
-    across the stdlib's SIMD bodies.
-  - Until then only a width-one SIMD conforms to `Equatable` and
-    `Comparable`.
-  - The pin's vectors conform too, with `==` reducing the lanes.
-  - Ledger name: `simd-infix-comparison`.
-  - Probe: `comptime if v < 3` over a `v: SIMD[DType.int32, 4]` value
-    parameter bound to `(1, 2, 3, 4)` prints `lt` at the pin, and
-    `comptime if v == w` reduces the lanes. Mojito's elaborator folds a
-    four-lane mask, which `fold::comparison_holds` leaves undecided, so the
-    instance fails with "the instance does not decide".
-  - A width-one comparison is a one-lane mask too, where the pin's
-    `SIMD.__lt__` returns `Bool`: `Int32(1) < Int32(2) or True` fails with
-    "operator 'or' is not defined for SIMD[DType.bool, 1]", and the pin
-    prints `True`. `Int`, `UInt`, and `Float64` keep their own scalar
-    operator path (`infer_infix`'s `has_host_scalar_value` gate, and the
-    specializer's mask-to-`Bool` rewrite skips them) until this lands.
-  - Depends on R143, the scalar comparison methods: once the infix spelling
-    goes, `x.ne(y)` is the only ordered comparison left on a scalar, and it
-    does not resolve there yet.
-  - Model: Fable, Planned.
+  `3 < UInt(4)`, `3 == UInt(3)`, `3 < Float64(2.5)`, `2 < u` over `u:
+  UInt8`, and `3.0 < f` over `f: Float32` print results here. The pin
+  rejects each with "no matching method in call to '__lt__'" (or
+  `'__eq__'`).
+  - Upstream spells `a < b` as `a.__lt__(b)`, and `SIMD` has no `__rlt__`
+    or `__req__`. The literal's own dunder is tried, and the vector does
+    not convert to the literal's type.
+  - `3 < n` over `n: Int` and `3.0 < Float64(2.5)` stay legal at the pin:
+    the literal's dunder takes its own materialized type.
+  - The leniency is the checker's operand unification: `types::splats_to`
+    admits a literal on either side in `infer_simd_infix`, and the host
+    scalar path's `common_numeric` does the same.
+  - Arithmetic keeps the reflected spelling: `3 + UInt(4)` is
+    `UInt.__radd__` at the pin too.
+  - Ledger name: `literal-left-comparison`.
+  - Found while landing R185 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R186 SIMD and `Int` constructors accept a narrowing element, an
   inferred width and a `FloatLiteral` the pin rejects**
@@ -8045,6 +8050,13 @@ retained on purpose and re-probed rather than fixed; they are listed in
     body and the elaborator judges it.
   - Probe: `G[-1].checked(1)` over a builtin static method of `struct
     G[k: Int]` asserting `Self.k > 0` behaves the same.
+  - Probe: `var x = a < SIMD[DType.int32, 4](2)` over a `comptime a =
+    SIMD[DType.int32, 4](1, 2, 3, 4)` prints `True` at the pin, which folds
+    the builtin `SIMD.__lt__` and drops its one-lane assertion. Mojito
+    fails the instance with "Strict inequality is only defined for
+    `Scalar`s": the check records the assertion at every run-time
+    position (`Checker::record_instance_assertion`), and only a
+    `comptime` position skips it.
   - Without the decorator both are rejected, at the pin and here.
   - Found while landing R1522 (2026-10-27).
   - Depends on nothing.
@@ -9826,6 +9838,11 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `_update_with_simd` from the value's type
     (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores;
     upstream's `SIMD.__hash__` calls `_update_with_simd` in library code.
+  - Upstream's `eq`/`lt`/`__bool__` bodies are `pop.cmp` in builtin
+    bodies, which `builtin_fold.rs` does not fold: an infix comparison is
+    the reducing dunder, so `pop.cmp` cannot be rewritten to one. The port
+    folds `pop.cmp` elementwise (`fold::fold_infix`) and
+    `pop.simd.reduce_*` under `Bool(mlir_value=...)` as the reduction.
   - Upstream's method `reduce_and`/`reduce_or` bodies (and `reduce_max`
     and `reduce_min` off x86) are `llvm_intrinsic` calls of
     `llvm.vector.reduce.*`, which run since R1394. Its subvector and

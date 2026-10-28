@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An infix `SIMD` comparison is upstream's builtin dunder, a `Bool` at
+  every width: `v == w` holds when every lane is equal and `!=` is its
+  negation, and `<`, `<=`, `>`, `>=` are defined on `Scalar`s only, their
+  one-lane `comptime assert` judged per reached instance ("Strict
+  inequality is only defined for `Scalar`s; did you mean to use
+  `SIMD.lt(...)`?"), as at the pin (R185). They were elementwise masks, so
+  `Int32(1) < Int32(2) or True` and chained comparisons over sized scalars
+  were rejected. A compile-time comparison folds with the assertion
+  dropped (`comptime if v < 3` holds when any lane does), every vector is
+  `Equatable` and `Comparable`, a `bool`-lane scalar orders, and `Bool`
+  converts to `SIMD[DType.bool, n]` with its own one-lane assertion. The
+  package format moves to `mojito-package 130`.
 - An `Int` width binder is solved from a vector whose width an `Int`
   expression spells: `show(a)` over `show[w: Int](x: SIMD[DType.int32, w])`
   and `a = SIMD[DType.int32, n](1)` binds `w` to `n`, as at the pin, where it

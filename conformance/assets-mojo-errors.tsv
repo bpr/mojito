@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	849
+# swept-count	853
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -234,6 +234,7 @@ assets/type_error/bare_reference_list_parameter.mojo	compile-reject	agree	error:
 assets/type_error/boolable_required_for_bool.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/bool_conversion_undeclared_boolable.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/bool_dtype_rejected.mojo	compile-reject	agree	error: 'Bool' value has no attribute 'dtype'
+assets/type_error/bool_mask_conversion_wide.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/borrowed_loop_binder_transfer.mojo	compile-reject	agree	error: expression does not designate a value with an origin
 assets/type_error/callable_struct_def_typed_argument.mojo	compile-reject	agree	error: invalid call to 'keep': value passed to 'callback' cannot be converted from 'Scale' to 'def(Int) -> Int'
 assets/type_error/call_result_pointer_field_immutable_source_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -741,6 +742,9 @@ assets/type_error/simd_size_removed_alias.mojo	compile-reject	agree	error: use o
 assets/type_error/simd_subscript_indexer.mojo	compile-reject	agree	error: invalid call to '__getitem__': value passed to 'idx' cannot be converted from 'Offset' to 'Int'
 assets/type_error/simd_symbolic_scalar_operand_rejected.mojo	compile-reject	agree	error: invalid call to '__mul__': value passed to 'rhs' cannot be converted from 'Int' to 'Scalar[dt]'
 assets/type_error/simd_symbolic_width_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[dt, width]' value to 'SIMD[dt, 4]'
+assets/type_error/simd_vector_ordered_symbolic_width.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_vector_ordered_through_bound.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_vector_strict_inequality.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_width_keyed_def_untaken_arm.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[dt, width]' value to 'String'
 assets/type_error/simd_width_keyed_struct_field_untaken_arm.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[dt, width]' value to 'String'
 assets/type_error/sized_bound_undeclared_struct.mojo	compile-reject	agree	error: invalid call to 'size_of': value passed to 'x' cannot be converted from 'Shelf' to 'T', argument type 'Shelf' does not conform to trait 'Sized'

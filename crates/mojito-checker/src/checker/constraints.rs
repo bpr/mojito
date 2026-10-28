@@ -1834,7 +1834,7 @@ impl Checker {
         }
         match (left_built.as_constant(), right_built.as_constant()) {
             (Some(left), Some(right)) => {
-                mojito_types::param_expr::fold::fold_infix(op, left, right)
+                mojito_types::param_expr::fold::fold_comparison(op, left, right)
                     .map_err(param_error)
                     .and_then(|value| self.ct_param(value))
             }

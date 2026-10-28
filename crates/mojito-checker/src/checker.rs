@@ -1980,6 +1980,17 @@ impl Checker {
             self.record_at(expression.source_span()).closure_callable = true;
             return Ok(());
         }
+        // Upstream's implicit `Bool` to `SIMD[DType.bool, n]` constructor,
+        // which asserts one lane.
+        if *from == TyKind::Bool
+            && let TyKind::Simd { width, .. } = to.kind()
+        {
+            return self.record_instance_assertion(
+                &expression.source_span(),
+                width,
+                mojito_types::types::BOOL_MASK_CONVERSION_MESSAGE,
+            );
+        }
         let scalar_boundary = matches!(from.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
             && (matches!(to.kind(), TyKind::INT | TyKind::UINT | TyKind::FLOAT64)
                 || matches!(to.kind(), TyKind::Simd { width, .. } if !width.is_inferred()));
