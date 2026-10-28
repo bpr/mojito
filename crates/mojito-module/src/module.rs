@@ -1815,6 +1815,8 @@ const PRELUDE_EXPORTS: &[&str] = &[
     "Absable",
     "Powable",
     "Roundable",
+    "max",
+    "min",
     "Hashable",
     "EnumLike",
     "range",

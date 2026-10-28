@@ -574,7 +574,10 @@ impl Checker {
     }
 
     /// Type `min(a, b)` / `max(a, b)`: two numeric arguments unified like an
-    /// operator (no concrete-type mixing), returning their common type.
+    /// operator (no concrete-type mixing), returning their common type. A
+    /// call reaches this rule only where no `max`/`min` binding exists — a
+    /// module loaded while the prelude bootstraps, or a program linked
+    /// without the prelude; elsewhere it calls `std.math`'s overloads.
     pub(super) fn infer_min_max(&self, name: &str, args: &[Expr]) -> Result<Ty, TypeError> {
         let tys = self.builtin_args(name, 2, args)?;
         common_numeric(&tys[0], &tys[1]).ok_or_else(|| TypeError::BadOperator {

@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `max` and `min` are upstream's `std.math` overloads, a `SIMD` pair and
+  a `Comparable` value followed by any number of others, exported from the
+  prelude, and `SIMD.clamp` and `std.math.clamp` are upstream's library
+  bodies over them (R1581): `v.clamp(0, 4)`, `max(v, 2)` over a vector,
+  a `bool` mask, `max(String("a"), String("b"))`, and `max(1, 2, 3)` run
+  as at the pin, where `clamp` had no method and a vector operand stopped
+  with "operator 'max' is not defined". An overload's `type_of(x)`
+  parameter now keys as `x`'s annotation, so the declared and called
+  symbols agree, and a `comptime assert` or `comptime if` reads a value's
+  `dtype` and `length` as its type's parameters rather than as a dynamic
+  value.
 - A `type_of(x)` receiver is the type itself, as upstream looks a member
   up on the type value (R1599): `type_of(y).length` over a `TypeList`
   over a raw list or over a pack, a value member, `dtype`, and `length`

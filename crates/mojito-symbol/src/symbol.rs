@@ -2352,34 +2352,48 @@ fn signature_from_ast<P: AnnotatedParam>(
     self_spelling: Option<&str>,
 ) -> SignatureKey {
     let type_bounds = binder_spellings(type_params);
+    let key = |param: &P| {
+        TypeKey(sanitize(&ast_raw(
+            denoted_annotation(params, param.annotation()),
+            comptimes,
+            &type_bounds,
+            self_spelling,
+        )))
+    };
     SignatureKey {
         types: params
             .iter()
             .filter(|param| param.kind() != ParamKind::KwVariadic)
-            .map(|param| {
-                TypeKey(sanitize(&ast_raw(
-                    param.annotation(),
-                    comptimes,
-                    &type_bounds,
-                    self_spelling,
-                )))
-            })
+            .map(key)
             .collect(),
         kw_variadic: params
             .iter()
             .find(|param| param.kind() == ParamKind::KwVariadic)
-            .map(|param| {
-                TypeKey(sanitize(&ast_raw(
-                    param.annotation(),
-                    comptimes,
-                    &type_bounds,
-                    self_spelling,
-                )))
-            }),
+            .map(key),
         keywords: Vec::new(),
         owned: Vec::new(),
         parameters: Vec::new(),
     }
+}
+
+/// The annotation a parameter's type denotes: `type_of(x)` over another
+/// parameter `x` of the same list is `x`'s own annotation, as the call side
+/// keys the type `x` resolved to rather than the `type_of` spelling.
+fn denoted_annotation<'a, P: AnnotatedParam>(params: &'a [P], annotation: &'a Type) -> &'a Type {
+    let mut annotation = annotation;
+    for _ in params {
+        let Type::TypeOf(operand) = annotation else {
+            break;
+        };
+        let ExprKind::Identifier(name) = &operand.kind else {
+            break;
+        };
+        let Some(named) = params.iter().find(|param| param.name() == name) else {
+            break;
+        };
+        annotation = named.annotation();
+    }
+    annotation
 }
 
 /// The `ty_raw` mangling of a struct's own instance type, reconstructed from its

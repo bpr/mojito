@@ -1530,7 +1530,7 @@ is such an application, closed or not
 (`mojito_checker::checker::lifts_comptime_value`), since the pin constructs
 one by running its initializer; so is a `Dict[...]`/`Set[...]` constructor
 call, and a local binding of either is kept for the check the same way, and
-so is a call of a builtin function the check types itself (`max(3, 4)`). Any
+so is a call of a builtin function the check types itself (`abs(-3)`). Any
 other closed constant — a scalar, a string, a `DType`, a vector, a closed
 tuple or struct — is a folded attribute (`Checker.module_values`, or the
 integer tables symbol spelling reads), its read a `ParamKind::Constant` at
@@ -7594,7 +7594,9 @@ Runtime helpers implement:
 - list methods
 - SIMD construction and lane access
 - builtin functions such as `print`, `len`, `range`, numeric conversions,
-  `abs`, `min`, `max`, and `round`
+  `abs`, `round`, and the `min`/`max` that a module loaded while the
+  prelude bootstraps still calls (elsewhere they are `std.math`'s library
+  overloads)
 
 `size_of[T]()` is deliberately not a VM-value helper. Checking records `T`, MIR
 retains it in `SizeOf`, verification requires it to have a native layout, and

@@ -943,6 +943,7 @@ assets/ok/simd_length_struct.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_literal_splat.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_math_cast_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_methods.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_min_max_clamp.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_mlir_storage.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_nullary_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_parameter_default_construction.mojo	-	ineligible	no-scalar-entry-shape

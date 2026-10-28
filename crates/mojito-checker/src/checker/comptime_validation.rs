@@ -1115,9 +1115,8 @@ impl Checker {
             return false;
         }
         let mut names = value_names_read(expr);
-        // A collector's `args.__len__()` is its pack's length.
-        for collector in self.pack_length_receivers(expr) {
-            if let Some(position) = names.iter().position(|name| *name == collector) {
+        for receiver in self.type_only_receivers(expr) {
+            if let Some(position) = names.iter().position(|name| *name == receiver) {
                 names.swap_remove(position);
             }
         }
@@ -1131,19 +1130,33 @@ impl Checker {
         })
     }
 
-    /// The collectors `expr` reads only for their pack's length, once per
-    /// `args.__len__()` it spells.
-    fn pack_length_receivers(&self, expr: &Expr) -> Vec<String> {
+    /// The bindings `expr` reads only for their type, once per read: a
+    /// collector's `args.__len__()` is its pack's length, and a value's
+    /// parameter member (`x.dtype`) is its type's parameter.
+    fn type_only_receivers(&self, expr: &Expr) -> Vec<String> {
         struct Receivers<'c> {
             checker: &'c Checker,
             names: Vec<String>,
         }
         impl mojito_ast::visit::Visitor for Receivers<'_> {
             fn visit_expr(&mut self, expr: &Expr) {
-                if let ExprKind::MethodCall { object, .. } = &expr.kind
-                    && let ExprKind::Identifier(name) = &object.kind
-                    && self.checker.pack_length_binder(expr).is_some()
-                {
+                let receiver = match &expr.kind {
+                    ExprKind::MethodCall { object, .. }
+                        if self.checker.pack_length_binder(expr).is_some() =>
+                    {
+                        object
+                    }
+                    ExprKind::Member { object, field }
+                        if matches!(&object.kind, ExprKind::Identifier(name)
+                        if self.checker.lookup(name).is_some_and(|ty| {
+                            self.checker.is_parameter_member(ty, field)
+                        })) =>
+                    {
+                        object
+                    }
+                    _ => return,
+                };
+                if let ExprKind::Identifier(name) = &receiver.kind {
                     self.names.push(name.clone());
                 }
             }

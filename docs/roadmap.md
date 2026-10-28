@@ -3142,6 +3142,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     closes the cycle `std.range` → `std.math` → `std.sys` → … →
     `std.collections.list` → `std.range`, and either module's methods then
     precede the other's `def`.
+  - Probe: `from std.math import max` in `builtin/builtin_slice.mojo` or
+    `os/path/path.mojo` stops with "Undefined variable
+    '__module$std$math$max'", since `std.math` links after them.
   - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5781,7 +5784,7 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   Problem: each of these runs at the pin on a concrete scalar or vector and
   is rejected by Mojito, so a symbolic template cannot license it either.
   - `len(v)` on a vector (`len_result_for_type` has no `Ty::Simd` arm),
-    `abs`/`max`/`min` over a scalar alias (`is_numeric` excludes it),
+    `abs` over a scalar alias (`is_numeric` excludes it),
     `Scalar[dt].MAX`/`.MIN`, and `**` on a lane.
   - Probe: `print(Int.MAX)`, `print(UInt8.MAX)`, and `T.MAX` over a module
     `comptime T = Int` stop at "Undefined variable 'Int'" (or 'UInt8'),
@@ -6224,6 +6227,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     parameter type yet ("unknown type 'FloatLiteral'").
   - Porting either removes its literal from
     `Checker::binds_undeclared_overload` (`checker/call_inference.rs`).
+  - Probe: `min(3, 2.5)` is rejected at overload resolution ("no overload
+    matches"). The pin binds `std.math`'s `SIMD` overload at `Int` and fails
+    the instance on the `FloatLiteral` initializer's assert ("the SIMD type
+    must be floating point").
   - Probe: `def f(x: IntLiteral)` binds a run-time `IntLiteral` register
     rather than inferring `x.value` per call, so `f(n)` over `var n = 3`
     reports "expected Int, found Int" where the pin says "cannot be
@@ -6887,6 +6894,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     diagnostic (`assets/type_error/contiguous_slice_not_equatable.mojo`,
     `conformance/fixtures/slice_kind_does_not_widen.mojo`,
     `conformance/fixtures/strided_slice_has_no_bounds.mojo`).
+  - Probe: an overload failure of a library function names its linked
+    symbol: `max(2, UInt8(1))` reports "invalid call to
+    '__module$std$math$max'" (`call_inference.rs` passes the linked name to
+    `TypeError::BadCall`), where the pin says "no matching function in call
+    to 'max'" (`assets/type_error/max_literal_first_mismatch.mojo`).
   - The lever: diagnostics spell a type through `unqualified_type_name`,
     as runtime type names already do.
   - Found while landing R605 (2026-10-10).
@@ -8116,8 +8128,10 @@ retained on purpose and re-probed rather than fixed; they are listed in
     not support MLIR operation lit.ref.immut"; so does `return Int(b)` over
     a `b: Bool`.
   - Probe: `return min(n, 3)` runs, where the pin says "only supports calls
-    to other '@always_inline("builtin")' functions": Mojito's `min` is a
-    host function (`infer_min_max`), not a library `def` the rule sees.
+    to other '@always_inline("builtin")' functions": `min` is
+    `std.math`'s library overloads, and `calls_ordinary_function` asks
+    only `applicable_functions`, the compile-time call domain, which holds
+    neither overload.
   - Probe: `return L(n)` or `return Self(n)` in a builtin static method of
     a `@fieldwise_init struct L` runs, where the pin says "only supports
     calls to other '@always_inline("builtin")' functions":
@@ -9502,10 +9516,19 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Workaround: `builtin/tuple.mojo`, `utils/variant.mojo`, `string.mojo`,
     `format/__init__.mojo`, `format/_utils.mojo`, and `format/tstring.mojo`
     import `range` from `std.range` explicitly.
+  - Probe: `builtin/builtin_slice.mojo` (`Slice.indices`) and
+    `os/path/path.mojo` call `max` without an import, so they reach the
+    checker's builtin `min`/`max` rule (`Checker::infer_min_max`), the VM's
+    `builtin_min_max`, and Pliron's `lower_min_max_builtin`, where every
+    other module calls `std.math`'s library overloads. `simd.mojo` imports
+    `max` and `min` from `std.math` for `clamp`.
   - Fix: bind the prelude's names in bootstrap modules too, then drop the
-    six imports.
+    six `range` imports and `simd.mojo`'s `max`/`min` import, and delete
+    the `min`/`max` rule, its `call_inference.rs` arm, the VM's
+    `"min"`/`"max"` `BUILTIN_CALLEES` entries and arms, and Pliron's
+    `lower_min_max_builtin` with its `calls.rs` arm.
   - Found while landing R791 (2026-10-14).
-  - Depends on nothing.
+  - Depends on R592 (the `max` callers only: `std.math` links after them).
   - Model: Fable, Not Planned.
 
 - [ ] **R492 `ParameterList.get_span` addresses its elements through a
@@ -9951,23 +9974,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1580 (2026-10-28).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1581 `SIMD.clamp` and `std.math`'s `SIMD` `max` and `min` are
-  missing**
-
-  `v.clamp(lo, hi)` is rejected ("has no method"), and `max(min(self,
-  hi), lo)` over `SIMD[dtype, length]` reports "operator 'min' is not
-  defined", where the pin runs both.
-  - `min` and `max` are `Checker::infer_min_max` rules. Upstream's `SIMD`
-    overloads (`def max[dtype: DType, //](x: SIMD[dtype, _], y:
-    type_of(x), /) -> type_of(x)`) resolve since R1508. Their body
-    ``return {mlir_value = __mlir_op.`pop.max`(...)}`` parses since R342
-    but needs R1599's construction at a `type_of` type.
-  - Port both overloads into `stdlib/std/math.mojo`, then `clamp`
-    (`simd.mojo:2670`). `infer_min_max` keeps the literal cases until
-    upstream's variadic overload lands.
-  - Depends on R342, R1599.
-  - Model: Opus, Planned.
 
 - [ ] **R1582 `SIMD.__round__` is a builtin rule and `SIMD` does not
   declare `Roundable`**

@@ -1908,6 +1908,19 @@ impl Checker {
         Some(read)
     }
 
+    /// Whether `field` read through a value of type `ty` is a parameter of
+    /// that type (a SIMD value's `dtype` or `length`), which the instance
+    /// only types: the read is the type's, not the value's.
+    pub(super) fn is_parameter_member(&self, ty: &Ty, field: &str) -> bool {
+        match field {
+            "dtype" => simd_dtype(ty).is_some(),
+            "length" => simd_slots(ty)
+                .and_then(|(_, width)| self.simd_length_parameter(&width))
+                .is_some_and(|length| length.meta().as_value().is_some()),
+            _ => false,
+        }
+    }
+
     pub(super) fn dtype_constant(
         &self,
         object: &Expr,

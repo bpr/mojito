@@ -64,7 +64,9 @@ components, including tensor operations, linear algebra routines, and
 domain-specific libraries for machine learning and scientific computing.
 """
 
-from std.math import Ceilable, Floorable, Truncable
+# `max`/`min` are upstream's prelude names, which `std.simd` cannot see
+# while the prelude bootstraps (R894).
+from std.math import Ceilable, Floorable, Truncable, max, min
 from std.sys.info import bit_width_of
 from std.builtin.simd_length import SIMDLength
 from std.builtin.enum_like import EnumLike
@@ -1495,6 +1497,23 @@ struct SIMD[dtype: DType, length: SIMDLength](
     ) -> SIMD[_integral_type_of[Self.dtype](), Self.length]:
         return bitcast[_integral_type_of[Self.dtype](), Self.length](self)
 
+
+    def clamp(self, lower_bound: Self, upper_bound: Self) -> Self:
+        """Clamps the values in a SIMD vector to be in a certain range.
+
+        Clamp cuts values in the input SIMD vector off at the upper bound and
+        lower bound values. For example,  SIMD vector `[0, 1, 2, 3]` clamped to
+        a lower bound of 1 and an upper bound of 2 would return `[1, 1, 2, 2]`.
+
+        Args:
+            lower_bound: Minimum of the range to clamp to.
+            upper_bound: Maximum of the range to clamp to.
+
+        Returns:
+            A new SIMD vector containing x clamped to be within lower_bound and
+            upper_bound.
+        """
+        return max(min(self, upper_bound), lower_bound)
 
     # TODO: Move to global function.
     @inline(.nodebug)

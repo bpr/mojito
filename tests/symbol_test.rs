@@ -466,6 +466,31 @@ fn mlir_typed_overload_keys_agree_between_declaration_and_call() {
     }
 }
 
+#[test]
+fn type_of_parameter_overload_keys_agree_between_declaration_and_call() {
+    // A parameter annotated `type_of(x)` over an earlier parameter keys as
+    // `x`'s own annotation, the type the call side resolves it to.
+    let src = "def pick(x: Int, y: type_of(x)) -> type_of(x):\n    return y\n\
+         def pick(x: Bool, y: Bool) -> Bool:\n    return x\n\
+         def main():\n\
+         \x20   print(pick(1, 2), pick(True, False))\n";
+    let program = parse(src).expect("parse error");
+    let targets = resolve_overload_targets(&program).expect("check error");
+    let names: HashSet<String> = lower_program(&program)
+        .expect("type error")
+        .functions
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    assert!(names.contains("pick$ov$Int$Int"), "{names:?}");
+    for target in targets.values() {
+        assert!(
+            names.contains(target),
+            "checker target '{target}' names no MIR function; emitted: {names:?}"
+        );
+    }
+}
+
 /// Repository hygiene: the `$ov$` spelling may exist only in the canonical
 /// symbol module. A new hand-built overload symbol anywhere else in the
 /// compiler sources (the facade's `src/` or any workspace crate under

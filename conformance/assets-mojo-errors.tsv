@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	902
+# swept-count	903
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -572,6 +572,7 @@ assets/type_error/match_tuple_arity_mismatch.mojo	compile-reject	agree	error: ca
 assets/type_error/match_tuple_pattern_non_tuple.mojo	compile-reject	agree	error: expected a tuple type to match against, got 'Int'
 assets/type_error/match_var_binding_not_copyable.mojo	compile-reject	agree	error: value of type 'Big' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/math_trait_without_import.mojo	compile-reject	agree	error: use of unknown declaration 'Ceilable'; did you mean to import it from 'std.math'? Add 'from std.math import Ceilable'
+assets/type_error/max_literal_first_mismatch.mojo	compile-reject	agree	error: no matching function in call to 'max'
 assets/type_error/maybe_uninit_copy_nontrivial.mojo	compile-reject	agree	error: value of type 'MaybeUninit[String]' cannot be implicitly copied, it does not conform to 'ImplicitlyCopyable'
 assets/type_error/maybe_uninit_deinit_requires_deinitable.mojo	compile-reject	agree	error: invalid call to 'unsafe_deinit': violated constraint
 assets/type_error/maybe_uninitialized.mojo	compile-reject	agree	error: use of uninitialized value 'value'

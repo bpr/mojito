@@ -1374,8 +1374,12 @@ intrinsics. Ordinary lexical bindings still shadow an implicit name.
   display writing, so `Bool` is `True`/`False` and `Float64` keeps a decimal point).
   Lets you build messages: `"n = " + String(n)`.
 - `abs(x)` — absolute value of a numeric, preserving its type.
-- `min(a, b)` / `max(a, b)` — two numeric arguments unified like an operator (no
-  concrete-type mixing), returning their common type.
+- `min(a, b)` / `max(a, b)` — `std.math`'s library overloads, which the prelude
+  exports: a `SIMD` pair (`y: type_of(x)`, a literal materializing to its
+  default type) or a `Comparable` value followed by any number of others. A
+  module loaded while the prelude bootstraps, or a program linked without the
+  prelude, reaches a builtin rule instead: two numeric arguments unified like
+  an operator, returning their common type.
 - `round(x)` — round a `Float64` to the nearest whole `Float64` (ties round half away
   from zero).
 - `len(x)` — the length of a `String` (in bytes) or the result of the selected

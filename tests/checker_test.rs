@@ -9226,6 +9226,23 @@ fn comptime_assert_rejects_a_dynamic_condition_and_a_computed_message() {
 }
 
 #[test]
+fn comptime_assert_reads_a_values_type_parameter_but_not_its_field() {
+    // `x.dtype` and `x.length` are parameters of `x`'s type, which the
+    // value only types, so a compile-time test may read them.
+    ok_std(
+        "def k[dtype: DType, //](x: SIMD[dtype, _]):\n    comptime assert x.dtype == .bool or x.dtype.is_numeric(), \"w\"\n    comptime assert x.length > 0, \"w\"\n\ndef c(x: SIMD[DType.int32, 2]):\n    comptime assert x.dtype == DType.int32, \"w\"\n\ndef main():\n    k(SIMD[DType.int32, 2](1, 2))\n    c(SIMD[DType.int32, 2](1, 2))\n",
+    );
+    let field = err_std(
+        "struct S:\n    var a: Int\n\n    def __init__(out self, a: Int):\n        self.a = a\n\ndef k(s: S):\n    comptime assert s.a > 0, \"w\"\n\ndef main():\n    k(S(1))\n",
+    )
+    .to_string();
+    assert!(
+        field.contains("cannot use a dynamic value in 'comptime assert' expression"),
+        "{field}"
+    );
+}
+
+#[test]
 fn fieldwise_ref_field_construction_binds_as_its_synthesized_init_call() {
     // The construction is the synthesized `View.__init__`'s call, whose
     // `ref` parameter retains the argument's place and lends it to the
