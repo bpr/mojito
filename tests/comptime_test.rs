@@ -1742,3 +1742,12 @@ fn a_kgen_string_parameter_prepares_as_a_value_binder_of_its_spelling() {
     );
     assert_eq!(function[4].bounds, ["__TypeOfAllTypes"]);
 }
+
+#[test]
+fn associated_self_construction_freezes_the_enclosing_struct() {
+    // `Self(8)` in an associated `comptime` over a `UInt8` field freezes as
+    // the spelled `F(8)` does, as upstream's `FastMathFlag` declares its
+    // cases.
+    let src = "@fieldwise_init\nstruct F(Equatable, ImplicitlyCopyable, RegisterPassable):\n    var _value: UInt8\n\n    comptime NONE = Self(0)\n    comptime FAST = Self(8)\n\n    def __eq__(self, other: Self) -> Bool:\n        return self._value == other._value\n\ndef main():\n    var f = F.FAST\n    print(f == F.NONE, f == F.FAST)\n";
+    assert_eq!(run(src).as_deref(), Ok("False True\n"));
+}

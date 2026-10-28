@@ -514,6 +514,10 @@ pub enum CtValue {
     /// is [`TyKind::KgenString`]. It displays as `"text"`, as the pin prints
     /// `Tag["Some"]`.
     KgenString(String),
+    /// An untyped MLIR attribute — upstream's `` __mlir_attr.`#pop.fmf<fast>` ``,
+    /// held as its text after the backtick, whose type is
+    /// [`TyKind::KgenDeferred`]. It displays as its text.
+    MlirAttr(String),
     /// A closed generator — upstream's `#kgen.gen<body>`, the value of a
     /// parameterized `comptime` declaration read unapplied (`Twice`,
     /// `A.get`). Its body names its own parameters and nothing else; its
@@ -837,13 +841,16 @@ impl CtValue {
     pub fn is_compile_time_only(&self) -> bool {
         self.is_metatype_valued()
             || match self {
-                Self::KgenString(_) | Self::Generator(_) => true,
+                Self::KgenString(_) | Self::MlirAttr(_) | Self::Generator(_) => true,
                 Self::List(values) | Self::Tuple(values) => values
                     .iter()
                     .any(|value| matches!(value, Self::Type(_)) || value.is_compile_time_only()),
                 Self::Expr(expr) => expr.meta().as_value().is_some_and(|ty| {
                     crate::types::mentions(ty, &|ty| {
-                        matches!(ty.kind(), TyKind::KgenString | TyKind::Generator(_))
+                        matches!(
+                            ty.kind(),
+                            TyKind::KgenString | TyKind::KgenDeferred | TyKind::Generator(_)
+                        )
                     })
                 }),
                 _ => false,
@@ -940,6 +947,7 @@ impl CtValue {
             | Self::Type(_)
             | Self::Trait(_)
             | Self::KgenString(_)
+            | Self::MlirAttr(_)
             | Self::Generator(_)
             | Self::Expr(_)
             | Self::Deferred(_)
@@ -1017,6 +1025,7 @@ impl CtValue {
             // list of that trait whose conversion the checker proved.
             (value @ Self::Type(_), TyKind::Trait(_)) => Some(value),
             (value @ Self::KgenString(_), TyKind::KgenString) => Some(value),
+            (value @ Self::MlirAttr(_), TyKind::KgenDeferred) => Some(value),
             // A generator binds a generator-typed parameter whose
             // conversion the checker proved.
             (value @ Self::Generator(_), TyKind::Generator(_)) => Some(value),
@@ -1278,6 +1287,16 @@ impl CtValue {
                     syntax_id: mojito_common::token::SyntaxId::fresh(),
                 }),
                 field: LITERAL_VALUE_MEMBER.to_string(),
+            },
+            // The attribute's own spelling, `` __mlir_attr.`text` ``.
+            Self::MlirAttr(text) => ExprKind::Member {
+                object: Box::new(Expr {
+                    kind: ExprKind::Identifier("__mlir_attr".to_string()),
+                    span,
+                    source: None,
+                    syntax_id: mojito_common::token::SyntaxId::fresh(),
+                }),
+                field: text.clone(),
             },
             // The explicit construction `SIMD[DType.d, w](l0, l1, ...)`.
             Self::Simd { dtype, lanes } => ExprKind::Call {
@@ -1544,6 +1563,7 @@ impl fmt::Display for CtValue {
             Self::Type(ty) => write!(f, "{ty}"),
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::KgenString(text) => write!(f, "{text:?}"),
+            Self::MlirAttr(text) => f.write_str(text),
             Self::Generator(generator) => {
                 f.write_str("__gen")?;
                 crate::types::write_param_decls(f, &generator.params)?;

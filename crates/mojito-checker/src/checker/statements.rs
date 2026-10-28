@@ -3270,6 +3270,8 @@ impl Checker {
                 self.return_annotations
                     .push(Self::body_return_annotation(ret_anno.as_ref(), name));
                 self.named_result_context.push(named_result.is_some());
+                self.deferred_result_bodies
+                    .push(matches!(ret_ty.kind(), TyKind::KgenDeferred));
                 if module_level {
                     self.pack_element_views.borrow_mut().clear();
                 }
@@ -3284,6 +3286,7 @@ impl Checker {
                 result = self.check_block(body, Some(&ret_ty), false);
                 self.lifting_owner = enclosing;
                 self.named_result_context.pop();
+                self.deferred_result_bodies.pop();
                 self.return_annotations.pop();
                 self.return_ref_contracts.pop();
                 self.raise_observation_frames.borrow_mut().pop();

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.131
+mojito-mir 1.132
 ```
 
-The writer emits 1.131. The reader accepts 1.0 through 1.131; *Schema 1.0*
+The writer emits 1.132. The reader accepts 1.0 through 1.132; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -870,6 +870,13 @@ The package format moves to `mojito-package 141`, with the schema still
 bundled `std.simd`, upstream's bodies over `bitcast`, and the checked
 `SimdToBits` adjustment is gone.
 
+Schema 1.132 adds the type `KgenDeferred`, upstream's `!kgen.deferred`,
+and the constant `ct_mlir_attr("text")`, an untyped
+`` __mlir_attr.`text` `` of that type. The package format moves to
+`mojito-package 142`, since the bundled `std.simd` declares
+`FastMathFlag` and `SIMD.fma`, `std.math` declares `fma`, and the
+compiler's `__fma__` rule is gone.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1264,6 +1271,7 @@ only the positional form.
 `ct_trait([trait, ...])` for a trait or a `&` composition of
 traits used as a value (schema 1.76), `ct_kgen_string("text")` for a
 string literal's KGEN string, its `value` parameter (schema 1.79),
+`ct_mlir_attr("text")` for an untyped `` __mlir_attr.`text` `` (schema 1.132),
 `ct_generator { params, body }` for a generator, upstream's `#kgen.gen`:
 a parameterized `comptime` declaration read unapplied, its body naming its
 own parameters and nothing else (schema 1.112),
@@ -1438,6 +1446,10 @@ it types records the bound `__TypeOfAllTypes`.
 `KgenString` (schema 1.79) is upstream's KGEN string type `!kgen.string`, the
 type of a `StringLiteral`'s `value` parameter, whose values are
 `ct_kgen_string`. It is compile-time only, as `any_trait` is.
+
+`KgenDeferred` (schema 1.132) is upstream's `!kgen.deferred`, the type of
+an untyped MLIR attribute and of a function result returning one, whose
+values are `ct_mlir_attr`. It is compile-time only, as `any_trait` is.
 
 `kgen_simd { dtype, width }` (schema 1.129) is upstream's vector storage
 `!kgen.simd<width, dtype>` (`!kgen.scalar<dtype>` at width one), the type of

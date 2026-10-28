@@ -467,7 +467,8 @@ impl Checker {
         let result = self
             .infer_impl(expr)
             .and_then(|ty| self.apply_rebind_target(expr, ty))
-            .map(|ty| self.read_through_call_reference(expr, ty));
+            .map(|ty| self.read_through_call_reference(expr, ty))
+            .and_then(|ty| self.reject_runtime_deferred_call(expr, ty));
         if let Ok(ty) = &result {
             if is_scalar_simd(ty)
                 && let Some(value) = self.exact_literal_value(expr)
@@ -3477,6 +3478,26 @@ impl Checker {
             },
         ));
         referent
+    }
+
+    /// `found`, unless `value` is a run-time call returning `!kgen.deferred`
+    /// outside a body returning one: such a callee runs only at compile
+    /// time, and the pin cannot lower its run-time call.
+    fn reject_runtime_deferred_call(&self, value: &Expr, found: Ty) -> Result<Ty, TypeError> {
+        let callee = match &value.kind {
+            ExprKind::Call { name, .. } => name,
+            ExprKind::MethodCall { method, .. } => method,
+            _ => return Ok(found),
+        };
+        if matches!(found.kind(), TyKind::KgenDeferred)
+            && self.crosses_to_runtime()
+            && self.deferred_result_bodies.last() != Some(&true)
+        {
+            return Err(super::comptime_validation::kgen_deferred_runtime_call(
+                callee,
+            ));
+        }
+        Ok(found)
     }
 }
 

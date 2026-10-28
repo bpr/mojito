@@ -3373,7 +3373,13 @@ impl<'a> Flatten<'a> {
         if value.is_name() && statement_binding.is_some_and(|owner| self.display(owner).is_some()) {
             return;
         }
-        if statement_binding.is_none() && value.ty().is_none() {
+        // A binding of an untyped attribute (`comptime f = flag._mlir_attr()`)
+        // is compile-time only, read where an op's attribute takes it.
+        if statement_binding.is_none()
+            && value
+                .ty()
+                .is_none_or(|ty| matches!(ty.kind(), TyKind::KgenDeferred))
+        {
             return;
         }
         // A thunk lifted after the binding reads it as the expression over

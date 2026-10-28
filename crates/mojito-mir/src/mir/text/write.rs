@@ -2117,6 +2117,7 @@ fn ty_value(ty: &Ty) -> String {
         TyKind::Dtype => "DType".into(),
         TyKind::TypeType => "TypeType".into(),
         TyKind::KgenString => "KgenString".into(),
+        TyKind::KgenDeferred => "KgenDeferred".into(),
         TyKind::Index => "index".into(),
         TyKind::SelfType => "Self".into(),
         TyKind::Error => "Error".into(),
@@ -2943,6 +2944,7 @@ fn ct_value(value: &CtValue) -> String {
         CtValue::Type(v) => positional("ct_type", &ty_value(v)),
         CtValue::Trait(traits) => positional("ct_trait", &list(traits.iter().map(|v| symbol(v)))),
         CtValue::KgenString(v) => positional("ct_kgen_string", &quote(v)),
+        CtValue::MlirAttr(v) => positional("ct_mlir_attr", &quote(v)),
         CtValue::Generator(generator) => record(
             "ct_generator",
             &[

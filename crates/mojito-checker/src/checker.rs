@@ -933,6 +933,9 @@ pub struct Checker {
     /// `None` for a reference return.
     return_annotations: Vec<Option<(mojito_ast::ast::SourceType, bool)>>,
     named_result_context: Vec<bool>,
+    /// Whether each enclosing body returns upstream's `!kgen.deferred`, so
+    /// runs only at compile time and reads untyped attributes as values.
+    deferred_result_bodies: Vec<bool>,
     raising_context: Vec<Option<Ty>>,
     handled_raise_depth: usize,
     handled_raise_types: RefCell<Vec<Vec<Ty>>>,
@@ -1122,6 +1125,7 @@ impl Checker {
             return_ref_contracts: Vec::new(),
             return_annotations: Vec::new(),
             named_result_context: Vec::new(),
+            deferred_result_bodies: Vec::new(),
             raising_context: Vec::new(),
             handled_raise_depth: 0,
             handled_raise_types: RefCell::new(Vec::new()),

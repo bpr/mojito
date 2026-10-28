@@ -1925,6 +1925,8 @@ impl Checker {
         self.function_bases.push(self.scopes.len() - 1);
         let named_result = params.iter().find(|param| param.is_named_result());
         self.named_result_context.push(named_result.is_some());
+        self.deferred_result_bodies
+            .push(matches!(ret_ty.kind(), TyKind::KgenDeferred));
         count_body_inference(!self.self_decls.is_empty() || generic, || {
             self.method_site
                 .as_ref()
@@ -1932,6 +1934,7 @@ impl Checker {
         });
         let result = self.check_block(body, Some(ret_ty), false);
         self.named_result_context.pop();
+        self.deferred_result_bodies.pop();
         self.function_bases.pop();
         self.return_annotations.pop();
         self.return_ref_contracts.pop();

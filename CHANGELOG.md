@@ -8,6 +8,19 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.simd` declares upstream's `FastMathFlag` and `SIMD.fma`, and
+  `std.math` declares upstream's `fma` (R1580): `v.fma(a, b)`,
+  `v.fma[FastMathFlag.FAST](a, b)`, and `fma(a, b, c)` run as at the pin,
+  and the float range steps through `SIMD.fma`. The Mojito-only `__fma__`
+  rule is gone from the checker, the VM, and Pliron. An untyped
+  `__mlir_attr` is upstream's compile-time `!kgen.deferred` value
+  (`TyKind::KgenDeferred`, `CtValue::MlirAttr`, MIR 1.132), and
+  `fastmathFlags=` takes any compile-time one: a `comptime` binding, or a
+  call returning one such as `flag._mlir_attr()`. A run-time call of a
+  function returning `!kgen.deferred` is the pin's "failed to convert call
+  result type". `comptime ENOENT = Self(2)` in a
+  `@fieldwise_init` struct over a sized field (`Int32`, `UInt8`) now freezes
+  as the spelled struct name does (R217).
 - `std.simd` declares upstream's `SIMD.__hash__` as a library body and
   lists `Hashable` in `SIMD`'s trait list (R1579): a floating `-0.0` lane
   hashes as `0.0` through `to_bits`, `eq`, and `select`, as at the pin.

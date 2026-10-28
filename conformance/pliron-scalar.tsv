@@ -522,6 +522,7 @@ assets/ok/method_unused_argument_instances.mojo	-	ineligible	no-scalar-entry-sha
 assets/ok/method_unused_receiver.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/method_value_parameter_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_builtin_casts.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/mlir_deferred_attribute.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_index_ops.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_index_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/mlir_pop_max_min_bool_casts.mojo	-	ineligible	no-scalar-entry-shape
@@ -924,6 +925,7 @@ assets/ok/simd_dtypes_int_lanes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_float_div.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floats.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floordiv_mod.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_fma.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_generic_width.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_hash_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_inferred_width_binding.mojo	-	ineligible	no-scalar-entry-shape

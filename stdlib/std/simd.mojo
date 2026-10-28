@@ -13,9 +13,10 @@
 # `__ror__`, `__rlshift__`, and `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
 # `__abs__`, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
-# `_to_bits_signed`, and `select`. The other
-# members are still served by the compiler (R184, R1566, R1567, R1580–R1582,
-# R1585, R1586, R1596, R330, R276), and so are the other initializers:
+# `_to_bits_signed`, `fma`, and `select`, with the `FastMathFlag` enum `fma`
+# takes. The other
+# members are still served by the compiler (R184, R1566, R1567, R1581,
+# R1582, R1585, R1586, R1596, R330, R276), and so are the other initializers:
 # `mlir_value=` (R1591), the element list (R1592), `from_bits=` (R1593),
 # `Bool`, `fill=`, and `Int` from an `index` (R1595), `IntLiteral` and
 # `FloatLiteral` (R1507), and the `Intable`, `IntableRaising`, `Floatable`,
@@ -66,6 +67,7 @@ domain-specific libraries for machine learning and scientific computing.
 from std.math import Ceilable, Floorable, Truncable
 from std.sys.info import bit_width_of
 from std.builtin.simd_length import SIMDLength
+from std.builtin.enum_like import EnumLike
 from std.memory import bitcast
 from std.builtin.dtype import (
     _integral_type_of,
@@ -123,6 +125,146 @@ def _simd_construction_checks[dtype: DType, size: SIMDLength]():
     # comptime assert (
     #     size <= 2**15
     # ), "simd size is too large and must be less than 2^15"
+
+
+# ===----------------------------------------------------------------------=== #
+# FastMathFlag
+# ===----------------------------------------------------------------------=== #
+
+
+@fieldwise_init
+struct FastMathFlag(EnumLike, Equatable, ImplicitlyCopyable, RegisterPassable):
+    """Flags for controlling fast-math optimizations in floating-point operations.
+
+    FastMathFlag provides compile-time controls for various floating-point math
+    optimization modes that trade strict IEEE 754 compliance for performance.
+
+    Available flags:
+    - `NONE`: No fast-math optimizations.
+    - `NNAN`: Assume operands and results are not NaN.
+    - `NINF`: Assume operands and results are not +/- infinity.
+    - `NSZ`: Treat the sign of a zero as insignificant.
+    - `ARCP`: Allow reciprocal of values.
+    - `CONTRACT`: Allow floating-point contraction (e.g., fused multiply-add).
+    - `AFN`: Allow algebraic function approximations.
+    - `REASSOC`: Allow reassociation of floating-point operations.
+    - `FAST`: Enable all fast-math optimizations.
+
+    Examples:
+        ```mojo
+        from std.simd import FastMathFlag
+        var value = Float32(2.0)
+        var multiplier = Float32(3.0)
+        var accumulator = Float32(1.0)
+
+        # Use contract flag for fused multiply-add
+        var result = value.fma[FastMathFlag.CONTRACT](multiplier, accumulator)
+
+        # Use fast flag for maximum optimization
+        var fast_result = value.fma[FastMathFlag.FAST](multiplier, accumulator)
+        ```
+    """
+
+    var _value: UInt8
+
+    comptime NONE = Self(0)
+    """No fast-math optimizations enabled."""
+
+    comptime NNAN = Self(1)
+    """Assume no NaN values."""
+
+    comptime NINF = Self(2)
+    """Assume no infinite values."""
+
+    comptime NSZ = Self(3)
+    """Treat the sign of zero as insignificant."""
+
+    comptime ARCP = Self(4)
+    """Allow reciprocal approximations."""
+
+    comptime CONTRACT = Self(5)
+    """Allow floating-point contraction."""
+
+    comptime AFN = Self(6)
+    """Allow approximate function implementations."""
+
+    comptime REASSOC = Self(7)
+    """Allow reassociation of operations."""
+
+    comptime FAST = Self(8)
+    """Enable all fast-math optimizations."""
+
+    comptime _enum_case_names = ParameterList.of[
+        "NONE".value,
+        "NNAN".value,
+        "NINF".value,
+        "NSZ".value,
+        "ARCP".value,
+        "CONTRACT".value,
+        "AFN".value,
+        "REASSOC".value,
+        "FAST".value,
+    ].values
+
+    # Upstream spells this `TypeList.splat[ParameterList[
+    # Self._enum_case_names].size, NoneType].values` (R1181).
+    comptime _enum_case_types = TypeList.of[
+        Trait=AnyType,
+        NoneType,
+        NoneType,
+        NoneType,
+        NoneType,
+        NoneType,
+        NoneType,
+        NoneType,
+        NoneType,
+        NoneType,
+    ].values
+
+    @inline(.always)
+    def _get_enum_discriminant(self) -> Int:
+        return Int(self._value)
+
+    @inline(.always)
+    def _unsafe_get_enum_payload[
+        id: Int
+    ](ref self) -> ref[self] TypeList[Trait=AnyType, Self._enum_case_types]()[
+        id
+    ]:
+        comptime assert False, "FastMathFlag has no payload"
+
+    def __eq__(self, other: Self) -> Bool:
+        """Compares two FastMathFlag values for identity.
+
+        Args:
+            other: The FastMathFlag to compare against.
+
+        Returns:
+            True if both flags have the same value, False otherwise.
+        """
+        return self._value == other._value
+
+    def _mlir_attr(self) -> __mlir_type.`!kgen.deferred`:
+        if self == FastMathFlag.NONE:
+            return __mlir_attr.`#pop.fmf<none>`
+        if self == FastMathFlag.NNAN:
+            return __mlir_attr.`#pop.fmf<nnan>`
+        if self == FastMathFlag.NINF:
+            return __mlir_attr.`#pop.fmf<ninf>`
+        if self == FastMathFlag.NSZ:
+            return __mlir_attr.`#pop.fmf<nsz>`
+        if self == FastMathFlag.ARCP:
+            return __mlir_attr.`#pop.fmf<arcp>`
+        if self == FastMathFlag.CONTRACT:
+            return __mlir_attr.`#pop.fmf<contract>`
+        if self == FastMathFlag.AFN:
+            return __mlir_attr.`#pop.fmf<afn>`
+        if self == FastMathFlag.REASSOC:
+            return __mlir_attr.`#pop.fmf<reassoc>`
+        if self == FastMathFlag.FAST:
+            return __mlir_attr.`#pop.fmf<fast>`
+
+        return __mlir_attr.`#pop.fmf<none>`
 
 
 # ===----------------------------------------------------------------------=== #
@@ -1352,6 +1494,36 @@ struct SIMD[dtype: DType, length: SIMDLength](
         self,
     ) -> SIMD[_integral_type_of[Self.dtype](), Self.length]:
         return bitcast[_integral_type_of[Self.dtype](), Self.length](self)
+
+
+    # TODO: Move to global function.
+    @inline(.nodebug)
+    def fma[
+        flag: FastMathFlag = FastMathFlag.CONTRACT
+    ](self, multiplier: Self, accumulator: Self) -> Self:
+        """Performs a fused multiply-add operation, i.e.
+        `self*multiplier + accumulator`.
+
+        Parameters:
+            flag: Fast-math optimization flags to apply (default: CONTRACT).
+
+        Args:
+            multiplier: The value to multiply.
+            accumulator: The value to accumulate.
+
+        Returns:
+            A new vector whose element at position `i` is computed as
+            `self[i]*multiplier[i] + accumulator[i]`.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+
+        return Self(
+            mlir_value=__mlir_op.`pop.fma`[fastmathFlags=flag._mlir_attr()](
+                self._mlir_value,
+                multiplier._mlir_value,
+                accumulator._mlir_value,
+            )
+        )
 
     # ===------------------------------------------------------------------=== #
     # select

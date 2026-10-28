@@ -17,9 +17,10 @@ use mojito_types::types::TyKind;
 pub(super) const LACKING_EVIDENCE: &str = "lacking evidence to prove correctness; ";
 
 /// Whether a module constant folded to `value` is that attribute wherever
-/// a body reads it: a closed parameter argument, or a string.
+/// a body reads it: a closed parameter argument, a string, or an untyped
+/// MLIR attribute.
 pub(super) fn is_module_constant_attribute(value: &CtValue) -> bool {
-    value.is_folded_parameter_argument() || matches!(value, CtValue::Str(_))
+    value.is_folded_parameter_argument() || matches!(value, CtValue::Str(_) | CtValue::MlirAttr(_))
 }
 
 impl Checker {
@@ -1654,14 +1655,12 @@ impl Checker {
             {
                 self.ct_param(CtValue::Dtype(dtype))
             }
-            // Upstream's KGEN types (`comptime KGENTypeType =
-            // __mlir_type.`!kgen.type``, `comptime KS =
-            // __mlir_type.`!kgen.string``).
+            // Upstream's KGEN types (`comptime KS = __mlir_type.`!kgen.string``)
+            // and untyped attributes (`` __mlir_attr.`#pop.fmf<fast>` ``).
             ExprKind::Member { object, field }
-                if matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_type")
-                    && let Some(ty) = mojito_types::types::mlir_type_named(field) =>
+                if let Some(built) = self.mlir_member(object, field) =>
             {
-                Ok(context.type_shape(ty))
+                built
             }
             // A compile-time `StringLiteral`'s `value` parameter
             // (`comptime none = "None".value`), or a `StringLiteral` value
@@ -2074,9 +2073,12 @@ impl Checker {
             return Ok(self.param_context.type_shape(ty.clone()));
         }
         // A local `comptime` binding of a string literal's KGEN string
-        // (`comptime v = "None".value`) or of a closed raw list is inlined.
+        // (`comptime v = "None".value`), of an untyped attribute, or of a
+        // closed raw list is inlined.
         if let Some(bound) = self.local_comptime_value(name)
-            && (self.reads_literal_value(bound) || self.reads_raw_list(bound))
+            && (self.reads_literal_value(bound)
+                || self.builds_attribute(bound)
+                || self.reads_raw_list(bound))
         {
             return self.build_ct(bound, recording);
         }
@@ -2433,9 +2435,28 @@ impl Checker {
         }
     }
 
+    /// The KGEN type `` __mlir_type.`name` `` names, or the untyped
+    /// attribute `` __mlir_attr.`text` ``, upstream's `!kgen.deferred`
+    /// constant. `None` for any other member.
+    fn mlir_member(&self, object: &Expr, field: &str) -> Option<Result<ParamExpr, TypeError>> {
+        let ExprKind::Identifier(base) = &object.kind else {
+            return None;
+        };
+        match base.as_str() {
+            "__mlir_type" => mojito_types::types::mlir_type_named(field)
+                .map(|ty| Ok(self.param_context.type_shape(ty))),
+            "__mlir_attr" => Some(
+                super::comptime_validation::untyped_mlir_attribute(field)
+                    .and_then(|value| self.ct_param(value)),
+            ),
+            _ => None,
+        }
+    }
+
     /// The fieldwise construction of a non-generic `@fieldwise_init`
-    /// struct from compile-time values (`Q(1, "x")`) as a frozen struct
-    /// value, field by field. `None` for any other expression.
+    /// struct from compile-time values (`Q(1, "x")`, or `Self(1, "x")`
+    /// inside `Q`) as a frozen struct value, field by field. `None` for any
+    /// other expression.
     fn frozen_construction(
         &self,
         expr: &Expr,
@@ -2449,6 +2470,10 @@ impl Checker {
         } = &expr.kind
         else {
             return None;
+        };
+        let name = match name.as_str() {
+            "Self" => mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?.0,
+            name => name,
         };
         let info = self.structs.get(name).filter(|info| {
             param_args.is_empty()
@@ -2478,7 +2503,7 @@ impl Checker {
             })
             .collect::<Result<Vec<_>, TypeError>>();
         Some(fields.map(|fields| CtValue::Struct {
-            name: name.clone(),
+            name: name.to_string(),
             fields,
         }))
     }
@@ -3280,6 +3305,26 @@ impl Checker {
             && self.compile_dependent_ct_expr(expr).is_ok_and(|value| {
                 matches!(value.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::KgenString))
             })
+    }
+
+    /// Whether `expr` builds an untyped attribute, upstream's compile-time
+    /// `!kgen.deferred` value: `` __mlir_attr.`#…` `` or a call returning
+    /// one (`flag._mlir_attr()`).
+    pub(super) fn builds_attribute(&self, expr: &Expr) -> bool {
+        let candidate = match &expr.kind {
+            ExprKind::Member { object, .. } => {
+                matches!(&object.kind, ExprKind::Identifier(name) if name == "__mlir_attr")
+            }
+            ExprKind::Call { .. } | ExprKind::MethodCall { .. } => true,
+            _ => false,
+        };
+        candidate
+            && {
+                let _lifting = self.lifting_position();
+                self.compile_dependent_ct_expr(expr).is_ok_and(|value| {
+                matches!(value.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::KgenDeferred))
+            })
+            }
     }
 
     /// Whether `expr` reads a closed raw list off a struct's parameter

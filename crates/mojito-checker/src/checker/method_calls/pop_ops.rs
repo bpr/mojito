@@ -61,12 +61,7 @@ impl Checker {
                 }
                 "_type" => result_type = Some(value.as_ref()),
                 "fastmathFlags" if !name.starts_with("index.") => {
-                    if !mlir_attribute(value).is_some_and(is_fastmath_attribute) {
-                        return Err(invalid(
-                            "attribute 'fastmathFlags' takes one '#pop.fmf<flag>' attribute"
-                                .to_string(),
-                        ));
-                    }
+                    self.fastmath_flags(name, value)?;
                 }
                 _ => {
                     return Err(invalid(format!(
@@ -193,6 +188,41 @@ impl Checker {
                 self.denoted_type(expression, "attribute '_type'")
             }
             mojito_ast::ast::ParamArg::Named { value, .. } => self.mlir_result_type(value),
+        }
+    }
+
+    /// Check the `fastmathFlags` attribute: a compile-time `!kgen.deferred`
+    /// value, an untyped `#pop.fmf<flag>` attribute or a computation of one
+    /// (`flag._mlir_attr()`). A closed attribute must be a fast-math flag;
+    /// a computed one is taken by its type, as the pin takes it.
+    fn fastmath_flags(
+        &self,
+        name: &str,
+        value: &mojito_ast::ast::ParamArg,
+    ) -> Result<(), TypeError> {
+        let invalid = |reason: String| TypeError::BadCall {
+            func: name.to_string(),
+            reason,
+        };
+        let rejected =
+            || invalid("attribute 'fastmathFlags' takes a '#pop.fmf<flag>' attribute".to_string());
+        let mojito_ast::ast::ParamArg::Value(expression) = value else {
+            return Err(rejected());
+        };
+        let built = {
+            let _lifting = self.lifting_position();
+            self.compile_dependent_ct_expr(expression)?
+        };
+        if !matches!(built.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::KgenDeferred)) {
+            return Err(rejected());
+        }
+        match built.as_constant() {
+            Some(CtValue::MlirAttr(attribute)) if !is_fastmath_attribute(attribute) => {
+                Err(invalid(format!(
+                    "Invalid attribute `fastmathFlags` in property conversion: {attribute}"
+                )))
+            }
+            _ => Ok(()),
         }
     }
 }

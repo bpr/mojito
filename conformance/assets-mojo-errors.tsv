@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	898
+# swept-count	900
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -584,6 +584,7 @@ assets/type_error/mlir_call_llvm_intrinsic_literal_name.mojo	compile-reject	agre
 assets/type_error/mlir_call_llvm_intrinsic_without_side_effects.mojo	compile-reject	agree	error: 'pop.call_llvm_intrinsic' op requires attribute 'hasSideEffects'
 assets/type_error/mlir_cast_from_builtin_storage_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cast_from_builtin' op cannot convert to scalar dtype index from '!kgen.scalar<index>'
 assets/type_error/mlir_cast_to_builtin_index_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cast_to_builtin' op operand #0 must be parameterized SIMD vector type, but got 'index'
+assets/type_error/mlir_deferred_runtime_call.mojo	compile-reject	agree	error: failed to convert call result type
 assets/type_error/mlir_index_not_int.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to 'Int'
 assets/type_error/mlir_index_op_storage_operand.mojo	compile-reject	agree	error: MLIR verification error: 'index.add' op operand #0 must be index, but got '!kgen.scalar<index>'
 assets/type_error/mlir_index_parameter_literal_argument.mojo	compile-reject	agree	error: invalid call to 'f': 'f' parameter 'n' has '__mlir_type.index' type, but value has type 'IntLiteral[3]'
@@ -763,6 +764,7 @@ assets/type_error/simd_element_int_narrowing.mojo	compile-reject	agree	error: no
 assets/type_error/simd_element_wider_float.mojo	compile-reject	agree	error: no matching function in initialization
 assets/type_error/simd_float_bitwise_and.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_float_is_power_of_two.mojo	compile-reject	agree	error: function instantiation failed
+assets/type_error/simd_fma_bool_lanes.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_generic_width_rejected.mojo	compile-reject	agree	error: SIMD vector length must be a power of two between 1 and 2^15, found '!kgen.simd<3, si32>'
 assets/type_error/simd_inferred_width_bool.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_inferred_width_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int64, 4]' value to 'SIMD[.int32, _]'

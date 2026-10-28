@@ -691,6 +691,12 @@ pub enum TyKind {
     /// [`CtValue::KgenString`](crate::ct::CtValue::KgenString). It is
     /// compile-time only; no runtime register holds one.
     KgenString,
+    /// Upstream's `!kgen.deferred`, the type of an untyped `__mlir_attr`
+    /// and of a function result that returns one (`FastMathFlag._mlir_attr`),
+    /// displayed ``__mlir_type.`!kgen.deferred` ``. Its values are
+    /// [`CtValue::MlirAttr`](crate::ct::CtValue::MlirAttr). It conforms to
+    /// no trait and is compile-time only; no runtime register holds one.
+    KgenDeferred,
     /// Upstream's MLIR builtin `index` (`__mlir_type.index`), what
     /// `Indexer.__mlir_index__` returns, displayed `__mlir_type.index`.
     /// `pop.cast_from_builtin` and `pop.cast_to_builtin` convert it to and
@@ -1237,6 +1243,10 @@ pub const TYPE_OF_ALL_TYPES: &str = "__TypeOfAllTypes";
 /// as the pin prints it.
 pub const KGEN_STRING_TYPE_SPELLING: &str = "__mlir_type.`!kgen.string`";
 
+/// The spelling of upstream's `!kgen.deferred` type
+/// ([`TyKind::KgenDeferred`]), as the pin prints it.
+pub const KGEN_DEFERRED_TYPE_SPELLING: &str = "__mlir_type.`!kgen.deferred`";
+
 /// The spelling of upstream's MLIR builtin `index` type ([`TyKind::Index`]),
 /// as the pin prints it.
 pub const MLIR_INDEX_TYPE_SPELLING: &str = "__mlir_type.index";
@@ -1261,13 +1271,15 @@ pub const FLOAT_STRIDED_RANGE: &str = "_FloatStridedRange";
 /// It is one of the types the subset reads: the builtin `index`
 /// ([`TyKind::Index`]), a scalar's `!kgen.scalar<dtype>` storage
 /// ([`TyKind::KgenSimd`], `!kgen.scalar<index>` for an `Int`), or the
-/// compile-time-only `!kgen.type` ([`TyKind::TypeType`]) and `!kgen.string`
-/// ([`TyKind::KgenString`]).
+/// compile-time-only `!kgen.type` ([`TyKind::TypeType`]), `!kgen.string`
+/// ([`TyKind::KgenString`]), and `!kgen.deferred`
+/// ([`TyKind::KgenDeferred`]).
 pub fn mlir_type_named(name: &str) -> Option<Ty> {
     match name {
         "index" => Some(Ty::index()),
         "!kgen.type" => Some(TyKind::TypeType.into()),
         "!kgen.string" => Some(TyKind::KgenString.into()),
+        "!kgen.deferred" => Some(TyKind::KgenDeferred.into()),
         _ => name
             .strip_prefix("!kgen.scalar<")
             .and_then(|rest| rest.strip_suffix('>'))
@@ -2767,6 +2779,7 @@ impl fmt::Display for TyKind {
             Self::Trait(traits) => f.write_str(&traits.join(" & ")),
             Self::TypeType => write!(f, "{TYPE_OF_ALL_TYPES}"),
             Self::KgenString => f.write_str(KGEN_STRING_TYPE_SPELLING),
+            Self::KgenDeferred => f.write_str(KGEN_DEFERRED_TYPE_SPELLING),
             Self::Index => f.write_str(MLIR_INDEX_TYPE_SPELLING),
             Self::KgenSimd { dtype, width } => {
                 let dtype = match dtype {
@@ -3356,6 +3369,7 @@ pub fn coerces(from: &Ty, to: &Ty) -> bool {
         (TyKind::Trait(a), TyKind::Trait(b)) => a == b,
         (TyKind::TypeType, TyKind::TypeType)
         | (TyKind::KgenString, TyKind::KgenString)
+        | (TyKind::KgenDeferred, TyKind::KgenDeferred)
         | (TyKind::Index, TyKind::Index) => true,
         (
             TyKind::Pointer {
@@ -4636,6 +4650,7 @@ pub fn rewrite_ty(ty: &Ty, rewrite: &mut dyn TyRewrite) -> Result<Ty, ParamError
         | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::KgenString
+        | TyKind::KgenDeferred
         | TyKind::Index
         | TyKind::SelfType
         | TyKind::Error => ty.clone(),
@@ -4740,6 +4755,7 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         | CtValue::Dtype(_)
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
+        | CtValue::MlirAttr(_)
         | CtValue::Generator(_)
         | CtValue::Simd { .. }
         | CtValue::Deferred(_)
@@ -5159,6 +5175,7 @@ pub fn is_symbolic(ty: &Ty) -> bool {
         | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::KgenString
+        | TyKind::KgenDeferred
         | TyKind::Index
         | TyKind::Bool
         | TyKind::StringLiteral
@@ -5268,6 +5285,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         | CtValue::Str(_)
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
+        | CtValue::MlirAttr(_)
         | CtValue::Generator(_)
         | CtValue::RemovedArg => false,
     }

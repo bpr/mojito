@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1600**.
+Next free ID: **R1601**.
 
 ## Ordered Work
 
@@ -3115,6 +3115,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     are.
   - A trait default reads every module function (R551), since the check
     checks it after the walk.
+  - Probe: `stdlib/std/range.mojo`'s float `__next__` calls the
+    `SIMD.fma` method where upstream imports `std.math.fma`. The import
+    closes the cycle `std.range` → `std.math` → `std.sys` → … →
+    `std.collections.list` → `std.range`, and either module's methods then
+    precede the other's `def`.
   - Found while landing R551 (2026-10-10).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6591,15 +6596,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1536 `__mlir_attr` has no expression form, so a typed attribute
-  constant such as an `index` cannot be spelled**
+- [ ] **R1536 A typed `__mlir_attr` has no expression form, so a typed
+  attribute constant such as an `index` cannot be spelled**
 
   `` __mlir_attr.`7 : index` `` and the bracketed
-  ``__mlir_attr[`#kgen.param_list.size<:`, …, `> : index`]`` are rejected
-  with "Undefined variable '__mlir_attr'", where the pin reads each as a
-  compile-time attribute of the type after the colon.
-  - Mojito reads `__mlir_attr` only as an op's named attribute (`pred=`,
-    `fastmathFlags=`; `method_calls::mlir_attribute`), never as a value.
+  ``__mlir_attr[`#kgen.param_list.size<:`, …, `> : index`]`` are rejected,
+  where the pin reads each as a compile-time attribute of the type after
+  the colon.
+  - An untyped `` __mlir_attr.`#…` `` is a compile-time `!kgen.deferred`
+    value (`CtValue::MlirAttr`), and
+    `comptime_validation::untyped_mlir_attribute` rejects a typed one as
+    outside the subset.
   - Probe: `comptime j: __mlir_type.index = __mlir_attr.`7 : index``
     then `print(Int(mlir_value=j))` prints `7` at the pin.
   - Probe: upstream's `TypeList._raw_length` (`#kgen.param_list.size`)
@@ -9965,21 +9972,25 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1566, R1561, R1562, R330, and R1568.
   - Model: Fable, Planned.
 
-- [ ] **R1580 `SIMD.fma` is missing and `__fma__` is a Mojito-only rule,
-  where upstream's `fma` takes a `FastMathFlag`**
+- [ ] **R1600 A `pop` op's fast-math flags are checked and dropped, where
+  upstream evaluates them and carries them to LLVM**
 
-  `v.fma(a, b)` is rejected ("has no method"), and the bundled
-  `std/range.mojo` calls a Mojito-only `__fma__` that the checker, VM, and
-  Pliron serve by name.
-  - Port `FastMathFlag` (`simd.mojo:342`) and `fma` (`:2689`), whose
-    `pop.fma[fastmathFlags=flag._mlir_attr()]` needs a computed
-    `!kgen.deferred` attribute: `pop_ops.rs` admits a literal `#pop.fmf<…>`
-    only.
-  - Bundle `std.math.fma`, move `std/range.mojo` to it, and retire the
-    `__fma__` arms (`simd_receivers.rs`, the VM's `invoke.rs`, Pliron's
-    `methods.rs` and `simd.rs`, and `INTRINSIC_METHODS`).
+  `fastmathFlags=` is typed as a compile-time `!kgen.deferred` value and
+  then dropped before MIR, so no flag reaches either backend.
+  - The VM holds no attribute value: `CtValue::MlirAttr` does not cross
+    (`vm/crossing.rs`), so a computed flag such as `flag._mlir_attr()` is
+    never run, and a function returning `!kgen.deferred` never reaches
+    concrete MIR.
+  - `MirInstr::Pop` and the float `binary` ops carry no flags, and
+    Pliron passes `FastmathFlagsAttr::default()` everywhere
+    (`lower/simd.rs`).
+  - Probe: `var a = __mlir_attr.`#pop.fmf<none>`` in `main` is rejected
+    ("read at run time is not supported"), where the pin elides it.
+  - Exact arithmetic implements every flag (`mlir::is_fastmath_attribute`),
+    so output never differs: this is shape, not semantics.
+  - Found while landing R1580 (2026-10-28).
   - Depends on nothing.
-  - Model: Fable, Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1581 `SIMD.clamp` and `std.math`'s `SIMD` `max` and `min` are
   missing**
@@ -11396,6 +11407,8 @@ residue found inside a task moves to the task that owns its fix.
     pack).
   - Upstream uses `#kgen.param_list.tabulate` and `.concat`. Port them as
     variadics-private stand-ins, as R811 does for `ParameterList`.
+  - Restore `FastMathFlag._enum_case_types` in `stdlib/std/simd.mojo` to
+    upstream's `TypeList.splat[...]` spelling.
   - Found while landing R1168 (2026-10-20).
   - Depends on R808 (generator parameters), R1485 (`Self._MapTabulator[
     ToTrait, Mapper, idx=_]`), and R1486 (a type generator applied in a
@@ -11500,15 +11513,6 @@ residue found inside a task moves to the task that owns its fix.
   untyped register for the constructor call.
   - Workaround: spell the wrapper (`Optional[P](P(4))`, `Optional(P(4))`).
   - A literal payload (`var n: Optional[Int] = 6`) converts.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R217 Struct-level `comptime NAME = Self(n)` constants do not
-  fold**
-
-  Problem: upstream's `ErrNo.ENOENT` shape does not fold.
-  - Cause: the associated-constant evaluator handles prefix, infix, tuple,
-    and list expressions only.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

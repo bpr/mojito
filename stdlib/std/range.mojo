@@ -200,7 +200,9 @@ struct _FloatStridedRange[dtype: DType = DType.float64](
     def __next__(mut self) raises StopIteration -> Scalar[Self.dtype]:
         if self.idx >= self.count:
             raise StopIteration()
-        var result = Scalar[Self.dtype](self.idx).__fma__(self.step, self.start)
+        # Upstream calls `std.math.fma` here, whose body is this call; the
+        # import cycle it closes needs R592.
+        var result = Scalar[Self.dtype](self.idx).fma(self.step, self.start)
         self.idx += 1
         return result
 

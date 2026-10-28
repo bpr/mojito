@@ -359,10 +359,6 @@ impl VmBackend {
                 ("__divmod__", 1) => {
                     return crate::runtime::builtin_divmod(recv, args[0].clone());
                 }
-                // A float range element's fused `self * b + c`.
-                ("__fma__", 2) => {
-                    return crate::runtime::builtin_fma(&recv, &args[0], &args[1]);
-                }
                 // `Equatable` and `Comparable` on a scalar: its operator.
                 ("__eq__" | "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__", 1) if !matches!(&recv, Value::Simd { lanes, .. } if lanes.width() != 1) =>
                 {

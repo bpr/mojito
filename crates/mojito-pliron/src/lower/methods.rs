@@ -200,9 +200,6 @@ impl FnLowering<'_> {
                 ("__divmod__", 1) => {
                     return self.lower_divmod_builtin(ctx, dest, &[recv, args[0]], &[]);
                 }
-                ("__fma__", 2) => {
-                    return self.lower_fma(ctx, dest, [recv, args[0], args[1]], &recv_ty);
-                }
                 _ => {}
             }
         }

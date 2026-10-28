@@ -358,6 +358,51 @@ pub(super) fn kgen_string_runtime_read() -> TypeError {
     ))
 }
 
+/// The value of the untyped attribute `` __mlir_attr.`text` ``, upstream's
+/// `!kgen.deferred` constant. A typed attribute (`` `7 : index` ``), whose
+/// type follows a colon outside the attribute's brackets, is outside the
+/// subset.
+pub(super) fn untyped_mlir_attribute(text: &str) -> Result<CtValue, TypeError> {
+    let mut depth = 0_usize;
+    let typed = text.chars().any(|c| {
+        match c {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' | ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        c == ':' && depth == 0
+    });
+    if typed {
+        return Err(TypeError::Unsupported(format!(
+            "the typed attribute '__mlir_attr.`{text}`' is outside the subset; only an untyped \
+             '{}' attribute is read",
+            mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING
+        )));
+    }
+    Ok(CtValue::MlirAttr(text.to_string()))
+}
+
+/// The rejection of an untyped `__mlir_attr` read at run time outside a
+/// body that returns `!kgen.deferred`, which the pin elides and Mojito does
+/// not hold.
+pub(super) fn kgen_deferred_runtime_read() -> TypeError {
+    TypeError::Unsupported(format!(
+        "a '{}' value read at run time is not supported; only a compile-time position or a \
+         function returning one reads it",
+        mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING
+    ))
+}
+
+/// The rejection of a run-time call whose result is `!kgen.deferred`,
+/// which the pin cannot lower.
+pub(super) fn kgen_deferred_runtime_call(callee: &str) -> TypeError {
+    TypeError::Unsupported(format!(
+        "failed to convert call result type: '{callee}' returns '{}', which only a \
+         compile-time position may call",
+        mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING
+    ))
+}
+
 /// The callables a compile-time call applies by name
 /// ([`Checker::called_application`]), every overload under the name a call
 /// spells: `h` for a module `def`, `S.f` for a static method.
@@ -513,17 +558,23 @@ pub(super) fn applicable_declarations<'a>(
                         continue;
                     }
                     // A method with `self` applies only when builtin, its
-                    // receiver taken `imm`, as the pin folds it; an ordinary
-                    // one is a run-time call.
-                    let Some(ret) = method.ret.as_ref().filter(|_| {
+                    // receiver taken `imm`, as the pin folds it, or when it
+                    // returns `!kgen.deferred` and so runs only at compile
+                    // time (`FastMathFlag._mlir_attr`); an ordinary one is a
+                    // run-time call.
+                    let Some(ret) = method.ret.as_ref().filter(|ret| {
                         !method.has_self
-                            || (matches!(
-                                mojito_checked::declaration::InlineLevel::of(&method.decorators),
-                                Ok(mojito_checked::declaration::InlineLevel::Builtin)
-                            ) && matches!(
-                                method.self_convention,
-                                None | Some(ArgConvention::Imm)
-                            ))
+                            || ((is_mlir_source(ret, "!kgen.deferred")
+                                || matches!(
+                                    mojito_checked::declaration::InlineLevel::of(
+                                        &method.decorators
+                                    ),
+                                    Ok(mojito_checked::declaration::InlineLevel::Builtin)
+                                ))
+                                && matches!(
+                                    method.self_convention,
+                                    None | Some(ArgConvention::Imm)
+                                ))
                     }) else {
                         continue;
                     };
@@ -1162,11 +1213,17 @@ impl Checker {
             TyKind::UINT => Ty::uint(),
             TyKind::Bool => Ty::bool(),
             TyKind::FLOAT64 | TyKind::FloatLiteral => Ty::float64(),
-            // A struct- or sized-scalar-valued call is an application the
-            // elaborator below MIR runs and materializes, and so is any
+            // A struct-, sized-scalar-, or attribute-valued call is an
+            // application the elaborator below MIR runs and materializes
+            // (an attribute only where an op's attribute takes it), and so
+            // is any
             // `String` expression, which it freezes to a compile-time string;
             // no other struct expression lifts.
-            TyKind::Struct(..) | TyKind::Simd { .. } | TyKind::Index | TyKind::Dtype
+            TyKind::Struct(..)
+            | TyKind::Simd { .. }
+            | TyKind::Index
+            | TyKind::Dtype
+            | TyKind::KgenDeferred
                 if called.is_some() =>
             {
                 ty
@@ -1679,6 +1736,7 @@ impl Checker {
                     | TyKind::Dtype
                     | TyKind::Simd { .. }
                     | TyKind::Struct(..)
+                    | TyKind::KgenDeferred
             )
         })?;
         if function.raises {
@@ -2309,7 +2367,7 @@ impl Checker {
             self.check_raw_list_annotation(name, annotation, value)?;
             return self.bind_compile_time_only_value(name, annotation, value);
         }
-        if self.reads_literal_value(value) {
+        if self.reads_literal_value(value) || self.builds_attribute(value) {
             return self.bind_compile_time_only_value(name, annotation, value);
         }
         // A reflected field type (`comptime F = r.field_at[1].T`) is a type
@@ -2570,6 +2628,7 @@ impl Checker {
             || matches!(self.reflection_handle(value), Ok(Some(_)))
             || matches!(self.reflection_list(value), Ok(Some(_)))
             || self.reads_literal_value(value)
+            || self.builds_attribute(value)
             || self.reads_raw_list(value))
         {
             return Ok(false);
@@ -4639,7 +4698,9 @@ impl ApplicableShape<'_> {
                 | SourceType::Float64
                 | SourceType::SelfType
                 | SourceType::Named(..) => self.ret.clone(),
-                ret if is_mlir_index_source(ret) => ret.clone(),
+                ret if is_mlir_index_source(ret) || is_mlir_source(ret, "!kgen.deferred") => {
+                    ret.clone()
+                }
                 _ => return None,
             },
             raises: self.raises,
@@ -4946,8 +5007,13 @@ pub(super) fn reads_comptime_interpreter_query(expr: &Expr) -> bool {
 
 /// Whether `ty` spells the MLIR builtin `__mlir_type.index`.
 fn is_mlir_index_source(ty: &SourceType) -> bool {
+    is_mlir_source(ty, "index")
+}
+
+/// Whether `ty` spells `` __mlir_type.`name` ``.
+fn is_mlir_source(ty: &SourceType, mlir_name: &str) -> bool {
     matches!(ty, SourceType::Assoc { base, name, args }
-        if name == "index"
+        if name == mlir_name
             && args.is_empty()
             && matches!(base.as_ref(), SourceType::Named(base, base_args)
                 if base == "__mlir_type" && base_args.is_empty()))

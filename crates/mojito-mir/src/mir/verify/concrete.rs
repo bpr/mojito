@@ -205,6 +205,7 @@ fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
                 | TyKind::Trait(_)
                 | TyKind::TypeType
                 | TyKind::KgenString
+                | TyKind::KgenDeferred
                 | TyKind::Generator(_)
         )
     }) {

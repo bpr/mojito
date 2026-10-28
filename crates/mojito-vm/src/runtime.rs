@@ -914,47 +914,6 @@ pub fn builtin_round_dir(method: &str, v: &Value) -> Result<Value, RuntimeError>
     }
 }
 
-/// The intrinsic behind a float range element (`__fma__(self, b, c) -> Self`):
-/// the fused `self * b + c`, computed at the operands' own precision.
-pub fn builtin_fma(a: &Value, b: &Value, c: &Value) -> Result<Value, RuntimeError> {
-    match (a, b, c) {
-        (Value::Float64(a), Value::Float64(b), Value::Float64(c)) => {
-            Ok(Value::Float64(a.mul_add(*b, *c)))
-        }
-        (
-            Value::Simd {
-                dtype,
-                lanes: SimdLanes::Float(a),
-            },
-            Value::Simd {
-                lanes: SimdLanes::Float(b),
-                ..
-            },
-            Value::Simd {
-                lanes: SimdLanes::Float(c),
-                ..
-            },
-        ) if a.len() == 1 && b.len() == 1 && c.len() == 1 => {
-            let fused = match dtype {
-                Dtype::Float32 => f64::from((a[0] as f32).mul_add(b[0] as f32, c[0] as f32)),
-                // Exact for half precision: wherever the 32-bit product can
-                // decide a tie, it and the sum fit a double's 53 bits.
-                _ => dtype.round_lane(a[0].mul_add(b[0], c[0])),
-            };
-            Ok(Value::Simd {
-                dtype: *dtype,
-                lanes: SimdLanes::Float(vec![fused]),
-            })
-        }
-        _ => Err(RuntimeError::TypeError(format!(
-            "__fma__ expects three float values of the same type, got {}, {} and {}",
-            type_name(a),
-            type_name(b),
-            type_name(c)
-        ))),
-    }
-}
-
 /// The intrinsic behind `math.ceildiv` — the `CeilDivable` dunder
 /// (`__ceildiv__(self, denominator) -> Self`, roadmap milestone 7): ceiling
 /// division, preserving the operand type.

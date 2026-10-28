@@ -522,6 +522,7 @@ assets/ok/method_unused_argument_instances.mojo	main	exe-differential	sanitized
 assets/ok/method_unused_receiver.mojo	main	exe-differential	sanitized
 assets/ok/method_value_parameter_binding.mojo	main	exe-differential	sanitized
 assets/ok/mlir_builtin_casts.mojo	main	exe-differential	sanitized
+assets/ok/mlir_deferred_attribute.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_ops.mojo	main	exe-differential	sanitized
 assets/ok/mlir_index_parameter.mojo	main	exe-differential	sanitized
 assets/ok/mlir_pop_max_min_bool_casts.mojo	main	exe-differential	sanitized
@@ -924,6 +925,7 @@ assets/ok/simd_dtypes_int_lanes.mojo	main	exe-differential	sanitized
 assets/ok/simd_float_div.mojo	main	exe-differential	sanitized
 assets/ok/simd_floats.mojo	main	exe-differential	sanitized
 assets/ok/simd_floordiv_mod.mojo	main	exe-differential	sanitized
+assets/ok/simd_fma.mojo	main	exe-differential	sanitized
 assets/ok/simd_generic_width.mojo	main	exe-differential	sanitized
 assets/ok/simd_hash_member.mojo	main	exe-differential	sanitized
 assets/ok/simd_inferred_width_binding.mojo	main	exe-differential	sanitized

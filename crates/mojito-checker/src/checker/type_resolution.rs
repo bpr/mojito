@@ -4458,6 +4458,7 @@ fn type_is_symbolic(ty: &Ty) -> bool {
         | TyKind::Trait(_)
         | TyKind::TypeType
         | TyKind::KgenString
+        | TyKind::KgenDeferred
         | TyKind::Index
         | TyKind::Error => false,
         TyKind::Func(_) | TyKind::GenericFunc(_) => ty

@@ -1670,6 +1670,21 @@ impl Checker {
                     .unwrap_or_else(|| Err(TypeError::UnknownSelfParam(field.to_string()))),
             };
         }
+        // An untyped `` __mlir_attr.`#…` `` is upstream's `!kgen.deferred`
+        // constant, which only a compile-time position or a body returning
+        // one reads.
+        if let ExprKind::Identifier(base) = &object.kind
+            && base == "__mlir_attr"
+            && self.lookup(base).is_none()
+        {
+            let value = super::comptime_validation::untyped_mlir_attribute(field)?;
+            if self.crosses_to_runtime() && self.deferred_result_bodies.last() != Some(&true) {
+                return Err(super::comptime_validation::kgen_deferred_runtime_read());
+            }
+            let value = self.param_context.constant(value).map_err(param_error)?;
+            self.record_member_value(span, value);
+            return Ok(TyKind::KgenDeferred.into());
+        }
         if let Some(dtype) = self.dtype_constant(object, field) {
             self.record_at(span).adjustment = Some(Box::new(
                 mojito_checked::checked::SemanticAdjustment::DtypeConstant { dtype: dtype? },

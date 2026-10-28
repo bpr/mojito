@@ -1,6 +1,6 @@
 # Upstream's `std/math/math.mojo`, holding its operation traits, the
-# rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`, and the `SIMD` overload
-# of `iota`, verbatim (the buffer overload is omitted). The prelude exports
+# rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`, the `SIMD` overload
+# of `iota`, and `fma`, verbatim (the buffer overload of `iota` is omitted). The prelude exports
 # `Absable`, `Powable`, and `Roundable`, as upstream's does; `abs`/`round`/
 # `divmod` are still compiler builtins (R1458).
 #
@@ -114,3 +114,38 @@ def iota[
             "llvm.stepvector", SIMD[step_dtype, width], has_side_effect=False
         ]()
     return step.cast[dtype]() + offset
+
+
+# ===----------------------------------------------------------------------=== #
+# fma
+# ===----------------------------------------------------------------------=== #
+
+
+@inline(.nodebug)
+def fma[
+    dtype: DType, width: SIMDLength, //
+](
+    a: SIMD[dtype, width],
+    b: SIMD[dtype, width],
+    c: SIMD[dtype, width],
+) -> SIMD[
+    dtype, width
+]:
+    """Performs elementwise `fma` (fused multiply-add) on the inputs.
+
+    Each element in the result SIMD vector is $(A_i * B_i) + C_i$, where $A_i$,
+    $B_i$ and $C_i$ are elements at index $i$ in a, b, and c respectively.
+
+    Parameters:
+        dtype: The `dtype` of the input SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        a: The first vector of inputs.
+        b: The second vector of inputs.
+        c: The third vector of inputs.
+
+    Returns:
+        Elementwise `fma` of a, b and c.
+    """
+    return a.fma(b, c)

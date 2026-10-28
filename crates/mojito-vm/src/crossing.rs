@@ -102,6 +102,7 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
         CtValue::Type(_)
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
+        | CtValue::MlirAttr(_)
         | CtValue::Generator(_)
         | CtValue::Expr(_)
         | CtValue::Deferred(_)

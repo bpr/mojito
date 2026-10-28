@@ -173,14 +173,14 @@ pub fn refines<'a>(
 
 /// Whether a closed `conforms_to(ty, Tr)` is `False` for every trait.
 ///
-/// The pin answers so for an MLIR type (`!kgen.string`, `index`,
-/// `!kgen.simd`), not even `AnyType`. A trait-bounded binder still binds
-/// one, and `conforms_to` over that binder answers by the type's shape, as
-/// at the pin.
+/// The pin answers so for an MLIR type (`!kgen.string`, `!kgen.deferred`,
+/// `index`, `!kgen.simd`), not even `AnyType`. A trait-bounded binder still
+/// binds one, and `conforms_to` over that binder answers by the type's
+/// shape, as at the pin.
 pub fn reflects_no_conformance(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::KgenString | TyKind::Index | TyKind::KgenSimd { .. }
+        TyKind::KgenString | TyKind::KgenDeferred | TyKind::Index | TyKind::KgenSimd { .. }
     )
 }
 

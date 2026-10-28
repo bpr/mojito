@@ -567,9 +567,11 @@ impl PopOp {
     }
 }
 
-/// Whether `attribute` is a `#pop.fmf<flag>` fast-math attribute. The
-/// flags permit, never require, a relaxed result, so exact arithmetic
-/// implements every one of them.
+/// Whether `attribute` is a `#pop.fmf<flag>` fast-math attribute.
+///
+/// The flags permit, never require, a relaxed result, so exact arithmetic
+/// implements every one of them: the check reads a closed flag, spelled or
+/// computed (`flag._mlir_attr()`), and drops it before MIR.
 pub fn is_fastmath_attribute(attribute: &str) -> bool {
     attribute
         .strip_prefix("#pop.fmf<")

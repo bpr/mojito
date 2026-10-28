@@ -100,26 +100,6 @@ impl Checker {
                     _ => Ok(Ty::bool()),
                 }
             }
-            // A float scalar's fused multiply-add (`k.__fma__(step,
-            // start)`, a float range element) is an intrinsic at the
-            // scalar's own precision.
-            "__fma__"
-                if width.known() == Some(1)
-                    && dtype.licenses(Dtype::is_float)
-                    && args.len() == 2 =>
-            {
-                for argument in args {
-                    let found = self.infer(argument)?;
-                    if found != *obj_ty {
-                        return Err(TypeError::TypeMismatch {
-                            expected: obj_ty.to_string(),
-                            found: found.to_string(),
-                            context: "argument to '__fma__'".to_string(),
-                        });
-                    }
-                }
-                Ok(obj_ty.clone())
-            }
             _ => Err(TypeError::NoSuchMethod {
                 object_type: obj_ty.to_string(),
                 method: method.to_string(),

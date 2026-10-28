@@ -42,7 +42,6 @@ pub const INTRINSIC_METHODS: &[&str] = &[
     "__ceil__",
     "__trunc__",
     "__ceildiv__",
-    "__fma__",
     "write_string",
     "byte_length",
     "ptr",

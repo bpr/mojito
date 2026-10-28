@@ -1902,11 +1902,11 @@ fn template_struct_lane_members_run_per_instance() {
 
 #[test]
 fn float_lane_methods_run_per_lane() {
-    // `__ceil__` and `__fma__` on values of a struct's symbolic lane — the
+    // `__ceil__` and `fma` on values of a struct's symbolic lane — the
     // bundled float range's and a user struct's — run from the template at
-    // a sized float lane and at the native `Float64`, whose `__fma__`
-    // borrows its place arguments and reads its temporary ones.
-    let source = "struct R[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var start: Scalar[Self.dtype]\n    var step: Scalar[Self.dtype]\n\n    def __init__(out self, start: Scalar[Self.dtype], step: Scalar[Self.dtype]):\n        self.start = start\n        self.step = step\n\n    def at(self, idx: Int) -> Scalar[Self.dtype]:\n        return Scalar[Self.dtype](idx).__fma__(self.step, self.start)\n\n    def far(self, idx: Int) -> Scalar[Self.dtype]:\n        return Scalar[Self.dtype](idx).__fma__(self.step * self.step, self.start + self.step)\n\n    def up(self) -> Scalar[Self.dtype]:\n        return (self.start / self.step).__ceil__()\n\ndef main():\n    var a = R[DType.float32](1.5, 2.0)\n    var b = R[DType.float64](1.5, 2.0)\n    print(a.at(2), a.up(), b.at(2), b.up())\n    print(a.far(2), b.far(2))\n    for x in range(Float64(0.5), Float64(1.5), Float64(0.5)):\n        print(x)\n    for y in range(Float32(1.0), Float32(0.0), Float32(-0.5)):\n        print(y)\n";
+    // a sized float lane and at the native `Float64`, whose `fma` borrows
+    // its place arguments and reads its temporary ones.
+    let source = "struct R[dtype: DType](Copyable, ImplicitlyCopyable, Movable):\n    var start: Scalar[Self.dtype]\n    var step: Scalar[Self.dtype]\n\n    def __init__(out self, start: Scalar[Self.dtype], step: Scalar[Self.dtype]):\n        self.start = start\n        self.step = step\n\n    def at(self, idx: Int) -> Scalar[Self.dtype]:\n        return Scalar[Self.dtype](idx).fma(self.step, self.start)\n\n    def far(self, idx: Int) -> Scalar[Self.dtype]:\n        return Scalar[Self.dtype](idx).fma(self.step * self.step, self.start + self.step)\n\n    def up(self) -> Scalar[Self.dtype]:\n        return (self.start / self.step).__ceil__()\n\ndef main():\n    var a = R[DType.float32](1.5, 2.0)\n    var b = R[DType.float64](1.5, 2.0)\n    print(a.at(2), a.up(), b.at(2), b.up())\n    print(a.far(2), b.far(2))\n    for x in range(Float64(0.5), Float64(1.5), Float64(0.5)):\n        print(x)\n    for y in range(Float32(1.0), Float32(0.0), Float32(-0.5)):\n        print(y)\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, source);
     assert_eq!(

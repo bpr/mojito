@@ -489,53 +489,6 @@ impl FnLowering<'_> {
         Ok(())
     }
 
-    /// `__fma__` on a float scalar receiver — the VM's `builtin_fma`: the
-    /// fused `self * b + c` through `llvm.fma` at the operands' precision. A
-    /// `Float16` fuses at f64 and rounds once, which is exact for half
-    /// precision (`runtime::builtin_fma`).
-    pub(super) fn lower_fma(
-        &mut self,
-        ctx: &mut Context,
-        dest: Reg,
-        operands: [Reg; 3],
-        recv_ty: &Ty,
-    ) -> Result<(), PlironError> {
-        if scalar_simd_dtype(recv_ty) == Some(Dtype::Float16) {
-            let mut values = Vec::with_capacity(operands.len());
-            for operand in operands {
-                let value = self.reg_value(ctx, operand, ScalarTy::Sized(Dtype::Float16))?;
-                values.push(self.widen_float_lane(ctx, value, dest));
-            }
-            let f64_ty: TypeHandle = FP64Type::get(ctx).into();
-            let wide = self.float_intrinsic(ctx, "llvm.fma.f64", f64_ty, values, dest);
-            let result = self.round_float_lane(ctx, Dtype::Float16, wide, dest);
-            self.reg_values.insert(dest.0, result);
-            return Ok(());
-        }
-        let (scalar, intrinsic, float_ty): (ScalarTy, &str, TypeHandle) = match recv_ty {
-            ty if scalar_simd_dtype(ty) == Some(Dtype::Float32) => (
-                ScalarTy::Sized(Dtype::Float32),
-                "llvm.fma.f32",
-                FP32Type::get(ctx).into(),
-            ),
-            ty if matches!(ty.kind(), TyKind::FLOAT64)
-                || scalar_simd_dtype(ty) == Some(Dtype::Float64) =>
-            {
-                (ScalarTy::Float64, "llvm.fma.f64", FP64Type::get(ctx).into())
-            }
-            other => {
-                return Err(self.unsupported_reg(format!("`__fma__` on `{other}`"), dest));
-            }
-        };
-        let mut values = Vec::with_capacity(operands.len());
-        for operand in operands {
-            values.push(self.reg_value(ctx, operand, scalar)?);
-        }
-        let result = self.float_intrinsic(ctx, intrinsic, float_ty, values, dest);
-        self.reg_values.insert(dest.0, result);
-        Ok(())
-    }
-
     /// `__ceildiv__` on a scalar receiver — the VM's `builtin_ceildiv`:
     /// ceiling division preserving the operand type. Int is the negated
     /// flooring division of the negated numerator (with the shared zero trap

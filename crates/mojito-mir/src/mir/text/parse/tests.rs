@@ -2557,6 +2557,29 @@ fn kgen_string_metatype_round_trips() {
     assert!(text.contains("KgenString") && text.contains("ct_kgen_string(\"None\")"));
 }
 
+/// Schema 1.132 spells upstream's `!kgen.deferred` type `KgenDeferred`,
+/// and an untyped attribute `ct_mlir_attr("...")`.
+#[test]
+fn kgen_deferred_attribute_round_trips() {
+    let ty = Ty::new(TyKind::KgenDeferred);
+    let program = program_with(vec![(
+        "main".into(),
+        function_with(
+            vec![ty.clone(), Ty::none()],
+            vec![
+                MirInstr::ConstructType { dest: Reg(0), ty },
+                MirInstr::Const {
+                    dest: Reg(1),
+                    k: Const::Value(mojito_types::ct::CtValue::MlirAttr("#pop.fmf<fast>".into())),
+                },
+            ],
+        ),
+    )]);
+    assert_reprints(&program);
+    let text = write::program(&program);
+    assert!(text.contains("KgenDeferred") && text.contains("ct_mlir_attr(\"#pop.fmf<fast>\")"));
+}
+
 /// Schema 1.129 spells upstream's `!kgen.simd` vector storage
 /// `kgen_simd { dtype, width }`, a type apart from the `simd` it stores.
 #[test]

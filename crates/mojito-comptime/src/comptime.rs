@@ -488,6 +488,7 @@ fn source_type_from_ty_with_origins(
         TyKind::None => Type::None,
         TyKind::Dtype => Type::Named("DType".to_string(), Vec::new()),
         TyKind::KgenString => kgen_string_source_type(),
+        TyKind::KgenDeferred => mlir_source_type("!kgen.deferred"),
         TyKind::Index => mlir_source_type("index"),
         // A callable has no source spelling a clone could carry.
         TyKind::Func(_) | TyKind::GenericFunc(_) => return None,
