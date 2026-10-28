@@ -438,6 +438,9 @@ pub fn writable_field_writer() -> String {
 pub struct Checker {
     /// Lexical scope chain, innermost last. Starts with the global scope.
     scopes: Vec<HashMap<String, Ty>>,
+    /// How many of `scopes` are signature scopes
+    /// ([`Self::in_signature_scope`]), which no body owns.
+    signature_scopes: usize,
     /// Binding mutability, parallel to `scopes`. `var` locals are writable;
     /// ordinary function parameters are not.
     mutable_scopes: Vec<HashMap<String, bool>>,
@@ -1004,6 +1007,7 @@ impl Checker {
         }
         Self {
             scopes: vec![HashMap::new()],
+            signature_scopes: 0,
             mutable_scopes: vec![HashMap::new()],
             owner_scopes: vec![HashMap::new()],
             aggregate_origin_scopes: vec![HashMap::new()],

@@ -296,29 +296,29 @@ impl Checker {
                     }
                 }
                 self.push_param_scope(&decls);
-                let signature = (|| {
-                    Ok::<_, TypeError>((
+                let signature = self.in_signature_scope(Some(&Ty::self_type()), |this| {
+                    Ok((
                         m.params
                             .iter()
                             .map(|param| {
                                 param
                                     .default
                                     .as_ref()
-                                    .map(|default| self.requirement_default(default, &decls))
+                                    .map(|default| this.requirement_default(default, &decls))
                                     .transpose()
                             })
                             .collect::<Result<Vec<_>, _>>()?,
-                        self.param_tys(&m.params)?,
+                        this.param_tys(&m.params)?,
                         match &m.ret {
                             Some(SourceType::Ref { referent, .. }) => {
-                                self.ty_from_anno(referent)?
+                                this.ty_from_anno(referent)?
                             }
-                            Some(t) => self.ty_from_anno(t)?,
+                            Some(t) => this.ty_from_anno(t)?,
                             None => Ty::none(),
                         },
-                        self.declared_error(m.raises, m.raises_type.as_ref())?,
+                        this.declared_error(m.raises, m.raises_type.as_ref())?,
                     ))
-                })();
+                });
                 self.tparams.pop();
                 let (defaults, all_types, ret, error) = signature?;
                 self.check_result_origins(
@@ -865,20 +865,20 @@ impl Checker {
             let signature = match self.method_where_assumptions(&m.where_clauses, &method_decls) {
                 Ok(assumptions) => {
                     self.push_assumptions(assumptions);
-                    let signature = (|| {
-                        let all_types = self.param_tys(&m.params)?;
-                        let sig = self.method_sig(m, method_decls, &all_types)?;
+                    let receiver = self.self_ty.clone().filter(|_| m.has_self);
+                    let signature = self.in_signature_scope(receiver.as_ref(), |this| {
+                        let all_types = this.param_tys(&m.params)?;
+                        let sig = this.method_sig(m, method_decls, &all_types)?;
                         if !name.contains('$') && !m.name.contains('$') {
-                            let receiver = self.self_ty.as_ref().filter(|_| m.has_self);
-                            self.check_result_origins(
+                            this.check_result_origins(
                                 m.ret.as_ref(),
                                 &m.params,
                                 &all_types,
-                                receiver.map(|ty| (m.self_convention, ty)),
+                                receiver.as_ref().map(|ty| (m.self_convention, ty)),
                             )?;
                         }
-                        Ok::<_, TypeError>((all_types, sig))
-                    })();
+                        Ok((all_types, sig))
+                    });
                     self.pop_assumptions();
                     signature
                 }

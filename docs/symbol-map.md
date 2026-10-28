@@ -669,7 +669,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - `checker/scopes.rs` owns lexical scope, binding declaration/mutability, and
   nested-def capture-access checks (a compile-time binding of a validated
   body — a `comptime for` variable or a value parameter — captures nothing).
-  It also owns binding-identity allocation: `reserve_owners` hands out
+  `in_signature_scope` is a signature's value scope: the receiver and each
+  parameter (`param_tys`, `statements.rs`) are declared, without storage,
+  as their annotations resolve, so a later annotation or the result reads
+  them (`y: type_of(x)`); `outside_bodies` discounts it. It also owns
+  binding-identity allocation: `reserve_owners` hands out
   identities from the cursor, or from the fresh region above every range a
   previous pass recorded once a body inferred again would cross the ceiling
   of the range it had (`owner_range_split`, which `body_carry.rs` reads).
@@ -1658,9 +1662,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   which Pliron's `dispatch_edges` (`lib.rs`) makes reachable for every
   `print`, `repr`, and `$write_formatted` argument.
 - `comptime/synth.rs` also owns the `SIMD[_, _]` parameter desugar
-  (`desugar_simd_wildcard_parameters`: an infer-only `DType` and
-  `SIMDLength` binder pair per wildcard parameter of a `def`, method, or
-  trait requirement), the vector-alias bound fold, and the value reading
+  (`desugar_simd_wildcard_parameters`: an infer-only `DType` or
+  `SIMDLength` binder per `_` slot of a `SIMD` parameter of a `def`,
+  method, or trait requirement), the vector-alias bound fold, and the value reading
   of a `Self.`-spelled `materialize` operand
   (`read_materialize_self_operands`: `materialize[Self.n]()`,
   `materialize[Self.values[i]]()`).

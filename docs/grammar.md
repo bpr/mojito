@@ -1206,9 +1206,10 @@ The checker reads every spelling alike: the operand's type, typed without
 being evaluated (`var y: type_of(x) = 3`, `List[type_of(x)]()`, `comptime
 T = type_of(x)`, `type_of(x) == Int`). A trait or a `&` composition of
 traits gives the trait metatype (displayed `AnyTrait[Copyable]`, which has
-no source spelling). A literal value (`type_of(3)`, R1507), a type
-(`type_of(Int)`, R1176), and an earlier parameter in a signature (`y:
-type_of(x)`, R1508) are checker errors.
+no source spelling). In a signature the operand reads the parameters
+declared before it (`y: type_of(x)`, `-> type_of(self.v)`); a later one is
+an unknown name. A literal value (`type_of(3)`, R1507) and a type
+(`type_of(Int)`, R1176) are checker errors.
 A named type whose head is a compile-time value rather than a type is the
 value's subscript (`var x: tl[1]` over `comptime tl = TypeList.of[...]()`),
 upstream's `__getitem_param__`; the value alone is "expected a type".

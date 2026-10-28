@@ -462,11 +462,12 @@ pub(super) fn synthesize_equatable_eq(program: &mut [Stmt]) {
     }
 }
 
-/// Desugar upstream's `value: SIMD[_, _]` parameter spelling on a `def`, a
-/// struct method, or a trait requirement into the parameters it stands for: an infer-only `DType`
-/// binder and an infer-only width binder of SIMD's own width type, over
-/// `SIMD[dtype, length]`, as upstream's automatic parameterization does. The
-/// argument's vector type solves both at each call, so the template serves
+/// Desugar each `_` of upstream's `value: SIMD[_, _]` or `SIMD[dtype, _]`
+/// parameter spelling on a `def`, a struct method, or a trait requirement
+/// into the parameter it stands for: an infer-only `DType` binder for the
+/// element, an infer-only width binder of SIMD's own width type for the
+/// length, as upstream's automatic parameterization does. The argument's
+/// vector type solves each at each call, so the template serves
 /// every call and the elaborator instantiates it per vector type. `$` keeps
 /// the binders unspellable in source.
 pub(super) fn desugar_simd_wildcard_parameters(program: &mut [Stmt]) {
@@ -552,47 +553,40 @@ fn desugar_wildcard_parameters(
     params: &mut [mojito_ast::ast::FnParam],
 ) {
     let mut binders = Vec::new();
-    for parameter in params
-        .iter_mut()
-        .filter(|parameter| is_simd_wildcard_type(&parameter.ty))
-    {
-        let dtype = format!("$dtype_{}", parameter.name);
-        let length = format!("$length_{}", parameter.name);
-        // Each `_` becomes a reference to its binder, keeping its span.
-        if let Type::Named(_, arguments) = &mut parameter.ty {
-            for (argument, name) in arguments.iter_mut().zip([&dtype, &length]) {
-                if let ParamArg::Value(Expr {
-                    kind: ExprKind::Identifier(hole),
-                    ..
-                }) = argument
-                {
-                    hole.clone_from(name);
-                }
-            }
+    for parameter in params.iter_mut() {
+        let Type::Named(name, arguments) = &mut parameter.ty else {
+            continue;
+        };
+        if name != "SIMD" || arguments.len() != 2 {
+            continue;
         }
-        for (name, bound) in [(dtype, "DType"), (length, "SIMDLength")] {
-            binders.push(TypeParam {
-                name,
-                bounds: vec![bound.to_string()],
-                value_type: None,
-                callable_bound: None,
-                origin_mutability: None,
-                infer_only: true,
-                default: None,
-                constraints: Vec::new(),
-            });
+        let slots = [
+            (format!("$dtype_{}", parameter.name), "DType"),
+            (format!("$length_{}", parameter.name), "SIMDLength"),
+        ];
+        // Each `_` becomes a reference to its binder, keeping its span.
+        for (argument, (binder, bound)) in arguments.iter_mut().zip(slots) {
+            if let ParamArg::Value(Expr {
+                kind: ExprKind::Identifier(hole),
+                ..
+            }) = argument
+                && hole == "_"
+            {
+                hole.clone_from(&binder);
+                binders.push(TypeParam {
+                    name: binder,
+                    bounds: vec![bound.to_string()],
+                    value_type: None,
+                    callable_bound: None,
+                    origin_mutability: None,
+                    infer_only: true,
+                    default: None,
+                    constraints: Vec::new(),
+                });
+            }
         }
     }
     type_params.splice(0..0, binders);
-}
-
-fn is_simd_wildcard_type(ty: &Type) -> bool {
-    matches!(ty, Type::Named(name, args)
-    if name == "SIMD"
-        && args.len() == 2
-        && args.iter().all(|argument| {
-            matches!(argument, ParamArg::Value(Expr { kind: ExprKind::Identifier(id), .. }) if id == "_")
-        }))
 }
 
 /// Fold a module-scope vector alias (`comptime U256 = SIMD[DType.uint64, 4]`)

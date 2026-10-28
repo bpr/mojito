@@ -869,7 +869,8 @@ impl Checker {
     /// probe, as upstream emits it into a block it then erases). A trait or a
     /// trait composition gives the trait metatype. A type operand's metatype
     /// and a literal value's value-parameterized literal type have no `Ty`,
-    /// and a signature types no earlier parameter, so each is rejected.
+    /// so each is rejected. In a signature the operand reads the parameters
+    /// declared before it ([`Self::in_signature_scope`]).
     pub(super) fn type_of_operand(&self, operand: &Expr) -> Result<Ty, TypeError> {
         if let Some(traits) = self.trait_value(operand) {
             return Ok(TyKind::AnyTrait(traits?).into());
@@ -889,26 +890,18 @@ impl Checker {
                 .map(|ty| (ty, self.exact_literal_value(operand).is_some()))
         });
         self.annotation_depth.set(depth);
-        match typed {
-            Ok((ty, literal))
-                if literal
-                    || matches!(
-                        ty.kind(),
-                        TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral
-                    ) =>
-            {
-                Err(TypeError::Unsupported(
-                    "'type_of' of a literal value is not supported yet".to_string(),
-                ))
-            }
-            Ok((ty, _)) => Ok(ty),
-            Err(TypeError::UndefinedVariable(_)) if self.function_bases.is_empty() => {
-                Err(TypeError::Unsupported(
-                    "'type_of' of a parameter in a signature is not supported yet".to_string(),
-                ))
-            }
-            Err(error) => Err(error),
+        let (ty, literal) = typed?;
+        if literal
+            || matches!(
+                ty.kind(),
+                TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::StringLiteral
+            )
+        {
+            return Err(TypeError::Unsupported(
+                "'type_of' of a literal value is not supported yet".to_string(),
+            ));
         }
+        Ok(ty)
     }
 
     /// A type comparison read as a value (`print(T == Int)`, `comptime b =

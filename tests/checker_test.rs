@@ -9066,10 +9066,13 @@ fn type_of_is_the_value_type_and_rejects_what_has_no_type_yet() {
         "def main():\n    comptime T = type_of(Int)\n",
         "'type_of' of a type",
     );
-    unsupported(
-        "def f(x: Int, y: type_of(x)) -> Int:\n    return x\ndef main():\n    print(f(1, 2))\n",
-        "'type_of' of a parameter in a signature",
+    ok_std(
+        "def f(x: Int, y: type_of(x)) -> type_of(x):\n    return x\ndef main():\n    print(f(1, 2))\n",
     );
+    assert!(matches!(
+        err_std("def f(y: type_of(x), x: Int) -> Int:\n    return x\ndef main():\n    print(f(1, 2))\n"),
+        TypeError::UndefinedVariable(name) if name == "x"
+    ));
     assert!(matches!(
         err_std("comptime N = 4\ndef main():\n    var x: N = 4\n"),
         TypeError::TypeMismatch { expected, found, .. } if expected == "a type" && found == "a value"

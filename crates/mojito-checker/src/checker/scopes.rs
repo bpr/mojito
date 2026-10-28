@@ -108,6 +108,58 @@ impl Checker {
         })
     }
 
+    /// Resolve a signature inside its own value scope, as upstream's
+    /// `Signatures.cpp` emits each type with the earlier arguments in scope:
+    /// the receiver (`receiver`, a method's `Self`) is declared first, and
+    /// [`Self::param_tys`] declares each parameter as its annotation
+    /// resolves, so a later annotation or the result reads it (`y:
+    /// type_of(x)`, `-> type_of(self.v)`).
+    pub(super) fn in_signature_scope<R>(
+        &mut self,
+        receiver: Option<&Ty>,
+        resolve: impl FnOnce(&mut Self) -> Result<R, TypeError>,
+    ) -> Result<R, TypeError> {
+        self.push_scope();
+        self.signature_scopes += 1;
+        let resolved = receiver
+            .map_or(Ok(()), |ty| {
+                self.declare_signature_parameter("self", ty.clone())
+            })
+            .and_then(|()| resolve(self));
+        self.signature_scopes -= 1;
+        self.pop_scope();
+        resolved
+    }
+
+    /// Whether checking is outside every body: in a module statement, a
+    /// field type, or a signature, whose scopes no body owns.
+    pub(super) const fn outside_bodies(&self) -> bool {
+        self.scopes.len() - self.signature_scopes < 2
+    }
+
+    /// Bind a signature's parameter `name` at `ty` in the innermost scope:
+    /// a typed name with no storage, which only the signature's later
+    /// annotations read.
+    pub(super) fn declare_signature_parameter(
+        &mut self,
+        name: &str,
+        ty: Ty,
+    ) -> Result<(), TypeError> {
+        self.scopes
+            .last_mut()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation("checker scope stack is empty".to_string())
+            })?
+            .insert(name.to_string(), ty);
+        self.mutable_scopes
+            .last_mut()
+            .ok_or_else(|| {
+                TypeError::InvariantViolation("checker mutability scope stack is empty".to_string())
+            })?
+            .insert(name.to_string(), false);
+        Ok(())
+    }
+
     /// Bind `name` in the innermost scope as another name of the immutable
     /// binding `target` resolves to: a read of either is a read of the one
     /// binding, with its type and its owner.

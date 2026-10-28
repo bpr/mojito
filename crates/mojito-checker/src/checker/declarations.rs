@@ -1559,17 +1559,23 @@ impl Checker {
                 "a function cannot declare both a named result and '->' return type".to_string(),
             ));
         }
-        let ret_ty = match &m.ret {
-            Some(SourceType::Ref { referent, .. }) => self.ty_from_anno(referent)?,
-            // `$`-mangled generated methods rebind already-checked
-            // annotations with origins legitimately erased.
-            Some(t) if m.name.contains('$') => self.resolve_generated_return_annotation(t)?,
-            Some(t) => self.resolve_return_annotation(t)?,
-            None => match named_result {
-                Some(result) => self.ty_from_anno(&result.ty)?,
-                None => Ty::none(),
-            },
-        };
+        let ret_ty = self.in_signature_scope(m.has_self.then_some(self_ty), |this| {
+            let generated = this.generated_declaration.get();
+            this.generated_declaration
+                .set(generated || m.name.contains('$'));
+            let params = this.param_tys(&m.params);
+            this.generated_declaration.set(generated);
+            params?;
+            match &m.ret {
+                Some(SourceType::Ref { referent, .. }) => this.ty_from_anno(referent),
+                // `$`-mangled generated methods rebind already-checked
+                // annotations with origins legitimately erased.
+                Some(t) if m.name.contains('$') => this.resolve_generated_return_annotation(t),
+                Some(t) => this.resolve_return_annotation(t),
+                None => named_result
+                    .map_or_else(|| Ok(Ty::none()), |result| this.ty_from_anno(&result.ty)),
+            }
+        })?;
         let regular: Vec<&FnParam> = m
             .params
             .iter()

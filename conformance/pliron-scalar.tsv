@@ -1270,6 +1270,7 @@ assets/ok/type_member_unused_argument_instances.mojo	-	ineligible	no-scalar-entr
 assets/ok/type_names_applied_elements.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_of_comptime_assert.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_of_receiver.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/type_of_signature_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_of_value_annotation.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_pack_reads_through_typelist.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/type_pack_runtime_read.mojo	-	ineligible	no-scalar-entry-shape

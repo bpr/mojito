@@ -1188,7 +1188,7 @@ impl Checker {
         let called = self.called_application(expr);
         // A signature or a field type has no body to lift a function from,
         // and no compile-time argument calls a raising function.
-        if self.scopes.len() < 2 || self.calls_raising_application(expr).is_some() {
+        if self.outside_bodies() || self.calls_raising_application(expr).is_some() {
             return called;
         }
         let names = names_read(expr);
@@ -1274,7 +1274,7 @@ impl Checker {
             .meta()
             .as_value()
             .is_some_and(|ty| matches!(ty.kind(), TyKind::INT | TyKind::Bool));
-        if self.scopes.len() < 2 || !applies || !scalar || expression.as_constant().is_some() {
+        if self.outside_bodies() || !applies || !scalar || expression.as_constant().is_some() {
             return;
         }
         self.lifted_expressions

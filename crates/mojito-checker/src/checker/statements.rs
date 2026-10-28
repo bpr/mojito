@@ -2757,29 +2757,29 @@ impl Checker {
         // references a dependent parameter expression names (`Buf[n + 1]`).
         self.push_param_scope(&decls);
 
-        let signature = (|| {
-            let generated = self.generated_declaration.replace(name.contains('$'));
-            let param_tys = self.param_tys(params);
-            self.generated_declaration.set(generated);
+        let signature = self.in_signature_scope(None, |this| {
+            let generated = this.generated_declaration.replace(name.contains('$'));
+            let param_tys = this.param_tys(params);
+            this.generated_declaration.set(generated);
             let param_tys = param_tys?;
             let ret_ty = match (ret_anno, named_result) {
-                (Some(SourceType::Ref { referent, .. }), _) => self.ty_from_anno(referent)?,
+                (Some(SourceType::Ref { referent, .. }), _) => this.ty_from_anno(referent)?,
                 // A compiler-generated specialization (`$`-mangled) rebinds
                 // already-checked annotations whose origin identity is
                 // legitimately erased; signature concreteness applies to
                 // user-spelled declarations only.
                 (Some(t), _) if name.contains('$') => {
-                    self.resolve_generated_return_annotation(t)?
+                    this.resolve_generated_return_annotation(t)?
                 }
-                (Some(t), _) => self.resolve_return_annotation(t)?,
-                (None, Some(result)) => self.ty_from_anno(&result.ty)?,
+                (Some(t), _) => this.resolve_return_annotation(t)?,
+                (None, Some(result)) => this.ty_from_anno(&result.ty)?,
                 (None, None) => Ty::none(),
             };
             if !name.contains('$') {
-                self.check_result_origins(ret_anno.as_ref(), params, &param_tys, None)?;
+                this.check_result_origins(ret_anno.as_ref(), params, &param_tys, None)?;
             }
-            Ok::<_, TypeError>((param_tys, ret_ty))
-        })();
+            Ok((param_tys, ret_ty))
+        });
         let (param_tys, ret_ty) = match signature {
             Ok(sig) => sig,
             Err(e) => {
@@ -3514,8 +3514,10 @@ impl Checker {
         })
     }
 
+    /// Each parameter's type, declared in the open signature scope
+    /// ([`Self::in_signature_scope`]) as it resolves.
     pub(super) fn param_tys(
-        &self,
+        &mut self,
         params: &[mojito_ast::ast::FnParam],
     ) -> Result<Vec<Ty>, TypeError> {
         params
@@ -3543,7 +3545,22 @@ impl Checker {
                 );
                 self.bare_literal_parameter.set(false);
                 self.resolving_parameter_annotation.set(false);
-                resolved
+                let resolved = resolved?;
+                let declared = match parameter.kind {
+                    mojito_ast::ast::ParamKind::Variadic => {
+                        mojito_types::types::variadic_collector_type(
+                            resolved.clone(),
+                            parameter.convention,
+                        )
+                    }
+                    mojito_ast::ast::ParamKind::KwVariadic => self.kwargs_collector_ty(
+                        resolved.clone(),
+                        &format!("keyword collector '{}'", parameter.name),
+                    )?,
+                    mojito_ast::ast::ParamKind::Regular => resolved.clone(),
+                };
+                self.declare_signature_parameter(&parameter.name, declared)?;
+                Ok(resolved)
             })
             .collect()
     }

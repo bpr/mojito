@@ -4005,6 +4005,16 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: in `def f[*Ts: AnyType]`, `type_of(x).length` over `x:
     TypeList[Trait=AnyType, Ts.values]` fails the same way: a raw list
     over a pack has no spelling either.
+  - Probe: a construction through `type_of` is respelled too
+    (`initializer_list_construction` over `ct::source_type`). In `def
+    m[dtype: DType, w: SIMDLength, //](x: SIMD[dtype, w], ...)`,
+    ``type_of(x)(mlir_value=__mlir_op.`pop.max`(x._mlir_value,
+    y._mlir_value))`` fails MIR verification ("place rooted at slot 0 lacks
+    complete checked type metadata"; `comptime T = type_of(x)` then `T(...)`
+    alike), and `var v = ...` then `type_of(x)(mlir_value=v)` over a
+    four-lane argument stops the VM with "cannot use SIMD[DType.int32, 4]
+    as an integer SIMD element". `SIMD[dtype, w](mlir_value=...)` runs
+    both.
   - Found while landing R495 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4322,27 +4332,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     bind `Checker::implicit_parameter_application` of the value, as a
     parameter argument (R1533) and an application's argument already
     convert.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1508 A signature's `type_of` of an earlier parameter is rejected**
-
-  Problem: `def f(x: Int, y: type_of(x)) -> type_of(x)` and a method's `->
-  type_of(self.v)` stop with "'type_of' of a parameter in a signature is
-  not supported yet", where the pin prints `3` and `4`.
-  - Upstream resolves each signature type with the earlier arguments in
-    scope (`Signatures.cpp` emits each through `emitExprType`).
-  - Mojito resolves a signature with no value scope: `method_sig`
-    (`checker/declarations.rs`) takes pre-resolved types, and parameters
-    are bound only when the body is checked (`bind_and_check_method`).
-  - The lever: a signature value scope declaring each parameter as it is
-    resolved, for `method_sig` and the free-function registration.
-    `Checker::type_of_operand` (`checker/constraints.rs`) then needs no
-    signature rejection.
-  - Probe: upstream's `std/math` SIMD `max` and `min`, `def max[dtype:
-    DType, //](x: SIMD[dtype, _], y: type_of(x), /) -> type_of(x)`, stop
-    here; their `pop.max`/`pop.min` bodies run since R1517.
-  - Found while landing R1369 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10000,11 +9989,13 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   defined", where the pin runs both.
   - `min` and `max` are `Checker::infer_min_max` rules. Upstream's `SIMD`
     overloads (`def max[dtype: DType, //](x: SIMD[dtype, _], y:
-    type_of(x), /) -> type_of(x)`) need R1508.
+    type_of(x), /) -> type_of(x)`) resolve since R1508. Their body
+    ``return {mlir_value = __mlir_op.`pop.max`(...)}`` needs R342's
+    keyword initializer list (or R1599's `type_of` construction).
   - Port both overloads into `stdlib/std/math.mojo`, then `clamp`
     (`simd.mojo:2670`). `infer_min_max` keeps the literal cases until
     upstream's variadic overload lands.
-  - Depends on R1508.
+  - Depends on R342.
   - Model: Opus, Planned.
 
 - [ ] **R1582 `SIMD.__round__` is a builtin rule and `SIMD` does not

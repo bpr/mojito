@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A signature's `type_of` reads the parameters declared before it, as
+  upstream resolves each signature type with the earlier arguments in
+  scope (R1508): `def f(x: Int, y: type_of(x)) -> type_of(x)` and a
+  method's `-> type_of(self.v)` run as at the pin instead of stopping with
+  "'type_of' of a parameter in a signature is not supported yet". Each `_`
+  of a `SIMD` parameter's type is now its own infer-only binder, so
+  upstream's `std/math` signature `max[dtype: DType, //](x: SIMD[dtype,
+  _], y: type_of(x), /) -> type_of(x)` binds its width per call.
 - `std.simd` declares upstream's `FastMathFlag` and `SIMD.fma`, and
   `std.math` declares upstream's `fma` (R1580): `v.fma(a, b)`,
   `v.fma[FastMathFlag.FAST](a, b)`, and `fma(a, b, c)` run as at the pin,
