@@ -1999,9 +1999,9 @@ impl Checker {
                     // result is (`comptime q = QS[2]`).
                     self.copy_compile_time_result(value, &ty);
                     let declared = self.inferred_binding_ty(&ty, name)?;
-                    // The binding is read at run time as its `Float64`
-                    // storage type, so the folded literal crosses here.
-                    if matches!(ty.kind(), TyKind::FloatLiteral) {
+                    // The binding is read at run time as its `Int` or
+                    // `Float64` storage type, so the literal crosses here.
+                    if matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral) {
                         self.record_literal_materializations(value, &ty, &declared)?;
                     }
                     self.declare_immutable(name, declared)?;

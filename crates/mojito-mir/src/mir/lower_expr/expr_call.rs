@@ -191,14 +191,20 @@ impl<'a> Flatten<'a> {
                 mojito_checked::checked::SemanticAdjustment::BuiltinCopyConstruction
             )
         }) {
-            return Some(
-                self.expr(
-                    kwargs
-                        .first()
-                        .expect("checked built-in copy construction has a keyword argument")
-                        .1,
-                ),
-            );
+            let (keyword, value) = kwargs
+                .first()
+                .expect("checked built-in copy construction has a keyword argument");
+            let value = self.expr(*value);
+            // `SIMD[dt, n](mlir_value=v)` is the vector its storage holds:
+            // the register is retyped, never converted.
+            return Some(match (call.ty(), self.f.reg_types.get(&value.0).cloned()) {
+                (Some(ty), Some(storage)) if *keyword == "mlir_value" && ty != storage => {
+                    let dest = self.fresh_typed(call.location(), None, ty);
+                    self.emit(MirInstr::Rebind { dest, value });
+                    dest
+                }
+                _ => value,
+            });
         }
         if node.adjustments.iter().any(|adjustment| {
             matches!(

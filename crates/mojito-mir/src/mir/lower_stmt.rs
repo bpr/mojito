@@ -3449,10 +3449,13 @@ impl<'a> Flatten<'a> {
         // places typed without relying on an unrelated later use. A
         // materialized literal binds at its materialization target, and a
         // converted initializer (`comptime t: String = "s"`) at its
-        // conversion's.
-        let converted = value
-            .implicit_conversion()
-            .and_then(|_| self.f.reg_types.get(&src.0).cloned());
+        // conversion's, a literal parameter value read the check
+        // materialized (`comptime k = A.K`) included.
+        let literal = |ty: &Ty| mojito_types::types::default_literal(ty) != *ty;
+        let converted = self.f.reg_types.get(&src.0).cloned().filter(|register| {
+            value.implicit_conversion().is_some()
+                || (value.ty().is_some_and(|ty| literal(&ty)) && !literal(register))
+        });
         let binding_ty = materialized
             .or(converted)
             .or_else(|| value.ty())

@@ -2555,7 +2555,10 @@ struct declaring an operation trait must define its dunder. Conversions
 (`Int`/`Float64`/`Bool` via `__int__`/`__float__`/`__bool__`) and `abs`/`round`
 (`__abs__`/`__round__`) route the same way for concrete structs, matching the
 paths opaque parameters already used. Builtin scalars keep primitive execution
-(`apply_infix`/`apply_prefix`) behind the protocol; a struct operand dispatches
+(`apply_infix`/`apply_prefix`) behind the protocol, except `+`, `-`, `*`, and
+prefix `-`, which are `SIMD`'s declared dunders, called as a struct's are and
+spliced by `inline-parametric`, their `pop` ops the `binary` and `unary` the
+backends run; a struct operand dispatches
 through its dunder (`apply_binop`/`apply_prefix`, and the `abs`/`round`/`Int`
 builtins). The checker checks a struct operator as its dunder's method call,
 as upstream's `emitBinOpCall` and `UnaryOpNode::emitArith` resolve it: `a op

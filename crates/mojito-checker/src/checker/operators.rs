@@ -14,17 +14,18 @@ impl Checker {
         operand: &Expr,
     ) -> Result<Ty, TypeError> {
         let t = self.infer(operand)?;
+        // `-x` over a `SIMD` is its declared `x.__neg__()`, as upstream's
+        // `UnaryOpNode::emitArith` emits it.
+        if op == PrefixOp::Neg
+            && self.declared_receiver_member(&t, op.dunder()).is_some()
+            && let Some(ty) =
+                self.infer_operator_method_call(&span, operand, &t, op.dunder(), &[])?
+        {
+            return Ok(ty);
+        }
         match (op, t.kind()) {
-            // Negation preserves the (possibly literal) numeric type, except UInt.
-            (
-                PrefixOp::Neg,
-                TyKind::INT | TyKind::FLOAT64 | TyKind::IntLiteral | TyKind::FloatLiteral,
-            ) => {
-                return Ok(t);
-            }
-            // Elementwise negation on numeric SIMD lanes preserves the type;
-            // a bool mask does not negate.
-            (PrefixOp::Neg, TyKind::Simd { dtype, .. }) if dtype.licenses(|d| d != Dtype::Bool) => {
+            // A literal's negation is a literal.
+            (PrefixOp::Neg, TyKind::IntLiteral | TyKind::FloatLiteral) => {
                 return Ok(t);
             }
             (PrefixOp::Not, TyKind::Bool) => return Ok(Ty::bool()),
@@ -144,8 +145,25 @@ impl Checker {
         if matches!(op, In | NotIn) {
             return self.infer_membership(span, op, left, right, &lt, &rt);
         }
-        // SIMD operators are elementwise (handled before the scalar-numeric
-        // path, which `Int`, `UInt`, and `Float64` operands keep).
+        // `+`, `-`, and `*` beside a `SIMD` operand, a scalar's included, are
+        // `SIMD`'s declared dunders, `a.__add__(b)` else the reflected
+        // `b.__radd__(a)`, as upstream's `emitBinOpCall` resolves them.
+        let pointer_or_archetype =
+            |ty: &Ty| matches!(ty.kind(), TyKind::Pointer { .. }) || is_bound_archetype(ty);
+        if let Some(span) = &span
+            && matches!(op, Add | Sub | Mul)
+            && (matches!(lt.kind(), TyKind::Simd { .. })
+                || matches!(rt.kind(), TyKind::Simd { .. }))
+            && !pointer_or_archetype(&lt)
+            && !pointer_or_archetype(&rt)
+        {
+            return self
+                .infer_operator_call(span, op, left, right, &lt, Some(&rt))?
+                .ok_or_else(|| bad_infix_operator(op, &lt, &rt));
+        }
+        // The other SIMD operators are elementwise (handled before the
+        // scalar-numeric path, which `Int`, `UInt`, and `Float64` operands
+        // keep).
         let vector = |ty: &Ty| {
             matches!(ty.kind(), TyKind::Simd { .. })
                 && !mojito_types::types::has_host_scalar_value(ty.kind())
@@ -256,7 +274,10 @@ impl Checker {
             Add if lt == TyKind::StringLiteral && rt == TyKind::StringLiteral => {
                 Some(Ty::string_literal())
             }
-            // Arithmetic that preserves the operand type.
+            // Arithmetic that preserves the operand type: literal
+            // arithmetic, and the binary operator of an augmented
+            // assignment over a scalar, which has no `__iadd__` yet (R1552);
+            // any other `+`, `-`, or `*` beside a `SIMD` is its dunder above.
             Add | Sub | Mul | FloorDiv | Mod | Pow => common,
             Shl | Shr | BitAnd | BitOr | BitXor
                 if common.as_ref().is_some_and(|ty| {
@@ -421,7 +442,8 @@ impl Checker {
         rt: Option<&Ty>,
     ) -> Result<Option<Ty>, TypeError> {
         if let Some(dunder) = op.dunder()
-            && self.has_operator_methods(lt)
+            && (self.has_operator_methods(lt)
+                || self.declared_receiver_member(lt, dunder).is_some())
             && let Some(ty) = self.infer_operator_method_call(
                 span,
                 left,
@@ -435,7 +457,8 @@ impl Checker {
         let (Some(reflected), Some(rt)) = (op.reflected_dunder(), rt) else {
             return Ok(None);
         };
-        if !self.has_operator_methods(rt) {
+        if !self.has_operator_methods(rt) && self.declared_receiver_member(rt, reflected).is_none()
+        {
             return Ok(None);
         }
         let ty = self.infer_operator_method_call(
@@ -515,7 +538,8 @@ impl Checker {
         })
     }
 
-    /// Type a SIMD operator. Both operands must be the same SIMD type,
+    /// Type a SIMD operator other than an infix `+`, `-`, or `*`, which are
+    /// `SIMD`'s declared dunders. Both operands must be the same SIMD type,
     /// except a numeric *literal* splats to the other operand's type.
     /// Arithmetic is elementwise and keeps the operand type; a comparison is
     /// upstream's builtin dunder, a `Bool`: `==` when every lane is equal,
@@ -560,7 +584,8 @@ impl Checker {
         };
         let same = || simd_of(dtype.clone(), width.clone());
         match op {
-            // Elementwise arithmetic on numeric lanes preserves the type.
+            // Only an augmented assignment's binary operator, which has no
+            // `__iadd__` yet (R1552), reaches here for `+`, `-`, and `*`.
             Add | Sub | Mul if dtype.licenses(|d| d != Dtype::Bool) => same(),
             // Floor division on numeric lanes (`pop.floordiv`); remainder on
             // integer lanes (upstream defines it on float lanes too, a
@@ -610,13 +635,24 @@ impl Checker {
             }
         };
         let holds = GenericConstraint::Eq(lanes, ConstraintOperand::Value(CtValue::Int(1)));
+        self.record_instance_constraint(span, holds, message);
+        Ok(())
+    }
+
+    /// Record at `span` the assertion that `holds`, failing with `message`,
+    /// for each reached instance to judge, once.
+    pub(super) fn record_instance_constraint(
+        &self,
+        span: &SourceSpan,
+        holds: GenericConstraint,
+        message: &str,
+    ) {
         let assertion = GenericConstraint::WithMessage(Box::new(holds), message.to_string());
         let mut record = self.record_at(span.clone());
         let assertions = record.instance_assertions.get_or_insert_with(Vec::new);
         if !assertions.contains(&assertion) {
             assertions.push(assertion);
         }
-        Ok(())
     }
 
     /// Type `SIMD[DType.<dt>, width](args)`: `width` element arguments, or a

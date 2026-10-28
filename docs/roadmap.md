@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1566**.
+Next free ID: **R1571**.
 
 ## Ordered Work
 
@@ -557,10 +557,11 @@ which names the upstream pass each one follows. Each is measured by the
     keeps its call at the pin and inlines here.
   - Marking that `nxt` `nodebug`, which inlines at any size in the first
     round, makes `f` cost 10 at the pin, which confirms the cause.
-  - Probe, once R1551 makes `Int` arithmetic `SIMD` dunder calls: `for i in
-    range(x): break` costs 31 here and `var r = range(x)` then `try: s +=
-    Int(r.__next__())` costs 28, where the pin keeps both, since
-    `SIMD.__add__` spliced into `__next__` puts it past the bound.
+  - Probe: now that `Int` arithmetic is `SIMD`'s dunders, an
+    `@always_inline` `f(x)` holding `for i in range(x): break` costs 33
+    and keeps its call, as at the pin.
+  - Probe: one holding `var r = range(x)` then `try: s +=
+    Int(r.__next__())` costs 31 and inlines, where the pin keeps it.
   - The lever: price the slot traffic, wrapper loop, and breaks of a body
     spliced since the last `mem-2-reg` as the operations the pin counts,
     calibrated against pin probes.
@@ -1228,6 +1229,24 @@ change that needs a new `MJRT_ABI_VERSION`.
 Track: `ownership`.
 
 Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
+
+- [ ] **R1570 A register-passable `read self` receiver keeps its place, so
+  its owner outlives the call, where upstream passes it by value**
+
+  `a.p.add(b.p)`, with `p` a `TrivialRegisterPassable` field of a `W` that
+  prints in its destructor, prints `add` then `del 2`, `del 1` here, where
+  the pin prints `del 1`, `del 2`, then `add`.
+  - The method call retains the receiver's place (`recv_place`), so the
+    owner's last use is the call, not the receiver's read at setup.
+  - A read argument already decides this by the checker's
+    `RegisterPassableRead` and passes such a value with no place unless
+    the call's result borrows it (`lower_call_operand`).
+  - `lower_receiver_value` (`mir/calls.rs`) drops the place for a `SIMD`
+    receiver only: record the same fact for a receiver and apply it to
+    every register-passable one.
+  - Probe: the shape above, as an `assets/ok` drop-order fixture.
+  - Depends on nothing.
+  - Model: Opus, Planned.
 
 - [ ] **R473 A discard `_ = e` binds its value into a slot, so a place is
   copied or moved into it**
@@ -2884,6 +2903,17 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1140 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1569 Unary `+` does not parse**
+
+  `print(+a)` over `a: Int` is a parse error here ("Expected an
+  expression"), where the pin calls `a.__pos__()` and prints `7`.
+  - `SIMD.__pos__` is declared, so `a.__pos__()` already runs.
+  - Add unary `+` to `factor` in `docs/grammar.md`, then `PrefixOp::Pos`
+    (dunder `__pos__`), parsed and checked as `-` is.
+  - A literal operand (`+5`) stays a literal.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1248 `comptime if case` is a parse error**
 
@@ -7293,6 +7323,9 @@ retained on purpose and re-probed rather than fixed; they are listed in
     overflow), so the plan decides which are bugs and which are recorded
     choices.
   - Ledger name: `native-arithmetic-edge-cases`.
+  - R1566 (`simd_floordiv_mod.mojo`: the pin's zero-divisor rule) and R1567
+    (`pliron_float_pow.mojo`: `_powf_scalar`'s `exp(log)`) each remove a
+    row.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -7554,6 +7587,15 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - But the elaborator's literal fold then divides an `IntLiteral` pair
     into a float where the pin keeps `Int`.
   - Ledger name: `int-true-division`.
+  - Port upstream's `SIMD.__truediv__` and `__rtruediv__` (`pop.div`) and
+    route `/` over a `SIMD` to them, as `+` is routed.
+  - The run-time half moves no corpus fixture (measured while planning
+    R1551).
+  - The compile-time half is `param_expr::fold`'s `Div` over `Int`
+    operands, which must truncate as `pop.div` does: `comptime y = x / 2`
+    over `comptime x: Int = 7` prints `3` at the pin.
+  - Pliron's `lower_true_div` and the VM's `Div` arm of `numeric_op`
+    retire.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -7966,7 +8008,7 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - `(c^) + (d^)` is the spelling both accept.
   - Probe: `conformance/probes/transfer_operand_before_infix_operator.mojo`.
   - Found while landing R730 (2026-10-13).
-  - Depends on nothing.
+  - Depends on R1569, which parses unary `+`.
   - Model: Opus, Not Planned.
 
 - [ ] **R815 Mojito accepts a `Dict` entry's key as its caller's bound,
@@ -9905,38 +9947,65 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1551 `SIMD`'s arithmetic is a checker rule and MIR binop, where
-  upstream's is `SIMD`'s `__add__` … `__pow__` bodies**
-
-  An infix operator over a `SIMD` is typed by `infer_simd_infix` and run by
-  name-keyed VM and Pliron arms, where upstream's dunders are `pop` ops in
-  library bodies.
-  - Port `__add__`, `__sub__`, `__mul__`, `__truediv__`, `__floordiv__`,
-    `__mod__`, `__divmod__`, `__pow__`, `__neg__`, `__pos__`,
-    `__ceildiv__`, and their reflected forms.
-  - Infix over `SIMD` dispatches to the declared dunders, as struct
-    operators do (R1348–R1359). `builtin_fold::mlir_op_operator` keeps
-    rewriting `pop.add` over storage only, so it does not recurse.
-  - Retire the arithmetic half of `infer_simd_infix` and the matching VM
-    and Pliron arms.
-  - Measure VM run time with `scripts/smoke` before and after: every `Int`
-    operation in the corpus moves to an inlined library call.
-  - Closes R850. Shrinks R171.
-  - Probe (from R1452): once `Int` arithmetic is a dunder call, `for i in
-    range(x): break` costs 31 here.
-  - Depends on R1550.
-  - Model: Fable, Planned.
-
 - [ ] **R1552 `SIMD`'s bitwise, shift, and in-place operators are checker
   rules, where upstream's are library bodies**
 
   `&`, `|`, `^`, `~`, `<<`, `>>`, and every in-place form over a `SIMD` are
   typed by rule and run by name-keyed backend arms.
   - Port `__and__`, `__or__`, `__xor__`, `__invert__`, `__lshift__`,
-    `__rshift__`, their reflected forms, and every `__i*__`.
-  - Retire the rest of `infer_simd_infix` and the backend arms.
+    `__rshift__`, and their reflected forms.
+  - Port the in-place forms whose binary operator is a dunder by then:
+    `__iadd__`, `__isub__`, `__imul__`, and the bitwise and shift ones.
+  - `__itruediv__` waits for R184, `__ifloordiv__` and `__imod__` for
+    R1566, and `__ipow__` for R1567.
+  - An augmented `+=`, `-=`, or `*=` over a scalar is still the checker's
+    binary rule (`infer_infix` with no span, `infer_simd_infix`'s `Add |
+    Sub | Mul` arm): retire both once `__iadd__` answers it.
+  - Retire the rest of `infer_simd_infix` but its `FloorDiv`, `Mod`, and
+    `Div` arms, and the backend arms.
   - Depends on R1551.
   - Model: Opus, Planned.
+
+- [ ] **R1566 `SIMD`'s `//`, `%`, `divmod`, and `ceildiv` are checker
+  rules and a trap, where upstream's are `__floordiv__` … `__ceildiv__`
+  bodies**
+
+  `a // 0` traps here, where upstream's `__floordiv__` and `__mod__` mask a
+  zero divisor and return `0` (`Int(7) // 0` prints `0` at the pin).
+  - Port `__floordiv__`, `__mod__`, `__divmod__`, `__ceildiv__`,
+    `__rfloordiv__`, and `__rmod__` verbatim, and route `//` and `%` to
+    them as `+` is routed (`Checker::infer_infix`).
+  - The bodies need `and` over masks (R97), `trunc` over a float vector
+    (R1554), `Self._Mask(fill=…)` at a symbolic width (R1555), `any`
+    (R1568), and `Self()` and `Self(1)` inside the struct.
+  - `assets/runtime_error/pliron_trap_{div,mod,uint_div}_zero.mojo` then
+    run: move them to `assets/ok` with the pin's output, drop their
+    errors-ledger rows, and update `docs/non-goals.md`'s trap sentence.
+  - Retire the VM's `__ceildiv__`/`__divmod__` arms
+    (`backend/vm/invoke.rs`), Pliron's (`lower/methods.rs`), and the
+    checker's `math_operation_requirement` rows for them.
+  - `builtin_fold.rs`'s syntactic `FloorDiv | Mod` body rule becomes the
+    dunder's inline level.
+  - Closes R850. Removes `simd_floordiv_mod.mojo` from R171.
+  - Depends on R97, R1554, R1555, and R1568.
+  - Model: Fable, Planned.
+
+- [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
+  `__pow__` over `_pow`**
+
+  `v ** 2` over a `float32` vector is rejected, and `Float64(2) **
+  Float64(0.5)` prints the host's `powf`, where the pin prints
+  `1.4142135623734946` through `_powf_scalar`'s `exp(log)`.
+  - Port the three `__pow__` overloads, `__rpow__`, `_pow`, `_powf`,
+    `_powf_scalar`, and `_powi`.
+  - `_pow` reads `CurrentPlugin.binary_math_fn` (R330, R1562), stores
+    lanes with `result[i] = …` (R1561), and initializes `out result` with
+    `result = {}`.
+  - Retire the `__pow__` arms of `math_operation_requirement` and the
+    elaborator's `__pow__` rewrite (`mono/specializer.rs`).
+  - Removes `pliron_float_pow.mojo` from R171.
+  - Depends on R1566, R1561, R1562, R330, and R1568.
+  - Model: Fable, Planned.
 
 - [ ] **R1553 `SIMD`'s comparisons are builtin dunders, where upstream's
   are `pop.cmp` in library bodies**
@@ -10896,6 +10965,17 @@ recorded limit, listed in impact order: soundness of the executable oracle
 first, then everyday spellings that reject today, then parity details. A
 residue found inside a task moves to the task that owns its fix.
 
+- [ ] **R1568 The free functions `any` and `all` are undefined**
+
+  `any(mask)` over a `SIMD` mask stops with "Undefined variable 'any'",
+  where the pin reduces the lanes.
+  - Bundle upstream's `any`/`all` overloads from `std/builtin/bool.mojo`:
+    the `Iterable` ones and the `SIMD` ones
+    (`value.cast[.bool]().reduce_or()`).
+  - `SIMD.__divmod__` and `__floordiv__` call `any` (R1566).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1421 `Optional` stores its value in a heap allocation, where
   upstream's holds it inline**
 
@@ -11663,8 +11743,9 @@ residue found inside a task moves to the task that owns its fix.
     differ. Each step rounds to the lane.
   - Once the VM computes it, add it to `ct::float_lane_binop`, so `sccp`
     folds it too.
+  - Closed by R1566, which ports upstream's `__mod__`.
   - Found while landing R846 (2026-10-14).
-  - Depends on nothing.
+  - Depends on R1566.
   - Model: Opus, Not Planned.
 
 - [ ] **R1410 `String`'s variadic constructor is rejected**

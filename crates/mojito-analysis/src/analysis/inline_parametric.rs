@@ -73,7 +73,8 @@
 //! bind nothing either: the checker judged them at the call, as the pin
 //! judges a clause there (a call from a generic caller without the evidence
 //! is rejected as "lacking evidence to prove correctness"), so the inlined
-//! body carries none. A `comptime for` sequence closes over the bindings
+//! body carries none. A `comptime assert` in the body comes with it, its
+//! binders the call's arguments, for the caller's instance to judge. A `comptime for` sequence closes over the bindings
 //! as a lane mask does, its loop binder staying the body's own, which the
 //! elaborator unrolls in the caller. A compile-time application over a
 //! bound type pack (`Tuple.reverse`'s `comptime for` bound) is applied to
@@ -198,8 +199,8 @@ use mojito_types::param_expr::{
 };
 use mojito_types::types::{
     GenericConstraint, LaneMask, ParamDecl, Ty, TyArg, TyKind, TyRewrite, VariantIndex,
-    default_literal, is_scalar_simd, list_spread_argument, names_binder, pack_spread,
-    pack_spread_argument, replace_argument_parameters, replace_constraint_parameters,
+    default_literal, is_scalar_simd, list_spread_argument, names_binder, nominal_parts,
+    pack_spread, pack_spread_argument, replace_argument_parameters, replace_constraint_parameters,
     replace_parameters, replace_value_parameters, rewrite_ty, scalar_simd_dtype,
 };
 use std::borrow::Cow;
@@ -1510,9 +1511,7 @@ impl<'c> Inliner<'_, 'c> {
     /// of the call's receiver or result; `None` when `ty` is no application
     /// of it.
     fn owner(&self, callee: &MirFunction, ty: &Ty) -> Option<Owner<'c>> {
-        let TyKind::Struct(template, _) = callee.param_types.first()?.kind() else {
-            return None;
-        };
+        let (template, _) = nominal_parts(callee.param_types.first()?)?;
         let structure = self.declarations.structure(template)?;
         let decls = &structure.param_decls;
         if decls.is_empty() {
@@ -1534,12 +1533,14 @@ impl<'c> Inliner<'_, 'c> {
             {
                 Some(Owner::Unbound)
             }
-            TyKind::Struct(name, _) if name == template => Some(Owner::Applied(OwnerInstance {
-                template: template.clone(),
-                ty: ty.clone(),
-                decls,
-                fields: &structure.fields,
-            })),
+            _ if nominal_parts(ty).is_some_and(|(name, _)| name == template) => {
+                Some(Owner::Applied(OwnerInstance {
+                    template: template.to_string(),
+                    ty: ty.clone(),
+                    decls,
+                    fields: &structure.fields,
+                }))
+            }
             _ => None,
         }
     }
@@ -2949,31 +2950,30 @@ fn retype_reference_results(blocks: &mut [MirBlock], returned: &[Reg], ty: &Ty) 
     }
 }
 
-/// Whether the callee has a shape the splice handles: a struct receiver
-/// if any, and blocks of plain or structured control flow, at any depth,
-/// with no closure or compile-time assertion (which fails the callee's own
-/// instance). A `try` is spliced as an inlined `if` is, its parts sharing
+/// Whether the callee has a shape the splice handles: a receiver of a
+/// declared struct's type ([`nominal_parts`]) if any, and blocks of plain
+/// or structured control flow, at any depth, with no closure. A
+/// compile-time assertion is spliced with the rest, its binders the call's
+/// arguments, so a concrete caller's instance judges it as the callee's
+/// own would. A `try` is spliced as an inlined `if` is, its parts sharing
 /// the caller's registers, and a raise naming it stays.
 fn is_closed(callee: &MirFunction, declaration: &MirFunctionDeclaration) -> bool {
     let receiver_closed = !declaration.has_receiver
         || callee
             .param_types
             .first()
-            .is_some_and(|receiver| matches!(receiver.kind(), TyKind::Struct(..)));
+            .is_some_and(|receiver| nominal_parts(receiver).is_some());
     receiver_closed && closed_blocks(&callee.blocks)
 }
 
-/// Whether `blocks` and their regions hold no closure or compile-time
-/// assertion.
+/// Whether `blocks` and their regions hold no closure.
 fn closed_blocks(blocks: &[MirBlock]) -> bool {
     blocks.iter().all(|block| {
         block.instrs.iter().all(|instruction| {
-            !matches!(
-                instruction,
-                MirInstr::ComptimeAssert { .. } | MirInstr::MakeClosure { .. }
-            ) && instruction_regions(instruction)
-                .into_iter()
-                .all(|region| closed_blocks(region))
+            !matches!(instruction, MirInstr::MakeClosure { .. })
+                && instruction_regions(instruction)
+                    .into_iter()
+                    .all(|region| closed_blocks(region))
         })
     })
 }
@@ -3792,10 +3792,8 @@ impl Instantiation {
             context: ParamContext::detached(),
         };
         if let Some(owner) = owner {
-            let TyKind::Struct(_, owner_arguments) = owner.ty.kind() else {
-                return None;
-            };
-            let owner_arguments = owner_binder_arguments(owner.decls, owner_arguments)?;
+            let (_, owner_arguments) = nominal_parts(&owner.ty)?;
+            let owner_arguments = owner_binder_arguments(owner.decls, &owner_arguments)?;
             for (decl, argument) in owner.decls.iter().zip(owner_arguments.iter()) {
                 match instantiation.bind(decl, argument, None)? {
                     Bound::Value(value)

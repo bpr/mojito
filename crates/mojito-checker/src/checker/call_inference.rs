@@ -829,6 +829,12 @@ impl Checker {
             "Int" | "UInt" | "Bool" | "Float64" if param_args.is_empty() => {
                 scalar_type_name(name).map(|ty| (ty, Vec::new()))
             }
+            // `Self(mlir_value=v)` inside `SIMD`'s own members.
+            "Self" if param_args.is_empty() && self.lookup("Self").is_none() => self
+                .self_ty
+                .clone()
+                .filter(|ty| simd_slots(ty).is_some())
+                .map(|ty| (ty, Vec::new())),
             _ if param_args.is_empty() => {
                 Dtype::from_scalar_alias(name).map(|dtype| (simd_ty(dtype, 1), Vec::new()))
             }

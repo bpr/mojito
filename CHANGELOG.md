@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD`'s `__add__`, `__sub__`, `__mul__`, `__pos__`, `__neg__`,
+  `__radd__`, `__rsub__`, and `__rmul__` are upstream's bodies in
+  `std.simd`, and infix `+`, `-`, `*` and prefix `-` beside any `SIMD`,
+  `Int` and `Float64` included, call them as a struct operator calls its
+  dunders (R1551). `a.__add__(2)`, `a.__radd__(1)`, and `a.__pos__()` over
+  an `Int` were rejected and run; `b * b` and `b - b` over a `bool` mask,
+  which ran, fail the instance with the pin's `pop.mul` lane rule and
+  `__sub__`'s assert. `inline-parametric` now splices a `SIMD` method and a
+  callee's `comptime assert`s, and `mem-2-reg` promotes a trivially
+  copyable slot whose stored register is read elsewhere too, so the VM runs
+  no extra frame. A `comptime k = A.K` binding is an `Int` slot, an `A.K`
+  read a method can take as its receiver.
 - `SIMD` declares `Boolable`, `Indexer`, and `Intable` with upstream's
   `__bool__`, `__int__`, `__mlir_index__`, `__float__`, `_refine`, and
   `__contains__` bodies in `std.simd`, and conformance of a `SIMD` to a

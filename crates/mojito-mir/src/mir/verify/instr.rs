@@ -1006,7 +1006,7 @@ fn verify_simd_instruction(cx: &InstrCx<'_>, instruction: &MirInstr, errors: &mu
             }
             if let Some(source) = cx.reg_ty(*value)
                 && let Some(joined) = other.as_ref().and_then(|register| cx.reg_ty(*register))
-                && joined != source
+                && held_simd_ty(joined) != held_simd_ty(source)
             {
                 errors.push(format!(
                     "{prefix}: SIMD join operand {joined} does not match {source}"

@@ -331,7 +331,9 @@ impl Facts {
     /// one of the `entry_stored` parameters) of a promotable type or a thin
     /// function type, or one every store of which is a closure of reference
     /// captures, kept by no mention, whose stores each store a register
-    /// defined once and read only there, and whose reads read its type. A
+    /// defined once, and read only there unless the slot's copy is the
+    /// identity, as upstream's stored SSA value is read anywhere, and whose
+    /// reads read its type. A
     /// call through the slot leaves only a slot of a thin function type, or
     /// a local some store of which gives it a closure: neither value
     /// carries storage it lends.
@@ -358,16 +360,15 @@ impl Facts {
                     .mentions
                     .iter()
                     .any(|(_, mention)| matches!(mention, Mention::Store(_)));
+        let identity = typed.is_some_and(|ty| declarations.copy_is_identity(ty));
         (var as usize >= function.n_params || entry_stored.contains(&var))
             && !entry.kept
-            && (thin
-                || stores_closures
-                || typed.is_some_and(|ty| declarations.copy_is_identity(ty)))
+            && (thin || stores_closures || identity)
             && entry.mentions.iter().all(|(_, mention)| match *mention {
                 Mention::Store(src) => {
                     function.reg_types.get(&src.0) == typed
                         && self.definitions.get(src.0 as usize) == Some(&1)
-                        && self.reads.get(src.0 as usize) == Some(&1)
+                        && (identity || self.reads.get(src.0 as usize) == Some(&1))
                 }
                 Mention::Read { dest } => function.reg_types.get(&dest.0) == typed,
                 Mention::CalleeRead { dest } => {

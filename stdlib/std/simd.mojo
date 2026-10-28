@@ -1,10 +1,12 @@
 # Upstream's `std/simd.mojo`, in part: the `SIMD` struct, its storage, and
 # its instance `__len__`, `__getitem__`, `__setitem__`, `__contains__`,
-# `__bool__`, `__int__`, `__mlir_index__`, `__float__`, and `_refine`. The
-# other members are still served by the compiler (R1551–R1555, R330, R276),
-# and the struct declares only the traits whose requirements are ported
-# here; as upstream's, its trait list has no `Floatable`. `Scalar`, `Int`,
-# `UInt`, the sized aliases, and `Byte` stay compiler names until R1557.
+# `__add__`, `__sub__`, `__mul__`, `__pos__`, `__neg__`, `__radd__`,
+# `__rsub__`, `__rmul__`, `__bool__`, `__int__`, `__mlir_index__`,
+# `__float__`, and `_refine`. The other members are still served by the
+# compiler (R184, R1552–R1555, R1566, R1567, R330, R276), and the struct
+# declares only the traits whose requirements are ported here; as
+# upstream's, its trait list has no `Floatable`. `Scalar`, `Int`, `UInt`,
+# the sized aliases, and `Byte` stay compiler names until R1557.
 # Omitted: the `@lldb_formatter_wrapping_type` decorator
 # (`std.utils._visualizers`) and `CoordLike`'s static `__len__`
 # (`std.utils.coord`).
@@ -235,6 +237,117 @@ struct SIMD[dtype: DType, length: SIMDLength](
             Whether the vector contains the value.
         """
         return self.eq(value).reduce_or()
+
+    @always_inline("builtin")
+    def __add__(self, rhs: Self) -> Self:
+        """Computes `self + rhs`.
+
+        Args:
+            rhs: The rhs value.
+
+        Returns:
+            A new vector whose element at position `i` is computed as
+            `self[i] + rhs[i]`.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        return Self(
+            mlir_value=__mlir_op.`pop.add`(self._mlir_value, rhs._mlir_value)
+        )
+
+    @always_inline("builtin")
+    def __sub__(self, rhs: Self) -> Self:
+        """Computes `self - rhs`.
+
+        Args:
+            rhs: The rhs value.
+
+        Returns:
+            A new vector whose element at position `i` is computed as
+            `self[i] - rhs[i]`.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        return Self(
+            mlir_value=__mlir_op.`pop.sub`(self._mlir_value, rhs._mlir_value)
+        )
+
+    @always_inline("builtin")
+    def __mul__(self, rhs: Self) -> Self:
+        """Computes `self * rhs`.
+
+        Args:
+            rhs: The rhs value.
+
+        Returns:
+            A new vector whose element at position `i` is computed as
+            `self[i] * rhs[i]`.
+        """
+
+        return Self(
+            mlir_value=__mlir_op.`pop.mul`(self._mlir_value, rhs._mlir_value)
+        )
+
+    @always_inline("builtin")
+    def __pos__(self) -> Self:
+        """Defines the unary `+` operation.
+
+        Returns:
+            This SIMD vector.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        return self
+
+    @always_inline("builtin")
+    def __neg__(self) -> Self:
+        """Defines the unary `-` operation.
+
+        Returns:
+            The negation of this SIMD vector.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        return Self(mlir_value=__mlir_op.`pop.neg`(self._mlir_value))
+
+    # ===------------------------------------------------------------------=== #
+    # Reversed operations
+    # ===------------------------------------------------------------------=== #
+
+    @always_inline("builtin")
+    def __radd__(self, value: Self) -> Self:
+        """Returns `value + self`.
+
+        Args:
+            value: The other value.
+
+        Returns:
+            `value + self`.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        return value + self
+
+    @always_inline("builtin")
+    def __rsub__(self, value: Self) -> Self:
+        """Returns `value - self`.
+
+        Args:
+            value: The other value.
+
+        Returns:
+            `value - self`.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        return value - self
+
+    @always_inline("builtin")
+    def __rmul__(self, value: Self) -> Self:
+        """Returns `value * self`.
+
+        Args:
+            value: The other value.
+
+        Returns:
+            `value * self`.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        return value * self
 
     # ===------------------------------------------------------------------=== #
     # Trait implementations

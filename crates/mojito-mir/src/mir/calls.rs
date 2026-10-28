@@ -2254,6 +2254,24 @@ impl<'a> Flatten<'a> {
         } else {
             value
         };
+        // A `SIMD` receiver the method reads is passed by value, as
+        // upstream passes a register-passable `read self`: it retains no
+        // place, so its owner may die at the read, before the call runs.
+        if place.is_some()
+            && !copied
+            && call.reference_result().is_none()
+            && call.call_contract().is_some_and(|contract| {
+                matches!(
+                    contract.receiver_convention,
+                    None | Some(mojito_ast::ast::ArgConvention::Imm)
+                )
+            })
+            && receiver
+                .ty()
+                .is_some_and(|ty| matches!(ty.kind(), TyKind::Simd { .. }))
+        {
+            return (value, None);
+        }
         (value, place)
     }
 }

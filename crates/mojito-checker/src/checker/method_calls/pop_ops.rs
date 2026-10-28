@@ -127,7 +127,56 @@ impl Checker {
         self.record_at(span.clone()).adjustment = Some(Box::new(
             mojito_checked::checked::SemanticAdjustment::MlirOp(op),
         ));
+        self.record_symbolic_lane_rule(span, name, op, &operands);
         Ok(result)
+    }
+
+    /// A lane rule over a dtype still a parameter (`pop.mul` in `SIMD`'s
+    /// `__mul__`) is the op verifier's in each instance: record it at
+    /// `span` as an assertion that the dtype is none the rule excludes.
+    fn record_symbolic_lane_rule(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        op: MlirOp,
+        operands: &[Ty],
+    ) {
+        if self.comptime_positions.get() != 0
+            || op == MlirOp::PopSelect
+            || op.is_builtin_cast()
+            || op.is_index()
+            || op.is_lane()
+        {
+            return;
+        }
+        let (Some(lanes), Some((SimdDtype::Expr(dtype), _))) =
+            (op.lanes(), operands.first().and_then(storage_slots))
+        else {
+            return;
+        };
+        if !SimdDtype::Expr(dtype.clone()).is_symbolic() {
+            return;
+        }
+        let holds = Dtype::ALL
+            .into_iter()
+            .filter(|excluded| !lanes.admits(*excluded))
+            .map(|excluded| {
+                GenericConstraint::Ne(
+                    ConstraintOperand::Expr(dtype.clone()),
+                    ConstraintOperand::Value(CtValue::Dtype(excluded)),
+                )
+            })
+            .reduce(|left, right| GenericConstraint::And(Box::new(left), Box::new(right)));
+        if let Some(holds) = holds {
+            self.record_instance_constraint(
+                span,
+                holds,
+                &format!(
+                    "'{name}' op operand #0 must be SIMD type whose element type is {} dtype",
+                    lanes.describe()
+                ),
+            );
+        }
     }
 
     /// The type a `_type` attribute names: a type annotation, or an
