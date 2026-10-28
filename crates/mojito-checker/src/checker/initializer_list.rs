@@ -59,25 +59,7 @@ impl Checker {
     /// P` is `P.make()`). The checked arena hands HIR the spelling in the
     /// expression's place. `None` when no type alias heads `expression`.
     pub(super) fn infer_type_alias_read(&self, expression: &Expr) -> Option<Result<Ty, TypeError>> {
-        let receiver = |object: &Expr| {
-            let ExprKind::Identifier(name) = &object.kind else {
-                return None;
-            };
-            let value = self.type_alias_read(name)?.1;
-            let mut receiver = value.clone();
-            receiver.source.clone_from(&expression.source);
-            // Ordinal 0 is the spelled expression, 1 an applied member's
-            // callee.
-            mojito_ast::visit::walk_expr_mut(
-                &mut mojito_ast::visit::DerivedIdentities {
-                    parent: expression.syntax_id,
-                    next: 2,
-                },
-                &mut receiver,
-            );
-            Some(Box::new(receiver))
-        };
-        let spelled = match &expression.kind {
+        match &expression.kind {
             // `Self(...)`: the struct's own alias, so the construction of
             // the struct over its own parameters (`G[Self.T](...)`).
             ExprKind::Call {
@@ -96,62 +78,93 @@ impl Checker {
                         kwargs: kwargs.clone(),
                     },
                 );
-                return Some(self.infer_spelled(expression, construction));
+                Some(self.infer_spelled(expression, construction))
             }
             ExprKind::Call {
                 name,
                 param_args,
                 args,
                 kwargs,
-            } if param_args.is_empty() => {
-                return self.type_alias_read(name).map(|(ty, value)| {
-                    self.alias_construction(expression, ty, value, args, kwargs)
-                        .and_then(|construction| self.infer_spelled(expression, construction))
-                });
+            } if param_args.is_empty() => self.type_alias_read(name).map(|(ty, value)| {
+                self.alias_construction(expression, ty, value, args, kwargs)
+                    .and_then(|construction| self.infer_spelled(expression, construction))
+            }),
+            _ => {
+                let spelled = over_receiver(expression, |object| {
+                    let ExprKind::Identifier(name) = &object.kind else {
+                        return None;
+                    };
+                    Some(derived_receiver(expression, self.type_alias_read(name)?.1))
+                })?;
+                Some(self.infer_spelled(expression, spelled))
             }
-            ExprKind::MethodCall {
-                object,
-                method,
-                args,
-                kwargs,
-            } => ExprKind::MethodCall {
-                object: receiver(object)?,
-                method: method.clone(),
-                args: args.clone(),
-                kwargs: kwargs.clone(),
+        }
+    }
+
+    /// Type an expression headed by `type_of(operand)` as the same
+    /// expression over the type the call denotes, as upstream reads
+    /// `type_of`'s result as that type: a call of it constructs the type
+    /// (`type_of(v)(2)` over a `Float32` `v` is `SIMD[DType.float32,
+    /// 1](2)`), and a static call, a member read, or an applied member
+    /// through it is the type's (`type_of(t).__len__()`). The checked arena
+    /// hands HIR the spelling in the expression's place. `None` when no
+    /// `type_of` heads `expression`.
+    pub(super) fn infer_type_of_read(&self, expression: &Expr) -> Option<Result<Ty, TypeError>> {
+        let is_type_of =
+            |head: &Expr| matches!(&head.kind, ExprKind::Call { name, .. } if name == "type_of");
+        if let ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } = &expression.kind
+            && param_args.is_empty()
+            && is_type_of(callee)
+        {
+            return Some(
+                self.denoted_type(callee, "a construction through 'type_of'")
+                    .and_then(|ty| self.alias_construction(expression, &ty, callee, args, kwargs))
+                    .and_then(|construction| self.infer_spelled(expression, construction)),
+            );
+        }
+        let head = match &expression.kind {
+            ExprKind::MethodCall { object, .. } | ExprKind::Member { object, .. } => object,
+            ExprKind::Invoke { callee, .. } => match &callee.kind {
+                ExprKind::Member { object, .. } => object,
+                _ => return None,
             },
-            ExprKind::Member { object, field } => ExprKind::Member {
-                object: receiver(object)?,
-                field: field.clone(),
-            },
-            ExprKind::Invoke {
-                callee,
-                param_args,
-                args,
-                kwargs,
-            } => {
-                let ExprKind::Member { object, field } = &callee.kind else {
-                    return None;
-                };
-                ExprKind::Invoke {
-                    callee: Box::new(spelled_node(
-                        expression,
-                        1,
-                        ExprKind::Member {
-                            object: receiver(object)?,
-                            field: field.clone(),
-                        },
-                        callee.span,
-                    )),
-                    param_args: param_args.clone(),
-                    args: args.clone(),
-                    kwargs: kwargs.clone(),
-                }
-            }
             _ => return None,
         };
-        let spelled = spelled_node(expression, 0, spelled, expression.span);
-        Some(self.infer_spelled(expression, spelled))
+        if !is_type_of(head) {
+            return None;
+        }
+        let receiver = self
+            .denoted_type(head, "the receiver 'type_of'")
+            .and_then(|ty| {
+                let spelling = match ty.kind() {
+                    TyKind::Param { binder, .. } => Some(Expr::new(
+                        ExprKind::Identifier(binder.name.to_string()),
+                        head.span,
+                    )),
+                    _ => mojito_types::ct::source_type(&ty, head.span)
+                        .and_then(|spelling| spelling.expression_spelling(head.span)),
+                };
+                spelling.ok_or_else(|| {
+                    TypeError::Unsupported(format!(
+                        "a receiver through 'type_of': '{ty}' has no spelling"
+                    ))
+                })
+            })
+            .map(|spelling| derived_receiver(expression, &spelling));
+        Some(receiver.and_then(|receiver| {
+            let spelled = over_receiver(expression, |object| {
+                std::ptr::eq(object, head.as_ref()).then(|| receiver.clone())
+            })
+            .ok_or_else(|| {
+                TypeError::InvariantViolation("a 'type_of' receiver lost its read".to_string())
+            })?;
+            self.infer_spelled(expression, spelled)
+        }))
     }
 
     /// The struct the enclosing declaration's `Self` names, and the bracket
@@ -597,6 +610,72 @@ pub(super) fn derived_construction(expression: &Expr, kind: ExprKind) -> Expr {
         mojito_ast::visit::walk_expr_mut(&mut identities, value);
     }
     construction
+}
+
+/// `expression` (a static call, a member read, or an applied member) over
+/// the receiver `receiver` gives for its own: the same read, spelled under
+/// `expression`'s identity. `None` when `expression` has no receiver or
+/// `receiver` replaces none.
+fn over_receiver(expression: &Expr, receiver: impl Fn(&Expr) -> Option<Box<Expr>>) -> Option<Expr> {
+    let spelled = match &expression.kind {
+        ExprKind::MethodCall {
+            object,
+            method,
+            args,
+            kwargs,
+        } => ExprKind::MethodCall {
+            object: receiver(object)?,
+            method: method.clone(),
+            args: args.clone(),
+            kwargs: kwargs.clone(),
+        },
+        ExprKind::Member { object, field } => ExprKind::Member {
+            object: receiver(object)?,
+            field: field.clone(),
+        },
+        ExprKind::Invoke {
+            callee,
+            param_args,
+            args,
+            kwargs,
+        } => {
+            let ExprKind::Member { object, field } = &callee.kind else {
+                return None;
+            };
+            ExprKind::Invoke {
+                callee: Box::new(spelled_node(
+                    expression,
+                    1,
+                    ExprKind::Member {
+                        object: receiver(object)?,
+                        field: field.clone(),
+                    },
+                    callee.span,
+                )),
+                param_args: param_args.clone(),
+                args: args.clone(),
+                kwargs: kwargs.clone(),
+            }
+        }
+        _ => return None,
+    };
+    Some(spelled_node(expression, 0, spelled, expression.span))
+}
+
+/// The type spelling `value` read as `expression`'s receiver, in its source
+/// under identities derived from its own: ordinal 0 is the spelled
+/// expression, 1 an applied member's callee.
+fn derived_receiver(expression: &Expr, value: &Expr) -> Box<Expr> {
+    let mut receiver = value.clone();
+    receiver.source.clone_from(&expression.source);
+    mojito_ast::visit::walk_expr_mut(
+        &mut mojito_ast::visit::DerivedIdentities {
+            parent: expression.syntax_id,
+            next: 2,
+        },
+        &mut receiver,
+    );
+    Box::new(receiver)
 }
 
 /// The callee and bracket arguments of a type alias's parameter

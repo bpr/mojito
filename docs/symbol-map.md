@@ -444,6 +444,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `ComptimeAlias::value`) (a
   call, a static call, a member read) over that parameter expression, a
   call as the type's construction, and records the spelling the same way;
+  `infer_type_of_read` does the same for a `type_of(value)` receiver or
+  callee, over the spelling of the type it denotes (`over_receiver` is the
+  read both rebuild around the spelled receiver);
   `Self(...)` in a struct's body is spelled as the construction of the
   struct over its own parameters (`self_instance_spelling`, which the
   static call through `Self` shares). Together they own method-call inference (including the inverted write:

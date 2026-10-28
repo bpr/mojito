@@ -895,7 +895,10 @@ impl Checker {
         if self.type_pack_named(expr).is_some() {
             return self.infer_type_pack_read(expr);
         }
-        if let Some(read) = self.infer_type_alias_read(expr) {
+        if let Some(read) = self
+            .infer_type_alias_read(expr)
+            .or_else(|| self.infer_type_of_read(expr))
+        {
             return read;
         }
         match &expr.kind {

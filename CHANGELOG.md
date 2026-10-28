@@ -8,6 +8,10 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `type_of(value)` receiver or callee is the value's type, as at the
+  pin: `type_of(t).__len__()` calls the tuple type's static, `type_of(v).dtype`
+  reads its member, and `type_of(v)(2)` constructs it, directly or through a
+  `comptime` alias of `type_of` (R1509).
 - `std.simd` declares upstream's `to_bits` and `_to_bits_signed` as
   library bodies over `bitcast`, replacing the checker's `to_bits` rule
   (R1589). `Float64(-0.0)._to_bits_signed()` prints

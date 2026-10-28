@@ -4002,6 +4002,15 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     source spelling either.
   - Probe: the bundled `VariadicList.__iter__` spells
     `_VariadicListIter[...](0, self)` where upstream writes `{0, self}`.
+  - Probe: a `type_of` receiver or callee spells its type the same way
+    (`Checker::infer_type_of_read`). In `def h[dt: DType](x: Scalar[dt])`,
+    `type_of(x)(3)` fails with "cannot emit initializer list for
+    'Scalar[dt]'", where the pin prints `3.0`. Upstream's `SIMD.__hash__`
+    reads `type_of(bits)(neg_zero)` (R1579).
+  - Probe: `type_of(t).__len__()` over `t: Tuple[*Ts]` fails with "a
+    receiver through 'type_of': 'Tuple[*Ts]' has no spelling". Upstream's
+    `Tuple.reverse` and `Tuple.concat` read `type_of(result).__len__()`
+    (R343).
   - Found while landing R325 (2026-10-08).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -4406,24 +4415,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1371 (2026-10-27).
   - Depends on R1513.
   - Model: Fable, Not Planned.
-
-- [ ] **R1509 A `type_of(...)` receiver of a static call is not a type
-  receiver**
-
-  Problem: `type_of(t).__len__()` over a tuple `t` stops with "Undefined
-  variable 'type_of'", where the pin prints `3`.
-  - A static call's receiver is classified by spelling
-    (`infer_type_receiver_call`, `method_calls/type_receivers.rs`), and the
-    static path (`infer_struct_static_method`) takes a struct name and its
-    bracket arguments, not a resolved type.
-  - Upstream's `Tuple.reverse` and `Tuple.concat` read
-    `type_of(result).__len__()` (R343).
-  - Probe: a construction through `type_of`, `type_of(v)(Float32(2))`,
-    stops with "Undefined variable 'type_of'" too. Upstream's
-    `SIMD.__hash__` reads `type_of(bits)(neg_zero)` (R1579).
-  - Found while landing R1369 (2026-10-27).
-  - Depends on R1371, which classifies the receiver by what it denotes.
-  - Model: Opus, Not Planned.
 
 - [ ] **R1511 A scalar type name in a bracket is a type by its spelling**
 
@@ -10001,14 +9992,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     (`enqueue_hash_leaf_instances`), and `runtime::hash_leaf_value`'s
     float fold. The `Bool`, `DType`, and `StringLiteral` leaves stay.
   - The body reads `type_of(bits)(neg_zero)`, a construction through
-    `type_of` (R1509).
+    `type_of` over a symbolic `Scalar`, which needs R495's spelling.
   - Probe (from R1109): the hash leaf reaches `__hash__` and a hasher's
     `_update_with_simd` from the value's type
     (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores.
     Upstream's `SIMD.__hash__` calls `_update_with_simd` in library code;
     the `Bool`, `DType`, and `StringLiteral` leaves keep both members
     type-reached until they are library code too.
-  - Depends on R1589 and R1509.
+  - Depends on R1589 and R495.
   - Model: Fable, Planned.
 
 - [ ] **R1580 `SIMD.fma` is missing and `__fma__` is a Mojito-only rule,
@@ -10194,6 +10185,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `max_finite` needs `~Scalar[_unsigned_integral_type_of[dtype]()](0)
     >> 1`.
   - `Int32.MAX` also needs R66's scalar alias read as a type.
+  - Probe: `type_of(v).MAX` over a `Float32` `v` reads `SIMD[DType.float32,
+    1].MAX` and stops the same way.
   - Found while landing R1555 (2026-10-28).
   - Depends on R66.
   - Model: Fable, Not Planned.
@@ -11501,7 +11494,7 @@ residue found inside a task moves to the task that owns its fix.
     `type_of(other).__len__()`.
   - Pinned by `assets/ok/tuple_reverse_concat.mojo`.
   - Depends on R341 (the storage model and `unsafe_write_move_from`), R1509
-    (a `type_of(...)` receiver), R340 (`Self.__len__()` in a header), and
+    (a `type_of(...)` receiver), R495 (its symbolic spelling), R340 (`Self.__len__()` in a header), and
     R344.
   - Model: Fable, Planned.
 
