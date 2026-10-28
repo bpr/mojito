@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1537**.
+Next free ID: **R1538**.
 
 ## Ordered Work
 
@@ -175,6 +175,11 @@ which names the upstream pass each one follows. Each is measured by the
     type-pack collector, bound through `mojito-ast`'s call binder.
     `Specializer::demand_application` regroups a collector's run into the
     one value its MIR parameter takes (read the VM's `thaw` first).
+  - `IntLiteral` parameters are admitted since R1533.
+  - Probe: `f[s]()` over `def f[w: S]()`, `comptime s: String = "abcd"`,
+    and `S`'s `@implicit __init__(out self, value: String, /)` storing
+    `value.byte_length()` is rejected as unsupported ("a parameter argument
+    converted by 'S.__init__' is not supported yet"). The pin prints `4`.
   - Probe: a construction whose `__init__` takes a struct or `String`
     parameter is still frozen fieldwise by `aggregate_value`'s
     `frozen_construction` (`checker/constraints.rs`), where the pin applies
@@ -2624,6 +2629,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     `g[n: Int]`) shares it: `g[Copyable]()` prints `2`, the pin `1`.
   - Upstream selects among such overloads by the bracket arguments'
     types, as it selects among run-time signatures.
+  - Probe: `def f[w: W]()` beside `def f[n: Int]()`, `W` with an
+    `@implicit __init__(out self, value: Int, /)` storing `value * 2`, the
+    first returning `w.v` and the second `n + 100`: `f[W(3)]()` and
+    `f[n=4]()` fail MIR verification on the shared `f$ov$`. The pin prints
+    `6 104`. `f[3]()` is ambiguous at both.
   - Found while planning R1166 (2026-10-20).
   - Depends on nothing.
   - Model: Fable, Not Planned.
@@ -4350,6 +4360,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     default is evaluated before `a` is bound to the caller's symbolic `x`.
   - The default should stay a parameter expression over the caller's
     binders, as an explicit `default_only[x, x]()` does.
+  - Probe: a struct-typed default over an earlier binder, `h[n: Int, w: W
+    = W(n)]` or the converted `w: W = n` (`W`'s `@implicit __init__(Int)`
+    storing `value * 2`), fails the same way in `default_argument` for
+    `h[4]()`. The pin prints `8`.
   - Add the probe as an `assets/ok` fixture once it runs.
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -5444,6 +5458,10 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - A static method of a generic struct prints the instance it is called on
     as an argument: `G.w[G[2]]()` for `G[2].w()`.
   - `not (n > 9)` prints as `not 9 < n`.
+  - The pin prints an `@implicit` constructor's application as its
+    argument: `var x: T[W(3)] = T[W(4)]()` over `struct T[w: W]` is
+    "cannot implicitly convert 'T[Int(4)]' value to 'T[Int(3)]'", where
+    Mojito prints `T[W(4)]`.
   - The application holds the MIR declaration's name and every argument in
     one list (`ParamKind::Apply`, `param_expr.rs`), so the printer knows
     neither the source name nor which arguments are compile-time ones.
@@ -6417,30 +6435,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1533 An `@implicit` constructor is not applied to a struct-typed
-  value-parameter argument**
-
-  `f[3]()` over `def f[w: W]()`, where `W` has an `@implicit`
-  `__init__(out self, value: Int, /)`, is rejected with "type mismatch for
-  value parameter 'w': expected W, found Int", where the pin converts the
-  argument.
-  - Probe: with that `__init__` storing `value * 2` and `f` returning
-    `w.v`, `f[3]()` and `g[5]()` over `def g[n: Int]() -> Int: return
-    f[n]()` print `6 10` at the pin.
-  - Probe: an `@implicit` `__init__(out self, value: Bool, /)` with
-    `f[True]()` fails the same way ("found Bool"). The pin prints `1`.
-  - `Checker::converts_to_parameter` (`checker/type_resolution.rs`) checks
-    a closed argument against the parameter type but keeps the unconverted
-    value, and a symbolic argument is never tried.
-  - Lever: the bound value is the application of the selected `@implicit`
-    `__init__`, closed or symbolic, built as a written construction is
-    (`Checker::called_application`), which the builtin fold then folds.
-  - Needed for `SIMD[dt, 4]` and `SIMD[dt, n]` once the width is a
-    `SIMDLength` (R1535).
-  - Found while planning R336 (2026-10-27).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1536 `__mlir_attr` has no expression form, so a typed attribute
   constant such as an `index` cannot be spelled**
 
@@ -6494,6 +6488,31 @@ fixture. Each entry's `Ledger name` is the slug `conformance/cases.tsv` uses
 for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R1537 An `@implicit` constructor's parameter admits a literal by
+  coercion, not at the literal's default type**
+
+  `var y: F = 2`, where `F`'s only `@implicit __init__(out self, value:
+  Float64, /)` stores `value + 0.5`, prints `2.5`, where the pin rejects it:
+  "cannot implicitly convert 'IntLiteral[2]' value to 'F'".
+  - Cause: `Checker::implicit_conversion_constructor` (`checker.rs`) keeps
+    a constructor whose parameter the source `coerces` to, so a literal
+    reaches any scalar it materializes as. The pin converts a literal only
+    at its default type (`Int`, `Float64`, `String`) before an `@implicit`
+    constructor.
+  - Probe: `f[C]()` over `def f[w: F]()` with `comptime C = 2` prints
+    `2.5`; the pin rejects it ("value has type 'IntLiteral[2]'"). The
+    parameter conversion inherits the rule (R1533).
+  - Probe: `f[3]()` into an `@implicit __init__(value: UInt8)` is rejected
+    as unsupported, where the pin rejects it as a type mismatch.
+  - Probe: the other way round, `var s: S = "abc"` over `@implicit
+    __init__(out self, value: String, /)` storing `value.byte_length()` is
+    rejected ("expected S, found StringLiteral"), where the pin prints `3`:
+    `StringLiteral` does not coerce to `String`. `f["abc"]()` over `def
+    f[w: S]()` (pin `3`) also needs R1528.
+  - Found while landing R1533 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1498 A module outside the bundled library is rooted at its file
   stem, not its dotted name**

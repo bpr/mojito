@@ -138,8 +138,9 @@ pub(super) struct ForwardedPack {
 /// struct, a struct's `__init__`, or an `@always_inline("builtin")` method
 /// taking `self`, whose own compile-time parameters and runtime parameters
 /// are each an `Int`, a `UInt`, a `Bool`, a `Float64`, or its struct's
-/// `Self`, and which returns one or a named struct. A `where` clause it
-/// declares binds a call as a runtime call's does.
+/// `Self` (a runtime one also an `index` or an `IntLiteral`), and which
+/// returns one or a named struct. A `where` clause it declares binds a call
+/// as a runtime call's does.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(in crate::checker) struct ApplicableFunction {
     /// The MIR declaration the elaborator runs.
@@ -1153,86 +1154,67 @@ impl Checker {
         if self.application_constraint_failure(&selected).is_some() {
             return None;
         }
-        let Selected {
+        self.selected_call(selected)
+    }
+
+    /// The application of the `@implicit` `__init__` of the struct `ty` that
+    /// converts a parameter argument of type `source` (`f[3]()` over `def
+    /// f[w: W]()`), as a run-time argument's conversion selects it
+    /// ([`Self::implicit_conversion_constructor`]): the constructor's call
+    /// node over the parameter expression `argument` builds at its
+    /// parameter's type, closed or symbolic, so `T[3]` is `T[W(3)]` and a
+    /// builtin constructor folds. `None` when no constructor converts
+    /// `source` or `argument` builds nothing, an error for a conversion no
+    /// compile-time call applies, or one its `where` clause or `raises`
+    /// rejects.
+    pub(super) fn implicit_parameter_application(
+        &self,
+        source: &Ty,
+        ty: &Ty,
+        argument: impl FnOnce(&Ty) -> Option<ParamExpr>,
+    ) -> Result<Option<ParamExpr>, TypeError> {
+        let TyKind::Struct(owner, _) = ty.kind() else {
+            return Ok(None);
+        };
+        let Some(conversion) = self.implicit_conversion_constructor(source, ty)? else {
+            return Ok(None);
+        };
+        let name = template_name(owner).to_string();
+        let Some(function) = self.applicable_functions.get(&name).and_then(|overloads| {
+            overloads
+                .iter()
+                .find(|function| function.constructs() && function.symbol() == conversion.target)
+        }) else {
+            return Err(TypeError::Unsupported(format!(
+                "a parameter argument converted by '{}' is not supported yet: its parameter \
+                 type is not one a compile-time call applies",
+                conversion.target
+            )));
+        };
+        let Some(argument) = function
+            .params
+            .first()
+            .and_then(|param| param.ty.resolved(Some(ty)))
+            .and_then(argument)
+        else {
+            return Ok(None);
+        };
+        let selected = Selected {
+            name,
             function,
-            instance,
-            arguments,
-            ..
-        } = selected;
-        let result = match &instance {
-            Some(instance) if function.constructs() || function.result == SourceType::SelfType => {
-                Some(instance.clone())
-            }
-            _ => self.ty_from_anno(&function.result).ok(),
+            instance: function.on_instance.then(|| ty.clone()),
+            arguments: vec![argument],
+        };
+        if let Some(error) = self.application_constraint_failure(&selected) {
+            return Err(error);
         }
-        .filter(|ty| {
-            matches!(
-                ty.kind(),
-                TyKind::INT
-                    | TyKind::UINT
-                    | TyKind::Index
-                    | TyKind::Bool
-                    | TyKind::FLOAT64
-                    | TyKind::Simd { .. }
-                    | TyKind::Struct(..)
-            )
-        })?;
         if function.raises {
-            return None;
+            return Err(TypeError::BadCall {
+                func: function.symbol.clone(),
+                reason: "cannot call raising function in type parameter".to_string(),
+            });
         }
-        let mut applied = Vec::with_capacity(arguments.len() + 1);
-        if function.on_instance {
-            applied.push(self.param_context.type_shape(instance.clone()?));
-        }
-        applied.extend(arguments.iter().cloned());
-        let application = self.param_context.apply(
-            &function.symbol,
-            &applied,
-            mojito_types::param_expr::MetaTy::value(result),
-        );
-        if let Some(body) = &function.folded_body {
-            let mut bindings = mojito_types::param_expr::ParamBindings::new();
-            for (slot, argument) in arguments.iter().enumerate() {
-                bindings.bind(
-                    super::annotations::builtin_body_binder(&function.symbol, slot, "").id,
-                    argument.clone(),
-                );
-            }
-            let declared = match instance.as_ref().map(Ty::kind) {
-                Some(TyKind::Struct(owner, instance_args)) => {
-                    let decls = &self.structs.get(template_name(owner))?.decls;
-                    let declared =
-                        mojito_types::types::declared_pack_arguments(owner, decls, instance_args);
-                    self.bind_declared(&mut bindings, decls, &declared).ok()?;
-                    Some((decls, declared))
-                }
-                _ => None,
-            };
-            let replaced = |expr: &ParamExpr| {
-                self.param_context
-                    .replace(expr, &bindings)
-                    .ok()
-                    .filter(|folded| {
-                        declared.as_ref().is_none_or(|(decls, instance_args)| {
-                            !reads_rebound_binder(folded, decls, instance_args)
-                        })
-                    })
-            };
-            let folded = match body {
-                FoldedBody::Value(value) => replaced(value).map(|folded| {
-                    respelled_struct_value(&self.param_context, folded, &application)
-                }),
-                FoldedBody::Fields(fields) => fields
-                    .iter()
-                    .map(|(name, value)| Some((name.clone(), replaced(value)?)))
-                    .collect::<Option<Vec<_>>>()
-                    .map(|fields| self.param_context.struct_value(&fields, &application)),
-            };
-            if folded.is_some() {
-                return folded;
-            }
-        }
-        Some(application)
+        Ok(self.selected_call(selected))
     }
 
     /// Whether `expr` calls a `raises` callable a compile-time call would
@@ -1405,7 +1387,129 @@ impl Checker {
                 })
             });
         let application = selected.next()?;
-        selected.next().is_none().then_some(application)
+        let mut tied: Vec<_> = selected.collect();
+        if tied.is_empty() {
+            return Some(application);
+        }
+        // Several overloads take the arguments' values (`W(3)` over
+        // `__init__(IntLiteral)` and `__init__(Int)`): the call applies the
+        // one its run-time call selects, as the pin ranks them.
+        let target = self.run_time_overload(expr)?;
+        tied.push(application);
+        let mut ranked = tied
+            .into_iter()
+            .filter(|selected| selected.function.symbol == target);
+        let application = ranked.next()?;
+        ranked.next().is_none().then_some(application)
+    }
+
+    /// The callable `expr`'s run-time call resolves to
+    /// (its `overload_target` fact), typing it first where the check
+    /// has not.
+    fn run_time_overload(&self, expr: &Expr) -> Option<String> {
+        let recorded = || {
+            self.node_facts
+                .borrow()
+                .get(&expr.source_span())
+                .and_then(|facts| facts.overload_target.clone())
+        };
+        recorded().or_else(|| {
+            let lifting = self.lifting_positions.replace(0);
+            let typed = {
+                let _position = self.comptime_position();
+                self.infer(expr)
+            };
+            self.lifting_positions.set(lifting);
+            typed.ok()?;
+            recorded()
+        })
+    }
+
+    /// The application `selected` denotes ([`Self::called_application`]):
+    /// the callable applied to its arguments, or a builtin body folded over
+    /// them. `None` for a result no parameter expression holds or a
+    /// `raises` callable.
+    fn selected_call(&self, selected: Selected<'_>) -> Option<ParamExpr> {
+        let Selected {
+            function,
+            instance,
+            arguments,
+            ..
+        } = selected;
+        let result = match &instance {
+            Some(instance) if function.constructs() || function.result == SourceType::SelfType => {
+                Some(instance.clone())
+            }
+            _ => self.ty_from_anno(&function.result).ok(),
+        }
+        .filter(|ty| {
+            matches!(
+                ty.kind(),
+                TyKind::INT
+                    | TyKind::UINT
+                    | TyKind::Index
+                    | TyKind::Bool
+                    | TyKind::FLOAT64
+                    | TyKind::Simd { .. }
+                    | TyKind::Struct(..)
+            )
+        })?;
+        if function.raises {
+            return None;
+        }
+        let mut applied = Vec::with_capacity(arguments.len() + 1);
+        if function.on_instance {
+            applied.push(self.param_context.type_shape(instance.clone()?));
+        }
+        applied.extend(arguments.iter().cloned());
+        let application = self.param_context.apply(
+            &function.symbol,
+            &applied,
+            mojito_types::param_expr::MetaTy::value(result),
+        );
+        if let Some(body) = &function.folded_body {
+            let mut bindings = mojito_types::param_expr::ParamBindings::new();
+            for (slot, argument) in arguments.iter().enumerate() {
+                bindings.bind(
+                    super::annotations::builtin_body_binder(&function.symbol, slot, "").id,
+                    argument.clone(),
+                );
+            }
+            let declared = match instance.as_ref().map(Ty::kind) {
+                Some(TyKind::Struct(owner, instance_args)) => {
+                    let decls = &self.structs.get(template_name(owner))?.decls;
+                    let declared =
+                        mojito_types::types::declared_pack_arguments(owner, decls, instance_args);
+                    self.bind_declared(&mut bindings, decls, &declared).ok()?;
+                    Some((decls, declared))
+                }
+                _ => None,
+            };
+            let replaced = |expr: &ParamExpr| {
+                self.param_context
+                    .replace(expr, &bindings)
+                    .ok()
+                    .filter(|folded| {
+                        declared.as_ref().is_none_or(|(decls, instance_args)| {
+                            !reads_rebound_binder(folded, decls, instance_args)
+                        })
+                    })
+            };
+            let folded = match body {
+                FoldedBody::Value(value) => replaced(value).map(|folded| {
+                    respelled_struct_value(&self.param_context, folded, &application)
+                }),
+                FoldedBody::Fields(fields) => fields
+                    .iter()
+                    .map(|(name, value)| Some((name.clone(), replaced(value)?)))
+                    .collect::<Option<Vec<_>>>()
+                    .map(|fields| self.param_context.struct_value(&fields, &application)),
+            };
+            if folded.is_some() {
+                return folded;
+            }
+        }
+        Some(application)
     }
 
     /// The name a call of `method` on `object` spells, the struct instance
@@ -1604,7 +1708,7 @@ impl Checker {
 
     /// The parameter expression of a call argument for a parameter of type
     /// `ty`.
-    fn applied_argument(&self, argument: &Expr, ty: &Ty) -> Option<ParamExpr> {
+    pub(super) fn applied_argument(&self, argument: &Expr, ty: &Ty) -> Option<ParamExpr> {
         let _lifting = self.lifting_position();
         let argument = self.compile_dependent_ct_expr(argument).ok()?;
         self.applied_value(argument.into_value(), ty)
@@ -1628,7 +1732,7 @@ impl Checker {
 
     /// `value` as the argument of a parameter of type `ty`. A literal is the
     /// value the parameter holds, so that `h(2)` is `h(n)` at `n = 2`.
-    fn applied_value(&self, value: CtValue, ty: &Ty) -> Option<ParamExpr> {
+    pub(super) fn applied_value(&self, value: CtValue, ty: &Ty) -> Option<ParamExpr> {
         let argument = match value {
             CtValue::Expr(argument) => argument,
             closed => self
@@ -4094,7 +4198,8 @@ enum SelfSlot {
 /// The type of an [`ApplicableParameter`].
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 enum SlotType {
-    /// An `Int`, a `UInt`, a `Bool`, or a `Float64`.
+    /// An `Int`, a `UInt`, a `Bool`, a `Float64`, an `index`, or an
+    /// `IntLiteral`.
     Scalar(Ty),
     /// `Self`, the struct a call's instance or receiver resolves.
     Owner,
@@ -4139,6 +4244,9 @@ impl ApplicableShape<'_> {
             SourceType::Float64 => Some(SlotType::Scalar(Ty::float64())),
             SourceType::SelfType => Some(SlotType::Owner),
             ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
+            ty if super::declarations::is_int_literal_annotation(ty) => {
+                Some(SlotType::Scalar(Ty::int_literal()))
+            }
             _ => None,
         };
         let binders = self

@@ -1165,6 +1165,10 @@ names no declaration's binders, so a signature and a struct field type take
 it, a caller that binds the parameters spells the same value (`h(2)` for
 `h(n)`), and inference solves a parameter through it argument by argument,
 through the instance too (`solve_applied_args`, `checker/generics.rs`).
+A value argument or default of a struct-typed parameter that is not of
+that struct converts as a run-time argument does: its value is the
+application of the `@implicit` `__init__` its own type selects
+(`Checker::implicit_parameter_application`), so `T[3]` is `T[W(3)]`.
 `not` and a conditional expression are the parameter domain's own
 operators (`eval_associated_ct`), never a function. A raising callee is
 rejected where it is called. `native::mono` runs the

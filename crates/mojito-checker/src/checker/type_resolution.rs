@@ -2842,11 +2842,35 @@ impl Checker {
                         }
                     } else if !coerces(&actual, ty) && !self.converts_to_parameter(expr, &value, ty)
                     {
-                        return Err(TypeError::TypeMismatch {
-                            expected: ty.to_string(),
-                            found: actual.to_string(),
-                            context: format!("value parameter '{name}'"),
-                        });
+                        // A struct parameter converts its argument through
+                        // the `@implicit` constructor a run-time argument's
+                        // own type selects (a literal its `IntLiteral` one).
+                        // A binder a signature reads is no variable there,
+                        // and is of the type it binds.
+                        let source = {
+                            let _position = self.comptime_position();
+                            self.infer(expr).unwrap_or_else(|_| actual.clone())
+                        };
+                        let mut slot = None;
+                        let converted =
+                            self.implicit_parameter_application(&source, ty, |slot_ty| {
+                                slot = Some(slot_ty.clone());
+                                self.applied_argument(expr, slot_ty)
+                            })?;
+                        let (Some(application), Some(slot)) = (converted, slot) else {
+                            return Err(TypeError::TypeMismatch {
+                                expected: ty.to_string(),
+                                found: actual.to_string(),
+                                context: format!("value parameter '{name}'"),
+                            });
+                        };
+                        self.record_literal_materializations(expr, &source, &slot)?;
+                        // The converted value is the constructor's call node,
+                        // never the argument expression's run-time value.
+                        let converted = TyArg::Val(CtValue::Expr(application));
+                        self.record_at(expr.source_span()).argument_attribute =
+                            Some(converted.clone());
+                        return Ok(converted);
                     }
                     self.record_literal_materializations(expr, &actual, ty)?;
                     // A type list (`Ts.values`), a closed raw list of
@@ -2882,9 +2906,24 @@ impl Checker {
                 ParamArg::Type(SourceType::SelfParam(param))
                     if matches!(self.self_param_ct_value(param), Some(CtValue::Expr(_))) =>
                 {
-                    self.self_param_value(param)
-                        .map(TyArg::Val)
-                        .ok_or_else(|| TypeError::UnknownSelfParam(param.clone()))
+                    let value = self
+                        .self_param_value(param)
+                        .ok_or_else(|| TypeError::UnknownSelfParam(param.clone()))?;
+                    let Some(actual) = self
+                        .ct_value_ty(&value, ty)
+                        .filter(|actual| !coerces(actual, ty))
+                    else {
+                        return Ok(TyArg::Val(value));
+                    };
+                    self.implicit_parameter_application(&actual, ty, |slot| {
+                        self.applied_value(value, slot)
+                    })?
+                    .map(|application| TyArg::Val(CtValue::Expr(application)))
+                    .ok_or_else(|| TypeError::TypeMismatch {
+                        expected: ty.to_string(),
+                        found: actual.to_string(),
+                        context: format!("value parameter '{name}'"),
+                    })
                 }
                 ParamArg::Type(source)
                     if let Some(read) = self.type_spelled_member_read(source) =>
@@ -2903,6 +2942,35 @@ impl Checker {
                 ParamArg::Named { value, .. } => self.resolve_param_arg(decl, value),
             },
         }
+    }
+
+    /// The attribute bracket argument `argument` carries once
+    /// [`Self::resolve_param_arg`] bound it to `bound`
+    /// ([`bracket_attribute`]): a value argument an `@implicit` constructor
+    /// converted is the constructor's application it recorded, the one
+    /// struct-valued application recorded as an argument's attribute.
+    pub(super) fn bound_bracket_attribute(
+        &self,
+        argument: &mojito_ast::ast::ParamArg,
+        bound: &TyArg,
+    ) -> Option<TyArg> {
+        use mojito_ast::ast::ParamArg;
+        bracket_attribute(argument, bound).or_else(|| match argument {
+            ParamArg::Named { value, .. } => self.bound_bracket_attribute(value, bound),
+            ParamArg::Value(expr) => self
+                .node_facts
+                .borrow()
+                .get(&expr.source_span())
+                .and_then(|facts| facts.argument_attribute.clone())
+                .filter(|attribute| {
+                    attribute == bound
+                        && matches!(attribute, TyArg::Val(CtValue::Expr(application))
+                        if application.meta().as_value().is_some_and(|ty| {
+                            matches!(ty.kind(), TyKind::Struct(..))
+                        }))
+                }),
+            ParamArg::Type(_) => None,
+        })
     }
 
     /// Record what each bracket argument of the application at `span`
@@ -3614,10 +3682,6 @@ impl Checker {
         ))
     }
 
-    /// Whether a nearer type parameter shadows the pack `*Ts`: a nested
-    /// `def[Ts: AnyType]` binds the bare name to something that is not a
-    /// pack, so a `*Ts` inside it does not reach the enclosing pack. Both
-    /// compilers reject that spread at the declaration.
     /// Whether the closed value argument `expr` types at its declared
     /// parameter type `ty` as a run-time argument does, recording the
     /// implicit conversions its elements need (a literal element at a

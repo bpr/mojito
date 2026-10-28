@@ -4131,6 +4131,10 @@ impl<'a> Flatten<'a> {
             CheckedParamArg::Value(_) => call.param_value(argument),
             CheckedParamArg::Named { value, .. } => match &**value {
                 CheckedParamArg::Value(_) => call.param_value(value),
+                CheckedParamArg::Attribute {
+                    value: Some(TyArg::Val(value)),
+                    ..
+                } => return self.attribute_value_reg(value, site),
                 CheckedParamArg::Attribute { .. } | CheckedParamArg::Named { .. } => return None,
             },
             CheckedParamArg::Attribute {

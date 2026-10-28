@@ -306,8 +306,12 @@ pub(super) fn is_string_literal_annotation(annotation: &SourceType) -> bool {
 /// ([`is_string_literal_annotation`], or exactly `IntLiteral`), whose value
 /// the parameter infers per call.
 pub(super) fn is_literal_annotation(annotation: &SourceType) -> bool {
-    is_string_literal_annotation(annotation)
-        || matches!(annotation, SourceType::Named(name, args) if name == "IntLiteral" && args.is_empty())
+    is_string_literal_annotation(annotation) || is_int_literal_annotation(annotation)
+}
+
+/// Whether a parameter annotation is exactly the bare `IntLiteral`.
+pub(super) fn is_int_literal_annotation(annotation: &SourceType) -> bool {
+    matches!(annotation, SourceType::Named(name, args) if name == "IntLiteral" && args.is_empty())
 }
 
 /// The collector part of a method signature — its `*args` and `**kwargs`
@@ -1022,12 +1026,18 @@ impl Checker {
                 Some(self.trait_param_default(tp, &id, bound, expr)?)
             }
             // A default that calls a function or constructs a struct
-            // (`e: Extent = Extent(2, 3)`) is that application.
+            // (`e: Extent = Extent(2, 3)`) is that application, and one a
+            // struct's `@implicit` constructor converts (`w: W = 3`) is
+            // that constructor's.
             (default, _) => default
                 .as_ref()
                 .map(|expr| {
                     let _lifting = self.lifting_position();
-                    self.compile_dependent_ct_expr(expr)
+                    let compiled = self.compile_dependent_ct_expr(expr)?;
+                    Ok::<_, TypeError>(
+                        self.converted_default(expr, &compiled, &ty)
+                            .unwrap_or(compiled),
+                    )
                 })
                 .transpose()?,
         };
@@ -1046,6 +1056,26 @@ impl Checker {
                 .map(|condition| self.compile_where_clause(condition))
                 .collect::<Result<_, _>>()?,
         })
+    }
+
+    /// The default `expr` of a value parameter of struct type `ty`, compiled
+    /// to `compiled`, converted through the struct's `@implicit`
+    /// constructor as a bracket argument is
+    /// ([`Self::implicit_parameter_application`]). `None` for a default
+    /// already of its type or one no constructor converts, which its use
+    /// rejects.
+    fn converted_default(&self, expr: &Expr, compiled: &ParamExpr, ty: &Ty) -> Option<ParamExpr> {
+        let found = compiled.meta().as_value()?;
+        if coerces(found, ty) {
+            return None;
+        }
+        let source = {
+            let _position = self.comptime_position();
+            self.infer(expr).unwrap_or_else(|_| found.clone())
+        };
+        self.implicit_parameter_application(&source, ty, |slot| self.applied_argument(expr, slot))
+            .ok()
+            .flatten()
     }
 
     /// The default of a trait-valued parameter (`Tr: type_of(AnyType) =
@@ -3561,7 +3591,7 @@ impl Checker {
                             continue;
                         }
                         let resolved = self.resolve_param_arg(element, argument)?;
-                        attributes[position] = bracket_attribute(argument, &resolved);
+                        attributes[position] = self.bound_bracket_attribute(argument, &resolved);
                         values.push(resolved.ct_value().ok_or_else(|| {
                             TypeError::Unsupported(
                                 "an origin argument cannot bind a type or value parameter"
@@ -3599,7 +3629,7 @@ impl Checker {
                 }
                 let tyarg = if let Some((position, argument)) = arguments.first() {
                     let resolved = self.resolve_param_arg(decl, argument)?;
-                    attributes[*position] = bracket_attribute(argument, &resolved);
+                    attributes[*position] = self.bound_bracket_attribute(argument, &resolved);
                     resolved
                 } else if let Some(solved) = trait_solutions.get(decl.id()) {
                     TyArg::Val(solved.clone())

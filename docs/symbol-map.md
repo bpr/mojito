@@ -1831,14 +1831,22 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   overload under the name a call spells (`ApplicableFunction`, built by
   `ApplicableShape::applicable`) before any declaration is checked,
   `selected_application` picks the one overload the arguments bind and
-  type, `applied_owner` resolves a static call's struct and instance
+  type (several tied by value, such as `__init__(IntLiteral)` beside
+  `__init__(Int)`, by the overload the run-time call selects,
+  `run_time_overload`), `applied_owner` resolves a static call's struct and instance
   (`S.f(n)`, `G[n].f()`, `Self.f()`), `applied_arguments` orders the
   compile-time and runtime arguments through `ast::call::match_call_slots`
   with `applied_default` for an omitted one, `calls_raising_application`
   backs the raising-callee rejection in `eval_associated_ct`,
   `solve_applied_args` (`checker/generics.rs`, from `solve_value_args`)
   solves a value parameter through one, and
-  `ComptimeThunks::request_applications` lifts nothing for it. A call of an
+  `ComptimeThunks::request_applications` lifts nothing for it. A value
+  parameter's argument (or default) not of its struct type is the
+  application of the `@implicit` `__init__` the run-time conversion's
+  `implicit_conversion_constructor` selects
+  (`Checker::implicit_parameter_application`, called by
+  `resolve_param_arg` and `value_param_decl`'s `converted_default`), which
+  `bound_bracket_attribute` makes the argument's attribute. A call of an
   `@always_inline("builtin")` callable whose body folds is that body instead
   (`ApplicableFunction::folded_body`, a `FoldedBody`, replaced over the
   call's arguments): an `__init__`'s is the field list its body stores

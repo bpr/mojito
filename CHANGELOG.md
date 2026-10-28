@@ -8,6 +8,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A value-parameter argument, a `Self.n` argument, or a declared default
+  that is not of the parameter's struct type now converts through the
+  struct's `@implicit` constructor, as a run-time argument does and as at
+  the pin (R1533): `f[3]()` over `def f[w: W]()` binds `W(3)`, `T[3]` is
+  `T[W(3)]`, a literal selects an `IntLiteral` constructor over an `Int`
+  one, and a builtin constructor folds. A compile-time call of a
+  constructor or function with an `IntLiteral` parameter is now an
+  application, and a call that several overloads take by value applies
+  the one its run-time call selects. These were rejected as a type
+  mismatch, and a `Self.n` argument failed MIR verification.
 - A parameter may be annotated `IntLiteral`, upstream's `IntLiteral[_]`,
   and beside an `Int` overload a literal argument selects it while an `Int`
   value selects the `Int` one, through an `@implicit` conversion or a
