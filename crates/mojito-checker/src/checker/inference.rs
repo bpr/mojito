@@ -505,7 +505,14 @@ impl Checker {
                 // A rule construction's dimensions are its slots: known, or the
                 // parameter expressions a generator names, which the
                 // elaborator closes per instance.
-                let dimensions = if name == "SIMD" {
+                let dimensions = if let TyKind::Simd { dtype, width } = ty.kind()
+                    && self
+                        .spelled_instances
+                        .borrow()
+                        .contains_key(&expr.source_span())
+                {
+                    Some((dtype.clone(), width.clone()))
+                } else if name == "SIMD" {
                     self.simd_dims(param_args).ok().map(|(dtype, width, _)| {
                         // An unbound `_` is the width the construction bound.
                         let width = match ty.kind() {

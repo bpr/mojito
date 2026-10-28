@@ -301,7 +301,7 @@ struct ParameterList[type: AnyType, //, values: _MLIR.KGENParamListType[type]](
         Returns:
             An iterator to the start of the list.
         """
-        return _ParameterListIter[*ParameterList[Self.values]()](0)
+        return {0}
 
 
 # ===-----------------------------------------------------------------------===#
@@ -497,9 +497,4 @@ struct VariadicList[
         Returns:
             An iterator to the start of the list.
         """
-        return _VariadicListIter[
-            Self.element_type,
-            elt_origin = Self.origin,
-            list_origin = origin_of(self),
-            is_owned = Self.is_owned,
-        ](0, self)
+        return {0, self}

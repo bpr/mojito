@@ -203,6 +203,59 @@ impl Checker {
         Ok(())
     }
 
+    /// A compile-time value as source meaning it in the caller's scope: a
+    /// constant as its literal, a value parameter in scope by its name, and
+    /// integer arithmetic over them as the operators; `None` for anything
+    /// else.
+    pub(super) fn spelled_parameter_value(&self, value: &ParamExpr, at: &Expr) -> Option<Expr> {
+        let spelled = |kind| Expr { kind, ..at.clone() };
+        match value.kind() {
+            ParamKind::Constant(constant) => constant_literal(constant, at),
+            ParamKind::DeclRef(reference) => {
+                let name = reference.name.to_string();
+                if self.value_parameter_in_scope(&name).as_ref() == Some(value) {
+                    return Some(spelled(ExprKind::Identifier(name)));
+                }
+                matches!(self.self_param_ct_value(&name), Some(CtValue::Expr(bound)) if &bound == value)
+                    .then(|| {
+                        spelled(ExprKind::Member {
+                            object: Box::new(spelled(ExprKind::Identifier("Self".to_string()))),
+                            field: name,
+                        })
+                    })
+            }
+            ParamKind::Op {
+                op: ParamOp::Neg,
+                operands,
+            } if operands.len() == 1 => Some(spelled(ExprKind::Prefix(
+                PrefixOp::Neg,
+                Box::new(self.spelled_parameter_value(&operands[0], at)?),
+            ))),
+            ParamKind::Op { op, operands } => {
+                let infix = match op {
+                    ParamOp::Add => InfixOp::Add,
+                    ParamOp::Sub => InfixOp::Sub,
+                    ParamOp::Mul => InfixOp::Mul,
+                    ParamOp::FloorDiv => InfixOp::FloorDiv,
+                    ParamOp::Mod => InfixOp::Mod,
+                    _ => return None,
+                };
+                let mut operands = operands
+                    .iter()
+                    .map(|operand| self.spelled_parameter_value(operand, at));
+                let first = operands.next()??;
+                operands.try_fold(first, |left, right| {
+                    Some(spelled(ExprKind::Infix(
+                        infix,
+                        Box::new(left),
+                        Box::new(right?),
+                    )))
+                })
+            }
+            _ => None,
+        }
+    }
+
     /// Whether some conformer to `bounds` declares a witness for
     /// `requirement` naming its regular parameter at `index` other than
     /// `name`, which a call through the bound binds by the requirement's
@@ -293,59 +346,6 @@ impl Checker {
                     "a trait requirement's default reading compile-time parameter '{parameter}' at a call through the bound that does not spell it"
                 ))
             })
-    }
-
-    /// A compile-time value as source meaning it in the caller's scope: a
-    /// constant as its literal, a value parameter in scope by its name, and
-    /// integer arithmetic over them as the operators; `None` for anything
-    /// else.
-    fn spelled_parameter_value(&self, value: &ParamExpr, at: &Expr) -> Option<Expr> {
-        let spelled = |kind| Expr { kind, ..at.clone() };
-        match value.kind() {
-            ParamKind::Constant(constant) => constant_literal(constant, at),
-            ParamKind::DeclRef(reference) => {
-                let name = reference.name.to_string();
-                if self.value_parameter_in_scope(&name).as_ref() == Some(value) {
-                    return Some(spelled(ExprKind::Identifier(name)));
-                }
-                matches!(self.self_param_ct_value(&name), Some(CtValue::Expr(bound)) if &bound == value)
-                    .then(|| {
-                        spelled(ExprKind::Member {
-                            object: Box::new(spelled(ExprKind::Identifier("Self".to_string()))),
-                            field: name,
-                        })
-                    })
-            }
-            ParamKind::Op {
-                op: ParamOp::Neg,
-                operands,
-            } if operands.len() == 1 => Some(spelled(ExprKind::Prefix(
-                PrefixOp::Neg,
-                Box::new(self.spelled_parameter_value(&operands[0], at)?),
-            ))),
-            ParamKind::Op { op, operands } => {
-                let infix = match op {
-                    ParamOp::Add => InfixOp::Add,
-                    ParamOp::Sub => InfixOp::Sub,
-                    ParamOp::Mul => InfixOp::Mul,
-                    ParamOp::FloorDiv => InfixOp::FloorDiv,
-                    ParamOp::Mod => InfixOp::Mod,
-                    _ => return None,
-                };
-                let mut operands = operands
-                    .iter()
-                    .map(|operand| self.spelled_parameter_value(operand, at));
-                let first = operands.next()??;
-                operands.try_fold(first, |left, right| {
-                    Some(spelled(ExprKind::Infix(
-                        infix,
-                        Box::new(left),
-                        Box::new(right?),
-                    )))
-                })
-            }
-            _ => None,
-        }
     }
 }
 

@@ -437,7 +437,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `SemanticAdjustment::SpelledConstruction` (`record_spelled_construction`,
   shared with t-strings), which `mojito-checked`'s arena builder answers at
   the sugar's location; the sugar's node operand is that construction, so
-  HIR lowers it in the sugar's place. The same file owns a body's local type
+  HIR lowers it in the sugar's place. A contextual type with no closed
+  spelling (over a type parameter, a symbolic `SIMD`, a raw list, an origin
+  argument, or a reflected field type) is constructed as itself:
+  `instance_construction` spells a bare call of the struct and records the
+  instance in the checker-only `spelled_instances`, and
+  `call_inference.rs:infer_instance_construction` checks that call against
+  it — `declarations.rs:infer_construction_of`'s `constructed` instance,
+  unified ahead of the arguments (`constructed_unification`), a `SIMD`'s
+  declared initializers or rule, or `reflection.rs:construct_dependent`.
+  The same file owns a body's local type
   alias: `bind_local_type_alias` records its type and parameter expression,
   and `infer_type_alias_read` spells an expression a local or module type
   alias heads (`type_alias_read`; a module alias's parameter expression is
@@ -445,7 +454,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   call, a static call, a member read) over that parameter expression, a
   call as the type's construction, and records the spelling the same way;
   `infer_type_of_read` does the same for a `type_of(value)` receiver or
-  callee, over the spelling of the type it denotes (`over_receiver` is the
+  callee, over the spelling of the type it denotes in scope
+  (`scope_type_spelling`: each parameter by its name, `Self.T` for the
+  struct's own, each symbolic value through
+  `bound_defaults.rs:spelled_parameter_value`) (`over_receiver` is the
   read both rebuild around the spelled receiver);
   `Self(...)` in a struct's body is spelled as the construction of the
   struct over its own parameters (`self_instance_spelling`, which the

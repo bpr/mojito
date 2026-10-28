@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1599**.
+Next free ID: **R1600**.
 
 ## Ordered Work
 
@@ -3983,35 +3983,24 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R495 An initializer list at a struct type over a parameter is
-  rejected**
+- [ ] **R1599 A `type_of` receiver is respelled as source, so a type
+  with no source spelling cannot be read through it**
 
-  Problem: `return {0}` in a method returning `It[Self.T]` fails with
-  "cannot emit initializer list for 'It[T]': the type has no construction
-  to spell", where the pin constructs `It[Self.T](0)`.
-  - `checker/initializer_list.rs` spells the construction through
-    `ct::source_type`, which has no spelling for a type parameter or a
-    value-pack argument.
-  - The bundled `ParameterList.__iter__` spells
-    `_ParameterListIter[*ParameterList[Self.values]()](0)` where upstream
-    writes `{0}`.
-  - Probe: `var x: TypeList.of[Trait=AnyType, Int, Bool] = {}` and, in
-    `def f[*Ts: AnyType]`, `var x: TypeList[Trait=AnyType, Ts.values] =
-    {}` fail with "cannot emit initializer list for 'TypeList[AnyType,
-    ...]'", where the pin prints `len(x)`: a raw-list argument has no
-    source spelling either.
-  - Probe: the bundled `VariadicList.__iter__` spells
-    `_VariadicListIter[...](0, self)` where upstream writes `{0, self}`.
-  - Probe: a `type_of` receiver or callee spells its type the same way
-    (`Checker::infer_type_of_read`). In `def h[dt: DType](x: Scalar[dt])`,
-    `type_of(x)(3)` fails with "cannot emit initializer list for
-    'Scalar[dt]'", where the pin prints `3.0`. Upstream's `SIMD.__hash__`
-    reads `type_of(bits)(neg_zero)` (R1579).
-  - Probe: `type_of(t).__len__()` over `t: Tuple[*Ts]` fails with "a
-    receiver through 'type_of': 'Tuple[*Ts]' has no spelling". Upstream's
-    `Tuple.reverse` and `Tuple.concat` read `type_of(result).__len__()`
-    (R343).
-  - Found while landing R325 (2026-10-08).
+  Problem: `type_of(y).length` over `y: TypeList.of[Trait=AnyType, Int,
+  Bool]` fails with "a receiver through 'type_of': 'TypeList[AnyType,
+  (Int, Bool)]' has no spelling", where the pin prints `2`.
+  - Upstream reads `type_of(x)` as the type value itself, then looks the
+    member up on that type.
+  - `Checker::infer_type_of_read` (`checker/initializer_list.rs`) instead
+    rewrites the receiver to a source spelling of the type
+    (`scope_type_spelling`), checked again as a type expression.
+  - A construction through `type_of` already builds the type itself
+    (`instance_construction`); a static call or member read needs the same:
+    a receiver bound to the resolved type, not a respelling.
+  - Probe: in `def f[*Ts: AnyType]`, `type_of(x).length` over `x:
+    TypeList[Trait=AnyType, Ts.values]` fails the same way: a raw list
+    over a pack has no spelling either.
+  - Found while landing R495 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -4831,25 +4820,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `[mk(3), P(1)]` over `@fieldwise_init struct P` with
     `def mk(n: Int) -> P`.
   - Found while landing R363 (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R443 An initializer list at a reflected field type is rejected**
-
-  Problem: `var x: types[i] = {}` over `comptime types =
-  reflect[T].field_types()`, under a `conforms_to` arm proving
-  `Defaultable`, fails with "cannot emit initializer list for
-  'reflect[T].field_types()[i]': the type has no construction to spell",
-  where the pin prints each field's default.
-  - `Checker::initializer_list_construction`
-    (`checker/initializer_list.rs`) rewrites a brace into a spelled callee,
-    and a reflected element has no name to spell.
-  - The lever: have the brace record `SemanticAdjustment::ConstructType`,
-    which MIR already lowers to `MirInstr::ConstructType`, instead of
-    spelling a call.
-  - `types[i]()` and `x: types[i] = types[i]()` run
-    (`assets/ok/reflection_field_type_construction.mojo`).
-  - Found while landing R364 (2026-10-07).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

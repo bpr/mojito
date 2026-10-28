@@ -8,6 +8,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- An initializer list at a type with no closed spelling constructs that
+  type itself, as at the pin (R495, R443): `return {0}` at `It[Self.T]`,
+  `{7}` at `SIMD[dt, w]`, `{}` at `TypeList[Trait=AnyType, Ts.values]` or
+  `TypeList.of[...]`, and `{}` at a reflected field type run, which failed
+  with "cannot emit initializer list ... the type has no construction to
+  spell". `type_of(x)(3)` over `x: Scalar[dt]` and `type_of(t).__len__()`
+  over `t: Tuple[*Ts]` run too, and the bundled `ParameterList.__iter__`
+  and `VariadicList.__iter__` return upstream's `{0}` and `{0, self}`.
 - A `type_of(value)` receiver or callee is the value's type, as at the
   pin: `type_of(t).__len__()` calls the tuple type's static, `type_of(v).dtype`
   reads its member, and `type_of(v)(2)` constructs it, directly or through a

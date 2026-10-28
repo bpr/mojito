@@ -906,6 +906,11 @@ pub struct Checker {
     /// checker-only argument standing for it while its subscript's overload
     /// is selected (`synthetic_slice_descriptor`).
     slice_literals: RefCell<HashMap<SourceSpan, [Option<Expr>; 3]>>,
+    /// The instance each construction the checker spelled for an
+    /// initializer list or a `type_of` call constructs, by the spelled call,
+    /// when no source spelling names it (`It[T]`, `Scalar[dt]`, a raw list's
+    /// `TypeList`): the call binds the struct's parameters against it.
+    spelled_instances: RefCell<HashMap<SourceSpan, Ty>>,
     /// Compile-time bindings read as the object of a field chain the checker
     /// compiled to a parameter expression (`q` of `q.a`): the chain is read,
     /// never the binding, which therefore materializes no temporary.
@@ -1109,6 +1114,7 @@ impl Checker {
             discarded_reference_results: RefCell::new(FactSet::default()),
             borrowed_reference_receivers: RefCell::new(FactSet::default()),
             slice_literals: RefCell::new(HashMap::new()),
+            spelled_instances: RefCell::new(HashMap::new()),
             parameter_field_objects: RefCell::new(FactSet::default()),
             unconsumed_temporaries: RefCell::new(FactSet::default()),
             linear_temporaries: RefCell::new(FactMap::default()),

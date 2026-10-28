@@ -88,7 +88,8 @@ impl Checker {
                 && let Some((ReflectQuery::FieldTypes, list)) = self.reflection_list(bound)? =>
             {
                 let element = self.reflection_list_element(&list, index)?;
-                self.construct_dependent(expr, element).map(Some)
+                self.construct_dependent(expr.source_span(), element)
+                    .map(Some)
             }
             // `FT()`: a construction of a field type bound as a local alias.
             ExprKind::Call {
@@ -102,7 +103,8 @@ impl Checker {
                 && let Some(alias) = self.lookup_tparam(name)
                 && matches!(alias.kind(), TyKind::Dependent(_)) =>
             {
-                self.construct_dependent(expr, alias).map(Some)
+                self.construct_dependent(expr.source_span(), alias)
+                    .map(Some)
             }
             _ => Ok(None),
         }
@@ -283,6 +285,27 @@ impl Checker {
             .rev()
             .find_map(|scope| scope.get(name))
             .or_else(|| self.installed_comptime_value(name))
+    }
+
+    /// `FT()` over a reflected field type, the construction at `span`: the
+    /// type must be proved `Defaultable`, as the pin requires. The
+    /// construction is recorded for MIR, which constructs the type the
+    /// expression denotes.
+    pub(super) fn construct_dependent(&self, span: SourceSpan, ty: Ty) -> Result<Ty, TypeError> {
+        let view = self.opaque_element(&ty).unwrap_or_else(|| ty.clone());
+        if !self.conforms_to(&view, "Defaultable") {
+            return Err(TypeError::BadCall {
+                func: "__init__".to_string(),
+                reason: format!(
+                    "type '{ty}' does not conform to trait 'Defaultable'; either prove the \
+                     conformance with 'conforms_to', or add conformance"
+                ),
+            });
+        }
+        self.record_at(span).adjustment = Some(Box::new(
+            mojito_checked::checked::SemanticAdjustment::ConstructType { ty: ty.clone() },
+        ));
+        Ok(ty)
     }
 
     /// The handle and query an expression reads: `r.field_count()`,
@@ -604,26 +627,6 @@ impl Checker {
                 found: "a runtime value".to_string(),
                 context: "reflected field index".to_string(),
             })
-    }
-
-    /// `FT()` over a reflected field type: the type must be proved
-    /// `Defaultable`, as the pin requires. The construction is recorded for
-    /// MIR, which constructs the type the expression denotes.
-    fn construct_dependent(&self, expr: &Expr, ty: Ty) -> Result<Ty, TypeError> {
-        let view = self.opaque_element(&ty).unwrap_or_else(|| ty.clone());
-        if !self.conforms_to(&view, "Defaultable") {
-            return Err(TypeError::BadCall {
-                func: "__init__".to_string(),
-                reason: format!(
-                    "type '{ty}' does not conform to trait 'Defaultable'; either prove the \
-                     conformance with 'conforms_to', or add conformance"
-                ),
-            });
-        }
-        self.record_at(expr.source_span()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::ConstructType { ty: ty.clone() },
-        ));
-        Ok(ty)
     }
 }
 

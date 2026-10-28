@@ -141,19 +141,13 @@ impl Checker {
         let receiver = self
             .denoted_type(head, "the receiver 'type_of'")
             .and_then(|ty| {
-                let spelling = match ty.kind() {
-                    TyKind::Param { binder, .. } => Some(Expr::new(
-                        ExprKind::Identifier(binder.name.to_string()),
-                        head.span,
-                    )),
-                    _ => mojito_types::ct::source_type(&ty, head.span)
-                        .and_then(|spelling| spelling.expression_spelling(head.span)),
-                };
-                spelling.ok_or_else(|| {
-                    TypeError::Unsupported(format!(
-                        "a receiver through 'type_of': '{ty}' has no spelling"
-                    ))
-                })
+                self.scope_type_spelling(&ty, head)
+                    .and_then(|spelling| spelling.expression_spelling(head.span))
+                    .ok_or_else(|| {
+                        TypeError::Unsupported(format!(
+                            "a receiver through 'type_of': '{ty}' has no spelling"
+                        ))
+                    })
             })
             .map(|spelling| derived_receiver(expression, &spelling));
         Some(receiver.and_then(|receiver| {
@@ -464,10 +458,11 @@ impl Checker {
 
     /// The construction `expected(entries...)` an initializer list stands
     /// for: a type parameter's own construction, a pack element's
-    /// (`Self.Ts[i]()` / `Ts[i]()` over the element's pack and index), or the
-    /// closed type's spelling applied to the entries. The entries keep their
-    /// identities; the construction and the spelled arguments take ones
-    /// derived from the brace.
+    /// (`Self.Ts[i]()` / `Ts[i]()` over the element's pack and index), the
+    /// closed type's spelling applied to the entries, or else the
+    /// construction of the type itself ([`Self::instance_construction`]).
+    /// The entries keep their identities; the construction and the spelled
+    /// arguments take ones derived from the brace.
     fn initializer_list_construction(
         &self,
         expression: &Expr,
@@ -488,11 +483,11 @@ impl Checker {
                 args,
                 kwargs: Vec::new(),
             },
-            TyKind::Dependent(dependent) if let Some((list, index)) = dependent.pack_element() => {
-                let pack = list
-                    .as_decl_ref()
-                    .map(|reference| reference.name.trim_start_matches('*').to_string())
-                    .ok_or_else(unspellable)?;
+            TyKind::Dependent(dependent)
+                if let Some((list, index)) = dependent.pack_element()
+                    && let Some(reference) = list.as_decl_ref() =>
+            {
+                let pack = reference.name.trim_start_matches('*').to_string();
                 let index = pack_index_expression(index, expression.span)
                     .or_else(|| self.comptime_alias_spelling(index, expression.span))
                     .ok_or_else(unspellable)?;
@@ -518,6 +513,17 @@ impl Checker {
                     kwargs: Vec::new(),
                 }
             }
+            // An origin argument has no source spelling of its own: the
+            // construction binds it against the instance.
+            TyKind::Struct(_, arguments)
+                if arguments
+                    .iter()
+                    .any(|argument| matches!(argument, TyArg::Origin(_))) =>
+            {
+                return self
+                    .instance_construction(expression, expected, args)
+                    .ok_or_else(unspellable);
+            }
             _ => {
                 let name = match mojito_types::ct::source_type(expected, expression.span) {
                     Some(SourceType::Named(name, param_args)) => {
@@ -535,7 +541,11 @@ impl Checker {
                     Some(SourceType::UInt) => "UInt",
                     Some(SourceType::Bool) => "Bool",
                     Some(SourceType::Float64) => "Float64",
-                    _ => return Err(unspellable()),
+                    _ => {
+                        return self
+                            .instance_construction(expression, expected, args)
+                            .ok_or_else(unspellable);
+                    }
                 };
                 ExprKind::Call {
                     name: name.to_string(),
@@ -546,6 +556,121 @@ impl Checker {
             }
         };
         Ok(derived_construction(expression, kind))
+    }
+
+    /// The source spelling of `ty` read at `at`: a closed type's own, and a
+    /// type over the parameters in scope with each parameter by its name
+    /// (`T`, `*Ts`; `Self.T` for the struct's own) and each symbolic value
+    /// as the source meaning it (`Scalar[dt]` is `SIMD[dt, 1]`). `None` when
+    /// some part of it has no spelling in scope.
+    fn scope_type_spelling(&self, ty: &Ty, at: &Expr) -> Option<SourceType> {
+        use mojito_ast::ast::ParamArg;
+        if let Some(closed) = mojito_types::ct::source_type(ty, at.span) {
+            return Some(closed);
+        }
+        let value = |value: &CtValue| match value {
+            CtValue::Expr(value) => self.spelled_parameter_value(value, at),
+            closed => closed.materialize(at.span),
+        };
+        match ty.kind() {
+            TyKind::Param { binder, .. } => {
+                let name = binder.name.to_string();
+                let binds = |declared: &ParamId| *declared == binder.id;
+                if self.self_decls.iter().any(
+                    |declaration| matches!(declaration, ParamDecl::Type { id, .. } if binds(id)),
+                ) {
+                    return Some(SourceType::SelfParam(name));
+                }
+                self.tparams
+                    .iter()
+                    .rev()
+                    .find_map(|scope| {
+                        scope
+                            .get(&name)
+                            .or_else(|| scope.get(name.trim_start_matches('*')))
+                    })
+                    .filter(|scoped| {
+                        matches!(scoped.kind(), TyKind::Param { binder, .. } if binds(&binder.id))
+                    })
+                    .map(|_| SourceType::Named(name, Vec::new()))
+            }
+            TyKind::Simd { dtype, width } => {
+                let dtype = match dtype {
+                    mojito_types::types::SimdDtype::Known(dtype) => {
+                        CtValue::Dtype(*dtype).materialize(at.span)
+                    }
+                    mojito_types::types::SimdDtype::Expr(dtype) => {
+                        self.spelled_parameter_value(dtype, at)
+                    }
+                }?;
+                let width = match width {
+                    mojito_types::types::SimdWidth::Known(width) => {
+                        CtValue::Int(*width).materialize(at.span)
+                    }
+                    mojito_types::types::SimdWidth::Expr(width) => {
+                        self.spelled_parameter_value(width, at)
+                    }
+                }?;
+                Some(SourceType::Named(
+                    mojito_types::types::SIMD_TYPE_NAME.to_string(),
+                    vec![ParamArg::Value(dtype), ParamArg::Value(width)],
+                ))
+            }
+            TyKind::Struct(name, arguments) => {
+                let (name, arguments) = match mojito_types::types::tuple_elements(ty) {
+                    Some(elements) if name != mojito_types::types::TUPLE_TYPE_NAME => (
+                        mojito_types::types::TUPLE_TYPE_NAME,
+                        elements.into_iter().cloned().map(TyArg::Ty).collect(),
+                    ),
+                    _ => (name.as_str(), arguments.clone()),
+                };
+                let arguments = arguments
+                    .iter()
+                    .map(|argument| match argument {
+                        TyArg::Ty(ty) => self.scope_type_spelling(ty, at).map(ParamArg::Type),
+                        TyArg::Val(spelled) => value(spelled).map(ParamArg::Value),
+                        TyArg::Origin(_) => Some(ParamArg::Value(Expr::new(
+                            ExprKind::Identifier("_".to_string()),
+                            at.span,
+                        ))),
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(SourceType::Named(name.to_string(), arguments))
+            }
+            _ => None,
+        }
+    }
+
+    /// The construction of `instance`, a type no source spelling names
+    /// (`It[T]`, `Scalar[dt]`, a `TypeList` over a raw list), from `args`:
+    /// the struct's call, bound to the instance it constructs, as upstream
+    /// constructs the contextual type itself. `None` for a type that is no
+    /// struct.
+    fn instance_construction(
+        &self,
+        expression: &Expr,
+        instance: &Ty,
+        args: Vec<Expr>,
+    ) -> Option<Expr> {
+        let name = match instance.kind() {
+            TyKind::Struct(name, _) => name.clone(),
+            TyKind::Simd { .. } => mojito_types::types::SIMD_TYPE_NAME.to_string(),
+            TyKind::Dependent(_) => instance.to_string(),
+            _ => return None,
+        };
+        let construction = derived_construction(
+            expression,
+            ExprKind::Call {
+                name,
+                param_args: Vec::new(),
+                args,
+                kwargs: Vec::new(),
+            },
+        );
+        self.spelled_instances
+            .borrow_mut()
+            .insert(construction.source_span(), instance.clone());
+        Some(construction)
     }
 
     /// The name of the innermost local `comptime` binding that denotes

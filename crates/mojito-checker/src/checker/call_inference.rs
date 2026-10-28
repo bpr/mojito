@@ -485,6 +485,52 @@ impl Checker {
         }))
     }
 
+    /// A construction the checker spelled for a type with no source
+    /// spelling, bound to `instance`: a struct's `__init__` overloads solve
+    /// its parameters against the instance, and a `SIMD` takes its declared
+    /// initializers before the checker's rule, as an alias's does.
+    fn infer_instance_construction(
+        &self,
+        span: &SourceSpan,
+        instance: &Ty,
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        match instance.kind() {
+            TyKind::Simd { dtype, width } => self
+                .declared_simd_construction(span, Some(instance), &[], args, kwargs)
+                .unwrap_or_else(|| self.construct_simd(span, dtype, width, args)),
+            // An origin slot the arguments leave open is the instance's.
+            TyKind::Struct(name, expected) => self
+                .infer_construction_of(span, name, Some(instance), &[], args, kwargs)
+                .map(|constructed| match constructed.kind() {
+                    TyKind::Struct(name, arguments) if arguments.len() == expected.len() => {
+                        let arguments = arguments
+                            .iter()
+                            .zip(expected)
+                            .map(|(argument, expected)| match (argument, expected) {
+                                (
+                                    TyArg::Origin(mojito_types::origin::Origin::Unbound),
+                                    TyArg::Origin(_),
+                                ) => expected.clone(),
+                                _ => argument.clone(),
+                            })
+                            .collect();
+                        TyKind::Struct(name.clone(), arguments).into()
+                    }
+                    _ => constructed,
+                }),
+            // A reflected field type's default construction.
+            TyKind::Dependent(_) if args.is_empty() && kwargs.is_empty() => {
+                self.construct_dependent(span.clone(), instance.clone())
+            }
+            _ => Err(TypeError::Unsupported(format!(
+                "cannot emit initializer list for '{instance}': the type has no construction \
+                 to spell"
+            ))),
+        }
+    }
+
     /// `Scalar[dt](...)` by the checker's rule: a one-lane `SIMD`
     /// construction.
     fn infer_scalar_construction(
@@ -979,6 +1025,9 @@ impl Checker {
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
+        if let Some(instance) = self.spelled_instances.borrow().get(&span).cloned() {
+            return self.infer_instance_construction(&span, &instance, args, kwargs);
+        }
         if name == "__RuntimeTuple"
             && (self.bundled_stdlib_declaration
                 || super::overload_support::is_bundled_module_source(span.source.as_deref()))

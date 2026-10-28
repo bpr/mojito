@@ -2225,9 +2225,12 @@ impl Checker {
         name: &str,
         decls: &[ParamDecl],
         param_args: &[mojito_ast::ast::ParamArg],
+        constructed: Option<&Ty>,
         patterns: &[Ty],
     ) -> Result<(), TypeError> {
-        let Some(pack) = Self::inferred_construction_pack(name, decls, param_args) else {
+        let Some(pack) = Self::inferred_construction_pack(name, decls, param_args)
+            .filter(|_| constructed.is_none())
+        else {
             return Ok(());
         };
         let names_pack = |ty: &Ty| {
@@ -2449,6 +2452,30 @@ impl Checker {
                 func: name.to_string(),
                 reason: failure.reason(),
             })
+    }
+
+    /// The patterns and actuals a construction of `name` solves the
+    /// struct's parameters from: its bound arguments', led by the struct at
+    /// its own binders against `constructed`, the instance the construction
+    /// builds when one is known before the overloads are matched.
+    fn constructed_unification(
+        &self,
+        name: &str,
+        constructed: Option<&Ty>,
+        patterns: &[Ty],
+        actuals: &[Ty],
+    ) -> (Vec<Ty>, Vec<Ty>) {
+        match constructed.zip(self.self_instance_ty(name)) {
+            Some((constructed, instance)) => (
+                std::iter::once(instance)
+                    .chain(patterns.iter().cloned())
+                    .collect(),
+                std::iter::once(constructed.clone())
+                    .chain(actuals.iter().cloned())
+                    .collect(),
+            ),
+            None => (patterns.to_vec(), actuals.to_vec()),
+        }
     }
 
     pub(super) fn infer_construction(
@@ -2739,12 +2766,20 @@ impl Checker {
                         self.solving_argument_ty(argument, pattern, &decls, &explicit)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                Self::reject_unconstrained_pack(name, &decls, param_args, &params)?;
+                Self::reject_unconstrained_pack(name, &decls, param_args, constructed, &params)?;
+                let (instance_patterns, instance_actuals) =
+                    self.constructed_unification(name, constructed, &params, &arg_tys);
                 let BoundParameters {
                     mut subst,
                     arguments: tyargs,
                     attributes,
-                } = self.resolve_use_params(name, &decls, param_args, &params, &arg_tys)?;
+                } = self.resolve_use_params(
+                    name,
+                    &decls,
+                    param_args,
+                    &instance_patterns,
+                    &instance_actuals,
+                )?;
                 self.record_bracket_attributes(
                     span.clone(),
                     partitioned.brackets.scatter(attributes),
@@ -2975,19 +3010,13 @@ impl Checker {
                     .map(|(_, pattern, _)| pattern.clone())
                     .collect();
                 let (instance_patterns, instance_actuals) =
-                    match constructed.zip(self.self_instance_ty(name)) {
-                        Some((constructed, instance)) => (
-                            std::iter::once(instance)
-                                .chain(patterns.iter().cloned())
-                                .collect(),
-                            std::iter::once(constructed.clone())
-                                .chain(arg_tys.iter().cloned())
-                                .collect(),
-                        ),
-                        None => (patterns.clone(), arg_tys.clone()),
-                    };
+                    self.constructed_unification(name, constructed, &patterns, &arg_tys);
                 let resolved_use = Self::reject_unconstrained_pack(
-                    name, &decls, param_args, &patterns,
+                    name,
+                    &decls,
+                    param_args,
+                    constructed,
+                    &patterns,
                 )
                 .and_then(|()| {
                     self.resolve_use_params(
@@ -3396,12 +3425,20 @@ impl Checker {
             .collect::<Result<Vec<_>, _>>()?;
         // The origin slots were partitioned out of `param_args` above; the
         // field types bind the struct's origin binders from the arguments.
-        Self::reject_unconstrained_pack(name, &decls, param_args, &field_tys)?;
+        Self::reject_unconstrained_pack(name, &decls, param_args, constructed, &field_tys)?;
+        let (instance_patterns, instance_actuals) =
+            self.constructed_unification(name, constructed, &field_tys, &arg_tys);
         let BoundParameters {
             subst,
             arguments: tyargs,
             attributes,
-        } = self.resolve_use_params(name, &decls, param_args, &field_tys, &arg_tys)?;
+        } = self.resolve_use_params(
+            name,
+            &decls,
+            param_args,
+            &instance_patterns,
+            &instance_actuals,
+        )?;
         self.record_bracket_attributes(span.clone(), partitioned.brackets.scatter(attributes));
         if let Some(specialized) =
             self.finish_variadic_construction(span, name, param_args, &tyargs, args, &[])
@@ -3868,7 +3905,12 @@ impl Checker {
                     ty,
                     ..
                 } => {
-                    if let Some(value) = value_solutions.get(pname) {
+                    // A value pack's list is solved under its binder's
+                    // name, which its declaration spells with the `*`.
+                    if let Some(value) = value_solutions
+                        .get(pname)
+                        .or_else(|| value_solutions.get(pname.trim_start_matches('*')))
+                    {
                         value_environment
                             .insert(pname.trim_start_matches('*').to_string(), value.clone());
                         tyargs.push(TyArg::Val(value.clone()));

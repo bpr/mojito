@@ -404,6 +404,7 @@ assets/ok/infer_only_parameter_by_keyword.mojo	main	exe-differential	sanitized
 assets/ok/init_out_self.mojo	main	exe-differential	sanitized
 assets/ok/init_raise_destroys_initialized_fields.mojo	main	exe-differential	sanitized
 assets/ok/initializer_list_contextual.mojo	main	exe-differential	sanitized
+assets/ok/initializer_list_symbolic_type.mojo	main	exe-differential	sanitized
 assets/ok/inlined_bitcast_application_argument.mojo	main	exe-differential	sanitized
 assets/ok/inlined_constructor_unread_struct_parameter.mojo	main	exe-differential	sanitized
 assets/ok/inplace_field.mojo	main	exe-differential	sanitized
