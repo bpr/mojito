@@ -1219,6 +1219,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A method that constructs its own struct through an initializer
+  overloaded over a parameter-dependent type, such as `L[Self.n](raw=v)`
+  beside `__init__(out self, *, raw: SIMD[DType.int32, Self.n])`, runs as at
+  the pin (R1518). It stopped with "keeps compile-time argument slots in
+  elaborated MIR"; the overload symbol fix above closed it, and
+  `assets/ok/mlir_type_overload_identity.mojo` now pins it.
+
 - An implicit conversion of a `Self(...)` argument now converts the
   construction it spells. It was dropped, so the call failed MIR
   verification.

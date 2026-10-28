@@ -1,7 +1,8 @@
 # An overloaded constructor or method whose parameter is spelled as an MLIR
 # type (`__mlir_type.index`, `__mlir_type[`!kgen.simd<`, ...]`) or as a
 # vector over the struct's own parameters (`SIMD[Self.dt, Self.n]`) is
-# named the same way at its declaration and at its call.
+# named the same way at its declaration and at its call, including a call
+# from a method of the struct itself.
 
 
 struct Index(ImplicitlyCopyable, TrivialRegisterPassable):
@@ -45,6 +46,22 @@ struct Lanes[dt: DType, n: SIMDLength](ImplicitlyCopyable):
         return v + self.x
 
 
+struct Raw[n: Int](Copyable, Movable):
+    var v: SIMD[DType.int32, Self.n]
+
+    def __init__(out self, value: String):
+        self.v = SIMD[DType.int32, Self.n](0)
+
+    def __init__(out self, *, raw: SIMD[DType.int32, Self.n]):
+        self.v = raw
+
+    def again(self) -> Raw[Self.n]:
+        return Raw[Self.n](raw=self.v + SIMD[DType.int32, Self.n](1))
+
+    def twice(self) -> Self:
+        return Self(raw=self.v * 2)
+
+
 def main():
     var a = Index(mlir_value=Int(3).__mlir_index__())
     print(a.get(), Index(5).get())
@@ -53,3 +70,5 @@ def main():
     var c = Lanes[DType.int32, 4](s)
     print(b.x, c.x, Lanes[DType.int32, 4](7, True).x)
     print(b.plus(s), b.plus(10))
+    var r = Raw[4](raw=SIMD[DType.int32, 4](7))
+    print(r.again().v, r.twice().v, Raw[2]("x").again().v)

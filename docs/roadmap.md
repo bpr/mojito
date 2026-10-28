@@ -953,28 +953,6 @@ which names the upstream pass each one follows. Each is measured by the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1518 A method that constructs its own struct through an
-  overloaded initializer over a parameter-dependent type fails
-  elaboration**
-
-  `struct L[n: Int]` with `__init__(out self, value: String)` and
-  `__init__(out self, *, raw: SIMD[DType.int32, Self.n])`, whose method
-  `again` returns `L[Self.n](raw=SIMD[DType.int32, Self.n](self.v))`, fails
-  with "keeps compile-time argument slots in elaborated MIR after
-  monomorphization", where the pin runs it.
-  - One keyword-only initializer works, and so does an overload whose
-    parameter type names no struct parameter (`raw: Int`, `raw: List[Int]`).
-  - The same construction from `main` works, so only the template's call
-    keeps its slots.
-  - `drop_parameter_slots` (`native/mono/specializer.rs`) keeps every slot
-    of a call when one still holds a run-time register, and the concrete
-    verifier then reports them.
-  - Upstream's `SIMD` overloads `__init__` over `Self`-dependent types and
-    constructs itself in its methods, so R1397 needs this.
-  - Found while planning R1392 (2026-10-27).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 ### Measure Instantiation And Test The Passes That Shrink It
 
 Track: `measure`.
@@ -3715,6 +3693,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     3]` at the pin: an element converts implicitly to `Scalar[dtype]`, and
     `@implicit __init__(SIMDLength)` is such a conversion. `splats_to` has
     no `SIMDLength` arm.
+  - Probe (from R1518): a method of `struct L[n: Int]` returning
+    `L[Self.n](raw=SIMD[DType.int32, Self.n](self.v))`, through an
+    `__init__(out self, *, raw: SIMD[DType.int32, Self.n])` overload, prints
+    the copied vector at the pin. Mojito rejects the inner same-type copy
+    ("expected a DType.int32 element, found SIMD[DType.int32, n]"); the
+    overloaded construction itself runs, over `raw=self.v`.
   - Found while landing R186 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
