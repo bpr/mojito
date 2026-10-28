@@ -223,6 +223,9 @@ impl<I: Iterator<Item = Result<(Token, Span), LexError>>> Parser<I> {
             Token::None => Ok(self.node(ExprKind::None, start)),
             Token::Ellipsis => Ok(self.node(ExprKind::Identifier("...".into()), start)),
             Token::Identifier(id) => Ok(self.node(ExprKind::Identifier(id), start)),
+            Token::IsRunInComptimeInterpreter => {
+                Ok(self.node(ExprKind::IsRunInComptimeInterpreter, start))
+            }
             Token::Def => {
                 let ty = self.parse_function_type_tail()?;
                 Ok(self.node(ExprKind::TypeValue(ty), start))

@@ -1161,6 +1161,26 @@ fn rejects_a_generator_type_without_a_result() {
 }
 
 #[test]
+fn parses_the_comptime_interpreter_query_as_a_keyword_expression() {
+    let statements = parse("def f() -> Bool:\n    return __is_run_in_comptime_interpreter\n");
+    let StmtKind::Def { body, .. } = &statements[0].kind else {
+        panic!("expected def");
+    };
+    let StmtKind::Return(Some(value)) = &body[0].kind else {
+        panic!("expected a return");
+    };
+    assert_eq!(value.kind, ExprKind::IsRunInComptimeInterpreter);
+}
+
+#[test]
+fn rejects_the_comptime_interpreter_query_as_a_function_name() {
+    let mut parser = Parser::new(Lexer::new(
+        "def __is_run_in_comptime_interpreter():\n    pass\n",
+    ));
+    assert!(parser.parse_program().is_err());
+}
+
+#[test]
 fn parses_a_bare_type_of_bound_as_a_bound_name() {
     let statements = parse("def g[T: type_of]():\n    pass\n");
     let StmtKind::Def { type_params, .. } = &statements[0].kind else {

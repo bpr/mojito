@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.127
+mojito-mir 1.128
 ```
 
-The writer emits 1.127. The reader accepts 1.0 through 1.127; *Schema 1.0*
+The writer emits 1.128. The reader accepts 1.0 through 1.128; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -812,6 +812,13 @@ is upstream's `pop.cast` to and from `bool` lanes too: a `bool` lane widens
 to 0 or 1, and a lane cast to `bool` is its low bit. The package format
 moves to `mojito-package 131`, since the checked `MlirOp` vocabulary grows.
 
+Schema 1.128 adds `is_run_in_comptime_interpreter { dest }` (R1546),
+upstream's `kgen.is_run_in_comptime_interpreter`: a `Bool` that is `True`
+while the comptime interpreter runs the function and `False` in the
+compiled program. The VM answers it per run, under CTFE fuel or not; a
+native backend writes `False`; no pass folds it. The package format moves
+to `mojito-package 132`, since the checked op vocabulary grows.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1546,6 +1553,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `Const` / `MaterializeLiteral` / `SizeOf` / `TypeName` | `const` / `literal.materialize` / `layout.size_of` / `type.name` |
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): exactly one of `dest` and `value` is an `index`, the other an `Int`; the bits are unchanged |
+| `IsRunInComptimeInterpreter` | `is_run_in_comptime_interpreter { dest }` (schema 1.128): a `Bool`, `True` exactly while the comptime interpreter runs the function; never folded before a backend reads it |
 | `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into a `Bool`; an integer division by zero traps |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |

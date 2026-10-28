@@ -965,6 +965,9 @@ impl Checker {
     /// display. Such an expression can run in a function the elaborator
     /// evaluates per instance.
     pub(super) fn reads_compile_time_alone(&self, expr: &Expr) -> bool {
+        if reads_comptime_interpreter_query(expr) {
+            return false;
+        }
         let mut names = names_read(expr);
         // A collector's `args.__len__()` is its pack's length.
         for collector in self.pack_length_receivers(expr) {
@@ -2933,7 +2936,8 @@ impl Checker {
     /// every operand it evaluates, so `X` is over a binder of a template
     /// body, and the call is the runtime value of that operand at its type.
     /// A whole field-name list (`materialize[names]()`) is the `Array` the
-    /// elaborator constructs per instance.
+    /// elaborator constructs per instance. An operand reading
+    /// `__is_run_in_comptime_interpreter` is the pin's rejection.
     pub(super) fn infer_template_materialize(
         &self,
         span: &SourceSpan,
@@ -2946,6 +2950,9 @@ impl Checker {
         };
         if let Some(ty) = self.materialized_reflection_list(span, operand)? {
             return Ok(ty);
+        }
+        if reads_comptime_interpreter_query(operand) {
+            return Err(TypeError::DynamicParameterValue);
         }
         self.record_crossing_operand(operand);
         let _position = self.comptime_position();
@@ -4632,6 +4639,21 @@ pub(super) fn names_read(expr: &Expr) -> Vec<String> {
     let mut names = Names(Vec::new());
     mojito_ast::visit::walk_expr(&mut names, expr);
     names.0
+}
+
+/// Whether `expr` reads `__is_run_in_comptime_interpreter`, a run-time
+/// value: a compile-time position reading it is the pin's "dynamic value"
+/// rejection.
+pub(super) fn reads_comptime_interpreter_query(expr: &Expr) -> bool {
+    struct Query(bool);
+    impl mojito_ast::visit::Visitor for Query {
+        fn visit_expr(&mut self, expr: &Expr) {
+            self.0 |= matches!(expr.kind, ExprKind::IsRunInComptimeInterpreter);
+        }
+    }
+    let mut query = Query(false);
+    mojito_ast::visit::walk_expr(&mut query, expr);
+    query.0
 }
 
 /// Whether `ty` spells the MLIR builtin `__mlir_type.index`.

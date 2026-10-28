@@ -1304,6 +1304,7 @@ fn instruction_families_reprint_byte_identically() {
             op: mojito_types::mlir::PopOp::Fma,
             operands: vec![Reg(1), Reg(2), Reg(3)],
         },
+        MirInstr::IsRunInComptimeInterpreter { dest: Reg(35) },
         MirInstr::Pop {
             dest: Reg(35),
             op: mojito_types::mlir::PopOp::Max,

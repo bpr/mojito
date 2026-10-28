@@ -61,7 +61,7 @@ Following the reference tree-sitter Mojo grammar, reserved words split into the 
 **shares with Python** (`def return pass None and or not if elif else while for in break
 continue raise try except finally import from as`, plus the `True`/`False` literals) and
 the **Mojo-only** ones (`var struct trait comptime raises`, and upstream's
-`__generator_type`). `Token::keyword` is the single
+`__generator_type` and `__is_run_in_comptime_interpreter`). `Token::keyword` is the single
 lookup table. Soft/contextual words such as `mut` (in `mut self`) are **not** reserved — they
 lex as identifiers, so they stay usable as ordinary names, matching Mojo. `enum` is one too:
 the lexer emits the `enum` keyword only where a statement starts with `enum` followed by a
@@ -970,6 +970,8 @@ atom:
     | 'True'
     | 'False'
     | 'None'
+    | '__is_run_in_comptime_interpreter'  # a run-time Bool: True while the comptime
+                                          # interpreter runs the body (ExprKind::IsRunInComptimeInterpreter)
     | list_literal
     | brace_literal
     | tuple_or_group

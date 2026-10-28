@@ -1857,6 +1857,11 @@ impl Checker {
                 where_clauses,
                 value,
             } => {
+                if super::comptime_validation::reads_comptime_interpreter_query(value) {
+                    return Err(TypeError::Unsupported(
+                        "cannot use a dynamic value in comptime initializer".to_string(),
+                    ));
+                }
                 // A lambda the value spells is declared before inference
                 // meets it, as in any statement's value.
                 if type_params.is_empty() {
@@ -3466,20 +3471,14 @@ impl Checker {
     }
 
     /// The first runtime binding — an enclosing local or a parameter — a
-    /// parameter default names, which current Mojo rejects: a default is
-    /// evaluated at compile time.
+    /// parameter default names, or the run-time
+    /// `__is_run_in_comptime_interpreter` it reads, which current Mojo
+    /// rejects: a default is evaluated at compile time.
     pub(super) fn dynamic_default_reference(&self, default: &Expr) -> Option<String> {
-        struct Names(Vec<String>);
-        impl mojito_ast::visit::Visitor for Names {
-            fn visit_expr(&mut self, expr: &Expr) {
-                if let ExprKind::Identifier(name) = &expr.kind {
-                    self.0.push(name.clone());
-                }
-            }
+        if super::comptime_validation::reads_comptime_interpreter_query(default) {
+            return Some("__is_run_in_comptime_interpreter".to_string());
         }
-        let mut names = Names(Vec::new());
-        mojito_ast::visit::walk_expr(&mut names, default);
-        names.0.into_iter().find(|name| {
+        names_read(default).into_iter().find(|name| {
             self.binding_scope(name).is_some_and(|scope| scope > 0)
                 && self.lookup(name).is_some_and(|ty| {
                     !matches!(

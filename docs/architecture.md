@@ -1908,6 +1908,14 @@ construction through a struct's type member (`S.Of[Int]()`,
 invoked lambda in a lifted initializer is the lifted thunk's nested
 declaration (`analyze_root_children` over the returned expression).
 
+The program the elaborator runs is the one the backends run: a body
+learns it is interpreted only through upstream's
+`__is_run_in_comptime_interpreter`, the MIR
+`is_run_in_comptime_interpreter` instruction, which the VM answers per run
+(`True` while it runs under CTFE fuel) and a native backend writes as
+`False`. It is a run-time value, so no pass folds it and no compile-time
+position reads it (`reads_compile_time_alone` is false over it).
+
 ### Fuel
 
 In this codebase, **fuel** means a compile-time step budget. It is not a runtime

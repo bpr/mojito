@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1548**.
+Next free ID: **R1549**.
 
 ## Ordered Work
 
@@ -6079,6 +6079,36 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1548 A local `comptime` initializer or a `materialize` operand
+  that reads a run-time local is accepted**
+
+  `var x = 3` then `comptime i = x + 1` prints `4`, where the pin rejects
+  it with "cannot use a dynamic value in comptime initializer".
+  - The checker's `StmtKind::Comptime` arm (`checker/statements.rs`)
+    binds an initializer that denotes no parameter expression as a
+    run-time immutable binding, without requiring it to read compile-time
+    bindings alone (`Checker::reads_compile_time_alone`).
+  - The arm already rejects an initializer reading
+    `__is_run_in_comptime_interpreter` (R1546); the general rule subsumes
+    that gate.
+  - Probe: `comptime i = x and True` prints `True`; the pin: "cannot use a
+    dynamic value in operator argument".
+  - Probe: `comptime i = (x, 1)` then `print(i[0])` prints `3`; the pin:
+    "cannot use a dynamic value in 'ref' argument".
+  - A call over the local (`comptime i = twice(x)`) is already rejected,
+    through `requested_binding`.
+  - Probe: `var x = True` then `materialize[x]()` prints `True`; the pin:
+    "cannot use a dynamic value in a parameter list". The `materialize`
+    check (`Checker::infer_template_materialize`) rejects only an operand
+    reading `__is_run_in_comptime_interpreter`.
+  - Trap: `reads_compile_time_alone` counts the local of `type_of(t)` as a
+    run-time read, so gating on it rejects
+    `assets/ok/type_of_value_annotation.mojo`'s
+    `materialize[type_of(t) == String]()`. A type read must not count.
+  - Found while landing R1546 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R99 A method call whose compile-time argument names the caller's
   value parameter fails MIR verification**
 
@@ -6555,25 +6585,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1531 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R1546 `__is_run_in_comptime_interpreter` is undefined**
-
-  Upstream's builtin is `True` while the comptime interpreter runs a body
-  and `False` in the compiled program, and Mojito stops with "Undefined
-  variable '__is_run_in_comptime_interpreter'".
-  - Mojito's comptime interpreter is the VM under CTFE fuel
-    (`Vm::ctfe_fuel`), so the VM can answer it per run, and Pliron lowers it
-    to `false`. No pass may fold it before the backend reads it.
-  - Probe: upstream's `math.iota` takes a `comptime for` branch in the
-    comptime interpreter, which cannot fold `llvm.stepvector`, so `comptime
-    c = iota[DType.int16, 4](3)` prints `[3, 4, 5, 6]` at the pin. Without
-    the branch both reject it ("LLVM could not constant fold intrinsic:
-    llvm.stepvector").
-  - Probe: upstream's `SIMD.slice`, `debug_assert`, `io.mojo`'s write
-    paths, `string_span.mojo`, and `_swisstable.mojo` read it.
-  - Found while landing R1519 (2026-10-28).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 

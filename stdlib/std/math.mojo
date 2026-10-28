@@ -1,5 +1,6 @@
-# Upstream's `std/math/math.mojo`, holding its operation traits and the
-# rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`. The prelude exports
+# Upstream's `std/math/math.mojo`, holding its operation traits, the
+# rounding helpers `floor`/`ceil`/`trunc`/`ceildiv`, and the `SIMD` overload
+# of `iota`, verbatim (the buffer overload is omitted). The prelude exports
 # `Absable`, `Powable`, and `Roundable`, as upstream's does; `abs`/`round`/
 # `divmod` are still compiler builtins (R1458).
 #
@@ -7,6 +8,8 @@
 # compiler-modelled `Int`, `UInt`, and `Float64` conform as upstream's `SIMD`
 # declares, other `SIMD` values only in part (R1457), and each answers a
 # requirement intrinsically.
+
+from std.sys import llvm_intrinsic
 
 
 trait Ceilable:
@@ -75,3 +78,37 @@ def trunc[T: Truncable](value: T) -> T:
 @inline(.always)
 def ceildiv[T: CeilDivable](numerator: T, denominator: T) -> T:
     return numerator.__ceildiv__(denominator)
+
+
+def iota[
+    dtype: DType, width: Int
+](offset: Scalar[dtype] = Scalar[dtype](0)) -> SIMD[dtype, width]:
+    """Creates a SIMD vector containing an increasing sequence, starting from
+    offset.
+
+    Parameters:
+        dtype: The `dtype` of the input and output SIMD vector.
+        width: The width of the input and output SIMD vector.
+
+    Args:
+        offset: The value to start the sequence at. Default is zero.
+
+    Returns:
+        An increasing sequence of values, starting from offset.
+    """
+
+    comptime if width == 1:
+        return offset
+
+    comptime step_dtype = dtype if dtype.is_integral() else DType.int
+    var step: SIMD[step_dtype, width]
+    if __is_run_in_comptime_interpreter:
+        step = 0
+
+        comptime for i in range(width):
+            step[i] = Scalar[step_dtype](i)
+    else:
+        step = llvm_intrinsic[
+            "llvm.stepvector", SIMD[step_dtype, width], has_side_effect=False
+        ]()
+    return step.cast[dtype]() + offset

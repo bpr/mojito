@@ -8,6 +8,15 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `__is_run_in_comptime_interpreter` is upstream's keyword: a `Bool` that
+  is `True` while the comptime interpreter runs a body and `False` in the
+  compiled program, on the VM and natively, as at the pin (R1546). It was
+  an undefined variable. A `comptime if` condition, `comptime assert`,
+  `comptime` initializer, parameter default, or `materialize` operand
+  reading it is the pin's "cannot use a dynamic value" rejection. `std.math` gains upstream's `SIMD` overload of `iota`,
+  which takes the interpreter's branch, so `comptime v = iota[DType.int16,
+  4](3)` folds. MIR moves to schema 1.128 (`is_run_in_comptime_interpreter`)
+  and the package format to `mojito-package 132`.
 - `llvm_intrinsic` calls the shuffles upstream's `SIMD` and `math.iota`
   call: `llvm.vector.extract`, `llvm.vector.insert`,
   `llvm.vector.splice.left`/`right`, `llvm.vector.interleave2`, and

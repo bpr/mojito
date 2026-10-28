@@ -892,6 +892,7 @@ pub fn instruction_regs_mut(instruction: &mut MirInstr) -> Vec<&mut Reg> {
         | MirInstr::SizeOf { dest, .. }
         | MirInstr::ParamListAddress { dest, .. }
         | MirInstr::TypeName { dest, .. }
+        | MirInstr::IsRunInComptimeInterpreter { dest }
         | MirInstr::HasNext { dest, .. }
         | MirInstr::Next { dest, .. } => out.push(dest),
         MirInstr::MaterializeLiteral { dest, value, .. }
@@ -2231,6 +2232,13 @@ pub enum MirInstr {
         args: Vec<Reg>,
         spread: Option<usize>,
     },
+    /// Upstream's `kgen.is_run_in_comptime_interpreter`: a `Bool` that is
+    /// `True` while the comptime interpreter runs the function and `False`
+    /// in the compiled program. The VM answers it per run, under CTFE fuel or
+    /// not, and a native backend writes `False`; no pass folds it.
+    IsRunInComptimeInterpreter {
+        dest: Reg,
+    },
     /// `x`, `x^`, `borrow x`, … — a use of a variable, tagged with how (`mode`).
     /// `constructor` names the `__copyinit__` a copy runs or the
     /// `__moveinit__` a move runs, as upstream's copy/move insertion names it
@@ -3151,6 +3159,7 @@ impl MirInstr {
             | Self::BuiltinCast { .. }
             | Self::SizeOf { .. }
             | Self::TypeName { .. }
+            | Self::IsRunInComptimeInterpreter { .. }
             | Self::ParamListAddress { .. }
             | Self::GetField { .. }
             | Self::ReadRef { .. }

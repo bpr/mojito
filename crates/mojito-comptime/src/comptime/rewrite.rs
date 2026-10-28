@@ -110,7 +110,8 @@ pub(super) fn rewrite_expr(e: &mut Expr, subs: Subs) {
         | ExprKind::Bool(_)
         | ExprKind::Str(_)
         | ExprKind::None
-        | ExprKind::EmptySubscript => {}
+        | ExprKind::EmptySubscript
+        | ExprKind::IsRunInComptimeInterpreter => {}
         ExprKind::TString { parts, .. } => {
             for part in parts {
                 if let mojito_ast::ast::TStringPart::Expr(value) = part {
@@ -1725,7 +1726,8 @@ fn retype_expr(e: &mut Expr, subs: TypeSubs) {
         | ExprKind::Bool(_)
         | ExprKind::Str(_)
         | ExprKind::None
-        | ExprKind::EmptySubscript => {}
+        | ExprKind::EmptySubscript
+        | ExprKind::IsRunInComptimeInterpreter => {}
         ExprKind::TString { parts, .. } => {
             for part in parts {
                 if let mojito_ast::ast::TStringPart::Expr(value) = part {

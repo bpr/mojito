@@ -886,7 +886,7 @@ impl Checker {
         match &expr.kind {
             ExprKind::Int(_) => Ok(Ty::int_literal()),
             ExprKind::Float(_) => Ok(Ty::float_literal()),
-            ExprKind::Bool(_) => Ok(Ty::bool()),
+            ExprKind::Bool(_) | ExprKind::IsRunInComptimeInterpreter => Ok(Ty::bool()),
             ExprKind::Str(_) => Ok(Ty::string_literal()),
             ExprKind::None => Ok(Ty::none()),
             ExprKind::Uninitialized => Err(TypeError::InvariantViolation(

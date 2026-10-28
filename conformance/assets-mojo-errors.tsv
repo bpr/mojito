@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	865
+# swept-count	869
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -477,6 +477,10 @@ assets/type_error/int_literal_local_not_concrete.mojo	compile-reject	agree	error
 assets/type_error/int_literal_parameter_int_argument.mojo	compile-reject	agree	error: invalid call to 'f': value passed to 'x' cannot be converted from 'Int' to 'IntLiteral[x.value]', it depends on an unresolved parameter 'x.value'
 assets/type_error/is_operator_missing_dunder.mojo	compile-reject	agree	error: 'Plain' does not implement the '__is__' method
 assets/type_error/is_operator_non_struct.mojo	compile-reject	agree	error: 'Int' does not implement the '__is__' method
+assets/type_error/is_run_in_comptime_interpreter_comptime_assert.mojo	compile-reject	agree	error: cannot use a dynamic value in 'comptime assert' expression
+assets/type_error/is_run_in_comptime_interpreter_comptime_if.mojo	compile-reject	agree	error: cannot use a dynamic value in 'comptime if' condition
+assets/type_error/is_run_in_comptime_interpreter_comptime_initializer.mojo	compile-reject	agree	error: cannot use a dynamic value in comptime initializer
+assets/type_error/is_run_in_comptime_interpreter_default_argument.mojo	compile-reject	agree	error: cannot use a dynamic value in default argument
 assets/type_error/is_same_type_removed.mojo	compile-reject	agree	error: use of unknown declaration 'is_same_type'
 assets/type_error/iter_result_not_iterator.mojo	compile-reject	agree	error: 'Mid' does not conform to 'Iterable'; add conformance to use in a 'for' loop
 assets/type_error/keyword_forward_beside_keywords.mojo	compile-reject	agree	error: invalid call to 'inner': combining a '**' unpack with other keyword arguments for '**kwargs' is not supported

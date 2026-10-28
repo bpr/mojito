@@ -1407,6 +1407,8 @@ pub enum CheckedOp {
     None,
     Uninitialized,
     EmptySubscript,
+    /// `__is_run_in_comptime_interpreter`, a run-time `Bool`.
+    IsRunInComptimeInterpreter,
     Identifier(String),
     /// A type in value position, as the check resolved it (`None` where
     /// the check resolved none), with the nodes of the applications the
@@ -1509,6 +1511,7 @@ impl CheckedOp {
             | Self::None
             | Self::Uninitialized
             | Self::EmptySubscript
+            | Self::IsRunInComptimeInterpreter
             | Self::Identifier(_)
             | Self::TypeValue { .. }
             | Self::Lambda { .. } => {}
@@ -1707,6 +1710,7 @@ impl CheckedOp {
             | Self::None
             | Self::Uninitialized
             | Self::EmptySubscript
+            | Self::IsRunInComptimeInterpreter
             | Self::Identifier(_) => self.clone(),
             Self::TypeValue { ty, applications } => Self::TypeValue {
                 ty: ty.clone(),
@@ -5564,6 +5568,7 @@ impl<'a> ArenaBuilder<'a> {
             ExprKind::None => CheckedOp::None,
             ExprKind::Uninitialized => CheckedOp::Uninitialized,
             ExprKind::EmptySubscript => CheckedOp::EmptySubscript,
+            ExprKind::IsRunInComptimeInterpreter => CheckedOp::IsRunInComptimeInterpreter,
             ExprKind::Identifier(name) => CheckedOp::Identifier(name.clone()),
             ExprKind::TypeValue(ty) => CheckedOp::TypeValue {
                 ty: self.facts(&expression.source_span()).type_operand.clone(),

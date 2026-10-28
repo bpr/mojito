@@ -857,6 +857,7 @@ fn instruction_value(instruction: &MirInstr) -> String {
         MirInstr::StoreToMem { dest, src } => {
             record(tag, &[("dest", reg_value(*dest)), ("src", reg_value(*src))])
         }
+        MirInstr::IsRunInComptimeInterpreter { dest } => record(tag, &[("dest", reg_value(*dest))]),
         MirInstr::SizeOf { dest, ty }
         | MirInstr::TypeName { dest, ty }
         | MirInstr::ConstructType { dest, ty } => {

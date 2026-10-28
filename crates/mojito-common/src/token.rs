@@ -313,6 +313,9 @@ pub enum Token {
     /// parameterized compile-time declaration (`__generator_type[Idx: Int]
     /// Int`).
     GeneratorType,
+    /// `__is_run_in_comptime_interpreter`, upstream's keyword for whether
+    /// the comptime interpreter is running the enclosing body.
+    IsRunInComptimeInterpreter,
 
     // --- Keywords shared with Python ---
     Def,
@@ -447,6 +450,7 @@ impl Token {
             "comptime" => Self::Comptime,
             "raises" => Self::Raises,
             "__generator_type" => Self::GeneratorType,
+            "__is_run_in_comptime_interpreter" => Self::IsRunInComptimeInterpreter,
             // Shared with Python
             "def" => Self::Def,
             "lambda" => Self::Lambda,

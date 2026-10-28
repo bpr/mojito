@@ -296,6 +296,7 @@ pub const fn instr_name(instr: &MirInstr) -> &'static str {
         MirInstr::ScalarCast { .. } => "ScalarCast",
         MirInstr::BuiltinCast { .. } => "BuiltinCast",
         MirInstr::Pop { .. } => "Pop",
+        MirInstr::IsRunInComptimeInterpreter { .. } => "IsRunInComptimeInterpreter",
         MirInstr::CallLlvmIntrinsic { .. } => "CallLlvmIntrinsic",
         MirInstr::UseVar { .. } => "UseVar",
         MirInstr::MovePlace { .. } => "MovePlace",

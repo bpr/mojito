@@ -288,6 +288,7 @@ impl Table<'_> {
             | MirInstr::Pop { .. }
             | MirInstr::SizeOf { .. }
             | MirInstr::TypeName { .. }
+            | MirInstr::IsRunInComptimeInterpreter { .. }
             | MirInstr::ParamListAddress { .. }
             | MirInstr::VariantIs { .. }
             | MirInstr::VariantTag { .. }

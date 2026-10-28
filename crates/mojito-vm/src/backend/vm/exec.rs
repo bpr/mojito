@@ -342,6 +342,9 @@ impl VmBackend {
             MirInstr::BuiltinCast { dest, value } => {
                 regs[dest.0 as usize] = regs[value.0 as usize].clone();
             }
+            MirInstr::IsRunInComptimeInterpreter { dest } => {
+                regs[dest.0 as usize] = Value::Bool(self.ctfe_fuel.is_some());
+            }
             MirInstr::Pop { dest, op, operands } => {
                 let operands: Vec<Value> = operands
                     .iter()

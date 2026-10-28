@@ -655,6 +655,11 @@ impl<'a> Flatten<'a> {
             // The `p[]` dereference marker: the checker validated the pointer
             // receiver, and offset 0 is the whole lowering.
             CheckedOp::EmptySubscript => self.literal(checked, Const::Int(0)),
+            CheckedOp::IsRunInComptimeInterpreter => {
+                let dest = self.fresh_typed(node.location(), None, Ty::bool());
+                self.emit(MirInstr::IsRunInComptimeInterpreter { dest });
+                dest
+            }
             // A bare read defaults to `Copy` — the lifecycle copy for owned
             // storage. Consuming conventions keep it; a read-convention call
             // argument is instead bound as a shallow place read where the

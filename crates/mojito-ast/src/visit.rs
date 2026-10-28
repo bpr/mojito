@@ -507,6 +507,7 @@ pub fn walk_expr<V: Visitor>(visitor: &mut V, expression: &Expr) {
         | ExprKind::None
         | ExprKind::Uninitialized
         | ExprKind::EmptySubscript
+        | ExprKind::IsRunInComptimeInterpreter
         | ExprKind::Identifier(_) => {}
     }
 }
@@ -1354,6 +1355,7 @@ pub fn walk_expr_mut<V: MutVisitor>(visitor: &mut V, expr: &mut Expr) {
         | ExprKind::None
         | ExprKind::Uninitialized
         | ExprKind::EmptySubscript
+        | ExprKind::IsRunInComptimeInterpreter
         | ExprKind::Identifier(_) => {}
     }
     visitor.visit_expr_mut(expr);

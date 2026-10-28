@@ -2037,6 +2037,11 @@ pub enum ExprKind {
     /// from `None` so a source `p[None]` cannot pose as a dereference.
     EmptySubscript,
     Identifier(String),
+    /// `__is_run_in_comptime_interpreter`: a `Bool` that is `True` while the
+    /// comptime interpreter runs the enclosing body and `False` in the
+    /// compiled program — a run-time value, never folded before a backend
+    /// reads it (upstream's `kgen.is_run_in_comptime_interpreter`).
+    IsRunInComptimeInterpreter,
     /// A type used as a compile-time value, such as a function/closure signature.
     /// Parsed for source compatibility; semantic treatment as a first-class
     /// compile-time value is deferred.
@@ -2599,6 +2604,7 @@ pub fn lambdas_in_expr<'a>(expr: &'a Expr, out: &mut Vec<&'a Expr>) {
         | ExprKind::None
         | ExprKind::Uninitialized
         | ExprKind::EmptySubscript
+        | ExprKind::IsRunInComptimeInterpreter
         | ExprKind::Identifier(_) => {}
     }
 }
@@ -2993,6 +2999,7 @@ pub fn rekey_syntax(statements: &mut [Stmt]) -> SyntaxOrigins {
                 | ExprKind::None
                 | ExprKind::Uninitialized
                 | ExprKind::EmptySubscript
+                | ExprKind::IsRunInComptimeInterpreter
                 | ExprKind::Identifier(_) => {}
             }
         }

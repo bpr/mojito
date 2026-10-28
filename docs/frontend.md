@@ -542,6 +542,9 @@ Postfix forms bind at `Call`, the highest level.
 
 - integer, float, bool, string, t-string, and `None` literals
 - identifiers
+- the `__is_run_in_comptime_interpreter` keyword, upstream's
+  `kgen.is_run_in_comptime_interpreter`, as
+  `ExprKind::IsRunInComptimeInterpreter`
 - unary `-`
 - unary `not`
 - grouped expressions

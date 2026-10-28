@@ -339,6 +339,9 @@ impl Decoder {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 src: self.req(value, fields, "src", Self::reg)?,
             }),
+            "is_run_in_comptime_interpreter" => Some(MirInstr::IsRunInComptimeInterpreter {
+                dest: self.req(value, fields, "dest", Self::reg)?,
+            }),
             "type.name" => Some(MirInstr::TypeName {
                 dest: self.req(value, fields, "dest", Self::reg)?,
                 ty: self.req(value, fields, "type", Self::ty)?,
