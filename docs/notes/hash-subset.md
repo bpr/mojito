@@ -20,9 +20,11 @@ Mojito's:
    checks once with both binders symbolic, and `native::mono` instantiates
    it at every leaf type it reaches (since 2026-10-05; before that the
    elaborator minted one clone per vector type, the width-1 set eagerly).
-   A scalar leaf's dispatch selects the instance whose value parameter has
-   the leaf's lane shape, passes the value itself with `-0.0` folded
-   (upstream's `SIMD.__hash__`), and a `Bool` leaf as `Scalar[DType.bool]`;
+   A `SIMD` reaches it through its declared `__hash__` (upstream's body in
+   `std.simd`, `-0.0` folded through `to_bits`). A `Bool` or `DType`
+   leaf's dispatch selects the instance whose value parameter has the
+   leaf's lane shape and passes the value as `Scalar[DType.bool]` or
+   `UInt8`;
    an erased run, compile-time evaluation included, calls the template with
    the binders read off the value. Bodies read lanes with
    `to_bits[DType.uint64]()` and `.length` (both compiler intrinsics), in

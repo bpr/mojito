@@ -281,10 +281,10 @@ impl VmBackend {
         // its own implementation still dispatches to its method below.
         if declared_owner.is_none() {
             match (method, args.len()) {
-                // Hashable scalar leaf: contribute the value itself (`-0.0`
-                // folded, as upstream's `SIMD.__hash__`) to the caller-owned
-                // hasher through its `_update_with_simd` instance at the leaf's
-                // own vector type.
+                // Hashable `Bool` or `DType` leaf: contribute the value
+                // `hash_leaf_value` names to the caller-owned hasher through
+                // its `_update_with_simd` instance at `hash_leaf_ty`'s type.
+                // A `SIMD` runs its declared `__hash__` instead.
                 ("__hash__", 1) => {
                     // A string literal hashes as the nominal `String` it
                     // materializes to, so literal and nominal keys agree.

@@ -925,6 +925,7 @@ assets/ok/simd_float_div.mojo	main	exe-differential	sanitized
 assets/ok/simd_floats.mojo	main	exe-differential	sanitized
 assets/ok/simd_floordiv_mod.mojo	main	exe-differential	sanitized
 assets/ok/simd_generic_width.mojo	main	exe-differential	sanitized
+assets/ok/simd_hash_member.mojo	main	exe-differential	sanitized
 assets/ok/simd_inferred_width_binding.mojo	main	exe-differential	sanitized
 assets/ok/simd_inferred_width_from_argument.mojo	main	exe-differential	sanitized
 assets/ok/simd_init_overloads.mojo	main	exe-differential	sanitized

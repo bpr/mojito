@@ -50,9 +50,9 @@ impl Specializer<'_> {
         }
     }
 
-    /// Enqueue the instances a lowered scalar `__hash__(hasher)` leaf calls:
-    /// for a scalar or vector receiver, the hasher's `_update_with_simd`
-    /// instantiated at the leaf's own vector type (`hash_leaf_ty`), its
+    /// Enqueue the instances a lowered builtin `__hash__(hasher)` leaf calls:
+    /// for a `Bool` or `DType` receiver, the hasher's `_update_with_simd`
+    /// instantiated at the type the leaf hashes as (`hash_leaf_ty`), its
     /// dtype and width binders solved from that type as a call's argument
     /// solves them. A string-literal
     /// receiver reaches the hasher through the nominal String's `__hash__`
@@ -73,9 +73,7 @@ impl Specializer<'_> {
         if !matches!(hasher_ty.kind(), TyKind::Struct(..)) {
             return Ok(());
         }
-        if mojito_types::types::simd_shape(receiver).is_some()
-            || matches!(receiver.kind(), TyKind::Bool | TyKind::Dtype)
-        {
+        if matches!(receiver.kind(), TyKind::Bool | TyKind::Dtype) {
             let leaf = mojito_types::types::hash_leaf_ty(receiver);
             self.nominal_method_instance(
                 owner,

@@ -274,8 +274,8 @@ pub fn leaf_conforms(
 /// to, and only `Int`, `UInt`, and `Float64` conform, since the backends
 /// compute those operations over no other `SIMD`.
 ///
-/// `SIMD`, `Bool`, `StringLiteral`, and `DType` list `Hashable`; none lists
-/// `Hasher`.
+/// `Bool`, `StringLiteral`, and `DType` list `Hashable` (a `SIMD`'s is its
+/// declaration's); none lists `Hasher`.
 ///
 /// `SIMD`, `Bool`, the literals, and `NoneType` list `Defaultable`, and
 /// `SIMD`, `Bool`, the numeric literals, `NoneType`, and `DType`
@@ -415,13 +415,7 @@ pub fn is_signed_numeric_like(ty: &Ty) -> bool {
 pub fn builtin_hashable_ty(ty: &Ty) -> bool {
     matches!(
         ty.kind(),
-        TyKind::INT
-            | TyKind::UINT
-            | TyKind::Bool
-            | TyKind::StringLiteral
-            | TyKind::FLOAT64
-            | TyKind::Simd { .. }
-            | TyKind::Dtype
+        TyKind::Bool | TyKind::StringLiteral | TyKind::Dtype
     )
 }
 

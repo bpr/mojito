@@ -2028,9 +2028,11 @@ fn simd_wildcard_member_runs_per_vector_type() {
 #[test]
 fn hash_leaf_instantiates_the_hasher_template_per_vector_type() {
     // A `hash` in a lane-keyed `def` reaches the default hasher's
-    // `_update_with_simd` at each instance's vector type: the elaborator
-    // instantiates the one template there, a four-lane leaf included, and
-    // mints no clone above MIR.
+    // `_update_with_simd` through `SIMD.__hash__`'s ordinary call at each
+    // instance's vector type: the elaborator instantiates the one template
+    // there, a four-lane leaf included, keyed by the vector type alone
+    // since the member reads no hasher parameter, and mints no clone above
+    // MIR.
     let source = "def h[dt: DType, n: Int](v: SIMD[dt, n]) -> UInt64:\n    return hash(v)\n\ndef main():\n    print(h[DType.int32, 4](SIMD[DType.int32, 4](1, 2, 3, 4)))\n    print(h[DType.uint8, 1](UInt8(5)))\n";
     let compiler = Compiler::default();
     let program = compile_entry(&compiler, source);
@@ -2051,7 +2053,7 @@ fn hash_leaf_instantiates_the_hasher_template_per_vector_type() {
         .program
         .functions
         .iter()
-        .filter(|(name, _)| name.contains("AHasher$") && name.contains("._update_with_simd$"))
+        .filter(|(name, _)| name.contains("AHasher") && name.contains("._update_with_simd$"))
         .filter_map(|(_, function)| function.param_types.get(1).map(ToString::to_string))
         .collect();
     assert!(

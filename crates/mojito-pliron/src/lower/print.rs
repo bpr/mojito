@@ -122,12 +122,13 @@ impl<'a> FnLowering<'a> {
         self.append_struct_display(ctx, receiver, name, writer, dest)
     }
 
-    /// Contribute one scalar/literal Hashable leaf to a caller-owned hasher —
-    /// the VM's non-struct `__hash__` intrinsic. A scalar or vector leaf
-    /// passes itself (`-0.0` folded to `0.0`, as upstream's `SIMD.__hash__`)
-    /// to the hasher's `_update_with_simd` instance at the leaf's own vector
-    /// type; a string literal materializes as a nominal `String` and
-    /// dispatches to that struct's `__hash__` instance bound to the hasher.
+    /// Contribute one `Bool`, `DType`, or string-literal Hashable leaf to a
+    /// caller-owned hasher — the VM's non-struct `__hash__` intrinsic. A
+    /// `Bool` or `DType` passes the value `hash_leaf_ty` names to the
+    /// hasher's `_update_with_simd` instance at that type; a string literal
+    /// materializes as a nominal `String` and dispatches to that struct's
+    /// `__hash__` instance bound to the hasher. A `SIMD` hashes through its
+    /// declared `__hash__`.
     pub(super) fn lower_hash_leaf(
         &mut self,
         ctx: &mut Context,
@@ -180,9 +181,7 @@ impl<'a> FnLowering<'a> {
             self.emit_free(ctx, data);
             return Ok(());
         }
-        if mojito_types::types::simd_shape(receiver).is_none()
-            && !matches!(receiver.kind(), TyKind::Bool | TyKind::Dtype)
-        {
+        if !matches!(receiver.kind(), TyKind::Bool | TyKind::Dtype) {
             return Err(self.unsupported_reg(format!("hashing a `{receiver}` leaf"), dest));
         }
         let target = self.hash_leaf_update_instance(dest, hasher_name, receiver)?;
@@ -190,40 +189,6 @@ impl<'a> FnLowering<'a> {
             return Err(self.unsupported_reg(format!("`{target}` takes no leaf"), dest));
         };
         let operand = match receiver.kind() {
-            TyKind::FLOAT64 => {
-                let value = self.reg_value(ctx, recv, ScalarTy::Float64)?;
-                self.folded_float(ctx, value, ScalarTy::Float64, dest)
-            }
-            ty if let Some(dtype) = scalar_simd_dtype(ty)
-                && dtype.is_narrow_float() =>
-            {
-                let value = self.reg_value(ctx, recv, ScalarTy::Sized(dtype))?;
-                self.folded_float(ctx, value, ScalarTy::Sized(dtype), dest)
-            }
-            _ if let Some((dtype, width)) = simd_dims(receiver)
-                && width > 1
-                && dtype.is_float() =>
-            {
-                // A float vector folds each lane into a fresh copy.
-                let scalar = ScalarTy::of_dtype(dtype);
-                let lane_layout = self
-                    .layout
-                    .layout_of(&canonical_simd_ty(dtype, 1))
-                    .expect("SIMD lane layout");
-                let layout = self.layout.layout_of(receiver).expect("SIMD layout");
-                let width = width as usize;
-                let vector = self.simd_load_vector(ctx, recv, dtype, width, dest)?;
-                let storage = self.entry_alloca(ctx, layout.size, layout.align);
-                for lane in 0..width {
-                    let value = self.simd_extract(ctx, vector, lane, dest);
-                    let folded = self.folded_float(ctx, value, scalar, dest);
-                    let target_address =
-                        self.offset_address(ctx, storage, lane_layout.size * lane as u64);
-                    let store = StoreOp::new(ctx, folded, target_address);
-                    self.append(ctx, store.get_operation(), Some(dest));
-                }
-                storage
-            }
             // A `DType` hashes its code byte as a `UInt8`.
             TyKind::Dtype => self.reg_value(ctx, recv, ScalarTy::Dtype)?,
             _ => self.arg_value(ctx, recv, &expected, false, dest)?,
@@ -301,29 +266,6 @@ impl<'a> FnLowering<'a> {
             ));
         }
         Ok(symbol.to_string())
-    }
-
-    /// A float leaf with `-0.0` folded to `0.0` (the two compare equal, so
-    /// they hash alike), at the lane's own float type.
-    pub(super) fn folded_float(
-        &mut self,
-        ctx: &mut Context,
-        value: Value,
-        scalar: ScalarTy,
-        dest: Reg,
-    ) -> Value {
-        let zero = match scalar {
-            ScalarTy::Sized(dtype) if dtype.is_narrow_float() => {
-                let f64_zero = self.float_constant(ctx, 0.0);
-                self.round_float_lane(ctx, dtype, f64_zero, dest)
-            }
-            _ => self.float_constant(ctx, 0.0),
-        };
-        let is_zero = self.fcmp(ctx, FCmpPredicateAttr::OEQ, value, zero);
-        self.append(ctx, is_zero.get_operation(), Some(dest));
-        let folded = SelectOp::new(ctx, is_zero.get_result(ctx), zero, value);
-        self.append(ctx, folded.get_operation(), Some(dest));
-        folded.get_result(ctx)
     }
 
     /// The builtin-string writer's `write`: grow-and-append each argument's

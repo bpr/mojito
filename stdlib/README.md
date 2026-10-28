@@ -189,8 +189,10 @@ point, as upstream's toolchain does.
   it) and `hasher.mojo` the `Hasher` trait with Mojito's requirement set
   (R25); the reflective `__hash__` default is still synthesized by the
   compiler (R1481). The compiler
-  instantiates the `_update_with_simd` template per hashed vector type and
-  feeds every leaf as itself (`-0.0` folded), a string's bytes as a `Span[Byte, _]`
+  instantiates the `_update_with_simd` template per hashed vector type, which
+  `std.simd`'s `SIMD.__hash__` calls with `-0.0` folded and which takes a
+  `Bool` or `DType` leaf as `Scalar[DType.bool]` or `UInt8`, and a string's
+  bytes as a `Span[Byte, _]`
   (`_update_with_bytes`). The containers (`List`, `Array`, `Set`, `Dict`,
   `Optional`, `Variant`, `Tuple`) conform to `Hashable` conditionally in
   upstream's bodies. Values match the audited head on both backends.

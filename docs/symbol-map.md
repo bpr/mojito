@@ -1672,8 +1672,9 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   key. `SpecializationKeyPart::ErasedOrigin` is the owner-key marker an erased
   origin argument contributes. `specialized_method_values` refuses a residual
   value and skips only a deferred callable-value slot.
-- A scalar `__hash__` leaf calls its hasher's `_update_with_simd`
-  instance at the leaf's vector type (`mojito_types::types::hash_leaf_ty`):
+- A `Bool` or `DType` `__hash__` leaf calls its hasher's `_update_with_simd`
+  instance at the type it hashes as (`mojito_types::types::hash_leaf_ty`; a
+  vector hashes through `std.simd`'s declared `SIMD.__hash__`):
   `native::mono`'s `enqueue_hash_leaf_instances` instantiates it, and the
   VM (`Prog::hash_leaf_update`) and Pliron (`hash_leaf_update_instance`)
   select it by

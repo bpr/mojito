@@ -2656,11 +2656,12 @@ Hashable values contribute to a caller-provided hasher through
 `hasher.mojo`); a conformer that omits it receives
 a synthesized field-by-field default at elaboration (next to the `copy`
 synthesis). `hash`, `Dict`'s bucketing, and the bundled `AHasher`/`Fnv1a` are
-ordinary stdlib code in `std.hash`. The compiler contributes only the leaf:
-a scalar or literal receiver's `__hash__(hasher)` is an intrinsic that
-normalizes the value (`-0.0` folded to `0.0`, a `DType` to its `UInt8` code,
-a `Bool` to `Scalar[DType.bool]`; a `StringLiteral` materializes to `String`
-and hashes as that struct) and calls the hasher's `_update_with_simd`, a
+ordinary stdlib code in `std.hash`, and so is `SIMD.__hash__` (`std.simd`),
+which folds `-0.0` to `0.0` before calling `_update_with_simd`. The compiler
+contributes only the `Bool`, `DType`, and `StringLiteral` leaves: such a
+receiver's `__hash__(hasher)` is an intrinsic that normalizes the value (a
+`DType` to its `UInt8` code, a `Bool` to `Scalar[DType.bool]`; a
+`StringLiteral` materializes to `String` and hashes as that struct) and calls the hasher's `_update_with_simd`, a
 generator over the leaf's dtype and width that `native::mono` instantiates
 per leaf type and both backends select by the lane shape of its value
 parameter (an erased run calls the template with the binders read off the

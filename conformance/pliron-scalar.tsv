@@ -925,6 +925,7 @@ assets/ok/simd_float_div.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floats.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_floordiv_mod.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_generic_width.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_hash_member.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_inferred_width_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_inferred_width_from_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_init_overloads.mojo	-	ineligible	no-scalar-entry-shape

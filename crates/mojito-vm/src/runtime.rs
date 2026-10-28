@@ -443,18 +443,13 @@ pub fn values_equal(a: &Value, b: &Value) -> Result<bool, RuntimeError> {
     }
 }
 
-/// The checked type a runtime Hashable leaf hashes as.
+/// The checked type a runtime `Bool` or `DType` Hashable leaf hashes as.
 ///
-/// The leaf's vector type, which the hasher's `_update_with_simd` instance is
-/// selected by (`canonical_simd_ty` canonicalizes a width-1 `int`/`float64`
-/// vector to the native scalar, as the checker does).
+/// The hasher's `_update_with_simd` instance is selected by it. A `SIMD`
+/// hashes through its declared `__hash__`, so only these two leaves remain.
 pub fn hash_leaf_ty(value: &Value) -> Option<Ty> {
     Some(match value {
-        Value::Int(_) | Value::IntLiteral(_) => Ty::int(),
-        Value::UInt(_) => Ty::uint(),
         Value::Bool(_) => Ty::bool(),
-        Value::Float64(_) | Value::FloatLiteral(_) => Ty::float64(),
-        Value::Simd { dtype, lanes } => canonical_simd_ty(*dtype, lanes.width() as i64),
         // Upstream's `DType.__hash__` hashes its code as a `UInt8`.
         Value::Dtype(_) => canonical_simd_ty(Dtype::UInt8, 1),
         _ => return None,
@@ -462,25 +457,12 @@ pub fn hash_leaf_ty(value: &Value) -> Option<Ty> {
 }
 
 /// The value a Hashable leaf contributes to its hasher, typed as `hash_leaf_ty`
-/// names it.
-///
-/// A floating `-0.0` leaf (or lane) folds to `0.0`, as upstream's
-/// `SIMD.__hash__` does (the two compare equal, so they hash alike), and a
-/// `DType` contributes its code.
+/// names it: a `DType` contributes its code, and a `Bool` itself.
 pub fn hash_leaf_value(value: Value) -> Value {
-    let fold = |x: f64| if x == 0.0 { 0.0 } else { x };
     match value {
         Value::Dtype(dtype) => Value::Simd {
             dtype: Dtype::UInt8,
             lanes: SimdLanes::Int(vec![i128::from(dtype.code())]),
-        },
-        Value::Float64(x) => Value::Float64(fold(x)),
-        Value::Simd {
-            dtype,
-            lanes: SimdLanes::Float(lanes),
-        } => Value::Simd {
-            dtype,
-            lanes: SimdLanes::Float(lanes.into_iter().map(fold).collect()),
         },
         other => other,
     }
@@ -2721,14 +2703,11 @@ mod tests {
             simd_bitcast(Dtype::UInt32, 1, &bytes).unwrap(),
             ints(Dtype::UInt32, &[4631])
         );
-        assert_eq!(hash_leaf_value(Value::Float64(-0.0)), Value::Float64(0.0));
         assert_eq!(hash_leaf_ty(&Value::Bool(true)), Some(Ty::bool()));
         assert_eq!(
-            hash_leaf_ty(&Value::Simd {
-                dtype: Dtype::Int,
-                lanes: SimdLanes::Int(vec![1]),
-            }),
-            Some(Ty::int())
+            hash_leaf_value(Value::Dtype(Dtype::Int8)),
+            ints(Dtype::UInt8, &[i128::from(Dtype::Int8.code())])
         );
+        assert_eq!(hash_leaf_ty(&Value::Int(1)), None);
     }
 }

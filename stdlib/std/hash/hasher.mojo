@@ -7,8 +7,8 @@
 # `update(mut self, value: ImmSpan[Byte, _])` and a `Defaultable` bound.
 # `_update_with_simd` infers its vector's dtype and width per call, as
 # upstream's `SIMD[_, _]` does: one template serves every hashed scalar and
-# vector type, and every scalar leaf reaches it as itself with `-0.0` folded
-# first, as upstream's `SIMD.__hash__`.
+# vector type. `SIMD.__hash__` (`std.simd`) calls it with `-0.0` folded, and
+# a `Bool` or `DType` leaf reaches it as `Scalar[DType.bool]` or `UInt8`.
 
 from ._ahash import AHasher
 from ._fnv1a import Fnv1a

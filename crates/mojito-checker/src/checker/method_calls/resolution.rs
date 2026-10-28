@@ -601,11 +601,12 @@ impl Checker {
                 vec![],
             ))));
         }
-        // Hashable scalar leaves contribute themselves to the
-        // caller-provided hasher's `_update_with_simd`, instantiated at
-        // their own vector type (`-0.0` folded first, as upstream's
-        // `SIMD.__hash__`). The `mut` argument is a place so its updated
-        // state is committed by ordinary call lowering.
+        // A `Bool`, `DType`, or `StringLiteral` leaf hashes into the
+        // caller-provided hasher: the first two through its
+        // `_update_with_simd` at `hash_leaf_ty`'s type, a string literal
+        // through the nominal `String`'s `__hash__`. A `SIMD`'s `__hash__`
+        // is its declared member. The `mut` argument is a place so its
+        // updated state is committed by ordinary call lowering.
         if method == "__hash__"
             && args.len() == 1
             && kwargs.is_empty()

@@ -3143,11 +3143,11 @@ pub fn simd_ty_from_slots(dtype: SimdDtype, width: SimdWidth) -> Result<Ty, Para
     })
 }
 
-/// The type a Hashable builtin leaf contributes to its hasher as.
+/// The type a `Bool` or `DType` Hashable leaf contributes to its hasher as.
 ///
 /// A `DType` hashes its code as a `UInt8` (upstream's `DType.__hash__`), a
-/// `Bool` as `Scalar[DType.bool]` (upstream's `Bool.__hash__`); every other
-/// leaf hashes as itself.
+/// `Bool` as `Scalar[DType.bool]` (upstream's `Bool.__hash__`). A `SIMD`
+/// hashes through its declared `__hash__`.
 pub fn hash_leaf_ty(ty: &Ty) -> Ty {
     match ty.kind() {
         TyKind::Dtype => canonical_simd_ty(Dtype::UInt8, 1),

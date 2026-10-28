@@ -5777,6 +5777,8 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Restore `_uint_type_of_width`'s `_uint1`, `_uint2`, `_uint4`,
     `uint128`, and `uint256` arms in `stdlib/std/builtin/dtype.mojo`, and
     drop its second `comptime assert`.
+  - Restore `SIMD.__hash__`'s `and Self.dtype != DType.float8_e8m0fnu`
+    conjunct and its comment in `stdlib/std/simd.mojo`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -9726,6 +9728,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     operators, and a leading-dot operand beside them, are a
     `TyKind::Dtype` arm of `infer_infix` that upstream's declared
     `DType.__eq__(self, rhs: Self)` replaces.
+  - Port `DType.__hash__` with the struct and retire its hash-leaf arms
+    (`builtin_hashable_ty`, `hash_leaf_ty`, the VM's `__hash__` arm,
+    `lower_hash_leaf`, `enqueue_hash_leaf_instances`); R1192 retires the last leaf.
   - Depends on nothing.
   - Model: Fable, Planned.
 
@@ -9748,6 +9753,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     is the `Bool` itself, read by the stand-in `Bool(value=b)`.
   - Probe: `b.__mlir_i1__()` is a compiler identity on `Bool`
     (`mc_infer.rs`), where upstream's body is `pop.cast_to_builtin`.
+  - Port `Bool.__hash__` with the struct and retire its hash-leaf arms
+    (`builtin_hashable_ty`, `hash_leaf_ty`, the VM's `__hash__` arm,
+    `lower_hash_leaf`, `enqueue_hash_leaf_instances`); R1192 retires the last leaf.
   - The planning session splits it into chained one-session entries if
     one session cannot land it.
   - Found while planning R1132 (2026-10-20).
@@ -9792,6 +9800,12 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `StringLiteral.__eq__(self, rhs: StringSlice)`, and for `+` the
     reflected `String.__radd__(self, other: StringSlice)`, which the
     bundled `stdlib/std/string.mojo` lacks. The port deletes that arm.
+  - Port `StringLiteral.__hash__` with the struct and retire its hash-leaf
+    arms (`builtin_hashable_ty`, the VM's `__hash__` arm,
+    `lower_hash_leaf`, `enqueue_hash_leaf_instances`).
+  - Once R160 and R1188 have retired the `DType` and `Bool` leaves too,
+    `__hash__` and `_update_with_simd` leave `mir::TYPE_REACHED_MEMBERS`,
+    and Pliron's type-reached member push (`lib.rs`) goes with them.
   - The planning session splits it into chained one-session entries if
     one session cannot land it.
   - Found while landing R1183 (2026-10-20).
@@ -9949,27 +9963,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - List `Powable` in `SIMD`'s declaration, and drop its
     `modelled_conformance` arm for `SIMD`.
   - Depends on R1566, R1561, R1562, R330, and R1568.
-  - Model: Fable, Planned.
-
-- [ ] **R1579 `SIMD.__hash__` is a hash-leaf rule, where upstream's is a
-  library body**
-
-  `resolve_builtin_method`'s `__hash__` arm and the backends' hash leaves
-  serve a `SIMD`'s hash by name.
-  - Port `__hash__` (`simd.mojo:2182`) and list `Hashable`.
-  - Retire `builtin_hashable_ty`'s `SIMD` arms, the `SIMD` leaves of the
-    VM (`backend/vm/invoke.rs`), Pliron (`lower_hash_leaf`), and mono
-    (`enqueue_hash_leaf_instances`), and `runtime::hash_leaf_value`'s
-    float fold. The `Bool`, `DType`, and `StringLiteral` leaves stay.
-  - The body reads `type_of(bits)(neg_zero)`, a construction through
-    `type_of` over a symbolic `Scalar`, which needs R495's spelling.
-  - Probe (from R1109): the hash leaf reaches `__hash__` and a hasher's
-    `_update_with_simd` from the value's type
-    (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores.
-    Upstream's `SIMD.__hash__` calls `_update_with_simd` in library code;
-    the `Bool`, `DType`, and `StringLiteral` leaves keep both members
-    type-reached until they are library code too.
-  - Depends on R1589 and R495.
   - Model: Fable, Planned.
 
 - [ ] **R1580 `SIMD.fma` is missing and `__fma__` is a Mojito-only rule,

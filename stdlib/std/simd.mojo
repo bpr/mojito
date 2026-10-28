@@ -12,9 +12,9 @@
 # reflected `__radd__`, `__rsub__`, `__rmul__`, `__rand__`, `__rxor__`,
 # `__ror__`, `__rlshift__`, and `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
-# `__abs__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
+# `__abs__`, `__hash__`, `_refine`, `cast`, `is_power_of_two`, `to_bits`,
 # `_to_bits_signed`, and `select`. The other
-# members are still served by the compiler (R184, R1566, R1567, R1579–R1582,
+# members are still served by the compiler (R184, R1566, R1567, R1580–R1582,
 # R1585, R1586, R1596, R330, R276), and so are the other initializers:
 # `mlir_value=` (R1591), the element list (R1592), `from_bits=` (R1593),
 # `Bool`, `fill=`, and `Int` from an `index` (R1595), `IntLiteral` and
@@ -22,7 +22,8 @@
 # and `FloatableRaising` conversions (R1399); `py=` is not ported. Until
 # then a construction takes a declared overload only where its arguments
 # select one at the pin. `_simd_dtype_checks` is `True`: Mojito has no
-# sub-byte float dtype (R65). The struct declares
+# sub-byte float dtype (R65), and `__hash__` omits its `float8_e8m0fnu`
+# conjunct for the same reason. The struct declares
 # only the traits whose requirements are ported here; as upstream's, its
 # trait list has no `Floatable`. `Scalar`, `Int`, `UInt`, the sized aliases,
 # and `Byte` stay compiler names until R1557.
@@ -72,6 +73,7 @@ from std.builtin.dtype import (
     _unsigned_integral_type_of,
 )
 from std.builtin.int import _FromInt
+from std.hash.hasher import Hasher
 
 
 # ===----------------------------------------------------------------------=== #
@@ -137,6 +139,7 @@ struct SIMD[dtype: DType, length: SIMDLength](
     Defaultable,
     Equatable,
     Floorable,
+    Hashable,
     Indexer,
     Intable,
     Sized,
@@ -1197,6 +1200,38 @@ struct SIMD[dtype: DType, length: SIMDLength](
             The absolute value of this SIMD vector.
         """
         return Self(mlir_value=__mlir_op.`pop.abs`(self._mlir_value))
+
+    def __hash__[H: Hasher](self, mut hasher: H):
+        """Updates hasher with this SIMD value.
+
+        For a floating-point vector, `-0.0` hashes as `0.0`, since the two
+        compare equal.
+
+        Parameters:
+            H: The hasher type.
+
+        Args:
+            hasher: The hasher instance.
+        """
+
+        comptime if Self.dtype.is_floating_point():
+            comptime neg_zero = Scalar[Self.dtype](-0.0).to_bits()
+
+            # The `fnuz` encodings have no negative zero, so nothing to fold.
+            comptime if neg_zero != 0:
+                # Match on the bit pattern rather than the value: a float
+                # compare crashes the compiler for every sub-16-bit encoding
+                # (MOCO-4680). The hashers start from `to_bits()` either way,
+                # so this leaves every other value's hash unchanged.
+                var bits = self.to_bits()
+                hasher._update_with_simd(
+                    bits.eq(type_of(bits)(neg_zero)).select(
+                        type_of(bits)(0), bits
+                    )
+                )
+                return
+
+        hasher._update_with_simd(self)
 
     # ===------------------------------------------------------------------=== #
     # Methods

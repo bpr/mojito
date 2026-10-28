@@ -1105,7 +1105,7 @@ impl<'p> CallEdges<'p, '_> {
                     }
                 }
             }
-            // A scalar/literal Hashable leaf lowers to the hasher's
+            // A `Bool`/`DType` Hashable leaf lowers to the hasher's
             // compiled `_update_with_simd` (a string literal through the
             // nominal String's `__hash__` instance bound to that hasher).
             MirInstr::MethodCall {

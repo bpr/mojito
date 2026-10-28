@@ -8,6 +8,11 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.simd` declares upstream's `SIMD.__hash__` as a library body and
+  lists `Hashable` in `SIMD`'s trait list (R1579): a floating `-0.0` lane
+  hashes as `0.0` through `to_bits`, `eq`, and `select`, as at the pin.
+  The checker, VM, Pliron, and elaborator `SIMD` hash leaves are gone;
+  `Bool`, `DType`, and `StringLiteral` keep theirs until their struct ports.
 - An initializer list at a type with no closed spelling constructs that
   type itself, as at the pin (R495, R443): `return {0}` at `It[Self.T]`,
   `{7}` at `SIMD[dt, w]`, `{}` at `TypeList[Trait=AnyType, Ts.values]` or
