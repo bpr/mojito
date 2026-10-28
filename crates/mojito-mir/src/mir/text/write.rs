@@ -2838,6 +2838,7 @@ fn ct_value(value: &CtValue) -> String {
         CtValue::StoreToMem(referent) => positional("ct_store_to_mem", &ct_value(referent)),
         CtValue::Int(v) => positional("ct_int", &v.to_string()),
         CtValue::UInt(v) => positional("ct_uint", &v.to_string()),
+        CtValue::Index(v) => positional("ct_index", &v.to_string()),
         CtValue::Float(v) => positional("ct_float_bits", &format!("{v:016x}")),
         CtValue::IntLiteral(v) => positional("ct_int_literal", &v.to_string()),
         CtValue::FloatLiteral(v) => positional("ct_float_literal", &v.to_string()),

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.123
+mojito-mir 1.124
 ```
 
-The writer emits 1.123. The reader accepts 1.0 through 1.123; *Schema 1.0*
+The writer emits 1.124. The reader accepts 1.0 through 1.124; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -765,6 +765,14 @@ as its `!kgen.scalar<index>` storage (an `Int`) or back (R1516).
 `mojito-package 125`, since the checked type and `MlirOp` vocabularies
 grow.
 
+Schema 1.124 adds `ct_index(n)`, a compile-time value of the MLIR builtin
+`index` (upstream's `N : index` attribute), the binding of a parameter of
+type `__mlir_type.index`; a `const` of it is read at `index`. Parameter
+expressions gain the unary operators `cast_to_builtin` and
+`cast_from_builtin`, the casts between `Int` and `index` (R1531). The
+package format moves to `mojito-package 126`, since checked parameter
+values and expressions may carry them.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1153,7 +1161,7 @@ binders of the declaration holding the default, as a conformer's trait
 default wrapper reaches its trait member's default. Concrete MIR carries
 only the positional form.
 
-`CtValue` uses `ct_int`, `ct_uint`, `ct_float_bits`, `ct_int_literal`,
+`CtValue` uses `ct_int`, `ct_uint`, `ct_index` (schema 1.124), `ct_float_bits`, `ct_int_literal`,
 `ct_float_literal`, `ct_bool`, `ct_string`, `ct_tuple`, `ct_list`, `ct_dict`,
 `ct_set`, `ct_dtype`, `ct_simd`, `ct_struct { name, fields }`, `ct_type`,
 `ct_trait([trait, ...])` for a trait or a `&` composition of

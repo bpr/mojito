@@ -209,6 +209,18 @@ impl ParamContext {
         self.op(ParamOp::BoolXor, &[operand.clone(), self.boolean(true)])
     }
 
+    /// `operand.__mlir_index__()`: an `Int` (or an integer literal, which
+    /// materializes to one) as an `index`; see [`ParamOp::CastToBuiltin`].
+    pub fn cast_to_builtin(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        self.op(ParamOp::CastToBuiltin, std::slice::from_ref(operand))
+    }
+
+    /// `Int(mlir_value=operand)`: an `index` as an `Int`; see
+    /// [`ParamOp::CastFromBuiltin`].
+    pub fn cast_from_builtin(&self, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        self.op(ParamOp::CastFromBuiltin, std::slice::from_ref(operand))
+    }
+
     /// The canonicalizing primitive constructor: checks arity and operand
     /// domains, folds what is constant, and returns the normal form, which may
     /// be a constant or one of the operands.
@@ -230,6 +242,7 @@ impl ParamContext {
             ParamOp::BoolXor => self.build_xor(operands),
             ParamOp::Eq | ParamOp::Lt | ParamOp::Le => self.build_comparison(op, &operands),
             ParamOp::Cond => self.build_cond(operands),
+            ParamOp::CastToBuiltin | ParamOp::CastFromBuiltin => self.build_cast(op, &operands[0]),
             ParamOp::Neg
             | ParamOp::Sub
             | ParamOp::Div
@@ -1391,6 +1404,54 @@ impl ParamContext {
         }
     }
 
+    /// A cast between `Int` and `index` over the canonical polynomial: each
+    /// coefficient is kept and each atom maps to its cast, a cast of the
+    /// inverse cast being its operand, so `(k + j).__mlir_index__()` and
+    /// `k.__mlir_index__() + j.__mlir_index__()` are one node and a round
+    /// trip is the identity.
+    fn build_cast(&self, op: ParamOp, operand: &ParamExpr) -> Result<ParamExpr, ParamError> {
+        let (from, to, inverse) = if op == ParamOp::CastToBuiltin {
+            (IntDomain::Int, IntDomain::Index, ParamOp::CastFromBuiltin)
+        } else {
+            (IntDomain::Index, IntDomain::Int, ParamOp::CastToBuiltin)
+        };
+        let operand = match operand.as_constant() {
+            Some(CtValue::IntLiteral(value)) if from == IntDomain::Int => {
+                self.integer_literal(from, value)
+            }
+            _ => operand.clone(),
+        };
+        if IntDomain::of(operand.meta()) != Some(from) {
+            return Err(ParamError::TypeMismatch {
+                operation: op.name().to_string(),
+                expected: from.ty().to_string(),
+                found: operand.meta().to_string(),
+            });
+        }
+        let mut image = Polynomial::zero(to);
+        for (monomial, coefficient) in &Polynomial::of(from, &operand)?.terms {
+            let mut term = Polynomial::constant(to, coefficient);
+            for atom in monomial {
+                let cast = match atom.kind() {
+                    ParamKind::Op { op, operands } if *op == inverse => operands[0].clone(),
+                    _ => self.make(
+                        MetaTy::value(to.ty()),
+                        ParamKind::Op {
+                            op,
+                            operands: vec![atom.clone()],
+                        },
+                    ),
+                };
+                term = term.mul(&Polynomial::of(to, &cast)?)?;
+            }
+            image = image.add(&term);
+        }
+        if image.as_constant().is_some() {
+            self.count_fold();
+        }
+        Ok(self.polynomial_node(&image))
+    }
+
     fn polynomial_node(&self, polynomial: &Polynomial) -> ParamExpr {
         let domain = polynomial.domain;
         let mut terms = Vec::new();
@@ -2477,6 +2538,14 @@ pub enum ParamOp {
     BoolOr,
     BoolXor,
     Cond,
+    /// `pop.cast_to_builtin`, `Int.__mlir_index__()`: an `Int` as the
+    /// `index` it stores. A ring isomorphism on the canonical polynomial, as
+    /// the pin folds it: the cast of a sum or product is the sum or product
+    /// of the casts, so only an atom is ever cast.
+    CastToBuiltin,
+    /// `pop.cast_from_builtin`, `Int(mlir_value=i)`: an `index` as the `Int`
+    /// whose storage it is; [`Self::CastToBuiltin`]'s inverse.
+    CastFromBuiltin,
 }
 
 impl ParamOp {
@@ -2503,6 +2572,8 @@ impl ParamOp {
             Self::BoolOr => "bool_or",
             Self::BoolXor => "bool_xor",
             Self::Cond => "cond",
+            Self::CastToBuiltin => "cast_to_builtin",
+            Self::CastFromBuiltin => "cast_from_builtin",
         }
     }
 
@@ -2538,7 +2609,7 @@ impl ParamOp {
         )
     }
 
-    const ALL: [Self; 20] = [
+    const ALL: [Self; 22] = [
         Self::Add,
         Self::Mul,
         Self::Neg,
@@ -2559,11 +2630,13 @@ impl ParamOp {
         Self::BoolOr,
         Self::BoolXor,
         Self::Cond,
+        Self::CastToBuiltin,
+        Self::CastFromBuiltin,
     ];
 
     const fn accepts_arity(self, arity: usize) -> bool {
         match self {
-            Self::Neg => arity == 1,
+            Self::Neg | Self::CastToBuiltin | Self::CastFromBuiltin => arity == 1,
             Self::Cond => arity == 3,
             Self::Add | Self::Mul | Self::BoolAnd | Self::BoolOr | Self::BoolXor => arity >= 2,
             _ => arity == 2,
@@ -2589,7 +2662,7 @@ impl ParamOp {
             Self::Le => InfixOp::Le,
             Self::BoolAnd => InfixOp::And,
             Self::BoolOr => InfixOp::Or,
-            Self::Neg | Self::Cond => return None,
+            Self::Neg | Self::Cond | Self::CastToBuiltin | Self::CastFromBuiltin => return None,
         })
     }
 
@@ -2826,6 +2899,7 @@ impl MetaTy {
         match value {
             CtValue::Int(_) => Self::int(),
             CtValue::UInt(_) => Self::value(Ty::uint()),
+            CtValue::Index(_) => Self::value(Ty::index()),
             CtValue::Float(_) => Self::value(Ty::float64()),
             CtValue::IntLiteral(_) => Self::value(Ty::int_literal()),
             CtValue::FloatLiteral(_) => Self::value(Ty::float_literal()),
@@ -3554,6 +3628,8 @@ impl Node {
 enum IntDomain {
     Int,
     UInt,
+    /// The MLIR builtin `index` of the 64-bit host target.
+    Index,
     Literal,
 }
 
@@ -3562,6 +3638,7 @@ impl IntDomain {
         match meta.as_value().map(Ty::kind) {
             Some(TyKind::INT) => Some(Self::Int),
             Some(TyKind::UINT) => Some(Self::UInt),
+            Some(TyKind::Index) => Some(Self::Index),
             Some(TyKind::IntLiteral) => Some(Self::Literal),
             _ => None,
         }
@@ -3571,6 +3648,7 @@ impl IntDomain {
         match self {
             Self::Int => Ty::int(),
             Self::UInt => Ty::uint(),
+            Self::Index => Ty::index(),
             Self::Literal => Ty::int_literal(),
         }
     }
@@ -3579,7 +3657,7 @@ impl IntDomain {
     /// the literal domain is exact.
     fn reduce(self, value: &IntLiteral) -> IntLiteral {
         match self {
-            Self::Int => value
+            Self::Int | Self::Index => value
                 .wrapping_signed(64)
                 .map_or_else(|| value.clone(), IntLiteral::from),
             Self::UInt => value
@@ -3593,6 +3671,7 @@ impl IntDomain {
         match self {
             Self::Int => CtValue::Int(value.wrapping_signed(64).unwrap_or_default()),
             Self::UInt => CtValue::UInt(value.wrapping_unsigned(64).unwrap_or_default()),
+            Self::Index => CtValue::Index(value.wrapping_signed(64).unwrap_or_default()),
             Self::Literal => CtValue::IntLiteral(value.clone()),
         }
     }
@@ -3756,6 +3835,8 @@ static NEXT_HOLE: AtomicU64 = AtomicU64::new(0);
 fn fold_primitive(op: ParamOp, operands: &[&CtValue]) -> Result<CtValue, ParamError> {
     match (op, operands) {
         (ParamOp::Neg, [operand]) => fold::fold_neg(operand),
+        (ParamOp::CastToBuiltin, [operand]) => fold::fold_cast_to_builtin(operand),
+        (ParamOp::CastFromBuiltin, [operand]) => fold::fold_cast_from_builtin(operand),
         (ParamOp::Cond, [condition, then_value, else_value]) => match condition {
             CtValue::Bool(true) => Ok((*then_value).clone()),
             CtValue::Bool(false) => Ok((*else_value).clone()),
@@ -3796,6 +3877,7 @@ fn is_scalar_domain(ty: &Ty) -> bool {
         ty.kind(),
         TyKind::INT
             | TyKind::UINT
+            | TyKind::Index
             | TyKind::IntLiteral
             | TyKind::FLOAT64
             | TyKind::FloatLiteral
@@ -3849,6 +3931,7 @@ const fn precedence(op: ParamOp) -> u8 {
         ParamOp::Mul | ParamOp::Div | ParamOp::FloorDiv | ParamOp::Mod => 11,
         ParamOp::Neg => 12,
         ParamOp::Pow => 13,
+        ParamOp::CastToBuiltin | ParamOp::CastFromBuiltin => 14,
     }
 }
 
@@ -3873,6 +3956,8 @@ const fn source_operator(op: ParamOp) -> &'static str {
         ParamOp::BoolOr => "or",
         ParamOp::Neg => "-",
         ParamOp::Cond => "if",
+        ParamOp::CastToBuiltin => ".__mlir_index__()",
+        ParamOp::CastFromBuiltin => "Int(mlir_value=)",
     }
 }
 
@@ -3933,6 +4018,21 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
                 (ParamOp::Neg, [operand]) => {
                     write!(f, "-")?;
                     write_expr(f, operand, level)?;
+                }
+                (ParamOp::CastToBuiltin, [operand]) => {
+                    write_expr(f, operand, level)?;
+                    write!(f, ".__mlir_index__()")?;
+                }
+                (ParamOp::CastFromBuiltin, [operand]) => {
+                    write!(f, "Int(mlir_value=")?;
+                    write_expr(f, operand, 0)?;
+                    write!(f, ")")?;
+                }
+                // An `index` sum or product of casts shows the cast pulled
+                // outward, as the pin does: `(k + 1).__mlir_index__()`.
+                (ParamOp::Add | ParamOp::Mul, _) if let Some(pulled) = pulled_cast(expr) => {
+                    write_expr(f, &pulled, precedence(ParamOp::CastToBuiltin))?;
+                    write!(f, ".__mlir_index__()")?;
                 }
                 // `x ^ True` is the canonical negation.
                 (ParamOp::BoolXor, [operand, constant]) if constant.as_bool() == Some(true) => {
@@ -4077,6 +4177,31 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             write!(f, "]")
         }
     }
+}
+
+/// The `Int` an `index` sum or product is the cast of, when every atom it
+/// holds is a cast: what [`write_expr`] shows with the cast pulled outward.
+fn pulled_cast(expr: &ParamExpr) -> Option<ParamExpr> {
+    if IntDomain::of(expr.meta()) != Some(IntDomain::Index) {
+        return None;
+    }
+    let casts_only = Polynomial::of(IntDomain::Index, expr)
+        .ok()?
+        .terms
+        .keys()
+        .flatten()
+        .all(|atom| {
+            matches!(
+                atom.kind(),
+                ParamKind::Op {
+                    op: ParamOp::CastToBuiltin,
+                    ..
+                }
+            )
+        });
+    casts_only
+        .then(|| ParamContext::detached().cast_from_builtin(expr).ok())
+        .flatten()
 }
 
 /// The bindings a generator's application installs: each bound slot's

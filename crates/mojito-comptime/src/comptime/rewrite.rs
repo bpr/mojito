@@ -572,6 +572,7 @@ const fn materializes_at_its_type(value: &CtValue) -> bool {
     matches!(
         value,
         CtValue::Int(_)
+            | CtValue::Index(_)
             | CtValue::Bool(_)
             | CtValue::Dtype(_)
             | CtValue::Simd { .. }

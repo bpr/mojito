@@ -698,6 +698,10 @@ impl VmBackend {
             Value::Ref { .. } => Err(RuntimeError::Unsupported(
                 "cannot freeze a reference to run-time storage".to_string(),
             )),
+            // The VM holds an `index` as an `Int`; its type says which it is.
+            Value::Int(n) if ty.is_some_and(|ty| matches!(ty.kind(), TyKind::Index)) => {
+                Ok(CtValue::Index(n))
+            }
             value => crate::crossing::vm_to_ct(value),
         }
     }
@@ -1293,7 +1297,7 @@ struct StructDef {
 
 fn ct_value_as_runtime(value: CtValue) -> Option<Value> {
     Some(match value {
-        CtValue::Int(value) => Value::Int(value),
+        CtValue::Int(value) | CtValue::Index(value) => Value::Int(value),
         CtValue::UInt(value) => Value::UInt(value),
         CtValue::Simd { dtype, lanes } => {
             use mojito_types::ct::CtLane;

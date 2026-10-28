@@ -1232,6 +1232,7 @@ impl Decoder {
             ValueKind::Positional(tag, inner) => match tag.as_str() {
                 "ct_int" => self.int64(inner).map(CtValue::Int),
                 "ct_uint" => self.uint64(inner).map(CtValue::UInt),
+                "ct_index" => self.int64(inner).map(CtValue::Index),
                 "ct_float_bits" => self.float_bits(inner).map(CtValue::Float),
                 "ct_int_literal" => self.int_literal(inner).map(CtValue::IntLiteral),
                 "ct_float_literal" => self.float_literal(inner).map(CtValue::FloatLiteral),

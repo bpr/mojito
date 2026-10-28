@@ -701,6 +701,41 @@ fn dunder_application_displays_as_its_operator() {
     assert_eq!(method.to_string(), "L.doubled(L(n))");
 }
 
+/// The casts between `Int` and `index` are a ring isomorphism on the
+/// canonical polynomial, as the pin identifies them: they distribute over
+/// `+` and `*`, a round trip cancels, a constant folds, and a residual cast
+/// shows pulled outward (`assets/ok/mlir_index_parameter.mojo`).
+#[test]
+fn builtin_casts_distribute_and_cancel() {
+    let context = ParamContext::new();
+    let k = int_param(&context, "h", 0, "k");
+    let j = int_param(&context, "h", 1, "j");
+    let to = |x: &ParamExpr| context.cast_to_builtin(x).expect("an Int casts");
+    let from = |x: &ParamExpr| context.cast_from_builtin(x).expect("an index casts");
+    let sum = infix(&context, InfixOp::Add, &k, &j);
+    assert_eq!(to(&sum), infix(&context, InfixOp::Add, &to(&j), &to(&k)));
+    let zero = infix(&context, InfixOp::Add, &k, &literal(&context, 0));
+    assert_eq!(to(&zero), to(&k));
+    assert_eq!(from(&to(&k)), k);
+    let i = context.register(ParamId::new("g", 0), "i", MetaTy::value(Ty::index()));
+    assert_eq!(to(&from(&i)), i);
+    assert_eq!(
+        to(&literal(&context, 3)).as_constant(),
+        Some(&CtValue::Index(3))
+    );
+    assert_eq!(
+        from(&to(&literal(&context, -7))).as_constant(),
+        Some(&CtValue::Int(-7))
+    );
+    let incremented = infix(&context, InfixOp::Add, &k, &literal(&context, 1));
+    let doubled = infix(&context, InfixOp::Mul, &k, &literal(&context, 2));
+    assert_ne!(to(&incremented), to(&doubled));
+    assert_eq!(to(&incremented).to_string(), "(k + 1).__mlir_index__()");
+    assert_eq!(to(&k).to_string(), "k.__mlir_index__()");
+    assert_eq!(from(&i).to_string(), "Int(mlir_value=i)");
+    assert!(context.cast_to_builtin(&i).is_err());
+}
+
 /// A `DType` float query over a binder is an application `replace` keeps
 /// and a required value answers: the format's width at a float dtype, and
 /// the pin's failed constraint at any other.

@@ -4446,6 +4446,7 @@ pub fn rewrite_value(value: &CtValue, rewrite: &mut dyn TyRewrite) -> Result<CtV
         },
         CtValue::Int(_)
         | CtValue::UInt(_)
+        | CtValue::Index(_)
         | CtValue::Float(_)
         | CtValue::IntLiteral(_)
         | CtValue::FloatLiteral(_)
@@ -4970,6 +4971,7 @@ pub fn ct_value_is_symbolic(value: &CtValue) -> bool {
         }
         CtValue::Int(_)
         | CtValue::UInt(_)
+        | CtValue::Index(_)
         | CtValue::Float(_)
         | CtValue::IntLiteral(_)
         | CtValue::FloatLiteral(_)
@@ -5226,6 +5228,7 @@ fn closed_argument(argument: &TyArg) -> bool {
             value,
             CtValue::Int(_)
                 | CtValue::UInt(_)
+                | CtValue::Index(_)
                 | CtValue::Float(_)
                 | CtValue::Bool(_)
                 | CtValue::Str(_)

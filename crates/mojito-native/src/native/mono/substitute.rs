@@ -471,7 +471,7 @@ pub(super) fn substitute_ty(ty: &Ty, bindings: &Bindings) -> Result<Ty, MonoErro
             };
             let value = eval_ct(index, bindings)?;
             let index = match value {
-                CtValue::Int(v) => usize::try_from(v).ok(),
+                CtValue::Int(v) | CtValue::Index(v) => usize::try_from(v).ok(),
                 CtValue::UInt(v) => usize::try_from(v).ok(),
                 _ => None,
             }

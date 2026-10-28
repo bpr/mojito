@@ -1790,6 +1790,7 @@ impl Checker {
                     .then(|| TyKind::ParamList(first).into())
             }
             CtValue::UInt(_) => Some(Ty::uint()),
+            CtValue::Index(_) => Some(Ty::index()),
             CtValue::Float(_) => Some(Ty::float64()),
             CtValue::IntLiteral(_) => Some(Ty::int_literal()),
             CtValue::FloatLiteral(_) => Some(Ty::float_literal()),

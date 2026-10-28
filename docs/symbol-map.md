@@ -2491,9 +2491,18 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `indexing.rs`, selects a struct's or bound's witness by that return), a
   run-time type both backends hold as `Int` (`lower_ty`/`scalar_type` in
   Pliron's `lower/types.rs`/`lower/support.rs`, `LayoutCx::layout_of` in
-  `mojito-native-core`), with no compile-time value:
-  `Checker::value_param_decl` (`declarations.rs`) rejects a parameter of
-  it (R1531). `MirInstr::BuiltinCast` (`builtin.cast`) is upstream's
+  `mojito-native-core`). Its compile-time value is `CtValue::Index`
+  (MIR `ct_index`), which the VM thaws to an `Int` and
+  `VmBackend::freeze_value` freezes back by type; the parameter domain's
+  `IntDomain::Index` polynomial and `ParamOp::CastToBuiltin`/
+  `ParamOp::CastFromBuiltin` (`ParamContext::cast_to_builtin`/
+  `cast_from_builtin`, `param_expr.rs`; constants by
+  `fold::fold_cast_to_builtin`/`fold_cast_from_builtin`) carry the casts,
+  which `Checker::scalar_storage_expression` (`constraints.rs`) builds from
+  `__mlir_index__` and `Int(mlir_value=)` and `builtin_fold::mlir_op_operator`
+  from the explicit ops; `ApplicableShape::applicable`
+  (`comptime_validation.rs`) admits `index` slots, binders, and results.
+  `MirInstr::BuiltinCast` (`builtin.cast`) is upstream's
   `pop.cast_from_builtin`/`pop.cast_to_builtin`: the checker's
   `builtin_cast_result` (`method_calls/pop_ops.rs`) types the explicit
   ops, `infer_storage_construction` (`call_inference.rs`) records

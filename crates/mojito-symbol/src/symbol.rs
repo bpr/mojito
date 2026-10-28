@@ -2659,6 +2659,10 @@ fn decode_specialization_value(text: &str, position: usize) -> Option<(Option<Ct
             let (digits, next) = until(b';')?;
             (Some(CtValue::UInt(digits.parse().ok()?)), next)
         }
+        b'x' => {
+            let (digits, next) = until(b';')?;
+            (Some(CtValue::Index(digits.parse().ok()?)), next)
+        }
         b'b' => {
             let (digit, next) = until(b';')?;
             (Some(CtValue::Bool(digit == "1")), next)
@@ -2916,6 +2920,7 @@ pub fn specialization_value_is_closed(value: &CtValue) -> bool {
         }
         CtValue::Int(_)
         | CtValue::UInt(_)
+        | CtValue::Index(_)
         | CtValue::Float(_)
         | CtValue::IntLiteral(_)
         | CtValue::FloatLiteral(_)
@@ -2966,6 +2971,7 @@ fn encode_specialization_value(value: &CtValue, out: &mut String) {
         }
         CtValue::Int(value) => out.push_str(&format!("i{value};")),
         CtValue::UInt(value) => out.push_str(&format!("u{value};")),
+        CtValue::Index(value) => out.push_str(&format!("x{value};")),
         CtValue::Dtype(dtype) => out.push_str(&format!("d{};", dtype.name())),
         CtValue::Simd { dtype, lanes } => {
             out.push_str(&format!("v{}:{};[", dtype.name(), lanes.len()));

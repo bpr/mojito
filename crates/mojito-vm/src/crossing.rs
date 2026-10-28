@@ -62,7 +62,7 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
              the type contains an origin referring to a compile-time value"
                 .to_string(),
         )),
-        CtValue::Int(n) => Ok(Value::Int(*n)),
+        CtValue::Int(n) | CtValue::Index(n) => Ok(Value::Int(*n)),
         CtValue::UInt(n) => Ok(Value::UInt(*n)),
         CtValue::Float(bits) => Ok(Value::Float64(f64::from_bits(*bits))),
         CtValue::IntLiteral(value) => Ok(Value::IntLiteral(value.clone())),

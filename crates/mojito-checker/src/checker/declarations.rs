@@ -1009,14 +1009,6 @@ impl Checker {
         id: ParamId,
         ty: Ty,
     ) -> Result<ParamDecl, TypeError> {
-        // A compile-time `index` has no value form yet (R1531).
-        if ty == Ty::index() {
-            return Err(TypeError::Unsupported(format!(
-                "parameter '{}' of type '{ty}' is outside the subset: Mojito holds no \
-                 compile-time 'index' value",
-                tp.name
-            )));
-        }
         let default = match (&tp.default, ty.kind()) {
             (Some(expr), TyKind::AnyTrait(bound)) => {
                 Some(self.trait_param_default(tp, &id, bound, expr)?)

@@ -81,6 +81,7 @@ pub fn fold_infix(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValu
     match (left, right) {
         (CtValue::Int(a), CtValue::Int(b)) => fold_int(op, *a, *b).map(CtValue::Int),
         (CtValue::UInt(a), CtValue::UInt(b)) => fold_uint(op, *a, *b).map(CtValue::UInt),
+        (CtValue::Index(a), CtValue::Index(b)) => fold_int(op, *a, *b).map(CtValue::Index),
         (CtValue::IntLiteral(a), CtValue::IntLiteral(b)) => fold_int_literal(op, a, b),
         (CtValue::FloatLiteral(a), CtValue::FloatLiteral(b)) => {
             fold_float_literal(op, a, b).map(CtValue::FloatLiteral)
@@ -107,6 +108,12 @@ pub fn fold_infix(op: InfixOp, left: &CtValue, right: &CtValue) -> Result<CtValu
         }
         (CtValue::IntLiteral(a), CtValue::UInt(b)) => {
             fold_uint(op, machine_uint(a)?, *b).map(CtValue::UInt)
+        }
+        (CtValue::Index(a), CtValue::IntLiteral(b)) => {
+            fold_int(op, *a, machine_int(b)?).map(CtValue::Index)
+        }
+        (CtValue::IntLiteral(a), CtValue::Index(b)) => {
+            fold_int(op, machine_int(a)?, *b).map(CtValue::Index)
         }
         (CtValue::IntLiteral(a), CtValue::FloatLiteral(b)) => {
             fold_float_literal(op, &FloatLiteral::from_int(a), b).map(CtValue::FloatLiteral)
@@ -147,6 +154,7 @@ pub fn fold_invert(value: &CtValue) -> Result<CtValue, ParamError> {
     match value {
         CtValue::Int(value) => Ok(CtValue::Int(!value)),
         CtValue::UInt(value) => Ok(CtValue::UInt(!value)),
+        CtValue::Index(value) => Ok(CtValue::Index(!value)),
         CtValue::IntLiteral(value) => Ok(CtValue::IntLiteral(
             value.neg().sub(&IntLiteral::from(1i64)),
         )),
@@ -209,10 +217,32 @@ pub fn comparison_holds(op: InfixOp, left: &CtValue, right: &CtValue) -> Option<
     }
 }
 
-/// The integer a concrete value denotes, across the three integer kinds.
+/// `pop.cast_to_builtin` over a concrete value: an `Int`, or a literal
+/// materialized to one first, as the `index` it stores.
+pub fn fold_cast_to_builtin(value: &CtValue) -> Result<CtValue, ParamError> {
+    match value {
+        CtValue::Int(value) => Ok(CtValue::Index(*value)),
+        CtValue::IntLiteral(value) => machine_int(value).map(CtValue::Index),
+        _ => Err(unsupported("'__mlir_index__' expects a compile-time 'Int'")),
+    }
+}
+
+/// `pop.cast_from_builtin` over a concrete value: an `index` as the `Int`
+/// whose storage it is.
+pub fn fold_cast_from_builtin(value: &CtValue) -> Result<CtValue, ParamError> {
+    match value {
+        CtValue::Index(value) => Ok(CtValue::Int(*value)),
+        _ => Err(unsupported(&format!(
+            "'Int(mlir_value=)' expects a compile-time '{}'",
+            crate::types::MLIR_INDEX_TYPE_SPELLING
+        ))),
+    }
+}
+
+/// The integer a concrete value denotes, across the integer kinds.
 pub fn integer_value(value: &CtValue) -> Option<IntLiteral> {
     match value {
-        CtValue::Int(value) => Some((*value).into()),
+        CtValue::Int(value) | CtValue::Index(value) => Some((*value).into()),
         CtValue::UInt(value) => Some((*value).into()),
         CtValue::IntLiteral(value) => Some(value.clone()),
         _ => None,

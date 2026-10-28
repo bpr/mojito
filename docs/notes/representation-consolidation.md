@@ -422,7 +422,7 @@ The sweep entries hold the lists, each with its reason:
 The sweeps also add the members' `Depends` links to the 10-25 cores:
 - R667 and R129 on R1364.
 - R1224 on R1374.
-- R1535 (R336's successor) on R1531, R1532, R1533, and R1534.
+- R1535 (R336's successor) on R1532, R1533, and R1534.
 - R276 on R1397.
 - R983, R172, and R303 on R533.
 

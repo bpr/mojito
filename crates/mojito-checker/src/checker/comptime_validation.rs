@@ -1067,7 +1067,7 @@ impl Checker {
             // elaborator below MIR runs and materializes, and so is any
             // `String` expression, which it freezes to a compile-time string;
             // no other struct expression lifts.
-            TyKind::Struct(..) | TyKind::Simd { .. } if called.is_some() => ty,
+            TyKind::Struct(..) | TyKind::Simd { .. } | TyKind::Index if called.is_some() => ty,
             TyKind::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
             {
@@ -1170,6 +1170,7 @@ impl Checker {
                 ty.kind(),
                 TyKind::INT
                     | TyKind::UINT
+                    | TyKind::Index
                     | TyKind::Bool
                     | TyKind::FLOAT64
                     | TyKind::Simd { .. }
@@ -4137,6 +4138,7 @@ impl ApplicableShape<'_> {
             SourceType::Bool => Some(SlotType::Scalar(Ty::bool())),
             SourceType::Float64 => Some(SlotType::Scalar(Ty::float64())),
             SourceType::SelfType => Some(SlotType::Owner),
+            ty if is_mlir_index_source(ty) => Some(SlotType::Scalar(Ty::index())),
             _ => None,
         };
         let binders = self
@@ -4154,6 +4156,14 @@ impl ApplicableShape<'_> {
                     [bound] if plain && bound == "UInt" => Ty::uint(),
                     [bound] if plain && bound == "Bool" => Ty::bool(),
                     [bound] if plain && bound == "Float64" => Ty::float64(),
+                    _ if binder.value_type.as_ref().is_some_and(is_mlir_index_source)
+                        && binder.callable_bound.is_none()
+                        && binder.default.is_none()
+                        && binder.constraints.is_empty()
+                        && !binder.infer_only =>
+                    {
+                        Ty::index()
+                    }
                     _ => return None,
                 };
                 Some((binder.name.clone(), ty))
@@ -4190,6 +4200,7 @@ impl ApplicableShape<'_> {
                 | SourceType::Float64
                 | SourceType::SelfType
                 | SourceType::Named(..) => self.ret.clone(),
+                ret if is_mlir_index_source(ret) => ret.clone(),
                 _ => return None,
             },
             raises: self.raises,
@@ -4479,12 +4490,22 @@ pub(super) fn names_read(expr: &Expr) -> Vec<String> {
     names.0
 }
 
+/// Whether `ty` spells the MLIR builtin `__mlir_type.index`.
+fn is_mlir_index_source(ty: &SourceType) -> bool {
+    matches!(ty, SourceType::Assoc { base, name, args }
+        if name == "index"
+            && args.is_empty()
+            && matches!(base.as_ref(), SourceType::Named(base, base_args)
+                if base == "__mlir_type" && base_args.is_empty()))
+}
+
 /// Whether `value` is a scalar or a string attribute.
 const fn is_scalar_attribute(value: &CtValue) -> bool {
     matches!(
         value,
         CtValue::Int(_)
             | CtValue::UInt(_)
+            | CtValue::Index(_)
             | CtValue::Float(_)
             | CtValue::IntLiteral(_)
             | CtValue::FloatLiteral(_)

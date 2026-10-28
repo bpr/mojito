@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1536**.
+Next free ID: **R1537**.
 
 ## Ordered Work
 
@@ -5388,6 +5388,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     ImplicitlyCopyable)`, matched as `case K.X:`, fails with "not an
     associated comptime expression", where the pin prints `x`: no
     initializer is a callable a compile-time call applies.
+  - Probe: `S[u.__mlir_index__()]` over a binder `u: UInt` (`S[n:
+    __mlir_type.index]`) fails with "not an associated comptime
+    expression", and `Int(u)` in the builder with "'Int' conversion of a
+    symbolic 'UInt' value", where the pin runs both: upstream's
+    `SIMD.__mlir_index__` is `pop.cast_to_builtin` of `pop.cast` to `int`.
+    A closed `UInt(3).__mlir_index__()` folds, but `Int(UInt(3))` in a
+    type argument is still "not a compile-time Int".
   - Found while landing the callee shapes a signature applies (2026-10-06).
   - Depends on R386, which gives the parameter domain a value meta for a
     `Float64` and a `String`.
@@ -6451,30 +6458,27 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1531 A compile-time `index` has no value, so a parameter of type
-  `__mlir_type.index` is rejected**
+- [ ] **R1536 `__mlir_attr` has no expression form, so a typed attribute
+  constant such as an `index` cannot be spelled**
 
-  Mojito holds the MLIR builtin `index` (`TyKind::Index`) only at run time:
-  no `CtValue` is an `index`, so `Checker::value_param_decl`
-  (`checker/declarations.rs`) rejects a parameter of that type as outside
-  the subset, where the pin binds one.
-  - Probe: `struct S[n: __mlir_type.index]` with a `show` printing
-    `Int(mlir_value=Self.n)`, applied as `S[Int(3).__mlir_index__()]`,
-    prints `3` at the pin and is rejected here; so is `def f[n:
-    __mlir_type.index]()`.
-  - Probe: upstream's `TypeList._raw_length` (a `comptime` of type
-    `__mlir_type.index` from `` `#kgen.param_list.size<...> : index` ``)
+  `` __mlir_attr.`7 : index` `` and the bracketed
+  ``__mlir_attr[`#kgen.param_list.size<:`, …, `> : index`]`` are rejected
+  with "Undefined variable '__mlir_attr'", where the pin reads each as a
+  compile-time attribute of the type after the colon.
+  - Mojito reads `__mlir_attr` only as an op's named attribute (`pred=`,
+    `fastmathFlags=`; `method_calls::mlir_attribute`), never as a value.
+  - Probe: `comptime j: __mlir_type.index = __mlir_attr.`7 : index``
+    then `print(Int(mlir_value=j))` prints `7` at the pin.
+  - Probe: upstream's `TypeList._raw_length` (`#kgen.param_list.size`)
     and `_get_type_at_index[idx: __mlir_type.index]`
-    (`std/builtin/variadics.mojo`) are left out of the bundled `TypeList`.
-  - Probe: `_MLIR.POPArrayType[size: __mlir_type.index, ...]` (R1315) and
-    `VariadicList`'s `Int(mlir_value=size)` (R1317) read such a binder.
-  - A local `comptime i: __mlir_type.index = Int(4).__mlir_index__()`
-    already runs, since the VM computes it.
-  - Lever: a compile-time `index` value, built and folded through
-    `__mlir_index__`, `pop.cast_to_builtin`, and `pop.cast_from_builtin` by
-    the parameter builder (`checker/constraints.rs`,
-    `checker/builtin_fold.rs`), which `value_param_decl` then admits.
-  - Found while landing R1516 (2026-10-27).
+    (`#kgen.param_list.get`, `std/builtin/variadics.mojo`) are left out of
+    the bundled `TypeList`.
+  - Probe: R1188's `` __mlir_attr.`#kgen.simd<true> : !kgen.scalar<bool>` ``.
+  - Lever: an `N : index` attribute is `CtValue::Index`, and the bracket
+    form's `#kgen.param_list.size` and `#kgen.param_list.get` are the
+    builder's existing `PackQuery::Length` and list read
+    (`checker/constraints.rs`).
+  - Found while landing R1531 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
@@ -8682,7 +8686,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The size needs the `Known`/`Expr` shape `SimdWidth` has, substituted
     by the elaborator and refused symbolic by the concrete verifier.
   - Found while landing R1304 (2026-10-23).
-  - Depends on R1531 (a parameter of type `__mlir_type.index`).
+  - Depends on nothing.
   - Model: Fable, Not Planned.
 
 - [ ] **R1316 `!lit.ref` and `!kgen.pointer` values have no spelling**
@@ -8710,15 +8714,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `Int(mlir_value=size)`, and Mojito's `__mlir_op` admits only the two
   ownership markers (`checker/method_calls/mlir_op.rs`).
   - `Int(0).__mlir_index__()` and `Int(mlir_value=size)` are upstream's
-    builtin casts, which run since R1516; the size is a parameter of type
-    `__mlir_type.index` (R1531).
+    builtin casts, which run since R1516, and the size is a parameter of
+    type `__mlir_type.index`, which binds a compile-time `index`.
   - The gep would be a `ref.make` of the array's element place, as the
     call's builder takes the span's pointer today
     (`mir::variadic_list::build_variadic_list`).
   - Found while landing R1304 (2026-10-23).
-  - Depends on R1316 (the `!kgen.pointer` operand), R221 (the
-    constructor's `unsafe_bitcast` of the element pointer), and R1531 (the
-    `index` size parameter).
+  - Depends on R1316 (the `!kgen.pointer` operand) and R221 (the
+    constructor's `unsafe_bitcast` of the element pointer).
   - Model: Opus, Not Planned.
 
 - [ ] **R1314 The call builds a `VariadicList`'s span itself, where
@@ -10070,9 +10073,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `assets/type_error/simd_int_width_binder_not_inferred.mojo` as they are.
   - Plan: `R336-simdlength-is-int-in-mojito-told-plan.md`, slices S1–S5.
   - Found while landing R259 (2026-10-05).
-  - Depends on R1531 (the struct's `index` field and ops fold in a
-    parameter expression), R1532 (its `IntLiteral` constructor), R1533 (a
-    width argument converts to it), and R1534 (its `__rshift__`).
+  - Depends on R1532 (its `IntLiteral` constructor), R1533 (a width
+    argument converts to it), and R1534 (its `__rshift__`).
   - Model: Fable, Planned.
 
 - [ ] **R1534 `pop.select` is outside the subset, so upstream's

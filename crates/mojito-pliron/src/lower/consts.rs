@@ -130,6 +130,7 @@ impl FnLowering<'_> {
                     value.to_i64().map(|v| v.to_le_bytes().to_vec())
                 }
                 (TyKind::UINT, CtValue::UInt(value)) => Some(value.to_le_bytes().to_vec()),
+                (TyKind::Index, CtValue::Index(value)) => Some(value.to_le_bytes().to_vec()),
                 (TyKind::UINT, CtValue::IntLiteral(value)) => {
                     value.to_u64().map(|v| v.to_le_bytes().to_vec())
                 }
@@ -181,6 +182,12 @@ impl FnLowering<'_> {
                 let constant = self.parameter_scalar(ctx, value, ScalarTy::UInt, dest)?;
                 self.reg_values.insert(dest.0, constant);
                 self.int_consts.insert(dest.0, *bits as i64);
+                Ok(())
+            }
+            CtValue::Index(n) => {
+                let constant = self.parameter_scalar(ctx, value, ScalarTy::Int, dest)?;
+                self.reg_values.insert(dest.0, constant);
+                self.int_consts.insert(dest.0, *n);
                 Ok(())
             }
             CtValue::Simd { dtype, lanes } => {
@@ -388,7 +395,7 @@ impl FnLowering<'_> {
     ) -> Result<Value, PlironError> {
         use mojito_types::ct::CtValue;
         match value {
-            CtValue::Int(value) => {
+            CtValue::Int(value) | CtValue::Index(value) => {
                 self.materialize_pending(ctx, &PendingLiteral::Int((*value).into()), scalar, dest)
             }
             CtValue::UInt(value) => {

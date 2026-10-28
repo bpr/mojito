@@ -1903,8 +1903,10 @@ impl Checker {
     /// `_mlir_value` is the scalar, since a width-one vector's storage is its
     /// value, `Int(mlir_value=s)` the scalar its storage `s` holds, and
     /// ``__mlir_op.`pop.add`(a, b)`` the operator its op computes
-    /// ([`super::builtin_fold::mlir_op_operator`]). `None` for any other
-    /// expression.
+    /// ([`super::builtin_fold::mlir_op_operator`]). Between an `Int` and the
+    /// MLIR builtin `index`, `x.__mlir_index__()` (`pop.cast_to_builtin`)
+    /// and `Int(mlir_value=i)` over an `index` (`pop.cast_from_builtin`)
+    /// are the parameter domain's casts. `None` for any other expression.
     fn scalar_storage_expression(
         &self,
         expr: &Expr,
@@ -1922,6 +1924,30 @@ impl Checker {
             ExprKind::Member { object, field } if field == mojito_types::ct::MLIR_VALUE_FIELD => {
                 scalar(object).map(Ok)
             }
+            ExprKind::MethodCall {
+                object,
+                method,
+                args,
+                kwargs,
+            } if method == "__mlir_index__" && args.is_empty() && kwargs.is_empty() => {
+                let value = match self.build_ct(object, recording) {
+                    Ok(value) => value,
+                    Err(error) => return Some(Err(error)),
+                };
+                // A closed `UInt` stores the same bits an `Int` does.
+                let value = match value.as_constant() {
+                    Some(CtValue::UInt(bits)) => self.ct_param(CtValue::Int(*bits as i64)).ok()?,
+                    _ => value,
+                };
+                if value.meta().as_value() != Some(&Ty::int()) {
+                    return None;
+                }
+                Some(
+                    self.param_context
+                        .cast_to_builtin(&value)
+                        .map_err(param_error),
+                )
+            }
             ExprKind::Call {
                 name,
                 param_args,
@@ -1933,8 +1959,20 @@ impl Checker {
                 && storage.name == "mlir_value" =>
             {
                 let target = scalar_type_name(name)?;
-                scalar(&storage.value)
-                    .filter(|value| value.meta().as_value() == Some(&target))
+                let value = self.build_ct(&storage.value, recording).ok()?;
+                if target == Ty::int()
+                    && matches!(value.meta().as_value().map(Ty::kind), Some(TyKind::Index))
+                {
+                    return Some(
+                        self.param_context
+                            .cast_from_builtin(&value)
+                            .map_err(param_error),
+                    );
+                }
+                Some(value)
+                    .filter(|value| {
+                        is_scalar_value(value) && value.meta().as_value() == Some(&target)
+                    })
                     .map(Ok)
             }
             _ => None,

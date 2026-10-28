@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A parameter of type `__mlir_type.index` now binds a compile-time `index`,
+  upstream's `N : index` attribute, on a struct or a `def`, with or
+  without a default, as at the pin (R1531): `S[Int(3).__mlir_index__()]`
+  is `S[3]`, and a run-time read of the binder is the constant. In a type
+  or parameter argument `x.__mlir_index__()` and `Int(mlir_value=i)` (and
+  the explicit `pop.cast_to_builtin`/`pop.cast_from_builtin`) fold, and
+  distribute over `+` and `*`, so `S[(k + j).__mlir_index__()]` is the
+  type a builtin `index.add` of the two casts names; a builtin callable
+  over `index` folds, and a `comptime` member `Self.n.__mlir_index__()`,
+  rejected before, folds. The MIR schema moves to 1.124 (`ct_index`) and
+  the package format to `mojito-package 126`.
 - `&`, `|`, and `^` over two `Bool`s are upstream's eager
   `Bool.__and__`/`__or__`/`__xor__`, with `&=`, `|=`, and `^=`, at run
   time, natively, and in a parameter expression (`Tag[True & False]`), as
@@ -23,8 +34,7 @@ to evolve under the `0.x` compatibility rules.
   the pin rejects are withdrawn: an `index` op over an `Int`'s
   `_mlir_value`, a `pop` op over an `index`, an `index` bound to an `Int`
   or printed, and an `Indexer` returning an `Int` value; `conforms_to`
-  over `index` is `False`. A parameter of type `__mlir_type.index` is now
-  rejected as outside the subset (R1531). The MIR schema moves to 1.123 and
+  over `index` is `False`. The MIR schema moves to 1.123 and
   the package format to `mojito-package 125`.
 - A call of an `@always_inline("builtin")` method with `self` in a type or
   a parameter argument is now its body's expression over the receiver, as

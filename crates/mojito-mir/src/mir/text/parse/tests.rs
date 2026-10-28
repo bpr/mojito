@@ -2127,6 +2127,7 @@ fn param_expr_mir_round_trip() {
     let constants = vec![
         CtValue::Int(-3),
         CtValue::UInt(u64::MAX),
+        CtValue::Index(-5),
         CtValue::Float((-0.0_f64).to_bits()),
         CtValue::IntLiteral(parse_int_literal("-12345678901234567890").unwrap()),
         CtValue::FloatLiteral(FloatLiteral::parse_exact("157/50").unwrap()),
@@ -2150,7 +2151,7 @@ fn param_expr_mir_round_trip() {
         },
         CtValue::Type(Ty::bool()),
     ];
-    assert_eq!(constants.len(), 15);
+    assert_eq!(constants.len(), 16);
     let mut register_types: Vec<Ty> = constants
         .into_iter()
         .map(|value| Ty::new(TyKind::Struct("Holder".into(), vec![TyArg::Val(value)])))
@@ -2159,6 +2160,10 @@ fn param_expr_mir_round_trip() {
     // dependent type over a residual index.
     register_types
         .push(TyKind::Struct("Buf".into(), vec![TyArg::Val(CtValue::Expr(sum.clone()))]).into());
+    let cast = context
+        .cast_to_builtin(&sum)
+        .expect("an Int casts to index");
+    register_types.push(TyKind::Struct("Idx".into(), vec![TyArg::Val(CtValue::Expr(cast))]).into());
     register_types.push(
         TyKind::Struct(
             "Buf".into(),

@@ -1631,6 +1631,7 @@ impl Const {
         match value {
             CtValue::Int(value) => Some(Self::Int(*value)),
             CtValue::UInt(value) => Some(Self::Value(CtValue::UInt(*value))),
+            CtValue::Index(value) => Some(Self::Value(CtValue::Index(*value))),
             CtValue::Float(bits) => Some(Self::Float(f64::from_bits(*bits))),
             CtValue::Bool(value) => Some(Self::Bool(*value)),
             CtValue::Dtype(value) => Some(Self::Dtype(*value)),
@@ -3727,6 +3728,7 @@ fn const_ct_value(constant: &Const, ty: &Ty) -> Option<CtValue> {
             Some(CtValue::FloatLiteral(value.clone()))
         }
         (Const::Value(value @ CtValue::UInt(_)), TyKind::UINT) => Some(value.clone()),
+        (Const::Value(value @ CtValue::Index(_)), TyKind::Index) => Some(value.clone()),
         (
             Const::Value(value @ CtValue::Simd { dtype, lanes }),
             TyKind::Simd {
@@ -3797,7 +3799,7 @@ fn ct_const(value: CtValue, ty: &Ty) -> Option<Const> {
         (CtValue::Bool(value), TyKind::Bool) => Some(Const::Bool(value)),
         (CtValue::IntLiteral(value), TyKind::IntLiteral) => Some(Const::IntLiteral(value)),
         (CtValue::FloatLiteral(value), TyKind::FloatLiteral) => Some(Const::FloatLiteral(value)),
-        (value @ (CtValue::UInt(_) | CtValue::Simd { .. }), _) => {
+        (value @ (CtValue::UInt(_) | CtValue::Index(_) | CtValue::Simd { .. }), _) => {
             let constant = Const::Value(value);
             const_ct_value(&constant, ty).is_some().then_some(constant)
         }

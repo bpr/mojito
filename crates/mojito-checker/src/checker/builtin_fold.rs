@@ -590,8 +590,11 @@ impl Checker {
 /// The operator expression ``__mlir_op.`op`(a, b)`` computes when `op` is a
 /// `pop` or `index` op the compile-time builder reads, an infix operator or
 /// a negation over the same operands (`a + b` for `pop.add`, `a < b` for
-/// `index.cmp` at `slt`), as upstream's parameter folder reads the op.
-/// `None` for any other expression or op.
+/// `index.cmp` at `slt`), as upstream's parameter folder reads the op. A
+/// builtin cast is its sugar: `pop.cast_to_builtin` over `s` is
+/// `s.__mlir_index__()` and `pop.cast_from_builtin` over `i` is
+/// `Int(mlir_value=i)`, the result type its `_type=` names being the one
+/// the check gave the op. `None` for any other expression or op.
 pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
     let (callee, param_args, args, kwargs) = match &expr.kind {
         ExprKind::MethodCall {
@@ -622,18 +625,36 @@ pub(super) fn mlir_op_operator(expr: &Expr) -> Option<Expr> {
         return None;
     }
     let mut predicate = None;
+    let mut typed = false;
     for argument in param_args {
         match argument {
             mojito_ast::ast::ParamArg::Named { name, value } if name == "pred" => {
                 predicate = Some(super::method_calls::mlir_attribute(value)?);
             }
+            mojito_ast::ast::ParamArg::Named { name, .. } if name == "_type" => typed = true,
             _ => return None,
         }
     }
-    let kind = match (
-        MlirOp::parse(name, predicate).ok()?.lowering(),
-        args.as_slice(),
-    ) {
+    let op = MlirOp::parse(name, predicate).ok()?;
+    let kind = match (op.lowering(), args.as_slice()) {
+        (MlirLowering::BuiltinCast, [operand]) if typed && op == MlirOp::PopCastToBuiltin => {
+            ExprKind::MethodCall {
+                object: Box::new(operand.clone()),
+                method: "__mlir_index__".to_string(),
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            }
+        }
+        (MlirLowering::BuiltinCast, [operand]) if typed => ExprKind::Call {
+            name: "Int".to_string(),
+            param_args: Vec::new(),
+            args: Vec::new(),
+            kwargs: vec![mojito_ast::ast::KwArg {
+                name: "mlir_value".to_string(),
+                value: operand.clone(),
+            }],
+        },
+        _ if typed => return None,
         (MlirLowering::Binary(op), [left, right]) => {
             ExprKind::Infix(op, Box::new(left.clone()), Box::new(right.clone()))
         }

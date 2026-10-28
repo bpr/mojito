@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	835
+# swept-count	838
 assets/type_error/comptime_applied_constant_mismatch.mojo	compile-reject	agree	error: invalid call to 'g': value passed to 'x' cannot be converted from 'SIMD[.float32, 8]' to 'SIMD[.float32, f(Int(7))]'
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
@@ -560,6 +560,9 @@ assets/type_error/mlir_cast_from_builtin_storage_operand.mojo	compile-reject	agr
 assets/type_error/mlir_cast_to_builtin_index_operand.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cast_to_builtin' op operand #0 must be parameterized SIMD vector type, but got 'index'
 assets/type_error/mlir_index_not_int.mojo	compile-reject	agree	error: cannot implicitly convert '__mlir_type.index' value to 'Int'
 assets/type_error/mlir_index_op_storage_operand.mojo	compile-reject	agree	error: MLIR verification error: 'index.add' op operand #0 must be index, but got '!kgen.scalar<index>'
+assets/type_error/mlir_index_parameter_literal_argument.mojo	compile-reject	agree	error: invalid call to 'f': 'f' parameter 'n' has '__mlir_type.index' type, but value has type 'IntLiteral[3]'
+assets/type_error/mlir_index_parameter_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'S[4]' value to 'S[3]'
+assets/type_error/mlir_index_parameter_symbolic_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'S[(k * Int(2)).__mlir_index__()]' value to 'S[(k + Int(1)).__mlir_index__()]'
 assets/type_error/mlir_op_cmp_without_predicate.mojo	compile-reject	agree	error: MLIR verification error: 'pop.cmp' op requires attribute 'pred'
 assets/type_error/mlir_op_operand_types_differ.mojo	compile-reject	agree	error: MLIR verification error: 'pop.add' op requires the same type for all operands and results
 assets/type_error/mlir_op_select_mask_not_bool.mojo	compile-reject	agree	error: MLIR verification error: 'pop.simd.select' op operand #0 must be !kgen.simd<N, bool>, but got '!kgen.simd<4, si32>'

@@ -384,6 +384,11 @@ pub enum CtValue {
     /// generated indices, lengths, and value parameters use this variant.
     Int(i64),
     UInt(u64),
+    /// A value of the MLIR builtin `index` type — upstream's `N : index`
+    /// integer attribute, what `Int.__mlir_index__()` (`pop.cast_to_builtin`)
+    /// yields at compile time. It is the 64-bit host target's `index`, and
+    /// displays bare (`S[3]`), as the pin prints it.
+    Index(i64),
     /// The bits of an already-materialized `Float64` compile-time value.
     Float(u64),
     /// An arbitrary-precision integer literal which has not yet been
@@ -728,6 +733,7 @@ impl CtValue {
                 value,
                 Self::Int(_)
                     | Self::UInt(_)
+                    | Self::Index(_)
                     | Self::IntLiteral(_)
                     | Self::Float(_)
                     | Self::FloatLiteral(_)
@@ -857,6 +863,7 @@ impl CtValue {
         Some(match self {
             Self::Int(_) | Self::IntLiteral(_) => "Int".to_string(),
             Self::UInt(_) => "UInt".to_string(),
+            Self::Index(_) => crate::types::MLIR_INDEX_TYPE_SPELLING.to_string(),
             Self::Float(_) | Self::FloatLiteral(_) => "Float64".to_string(),
             Self::Bool(_) => "Bool".to_string(),
             Self::Str(_) => "String".to_string(),
@@ -958,6 +965,7 @@ impl CtValue {
         match (self, ty.kind()) {
             (value @ Self::Int(_), TyKind::INT)
             | (value @ Self::UInt(_), TyKind::UINT)
+            | (value @ Self::Index(_), TyKind::Index)
             | (value @ Self::Float(_), TyKind::FLOAT64)
             | (value @ Self::IntLiteral(_), TyKind::IntLiteral)
             | (value @ Self::FloatLiteral(_), TyKind::FloatLiteral)
@@ -1128,6 +1136,22 @@ impl CtValue {
             Self::FloatLiteral(value) => ExprKind::Float(value.clone()),
             Self::Bool(b) => ExprKind::Bool(*b),
             Self::Str(s) => ExprKind::Str(s.clone()),
+            // Upstream's spelling of an `index` constant from source:
+            // `Int(n).__mlir_index__()`.
+            Self::Index(n) => ExprKind::MethodCall {
+                object: Box::new(literal(
+                    ExprKind::Call {
+                        name: "Int".to_string(),
+                        param_args: Vec::new(),
+                        args: vec![Self::Int(*n).materialize(span)?],
+                        kwargs: Vec::new(),
+                    },
+                    span,
+                )),
+                method: "__mlir_index__".to_string(),
+                args: Vec::new(),
+                kwargs: Vec::new(),
+            },
             Self::Tuple(vs) => ExprKind::TupleLit(materialize_all(vs, span)?),
             Self::List(vs) => ExprKind::ListLit(materialize_all(vs, span)?),
             // The bare display, or the explicit literal constructor
@@ -1284,6 +1308,7 @@ impl CtValue {
         match self {
             Self::Int(_)
             | Self::UInt(_)
+            | Self::Index(_)
             | Self::Float(_)
             | Self::IntLiteral(_)
             | Self::FloatLiteral(_)
@@ -1424,6 +1449,7 @@ impl fmt::Display for CtValue {
         match self {
             Self::Int(n) => write!(f, "{n}"),
             Self::UInt(n) => write!(f, "{n}u"),
+            Self::Index(n) => write!(f, "{n}"),
             Self::Float(bits) => write!(f, "{:?}", f64::from_bits(*bits)),
             Self::IntLiteral(value) => write!(f, "{value}"),
             Self::FloatLiteral(value) => write!(f, "{value}"),
