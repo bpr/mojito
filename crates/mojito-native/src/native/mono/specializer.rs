@@ -1474,8 +1474,9 @@ impl<'a> Specializer<'a> {
     /// the call passes and the cache keys beside the name. A binder the
     /// function removed is not keyed, as a call's is, and is bound only when
     /// its argument resolves: the caller may have removed the parameter it
-    /// would forward. A demand on an instance being materialized is a cycle
-    /// in the parameter domain.
+    /// would forward. Every argument, compile-time or runtime, is valued by
+    /// [`Self::argument_value`]. A demand on an instance being materialized
+    /// is a cycle in the parameter domain.
     fn demand_application(
         &mut self,
         template: &str,
@@ -1522,24 +1523,10 @@ impl<'a> Specializer<'a> {
         }
         let (args, called) = args.split_at(own_decls.len());
         // A function the check applied by its own name takes the values of
-        // its arguments as a call does, an argument's own applications
-        // demanded first (`SIMDLength(w)`'s `w.__mlir_index__()`).
+        // its arguments as a call does (`SIMDLength(w)`).
         let mut called_values = Vec::with_capacity(called.len());
         for arg in called {
-            let value = match arg.kind() {
-                ParamKind::DeclRef(reference) => bindings.values.get(reference).cloned(),
-                _ if let Some(value) =
-                    eval_ct(arg, bindings).ok().or_else(|| arg.frozen_struct()) =>
-                {
-                    Some(value)
-                }
-                _ => {
-                    let applied = self.applied(template, arg, bindings)?;
-                    eval_ct(&applied, bindings)
-                        .ok()
-                        .or_else(|| applied.frozen_struct())
-                }
-            };
+            let value = self.argument_value(template, arg, bindings)?;
             called_values.push(value.ok_or_else(|| {
                 self.error(
                     Some(template),
@@ -1550,6 +1537,19 @@ impl<'a> Specializer<'a> {
             })?);
         }
         let called = called_values;
+        let removed = self.removed_params(function, false);
+        // A removed binder's argument may not resolve: its error is dropped.
+        let parameter_values = own_decls
+            .iter()
+            .zip(args)
+            .map(|(decl, arg)| match decl {
+                ParamDecl::Type { .. } => Ok(None),
+                ParamDecl::Value { .. } if removed.contains(decl.id()) => {
+                    Ok(self.argument_value(template, arg, bindings).ok().flatten())
+                }
+                ParamDecl::Value { .. } => self.argument_value(template, arg, bindings),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let unresolved = |what: &str, arg: &ParamExpr| {
             self.error(
                 Some(template),
@@ -1571,9 +1571,8 @@ impl<'a> Specializer<'a> {
                 .map_err(|error| self.error(Some(template), error))?;
             instance_bindings.self_instance = Some((nominal_template(name).to_string(), ty));
         }
-        let removed = self.removed_params(function, false);
         let mut arguments = Vec::new();
-        for (decl, arg) in own_decls.iter().zip(args) {
+        for ((decl, arg), value) in own_decls.iter().zip(args).zip(parameter_values) {
             let keyed = !removed.contains(decl.id());
             let binder = decl.binder();
             let unresolved = |what: &str| unresolved(what, arg);
@@ -1620,10 +1619,6 @@ impl<'a> Specializer<'a> {
                     }
                 }
                 ParamDecl::Value { .. } => {
-                    let value = match arg.kind() {
-                        ParamKind::DeclRef(reference) => bindings.values.get(reference).cloned(),
-                        _ => eval_ct(arg, bindings).ok(),
-                    };
                     let Some(value) = value else {
                         if keyed {
                             return Err(unresolved("an unresolved value"));
@@ -1690,6 +1685,29 @@ impl<'a> Specializer<'a> {
 
     /// The verified concrete fragment the instance `name` runs in: its
     /// reference closure, materialized now, and nothing else.
+    /// The value of an application's argument under `bindings`, the
+    /// argument's own applications demanded first, a lifted `$comptime$…`
+    /// thunk's included, as the pin folds an `apply` operand before the
+    /// `apply` over it (`k[bit_width_of[dt]()]`, or `k[w]` over a local
+    /// `comptime w`). `None` when it stays open.
+    fn argument_value(
+        &mut self,
+        template: &str,
+        arg: &ParamExpr,
+        bindings: &Bindings,
+    ) -> Result<Option<CtValue>, MonoError> {
+        if let ParamKind::DeclRef(reference) = arg.kind() {
+            return Ok(bindings.values.get(reference).cloned());
+        }
+        if let Some(value) = eval_ct(arg, bindings).ok().or_else(|| arg.frozen_struct()) {
+            return Ok(Some(value));
+        }
+        let applied = self.applied(template, arg, bindings)?;
+        Ok(eval_ct(&applied, bindings)
+            .ok()
+            .or_else(|| applied.frozen_struct()))
+    }
+
     fn verified_fragment(&mut self, template: &str, name: &str) -> Result<ConcreteMir, MonoError> {
         let index = self.instance_names[name];
         let closure = match self.states[index] {

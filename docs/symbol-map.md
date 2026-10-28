@@ -1813,7 +1813,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   struct parameters from the instance (`owner_covered_prefix`), and
   `VmBackend::call_concrete` runs an `__init__` on the skeleton a
   construction builds (`construct_bound`), its `out self` the result
-  (`ConcreteProgram::result_ty`).
+  (`ConcreteProgram::result_ty`). `Specializer::argument_value` is the
+  one rule valuing an application's arguments, compile-time and runtime
+  alike: an argument's own applications, a lifted `$comptime$…` thunk's
+  included, are demanded first.
   `Flatten::lower_comptime_binding` (`mir/lower_stmt.rs`) records the
   binding with its value's node handle and sequence (`DisplayBinding`, in
   the scoped `Flatten::displays`; `ComptimeThunks::bind_display`) and gives

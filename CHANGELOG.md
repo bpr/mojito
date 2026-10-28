@@ -1359,6 +1359,14 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A compile-time application whose compile-time argument is itself an
+  application, a lifted `comptime` value included, has that argument
+  demanded first (R1577). `_uint_type_of_width[bit_width_of[DType.int16]()]()`,
+  `_uint_type_of_width[w]()` over a local `comptime w`, and an
+  `@always_inline` callee's `comptime assert` over such a binder, which
+  stopped with "reads an unresolved value", run as at the pin, and a
+  failing assertion is reported as the pin's constraint failure.
+
 - A `comptime if` whose arms return but whose `else` ends in `comptime
   assert False, "…"`, upstream's `_integral_type_of` shape, runs as at the
   pin (R1576); it was rejected with "does not return a value on every

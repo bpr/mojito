@@ -15,6 +15,7 @@ assets/ok/always_inline_builtin_init_fold.mojo	-	ineligible	no-scalar-entry-shap
 assets/ok/always_inline_builtin_parameter_fold.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_builtin_self_method_fold.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_builtin_struct_static_fold.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/always_inline_lifted_parameter_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_binders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_calls.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_collectors.mojo	-	ineligible	no-scalar-entry-shape

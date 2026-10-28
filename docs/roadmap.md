@@ -5602,26 +5602,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1577 A compile-time application whose argument is a lifted
-  `comptime` value fails elaboration**
-
-  `_uint_type_of_width[bit_width_of[DType.int16]()]()`, and
-  `_uint_type_of_width[w]()` over a local `comptime w =
-  bit_width_of[dt]()`, stop with "unsupported compile-time application
-  `$comptime$…_uint_type_of_width$c0` reads an unresolved value
-  `$comptime$main$c0()`", where the pin prints `uint16` and `uint32`.
-  - `Specializer::demand_application` (`mono/specializer.rs`) values each
-    argument by `eval_ct` or `applied`, and `applied` demands only an
-    application of a declared function: the check's lifted thunk
-    (`lifted_check_name`) is not one, so its value stays open.
-  - Demand the lifted thunk's value as the elaborator does for its own
-    `comptime` reads, then apply the outer function.
-  - Upstream's `_unsigned_integral_type_of` and `to_bits`'s default read
-    `_uint_type_of_width[bit_width_of[…]()]()` (R1578).
-  - Found while planning R1554 (2026-10-28).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
-
 - [ ] **R387 A function applied in a parameter argument cannot print**
 
   Problem: `g[noisy(n)]()` in `def f[n: Int]()`, where `noisy` prints before
@@ -10085,9 +10065,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     0]` at the pin.
   - `bitcast`'s asserts compare `src_dtype == .float16` (R1238).
   - `to_bits`'s default `_uint_type_of_width[bit_width_of[Self.dtype]()]()`
-    is an application over a `DType` binder (R397) whose argument is a
-    lifted value (R1577).
-  - Depends on R1576, R1577, R397, and R1238.
+    is an application over a `DType` binder (R397).
+  - Depends on R1576, R397, and R1238.
   - Model: Fable, Planned.
 
 - [ ] **R1579 `SIMD.__hash__` is a hash-leaf rule, where upstream's is a
