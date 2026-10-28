@@ -104,17 +104,13 @@ impl Checker {
         };
         // An element of an unbound pack dispatches through its bounds.
         let obj_ty = self.opaque_element(&obj_ty).unwrap_or(obj_ty);
-        // `Int.__mlir_index__()` is upstream's `pop.cast_to_builtin` of the
-        // `Int`'s storage to the builtin `index`, after a `UInt`'s
-        // `pop.cast` to `Int` or a literal's materialization.
+        // `IntLiteral.__mlir_index__()` is upstream's conversion of the
+        // literal to the builtin `index`; a `SIMD`'s is its declared member.
         if method == "__mlir_index__"
             && args.is_empty()
             && kwargs.is_empty()
             && param_args.is_empty()
-            && matches!(
-                obj_ty.kind(),
-                TyKind::INT | TyKind::IntLiteral | TyKind::UINT
-            )
+            && *obj_ty.kind() == TyKind::IntLiteral
         {
             return Ok(Ty::index());
         }
@@ -150,10 +146,10 @@ impl Checker {
         {
             return Ok(obj_ty);
         }
-        // A scalar's conversion dunders are the methods upstream's `SIMD`,
-        // `Bool`, and numeric literals declare for `Boolable`, `Intable`,
-        // and `Floatable`; the backends answer them through the conversion
-        // built-in.
+        // The conversion dunders of `Bool` and the numeric literals are the
+        // methods upstream declares for `Boolable`, `Intable`, and
+        // `Floatable`; the backends answer them through the conversion
+        // built-in. A `SIMD`'s are its declared members.
         if let Some((trait_name, result)) = match method {
             "__bool__" => Some(("Boolable", Ty::bool())),
             "__int__" => Some(("Intable", Ty::int())),
@@ -162,7 +158,10 @@ impl Checker {
         } && args.is_empty()
             && kwargs.is_empty()
             && param_args.is_empty()
-            && (is_numeric_like(&obj_ty) || is_scalar_simd(&obj_ty) || obj_ty == TyKind::Bool)
+            && matches!(
+                obj_ty.kind(),
+                TyKind::IntLiteral | TyKind::FloatLiteral | TyKind::Bool
+            )
             && mojito_types::conformance::modelled_declares(&obj_ty, trait_name, &mut |_, _| true)
         {
             return Ok(result);

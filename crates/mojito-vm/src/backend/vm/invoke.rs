@@ -374,14 +374,20 @@ impl VmBackend {
                     return crate::runtime::apply_infix(op, recv, args[0].clone());
                 }
                 // `Boolable`, `Intable`, `Floatable`, and `Indexer` on a
-                // scalar: its conversion. A string literal is true when
+                // `Bool` or a numeric literal: its conversion; a `SIMD`'s are
+                // its declared members. A string literal is true when
                 // non-empty.
                 ("__bool__", 0) if matches!(&recv, Value::Str(_)) => {
                     return Ok(Value::Bool(
                         matches!(&recv, Value::Str(text) if !text.is_empty()),
                     ));
                 }
-                ("__bool__" | "__int__" | "__float__" | "__mlir_index__", 0) => {
+                ("__bool__" | "__int__" | "__float__" | "__mlir_index__", 0)
+                    if matches!(
+                        &recv,
+                        Value::Bool(_) | Value::IntLiteral(_) | Value::FloatLiteral(_)
+                    ) =>
+                {
                     let target = match method {
                         "__bool__" => ScalarConversion::Bool,
                         "__float__" => ScalarConversion::Float64,

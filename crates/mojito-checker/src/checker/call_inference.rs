@@ -391,6 +391,14 @@ impl Checker {
             "Bool" => self.infer_conversion(&span, Ty::bool(), args),
             "divmod" => self.infer_divmod(args),
             "SIMD" => self.infer_simd_construction(&span, param_args, args),
+            // `Self(...)` in `SIMD`'s own body constructs by the rule too.
+            "Self"
+                if param_args.is_empty()
+                    && let Some(TyKind::Simd { dtype, width }) =
+                        self.self_ty.as_ref().map(Ty::kind) =>
+            {
+                self.construct_simd(&span, dtype, width, args)
+            }
             _ if param_args.is_empty() && self.vector_alias(name).is_some() => {
                 self.infer_vector_alias_construction(name, args)
             }

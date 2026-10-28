@@ -80,22 +80,17 @@ impl FnLowering<'_> {
         ) {
             return self.lower_pointer_method(ctx, dest, recv, method, args);
         }
-        // `Boolable`, `Intable`, `Floatable`, and `Indexer` on a scalar: its
-        // conversion, as the VM dispatches it.
+        // `Boolable`, `Intable`, `Floatable`, and `Indexer` on a `Bool` or a
+        // numeric literal: its conversion, as the VM dispatches it; a
+        // `SIMD`'s are its declared members.
         if resolved.is_none()
             && args.is_empty()
             && kwargs.is_empty()
             && self.func.reg_types.get(&recv.0).is_some_and(|ty| {
-                mojito_types::types::is_scalar_simd(ty)
-                    || matches!(
-                        ty.kind(),
-                        TyKind::INT
-                            | TyKind::UINT
-                            | TyKind::FLOAT64
-                            | TyKind::Bool
-                            | TyKind::IntLiteral
-                            | TyKind::FloatLiteral
-                    )
+                matches!(
+                    ty.kind(),
+                    TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral
+                )
             })
             && let Some(target) = match method {
                 "__bool__" => Some(mojito_types::ct::ScalarConversion::Bool),

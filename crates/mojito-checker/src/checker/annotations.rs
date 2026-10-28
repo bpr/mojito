@@ -33,8 +33,9 @@ impl Checker {
             ..
         }) = arg
         {
+            // A leading-dot member (`.int32`) is `DType`'s, the slot's type.
             if let ExprKind::Identifier(ns) = &object.kind
-                && ns == "DType"
+                && (ns == "DType" || ns == mojito_ast::ast::CONTEXTUAL_SENTINEL)
                 && let Some(dtype) = Dtype::from_name(field)
             {
                 return Ok(SimdDtype::Known(dtype));
@@ -72,6 +73,32 @@ impl Checker {
                     return Ok(SimdDtype::Expr(expr));
                 }
                 _ => {}
+            }
+        }
+        // Any other compile-time expression of type `DType`
+        // (`_uint_type_of_width[w]()`) is the value it folds to, or that
+        // expression while its operands are open.
+        if let mojito_ast::ast::ParamArg::Value(expr) = arg
+            && matches!(
+                expr.kind,
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+            )
+        {
+            let _lifting = self.lifting_position();
+            let evaluated = self.eval_associated_ct(expr);
+            match evaluated {
+                Ok(CtValue::Dtype(dtype)) => return Ok(SimdDtype::Known(dtype)),
+                Ok(CtValue::Expr(expr)) if expr.meta().as_value() == Some(&Ty::dtype()) => {
+                    return Ok(SimdDtype::Expr(expr));
+                }
+                _ => {
+                    if let Some(application) = self
+                        .lifted_application(expr)
+                        .filter(|application| application.meta().as_value() == Some(&Ty::dtype()))
+                    {
+                        return Ok(SimdDtype::Expr(application));
+                    }
+                }
             }
         }
         Err(TypeError::BadDtype(match arg {
@@ -140,7 +167,9 @@ pub(super) fn converts_to_lane(ty: &Ty, dtype: &SimdDtype) -> bool {
     let float_source = matches!(ty.kind(), TyKind::FLOAT64)
         || matches!(scalar_simd_dtype(ty), Some(d) if d.is_float());
     match dtype.known() {
-        Some(Dtype::Bool) => false,
+        // Upstream's `IntLiteral` initializer converts a literal into a
+        // mask lane by `value != 0`.
+        Some(Dtype::Bool) => *ty.kind() == TyKind::IntLiteral,
         Some(dtype) if dtype.is_float() => float_source || integer_source,
         Some(_) => integer_source,
         None => float_source || integer_source,

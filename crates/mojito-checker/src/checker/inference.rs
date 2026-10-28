@@ -511,6 +511,16 @@ impl Checker {
                         };
                         (dtype, width)
                     })
+                } else if name == "Self"
+                    && param_args.is_empty()
+                    && self.lookup(name).is_none()
+                    && let TyKind::Simd { dtype, width } = ty.kind()
+                    && matches!(
+                        self.self_ty.as_ref().map(Ty::kind),
+                        Some(TyKind::Simd { .. })
+                    )
+                {
+                    Some((dtype.clone(), width.clone()))
                 } else if name == "Scalar" && param_args.len() == 1 {
                     // `Scalar[DType.x](arg)` is width-1 SIMD construction; the
                     // VM canonicalizes width-1 int/float64 back to the native

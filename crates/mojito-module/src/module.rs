@@ -1762,7 +1762,7 @@ const BUILTIN_MODULE_EXPORTS: &[(&str, &[&str])] = &[
     ),
     ("std/reflection/type_info.mojo", &["_unqualified_type_name"]),
     ("std/ffi/__init__.mojo", &["external_call"]),
-    ("std/sys/__init__.mojo", &["size_of"]),
+    ("std/sys/info.mojo", &["size_of"]),
 ];
 
 /// The module name the entry file's colliding declarations are qualified by.

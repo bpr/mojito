@@ -689,6 +689,7 @@ assets/ok/param_expr_where_assumption.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_list_of_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_list_raw_parameter.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameter_list_raw_values.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/parameter_only_overloads.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_concrete.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_origin.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/parameterized_assoc_self_origin.mojo	-	ineligible	no-scalar-entry-shape
@@ -902,6 +903,7 @@ assets/ok/simd_cast_float_thresholds.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_cast_matrix.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_compare_all_dtypes.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_comparison_dunders.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_conversion_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_declared_members.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtype_alias.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_dtypes_int_lanes.mojo	-	ineligible	no-scalar-entry-shape

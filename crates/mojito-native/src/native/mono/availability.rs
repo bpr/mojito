@@ -262,7 +262,22 @@ impl Specializer<'_> {
         visiting: &mut HashSet<(String, String)>,
     ) -> Option<bool> {
         let declarations = &self.source.declarations;
-        let TyKind::Struct(name, arguments) = ty.kind() else {
+        // A `SIMD` answers a trait its declaration lists, or one such a
+        // trait refines, as the struct it is.
+        let declared_by_simd = matches!(ty.kind(), TyKind::Simd { .. })
+            && declarations.declares_trait(trait_name)
+            && self
+                .structs
+                .get(mojito_types::types::SIMD_TYPE_NAME)
+                .is_some_and(|template| {
+                    template.declared.iter().any(|declared| {
+                        declared.trait_name == trait_name
+                            || declarations.trait_refines(&declared.trait_name, trait_name)
+                    })
+                });
+        let Some((name, arguments)) = mojito_types::types::nominal_parts(ty)
+            .filter(|_| declared_by_simd || matches!(ty.kind(), TyKind::Struct(..)))
+        else {
             let mut undecided = false;
             let mut element = |element: &Ty, required: &str| {
                 self.type_conforms(element, required, visiting)
@@ -311,9 +326,9 @@ impl Specializer<'_> {
                 StructTraitRule::Always => return Some(true),
             };
         let mut bindings = self.base_bindings();
-        bind_struct_arguments(&template.param_decls, arguments, &mut bindings)?;
+        bind_struct_arguments(&template.param_decls, &arguments, &mut bindings)?;
         // A conformance that depends on itself proves nothing.
-        let key = (name.clone(), trait_name.to_string());
+        let key = (name.to_string(), trait_name.to_string());
         if !visiting.insert(key.clone()) {
             return Some(false);
         }

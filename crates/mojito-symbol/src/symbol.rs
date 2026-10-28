@@ -413,6 +413,12 @@ pub struct SignatureKey {
     /// overloads a free function on a read versus an owned parameter of the
     /// same type, so ownership is part of that callable's identity.
     owned: Vec<usize>,
+    /// The explicit compile-time parameter names of an overload that takes
+    /// no run-time parameter. Such overloads differ only in what a call
+    /// binds in brackets (`bit_width_of[type: AnyType]()` beside
+    /// `bit_width_of[dtype: DType]()`), so their binders are their identity;
+    /// the suffix stays empty for every other signature.
+    parameters: Vec<String>,
 }
 
 impl SignatureKey {
@@ -430,6 +436,7 @@ impl SignatureKey {
                 .map(|parameter| TypeKey::from_ast(&parameter.ty)),
             keywords: Vec::new(),
             owned: Vec::new(),
+            parameters: Vec::new(),
         }
     }
 
@@ -440,6 +447,7 @@ impl SignatureKey {
             kw_variadic: None,
             keywords: Vec::new(),
             owned: Vec::new(),
+            parameters: Vec::new(),
         }
     }
 
@@ -463,6 +471,7 @@ impl SignatureKey {
             kw_variadic: None,
             keywords: Vec::new(),
             owned: Vec::new(),
+            parameters: Vec::new(),
         }
     }
 
@@ -494,6 +503,17 @@ impl SignatureKey {
         self
     }
 
+    /// Attach the explicit compile-time parameter names `names` when this
+    /// signature has no run-time parameter (see [`SignatureKey`]'s
+    /// `parameters`).
+    #[must_use]
+    pub fn with_parameter_names<'a>(mut self, names: impl IntoIterator<Item = &'a str>) -> Self {
+        if self.types.is_empty() && self.kw_variadic.is_none() {
+            self.parameters = names.into_iter().map(str::to_string).collect();
+        }
+        self
+    }
+
     fn suffix(&self) -> String {
         let parts = self
             .types
@@ -514,6 +534,10 @@ impl SignatureKey {
             suffix.push_str("$var");
             suffix.push_str(&index.to_string());
         }
+        if !self.parameters.is_empty() {
+            suffix.push_str("$ct$");
+            suffix.push_str(&self.parameters.join("$"));
+        }
         suffix
     }
 
@@ -533,6 +557,7 @@ impl SignatureKey {
             kw_variadic: self.kw_variadic.clone(),
             keywords: self.keywords.clone(),
             owned: self.owned.clone(),
+            parameters: self.parameters.clone(),
         }
     }
 }
@@ -1013,6 +1038,7 @@ pub fn lowered_def_name<P: AnnotatedParam>(
             // `f(*rest: Int, a: Int)`, whose type sequences agree.
             &signature_from_ast(params, type_params, constants, None)
                 .with_keyword_names(keyword_only_names(params, None))
+                .with_parameter_names(explicit_parameter_names(type_params))
                 .with_owned_params(
                     &params
                         .iter()
@@ -1092,7 +1118,8 @@ pub fn lowered_method_name<P: AnnotatedParam>(
             .cloned()
             .collect();
         let signature = signature_from_ast(params, &scope, constants, self_spelling.as_deref())
-            .with_keyword_names(keyword_only_names(params, keyword_only));
+            .with_keyword_names(keyword_only_names(params, keyword_only))
+            .with_parameter_names(explicit_parameter_names(method_type_params));
         match split_method_symbol(source_name)
             .filter(|(_, method)| receiver_overloaded_method(method))
         {
@@ -2350,6 +2377,7 @@ fn signature_from_ast<P: AnnotatedParam>(
             }),
         keywords: Vec::new(),
         owned: Vec::new(),
+        parameters: Vec::new(),
     }
 }
 
@@ -2404,6 +2432,15 @@ fn self_struct_spelling(type_name: &str, type_params: &[TypeParam]) -> Option<St
 /// The names of the keyword-only parameters, part of overload identity.
 /// Parameters after a `*` marker or a variadic collector are keyword-only;
 /// the collectors themselves are not named parameters.
+/// The names a call may bind in brackets: every compile-time parameter after
+/// the `//` infer-only marker, a pack's without its `*`.
+fn explicit_parameter_names(type_params: &[TypeParam]) -> impl Iterator<Item = &str> {
+    type_params
+        .iter()
+        .filter(|param| !param.infer_only)
+        .map(|param| param.name.trim_start_matches('*'))
+}
+
 fn keyword_only_names<P: DeclaredParam>(params: &[P], keyword_only: Option<usize>) -> Vec<String> {
     let variadic = params
         .iter()

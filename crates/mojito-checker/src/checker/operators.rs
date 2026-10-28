@@ -491,10 +491,12 @@ impl Checker {
         if ok {
             return Ok(Ty::bool());
         }
-        // `x in c` on a user struct dispatches to the container's `__contains__`
-        // (`c.__contains__(x)`), which must return `Bool`.
+        // `x in c` on a user struct, or on a `SIMD` whose struct declares it,
+        // dispatches to the container's `__contains__` (`c.__contains__(x)`),
+        // which must return `Bool`.
         if let Some(span) = span
-            && matches!(rt.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+            && (matches!(rt.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
+                || self.declared_receiver_member(rt, "__contains__").is_some())
         {
             let ret = self.infer_method_call(
                 &span,
@@ -631,13 +633,24 @@ impl Checker {
         if width.is_inferred() {
             width = self.argument_simd_width(&dtype, args)?;
         }
+        self.construct_simd(span, &dtype, &width, args)
+    }
+
+    /// Check the construction of `SIMD[dtype, width]` from `args`.
+    pub(super) fn construct_simd(
+        &self,
+        span: &SourceSpan,
+        dtype: &SimdDtype,
+        width: &SimdWidth,
+        args: &[Expr],
+    ) -> Result<Ty, TypeError> {
         let ty = simd_of(dtype.clone(), width.clone())?;
         if let [arg] = args
             && self.simd_length_construction(span, &ty, arg, &self.infer(arg)?)?
         {
             return Ok(ty);
         }
-        self.check_simd_args(&dtype, &width, args)?;
+        self.check_simd_args(dtype, width, args)?;
         Ok(ty)
     }
 
@@ -763,10 +776,12 @@ impl Checker {
             });
         }
         // `Bool` is not a `Scalar`, so a multi-lane mask splats one `Bool`
-        // only through `fill=`.
+        // only through `fill=`; an integer literal splats through the
+        // `IntLiteral` initializer, as into any other lane.
         if dtype.known() == Some(Dtype::Bool)
             && width.known().is_some_and(|width| width > 1)
-            && args.len() == 1
+            && let [arg] = args
+            && *self.infer(arg)?.kind() != TyKind::IntLiteral
         {
             return Err(TypeError::BadCall {
                 func: "SIMD".to_string(),

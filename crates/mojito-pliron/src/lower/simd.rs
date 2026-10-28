@@ -100,6 +100,11 @@ impl FnLowering<'_> {
         // A literal element folds with the exact conversions (integers wrap
         // at the lane width, narrow floats round from the exact rational).
         if let Some(literal) = self.pending_literals.get(&elem.0).cloned() {
+            // Upstream's `IntLiteral` initializer: a mask lane is `True`
+            // when the literal is nonzero.
+            if let (PendingLiteral::Int(literal), ScalarTy::Bool) = (&literal, target) {
+                return Ok(self.bool_constant(ctx, !literal.is_zero()));
+            }
             return self.materialize_pending(ctx, &literal, target, dest);
         }
         if let Some(value) = self.intable_struct_value(ctx, elem, dest)? {

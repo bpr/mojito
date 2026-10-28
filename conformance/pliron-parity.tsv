@@ -689,6 +689,7 @@ assets/ok/param_expr_where_assumption.mojo	main	exe-differential	sanitized
 assets/ok/parameter_list_of_alias.mojo	main	exe-differential	sanitized
 assets/ok/parameter_list_raw_parameter.mojo	main	exe-differential	sanitized
 assets/ok/parameter_list_raw_values.mojo	main	exe-differential	sanitized
+assets/ok/parameter_only_overloads.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_concrete.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_origin.mojo	main	exe-differential	sanitized
 assets/ok/parameterized_assoc_self_origin.mojo	main	exe-differential	sanitized
@@ -902,6 +903,7 @@ assets/ok/simd_cast_float_thresholds.mojo	main	exe-differential	sanitized
 assets/ok/simd_cast_matrix.mojo	main	exe-differential	sanitized
 assets/ok/simd_compare_all_dtypes.mojo	main	exe-differential	sanitized
 assets/ok/simd_comparison_dunders.mojo	main	exe-differential	sanitized
+assets/ok/simd_conversion_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_declared_members.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtype_alias.mojo	main	exe-differential	sanitized
 assets/ok/simd_dtypes_int_lanes.mojo	main	exe-differential	sanitized

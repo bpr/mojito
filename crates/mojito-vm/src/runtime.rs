@@ -1866,6 +1866,8 @@ fn value_to_float_lane(v: &Value, dtype: Dtype) -> Result<f64, RuntimeError> {
 fn value_to_bool_lane(v: &Value) -> Result<bool, RuntimeError> {
     match v {
         Value::Bool(b) => Ok(*b),
+        // Upstream's `IntLiteral` initializer: a nonzero literal is `True`.
+        Value::IntLiteral(value) => Ok(!value.is_zero()),
         Value::Simd {
             lanes: SimdLanes::Bool(l),
             ..
@@ -2173,7 +2175,12 @@ pub fn simd_reduce_lanes(
     op: mojito_types::mlir::SimdReduction,
     value: &Value,
 ) -> Result<Value, RuntimeError> {
-    let lane = match simd_parts(value) {
+    // A one-lane mask (a width-one comparison's result) is held as `Bool`.
+    let parts = match value {
+        Value::Bool(lane) => Some((Dtype::Bool, SimdLanes::Bool(vec![*lane]))),
+        other => simd_parts(other),
+    };
+    let lane = match parts {
         Some((dtype, SimdLanes::Bool(lanes))) => (
             dtype,
             SimdLanes::Bool(vec![op.reduce_bools(lanes.into_iter())]),

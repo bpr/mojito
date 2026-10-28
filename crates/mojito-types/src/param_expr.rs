@@ -2107,6 +2107,28 @@ impl ParamExpr {
         }
     }
 
+    /// The frozen struct a folded construction of a non-generic struct
+    /// builds once every field is constant (`SIMDLength(1)`), as a value a
+    /// compile-time application passes; `None` for any other expression.
+    pub fn frozen_struct(&self) -> Option<CtValue> {
+        let ParamKind::StructValue { fields, .. } = self.kind() else {
+            return None;
+        };
+        let TyKind::Struct(name, arguments) = self.meta().as_value()?.kind() else {
+            return None;
+        };
+        if !arguments.is_empty() {
+            return None;
+        }
+        Some(CtValue::Struct {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(field, value)| Some((field.clone(), value.require_constant().ok()?)))
+                .collect::<Option<_>>()?,
+        })
+    }
+
     /// The integer a closed `Int`-valued expression denotes.
     pub fn as_i64(&self) -> Option<i64> {
         self.require_constant()

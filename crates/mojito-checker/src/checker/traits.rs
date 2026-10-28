@@ -1904,6 +1904,22 @@ impl Checker {
         let element = &mut |element: &Ty, tr: &str| self.conformance(element, tr);
         match ty.kind() {
             TyKind::Struct(name, args) => self.struct_trait_conformance(ty, name, args, tr),
+            // A `SIMD` answers a trait its declaration lists as the struct it
+            // is; the traits `std.simd` does not declare yet keep the model.
+            TyKind::Simd { .. }
+                if let Some((name, args)) = self.nominal_struct(ty)
+                    && matches!(
+                        struct_trait_rule(tr, self.traits.contains_key(tr)),
+                        StructTraitRule::Declared
+                    )
+                    && self.structs.get(name).is_some_and(|info| {
+                        info.conforms
+                            .iter()
+                            .any(|declared| self.trait_implies(declared, tr))
+                    }) =>
+            {
+                self.struct_conformance(name, &args, tr)
+            }
             TyKind::Param { .. } | TyKind::Assoc { .. } => self.archetype_conformance(ty, tr),
             TyKind::Dependent(_) | TyKind::SelfType | TyKind::Infer => Conformance::Unknown,
             // An already-reported error proves anything, so it cascades no

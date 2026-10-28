@@ -33,7 +33,7 @@
 #
 # Lifting a mask moves a row to another family rather than closing it: the pin
 # reports one complaint at a time.
-# swept-count	878
+# swept-count	881
 fixture	verdict	family	upstream
 assets/origin_error/for_ref_binding_escapes_local_source.mojo	compile-reject	agree	error: cannot return reference with incompatible origin: 'origin_of(local)' vs 'origin_of(values["element"])'
 assets/origin_error/immutable_write.mojo	compile-reject	agree	error: expression must be mutable in assignment
@@ -754,11 +754,14 @@ assets/type_error/simd_generic_width_rejected.mojo	compile-reject	agree	error: S
 assets/type_error/simd_inferred_width_bool.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_inferred_width_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'SIMD[.int64, 4]' value to 'SIMD[.int32, _]'
 assets/type_error/simd_inferred_width_from_elements.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/simd_intable_bound_vector.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_intable_multi_lane_splat.mojo	compile-reject	agree	error: no matching function in initialization
+assets/type_error/simd_int_vector.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_int_width_binder_from_alias.mojo	compile-reject	agree	error: invalid call to 'show': value passed to 'x' cannot be converted from 'SIMD[.int32, L]' to 'SIMD[.int32, w]', it depends on an unresolved parameter 'w'
 assets/type_error/simd_int_width_binder_from_length.mojo	compile-reject	agree	error: invalid call to 'show': value passed to 'x' cannot be converted from 'SIMD[.int32, m]' to 'SIMD[.int32, w]', it depends on an unresolved parameter 'w'
 assets/type_error/simd_int_width_binder_not_inferred.mojo	compile-reject	agree	error: invalid call to 'lanes': value passed to 'v' cannot be converted from 'SIMD[.int32, 4]' to 'SIMD[.int32, n]', it depends on an unresolved parameter 'n'
 assets/type_error/simd_length_not_writable.mojo	compile-reject	agree	error: invalid call to 'print': an element of 'values' with type 'SIMDLength' does not conform to trait 'Writable'; either prove the conformance with 'conforms_to', or add conformance
+assets/type_error/simd_mlir_index_float.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_scalar_splat_dtype_mismatch.mojo	compile-reject	agree	error: cannot implicitly convert 'Int32' value to 'SIMD[.int64, 4]'
 assets/type_error/simd_shuffle_width_mismatch.mojo	compile-reject	agree	error: function instantiation failed
 assets/type_error/simd_size_removed_alias.mojo	compile-reject	agree	error: use of unknown declaration 'SIMDSize'

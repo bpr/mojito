@@ -6,9 +6,7 @@
 //! and the elaborator ask the same predicate here.
 
 use crate::types::TyKind;
-use crate::types::{
-    Ty, default_literal, is_scalar_simd, scalar_simd_dtype, simd_shape, trivial_predicate_name,
-};
+use crate::types::{Ty, default_literal, scalar_simd_dtype, simd_shape, trivial_predicate_name};
 
 /// Mojo's built-in traits the compiler knows by name. A program may also
 /// declare a trait of one of these names; its declaration then decides.
@@ -258,19 +256,17 @@ pub fn leaf_conforms(
 /// How the compiler-modelled type `ty` conforms to the library trait
 /// `trait_name`, as the upstream struct it stands in for declares.
 ///
-/// Upstream's `SIMD` (whose scalars `Int`, `UInt`, and `Float64` are),
-/// `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`. `SIMD` and
+/// Upstream's `Tuple`, `VariadicPack`, and `TypeList` each list `Sized`. `SIMD` and
 /// `Bool` list `Equatable` and `Comparable`, and `DType` lists `Equatable`;
 /// a numeric literal answers as the scalar it materializes to. A vector
 /// conforms at every width: its `__eq__` reduces the lanes, and its
 /// ordered dunders assert a scalar where an instance reaches them.
 ///
-/// `SIMD`, `Bool`, and the literal structs list `Boolable`; `SIMD`, `Bool`,
-/// and the numeric literals `Intable`; `Bool` and `FloatLiteral`
-/// `Floatable`; `SIMD` and `IntLiteral` `Indexer`; none lists
-/// `Identifiable`. Only a scalar `SIMD` is `Intable` here, and only an
-/// integral one `Indexer`, since upstream's methods assert as much where
-/// an instance calls them.
+/// `Bool` and the literal structs list `Boolable`; `Bool` and the numeric
+/// literals `Intable`; `Bool` and `FloatLiteral` `Floatable`; `IntLiteral`
+/// `Indexer`; none lists `Identifiable`. `SIMD`'s `Boolable`, `Intable`,
+/// `Indexer`, and `Sized` are its declaration's in `std.simd`, which the
+/// checker and the elaborator read instead.
 ///
 /// `SIMD` lists every `std.math` operation trait but `CeilDivableRaising`;
 /// a numeric literal answers as the scalar it materializes to. Only `Int`,
@@ -303,19 +299,16 @@ pub fn modelled_conformance(
         .strip_prefix("__module$std$math$")
         .unwrap_or(trait_name)
     {
-        "Boolable" => {
-            is_numeric_like(ty)
-                || matches!(
-                    ty.kind(),
-                    TyKind::Bool | TyKind::StringLiteral | TyKind::Simd { .. }
-                )
-        }
-        "Intable" => is_numeric_like(ty) || is_scalar_simd(ty) || *ty == TyKind::Bool,
+        "Boolable" => matches!(
+            ty.kind(),
+            TyKind::Bool | TyKind::StringLiteral | TyKind::IntLiteral | TyKind::FloatLiteral
+        ),
+        "Intable" => matches!(
+            ty.kind(),
+            TyKind::Bool | TyKind::IntLiteral | TyKind::FloatLiteral
+        ),
         "Floatable" => matches!(ty.kind(), TyKind::Bool | TyKind::FloatLiteral),
-        "Indexer" => {
-            is_integer_like(ty)
-                || scalar_simd_dtype(ty).is_some_and(mojito_ast::ast::Dtype::is_integral)
-        }
+        "Indexer" => *ty == TyKind::IntLiteral,
         "Equatable" => {
             is_numeric_like(ty)
                 || matches!(
@@ -368,11 +361,7 @@ pub fn modelled_conformance(
         },
         "Sized" => matches!(
             ty.kind(),
-            TyKind::INT
-                | TyKind::UINT
-                | TyKind::FLOAT64
-                | TyKind::Simd { .. }
-                | TyKind::Tuple(_)
+            TyKind::Tuple(_)
                 | TyKind::RuntimePack(_)
                 | TyKind::VariadicPack(_)
                 | TyKind::ComptimeList(_)

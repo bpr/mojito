@@ -4529,7 +4529,10 @@ fn default_argument(
     let context = || format!("default for parameter '{name}'");
     let value = match value.evaluate_named(environment) {
         Ok(value) => value,
-        Err(_) if value.is_closed() && value.meta().as_value() == Some(ty) => {
+        // A closed application the elaborator evaluates, or a default over
+        // binders still open at the use (`Self.dtype` at a receiver in its
+        // struct's own generic body), which each instance closes.
+        Err(_) if value.meta().as_value() == Some(ty) => {
             return Ok(CtValue::Expr(value.clone()));
         }
         Err(_) => return Err(TypeError::NotComptime(context())),

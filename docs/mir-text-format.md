@@ -834,6 +834,12 @@ The package format moves to `mojito-package 135` (R1549), since the bundled
 library gains `std.simd`, whose `SIMD` the prelude exports; the MIR schema
 does not change.
 
+The package format moves to `mojito-package 136` (R1550), since the bundled
+library gains `std.sys.info` and `std.builtin.dtype`, `SIMD` declares its
+conversion members and their traits, and an overload that takes no run-time
+parameter keys its compile-time parameter names into its symbol; the MIR
+schema does not change.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 

@@ -1,6 +1,7 @@
 //! Trait support: method-requirement satisfaction, associated-requirement
 //! merging.
 
+use super::overload_support::explicit_parameter_names;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::param_expr::fold::comparison_holds;
@@ -82,6 +83,10 @@ pub(super) fn same_method_shape(a: &MethodSig, b: &MethodSig) -> bool {
         && a.variadic == b.variadic
         && a.kw_variadic == b.kw_variadic
         && keyword_names(a) == keyword_names(b)
+        && (!a.params.is_empty()
+            || a.variadic.is_some()
+            || a.kw_variadic.is_some()
+            || explicit_parameter_names(&a.decls).eq(explicit_parameter_names(&b.decls)))
 }
 
 /// A conforming method may promise no error where its trait requirement raises,

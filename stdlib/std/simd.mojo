@@ -1,9 +1,11 @@
 # Upstream's `std/simd.mojo`, in part: the `SIMD` struct, its storage, and
-# its instance `__len__`, `__getitem__`, and `__setitem__`. The other members
-# are still served by the compiler (R1550–R1555, R330, R276), and the struct
-# declares only the traits whose requirements are ported here. `Scalar`,
-# `Int`, `UInt`, the sized aliases, and `Byte` stay compiler names until
-# R1557. Omitted: the `@lldb_formatter_wrapping_type` decorator
+# its instance `__len__`, `__getitem__`, `__setitem__`, `__contains__`,
+# `__bool__`, `__int__`, `__mlir_index__`, `__float__`, and `_refine`. The
+# other members are still served by the compiler (R1551–R1555, R330, R276),
+# and the struct declares only the traits whose requirements are ported
+# here; as upstream's, its trait list has no `Floatable`. `Scalar`, `Int`,
+# `UInt`, the sized aliases, and `Byte` stay compiler names until R1557.
+# Omitted: the `@lldb_formatter_wrapping_type` decorator
 # (`std.utils._visualizers`) and `CoordLike`'s static `__len__`
 # (`std.utils.coord`).
 """Implements SIMD primitives and abstractions.
@@ -36,7 +38,9 @@ components, including tensor operations, linear algebra routines, and
 domain-specific libraries for machine learning and scientific computing.
 """
 
+from std.sys.info import bit_width_of
 from std.builtin.simd_length import SIMDLength
+from std.builtin.dtype import _uint_type_of_width
 
 
 # ===----------------------------------------------------------------------=== #
@@ -45,7 +49,13 @@ from std.builtin.simd_length import SIMDLength
 
 
 @stable(since="1.1")
-struct SIMD[dtype: DType, length: SIMDLength](Sized, TrivialRegisterPassable):
+struct SIMD[dtype: DType, length: SIMDLength](
+    Boolable,
+    Indexer,
+    Intable,
+    Sized,
+    TrivialRegisterPassable,
+):
     """Represents a vector type that leverages hardware acceleration to process
     multiple data elements with a single operation.
 
@@ -215,6 +225,17 @@ struct SIMD[dtype: DType, length: SIMDLength](Sized, TrivialRegisterPassable):
             self._mlir_value, val._mlir_value, idx.__mlir_index__()
         )
 
+    def __contains__(self, value: Scalar[Self.dtype]) -> Bool:
+        """Whether the vector contains the value.
+
+        Args:
+            value: The value.
+
+        Returns:
+            Whether the vector contains the value.
+        """
+        return self.eq(value).reduce_or()
+
     # ===------------------------------------------------------------------=== #
     # Trait implementations
     # ===------------------------------------------------------------------=== #
@@ -229,3 +250,93 @@ struct SIMD[dtype: DType, length: SIMDLength](Sized, TrivialRegisterPassable):
         """
 
         return self.length
+
+    @always_inline("builtin")
+    def __bool__(self) -> Bool:
+        """Converts the SIMD scalar into a boolean value.
+
+        Returns:
+            True if the SIMD scalar is non-zero and False otherwise.
+        """
+
+        var ne_zero = __mlir_op.`pop.cmp`[
+            pred=__mlir_attr.`#kgen.cmp_pred<ne>`
+        ](self._mlir_value, Self(0)._mlir_value)
+        return Bool(mlir_value=__mlir_op.`pop.simd.reduce_or`(ne_zero))
+
+    @inline(.nodebug)
+    def __int__(self) -> Int:
+        """Casts to the value to an Int. If there is a fractional component,
+        then the fractional part is truncated.
+
+        Constraints:
+            The size of the SIMD vector must be 1.
+
+        Returns:
+            The value as an integer.
+        """
+        comptime assert Int(Self.length) == 1, "expected a scalar type"
+
+        comptime int_width = bit_width_of[Int]()
+        comptime type_width = bit_width_of[Self.dtype]()
+
+        comptime if Self.dtype.is_unsigned() and int_width > type_width:
+            # If we are casting up, prevent sign extension by first casting to
+            # a large unsigned
+            return self.cast[_uint_type_of_width[int_width]()]().__int__()
+        else:
+            return self._refine[new_size=1]().cast[DType.int]()
+
+    @doc_hidden
+    @always_inline("builtin")
+    def __mlir_index__(self) -> __mlir_type.index:
+        """Convert to index.
+
+        Returns:
+            The corresponding __mlir_type.index value.
+        """
+        comptime assert (
+            Self.dtype.is_integral()
+        ), "cannot index using a floating point type"
+        comptime assert Self.length == SIMDLength(
+            1
+        ), "cannot index using a non-scalar SIMD"
+
+        return __mlir_op.`pop.cast_to_builtin`[_type=__mlir_type.index](
+            __mlir_op.`pop.cast`[
+                _type=SIMD[.int, 1]._mlir_type,
+                fastmathFlags=__mlir_attr.`#pop.fmf<fast>`,
+            ](rebind[SIMD[Self.dtype, SIMDLength(1)]](self)._mlir_value)
+        )
+
+    @inline(.nodebug)
+    def __float__(self) -> Float64:
+        """Casts the value to a float.
+
+        Constraints:
+            The size of the SIMD vector must be 1.
+
+        Returns:
+            The value as a float.
+        """
+        comptime assert Self.length == 1, "expected a scalar type"
+        return self._refine[new_size=1]().cast[DType.float64]()
+
+    # ===------------------------------------------------------------------=== #
+    # Methods
+    # ===------------------------------------------------------------------=== #
+
+    @inline(.nodebug)
+    def _refine[
+        new_dtype: DType = Self.dtype, new_size: SIMDLength = Self.length
+    ](self) -> SIMD[new_dtype, new_size]:
+        """Manually refines the SIMD vector to a specific element type and size.
+
+        Parameters:
+            new_dtype: The target DType.
+            new_size: The target size of the SIMD vector.
+
+        Returns:
+            The same SIMD vector with the specified element type and size.
+        """
+        return rebind[SIMD[new_dtype, new_size]](self)

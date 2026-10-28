@@ -1406,13 +1406,20 @@ impl Checker {
         }
 
         if targs.is_empty()
-            || !signature
-                .decls
-                .iter()
-                .any(|decl| matches!(decl, ParamDecl::Value { .. }))
+            || !signature.decls.iter().any(|decl| {
+                matches!(
+                    decl,
+                    ParamDecl::Value { .. }
+                        | ParamDecl::Type {
+                            default: Some(_),
+                            ..
+                        }
+                )
+            })
         {
             return None;
         }
+        let owner_values = owner_value_bindings(&info.decls, targs);
         let pack = positional_pack_arguments(&info.decls, targs);
         let mut rewrite = CloseElements {
             checker: self,
@@ -1423,14 +1430,34 @@ impl Checker {
         let mut closed = signature.clone();
         let mut retyped = false;
         for decl in &mut closed.decls {
-            if let ParamDecl::Value { ty, .. } = decl {
-                let rewritten = mojito_types::types::rewrite_ty(ty, &mut rewrite)
-                    .unwrap_or_else(|_| (*ty).clone());
-                // A value parameter typed by the struct's own type binder
-                // (`[v: Self.T]`) takes the receiver's argument for it.
-                let at_receiver = substitute_at(&rewritten, info, targs);
-                retyped |= at_receiver != rewritten;
-                *ty = at_receiver;
+            match decl {
+                ParamDecl::Value { ty, default, .. } => {
+                    let rewritten = mojito_types::types::rewrite_ty(ty, &mut rewrite)
+                        .unwrap_or_else(|_| (*ty).clone());
+                    // A value parameter typed by the struct's own type binder
+                    // (`[v: Self.T]`) takes the receiver's argument for it.
+                    let at_receiver = substitute_at(&rewritten, info, targs);
+                    retyped |= at_receiver != rewritten;
+                    *ty = at_receiver;
+                    // A default reading the struct's own binder
+                    // (`[n: Int = Self.k]`) reads the receiver's argument.
+                    if let Some(value) = default
+                        && let Ok(replaced) = mojito_types::param_expr::ParamContext::detached()
+                            .replace(value, &owner_values)
+                        && replaced != *value
+                    {
+                        *value = replaced;
+                        retyped = true;
+                    }
+                }
+                ParamDecl::Type {
+                    default: Some(ty), ..
+                } => {
+                    let at_receiver = substitute_at(ty, info, targs);
+                    retyped |= at_receiver != *ty;
+                    *ty = at_receiver;
+                }
+                ParamDecl::Type { .. } => {}
             }
         }
         (rewrite.closed || retyped).then_some(closed)
@@ -1686,4 +1713,26 @@ fn bind_pointer_origin_tails(
         TyKind::Tuple(elements) => TyKind::Tuple(elements.iter().map(recur).collect()).into(),
         _ => ty.clone(),
     }
+}
+
+/// The struct value binders `decls` bound to the receiver's arguments
+/// `targs`, by identity, for replacing them inside a member's parameter
+/// expressions.
+fn owner_value_bindings(
+    decls: &[ParamDecl],
+    targs: &[TyArg],
+) -> mojito_types::param_expr::ParamBindings {
+    let context = mojito_types::param_expr::ParamContext::detached();
+    let mut bindings = mojito_types::param_expr::ParamBindings::new();
+    for (decl, argument) in decls.iter().zip(targs) {
+        if let (ParamDecl::Value { id, .. }, TyArg::Val(value)) = (decl, argument)
+            && let Some(value) = match value {
+                CtValue::Expr(expr) => Some(expr.clone()),
+                value => context.constant(value.clone()).ok(),
+            }
+        {
+            bindings.bind(id.clone(), value);
+        }
+    }
+    bindings
 }

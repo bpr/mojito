@@ -496,35 +496,16 @@ impl<'a> Flatten<'a> {
     /// `__mlir_bool__`, `__mlir_i1__`, or a collector's
     /// `get_loaded_kgen_pack`. `None` leaves the call to the later forms.
     fn mlir_conversion(&mut self, call: Node<'a>, object: Node<'a>, method: &str) -> Option<Reg> {
-        // `x.__mlir_index__()` on an integer is upstream's
-        // `pop.cast_to_builtin` of an `Int`: a `UInt` is `pop.cast` to
-        // `Int` first, and a literal materializes as one.
+        // `n.__mlir_index__()` on an integer literal is upstream's
+        // conversion of the literal, materialized as an `Int`, to the
+        // builtin `index`; a `SIMD`'s is its declared member.
         if method == "__mlir_index__"
-            && let Some(found) = object.ty().filter(|ty| {
-                matches!(
-                    ty.kind(),
-                    mojito_types::types::TyKind::INT
-                        | mojito_types::types::TyKind::IntLiteral
-                        | mojito_types::types::TyKind::UINT
-                )
-            })
+            && object
+                .ty()
+                .is_some_and(|ty| *ty.kind() == mojito_types::types::TyKind::IntLiteral)
         {
             let value = self.expr(object);
-            let value = match found.kind() {
-                mojito_types::types::TyKind::IntLiteral => {
-                    self.materialize_literal(value, &Ty::int(), call.location())
-                }
-                mojito_types::types::TyKind::UINT => {
-                    let dest = self.fresh_typed(call.location(), None, Ty::int());
-                    self.emit(MirInstr::ScalarCast {
-                        dest,
-                        value,
-                        target: ScalarConversion::Int,
-                    });
-                    dest
-                }
-                _ => value,
-            };
+            let value = self.materialize_literal(value, &Ty::int(), call.location());
             return Some(self.builtin_cast(call.location(), value, Ty::index()));
         }
         // `b.__mlir_bool__()` on a `Bool` is its `!kgen.scalar<bool>`

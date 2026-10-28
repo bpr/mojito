@@ -1071,7 +1071,11 @@ impl Checker {
             // elaborator below MIR runs and materializes, and so is any
             // `String` expression, which it freezes to a compile-time string;
             // no other struct expression lifts.
-            TyKind::Struct(..) | TyKind::Simd { .. } | TyKind::Index if called.is_some() => ty,
+            TyKind::Struct(..) | TyKind::Simd { .. } | TyKind::Index | TyKind::Dtype
+                if called.is_some() =>
+            {
+                ty
+            }
             TyKind::Struct(name, args)
                 if args.is_empty() && mojito_types::types::is_stdlib_string_struct(name) =>
             {
@@ -1453,6 +1457,7 @@ impl Checker {
                     | TyKind::Index
                     | TyKind::Bool
                     | TyKind::FLOAT64
+                    | TyKind::Dtype
                     | TyKind::Simd { .. }
                     | TyKind::Struct(..)
             )

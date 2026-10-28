@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1562**.
+Next free ID: **R1566**.
 
 ## Ordered Work
 
@@ -3744,6 +3744,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     that `m.reduce_or() and not m.reduce_and()` checks: its MIR casts the
     `simd.reduce` lane to `Bool`. Once `and`/`or` take the lane, the
     method takes upstream's type and `size_out`.
+  - Probe: `v and True` and `v or False` over a 4-lane `int32` vector print
+    `True True` at the pin, which converts the vector through its declared
+    `__bool__` (R1550); Mojito rejects both.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -3813,6 +3816,12 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     which must mark the collector on the declaration side and at every call
     side that builds a key (`method_lowered_name`, `callable_lowered_name`,
     `callable_contract_target`).
+  - Probe: `def f[a: Int](x: Int)` beside `def f[T: AnyType](x: Int)` fails
+    MIR verification ("value parameter 'a' has no runtime register"), where
+    the pin prints `4 101` for `f[3](1), f[String](1)`. The key spells the
+    explicit compile-time parameter names only for an overload with no
+    run-time parameter (`SignatureKey::with_parameter_names`, R1550), and
+    never their kinds.
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -5783,6 +5792,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     need a manual `rg` pass.
   - The bundled `struct DType` port, R160, rewrites the same table, so this
     lands first or folds into it.
+  - Restore `_uint_type_of_width`'s `_uint1`, `_uint2`, `_uint4`,
+    `uint128`, and `uint256` arms in `stdlib/std/builtin/dtype.mojo`, and
+    drop its second `comptime assert`.
   - Depends on nothing.
   - Model: Opus, Planned.
 
@@ -6595,6 +6607,23 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1531 (2026-10-27).
   - Depends on nothing.
   - Model: Fable, Not Planned.
+
+- [ ] **R1563 `conforms_to` over a struct with a struct-valued argument
+  stays unfolded in elaborated MIR**
+
+  `comptime c = conforms_to(W[K(4)], Intable)`, with `@fieldwise_init
+  struct K` and `struct W[k: K]`, stops with "keeps the parameter constant
+  `conforms_to(W[K(4)], Intable)` in elaborated MIR", where the pin prints
+  `False`.
+  - The `comptime if conforms_to(W[K(4)], Sized)` form fails the same way.
+  - The root is not located. The suspect is `Specializer::decide_type_conforms`
+    (`mono/availability.rs`), whose `bind_struct_arguments` may not bind
+    the `K(4)` construction argument, leaving the query undecided.
+  - A `SIMD` instance's `SIMDLength` argument folds here, so the gap is the
+    construction argument's, not the struct-valued slot's.
+  - Found while landing R1550 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 ### Behavioral Divergences From The Pinned Mojo *(recurring — reopens at every nightly re-pin)*
 
@@ -8134,6 +8163,19 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1565 A method's compile-time parameter may reuse its struct's
+  parameter name**
+
+  `struct H[d: DType]` with `def f[d: Int]()` checks and runs, where the pin
+  rejects the method with "invalid redefinition of 'd'".
+  - The method binder shadows the struct's inside the method, where the
+    pin's scope holds both and refuses the second.
+  - Reject the method binder at its declaration, as the pin does, and add
+    an `assets/type_error` fixture with its `# expect:`.
+  - Found while landing R1550 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Mojito-Specific Shortcuts To Move Toward Mojo's Shape
 
 Track: `mojo-shape`.
@@ -8563,7 +8605,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     method '__abs__'"), where the pin prints `3`; `Int(-3).__abs__()`
     runs.
   - Shrinks R66 (`abs` over a scalar alias).
-  - Done when `modelled_declares` answers the eight for every `SIMD`.
+  - Done when `SIMD`'s declaration in `std.simd` lists the eight, which
+    `Checker::conformance` and `Specializer::decide_type_conforms` answer
+    from it (R1550).
   - Found while landing R1361 (2026-10-26).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -9841,26 +9885,24 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1503, for the `mut` lane argument.
   - Model: Fable, Not Planned.
 
-- [ ] **R1550 `SIMD`'s conversions and conformances are checker rules,
-  where upstream's are its declared members and trait list**
+- [ ] **R1562 `CompilationTarget` is undeclared, where upstream's
+  `std/sys/info.mojo` answers target queries from `#kgen.param.expr`
+  attributes**
 
-  `modelled_conformance` answers `SIMD`'s traits by shape, where upstream's
-  struct declares them at every dtype and width and fails an instance at a
-  member's `comptime assert`.
-  - Port `__int__`, `__mlir_index__`, `__float__`, `__bool__`, `_refine`,
-    and `__contains__`, and declare their traits on the struct.
-  - Bundle what they import: `stdlib/std/sys/info.mojo` (`bit_width_of`,
-    and `CompilationTarget` with the host's answers, which R1554 and R330
-    need), and `_uint_type_of_width`, `_integral_type_of`, and
-    `_unsigned_integral_type_of` from `std.builtin.dtype`.
-  - Conformance of a `SIMD` answers from the declaration for the ported
-    traits.
-  - Probe: `conforms_to(SIMD[DType.int32, 4], Intable)` and
-    `conforms_to(Float64, Indexer)` are `True` at the pin. Mojito answers
-    `False`, since `modelled_declares` (`mojito-types::conformance`) gives
-    `Intable` to scalars and `Indexer` to integral scalars only.
-  - Shrinks R1457.
-  - Depends on R1549.
+  `CompilationTarget.current()` and every target query are undefined, and
+  the bundled `bit_width_of` and `size_of` take no `target` parameter.
+  - Upstream's bodies read `#kgen.param.expr<current_target>`,
+    `get_sizeof`, `get_alignof`, `target_get_field`, and `has_feature` over
+    an `!kgen.target` value. Mojito has no `!kgen.target` type and folds
+    none of these attributes.
+  - Answer them with the host's values (the layout oracle's `size_of` and
+    `align_of` included), so `size_of` and `align_of` become library bodies
+    in `stdlib/std/sys/info.mojo`.
+  - Restore the `target: CompilationTarget = CompilationTarget.current()`
+    parameter of `bit_width_of` and `size_of` (dropped in R1550).
+  - R330 and R1554 read `CompilationTarget.current().stdlib_plugin`.
+  - Split it if one session cannot land the type and the folds together.
+  - Depends on nothing.
   - Model: Fable, Planned.
 
 - [ ] **R1551 `SIMD`'s arithmetic is a checker rule and MIR binop, where
@@ -9921,6 +9963,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `reduce_bit_count`, `clamp`, `fma`, `is_power_of_two`, `__abs__`,
     `__floor__`, `__ceil__`, `__trunc__`, `__round__`, and `__hash__`.
   - Bundle `std.memory.bitcast`.
+  - Bundle `_integral_type_of` and `_unsigned_integral_type_of` into
+    `stdlib/std/builtin/dtype.mojo` for `to_bits`/`from_bits`.
   - Upstream's `reduce_and`/`reduce_or` (and `reduce_max`/`reduce_min`
     off x86) call `llvm.vector.reduce.*`, which run since R1394.
   - Probe (from R1109): the hash leaf reaches `__hash__` and a hasher's
@@ -10261,7 +10305,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Admit `pop.simd.shuffle` in `MlirOp`, lowering to `MirInstr::SimdShuffle`.
   - Bundle `std/utils/static_tuple.mojo` (`StaticTuple`) and `std/_plugin`
     (`PluginHooks`, `DefaultPlugin`, and `CurrentPlugin`, which is
-    `CompilationTarget.current().stdlib_plugin`, R1550). The bodies read
+    `CompilationTarget.current().stdlib_plugin`, R1562). The bodies read
     `CurrentPlugin.lowers_subvector_intrinsics`, `True` on the CPU plugin.
   - The `slice`, `insert`, `interleave`, rotation, and shift bodies call
     intrinsics that run since R1519, `deinterleave`'s since R1547, and
@@ -10273,7 +10317,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `StaticTuple[SIMDLength, n]`'s storage, and Mojito bundles no
     `StaticTuple`. `MirInstr::SimdShuffle` already computes the op.
   - Closes R331 (the pin's `2 * length` bound). Shrinks R212.
-  - Depends on R1550, which bundles `CompilationTarget`.
+  - Depends on R1562, which bundles `CompilationTarget`.
   - Model: Fable, Not Planned.
 
 - [ ] **R422 `print` and `String(x)` write a struct through a host string
@@ -11654,6 +11698,19 @@ residue found inside a task moves to the task that owns its fix.
     interop.
   - If Python interop is out of scope, this moves to `docs/non-goals.md`.
   - Found while landing R578 (2026-10-26).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1564 The bundled `List` has no `__getitem__` over an `Indexer`**
+
+  `l[Int32(1)]` over a `List[Int]` is rejected ("no overload matches the
+  supplied arguments"), where the pin prints the element.
+  - Upstream's `List` declares `__getitem__(ref self, idx: Some[Indexer])`
+    beside the `Int` overload, and every sized integer scalar is an
+    `Indexer` since R1550.
+  - Port the overload into `stdlib/std/collections/list.mojo`, then check
+    `Span`, `Array`, and `String` subscripts against upstream's.
+  - Found while landing R1550 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 

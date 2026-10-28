@@ -8,6 +8,27 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD` declares `Boolable`, `Indexer`, and `Intable` with upstream's
+  `__bool__`, `__int__`, `__mlir_index__`, `__float__`, `_refine`, and
+  `__contains__` bodies in `std.simd`, and conformance of a `SIMD` to a
+  trait its declaration lists is answered from the declaration (R1550).
+  `conforms_to(SIMD[DType.int32, 4], Intable)` and `conforms_to(Float64,
+  Indexer)` were `False` and are `True`, as at the pin. `Bool(v)`, `if v:`,
+  `not v`, `x in v`, `Float32(x).__float__()`, `x.__mlir_index__()` over a
+  sized scalar, and `_refine` now run on the VM and natively, where they
+  were rejected; `__int__` over a vector and `__mlir_index__` over a float
+  fail the instance with the pin's assert message. `std.sys.info`
+  (`bit_width_of`, `size_of`'s home) and `std.builtin.dtype`
+  (`_uint_type_of_width`) are bundled. Along the way: overloads differing
+  only in compile-time parameters (`f[type: AnyType]()` beside
+  `f[dtype: DType]()`) are distinct callables; a method parameter defaulting
+  to its owner's parameter (`[n: Int = Self.k]`) applies; a leading-dot
+  `DType` member (`SIMD[.int32, 4]`) and a `DType`-valued compile-time call
+  name a SIMD dtype; `v.eq(scalar)` splats the scalar; `SIMD[DType.bool,
+  n](0)` builds a mask from an integer literal; and a `comptime assert` over
+  `SIMDLength(1)` in a generic body folds. The package format moves to
+  `mojito-package 136`.
+
 - `SIMD` is declared in `std.simd` as upstream's struct over its
   `!kgen.simd` storage, in the prelude, and its `__len__`, `__getitem__`,
   and `__setitem__` are upstream's bodies (R1549). Explicit calls on a

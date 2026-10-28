@@ -188,8 +188,12 @@ impl Checker {
             // vectors, so a mask comes from these methods.
             "lt" | "le" | "gt" | "ge" | "eq" | "ne" if args.len() == 1 => {
                 let other = self.infer(&args[0])?;
+                // A `Scalar` of the receiver's dtype converts to `Self`
+                // through upstream's `@implicit` splat initializer.
                 let compatible = match other.kind() {
-                    TyKind::Simd { dtype: d, width: w } => *d == dtype && *w == width,
+                    TyKind::Simd { dtype: d, width: w } => {
+                        *d == dtype && (*w == width || w.known() == Some(1))
+                    }
                     _ => splats_to(&other, &dtype),
                 };
                 if !compatible {

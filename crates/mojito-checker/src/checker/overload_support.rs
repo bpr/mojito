@@ -357,7 +357,11 @@ pub(super) fn callable_lowered_name(name: &str, ty: &Ty) -> Option<String> {
     let signature = mojito_symbol::symbol::SignatureKey::from_tys(signature_types)
         .with_kw_variadic(kw_variadic.as_ref())
         .with_keyword_names(names[collector_position..].to_vec())
-        .with_owned_params(conventions);
+        .with_owned_params(conventions)
+        .with_parameter_names(explicit_parameter_names(
+            ty.as_generic_func()
+                .map_or(&[][..], |generic| &generic.decls),
+        ));
     Some(mojito_symbol::symbol::function_symbol(name, &signature))
 }
 
@@ -392,7 +396,8 @@ pub(super) fn method_lowered_name(
     let signature =
         mojito_symbol::symbol::SignatureKey::from_tys_with_self(signature_types, self_ty)
             .with_kw_variadic(sig.kw_variadic.as_ref())
-            .with_keyword_names(keyword_names);
+            .with_keyword_names(keyword_names)
+            .with_parameter_names(explicit_parameter_names(&sig.decls));
     if mojito_symbol::symbol::receiver_overloaded_method(method) {
         if sig.has_self {
             mojito_symbol::symbol::receiver_method_symbol(
@@ -407,6 +412,26 @@ pub(super) fn method_lowered_name(
     } else {
         mojito_symbol::symbol::method_symbol(type_name, method, &signature)
     }
+}
+
+/// The names a call may bind in brackets, as the declaration side spells
+/// them: every compile-time parameter after the `//` infer-only marker.
+pub(super) fn explicit_parameter_names(decls: &[ParamDecl]) -> impl Iterator<Item = &str> {
+    decls
+        .iter()
+        .filter(|decl| {
+            !matches!(
+                decl,
+                ParamDecl::Type {
+                    infer_only: true,
+                    ..
+                } | ParamDecl::Value {
+                    infer_only: true,
+                    ..
+                }
+            )
+        })
+        .map(|decl| decl.name().trim_start_matches('*'))
 }
 
 /// The lowered symbol of the constructor a construction selected: the

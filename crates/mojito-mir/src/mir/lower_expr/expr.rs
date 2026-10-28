@@ -808,7 +808,7 @@ impl<'a> Flatten<'a> {
             CheckedOp::Infix(op @ (InfixOp::And | InfixOp::Or), a, b) => {
                 self.short_circuit(*op, operand(a)?, operand(b)?, node.location())
             }
-            // A checked nominal membership operation is an ordinary borrowed
+            // A checked nominal membership operation (a `SIMD`'s too) is an ordinary borrowed
             // `container.__contains__(value)` call.  Keeping it as a value-only
             // `BinOp` loses the receiver place; the VM would then install a
             // shallow struct value in the callee's `self` slot and destroy its
@@ -817,10 +817,11 @@ impl<'a> Flatten<'a> {
             // (value before container), the selected overload, and the normal
             // method-call place/capture contract.
             CheckedOp::Infix(op @ (InfixOp::In | InfixOp::NotIn), value, container)
-                if matches!(
-                    operand(container).and_then(Node::ty).as_ref().map(Ty::kind),
-                    Some(TyKind::Struct(..))
-                ) =>
+                if operand(container)
+                    .and_then(Node::ty)
+                    .as_ref()
+                    .and_then(mojito_types::types::nominal_parts)
+                    .is_some() =>
             {
                 self.contains_call(node, *op, operand(value)?, operand(container)?)
             }
@@ -891,14 +892,13 @@ impl<'a> Flatten<'a> {
             return self.ordinary_method_call(node, value, op.dunder(), &[], &[]);
         }
         let ra = self.lower_operator_operand(node, value);
-        // `not x` on a struct or a numeric scalar is
+        // `not x` on a struct, a numeric scalar, or a vector is
         // `not x.__bool__()`: convert through the explicit `Bool(x)`
         // call so the negation is scalar on both backends.
         let ra = if op == PrefixOp::Not
             && value.ty().is_some_and(|ty| {
-                matches!(ty.kind(), TyKind::Struct(..))
+                matches!(ty.kind(), TyKind::Struct(..) | TyKind::Simd { .. })
                     || mojito_types::conformance::is_numeric(&ty)
-                    || mojito_types::types::is_scalar_simd(&ty)
             }) {
             self.bool_conversion(value.location(), ra, value.ty().as_ref())
         } else {

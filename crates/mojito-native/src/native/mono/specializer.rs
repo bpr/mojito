@@ -1534,7 +1534,7 @@ impl<'a> Specializer<'a> {
             .map(|arg| {
                 match arg.kind() {
                     ParamKind::DeclRef(reference) => bindings.values.get(reference).cloned(),
-                    _ => eval_ct(arg, bindings).ok(),
+                    _ => eval_ct(arg, bindings).ok().or_else(|| arg.frozen_struct()),
                 }
                 .ok_or_else(|| unresolved("an unresolved value", arg))
             })
@@ -2550,14 +2550,24 @@ impl<'a> Specializer<'a> {
                         _ => None,
                     };
                     let builtin = !self.functions.contains_key(func.0.as_str());
+                    let operand = args
+                        .first()
+                        .and_then(|arg| function.reg_types.get(&arg.0))
+                        .map(peel_refs);
+                    // A vector is no scalar cast's source: its conversion is
+                    // `SIMD`'s declared dunder, whose instance asserts.
+                    let vector = |operand: &Ty| {
+                        matches!(operand.kind(), TyKind::Simd { .. })
+                            && mojito_types::ct::ScalarConversion::named(func.0.as_str())
+                                .is_some_and(|target| !target.casts_from(operand))
+                    };
                     if let Some(method) = dunder
                         && builtin
                         && kwargs.is_empty()
                         && args.len() == 1 + usize::from(method == "__divmod__")
-                        && matches!(
-                            (function.reg_types.get(&args[0].0).map(peel_refs)).map(Ty::kind),
-                            Some(TyKind::Struct(..))
-                        )
+                        && operand.is_some_and(|operand| {
+                            matches!(operand.kind(), TyKind::Struct(..)) || vector(operand)
+                        })
                     {
                         *instruction = dunder_method_call(
                             *dest,
