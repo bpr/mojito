@@ -384,6 +384,7 @@ fn fold_operands(instruction: &MirInstr) -> Vec<Reg> {
         MirInstr::MakeSimd { elems, .. } => elems.clone(),
         MirInstr::MaterializeLiteral { value, .. }
         | MirInstr::ScalarCast { value, .. }
+        | MirInstr::SimdCast { value, .. }
         | MirInstr::CopyValue { value, .. } => vec![*value],
         _ => Vec::new(),
     }

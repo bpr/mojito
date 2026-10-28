@@ -1,6 +1,7 @@
-# expect: positive power of two
+# expect: simd width must be power of 2
 # A generic width binds per call during checked elaboration, where the
-# ordinary power-of-two validation rejects it — not at a late VM operation.
+# `SIMDLength` initializer's `_simd_construction_checks` rejects it — not at
+# a late VM operation.
 def splat[w: SIMDLength](value: Int) -> SIMD[DType.int32, w]:
     return SIMD[DType.int32, w](value)
 

@@ -941,11 +941,9 @@ impl Checker {
     }
 
     /// The member `field` the enclosing struct's shell holds, as resolved
-    /// so far.
+    /// so far: `SIMD`'s too, whose `Self` is the bridged vector.
     fn self_struct_member(&self, field: &str) -> Option<&CtValue> {
-        let Some(TyKind::Struct(name, _)) = self.self_ty.as_ref().map(Ty::kind) else {
-            return None;
-        };
+        let (name, _) = mojito_types::types::nominal_parts(self.self_ty.as_ref()?)?;
         self.structs.get(name)?.associated.get(field)
     }
 

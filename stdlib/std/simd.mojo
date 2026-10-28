@@ -1,5 +1,8 @@
-# Upstream's `std/simd.mojo`, in part: the `SIMD` struct, its storage, and
-# its instance `__len__`, `__getitem__`, `__setitem__`, `__contains__`,
+# Upstream's `std/simd.mojo`, in part: the `SIMD` struct, its storage, the
+# `_simd_dtype_checks` and `_simd_construction_checks` helpers, the
+# initializers `__init__(out self)`, the cast from `SIMD[other_dtype,
+# Self.length]`, the `SIMDLength` splat, `from_int=`, and the
+# `Scalar[Self.dtype]` splat, and its instance `__len__`, `__getitem__`, `__setitem__`, `__contains__`,
 # `__add__`, `__sub__`, `__mul__`, `__pos__`, `__neg__`, `__and__`,
 # `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
 # comparisons `__eq__`, `__ne__`, `__gt__`, `__ge__`, `__lt__`, and
@@ -10,8 +13,15 @@
 # `__ror__`, `__rlshift__`, and `__rrshift__`, `__bool__`, `__int__`,
 # `__mlir_index__`, `__float__`, `__floor__`, `__ceil__`, `__trunc__`,
 # `__abs__`, `_refine`, `cast`, `is_power_of_two`, and `select`. The other
-# members are still served by the compiler (R184, R1555, R1566, R1567,
-# R1579–R1582, R1585, R1586, R1589, R330, R276), and the struct declares
+# members are still served by the compiler (R184, R1566, R1567, R1579–R1582,
+# R1585, R1586, R1589, R1596, R330, R276), and so are the other initializers:
+# `mlir_value=` (R1591), the element list (R1592), `from_bits=` (R1593),
+# `Bool`, `fill=`, and `Int` from an `index` (R1595), `IntLiteral` and
+# `FloatLiteral` (R1507), and the `Intable`, `IntableRaising`, `Floatable`,
+# and `FloatableRaising` conversions (R1399); `py=` is not ported. Until
+# then a construction takes a declared overload only where its arguments
+# select one at the pin. `_simd_dtype_checks` is `True`: Mojito has no
+# sub-byte float dtype (R65). The struct declares
 # only the traits whose requirements are ported here; as upstream's, its
 # trait list has no `Floatable`. `Scalar`, `Int`, `UInt`, the sized aliases,
 # and `Byte` stay compiler names until R1557.
@@ -55,6 +65,56 @@ from std.math import Ceilable, Floorable, Truncable
 from std.sys.info import bit_width_of
 from std.builtin.simd_length import SIMDLength
 from std.builtin.dtype import _uint_type_of_width
+from std.builtin.int import _FromInt
+
+
+# ===----------------------------------------------------------------------=== #
+# Utilities
+# ===----------------------------------------------------------------------=== #
+
+
+@always_inline("builtin")
+def _simd_dtype_checks[dtype: DType]() -> Bool:
+    """Checks that the SIMD element dtype can be held in a value.
+
+    The sub-byte float formats are storage-only: no target registers a
+    `pop.cast` for them, so such a value can neither be produced from nor read
+    back into another float type.
+
+    Parameters:
+      dtype: The data type of SIMD vector elements.
+
+    Returns:
+        Whether a SIMD value may be constructed with this element dtype.
+    """
+    return True
+
+
+@always_inline("builtin")
+def _simd_construction_checks[dtype: DType, size: SIMDLength]():
+    """Checks if the SIMD dtype and size are valid.
+
+    The SIMD size is valid if it is a power of two and is positive.
+
+    Parameters:
+      dtype: The data type of SIMD vector elements.
+      size: The number of elements in the SIMD vector. The size must not be greater than 2**15.
+    """
+    comptime assert _simd_dtype_checks[dtype](), (
+        "cannot construct a SIMD value with a sub-byte float dtype; these are"
+        " storage-only formats with no conversion support on any target."
+    )
+    comptime assert size.is_power_of_two(), "simd width must be power of 2"
+    # MOCO-1388: Until LLVM's issue #122571 is fixed, LLVM's SelectionDAG has
+    # a limit of 2^15 for the number of operands of the instruction.
+    # NOTE: Even after the limit increases in LLVM, compile time might be 3x
+    # slower than with GCC, therefore until we have a real use case for large
+    # SIMD, we better to keep limit at 2^15.
+    # NOTE: Might need to revisit the limit for targets that use GlobalISel
+    # as it does have smaller limit now.
+    # comptime assert (
+    #     size <= 2**15
+    # ), "simd size is too large and must be less than 2^15"
 
 
 # ===----------------------------------------------------------------------=== #
@@ -68,6 +128,7 @@ struct SIMD[dtype: DType, length: SIMDLength](
     Boolable,
     Ceilable,
     Comparable,
+    Defaultable,
     Equatable,
     Floorable,
     Indexer,
@@ -75,6 +136,7 @@ struct SIMD[dtype: DType, length: SIMDLength](
     Sized,
     TrivialRegisterPassable,
     Truncable,
+    _FromInt,
 ):
     """Represents a vector type that leverages hardware acceleration to process
     multiple data elements with a single operation.
@@ -218,6 +280,114 @@ struct SIMD[dtype: DType, length: SIMDLength](
     # ===-------------------------------------------------------------------===#
 
     comptime _Mask = SIMD[.bool, Self.length]
+
+    # ===-------------------------------------------------------------------===#
+    # Life cycle methods
+    # ===-------------------------------------------------------------------===#
+
+    @stable(since="1.1")
+    @always_inline("builtin")
+    def __init__(out self):
+        """Default initializer of the SIMD vector.
+
+        By default the SIMD vectors are initialized to all zeros.
+        """
+        # make sure this constructor is called at compile time
+        comptime res = SIMD[Self.dtype, Self.length](0)
+        self = res
+
+    @inline(.nodebug)
+    def __init__[
+        other_dtype: DType, //
+    ](out self, value: SIMD[other_dtype, Self.length], /):
+        """Initialize from another SIMD of the same size. If the value
+        passed is a scalar, you can initialize a SIMD vector with more elements.
+
+        Parameters:
+            other_dtype: The type of the value that is being cast from.
+
+        Args:
+            value: The value to cast from.
+
+        Example:
+
+        ```mojo
+        print(UInt64(UInt8(42))) # 42
+        print(SIMD[.uint64, 4](UInt8(42))) # [42, 42, 42, 42]
+        ```
+
+        Casting behavior:
+
+        ```mojo
+        # Basic casting preserves value within range
+        Int8(UInt8(127)) == Int8(127)
+
+        # Numbers above signed max wrap to negative using two's complement
+        Int8(UInt8(128)) == Int8(-128)
+        Int8(UInt8(129)) == Int8(-127)
+        Int8(UInt8(256)) == Int8(0)
+
+        # Negative signed cast to unsigned using two's complement
+        UInt8(Int8(-128)) == UInt8(128)
+        UInt8(Int8(-127)) == UInt8(129)
+        UInt8(Int8(-1)) == UInt8(255)
+
+        # Truncate precision after downcast and upcast
+        Float64(Float32(Float64(123456789.123456789))) == Float64(123456792.0)
+
+        # Rightmost bits of significand become 0's on upcast
+        Float64(Float32(0.3)) == Float64(0.30000001192092896)
+
+        # Numbers equal after truncation of float literal and cast truncation
+        Float32(Float64(123456789.123456789)) == Float32(123456789.123456789)
+
+        # Float to int/uint floors
+        Int64(Float64(42.2)) == Int64(42)
+        ```
+        """
+        self = value.cast[Self.dtype]()
+
+    @always_inline("builtin")
+    @implicit
+    def __init__(out self, value: SIMDLength, /):
+        """Initializes the SIMD vector with a signed integer.
+
+        The signed integer value is splatted across all the elements of the SIMD
+        vector.
+
+        Args:
+            value: The input value.
+        """
+        _simd_construction_checks[Self.dtype, Self.length]()
+
+        self._mlir_value = __mlir_op.`pop.simd.splat`[_type=Self._mlir_type](
+            __mlir_op.`pop.cast`[_type=Scalar[Self.dtype]._mlir_type](
+                __mlir_op.`pop.cast_from_builtin`[
+                    _type=__mlir_type.`!kgen.scalar<index>`
+                ](value._mlir_value)
+            )
+        )
+
+    @doc_hidden
+    @always_inline("builtin")
+    def __init__(out self, *, from_int: Int):
+        _simd_construction_checks[Self.dtype, Self.length]()
+        self = Self(from_int)
+
+    @always_inline("builtin")
+    @implicit
+    def __init__(out self, value: Scalar[Self.dtype], /):
+        """Constructs a SIMD vector by splatting a scalar value.
+
+        The input value is splatted across all elements of the SIMD vector.
+
+        Args:
+            value: The value to splat to the elements of the vector.
+        """
+        _simd_construction_checks[Self.dtype, Self.length]()
+        self._mlir_value = __mlir_op.`pop.simd.splat`[_type=Self._mlir_type](
+            value._mlir_value
+        )
 
     # ===-------------------------------------------------------------------===#
     # Operator dunders

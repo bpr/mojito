@@ -3395,6 +3395,27 @@ impl MirInstr {
                 value,
                 target,
             } => (dest, operand(*value)?.folded_conversion(*target)?),
+            // A host integer cast into one integer lane wraps, as
+            // `MakeSimd` builds it (`Int64(n)` through `SIMD`'s cast
+            // initializer over a folded `n`).
+            Self::SimdCast {
+                dest,
+                value,
+                dtype: mojito_types::types::SimdDtype::Known(dtype),
+                width: mojito_types::types::SimdWidth::Known(1),
+            } if dtype.is_integral() => {
+                let value = operand(*value)?;
+                if !matches!(value, CtValue::Int(_) | CtValue::UInt(_)) {
+                    return None;
+                }
+                (
+                    dest,
+                    CtValue::Simd {
+                        dtype: *dtype,
+                        lanes: vec![mojito_types::ct::CtLane::from_value(&value, *dtype)?],
+                    },
+                )
+            }
             _ => return None,
         };
         ct_const(value, reg_types.get(&dest.0)?)

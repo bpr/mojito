@@ -340,7 +340,7 @@ pub fn modelled_conformance(
                 is_numeric_like(ty)
                     || matches!(
                         ty.kind(),
-                        TyKind::Bool | TyKind::StringLiteral | TyKind::None | TyKind::Simd { .. }
+                        TyKind::Bool | TyKind::StringLiteral | TyKind::None
                     )
             }
         },

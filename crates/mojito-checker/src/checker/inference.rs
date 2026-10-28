@@ -496,8 +496,13 @@ impl Checker {
             if let ExprKind::Call {
                 name, param_args, ..
             } = &expr.kind
+                && self
+                    .node_facts
+                    .borrow()
+                    .get(&expr.source_span())
+                    .is_none_or(|facts| facts.overload_target.is_none())
             {
-                // A construction's dimensions are its slots: known, or the
+                // A rule construction's dimensions are its slots: known, or the
                 // parameter expressions a generator names, which the
                 // elaborator closes per instance.
                 let dimensions = if name == "SIMD" {

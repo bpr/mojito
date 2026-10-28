@@ -16,3 +16,8 @@ trait Intable:
 trait IntableRaising:
     def __int__(self) raises -> Int:
         ...
+
+
+trait _FromInt:
+    def __init__(out self, *, from_int: Int):
+        ...

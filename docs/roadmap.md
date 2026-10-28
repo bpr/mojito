@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1590**.
+Next free ID: **R1599**.
 
 ## Ordered Work
 
@@ -3583,9 +3583,47 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: a construction through a non-generic struct's member alias,
     `S.V(1)` over `comptime V = SIMD[DType.int64, Self.w]`, fails with
     "Undefined variable 'S'", where the pin prints `[1, 1, 1, 1]`.
+  - Probe: `SIMD[DType.int32, 2]._Mask(True, False)`, and `T._Mask(True,
+    False)` over a local `comptime T = SIMD[DType.int32, 2]`, fail with
+    "type 'SIMD[…]' has no method '_Mask'", where the pin prints `[True,
+    False]` (found while landing R1555, 2026-10-28).
   - Depends on R59, which finds the pass that reads a bare type name as a
     value; the alias call needs the same answer.
   - Model: Opus, Planned.
+
+- [ ] **R1594 An initializer cannot refine its `out self` type**
+
+  `def __init__(out self: W[2], *, two: Int)` on `struct W[n: Int]` stops
+  the parser at the colon ("Expected ')' after the parameters"), where the
+  pin runs `W[2](two=7)`.
+  - `parse_method` (`parser/items.rs`) takes a convention, then the bare
+    word `self`.
+  - Upstream's `SIMD` declares six such overloads (`Scalar[target_dtype]`,
+    `Int`, `Float64`, and the `bool` mask's), which R1399 and R1595 port.
+  - An overload whose refined type does not unify with the constructed
+    type is no candidate. One whose type names its own binders
+    (`target_dtype`) solves them from the constructed type.
+  - Grammar first (`docs/grammar.md`), then the AST receiver type, the
+    parser, and the candidate filter in `Checker::infer_construction_of`.
+  - Related: R1154 (`out self` after another parameter).
+  - Found while landing R1555 (2026-10-28).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1598 The `assert` statement does not parse**
+
+  `assert n == 3, "boom"` is a parse error ("Expected newline, ';', or EOF
+  at the end of statement"), where the pin desugars it to `debug_assert()`
+  and, under the default `-D ASSERT` mode, skips it, so the next
+  `print("ok")` runs.
+  - Bundle the part of `std/builtin/debug_assert.mojo` the desugaring
+    calls, with `ASSERT_MODE` from `get_defined_string`.
+  - Upstream's `SIMD` element-list initializer (R1592) asserts its arity
+    this way.
+  - Grammar first.
+  - Found while landing R1555 (2026-10-28).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
 
 - [ ] **R61 A leading-dot static call cannot take its struct's parameters
   from the expected type**
@@ -3685,39 +3723,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1544 A `SIMD` construction takes a subset of upstream's
-  conversions: no float into an integer lane, no vector cast, no `Bool`
-  through `Intable`, no `SIMDLength` element**
+- [ ] **R1544 `SIMD[dt, _](v)` does not bind its width from a vector
+  argument**
 
-  The checker's construction rule models a narrower overload set than
-  upstream's `SIMD.__init__`: `converts_to_lane` (`checker/annotations.rs`)
-  for one argument and `splats_to` (`mojito_types::types`) for each of
-  several elements.
-  - Probe: `Int8(Float64(3.9))` and `UInt8(Float32(300.5))` print `3` and
-    `0` at the pin, through the cast overload
-    `__init__[other_dtype](value: SIMD[other_dtype, Self.length])`
-    (`value.cast[Self.dtype]()`, `simd.mojo:744`). Mojito rejects them:
-    "type mismatch for SIMD element: expected a DType.int8 element, found
-    Float64".
-  - Probe: `SIMD[DType.int32, 4](v)` and `SIMD[DType.int32, _](v)` over
-    `v: SIMD[DType.float64, 4]` print `[1, 2, 3, 4]`, and
-    `SIMD[DType.float64, _](w)` over a two-lane `float64` `w` copies it. The
-    same cast overload takes a vector of the construction's width; Mojito
-    admits only a one-lane argument.
-  - Probe: `UInt8(True)` and `SIMD[DType.int, _](True)` print `1` at the
-    pin, through `__init__[T: Intable]` (`Bool` is `Intable`). Mojito's
-    `Intable` clause (`check_simd_value`) takes only a struct or a
-    parameter.
-  - Probe: `SIMD[DType.int, 2](m, m)` over `m = SIMDLength(3)` prints `[3,
-    3]` at the pin: an element converts implicitly to `Scalar[dtype]`, and
-    `@implicit __init__(SIMDLength)` is such a conversion. `splats_to` has
-    no `SIMDLength` arm.
-  - Probe (from R1518): a method of `struct L[n: Int]` returning
-    `L[Self.n](raw=SIMD[DType.int32, Self.n](self.v))`, through an
-    `__init__(out self, *, raw: SIMD[DType.int32, Self.n])` overload, prints
-    the copied vector at the pin. Mojito rejects the inner same-type copy
-    ("expected a DType.int32 element, found SIMD[DType.int32, n]"); the
-    overloaded construction itself runs, over `raw=self.v`.
+  `SIMD[DType.int32, _](v)` and `SIMD[DType.float64, _](w)` over a
+  four-lane `float64` `v` and a two-lane `float64` `w` print `[1, 2, 3, 4]`
+  and copy `w` at the pin. Mojito rejects both: "type mismatch for SIMD
+  element: expected a DType.int32 element, found SIMD[DType.float64, 4]".
+  - The declared cast overload `__init__[other_dtype](value:
+    SIMD[other_dtype, Self.length])` does not bind an unbound `_` from its
+    argument, so the construction falls back to the checker's rule, whose
+    `argument_simd_width` admits only a one-lane argument.
+  - A user struct of the same shape, `W[DType.int32, _](v)` over
+    `__init__[other: DType, //](out self, x: SIMD[other, Self.n], /)`, is
+    rejected at the pin too ("depends on an unresolved parameter 'n'"), so
+    find what lets `SIMD`'s `_` bind before changing the general rule.
   - Found while landing R186 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6295,8 +6315,13 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: `comptime M: Int = 4` then `var z: type_of(M) = 9` prints `9` at
     the pin. Mojito cannot tell the annotated binding from `comptime N = 4`
     and rejects it too.
-  - R1555's `#pop.int_literal_convert` needs the same parametric
-    `IntLiteral[value]`.
+  - `SIMD`'s `IntLiteral` and `FloatLiteral` initializers
+    (`simd.mojo:852`, `:972`) stay the checker's coercion until then: their
+    bodies read `value.value` into `#pop.int_literal_convert` and
+    `#pop<float_literal_convert>`, and `FloatLiteral` is not even a
+    parameter type yet ("unknown type 'FloatLiteral'").
+  - Porting either removes its literal from
+    `Checker::binds_undeclared_overload` (`checker/call_inference.rs`).
   - Probe: `def f(x: IntLiteral)` binds a run-time `IntLiteral` register
     rather than inferring `x.value` per call, so `f(n)` over `var n = 3`
     reports "expected Int, found Int" where the pin says "cannot be
@@ -9954,7 +9979,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port `__ifloordiv__` (`simd.mojo:1722`) and `__imod__` (`:1735`)
     too, so `//=` and `%=` call them, as R1552 routes `+=`.
   - The bodies need `and` over masks (R97), `Self._Mask(fill=…)` at a
-    symbolic width (R1555), `any` (R1568), and `Self()` and `Self(1)`
+    symbolic width (R1595), `any` (R1568), and `Self()` and `Self(1)`
     inside the struct; `trunc` and `cast` over a vector are its declared
     members.
   - List `DivModable` and `CeilDivable` in `SIMD`'s declaration, and drop
@@ -9968,7 +9993,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `builtin_fold.rs`'s syntactic `FloorDiv | Mod` body rule becomes the
     dunder's inline level.
   - Closes R850. Removes `simd_floordiv_mod.mojo` from R171.
-  - Depends on R97, R1554, R1555, and R1568.
+  - Depends on R97, R1554, R1555, R1568, and R1595.
   - Model: Fable, Planned.
 
 - [ ] **R1567 `SIMD`'s `**` is a checker rule, where upstream's is
@@ -10125,29 +10150,124 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on R1585, R1578, and R97.
   - Model: Fable, Planned.
 
-- [ ] **R1555 `SIMD`'s initializers are checker rules, where upstream's
-  are `__init__` overloads**
+- [ ] **R1591 `SIMD`'s `mlir_value=` initializer is a checker rule that
+  binds from a concrete storage type**
 
-  R186's `infer_simd_construction`, `infer_simd_fill`,
-  `infer_simd_alias_construction`, `check_simd_args`, and the
-  `call_inference.rs` `"SIMD"`/`"Scalar"` arms type every construction.
-  - Port every `__init__` overload, including the `mlir_value=` one, but
-    `py=` and the `Intable`, `IntableRaising`, and `Floatable` conversions,
-    which R1399 ports.
-  - Port `MAX`, `MIN`, `MAX_FINITE`, and `MIN_FINITE` after bundling
-    `std/utils/numerics.mojo`'s `_max_or_inf` family.
-  - Every upstream body constructs through `Self(mlir_value=...)` and
-    overloads `__init__` over `Self`-dependent parameter types (R1518).
-  - The `IntLiteral` initializer stays the checker's coercion until R1507:
-    upstream's `#pop.int_literal_convert` needs a parametric
-    `IntLiteral[value]`.
-  - Port `__init__(out self, *, from_bits: SIMD[int_dtype,
-    Self.length])` (`simd.mojo:991`), which calls `bitcast` (R1578).
-  - The `call_inference.rs` `SIMD(mlir_value=v)` arm, which infers both
-    parameters from `v`'s `!kgen.simd` type, stands in for the
-    `mlir_value=` overload and retires with it.
-  - Depends on R1554 and R1578.
+  `SIMD(mlir_value=v._mlir_value)` over a concrete `v: SIMD[DType.int32,
+  4]` prints the vector in Mojito, where the pin rejects it ("no matching
+  function in initialization"). An annotated `var`, a `return`, and an
+  argument position are rejected at the pin too.
+  - Upstream's `__init__(out self, *, mlir_value: Self._mlir_type)` binds
+    `dtype` and `length` only where the argument's storage type spells both
+    through binders (`!kgen.simd<width._mlir_value, dtype._mlir_value>` in a
+    body generic over them, as upstream's `cast` and `select` build it).
+    A concrete slot binds nothing, and neither does a literal width inside
+    a generic body (`SIMD[dtype, 2]._mlir_type`).
+  - Mojito's stand-ins: `lone_storage_keyword` and
+    `infer_inferred_storage_construction`, the `SIMD[dt, n](mlir_value=v)`
+    arm of `infer_unbound_call`, and `builtin_copy_constructed` for
+    `Self(mlir_value=…)` (`checker/call_inference.rs`).
+  - Declaring the overload today breaks the inlined `cast` body's
+    per-instance re-check: its call names `SIMD.__init__$ov$$$KgenSimd…`
+    while the declaration is `…$u5F$mlir$u5F$type…` (R240).
+  - Then a `!kgen.simd` parameter pattern unifies a slot only with a
+    binder-valued slot, the stand-ins retire, and the concrete-`v` program
+    becomes a `type_error` fixture.
+  - Keep the template's selection in a per-instance re-check, where the
+    slots are concrete.
+  - Found while landing R1555 (2026-10-28).
+  - Depends on R240.
   - Model: Fable, Planned.
+
+- [ ] **R1592 `SIMD`'s element-list initializer is a checker rule**
+
+  `check_simd_args`, `TypeError::SimdArity`, and `try_simd_call` type and
+  build `SIMD[dt, n](a, b, …)`, where upstream declares `__init__(out self,
+  *elems: Scalar[Self.dtype], __list_literal__: NoneType = None)`
+  (`simd.mojo:941`).
+  - Its `lit.ownership.mark_initialized` over `self` is rejected:
+    `std/simd.mojo` is not in
+    `overload_support::is_bundled_private_storage_source`, and
+    `origin_place` refuses a bridged `SIMD`'s `out self` even once it is.
+  - Its `assert Self.length == len(elems)` is off by default at the pin
+    (R1598). Omit it with a header note. `SIMD[DType.int32, 4](1, 2)` then
+    compiles and traps at run time, as the pin's crashes: move its fixture
+    to `runtime_error` and delete `SimdArity`.
+  - Probe: `SIMD[DType.int, 2](m, m)` over `m = SIMDLength(3)` prints `[3,
+    3]` at the pin, each element converting through the declared
+    `SIMDLength` splat. Mojito's `splats_to` has no `SIMDLength` arm.
+  - Remove the element list from `Checker::binds_undeclared_overload`.
+  - Found while landing R1555 (2026-10-28).
+  - Depends on nothing.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1593 `SIMD` has no `from_bits=` initializer**
+
+  `Float32(from_bits=UInt32(1065353216))` prints `1.0` and
+  `SIMD[DType.bool, 2](from_bits=SIMD[DType.uint8, 2](0, 3))` prints
+  `[False, True]` at the pin. Mojito rejects both ("keyword arguments are
+  not supported here").
+  - Upstream declares `@staticmethod def __init__[int_dtype: DType,
+    //](out self, *, from_bits: SIMD[int_dtype, Self.length])`
+    (`simd.mojo:991`), over the bundled `bitcast` and `ne(0)._refine`.
+  - The parser reads a `@staticmethod`'s `out self` as an unannotated
+    parameter, user structs included: `@staticmethod def __init__[T:
+    Intable, //](out self, *, from_t: T)` is "Parameters require a type
+    annotation". Grammar first, then `parse_method` (`parser/items.rs`).
+  - Found while landing R1555 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1595 `SIMD`'s `Bool`, `fill=`, and `Int`-from-`index`
+  initializers are checker rules**
+
+  `infer_simd_fill`, `check_simd_args`'s positional-`Bool` rejection, and
+  `infer_storage_construction`'s `Int` arm stand in for upstream's
+  overloads at `simd.mojo:871`, `:894`, and `:920`.
+  - All three refine `out self` (R1594). The first two read `Bool`'s
+    `_mlir_value` (R1188).
+  - `SIMD[DType.bool, 4](True)` then fails with the pin's "constraint
+    failed: must be a scalar; use the `fill` keyword instead for explicit
+    splatting" (`assets/type_error/simd_bool_positional_splat.mojo`).
+  - Remove `Bool` from `Checker::binds_undeclared_overload`.
+  - Found while landing R1555 (2026-10-28).
+  - Depends on R1594 and R1188.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1596 `SIMD` has no `MAX`, `MIN`, `MAX_FINITE`, or `MIN_FINITE`**
+
+  `SIMD[DType.int32, 1].MAX` is "a parameterized type is not a value",
+  where the pin prints `2147483647`, and `Float32.MAX` prints `inf`.
+  - Port the four `comptime` members (`simd.mojo:638`) over upstream's
+    `std/utils/numerics.mojo` `inf`, `neg_inf`, `max_finite`,
+    `min_finite`, `max_or_inf`, and `min_or_neg_inf`, imported as
+    `_max_or_inf` and its siblings.
+  - `inf` and `neg_inf` need typed float attribute constants
+    (``#kgen.simd<"inf"> : !kgen.scalar<f32>``).
+  - `max_finite` needs `~Scalar[_unsigned_integral_type_of[dtype]()](0)
+    >> 1`.
+  - `Int32.MAX` also needs R66's scalar alias read as a type.
+  - Found while landing R1555 (2026-10-28).
+  - Depends on R66.
+  - Model: Fable, Not Planned.
+
+- [ ] **R1597 A compile-time `SIMD` construction folds by the checker's
+  rule**
+
+  `comptime v = SIMD[DType.int32, 4](1, 2, 3, 4)` is folded by
+  `simd_construction` (`checker/constraints.rs`), and
+  `comptime_requests.rs` excludes `SIMD` from requests. The pin folds a
+  `builtin` `__init__` body (`foldInlineBuiltinFunction`) and interprets
+  the variadic one.
+  - The declared default initializer's `comptime res = SIMD[Self.dtype,
+    Self.length](0)` folds through the same rule.
+  - Fold `pop.simd.splat` into a parameter expression (`builtin_fold.rs`
+    declines every typed op), and request the variadic one as any
+    non-builtin compile-time call.
+  - The values agree today: the gap is structural.
+  - Found while landing R1555 (2026-10-28).
+  - Depends on R1592.
+  - Model: Fable, Not Planned.
 
 - [ ] **R1574 A compile-time call of `SIMD`'s comparison members runs a
   lifted thunk, where upstream folds their `pop.cmp` bodies**
@@ -10192,11 +10312,18 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     …)` through the declaration.
   - `Scalar`, `Int`, `UInt`, `Float64`, `Byte`, and the sized aliases come
     from `std/simd.mojo`'s `comptime` aliases, in the pin's prelude list.
-  - Delete what the bridge needed beside it: `Checker::constructs_by_rule`
-    (if R1555 left it), `self_receiver_ty`'s `SIMD` arm (`mojito-mir`),
-    and `types::nominal_parts`'s `Simd` arm, which the elaborator, the
-    checker, and the VM's `declared_owner` read `SIMD`'s identity through.
-  - Depends on R1555, R276, R330, and R1556.
+  - Delete what the bridge needed beside it: `self_receiver_ty`'s `SIMD`
+    arm (`mojito-mir`), and `types::nominal_parts`'s `Simd` arm, which the
+    elaborator, the checker, and the VM's `declared_owner` read `SIMD`'s
+    identity through.
+  - Delete the rule fallback of `SIMD` construction once the initializer
+    entries empty it: `Checker::{declared_simd_construction,
+    binds_undeclared_overload, simd_alias_instance}` and the rule arms of
+    `infer_unbound_call` (`checker/call_inference.rs`).
+  - The checker's implicit conversions into `SIMD` (`coerces`, `splats_to`)
+    stand in for the `@implicit` overloads until the bridge goes.
+  - Depends on R1555, R276, R330, R1556, R1591, R1592, R1593, R1595,
+    R1399, and R1507.
   - Model: Fable, Planned.
 
 - [ ] **R1558 MIR and the backends hold a `SIMD` value as a vector type,
@@ -10239,9 +10366,17 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `checker/builtins.rs` types the conversions by rule, and the VM's
   `builtin_convert` and Pliron's `lower_convert` run them, where upstream
   declares `__init__[T: Intable]`, `__init__[T: IntableRaising](out self:
-  Int, ...) raises`, and `__init__[T: Floatable](out self: Float64, ...)`.
+  Int, ...) raises`, `__init__[T: Floatable](out self: Float64, ...)`, and
+  `__init__[T: FloatableRaising](out self: Float64, ...) raises`.
   - Port the overloads, including the refined `out self` they use, and
-    delete the scalar arms of all three sites. The `scalar.cast`
+    delete the scalar arms of all three sites.
+  - Porting `Intable` removes a non-`SIMD` argument from
+    `Checker::binds_undeclared_overload` (`checker/call_inference.rs`), so
+    a sized alias over an `Intable` value takes the declared overload too.
+  - Probe: `UInt8(True)` and `SIMD[DType.int, _](True)` print `1` at the
+    pin, through `__init__[T: Intable]` (`Bool` is `Intable`). Mojito's
+    rule (`check_simd_value`) takes only a struct or a parameter as
+    `Intable`. The `scalar.cast`
     instruction (R857) becomes their `pop.cast`.
   - Probe (from R857): a conversion over a struct or a bounded type
     parameter is still a bare-name `call` of `Int`, `Float64`, or `Bool` in
@@ -10266,7 +10401,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     through `simd.make` (`mir::TYPE_REACHED_MEMBERS`), so an `__int__`
     ignoring `self` keeps one instance per `n`, where `Int(C[n](1))`
     already calls it.
-  - Depends on R1555, which declares the other `__init__` overloads.
+  - Depends on R1555, which declares the other `__init__` overloads, and
+    R1594 (the refined `out self`).
   - Model: Fable, Not Planned.
 
 - [ ] **R1407 An `enum`'s `__Enum` members are generated on each enum,
@@ -11703,8 +11839,17 @@ residue found inside a task moves to the task that owns its fix.
     StringSlice)` beside `def f(value: Int)` fails on the VM with "does not
     support the built-in or callee 'f$ov$StringSpan'"; the bundled `len`'s
     `@unavailable` overload spells `StringSpan` for it.
+  - Cause: the declaration's symbol mangles the annotation's spelling
+    (`signature_from_ast`), the call's the type it resolves to
+    (`TypeKey::from_ty_with_self`), and an alias spells neither the same.
+  - Probe: a member alias does too. `struct P[n: Int]` with `comptime T =
+    SIMD[DType.int32, Self.n]` and `__init__(out self, *, raw: Self.T)`
+    beside `__init__(out self)` fails on the VM with "keyword arguments to
+    'P.__init__$ov$SIMD$DType$int32$$n$$kw$raw' are not supported", where
+    the pin runs `P[2](raw=SIMD[DType.int32, 2](5))`. `SIMD`'s
+    `mlir_value: Self._mlir_type` overload hits it (R1591).
   - Depends on nothing.
-  - Model: Opus, Not Planned.
+  - Model: Fable, Not Planned.
 
 - [ ] **R241 A temporary view used as a method argument or
   augmented-assignment operand fails in the VM**

@@ -2451,11 +2451,27 @@ impl Checker {
             })
     }
 
-    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
     pub(super) fn infer_construction(
         &self,
         span: &SourceSpan,
         name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Result<Ty, TypeError> {
+        self.infer_construction_of(span, name, None, param_args, args, kwargs)
+    }
+
+    /// A construction of `name`, whose instance `constructed` names when an
+    /// alias spells it without brackets (`Int32(x)` is `SIMD[DType.int32,
+    /// 1](x)`): the instance binds the struct's parameters as an argument
+    /// does, before the overloads are matched.
+    #[allow(clippy::too_many_lines, reason = "TODO: split this pass")]
+    pub(super) fn infer_construction_of(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        constructed: Option<&Ty>,
         param_args: &[mojito_ast::ast::ParamArg],
         args: &[Expr],
         kwargs: &[mojito_ast::ast::KwArg],
@@ -2766,6 +2782,27 @@ impl Checker {
                     sig,
                     self.self_instance_ty(name).as_ref(),
                 ));
+                let values = solved_value_bindings(&decls, &tyargs);
+                let struct_subst = struct_binders_only(&subst, sig);
+                // The struct's own origin binders are bound before its type
+                // parameters, so an argument type's binder of the same slot
+                // number (an enclosing clone's) stays as it is.
+                let struct_bound = params
+                    .iter()
+                    .take(args.len())
+                    .map(|pty| {
+                        self.constructor_parameter_ty(
+                            &pointer_origins.substitute(&expand_bound_pack(pty, &decls, &tyargs)),
+                            &struct_subst,
+                            &values,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let own = self.solve_constructor_own_params(
+                    name,
+                    sig,
+                    struct_bound.iter().cloned().zip(arg_tys.iter().cloned()),
+                )?;
                 self.record_construction_instantiation(
                     span,
                     name,
@@ -2774,21 +2811,13 @@ impl Checker {
                     tyargs
                         .iter()
                         .cloned()
-                        .chain(constructor_own_arguments(sig, &subst))
+                        .chain(own.arguments.clone())
                         .collect(),
                 );
                 self.record_struct_instantiation(name, &tyargs, span.source.as_deref());
-                let values = solved_value_bindings(&decls, &tyargs);
                 let mut bound = Vec::with_capacity(args.len());
-                for (i, pty) in params.iter().enumerate().take(args.len()) {
-                    // The struct's own origin binders are bound before its
-                    // type parameters, so an argument type's binder of the
-                    // same slot number (an enclosing clone's) stays as it is.
-                    let expected = self.constructor_parameter_ty(
-                        &pointer_origins.substitute(&expand_bound_pack(pty, &decls, &tyargs)),
-                        &subst,
-                        &values,
-                    )?;
+                for (i, pty) in struct_bound.iter().enumerate() {
+                    let expected = own.apply(self, pty)?;
                     // Checked against its solved parameter, last: a display
                     // argument constructs that parameter's collection.
                     let actual = self
@@ -2945,10 +2974,30 @@ impl Checker {
                     .iter()
                     .map(|(_, pattern, _)| pattern.clone())
                     .collect();
-                let resolved_use =
-                    Self::reject_unconstrained_pack(name, &decls, param_args, &patterns).and_then(
-                        |()| self.resolve_use_params(name, &decls, param_args, &patterns, &arg_tys),
-                    );
+                let (instance_patterns, instance_actuals) =
+                    match constructed.zip(self.self_instance_ty(name)) {
+                        Some((constructed, instance)) => (
+                            std::iter::once(instance)
+                                .chain(patterns.iter().cloned())
+                                .collect(),
+                            std::iter::once(constructed.clone())
+                                .chain(arg_tys.iter().cloned())
+                                .collect(),
+                        ),
+                        None => (patterns.clone(), arg_tys.clone()),
+                    };
+                let resolved_use = Self::reject_unconstrained_pack(
+                    name, &decls, param_args, &patterns,
+                )
+                .and_then(|()| {
+                    self.resolve_use_params(
+                        name,
+                        &decls,
+                        param_args,
+                        &instance_patterns,
+                        &instance_actuals,
+                    )
+                });
                 // A value spelled where the struct takes a type
                 // (`Tuple[Int, Tuple[3]]()`) is wrong whichever constructor
                 // the arguments select.
@@ -2995,11 +3044,31 @@ impl Checker {
                             continue;
                         }
                     };
+                    // The struct's binders only: the constructor's own are
+                    // solved apart, against these.
                     let bindings = AssocBindings {
-                        types: subst.clone(),
+                        types: struct_binders_only(&subst, sig),
                         values: solved_value_bindings(&decls, &tyargs),
                         ids: mojito_types::param_expr::ParamBindings::new(),
                         origins: HashMap::new(),
+                    };
+                    let own = match self.solve_constructor_own_params(
+                        name,
+                        sig,
+                        patterns
+                            .iter()
+                            .zip(&arg_tys)
+                            .enumerate()
+                            .filter(|(index, _)| Some(*index) != forwarded_index)
+                            .map(|(_, (pattern, actual))| {
+                                (substitute_assoc(pattern, &bindings), actual.clone())
+                            }),
+                    ) {
+                        Ok(own) => own,
+                        Err(error) => {
+                            bound_failure.get_or_insert(error);
+                            continue;
+                        }
                     };
                     let mut score = 0;
                     let mut ok = true;
@@ -3034,13 +3103,20 @@ impl Checker {
                                     .and_then(|(_, elements)| elements.get(position))
                             })
                             .cloned()
-                            .unwrap_or_else(|| {
-                                substitute_assoc(
-                                    &pointer_origins
-                                        .substitute(&expand_bound_pack(pty, &decls, &tyargs)),
-                                    &bindings,
-                                )
-                            });
+                            .map_or_else(
+                                || {
+                                    own.apply(
+                                        self,
+                                        &substitute_assoc(
+                                            &pointer_origins.substitute(&expand_bound_pack(
+                                                pty, &decls, &tyargs,
+                                            )),
+                                            &bindings,
+                                        ),
+                                    )
+                                },
+                                Ok,
+                            )?;
                         // Scored against the solved parameter, as the
                         // commit below checks it: a display argument is that
                         // parameter's collection.
@@ -3095,6 +3171,7 @@ impl Checker {
                             rank,
                             sig: sig.clone(),
                             tyargs,
+                            own_arguments: own.arguments,
                             expected: expected_tys,
                             slots: matched.slots,
                             overflow: matched.positional_overflow,
@@ -3119,6 +3196,7 @@ impl Checker {
                 let GenericConstructorMatch {
                     sig,
                     tyargs,
+                    own_arguments,
                     expected,
                     slots,
                     overflow,
@@ -3198,11 +3276,7 @@ impl Checker {
                     name,
                     (&decls, param_args),
                     &sig.names,
-                    tyargs
-                        .iter()
-                        .cloned()
-                        .chain(constructor_own_arguments(&sig, &subst))
-                        .collect(),
+                    tyargs.iter().cloned().chain(own_arguments).collect(),
                 );
                 // `expected` addresses the packed layout: the non-default
                 // slots in order, then the gathered arguments.
@@ -4191,7 +4265,6 @@ impl Checker {
             std::slice::from_ref(&arg_ty),
         )?;
         self.record_bracket_attributes(span.clone(), partitioned.brackets.scatter(attributes));
-        let own_arguments = constructor_own_arguments(sig, &subst);
         let expected = if let Some(parameter) = params.first() {
             substitute_assoc(
                 parameter,
@@ -4205,6 +4278,12 @@ impl Checker {
         } else {
             Self::struct_instance_type(name, tyargs.clone())
         };
+        let own = self.solve_constructor_own_params(
+            name,
+            sig,
+            std::iter::once((expected.clone(), arg_ty.clone())),
+        )?;
+        let expected = own.apply(self, &expected)?;
         if !coerces(&arg_ty, &expected) {
             return Err(TypeError::TypeMismatch {
                 expected: expected.to_string(),
@@ -4224,7 +4303,7 @@ impl Checker {
             name,
             (&decls, param_args),
             &sig.names,
-            tyargs.iter().cloned().chain(own_arguments).collect(),
+            tyargs.iter().cloned().chain(own.arguments).collect(),
         );
         // A copy keeps the source's origin tail.
         let mut arguments = tyargs;
@@ -4349,6 +4428,39 @@ impl Checker {
         self.resolve_dependent_ty(&expected, values)
     }
 
+    /// An `__init__`'s own compile-time parameters (`__init__[other_dtype:
+    /// DType, //](out self, value: SIMD[other_dtype, Self.length])`), solved
+    /// from its arguments against its parameter types with the struct's
+    /// binders already substituted.
+    fn solve_constructor_own_params(
+        &self,
+        name: &str,
+        sig: &MethodSig,
+        bound: impl Iterator<Item = (Ty, Ty)>,
+    ) -> Result<OwnParameters, TypeError> {
+        if sig.decls.is_empty() {
+            return Ok(OwnParameters::default());
+        }
+        let (patterns, actuals): (Vec<Ty>, Vec<Ty>) = bound.unzip();
+        let BoundParameters {
+            mut subst,
+            arguments,
+            ..
+        } = self.resolve_use_params(
+            &format!("{name}.__init__"),
+            &sig.decls,
+            &[],
+            &patterns,
+            &actuals,
+        )?;
+        unify_through_callable_bounds(&sig.decls, &mut subst)?;
+        Ok(OwnParameters {
+            values: Self::value_argument_environment(&sig.decls, &arguments),
+            subst,
+            arguments,
+        })
+    }
+
     /// A pack element materializes like any other inferred instantiation
     /// argument (a literal binds `Int`/`String`). A seam without the linked
     /// String struct keeps the literal: materializing to an absent struct
@@ -4428,15 +4540,14 @@ fn collector_takes_bound_pack(
 /// A generic constructor's own type arguments, as `subst` solved them in
 /// declaration order; none unless every one is a solved type (a value
 /// parameter of its own is left to the call's arguments).
-fn constructor_own_arguments(sig: &MethodSig, subst: &TySubst) -> Vec<TyArg> {
-    sig.decls
+/// `subst` without the bindings of `sig`'s own compile-time parameters,
+/// which [`Checker::solve_constructor_own_params`] solves apart.
+fn struct_binders_only(subst: &TySubst, sig: &MethodSig) -> TySubst {
+    subst
         .iter()
-        .map(|decl| match decl {
-            ParamDecl::Type { id, .. } => subst.get(id).map(|ty| TyArg::Ty(ty.clone())),
-            ParamDecl::Value { .. } => None,
-        })
-        .collect::<Option<Vec<_>>>()
-        .unwrap_or_default()
+        .filter(|(id, _)| !sig.decls.iter().any(|decl| decl.id() == *id))
+        .map(|(id, ty)| (id.clone(), ty.clone()))
+        .collect()
 }
 
 fn forwards_pack(actual: &Ty) -> bool {
@@ -4632,10 +4743,33 @@ fn bracket_bindings<'a>(
 /// One generic constructor overload the arguments match: its rank, its
 /// solved struct parameters, and the solved parameter type each bound
 /// argument is checked against once it wins.
+/// An `__init__`'s own compile-time parameters, solved from a
+/// construction's arguments.
+#[derive(Default)]
+struct OwnParameters {
+    subst: TySubst,
+    values: HashMap<String, CtValue>,
+    arguments: Vec<TyArg>,
+}
+
+impl OwnParameters {
+    /// `ty`, a parameter type over the struct's arguments, at these own
+    /// parameters too.
+    fn apply(&self, checker: &Checker, ty: &Ty) -> Result<Ty, TypeError> {
+        if self.arguments.is_empty() {
+            return Ok(ty.clone());
+        }
+        let substituted = checker.resolve_assoc_ty(&substitute(ty, &self.subst));
+        checker.resolve_dependent_ty(&substituted, &self.values)
+    }
+}
+
 struct GenericConstructorMatch {
     rank: usize,
     sig: MethodSig,
     tyargs: Vec<TyArg>,
+    /// The selected `__init__`'s own compile-time parameters.
+    own_arguments: Vec<TyArg>,
     /// Indexed by position in the scored bound (regular slots, then
     /// variadic overflow), the forwarded pack left out.
     expected: Vec<(usize, Ty)>,

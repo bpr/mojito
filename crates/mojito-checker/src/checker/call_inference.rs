@@ -36,17 +36,6 @@ impl Checker {
         }
     }
 
-    /// Whether the declared struct `name` is constructed by the compiler's
-    /// rule rather than by a declared initializer: `SIMD`, while
-    /// `std.simd` declares none of upstream's `__init__` overloads (R1555).
-    pub(super) fn constructs_by_rule(&self, name: &str) -> bool {
-        name == mojito_types::types::SIMD_TYPE_NAME
-            && self
-                .structs
-                .get(name)
-                .is_some_and(|info| !info.methods.contains_key("__init__"))
-    }
-
     fn erased_origin_constraint_environment(
         signature: &CallableOriginSignature,
         bindings: &HashMap<usize, bool>,
@@ -116,7 +105,12 @@ impl Checker {
         kwargs: &[mojito_ast::ast::KwArg],
     ) -> Result<Ty, TypeError> {
         match name {
-            _ if self.structs.contains_key(name) && !self.constructs_by_rule(name) => {
+            _ if let Some(constructed) =
+                self.declared_simd_spelling(&span, name, param_args, args, kwargs) =>
+            {
+                constructed
+            }
+            _ if self.structs.contains_key(name) && name != mojito_types::types::SIMD_TYPE_NAME => {
                 // `String(x)` on a non-literal argument stringifies through
                 // the builtin conversion, which builds the nominal struct
                 // itself: the call routes to the `"String"` builtin (a
@@ -406,28 +400,7 @@ impl Checker {
             _ if param_args.is_empty() && self.vector_alias(name).is_some() => {
                 self.infer_vector_alias_construction(name, args)
             }
-            "Scalar" => {
-                if param_args.len() != 1 {
-                    return Err(TypeError::WrongTypeArgCount {
-                        name: "Scalar".to_string(),
-                        expected: 1,
-                        got: param_args.len(),
-                    });
-                }
-                let dtype = self.dtype_from_arg(&param_args[0])?;
-                self.record_bracket_attributes(
-                    span.clone(),
-                    vec![dtype_attribute(&param_args[0], &dtype)],
-                );
-                let ty = simd_of(dtype.clone(), SimdWidth::Known(1))?;
-                if let [arg] = args
-                    && self.simd_length_construction(&span, &ty, arg, &self.infer(arg)?)?
-                {
-                    return Ok(ty);
-                }
-                self.check_simd_args(&dtype, &SimdWidth::Known(1), args)?;
-                Ok(ty)
-            }
+            "Scalar" => self.infer_scalar_construction(&span, param_args, args),
             "List" => self.infer_list_construction(&span, param_args, args),
             "Set" => {
                 let (collection, attributes) = self.set_type(param_args)?;
@@ -477,6 +450,139 @@ impl Checker {
                 self.infer_simd_alias_construction(dtype, param_args, args)
             }
             _ => Err(TypeError::UndefinedVariable(name.to_string())),
+        }
+    }
+
+    /// A `SIMD` construction through the `__init__` overloads `std.simd`
+    /// declares, or `None` when it is the checker's rule's: its arguments
+    /// select an overload not declared yet
+    /// ([`Self::binds_undeclared_overload`]), or no declared one matches.
+    /// `constructed` is the instance an alias (`Int32`, `Scalar[dt]`, a
+    /// vector alias, `Self` in `SIMD`'s body) names without brackets.
+    fn declared_simd_construction(
+        &self,
+        span: &SourceSpan,
+        constructed: Option<&Ty>,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        let name = mojito_types::types::SIMD_TYPE_NAME;
+        if !self
+            .structs
+            .get(name)
+            .is_some_and(|info| info.methods.contains_key("__init__"))
+            || self.binds_undeclared_overload(args)
+        {
+            return None;
+        }
+        let construct =
+            || self.infer_construction_of(span, name, constructed, param_args, args, kwargs);
+        self.probe(construct).ok()?;
+        Some(construct().and_then(|ty| {
+            self.type_runtime_param_args(param_args)?;
+            Ok(ty)
+        }))
+    }
+
+    /// `Scalar[dt](...)` by the checker's rule: a one-lane `SIMD`
+    /// construction.
+    fn infer_scalar_construction(
+        &self,
+        span: &SourceSpan,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+    ) -> Result<Ty, TypeError> {
+        let [dtype_arg] = param_args else {
+            return Err(TypeError::WrongTypeArgCount {
+                name: "Scalar".to_string(),
+                expected: 1,
+                got: param_args.len(),
+            });
+        };
+        let dtype = self.dtype_from_arg(dtype_arg)?;
+        self.record_bracket_attributes(span.clone(), vec![dtype_attribute(dtype_arg, &dtype)]);
+        let ty = simd_of(dtype.clone(), SimdWidth::Known(1))?;
+        if let [arg] = args
+            && self.simd_length_construction(span, &ty, arg, &self.infer(arg)?)?
+        {
+            return Ok(ty);
+        }
+        self.check_simd_args(&dtype, &SimdWidth::Known(1), args)?;
+        Ok(ty)
+    }
+
+    /// A `SIMD` construction however it is spelled (`SIMD[...]`,
+    /// `Scalar[dt]`, a sized or vector alias, `Self` in `SIMD`'s body)
+    /// through its declared initializers, or `None` for any other call or
+    /// one the checker's rule serves ([`Self::declared_simd_construction`]).
+    fn declared_simd_spelling(
+        &self,
+        span: &SourceSpan,
+        name: &str,
+        param_args: &[mojito_ast::ast::ParamArg],
+        args: &[Expr],
+        kwargs: &[mojito_ast::ast::KwArg],
+    ) -> Option<Result<Ty, TypeError>> {
+        match (name, param_args) {
+            (mojito_types::types::SIMD_TYPE_NAME, _) => {
+                self.declared_simd_construction(span, None, param_args, args, kwargs)
+            }
+            (_, []) => {
+                let alias = self.simd_alias_instance(name)?;
+                self.declared_simd_construction(span, Some(&alias), &[], args, kwargs)
+            }
+            ("Scalar", [dtype_arg]) => {
+                let dtype = self.dtype_from_arg(dtype_arg).ok()?;
+                let alias = simd_of(dtype.clone(), SimdWidth::Known(1)).ok()?;
+                let constructed =
+                    self.declared_simd_construction(span, Some(&alias), &[], args, kwargs)?;
+                Some(constructed.and_then(|constructed| {
+                    self.type_runtime_param_args(param_args)?;
+                    self.record_bracket_attributes(
+                        span.clone(),
+                        vec![dtype_attribute(dtype_arg, &dtype)],
+                    );
+                    Ok(constructed)
+                }))
+            }
+            _ => None,
+        }
+    }
+
+    /// The `SIMD` instance a bracketless alias names: a scalar alias
+    /// (`Int32`), a vector alias, or `Self` in `SIMD`'s own body. `Int`,
+    /// `UInt`, and `Float64` keep their conversions (R1399).
+    fn simd_alias_instance(&self, name: &str) -> Option<Ty> {
+        match name {
+            "Int" | "UInt" | "Float64" => None,
+            "Self" if self.lookup(name).is_none() => self
+                .self_ty
+                .clone()
+                .filter(|ty| matches!(ty.kind(), TyKind::Simd { .. })),
+            _ => Dtype::from_scalar_alias(name)
+                .map(|dtype| simd_ty(dtype, 1))
+                .or_else(|| {
+                    self.vector_alias(name)
+                        .map(|(dtype, width)| simd_ty(dtype, width))
+                }),
+        }
+    }
+
+    /// Whether a `SIMD` construction's positional arguments select, at the
+    /// pin, an overload `std.simd` does not declare yet, which the checker's
+    /// rule serves instead: an element list (R1592), an `IntLiteral` or a
+    /// `FloatLiteral` (R1507), a `Bool` (R1595), or an `Intable` value
+    /// (R1399). Each would otherwise reach a declared overload through an
+    /// implicit conversion the pin never takes.
+    fn binds_undeclared_overload(&self, args: &[Expr]) -> bool {
+        match args {
+            [] => false,
+            [argument] => self.probe(|| self.infer(argument)).is_ok_and(|ty| {
+                !matches!(ty.kind(), TyKind::Simd { .. })
+                    && !mojito_types::types::is_simd_length(&ty)
+            }),
+            _ => true,
         }
     }
 

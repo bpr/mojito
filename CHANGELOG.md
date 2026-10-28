@@ -8,6 +8,21 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `std.simd` declares upstream's `_simd_construction_checks` and five
+  `SIMD` initializers: `__init__(out self)`, the cast from
+  `SIMD[other_dtype, Self.length]`, the `SIMDLength` splat, `from_int=`,
+  and the `Scalar[Self.dtype]` splat, and `SIMD` declares `Defaultable` and
+  `_FromInt` (R1555, in part). A construction through `SIMD[...]`,
+  `Scalar[dt]`, a sized or vector alias, or `Self` selects among them first
+  and falls back to the checker's rule for the overloads still undeclared,
+  so `Int8(Float64(3.9))` prints `3`, `SIMD[DType.int32, 4](v)` casts a
+  four-lane `float64` vector, and `Int32(SIMDLength(3))` prints `3`, which
+  were rejected. A constructor's own value parameter is now solved from
+  its arguments on a parametric struct, which was "no constructor overload
+  matches". `sccp` folds a host integer's `simd.cast` into one integer
+  lane, so an `llvm_intrinsic` immediate spelled `Int64(offset)` stays
+  immediate. The remaining initializers are filed as R1591–R1595, `MAX`
+  and `MIN` as R1596.
 - `std.memory`'s `bitcast` and `pack_bits` are upstream's library bodies
   over the `pop.bitcast` `__mlir_op`, which Mojito now admits, and
   `std.builtin.dtype` bundles `_integral_type_of` and
