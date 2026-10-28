@@ -1359,6 +1359,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- A `comptime if` whose arms return but whose `else` ends in `comptime
+  assert False, "…"`, upstream's `_integral_type_of` shape, runs as at the
+  pin (R1576); it was rejected with "does not return a value on every
+  path". An assertion whose condition folds to `False` likewise ends a
+  path for a named `out` result and a constructor's field initialization.
+
 - A method that constructs its own struct through an initializer
   overloaded over a parameter-dependent type, such as `L[Self.n](raw=v)`
   beside `__init__(out self, *, raw: SIMD[DType.int32, Self.n])`, runs as at

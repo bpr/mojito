@@ -1,7 +1,7 @@
 //! Declaration collection, signature construction, and body-checking support.
 
 use super::decorators::DecoratorSite;
-use super::patterns::MatchReach;
+use super::patterns::StmtReach;
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::DeclaredParam;
@@ -45,7 +45,7 @@ impl BodyParam<'_> {
     }
 }
 
-pub(super) fn definitely_returns(body: &[Stmt], reach: &dyn Fn(&Stmt) -> MatchReach) -> bool {
+pub(super) fn definitely_returns(body: &[Stmt], reach: &dyn Fn(&Stmt) -> StmtReach) -> bool {
     body.iter().any(|stmt| stmt_returns(stmt, reach))
 }
 
@@ -128,7 +128,7 @@ pub(super) fn unify_through_callable_bounds(
 /// statement's coverage facts: whether its cases cover every value of its
 /// subject, and which cases earlier ones already cover; a case the subject
 /// cannot miss concludes it regardless.
-pub(super) fn stmt_returns(stmt: &Stmt, reach: &dyn Fn(&Stmt) -> MatchReach) -> bool {
+pub(super) fn stmt_returns(stmt: &Stmt, reach: &dyn Fn(&Stmt) -> StmtReach) -> bool {
     match &stmt.kind {
         StmtKind::Return(_) => true,
         // A `raise` diverges (it never falls through to the end), so for
@@ -141,6 +141,9 @@ pub(super) fn stmt_returns(stmt: &Stmt, reach: &dyn Fn(&Stmt) -> MatchReach) -> 
             kind: ExprKind::Call { name, .. },
             ..
         }) if is_diverging_intrinsic(name) => true,
+        // A `comptime assert` whose condition folded to `False` fails in
+        // every instance that reaches it.
+        StmtKind::ComptimeAssert { .. } => reach(stmt).fails,
         // A `comptime if` reaches here only under source validation, where
         // no arm is assumed selected: every arm must return.
         StmtKind::If { branches, orelse } | StmtKind::ComptimeIf { branches, orelse } => {
@@ -204,8 +207,8 @@ pub(super) fn stmt_returns(stmt: &Stmt, reach: &dyn Fn(&Stmt) -> MatchReach) -> 
 pub(super) fn match_reach(
     stmt: &Stmt,
     cases: &[mojito_ast::ast::MatchCase],
-    reach: &dyn Fn(&Stmt) -> MatchReach,
-) -> MatchReach {
+    reach: &dyn Fn(&Stmt) -> StmtReach,
+) -> StmtReach {
     let mut reached = reach(stmt);
     reached.concluded |= cases
         .iter()
@@ -219,7 +222,7 @@ pub(super) fn match_reach(
 pub(super) fn definitely_initializes_named_result(
     body: &[Stmt],
     name: &str,
-    reach: &dyn Fn(&Stmt) -> MatchReach,
+    reach: &dyn Fn(&Stmt) -> StmtReach,
 ) -> bool {
     let mut initialized = false;
     for stmt in body {
@@ -244,6 +247,7 @@ pub(super) fn definitely_initializes_named_result(
                 kind: ExprKind::Call { name, .. },
                 ..
             }) if is_diverging_intrinsic(name) => return true,
+            StmtKind::ComptimeAssert { .. } if reach(stmt).fails => return true,
             StmtKind::Return(None) => return initialized,
             StmtKind::Scope(body) => {
                 initialized |= definitely_initializes_named_result(body, name, reach);
@@ -281,7 +285,7 @@ pub(super) fn definitely_initializes_named_result(
 pub(super) fn definitely_initializes_self_field(
     body: &[Stmt],
     field: &str,
-    reach: &dyn Fn(&Stmt) -> MatchReach,
+    reach: &dyn Fn(&Stmt) -> StmtReach,
 ) -> bool {
     let flow = init_field_flow(body, field, false, reach);
     flow.valid && flow.normal.is_none_or(|initialized| initialized)
@@ -435,7 +439,7 @@ fn init_field_flow(
     body: &[Stmt],
     field: &str,
     mut initialized: bool,
-    reach: &dyn Fn(&Stmt) -> MatchReach,
+    reach: &dyn Fn(&Stmt) -> StmtReach,
 ) -> InitFieldFlow {
     let mut valid = true;
     for stmt in body {
@@ -467,6 +471,12 @@ fn init_field_flow(
                 };
             }
             StmtKind::Raise(_) => {
+                return InitFieldFlow {
+                    normal: None,
+                    valid,
+                };
+            }
+            StmtKind::ComptimeAssert { .. } if reach(stmt).fails => {
                 return InitFieldFlow {
                     normal: None,
                     valid,
@@ -1654,7 +1664,7 @@ impl Checker {
             return Ok(());
         }
         for (field, _) in &info.fields {
-            if !definitely_initializes_self_field(body, field, &|stmt| self.match_reach(stmt)) {
+            if !definitely_initializes_self_field(body, field, &|stmt| self.stmt_reach(stmt)) {
                 return Err(TypeError::UninitializedField {
                     struct_name: sname.to_string(),
                     method: method.to_string(),
@@ -1955,7 +1965,7 @@ impl Checker {
         self.self_mutable = saved;
         self.self_initializing = saved_initializing;
         result?;
-        let reach = |stmt: &Stmt| self.match_reach(stmt);
+        let reach = |stmt: &Stmt| self.stmt_reach(stmt);
         let completes = match named_result {
             Some(result) => definitely_initializes_named_result(body, result.name, &reach),
             None => *ret_ty == TyKind::None || definitely_returns(body, &reach),

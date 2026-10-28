@@ -238,10 +238,11 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   `MatchEmission` tree (`EmittedArm::Case`/`Cluster`, `CaseCluster`,
   `ClusterGroup`, `ResidualCase`, `CommandRef` in `checked.rs`). The plan
   records `MatchPlan::concluded` (the emission seals the fall-through) and
-  `MatchPlan::unreachable`; `Checker::match_reach` answers
-  both as a `MatchReach` to the return and initialization analyses
+  `MatchPlan::unreachable`; `Checker::stmt_reach` answers
+  both as a `StmtReach` to the return and initialization analyses
   (`declarations.rs`'s `match_reach`, which adds the irrefutable-case
-  fallback), `explicit_destroy` reads them from the fact, and the checked
+  fallback), with a `comptime assert`'s `failing_assertion` fact (its
+  condition folded to `False`, `check_comptime_assert`) as `fails`, `explicit_destroy` reads them from the fact, and the checked
   program carries each case's `CheckedMatchCase::unreachable`. The checked
   program carries the commands as `CheckedCommand`s
   (`crates/mojito-checked/src/checked.rs`: `Equal`, `ListLength`,

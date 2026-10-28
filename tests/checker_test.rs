@@ -2548,6 +2548,30 @@ fn rejects_return_only_inside_a_loop() {
 }
 
 #[test]
+fn a_failing_comptime_assert_ends_a_return_path() {
+    // A `comptime assert` whose condition folds to `False` ends every path
+    // through it, as the pin's constraint failure does; one over a
+    // parameter does not.
+    for condition in ["False", "not True", "NO"] {
+        ok_std(&format!(
+            "comptime NO = False\n\ndef k[n: Int]() -> Int:\n    comptime if n == 1:\n        return 1\n    else:\n        comptime assert {condition}, \"no\"\n"
+        ));
+    }
+    ok_std(
+        "def k[n: Int](out r: Int):\n    comptime if n == 1:\n        r = 1\n    else:\n        comptime assert False\n",
+    );
+    ok_std(
+        "struct S[n: Int]:\n    var x: Int\n    def __init__(out self):\n        comptime if Self.n == 1:\n            self.x = 1\n        else:\n            comptime assert False\n",
+    );
+    for condition in ["n == 2", "n == 2 and False"] {
+        let e = err_std(&format!(
+            "def k[n: Int]() -> Int:\n    comptime if n == 1:\n        return 1\n    else:\n        comptime assert {condition}, \"no\"\n"
+        ));
+        assert_eq!(e, TypeError::MissingReturn("k".into()));
+    }
+}
+
+#[test]
 fn rejects_method_missing_return() {
     let e = err(
         "@fieldwise_init\nstruct P:\n    var x: Int\n\n    def get(self) -> Int:\n        pass\n",

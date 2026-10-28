@@ -3307,7 +3307,7 @@ impl Checker {
         }
         // A function with a non-`None` return type must return on every
         // path (falling off the end would yield `None`).
-        let reach = |stmt: &Stmt| self.match_reach(stmt);
+        let reach = |stmt: &Stmt| self.stmt_reach(stmt);
         if result.is_ok()
             && unavailable.is_none()
             && named_result.is_none()

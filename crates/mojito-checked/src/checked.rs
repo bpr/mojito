@@ -6882,6 +6882,10 @@ node_facts! {
         /// See [`SemanticAdjustment::ConversionIndirectResult`].
         conversion_indirect_result,
         comptime_conditional,
+        /// A `comptime assert` condition that folds to the constant
+        /// `False`: no instance reaching the assertion completes past it,
+        /// as the pin's constraint-failure terminator ends a return path.
+        failing_assertion,
     }
 }
 

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1587**.
+Next free ID: **R1589**.
 
 ## Ordered Work
 
@@ -5584,21 +5584,21 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1576 A `comptime assert False` arm does not end a return path**
+- [ ] **R1588 A `comptime assert` over a parameter that the pin folds to
+  `False` does not end a return path**
 
-  `def k[dt: DType]() -> DType` whose `comptime if` returns in each arm but
-  an `else: comptime assert False, "…"` is rejected ("'k' does not return
-  a value on every path"), where the pin prints `int32` for
-  `k[DType.float32]()`.
-  - The checker's return-path rule checks the template, where the pin
-    checks each instance after resolving its `comptime if`: a constant
-    `False` assertion never falls off the end of an instance that reaches
-    it.
-  - Treat a `comptime assert` whose condition is the constant `False` as
-    a diverging statement in the return-path rule.
-  - Upstream's `_integral_type_of` and `_unsigned_integral_type_of`
-    (`std/builtin/dtype.mojo`) end this way (R1578).
-  - Found while planning R1554 (2026-10-28).
+  `def k[n: Int]() -> Int` whose `comptime if n == 1:` returns and whose
+  `else:` holds `comptime assert n != n, "x"` is rejected ("'k' does not
+  return a value on every path"), where the pin prints `1` for `k[1]()`.
+  - `Checker::check_comptime_assert` records a failing assertion only
+    when `fold_closed_constraint` decides its condition, which needs a
+    condition over no parameter. The pin's parameter canonicalizer also
+    folds an open one.
+  - Probe: `n - n == 1` and `False and n == 2` behave the same.
+  - The pin keeps `n == 2 and False` and `n < n` open (rejected there
+    too), so the fold must match the canonicalizer, not three-valued
+    logic.
+  - Found while landing R1576 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -6779,6 +6779,24 @@ fixture. Each entry's `Ledger name` is the slug `conformance/cases.tsv` uses
 for it, and an entry that waits on another names it. Five divergences are
 retained on purpose and re-probed rather than fixed; they are listed in
 [`docs/non-goals.md`](non-goals.md).
+
+- [ ] **R1587 An instance drops the `comptime assert`s after a selected
+  `comptime if` arm that never falls through**
+
+  `def k[n: Int]() -> Int` holding `comptime if n == 1: return 1`, then
+  `comptime assert n == 5, "never"` and `return 3`, prints `1` for
+  `k[1]()`, where the pin fails the instance: "constraint failed: never".
+  - `splice_comptime_arm` (`native/mono/select.rs`) discards the block's
+    tail when the taken arm returns, before `discharge_comptime_asserts`
+    judges what the instance keeps. The pin judges the tail's assertions.
+  - Probe: `comptime assert False, "never"` after the same `comptime if`,
+    with no trailing `return`, runs since R1576 and fails at the pin.
+  - A tail after a plain `return` is erased before either judges it
+    (`hir::Lower`'s `live_statements`, the pin's parser), so it stays
+    unjudged.
+  - Found while landing R1576 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R1537 An `@implicit` constructor's parameter admits a literal by
   coercion, not at the literal's default type**

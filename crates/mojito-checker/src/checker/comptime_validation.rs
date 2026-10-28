@@ -511,7 +511,9 @@ impl Checker {
     /// A `comptime assert`: its condition is checked as a `comptime if`
     /// condition is, never judged here — the elaborator judges it per
     /// reached instance. The message is a string literal. The condition's
-    /// bound reading, when it closes, for the knowledge it introduces.
+    /// bound reading, when it closes, for the knowledge it introduces. A
+    /// condition over no parameter that folds to `False` is recorded as a
+    /// failing assertion, which ends every path through it.
     pub(super) fn check_comptime_assert(
         &self,
         cond: &Expr,
@@ -522,7 +524,16 @@ impl Checker {
                 "a 'comptime assert' message other than a string literal".to_string(),
             ));
         }
-        self.check_comptime_condition(cond, ComptimeTest::Assert)
+        let constraint = self.check_comptime_condition(cond, ComptimeTest::Assert)?;
+        if constraint.as_ref().is_some_and(|constraint| {
+            matches!(
+                self.fold_closed_constraint(constraint.clone()),
+                GenericConstraint::Bool(false)
+            )
+        }) {
+            self.record_at(cond.source_span()).failing_assertion = true;
+        }
+        Ok(constraint)
     }
 
     /// Whether the condition of a conditional expression is a parameter

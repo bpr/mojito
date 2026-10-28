@@ -218,17 +218,27 @@ impl Checker {
         }
     }
 
-    /// What the check proved of the `match` statement `stmt`: whether its
-    /// cases cover every value of its subject, so that nothing falls
-    /// through it, and which cases earlier ones already cover.
-    pub(super) fn match_reach(&self, stmt: &Stmt) -> MatchReach {
-        self.node_facts
-            .borrow()
+    /// What the check proved of how control leaves `stmt`: for a `match`,
+    /// whether its cases cover every value of its subject, so that nothing
+    /// falls through it, and which cases earlier ones already cover; for a
+    /// `comptime assert`, whether its condition folded to `False`.
+    pub(super) fn stmt_reach(&self, stmt: &Stmt) -> StmtReach {
+        let facts = self.node_facts.borrow();
+        if let StmtKind::ComptimeAssert { cond, .. } = &stmt.kind {
+            return StmtReach {
+                fails: facts
+                    .get(&cond.source_span())
+                    .is_some_and(|facts| facts.failing_assertion),
+                ..StmtReach::default()
+            };
+        }
+        facts
             .get(&stmt.source_span())
             .and_then(|facts| facts.match_plan.as_ref())
-            .map(|plan| MatchReach {
+            .map(|plan| StmtReach {
                 concluded: plan.concluded,
                 unreachable: plan.unreachable.clone(),
+                fails: false,
             })
             .unwrap_or_default()
     }
@@ -1482,17 +1492,20 @@ pub fn irrefutable(pattern: &MatchPattern) -> bool {
     }
 }
 
-/// A `match` statement's coverage facts, as the return and initialization
-/// analyses read them: whether nothing falls through it, and, per case,
-/// whether earlier cases already cover every value it matches (none when
-/// the check recorded no plan).
+/// A statement's reachability facts, as the return and initialization
+/// analyses read them: for a `match`, whether nothing falls through it,
+/// and, per case, whether earlier cases already cover every value it
+/// matches (none when the check recorded no plan); for a `comptime
+/// assert`, whether it fails in every instance, so that nothing completes
+/// past it.
 #[derive(Default)]
-pub(super) struct MatchReach {
+pub(super) struct StmtReach {
     pub(super) concluded: bool,
     pub(super) unreachable: Vec<bool>,
+    pub(super) fails: bool,
 }
 
-impl MatchReach {
+impl StmtReach {
     /// The cases of `cases` a value reaches.
     pub(super) fn reachable<'c>(
         &self,
