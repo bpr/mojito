@@ -3506,20 +3506,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R58 `Self(...)` does not construct inside a method**
-
-  Problem: `return Self(self.a, not self.b)` in a method of an
-  `@fieldwise_init` struct reports "Undefined variable 'Self'", and so does
-  the keyword form; the pin constructs the enclosing struct.
-  - Naming the struct (`P(...)`, `G(...)` in a generic struct) constructs,
-    by position or keyword, so the gap is resolving `Self` as a callee.
-  - A static call through `Self` (`Self.plus(a, 1)` in a `@staticmethod`)
-    is rejected the same way, where the pin prints `101`; spelling the
-    struct (`W[Self.k].plus(a, 1)`) works.
-  - Pinned by `conformance/probes/self_call_construction.mojo`.
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R59 Explicit type arguments on a static method of a non-parametric
   struct are rejected**
 
@@ -3860,6 +3846,9 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     struct's constructor call, as `T(copy=x)` already is.
   - Found while landing `T(copy=x)` (2026-10-04).
   - Probe: `conformance/probes/type_param_trait_init_requirement.mojo`.
+  - Probe: `Self(7)` in a trait's default method reaches the same rejection
+    through the `_Self` binder the default is checked over
+    (`conformance/probes/trait_default_self_construction.mojo`).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -7909,6 +7898,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Probe: `return min(n, 3)` runs, where the pin says "only supports calls
     to other '@always_inline("builtin")' functions": Mojito's `min` is a
     host function (`infer_min_max`), not a library `def` the rule sees.
+  - Probe: `return L(n)` or `return Self(n)` in a builtin static method of
+    a `@fieldwise_init struct L` runs, where the pin says "only supports
+    calls to other '@always_inline("builtin")' functions":
+    `calls_ordinary_function` exempts every construction, where the pin
+    admits only a builtin `__init__`.
   - Found while landing R1395 (2026-10-27).
   - Depends on R1522.
   - Model: Opus, Not Planned.
@@ -9655,7 +9649,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Probe: `L(n).doubled()` over a `@fieldwise_init` `L` is rejected at
     the pin naming the folded `Int((mul L(n).v, 2))`, which names the
     field read of the folded construction R1525 builds.
-  - `Self(...)` in such a body is R58.
   - Found while landing R1522 (2026-10-27).
   - Depends on R1525 and R58.
   - Model: Fable, Not Planned.
@@ -9728,8 +9721,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `_mlir_value`, runs, where the pin rejects "'pop.add' op operand #0
     must be SIMD type ... but got '!lit.struct<...SIMD...>'". The same
     distinct struct type closes it.
-  - Every upstream body constructs through `Self(mlir_value=...)` (R58)
-    and overloads `__init__` over `Self`-dependent parameter types (R1518).
+  - Every upstream body constructs through `Self(mlir_value=...)` and
+    overloads `__init__` over `Self`-dependent parameter types (R1518).
   - Probe (from R1109): the hash leaf reaches `__hash__` and a hasher's
     `_update_with_simd` from the value's type
     (`mir::TYPE_REACHED_MEMBERS`), so either keeps an argument it ignores;

@@ -74,24 +74,15 @@ impl Checker {
         // parameters (`Grid[Self.n].width()`).
         if let ExprKind::Identifier(name) = &object.kind
             && name == "Self"
-            && let Some(TyKind::Struct(instance, _)) = self.self_ty.as_ref().map(Ty::kind)
-            && let owner =
-                mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance)
-            && let Some(info) = self.structs.get(owner)
-            && info
-                .methods
-                .get(method)
+            && let Some((owner, targs)) = self.self_instance_spelling()
+            && self
+                .structs
+                .get(&owner)
+                .and_then(|info| info.methods.get(method))
                 .is_some_and(|sigs| sigs.iter().any(|sig| !sig.has_self))
         {
-            let targs: Vec<_> = info
-                .source_params
-                .iter()
-                .map(|parameter| {
-                    mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(parameter.name.clone()))
-                })
-                .collect();
-            let ty = self.infer_struct_static_method(span.clone(), owner, &targs, method, call)?;
-            self.record_static_receiver(object, owner, &targs);
+            let ty = self.infer_struct_static_method(span.clone(), &owner, &targs, method, call)?;
+            self.record_static_receiver(object, &owner, &targs);
             // The receiver spells no struct name for lowering to compose
             // the symbol from.
             self.record_at(span.clone())

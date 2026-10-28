@@ -8,6 +8,12 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `Self(...)` inside a struct's method now constructs the struct over its
+  own parameters, by position or keyword, as at the pin (R58): the
+  checker reads `Self` as the struct's alias and spells the call as the
+  construction `G[Self.T, Self.n](...)`, as a call through a type alias
+  is spelled. It reaches a written or fieldwise `__init__`, `copy=`, a
+  static method, and a nested `def` of a method.
 - A call of an `@always_inline("builtin")` `__init__` in a type or a
   parameter argument is now the struct value its body stores, as at the
   pin (R1525). It is compared by its fields and shown as its call, so

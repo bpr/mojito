@@ -438,7 +438,10 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   alias heads (`type_alias_read`; a module alias's parameter expression is
   `ComptimeAlias::value`) (a
   call, a static call, a member read) over that parameter expression, a
-  call as the type's construction, and records the spelling the same way. Together they own method-call inference (including the inverted write:
+  call as the type's construction, and records the spelling the same way;
+  `Self(...)` in a struct's body is spelled as the construction of the
+  struct over its own parameters (`self_instance_spelling`, which the
+  static call through `Self` shares). Together they own method-call inference (including the inverted write:
   `x.write_to(writer)` on a bounded parameter, a builtin, or the
   nominal String records `SemanticAdjustment::InvertedWrite`, which
   `mir/lower_expr/expr_method.rs` lowers as the writer's host primitive

@@ -868,6 +868,7 @@ assets/ok/scalar_range_zero_starting.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_runtime_conversions.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_simd_lane_methods.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/scalar_uint_dtype.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/self_call_construction.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/self_hosted_dict.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/self_hosted_vec.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/sequence_starred_evaluation_order.mojo	-	ineligible	no-scalar-entry-shape

@@ -78,6 +78,26 @@ impl Checker {
             Some(Box::new(receiver))
         };
         let spelled = match &expression.kind {
+            // `Self(...)`: the struct's own alias, so the construction of
+            // the struct over its own parameters (`G[Self.T](...)`).
+            ExprKind::Call {
+                name,
+                param_args,
+                args,
+                kwargs,
+            } if name == "Self" && param_args.is_empty() && self.lookup(name).is_none() => {
+                let (owner, param_args) = self.self_instance_spelling()?;
+                let construction = derived_construction(
+                    expression,
+                    ExprKind::Call {
+                        name: owner,
+                        param_args,
+                        args: args.clone(),
+                        kwargs: kwargs.clone(),
+                    },
+                );
+                return Some(self.infer_spelled(expression, construction));
+            }
             ExprKind::Call {
                 name,
                 param_args,
@@ -132,6 +152,28 @@ impl Checker {
         };
         let spelled = spelled_node(expression, 0, spelled, expression.span);
         Some(self.infer_spelled(expression, spelled))
+    }
+
+    /// The struct the enclosing declaration's `Self` names, and the bracket
+    /// arguments applying it to its own parameters (`Grid[Self.n]`), as
+    /// upstream binds `Self` to the struct over its own parameters. `None`
+    /// outside a struct.
+    pub(super) fn self_instance_spelling(
+        &self,
+    ) -> Option<(String, Vec<mojito_ast::ast::ParamArg>)> {
+        let TyKind::Struct(instance, _) = self.self_ty.as_ref()?.kind() else {
+            return None;
+        };
+        let owner = mojito_symbol::symbol::specialization_template(instance).unwrap_or(instance);
+        let info = self.structs.get(owner)?;
+        let param_args = info
+            .source_params
+            .iter()
+            .map(|parameter| {
+                mojito_ast::ast::ParamArg::Type(SourceType::SelfParam(parameter.name.clone()))
+            })
+            .collect();
+        Some((owner.to_string(), param_args))
     }
 
     /// Record that the sugar `expression` checked as `construction` of type
