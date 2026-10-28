@@ -179,6 +179,7 @@ assets/ok/comptime_if_scalar_value_param.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_struct_equality.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_symbolic_conditional_conformance.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_if_template_served.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/comptime_if_untaken_arm_unevaluated.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_lambda_initializer.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_layout_constant.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/comptime_local_application_per_read.mojo	-	ineligible	no-scalar-entry-shape

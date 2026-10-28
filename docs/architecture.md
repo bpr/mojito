@@ -967,9 +967,10 @@ and records each condition it compiles as a constraint
 `ComptimeIf` region op (`hlcf.comptime.if`), every condition first, then one
 region per arm, each condition a `GenericConstraint` over the function's
 binders (or, once inlined, the caller's types), not a register, and `native::mono` decides it under the
-instance's bindings after drop elaboration (`select_comptime_branches`),
-keeping the taken arm and erasing the others before any call in them is
-enqueued. Every leaf of a condition is the check's: a leaf the constraint
+instance's bindings after drop elaboration, before substituting the
+instance (`elaborate_comptime_ops`), keeping the taken arm and erasing the
+others before any call in them is enqueued or any compile-time op in them
+reached. Every leaf of a condition is the check's: a leaf the constraint
 compiler does not close (`h(n) > 4`, a `Bool` binder, `Self.flag`) is the
 one parameter expression a bracket argument spelling it is, compared with
 `True` — built structurally, a call it cannot express applying the function
@@ -1001,9 +1002,12 @@ condition lazily, as upstream folds a `ParamOperatorAttr` (`Specializer::
 decide_comptime_condition`): `and` and `or` stop once their left side
 decides them, and each `comptime if` is decided in order on its region op,
 its taken arm spliced where the op stood before the walk goes on
-(`select_comptime_ifs`, as `processComptimeIfOp` elaborates only that arm),
-so an `elif` past a taken arm, or an enum payload read guarded by its tag,
-never runs.
+(`Specializer::decide_comptime_op`, as `processComptimeIfOp` elaborates
+only that arm), so an `elif` past a taken arm, or an enum payload read
+guarded by its tag, never runs. The same in-order walk unrolls each
+`comptime for` it reaches (`unroll.rs::elaborate_in`), as upstream's one
+work list does, so a loop header, a nested condition, or a local
+`comptime` binding in an untaken arm is never evaluated.
 A `comptime match` is that same conditional chain, as upstream emits its
 cases as one `hlcf.comptime.if` (`emitComptimeCases`): the elaborator above
 the check keeps it with each case body elaborated
@@ -1199,12 +1203,14 @@ sequence, as upstream's `hlcf.comptime.for` iterates a compile-time sequence —
 the ownership analysis and drop
 elaboration decide it as the loop of the same shape with its trip count
 unknown, and `native::mono` unrolls it under the instance's bindings before
-substitution (`unroll_comptime_loops`), on its region op as upstream's
+substitution, where the in-order walk of the instance's compile-time ops
+reaches it (`elaborate_comptime_ops`), on its region op as upstream's
 `processComptimeForOp` does: the body's one block is cloned once per
 iterator, the exhausted one included, each clone's own registers fresh
 and its arguments the previous iteration's results, the binder's reads
-folded and its types substituted, the loops nested in the clone unrolled
-under its binding first and the `comptime if`s over it decided. Each clone
+folded and its types substituted, the compile-time ops nested in the clone
+elaborated in order under its binding first, its `comptime if`s decided and
+its loops unrolled. Each clone
 sits in an unlabelled loop that its `comptime.for.continue` breaks, inside a
 loop labelled `param_for_outer` that its `comptime.for.break` breaks, and
 `simplifyParamForLoop`'s folds splice the loops a clone leaves trivial

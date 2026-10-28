@@ -10,85 +10,59 @@ use super::*;
 use mojito_mir::mir::{MirTerm, SpanTable, defined_registers, resolve_replacements};
 
 impl Specializer<'_> {
-    /// Decide every `comptime if` of the instance under its bindings and
-    /// keep the taken arm, before any call in an untaken one is enqueued or
-    /// any type in it verified. The taken arm keeps the destroys drop
-    /// elaboration placed in it; no last use is recomputed. Every reached
-    /// `comptime assert` is decided with them: one that holds goes, and one
-    /// that fails stays, its condition folded to `False`, for
-    /// [`failure::discharge_comptime_asserts`] to report.
-    pub(super) fn select_comptime_branches(
+    /// Decide the `comptime if` or `comptime assert` at `index` of `block`
+    /// under `bindings`, as upstream's work list reaches the op, recording
+    /// in `decided` what the decision replaces: an `if` is replaced by its
+    /// taken arm, whose instructions the walk reaches next, so an `elif`
+    /// past a taken arm, or an op after an arm that leaves, never runs its
+    /// condition's applications. The taken arm keeps the destroys drop
+    /// elaboration placed in it; no last use is recomputed. An assertion
+    /// that holds goes, and one that fails stays, its condition folded to
+    /// `False`, for [`failure::discharge_comptime_asserts`] to report. How
+    /// far the walk moves past the op, or `None` when the instruction there
+    /// is another.
+    pub(super) fn decide_comptime_op(
         &mut self,
         template: &str,
-        function: &mut MirFunction,
-        bindings: &Bindings,
-    ) -> Result<(), MonoError> {
-        let mut decided = Decided::default();
-        self.select_comptime_ifs(template, &mut function.blocks, bindings, &mut decided)?;
-        decided.apply(
-            &mut function.blocks,
-            &mut function.reg_types,
-            &mut function.spans,
-        );
-        Ok(())
-    }
-
-    /// [`Self::select_comptime_branches`] over `blocks` and the regions below
-    /// them, recording in `decided` what the decisions replace. Each block
-    /// is decided in order, as upstream's work list reaches the ops: a taken
-    /// arm's instructions are decided where they land, so an `elif` past a
-    /// taken arm, or an op after an arm that leaves, never runs its
-    /// condition's applications.
-    pub(super) fn select_comptime_ifs(
-        &mut self,
-        template: &str,
-        blocks: &mut [MirBlock],
+        block: &mut MirBlock,
+        index: usize,
         bindings: &Bindings,
         decided: &mut Decided,
-    ) -> Result<(), MonoError> {
-        for block in blocks {
-            let mut index = 0;
-            while index < block.instrs.len() {
-                match &mut block.instrs[index] {
-                    MirInstr::ComptimeIf { conds, .. } => {
-                        let mut taken = None;
-                        for (arm, cond) in conds.iter().enumerate() {
-                            if self.decide_comptime_condition(template, cond, bindings)? {
-                                taken = Some(arm);
-                                break;
-                            }
-                        }
-                        splice_comptime_arm(block, index, taken, decided)
-                            .map_err(|construct| self.error(Some(template), construct))?;
-                    }
-                    MirInstr::ComptimeAssert { cond } => {
-                        let holds = self.decide_comptime_condition(template, cond, bindings)?;
-                        if holds {
-                            block.instrs.remove(index);
-                        } else {
-                            **cond = folded_false(cond);
-                            index += 1;
-                        }
-                    }
-                    instruction => {
-                        for region in mojito_mir::mir::instruction_regions_mut(instruction) {
-                            self.select_comptime_ifs(template, region, bindings, decided)?;
-                        }
-                        index += 1;
+    ) -> Result<Option<usize>, MonoError> {
+        match &mut block.instrs[index] {
+            MirInstr::ComptimeIf { conds, .. } => {
+                let mut taken = None;
+                for (arm, cond) in conds.iter().enumerate() {
+                    if self.decide_comptime_condition(template, cond, bindings)? {
+                        taken = Some(arm);
+                        break;
                     }
                 }
+                splice_comptime_arm(block, index, taken, decided)
+                    .map_err(|construct| self.error(Some(template), construct))?;
+                Ok(Some(0))
             }
+            MirInstr::ComptimeAssert { cond } => {
+                if self.decide_comptime_condition(template, cond, bindings)? {
+                    block.instrs.remove(index);
+                    Ok(Some(0))
+                } else {
+                    **cond = folded_false(cond);
+                    Ok(Some(1))
+                }
+            }
+            _ => Ok(None),
         }
-        Ok(())
     }
 }
 
-/// What deciding `comptime if`s leaves for the function's tables: each
-/// taken arm's result and the value its `comptime.yield` carries, and every
-/// register the dropped code defined.
+/// What deciding `comptime if`s and folding unrolled loops leaves for the
+/// function's tables: each taken arm's or folded loop's result and the
+/// value its `comptime.yield` or break carries, and every register the
+/// dropped code defined.
 #[derive(Default)]
 pub(super) struct Decided {
-    replaced: HashMap<u32, Reg>,
+    pub(super) replaced: HashMap<u32, Reg>,
     dead: Vec<Reg>,
 }
 

@@ -1065,7 +1065,6 @@ impl<'a> Specializer<'a> {
         function.callee_removed_args.clear();
         function.removed_args.clear();
         expand_pack_spreads(&key.template, &mut function)?;
-        self.select_comptime_branches(&key.template, &mut function, bindings)?;
         failure::discharge_comptime_asserts(&mut function).map_err(|construct| MonoError {
             kind: MonoErrorKind::Instantiation,
             ..self.error(Some(&key.template), construct)
@@ -1195,7 +1194,7 @@ impl<'a> Specializer<'a> {
         Ok(())
     }
 
-    /// A copy of `template` with its `comptime for` loops unrolled and
+    /// A copy of `template` with its compile-time ops elaborated and
     /// `bindings` substituted through it, beside the slots its parameter
     /// reads reified.
     fn substituted(
@@ -1213,7 +1212,7 @@ impl<'a> Specializer<'a> {
             bindings,
             &self.source.declarations,
         )?;
-        self.unroll_comptime_loops(name, &mut function, scope, bindings)?;
+        self.elaborate_comptime_ops(name, &mut function, scope, bindings)?;
         self.erase_valueless_removed_arguments(&mut function.blocks, bindings);
         substitute_function(&mut function, bindings, scope).map_err(|mut e| {
             e.function.get_or_insert_with(|| name.to_string());

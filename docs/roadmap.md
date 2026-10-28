@@ -4898,32 +4898,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R376 A compile-time application under an untaken `comptime if` arm
-  is evaluated**
-
-  Problem: `comptime if n > 100:` holding `comptime for z in [10 // (n -
-  4)]:` in `def f[n: Int]()` stops `f[4]()` with "integer division or modulo
-  by zero", where the pin skips the arm and runs.
-  - `native::mono` unrolls every loop header of an instance before it
-    selects a branch (`unroll_comptime_loops`, then
-    `select_comptime_branches`, `mono/unroll.rs` and `mono/select.rs`), so
-    the header's thunk runs in an arm the instance never takes.
-  - Both walk regions since R880, so the fix makes `unroll_in` and
-    `select_comptime_ifs` one in-order walk, as upstream's one work list:
-    a `comptime if` is decided and its arm spliced before any `comptime
-    for` in it is unrolled. Selection then moves before
-    `substitute_function`, into `materialize_body`'s `answer_pending`
-    loop.
-  - Probe: `comptime if n > 0:` holding `comptime for i in range(10 //
-    n):` in `def total[n: Int]() -> Int`; the pin prints `0` for
-    `total[0]()`.
-  - A nested `comptime if` whose condition applies a function fails the
-    same way.
-  - A local `comptime` display binding read in such an arm does too.
-  - Found while landing reads of a local display binding (2026-10-06).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R380 Two local `comptime` bindings of one display are different
   values in a type**
 
@@ -10026,9 +10000,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port `to_bits` and `_to_bits_signed` (`simd.mojo:2522`, `:2547`) over
     the bundled `bitcast`, `_integral_type_of`, and
     `_unsigned_integral_type_of`, importing `bitcast` into `std.simd`.
-  - The port fails every `bool` `to_bits` until R376 lands: the untaken
-    `else` arm's `comptime uint = _unsigned_integral_type_of[Self.dtype]()`
-    is applied and reaches its `comptime assert False`.
   - Retire `infer_simd_to_bits`, the `"to_bits"` arm of
     `intrinsic_receivers.rs`, `types::{unsigned_dtype_of_width,
     symbolic_unsigned_dtype_of}`, `SemanticAdjustment::SimdToBits`,

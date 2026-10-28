@@ -10,7 +10,7 @@ use super::*;
 use mojito_mir::mir::Const;
 
 /// Report the first `comptime assert` the instance `function` keeps — one
-/// [`Specializer::select_comptime_ifs`] left, so one that failed — as
+/// [`Specializer::decide_comptime_op`] left, so one that failed — as
 /// upstream's `constraint failed: MESSAGE`.
 pub(super) fn discharge_comptime_asserts(function: &mut MirFunction) -> Result<(), String> {
     if let Some(failed) = function

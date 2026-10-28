@@ -1,9 +1,11 @@
-//! Unrolling a `comptime for`, as upstream's `processComptimeForOp` does:
-//! the op becomes a loop labelled `param_for_outer` holding one unlabelled
-//! loop per iterator the protocol steps to, the exhausted one included, each
-//! holding a clone of the body that keeps the arm of the body's `has_next`
-//! test its iterator takes; `simplifyParamForLoop` then folds the loops the
-//! clones leave trivial.
+//! Elaborating an instance's compile-time ops in order, as upstream's work
+//! list does: a `comptime if` or `comptime assert` is decided where the walk
+//! reaches it ([`super::select`]), and a `comptime for` is unrolled as
+//! upstream's `processComptimeForOp` does: the op becomes a loop labelled
+//! `param_for_outer` holding one unlabelled loop per iterator the protocol
+//! steps to, the exhausted one included, each holding a clone of the body
+//! that keeps the arm of the body's `has_next` test its iterator takes;
+//! `simplifyParamForLoop` then folds the loops the clones leave trivial.
 
 use super::select::{Decided, splice_comptime_arm};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -12,19 +14,23 @@ use mojito_checked::checked::ComptimeSequence;
 use mojito_hir::hir::VarId;
 use mojito_mir::mir::{
     LoopLabel, MirTerm, SpanTable, defined_registers, for_each_register, instruction_regions_mut,
-    loop_breaks_mut, renumber_block_slots, replace_register_reads, resolve_replacements,
+    loop_breaks_mut, renumber_block_slots,
 };
 
 impl Specializer<'_> {
-    /// Unroll every `comptime for` of the instance under its bindings, as
-    /// the elaborator does for upstream's `ComptimeForOp`: the iterators are
+    /// Elaborate every compile-time op of the instance under its bindings,
+    /// in order, before the instance is substituted: each `comptime if` is
+    /// decided and its taken arm spliced before any op in it is reached, so
+    /// a loop header or condition in an arm the instance never takes is
+    /// never evaluated, and each `comptime for` is unrolled as the
+    /// elaborator does for upstream's `ComptimeForOp`: the iterators are
     /// stepped, and the body is cloned N+1 times, once per iterator
     /// `has_next` accepts and once over the exhausted one, each clone with
     /// fresh registers for what it defines and the binder bound to its
     /// iterator. Each clone decides the body's leading `has_next` test
-    /// first and keeps the taken arm alone; the suite's clone then has its
-    /// reads folded, its types substituted, the `comptime if`s over the
-    /// binder decided, and the loops nested in it unrolled in turn, while
+    /// first and keeps the taken arm alone; the suite's clone then has the
+    /// ops nested in it elaborated in turn, its reads folded, and its types
+    /// substituted, while
     /// the exhausted clone keeps only the stop arm, which leaves the loop.
     /// Each clone sits in a loop of its own, which its `comptime.for.continue`
     /// leaves, inside the loop its `comptime.for.break` leaves, and the
@@ -33,7 +39,7 @@ impl Specializer<'_> {
     /// of the region allocates its own `var`, and the template's slot leaves
     /// the function. The drops the analysis placed in the body come with
     /// each clone; no last use is recomputed.
-    pub(super) fn unroll_comptime_loops(
+    pub(super) fn elaborate_comptime_ops(
         &mut self,
         template: &str,
         function: &mut MirFunction,
@@ -42,7 +48,14 @@ impl Specializer<'_> {
     ) -> Result<(), MonoError> {
         if !mojito_mir::mir::nested_instructions(&function.blocks)
             .iter()
-            .any(|instruction| matches!(instruction, MirInstr::ComptimeFor { .. }))
+            .any(|instruction| {
+                matches!(
+                    instruction,
+                    MirInstr::ComptimeFor { .. }
+                        | MirInstr::ComptimeIf { .. }
+                        | MirInstr::ComptimeAssert { .. }
+                )
+            })
         {
             return Ok(());
         }
@@ -69,7 +82,7 @@ impl Specializer<'_> {
             dangling,
         };
         let frame = LoopFrame { template, scope };
-        self.unroll_in(blocks, &frame, bindings, &mut tables)?;
+        self.elaborate_in(blocks, &frame, bindings, &mut tables)?;
         if retired.is_empty() {
             return Ok(());
         }
@@ -92,42 +105,45 @@ impl Specializer<'_> {
         Ok(())
     }
 
-    /// Unroll every `comptime for` of `blocks` and the regions below them, in
-    /// order: a loop's clones are finished, the loops nested in them
-    /// unrolled, before the walk resumes after its replacement. The results
-    /// a folded loop leaves are read as the values its break carried, which
-    /// only `blocks` read.
-    fn unroll_in(
+    /// Elaborate every compile-time op of `blocks` and the regions below
+    /// them, in order, as upstream's work list reaches them: a decided
+    /// `comptime if`'s taken arm is walked where it lands, and a loop's
+    /// clones are finished, the ops nested in them elaborated, before the
+    /// walk resumes after its replacement. The results a decided `if` or a
+    /// folded loop leaves are read as the values its yield or break
+    /// carried, which only `blocks` read.
+    fn elaborate_in(
         &mut self,
         blocks: &mut [MirBlock],
         frame: &LoopFrame<'_>,
         bindings: &Bindings,
         tables: &mut FrameTables<'_>,
     ) -> Result<(), MonoError> {
-        let mut folded = HashMap::new();
+        let mut decided = Decided::default();
         for block in blocks.iter_mut() {
             let mut index = 0;
             while index < block.instrs.len() {
+                if let Some(step) =
+                    self.decide_comptime_op(frame.template, block, index, bindings, &mut decided)?
+                {
+                    index += step;
+                    continue;
+                }
                 let Some(op) = ComptimeForOp::take(&mut block.instrs, index) else {
                     for region in instruction_regions_mut(&mut block.instrs[index]) {
-                        self.unroll_in(region, frame, bindings, tables)?;
+                        self.elaborate_in(region, frame, bindings, tables)?;
                     }
                     index += 1;
                     continue;
                 };
-                let replacement = self.unroll_op(op, frame, bindings, tables, &mut folded)?;
+                let replacement =
+                    self.unroll_op(op, frame, bindings, tables, &mut decided.replaced)?;
                 let count = replacement.len();
                 block.instrs.splice(index..index, replacement);
                 index += count;
             }
         }
-        if !folded.is_empty() {
-            replace_register_reads(blocks, &resolve_replacements(&folded));
-            for reg in folded.keys() {
-                tables.reg_types.remove(reg);
-                tables.spans.0.remove(reg);
-            }
-        }
+        decided.apply(blocks, tables.reg_types, tables.spans);
         Ok(())
     }
 
@@ -269,9 +285,9 @@ impl Specializer<'_> {
     /// `operands`, as upstream's `IRMapping` and `replaceArgs` remap a clone;
     /// its `comptime.for.continue`s and `comptime.for.break`s breaks of its
     /// iteration loop and of the outer loop; each slot typed over the binder
-    /// it addresses fresh at its type for the iteration; then the loops nested
-    /// in it unrolled, reads of the binder folded, types substituted, and
-    /// its compile-time branches decided.
+    /// it addresses fresh at its type for the iteration; then the
+    /// compile-time ops nested in it elaborated, reads of the binder folded,
+    /// and types substituted.
     fn clone_body(
         &mut self,
         looped: &LoopBody<'_>,
@@ -351,10 +367,10 @@ impl Specializer<'_> {
             }
         }
         let blocks = std::slice::from_mut(&mut clone);
-        // The loops nested in the clone first: their bounds and their bodies
-        // are over this iteration's binding and their own, which nothing
-        // else of the clone may be substituted without.
-        self.unroll_in(blocks, frame, iteration, tables)?;
+        // The ops nested in the clone first: their conditions, bounds, and
+        // bodies are over this iteration's binding and their own, which
+        // nothing else of the clone may be substituted without.
+        self.elaborate_in(blocks, frame, iteration, tables)?;
         let locals = bound_parameter_locals(frame.scope, bindings);
         substitute_callable_binder_reads(
             blocks,
@@ -384,9 +400,6 @@ impl Specializer<'_> {
             },
             false,
         )?;
-        let mut decided = Decided::default();
-        self.select_comptime_ifs(template, blocks, iteration, &mut decided)?;
-        decided.apply(blocks, tables.reg_types, tables.spans);
         let mut dropped = Vec::new();
         self.instantiate_region_references(template, blocks, iteration, &mut dropped)?;
         // A dropped operand's defining chain was erased with the removed

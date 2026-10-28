@@ -1398,6 +1398,16 @@ to evolve under the `0.x` compatibility rules.
 
 ### Fixed
 
+- An instance's `comptime if`s, `comptime assert`s, and `comptime for`s
+  are elaborated in one in-order walk before the instance is substituted,
+  as upstream's work list elaborates them, so a `comptime if` is decided and
+  its taken arm spliced before any op in it is reached (R376). A `comptime
+  for` header, a nested condition's application, or a local `comptime`
+  binding in an arm the instance never takes, which stopped the instance
+  with "integer division or modulo by zero" or an unrelated failed
+  `comptime assert`, is no longer evaluated, so `total[0]()` over
+  `comptime if n > 0: comptime for i in range(10 // n):` prints `0` as at
+  the pin.
 - A leading-dot operand beside a `DType` takes `DType` as its contextual
   type, as upstream's `DType.__eq__(self, rhs: Self)` gives it (R1238).
   `d == .int64`, `dt != .int8` in a `comptime if`, `var e: DType =
