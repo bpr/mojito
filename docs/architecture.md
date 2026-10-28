@@ -6595,9 +6595,10 @@ point where a slot declared in a loop is uninitialized again.
   interpreter refuses and only run time saturates. A materialization or a one-lane `simd.make` folds to the value
   `CtValue::materialize_as` gives, and a wider `simd.make` to the lanes
   `ct::simd_construction_lanes` gives, each element's lane by
-  `CtLane::from_value`, the construction rule the comptime evaluator and
-  the checker's constraint evaluator share; an element Mojito narrows but
-  the pin rejects (an `Int`, divergence R186) folds nothing. The literal lane rule
+  `CtLane::from_element` (upstream's implicit conversion to
+  `Scalar[dtype]`) and a single value's by `CtLane::from_value` (the
+  cast), the construction rule the checker's constraint evaluator shares;
+  a splat folds only a value `from_element` takes. The literal lane rule
   (`CtLane::of_int_literal`, `CtLane::of_float_literal`) is the VM's own,
   which `runtime::materialize_literal` and `runtime::simd_from_values` call;
   a `UInt` or SIMD result is a `Const::Value`, upstream's

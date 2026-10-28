@@ -618,7 +618,8 @@ impl Checker {
     }
 
     /// Type `SIMD[DType.<dt>, width](args)`: `width` element arguments, or a
-    /// single argument that splats across all lanes; each must fit the dtype.
+    /// single argument that splats across all lanes; each must fit the dtype
+    /// ([`Self::check_simd_args`]).
     pub(super) fn infer_simd_construction(
         &self,
         span: &SourceSpan,
@@ -628,11 +629,7 @@ impl Checker {
         let (dtype, mut width, attributes) = self.simd_dims(param_args)?;
         self.record_bracket_attributes(span.clone(), attributes);
         if width.is_inferred() {
-            let inferred = i64::try_from(args.len()).unwrap_or(0);
-            if inferred < 1 || (inferred & (inferred - 1)) != 0 {
-                return Err(TypeError::BadSimdWidth(inferred.to_string()));
-            }
-            width = SimdWidth::Known(inferred);
+            width = self.argument_simd_width(&dtype, args)?;
         }
         let ty = simd_of(dtype.clone(), width.clone())?;
         if let [arg] = args
@@ -737,11 +734,19 @@ impl Checker {
         .into())
     }
 
-    /// Check the element arguments of a SIMD construction: none (all lanes
-    /// zero), `width` of them (one per lane), or exactly one (splatted), each
-    /// fitting `dtype`. A
-    /// symbolic width fixes no count and a symbolic dtype gates nothing: both
-    /// are the instantiation's to check.
+    /// Check the arguments of a SIMD construction against upstream's
+    /// `SIMD.__init__` overloads: none (all lanes zero), exactly one, or one
+    /// per lane. A symbolic width fixes no count and a symbolic dtype gates
+    /// nothing: both are the instantiation's to check.
+    ///
+    /// One argument binds a one-value overload: the cast from a
+    /// `SIMD[other_dtype, Self.length]` (a scalar reaching every lane through
+    /// the implicit splat), the `IntLiteral` and `FloatLiteral` splats, and,
+    /// for a scalar only, `__init__[T: Intable]`, whose result is
+    /// `Scalar[target_dtype]`. Several bind `*elems: Scalar[Self.dtype]`, so
+    /// each element is already the lane's scalar or converts to it
+    /// implicitly ([`splats_to`]): a literal, a one-lane value of the dtype,
+    /// or a `Bool` into a mask.
     pub(super) fn check_simd_args(
         &self,
         dtype: &SimdDtype,
@@ -768,26 +773,13 @@ impl Checker {
                 reason: format!("a {width}-lane DType.bool mask splats one Bool only as 'fill='"),
             });
         }
+        if let [arg] = args {
+            return self.check_simd_value(dtype, width, arg);
+        }
         for arg in args {
             let aty = self.infer(arg)?;
-            // Integer lanes also construct from any Intable value (bounded
-            // parameter or conforming struct) through its `__int__`; the
-            // numeric scalars take the exact `converts_to_lane` matrix, so a
-            // float source still spells its truncation explicitly.
-            let intable_object = dtype.licenses(|d| d != Dtype::Bool && !d.is_float())
-                && matches!(aty.kind(), TyKind::Param { .. } | TyKind::Struct(..))
-                && self.conforms_to(&aty, "Intable");
-            if !converts_to_lane(&aty, dtype) && !intable_object {
-                return Err(TypeError::TypeMismatch {
-                    expected: format!("a {dtype} element"),
-                    found: aty.to_string(),
-                    context: "SIMD element".to_string(),
-                });
-            }
-            if intable_object {
-                self.borrow_nominal_place_argument(arg, &aty);
-                self.borrow_parameter_place_argument(arg, &aty);
-                self.record_read_temporary_argument(arg);
+            if !splats_to(&aty, dtype) {
+                return Err(simd_argument_error(dtype, width, &aty));
             }
         }
         Ok(())
@@ -957,6 +949,76 @@ impl Checker {
         .into())
     }
 
+    /// The width an unbound `SIMD[dtype, _]` construction binds from its
+    /// arguments, as upstream's one-value overloads do: a `SIMD[other_dtype,
+    /// Self.length]` argument gives its own width (a literal materializes to
+    /// a scalar), and an `Intable` one binds `__init__[T: Intable]`, a scalar
+    /// whose `comptime assert` wants an integral dtype. No overload binds
+    /// `_` from an element count.
+    fn argument_simd_width(
+        &self,
+        dtype: &SimdDtype,
+        args: &[Expr],
+    ) -> Result<SimdWidth, TypeError> {
+        let no_match = || TypeError::BadCall {
+            func: "SIMD".to_string(),
+            reason: "no matching function in initialization: an unbound '_' width binds \
+                     only from a single argument's own width"
+                .to_string(),
+        };
+        let [arg] = args else {
+            return Err(no_match());
+        };
+        let aty = self.infer(arg)?;
+        match aty.kind() {
+            TyKind::IntLiteral | TyKind::FloatLiteral => Ok(SimdWidth::Known(1)),
+            TyKind::Simd { width, .. } if !width.is_inferred() => Ok(width.clone()),
+            TyKind::Bool | TyKind::Param { .. } | TyKind::Struct(..)
+                if !mojito_types::types::is_simd_length(&aty)
+                    && (*aty == TyKind::Bool || self.conforms_to(&aty, "Intable")) =>
+            {
+                if !dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) {
+                    return Err(TypeError::BadCall {
+                        func: "SIMD".to_string(),
+                        reason: format!(
+                            "constraint failed: {}",
+                            mojito_types::types::INTABLE_CONVERSION_MESSAGE
+                        ),
+                    });
+                }
+                Ok(SimdWidth::Known(1))
+            }
+            _ => Err(no_match()),
+        }
+    }
+
+    /// Check the one argument of a SIMD construction: the cast from another
+    /// dtype ([`converts_to_lane`], a scalar splatting across the width), or
+    /// a scalar's construction from an `Intable` value through its
+    /// `__int__`.
+    fn check_simd_value(
+        &self,
+        dtype: &SimdDtype,
+        width: &SimdWidth,
+        arg: &Expr,
+    ) -> Result<(), TypeError> {
+        let aty = self.infer(arg)?;
+        if converts_to_lane(&aty, dtype) {
+            return Ok(());
+        }
+        let intable_object = width.known() == Some(1)
+            && dtype.licenses(|d| d != Dtype::Bool && !d.is_float())
+            && matches!(aty.kind(), TyKind::Param { .. } | TyKind::Struct(..))
+            && self.conforms_to(&aty, "Intable");
+        if !intable_object {
+            return Err(simd_argument_error(dtype, width, &aty));
+        }
+        self.borrow_nominal_place_argument(arg, &aty);
+        self.borrow_parameter_place_argument(arg, &aty);
+        self.record_read_temporary_argument(arg);
+        Ok(())
+    }
+
     /// A read dunder binds its operand as a method call binds a read
     /// argument: a named struct place, or a struct element an accessor
     /// returns by reference (`xs[0]` through `List.__getitem__`), is read
@@ -1030,6 +1092,24 @@ impl Checker {
 /// declare: a type parameter or an associated projection of one.
 fn is_bound_archetype(ty: &Ty) -> bool {
     matches!(ty.kind(), TyKind::Param { .. } | TyKind::Assoc { .. })
+}
+
+/// The error a SIMD construction argument of type `aty` no overload takes
+/// reports: a float literal binds `@implicit __init__(FloatLiteral)` and
+/// fails its float-dtype assert, anything else matches no overload.
+fn simd_argument_error(dtype: &SimdDtype, width: &SimdWidth, aty: &Ty) -> TypeError {
+    if *aty == TyKind::FloatLiteral && dtype.known().is_some_and(|dtype| !dtype.is_float()) {
+        let target = Ty::from(TyKind::Simd {
+            dtype: dtype.clone(),
+            width: width.clone(),
+        });
+        return super::builtins::float_literal_conversion_error(&target);
+    }
+    TypeError::TypeMismatch {
+        expected: format!("a {dtype} element"),
+        found: aty.to_string(),
+        context: "SIMD element".to_string(),
+    }
 }
 
 /// The error an infix operator its operands do not define reports. A KGEN

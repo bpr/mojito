@@ -553,7 +553,7 @@ fn uint_arithmetic_via_conversions() {
 #[test]
 fn numeric_conversions_follow_mojo() {
     let e = run(
-        "var trunc: Int = Int(3.9)\nvar widen: Float64 = Float64(3)\nvar frombool: Int = Int(True)\nvar u: UInt = UInt(5)\n",
+        "var trunc: Int = Int(Float64(3.9))\nvar widen: Float64 = Float64(3)\nvar frombool: Int = Int(True)\nvar u: UInt = UInt(5)\n",
     );
     assert_eq!(binding(&e, "trunc"), Value::Int(3)); // truncates toward zero
     assert_eq!(binding(&e, "widen"), Value::Float64(3.0));
@@ -959,7 +959,7 @@ fn runtime_scalar_conversions_wrap_bit_accurately() {
     // 300 wraps to 44 in uint8; a byte widens exactly into int32; an integer
     // converts numerically into a float lane.
     let e = run(
-        "var i = 300\nvar b: Byte = Byte(i)\nvar n: Int32 = Int32(Byte(200))\nvar f: Float32 = Float32(i)\nvar v: SIMD[DType.uint8, 2] = SIMD[DType.uint8, 2](i, 259)\n",
+        "var i = 300\nvar b: Byte = Byte(i)\nvar n: Int32 = Int32(Byte(200))\nvar f: Float32 = Float32(i)\nvar v: SIMD[DType.uint8, 2] = SIMD[DType.uint8, 2](Byte(i), 259)\n",
     );
     assert_eq!(binding(&e, "b").to_string(), "44");
     assert_eq!(binding(&e, "n").to_string(), "200");

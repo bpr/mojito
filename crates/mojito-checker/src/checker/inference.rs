@@ -494,10 +494,7 @@ impl Checker {
                     .insert(expr.source_span());
             }
             if let ExprKind::Call {
-                name,
-                param_args,
-                args,
-                ..
+                name, param_args, ..
             } = &expr.kind
             {
                 // A construction's dimensions are its slots: known, or the
@@ -505,10 +502,12 @@ impl Checker {
                 // elaborator closes per instance.
                 let dimensions = if name == "SIMD" {
                     self.simd_dims(param_args).ok().map(|(dtype, width, _)| {
-                        let width = if width.is_inferred() {
-                            SimdWidth::Known(i64::try_from(args.len()).unwrap_or(0))
-                        } else {
-                            width
+                        // An unbound `_` is the width the construction bound.
+                        let width = match ty.kind() {
+                            TyKind::Simd { width: bound, .. } if width.is_inferred() => {
+                                bound.clone()
+                            }
+                            _ => width,
                         };
                         (dtype, width)
                     })

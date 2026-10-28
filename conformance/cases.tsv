@@ -34,7 +34,9 @@ integer-arithmetic	run	conformance/fixtures/integer_arithmetic.mojo
 int-true-division	output-diff	conformance/fixtures/int_true_division.mojo
 defined-float-to-int-edges	output-diff	conformance/fixtures/defined_float_to_int_edges.mojo
 defined-shift-overflow	mojito-only	conformance/fixtures/defined_shift_overflow.mojo
-float-literal-to-int	mojito-only	conformance/fixtures/float_literal_to_int.mojo
+float-literal-to-int	reject	assets/type_error/float_literal_to_int.mojo
+simd-element-narrowing	reject	assets/type_error/simd_element_int_narrowing.mojo
+simd-inferred-width	reject	assets/type_error/simd_inferred_width_from_elements.mojo
 utility-numeric-builtins	run	assets/ok/builtins_numeric.mojo
 input-eof	reject	conformance/fixtures/input_eof.mojo
 native-input-echo	run	assets/ok/pliron_input_echo.mojo

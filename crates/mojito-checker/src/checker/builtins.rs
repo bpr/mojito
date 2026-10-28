@@ -27,6 +27,19 @@ pub(super) fn not_writable(ty: &Ty) -> TypeError {
     }
 }
 
+/// The failed `comptime assert` of upstream's `@implicit
+/// SIMD.__init__(FloatLiteral)` at the integer `target` a float literal
+/// constructs (`Int(3.9)`, `Int8(3.9)`, `SIMD[DType.int, 4](3.9)`).
+pub(super) fn float_literal_conversion_error(target: &impl std::fmt::Display) -> TypeError {
+    TypeError::BadCall {
+        func: target.to_string(),
+        reason: format!(
+            "constraint failed: {}",
+            mojito_types::types::FLOAT_LITERAL_CONVERSION_MESSAGE
+        ),
+    }
+}
+
 /// Whether `print` accepts a value of type `ty` for its keyword `name`, with
 /// the type it expects there: `sep`/`end` take a string, `flush` a `Bool`,
 /// and `file` the stdlib `RawFileDescriptor`. `None` for any other keyword.
@@ -857,13 +870,6 @@ impl Checker {
         Ok(Some(ty))
     }
 
-    /// Type a conversion built-in `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`:
-    /// exactly one argument of a numeric or `Bool` type, producing `target`,
-    /// recorded as the `ScalarCast` upstream's inlined `pop.cast` is. An
-    /// opaque type parameter is also accepted when its bound promises the
-    /// conversion — `Int(x)` on `T: Intable`, `Float64(x)` on `T: Floatable`,
-    /// `Bool(x)` on `T: Boolable` (`__int__`/`__float__`/`__bool__` run after
-    /// type erasure).
     /// Whether a `SIMDLength` argument constructs the vector `target`
     /// (`Int(w)`, `Scalar[dt](w)`, `SIMD[dt, n](w)`): that is upstream's
     /// `@implicit SIMD.__init__(SIMDLength)` called by name, so the call is
@@ -886,6 +892,13 @@ impl Checker {
         Ok(true)
     }
 
+    /// Type a conversion built-in `Int(x)` / `UInt(x)` / `Float64(x)` / `Bool(x)`:
+    /// exactly one argument of a numeric or `Bool` type, producing `target`,
+    /// recorded as the `ScalarCast` upstream's inlined `pop.cast` is. An
+    /// opaque type parameter is also accepted when its bound promises the
+    /// conversion — `Int(x)` on `T: Intable`, `Float64(x)` on `T: Floatable`,
+    /// `Bool(x)` on `T: Boolable` (`__int__`/`__float__`/`__bool__` run after
+    /// type erasure).
     pub(super) fn infer_conversion(
         &self,
         span: &SourceSpan,
@@ -923,6 +936,13 @@ impl Checker {
                 mojito_checked::checked::SemanticAdjustment::ConvertedArgument,
             ));
             return Ok(target);
+        }
+        // Upstream's exact-type `@implicit SIMD.__init__(FloatLiteral)`
+        // outranks the generic `Intable` overload, and its `comptime assert`
+        // fails for an integer dtype. A generic `Int(x)` instantiated at a
+        // `FloatLiteral` still binds `Intable` inside its body.
+        if *arg_ty == TyKind::FloatLiteral && matches!(target.kind(), TyKind::INT | TyKind::UINT) {
+            return Err(float_literal_conversion_error(&target));
         }
         // A scalar operand is cast; `Int(pointer)` is the address conversion
         // (upstream `Pointer.__int__`), a null pointer converting to 0, which

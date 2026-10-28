@@ -664,7 +664,7 @@ fn partial_move_field_read_parity() {
 #[test]
 fn utility_builtins_parity() {
     // abs/min/max/round + Int/UInt/Float64 conversions use shared runtime helpers.
-    let src = "def main():\n    print(abs(-5))\n    print(abs(-3.5))\n    print(min(3, 7), max(3, 7))\n    print(round(2.5), round(2.4))\n    print(Int(3.9), UInt(42), Float64(7))\n";
+    let src = "def main():\n    print(abs(-5))\n    print(abs(-3.5))\n    print(min(3, 7), max(3, 7))\n    print(round(2.5), round(2.4))\n    print(Int(Float64(3.9)), UInt(42), Float64(7))\n";
     assert_eq!(parity(src), "5\n3.5\n3 7\n2.0 2.0\n3 42 7.0\n");
 }
 

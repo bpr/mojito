@@ -3148,6 +3148,18 @@ pub const fn scalar_comparison_message(op: InfixOp) -> Option<&'static str> {
 pub const BOOL_MASK_CONVERSION_MESSAGE: &str =
     "must be a scalar; use the `fill` keyword instead for explicit splatting";
 
+/// The message of the `comptime assert Self.dtype.is_floating_point()` of
+/// upstream's implicit `SIMD.__init__(FloatLiteral)`, verbatim.
+///
+/// That is the overload an `Int(3.9)` or `Int8(3.9)` binds, ahead of the
+/// generic `Intable` one.
+pub const FLOAT_LITERAL_CONVERSION_MESSAGE: &str = "the SIMD type must be floating point";
+
+/// The message of the `comptime assert target_dtype.is_integral()` of
+/// upstream's `SIMD.__init__[T: Intable, target_dtype](value: T)`, verbatim.
+pub const INTABLE_CONVERSION_MESSAGE: &str =
+    "constructing from an `Intable` value requires an integral dtype";
+
 /// The known dtype of a width-one `TyKind::Simd`.
 pub const fn scalar_simd_dtype(ty: &TyKind) -> Option<Dtype> {
     match ty {

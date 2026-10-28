@@ -1,10 +1,9 @@
 # Explicit scalar construction converts runtime values: integers wrap to any
 # integer width and convert to float lanes, floats adjust precision, and any
 # Intable value (bounded parameter or conforming struct) constructs integer
-# scalars through its __int__. A SIMD element narrows through its lane type:
-# upstream's element argument is already the lane's scalar, and passing an
-# out-of-range literal or a wider runtime value is the Mojito-only
-# `simd-element-narrowing` conformance case.
+# scalars through its __int__. Several SIMD elements are each already the
+# lane's scalar, so a runtime element is spelled as one (`Byte(i)`), while an
+# out-of-range literal element wraps, as at the pin.
 @fieldwise_init
 struct Meters(Intable):
     var count: Int

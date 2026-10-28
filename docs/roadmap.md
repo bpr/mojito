@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1544**.
+Next free ID: **R1546**.
 
 ## Ordered Work
 
@@ -3688,6 +3688,52 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1544 A `SIMD` construction takes a subset of upstream's
+  conversions: no float into an integer lane, no vector cast, no `Bool`
+  through `Intable`, no `SIMDLength` element**
+
+  The checker's construction rule models a narrower overload set than
+  upstream's `SIMD.__init__`: `converts_to_lane` (`checker/annotations.rs`)
+  for one argument and `splats_to` (`mojito_types::types`) for each of
+  several elements.
+  - Probe: `Int8(Float64(3.9))` and `UInt8(Float32(300.5))` print `3` and
+    `0` at the pin, through the cast overload
+    `__init__[other_dtype](value: SIMD[other_dtype, Self.length])`
+    (`value.cast[Self.dtype]()`, `simd.mojo:744`). Mojito rejects them:
+    "type mismatch for SIMD element: expected a DType.int8 element, found
+    Float64".
+  - Probe: `SIMD[DType.int32, 4](v)` and `SIMD[DType.int32, _](v)` over
+    `v: SIMD[DType.float64, 4]` print `[1, 2, 3, 4]`, and
+    `SIMD[DType.float64, _](w)` over a two-lane `float64` `w` copies it. The
+    same cast overload takes a vector of the construction's width; Mojito
+    admits only a one-lane argument.
+  - Probe: `UInt8(True)` and `SIMD[DType.int, _](True)` print `1` at the
+    pin, through `__init__[T: Intable]` (`Bool` is `Intable`). Mojito's
+    `Intable` clause (`check_simd_value`) takes only a struct or a
+    parameter.
+  - Probe: `SIMD[DType.int, 2](m, m)` over `m = SIMDLength(3)` prints `[3,
+    3]` at the pin: an element converts implicitly to `Scalar[dtype]`, and
+    `@implicit __init__(SIMDLength)` is such a conversion. `splats_to` has
+    no `SIMDLength` arm.
+  - Found while landing R186 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
+- [ ] **R1545 A `SIMD[dtype](...)` call with its length omitted is
+  rejected, where the pin binds the length from the arguments**
+
+  `print(SIMD[DType.int8](5))` prints `5` at the pin, which leaves
+  `length` unbound as `SIMD[DType.int8, _](5)` does. Mojito stops with
+  "type 'SIMD' expects 2 type argument(s), got 1".
+  - Cause: `Checker::simd_dims` (`checker/type_resolution.rs`) requires
+    both bracket arguments, and the construction dimensions `infer`
+    records read it too.
+  - Lever: a construction with one bracket argument takes the unbound
+    width `argument_simd_width` already binds for `_`.
+  - Found while landing R186 (2026-10-27).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R97 `and`/`or` over a non-`Bool` operand is rejected**
 
   Problem: `n or 2` over `n: Int` prints `2` at the pin, and `if n and True:`
@@ -4224,6 +4270,11 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probe: module `comptime W: L = 4` and `f[W]()` fail with "type
     mismatch for value parameter 'w': expected L, found 4". The pin
     prints `4`.
+  - Probe: `comptime n: Int = 3` in `main`, then `var x: UInt8 = n` or
+    `SIMD[DType.uint8, 2](n, n)`, run, where the pin rejects "cannot
+    implicitly convert 'Int' value to 'UInt8'" and "no matching function
+    in initialization": the binding stays an `IntLiteral`, which converts
+    to any lane. A module `comptime N: Int = 3` does the same.
   - Cause, module: `Checker::fold_module_constants`
     (`checker/constraints.rs`) folds the initializer to an `IntLiteral`
     before any struct registers, ignoring the annotation, and the later
@@ -7460,23 +7511,6 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Found while landing R185 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R186 SIMD and `Int` constructors accept a narrowing element, an
-  inferred width and a `FloatLiteral` the pin rejects**
-
-  Problem: three small constructor leniencies.
-  - Mojito narrows a SIMD element argument to the lane type, wrapping an
-    out-of-range literal and a wider runtime value. The pin wants the
-    lane's own scalar.
-  - Mojito infers an unbound SIMD width from the argument count. The pin
-    wants a written-out width.
-  - Mojito truncates a `FloatLiteral` straight to `Int`. The pin wants the
-    `Float64` it truncates from.
-  - Three leniencies to withdraw in one pass.
-  - Ledger name: `simd-element-narrowing`, `simd-inferred-width`,
-    `float-literal-to-int`.
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R187 `reduce_mul` over `Float32` lanes folds left at lane precision,
   where the pin reduces pairwise**

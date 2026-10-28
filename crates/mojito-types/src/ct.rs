@@ -43,14 +43,35 @@ pub enum CtLane {
 }
 
 impl CtLane {
-    /// One element's lane of `dtype` under upstream's `*elems: Scalar[dtype]`
-    /// conversion, or `None` when the element does not fit the lane (a float
-    /// into an integer lane, a one-lane value of another dtype).
+    /// One element's lane of `dtype` under upstream's `*elems:
+    /// Scalar[dtype]`, or `None` when the element does not convert to the
+    /// lane's scalar implicitly.
     ///
     /// A literal materializes by the literal rule ([`Self::of_int_literal`],
-    /// [`Self::of_float_literal`]), and a one-lane `Scalar[dtype]` is its own
-    /// lane. The `Int`, `UInt`, and `Float` arms are the element narrowing
-    /// the pin rejects (divergence R186).
+    /// [`Self::of_float_literal`]), a one-lane `Scalar[dtype]` (a host `Int`,
+    /// `UInt`, or `Float64` at its own dtype) is its own lane, and a `Bool` is
+    /// a mask's lane. Any other value is the cast only a single argument
+    /// takes ([`Self::from_value`]).
+    pub fn from_element(value: &CtValue, dtype: mojito_ast::ast::Dtype) -> Option<Self> {
+        use mojito_ast::ast::Dtype;
+        match (dtype, value) {
+            (_, CtValue::IntLiteral(_) | CtValue::FloatLiteral(_) | CtValue::Simd { .. })
+            | (Dtype::Bool, CtValue::Bool(_))
+            | (Dtype::Int, CtValue::Int(_))
+            | (Dtype::UInt, CtValue::UInt(_))
+            | (Dtype::Float64, CtValue::Float(_)) => Self::from_value(value, dtype),
+            _ => None,
+        }
+    }
+
+    /// The lane of `dtype` one value converts to as the single argument of
+    /// a construction (upstream's cast from `SIMD[other_dtype,
+    /// Self.length]` over a splatted scalar), or `None` when it does not fit
+    /// the lane (a float into an integer lane, a vector of another dtype).
+    ///
+    /// A literal materializes by the literal rule, a one-lane value of the
+    /// dtype is its own lane, and a host `Int`, `UInt`, or `Float64` wraps or
+    /// rounds into the lane.
     pub fn from_value(value: &CtValue, dtype: mojito_ast::ast::Dtype) -> Option<Self> {
         use mojito_ast::ast::Dtype;
         match (dtype, value) {
@@ -121,21 +142,26 @@ pub enum SimdConstructionError {
     Lane,
 }
 
-/// The lanes of `SIMD[dtype, width](values…)`: one value splats across the
-/// width, and `width` values give one lane each (upstream's
-/// `*elems: Scalar[dtype]`), each lane by [`CtLane::from_value`].
+/// The lanes of `SIMD[dtype, width](values…)`.
 ///
-/// The comptime evaluator, the checker's constraint evaluator, and `sccp`'s
-/// `simd.make` fold all build a construction's lanes by this one rule.
+/// One value converts by [`CtLane::from_value`] and splats across the
+/// width, and `width > 1` values give one lane each (upstream's `*elems:
+/// Scalar[dtype]`), each by [`CtLane::from_element`].
+///
+/// The checker's constraint evaluator and `sccp`'s `simd.make` fold build a
+/// construction's lanes by this one rule.
 pub fn simd_construction_lanes(
     dtype: mojito_ast::ast::Dtype,
     width: usize,
     values: &[CtValue],
 ) -> Result<Vec<CtLane>, SimdConstructionError> {
-    let lane = |value| CtLane::from_value(value, dtype).ok_or(SimdConstructionError::Lane);
+    let lane = |lane: Option<CtLane>| lane.ok_or(SimdConstructionError::Lane);
     match values {
-        [value] if width != 1 => Ok(vec![lane(value)?; width]),
-        _ if values.len() == width => values.iter().map(lane).collect(),
+        [value] => Ok(vec![lane(CtLane::from_value(value, dtype))?; width]),
+        _ if values.len() == width => values
+            .iter()
+            .map(|value| lane(CtLane::from_element(value, dtype)))
+            .collect(),
         _ => Err(SimdConstructionError::Arity),
     }
 }
@@ -1626,6 +1652,21 @@ mod tests {
         assert_eq!(
             simd_construction_lanes(Dtype::Bool, 2, &[literal(1), literal(0)]),
             Err(SimdConstructionError::Lane)
+        );
+        // A host `Int` is an element of an `int` vector only; a single one
+        // still converts.
+        let ints = [CtValue::Int(1), CtValue::Int(2)];
+        assert_eq!(
+            simd_construction_lanes(Dtype::UInt8, 2, &ints),
+            Err(SimdConstructionError::Lane)
+        );
+        assert_eq!(
+            simd_construction_lanes(Dtype::Int, 2, &ints),
+            Ok(vec![CtLane::Int(1), CtLane::Int(2)])
+        );
+        assert_eq!(
+            simd_construction_lanes(Dtype::UInt8, 2, &[CtValue::Int(300)]),
+            Ok(vec![CtLane::Int(44); 2])
         );
     }
 

@@ -1950,6 +1950,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Changed
 
+- `SIMD` and `Int` constructors take upstream's `SIMD.__init__` overloads
+  (R186). Several elements are each already the lane's scalar, so
+  `SIMD[DType.uint8, 2](i, i)` over an `Int`, a `Float64` into a `float32`
+  vector, and an `Intable` struct are rejected, while an out-of-range
+  literal element still wraps. An `Intable` value constructs a scalar only.
+  An unbound `SIMD[dt, _]` binds its width from a single argument's own
+  width, never from the argument count, and rejects a `SIMDLength` and a
+  `Bool` mask argument. `Int(3.9)`, `UInt(3.0)`, and `Int8(3.9)` fail the
+  float-dtype assert of `@implicit SIMD.__init__(FloatLiteral)`; spell
+  `Int(Float64(3.9))`. The compile-time fold builds elements by the same
+  rule (`CtLane::from_element`).
 - `Int(x)`, `UInt(x)`, `Float64(x)`, and `Bool(x)` of a scalar operand are
   now a `scalar.cast` MIR instruction carrying its target, upstream's
   inlined `pop.cast` or compare, where they were a `call` the VM, Pliron,

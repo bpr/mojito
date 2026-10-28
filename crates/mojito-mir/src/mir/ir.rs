@@ -3371,16 +3371,16 @@ impl MirInstr {
                         literal.clone().materialize_as(reg_types.get(&dest.0)?)?
                     }
                     _ if width == 1 => return None,
-                    _ if values.iter().all(|value| is_scalar_element(value, *dtype)) => {
-                        CtValue::Simd {
-                            dtype: *dtype,
-                            lanes: mojito_types::ct::simd_construction_lanes(
-                                *dtype, width, &values,
-                            )
-                            .ok()?,
-                        }
+                    // A splat folds only the element a scalar construction
+                    // takes; another one-value cast stays the run time's.
+                    [value] if mojito_types::ct::CtLane::from_element(value, *dtype).is_none() => {
+                        return None;
                     }
-                    _ => return None,
+                    _ => CtValue::Simd {
+                        dtype: *dtype,
+                        lanes: mojito_types::ct::simd_construction_lanes(*dtype, width, &values)
+                            .ok()?,
+                    },
                 };
                 (dest, folded)
             }
@@ -3842,19 +3842,6 @@ fn self_comparison(op: InfixOp, operand: &Ty, dest: &Ty) -> Option<CtValue> {
             lanes: vec![mojito_types::ct::CtLane::Bool(holds); usize::try_from(*width).ok()?],
         }),
         _ => None,
-    }
-}
-
-/// Whether `value` is an element upstream's `SIMD.__init__(*elems:
-/// Scalar[dtype])` admits: a literal, a `Bool` into a `bool` vector, or a
-/// one-lane value of the vector's own dtype. Mojito's narrowing of other
-/// elements (divergence R186) never folds.
-fn is_scalar_element(value: &CtValue, dtype: Dtype) -> bool {
-    match value {
-        CtValue::IntLiteral(_) | CtValue::FloatLiteral(_) => true,
-        CtValue::Bool(_) => dtype == Dtype::Bool,
-        CtValue::Simd { dtype: own, lanes } => *own == dtype && lanes.len() == 1,
-        _ => false,
     }
 }
 

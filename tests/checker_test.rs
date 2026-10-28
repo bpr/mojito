@@ -557,7 +557,24 @@ fn accepts_uint_via_conversion() {
 
 #[test]
 fn accepts_numeric_conversions() {
-    ok("var i: Int = Int(3.9)\nvar f: Float64 = Float64(3)\nvar u: UInt = UInt(True)\n");
+    ok("var i: Int = Int(Float64(3.9))\nvar f: Float64 = Float64(3)\nvar u: UInt = UInt(True)\n");
+}
+
+#[test]
+fn rejects_float_literal_to_int() {
+    // Upstream's `@implicit SIMD.__init__(FloatLiteral)` outranks the
+    // `Intable` overload and asserts a float dtype.
+    for source in [
+        "var i: Int = Int(3.9)\n",
+        "var u: UInt = UInt(3.0)\n",
+        "def main():\n    comptime x: Int = Int(3.9)\n    print(x)\n",
+    ] {
+        let message = err(source).to_string();
+        assert!(
+            message.contains("constraint failed: the SIMD type must be floating point"),
+            "{source}: {message}"
+        );
+    }
 }
 
 #[test]
@@ -2461,7 +2478,7 @@ fn accepts_runtime_scalar_dtype_conversions() {
     // Explicit construction converts: runtime integers wrap to any integer
     // width and convert to float lanes; floats adjust precision.
     ok(
-        "def main():\n    var i = 300\n    var b: Byte = Byte(i)\n    var u: UInt32 = UInt32(UInt(70000))\n    var w: Int32 = Int32(b)\n    var f: Float32 = Float32(2.75)\n    var g: Float32 = Float32(i)\n    var v: SIMD[DType.uint8, 4] = SIMD[DType.uint8, 4](i, 1, 2, 3)\n",
+        "def main():\n    var i = 300\n    var b: Byte = Byte(i)\n    var u: UInt32 = UInt32(UInt(70000))\n    var w: Int32 = Int32(b)\n    var f: Float32 = Float32(2.75)\n    var g: Float32 = Float32(i)\n    var v: SIMD[DType.uint8, 4] = SIMD[DType.uint8, 4](Byte(i), 1, 2, 3)\n",
     );
 }
 
@@ -3941,7 +3958,7 @@ fn nightly_pack_conformance_checks_every_type_value() {
 #[test]
 fn int_is_scalar_dtype_int_and_simdlength_drives_width_values() {
     ok_std(
-        "def width_value[width: SIMDLength]() -> Int where width > 0:\n    return width\n\ndef main():\n    var scalar: Scalar[DType.int] = 41\n    var same: Int = Scalar[DType.int](scalar + 1)\n    var vector: SIMD[DType.int, 4] = SIMD[DType.int, _](1, 2, 3, 4)\n    var width = width_value[4]()\n",
+        "def width_value[width: SIMDLength]() -> Int where width > 0:\n    return width\n\ndef main():\n    var scalar: Scalar[DType.int] = 41\n    var same: Int = Scalar[DType.int](scalar + 1)\n    var vector: SIMD[DType.int, 4] = SIMD[DType.int, 4](1, 2, 3, 4)\n    var width = width_value[4]()\n",
     );
 }
 
@@ -8937,8 +8954,9 @@ fn module_integer_constants_fold_once_as_at_the_pin() {
 #[test]
 fn scalar_construction_from_a_literal_is_its_materialization() {
     // `UInt(7)` is upstream's builtin-inline `SIMD.__init__(IntLiteral)`, the
-    // literal's conversion; a runtime `Int(x)` and `Int(3.9)` stay calls.
-    let source = "def main():\n    var x = 5\n    print(UInt(7), Int(x), Int(3.9))\n";
+    // literal's conversion; a runtime `Int(x)` and `Int(f)` stay calls.
+    let source =
+        "def main():\n    var x = 5\n    var f = 3.9\n    print(UInt(7), Int(x), Int(f))\n";
     let checked = check_program(&parse(source).expect("parse")).expect("check");
     let constructions = checked
         .expressions()
