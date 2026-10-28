@@ -2745,6 +2745,22 @@ fn param_expr(value: &ParamExpr) -> String {
                 meta,
             ],
         ),
+        ParamKind::StructValue { fields, spelling } => record(
+            "param_struct_value",
+            &[
+                (
+                    "fields",
+                    list(fields.iter().map(|(name, value)| {
+                        record(
+                            "field",
+                            &[("name", symbol(name)), ("value", param_expr(value))],
+                        )
+                    })),
+                ),
+                ("spelling", param_expr(&spelling.0)),
+                meta,
+            ],
+        ),
         // A hole never crosses into MIR: the parser rejects the form, and the
         // token keeps the text honest if one is reached.
         ParamKind::Hole { kind, token } => record(

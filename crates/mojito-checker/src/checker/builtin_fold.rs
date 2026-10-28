@@ -3,13 +3,14 @@
 //! folded once, at its declaration, into the parameter expression a call
 //! substitutes its arguments into ([`Checker::called_application`]), as
 //! upstream's `SharedState::foldInlineBuiltinFunction` clones the body with
-//! a call's operands substituted. A body construct the pin's fold rejects
+//! a call's operands substituted. An `__init__`'s body folds to the fields
+//! it stores, which a call builds into the struct value it constructs. A body construct the pin's fold rejects
 //! is rejected at the declaration, called or not, with the pin's message.
 //! The body's operators are read by the one compile-time builder, so
 //! `twice(n)` over `return n + n` and `n + n` spelled in place are one
 //! expression.
 
-use super::comptime_validation::{ApplicableDeclaration, applicable_declarations};
+use super::comptime_validation::{ApplicableDeclaration, FoldedBody, applicable_declarations};
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_ast::ast::{InfixOp, PrefixOp};
@@ -31,12 +32,7 @@ impl Checker {
         let declarations: Vec<_> =
             applicable_declarations(stmts, &*self.overload_sets, &*self.program_constants)
                 .into_iter()
-                // A builtin `__init__` stays its application until R1525
-                // folds a constructor body.
-                .filter(|declaration| {
-                    declaration.function.inline == InlineLevel::Builtin
-                        && !declaration.function.constructs()
-                })
+                .filter(|declaration| declaration.function.inline == InlineLevel::Builtin)
                 .collect();
         if let Some(error) = declarations.iter().find_map(|declaration| {
             self.in_owner_scope(declaration, |checker| {
@@ -234,15 +230,24 @@ impl Checker {
     /// The body of `declaration` as a parameter expression over its argument
     /// slots ([`super::annotations::builtin_body_binder`]): a docstring, a
     /// `var` or `comptime` binding, and a `comptime assert`, which the fold
-    /// drops, may stand before the final `return`. `None` for any other statement, or an
-    /// expression the compile-time builder does not read.
+    /// drops, may stand before the final `return`. An `__init__`'s body is
+    /// the fields it stores instead ([`Self::folded_construction`]). `None`
+    /// for any other statement, or an expression the compile-time builder
+    /// does not read.
     fn folded_builtin_body(
         &mut self,
         declaration: &ApplicableDeclaration<'_>,
-    ) -> Option<ParamExpr> {
+    ) -> Option<FoldedBody> {
         self.in_argument_scope(declaration, |checker, level| {
+            if declaration.function.constructs() {
+                return checker
+                    .folded_construction(declaration, level)
+                    .map(FoldedBody::Fields);
+            }
             let result = checker.ty_from_anno(declaration.function.result()).ok()?;
-            checker.folded_statements(declaration.body, level, &result)
+            checker
+                .folded_statements(declaration.body, level, &result)
+                .map(FoldedBody::Value)
         })
         .flatten()
     }
@@ -272,43 +277,128 @@ impl Checker {
     fn folded_statements(&mut self, body: &[Stmt], level: usize, result: &Ty) -> Option<ParamExpr> {
         let (last, leading) = body.split_last()?;
         for statement in leading {
-            match &statement.kind {
-                StmtKind::Pass => {}
-                StmtKind::Expr(Expr {
-                    kind: ExprKind::Str(_),
-                    ..
-                }) => {}
-                StmtKind::VarDecl { name, value, .. }
-                | StmtKind::Comptime {
-                    name,
-                    value,
-                    type_params: _,
-                    ty: _,
-                    where_clauses: _,
-                } => {
-                    let bound = self.builtin_operand(value)?;
-                    self.local_comptime_parameters
-                        .last_mut()?
-                        .insert(name.clone(), (level, bound));
-                }
-                // The pin's fold drops an assertion; a closed one is the body
-                // check's to judge.
-                StmtKind::ComptimeAssert { .. } => {}
-                _ => return None,
-            }
+            self.folded_leading_statement(statement, level)?;
         }
         let StmtKind::Return(Some(value)) = &last.kind else {
             return None;
         };
+        self.builtin_value(value, result)
+    }
+
+    /// The fields a builtin `__init__`'s body stores, in declaration order,
+    /// over its argument slots, as upstream's fold reads the construction:
+    /// each `self.f = e` stores `e`, a later store of a field replacing an
+    /// earlier one, and a read of a stored field (`self.b = self.a + 1`) is
+    /// the value stored. A docstring, a `var` or `comptime` binding, and a
+    /// `comptime assert` may stand among the stores. `None` for any other
+    /// statement (an augmented store, a store into a field's field), or a
+    /// field the body leaves unstored.
+    fn folded_construction(
+        &mut self,
+        declaration: &ApplicableDeclaration<'_>,
+        level: usize,
+    ) -> Option<Vec<(String, ParamExpr)>> {
+        let StmtKind::Struct { fields, .. } = &declaration.owner?.kind else {
+            return None;
+        };
+        let declared: Vec<(String, Ty)> = fields
+            .iter()
+            .map(|field| Some((field.name.clone(), self.ty_from_anno(&field.ty).ok()?)))
+            .collect::<Option<_>>()?;
+        let self_ty = self.self_ty.clone()?;
+        let symbol = declaration.function.symbol();
+        let mut slots: Vec<ParamExpr> = declaration
+            .function
+            .argument_slots()
+            .into_iter()
+            .enumerate()
+            .map(|(slot, (name, ty))| {
+                super::annotations::value_binder_expr(
+                    super::annotations::builtin_body_binder(symbol, slot, name).id,
+                    name,
+                    ty,
+                )
+            })
+            .collect();
+        if !self.enclosing_type_params.is_empty() {
+            slots.insert(0, self.param_context.type_shape(self_ty.clone()));
+        }
+        let spelling = self
+            .param_context
+            .apply(symbol, &slots, MetaTy::value(self_ty));
+        let mut stored: Vec<Option<ParamExpr>> = vec![None; declared.len()];
+        for statement in declaration.body {
+            let so_far: Vec<(String, ParamExpr)> = declared
+                .iter()
+                .zip(&stored)
+                .filter_map(|((name, _), value)| Some((name.clone(), value.clone()?)))
+                .collect();
+            let this = self.param_context.struct_value(&so_far, &spelling);
+            self.local_comptime_parameters
+                .last_mut()?
+                .insert("self".to_string(), (level, this));
+            let StmtKind::SetPlace { place, value } = &statement.kind else {
+                self.folded_leading_statement(statement, level)?;
+                continue;
+            };
+            let ExprKind::Member { object, field } = &place.kind else {
+                return None;
+            };
+            if !matches!(&object.kind, ExprKind::Identifier(name) if name == "self") {
+                return None;
+            }
+            let index = declared.iter().position(|(name, _)| name == field)?;
+            stored[index] = Some(self.builtin_value(value, &declared[index].1)?);
+        }
+        declared
+            .into_iter()
+            .zip(stored)
+            .map(|((name, _), value)| Some((name, value?)))
+            .collect()
+    }
+
+    /// Bind or drop `statement`, one a builtin body may hold before its
+    /// result: a docstring or `pass`, a `var` or `comptime` binding bound at
+    /// `level`, or a `comptime assert`, which the pin's fold drops (a closed
+    /// one is the body check's to judge). `None` for any other statement.
+    fn folded_leading_statement(&mut self, statement: &Stmt, level: usize) -> Option<()> {
+        match &statement.kind {
+            StmtKind::Pass
+            | StmtKind::Expr(Expr {
+                kind: ExprKind::Str(_),
+                ..
+            })
+            | StmtKind::ComptimeAssert { .. } => Some(()),
+            StmtKind::VarDecl { name, value, .. }
+            | StmtKind::Comptime {
+                name,
+                value,
+                type_params: _,
+                ty: _,
+                where_clauses: _,
+            } => {
+                let bound = self.builtin_operand(value)?;
+                self.local_comptime_parameters
+                    .last_mut()?
+                    .insert(name.clone(), (level, bound));
+                Some(())
+            }
+            _ => None,
+        }
+    }
+
+    /// The parameter expression of a builtin body's value of type `ty`, a
+    /// closed one materialized at it.
+    fn builtin_value(&self, value: &Expr, ty: &Ty) -> Option<ParamExpr> {
         let value = self.builtin_operand(value)?;
         let value = match value.as_constant() {
             Some(closed) => self
                 .param_context
-                .constant(closed.clone().materialize_as(result)?)
+                .constant(closed.clone().materialize_as(ty)?)
                 .ok()?,
             None => value,
         };
-        (value.meta().as_value() == Some(result)).then_some(value)
+        (value.meta().as_value() == Some(ty)).then_some(value)
     }
 
     /// The parameter expression of a builtin body's operand, built as a
@@ -411,10 +501,16 @@ fn returns(body: &[Stmt]) -> bool {
 }
 
 /// Whether `body` applies any callable of `symbols`.
-fn applies_any(body: &ParamExpr, symbols: &HashSet<String>) -> bool {
+fn applies_any(body: &FoldedBody, symbols: &HashSet<String>) -> bool {
     let mut applies = false;
-    body.visit(&mut |node| {
-        applies |= matches!(node.kind(), ParamKind::Apply { function, .. } if symbols.contains(function.as_str()));
-    });
+    let mut visit = |expr: &ParamExpr| {
+        expr.visit(&mut |node| {
+            applies |= matches!(node.kind(), ParamKind::Apply { function, .. } if symbols.contains(function.as_str()));
+        });
+    };
+    match body {
+        FoldedBody::Value(value) => visit(value),
+        FoldedBody::Fields(fields) => fields.iter().for_each(|(_, value)| visit(value)),
+    }
     applies
 }

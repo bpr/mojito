@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.121
+mojito-mir 1.122
 ```
 
-The writer emits 1.121. The reader accepts 1.0 through 1.121; *Schema 1.0*
+The writer emits 1.122. The reader accepts 1.0 through 1.122; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -741,6 +741,15 @@ compile-time-applicable callables include every struct's `__init__`, the
 synthesized fieldwise one included, marked as constructing the instance a
 call in an importer's type builds (R1483). The MIR schema is unchanged.
 
+Schema 1.122 adds `param_struct_value { fields: [field { name: symbol,
+value: param-expr }...], spelling: param-expr, type: meta }`, the struct
+value a call of an `@always_inline("builtin")` `__init__` folds to, upstream's
+folded construction (R1525). Its identity is its fields, in declaration
+order; `spelling` is the `param_apply` of the `__init__` it folded from,
+which a diagnostic shows and the elaborator answers. The package format
+moves to `mojito-package 123`, since a package's compile-time-applicable
+`__init__` may carry its folded body as the field list it stores.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1195,6 +1204,7 @@ param_type_member { subject, name: symbol, args: [param-expr...], type: meta }
 param_pack_query { pack, query }
 param_apply     { function: "symbol", type: meta, args: [param-expr...] }
 param_bind_params { generator, args: [present(param-expr) | absent...], type: meta }
+param_struct_value { fields: [field { name: symbol, value: param-expr }...], spelling, type: meta }
 ```
 
 `param_list_get` is an element of a parameter list that is still a parameter
@@ -1225,7 +1235,11 @@ __generator_type[Idx: Int] Int`) bound to `args` in its parameters'
 order, `absent` leaving a slot unbound. Its `type` is the generator type's
 result once every slot is bound, else the generator over the open slots.
 Binding a `ct_generator`, or a `param_type_member` read unapplied, folds
-when the node is built, so concrete MIR holds none.
+when the node is built, so concrete MIR holds none. `param_struct_value`
+(schema 1.122) is the struct value a builtin `__init__`'s call folds to:
+two with equal `fields` are one value whatever their `spelling`, a
+`param_field` of one is the field, and the elaborator answers it by
+running its `spelling`, so concrete MIR holds none.
 
 `op` is one of `add`, `mul`, `neg`, `sub`, `div`, `floordiv`, `mod`, `pow`,
 `shl`, `shr`, `and`, `or`, `xor`, `eq`, `lt`, `le`, `bool_and`, `bool_or`,

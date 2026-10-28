@@ -869,6 +869,24 @@ impl Decoder {
                     let built = self.context.bind_params(&generator, &args);
                     self.built(value, built)
                 }
+                "param_struct_value" => {
+                    let fields_value = self.required(value, fields, "fields")?;
+                    let entries: Vec<(String, ParamExpr)> = self
+                        .list(fields_value)
+                        .ok()?
+                        .iter()
+                        .map(|entry| {
+                            let entry_fields = self.record(entry, "field").ok()?;
+                            let name = self.req(entry, entry_fields, "name", Self::symbol)?;
+                            let field = self.req(entry, entry_fields, "value", Self::param_expr)?;
+                            self.unknown(entry_fields, &["name", "value"]);
+                            Some((name, field))
+                        })
+                        .collect::<Option<_>>()?;
+                    let spelling = self.req(value, fields, "spelling", Self::param_expr)?;
+                    self.unknown(fields, &["fields", "spelling", "type"]);
+                    Some(self.context.struct_value(&entries, &spelling))
+                }
                 "param_list_concat" => {
                     let lists_value = self.required(value, fields, "lists")?;
                     let lists: Vec<ParamExpr> = self

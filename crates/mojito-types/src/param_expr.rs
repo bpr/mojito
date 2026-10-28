@@ -713,6 +713,17 @@ impl ParamContext {
                 })?;
             return self.constant(field.1.clone());
         }
+        if let ParamKind::StructValue { fields, spelling } = base.kind() {
+            return fields
+                .iter()
+                .find(|(field, _)| field == name)
+                .map(|(_, value)| value.clone())
+                .ok_or_else(|| ParamError::TypeMismatch {
+                    operation: format!("field `{name}`"),
+                    expected: format!("a field of `{}`", spelling.0),
+                    found: name.to_string(),
+                });
+        }
         let base = self.intern(base);
         Ok(self.make(
             meta,
@@ -876,6 +887,24 @@ impl ParamContext {
         )
     }
 
+    /// The struct value `spelling`, an application of an
+    /// `@always_inline("builtin")` `__init__`, folds to: `fields` in
+    /// declaration order, typed as the construction is. A field read through
+    /// it is the field.
+    pub fn struct_value(&self, fields: &[(String, ParamExpr)], spelling: &ParamExpr) -> ParamExpr {
+        let fields = fields
+            .iter()
+            .map(|(name, value)| (name.clone(), self.intern(value)))
+            .collect();
+        self.make(
+            spelling.meta().clone(),
+            ParamKind::StructValue {
+                fields,
+                spelling: Spelling(self.intern(spelling)),
+            },
+        )
+    }
+
     /// The layout query `size_of[T]()`: the application of `size_of` to one
     /// type, answered only by the elaborator under its native target.
     pub fn size_of(&self, ty: Ty) -> ParamExpr {
@@ -1003,6 +1032,10 @@ impl ParamContext {
                     .collect::<Result<_, _>>()?;
                 self.bind_params(&self.fold(generator)?, &args)?
             }
+            ParamKind::StructValue { fields, spelling } => self.struct_value(
+                &rebuilt_fields(fields, |value| self.fold(value))?,
+                &self.fold(&spelling.0)?,
+            ),
             _ => expr.clone(),
         })
     }
@@ -1229,6 +1262,17 @@ impl ParamContext {
                     })
                     .collect::<Result<_, _>>()?;
                 return self.bind_params(&self.answer_queries(generator, answer)?, &args);
+            }
+            // An answered construction is the struct value it computes.
+            ParamKind::StructValue { fields, spelling } => {
+                let spelling = self.answer_queries(&spelling.0, answer)?;
+                if spelling.as_constant().is_some() {
+                    return Ok(spelling);
+                }
+                return Ok(self.struct_value(
+                    &rebuilt_fields(fields, |value| self.answer_queries(value, answer))?,
+                    &spelling,
+                ));
             }
             _ => return Ok(expr.clone()),
         };
@@ -1737,6 +1781,12 @@ impl ParamContext {
                     .collect::<Result<_, _>>()?;
                 self.bind_params(&self.replace_at(generator, bindings, depth, memo)?, &args)?
             }
+            ParamKind::StructValue { fields, spelling } => self.struct_value(
+                &rebuilt_fields(fields, |value| {
+                    self.replace_at(value, bindings, depth, memo)
+                })?,
+                &self.replace_at(&spelling.0, bindings, depth, memo)?,
+            ),
         };
         memo.insert(key, replaced.clone());
         Ok(replaced)
@@ -1860,6 +1910,10 @@ impl ParamContext {
                     .collect::<Result<_, _>>()?;
                 self.bind_params(&self.shift(generator, cutoff, by)?, &args)?
             }
+            ParamKind::StructValue { fields, spelling } => self.struct_value(
+                &rebuilt_fields(fields, |value| self.shift(value, cutoff, by))?,
+                &self.shift(&spelling.0, cutoff, by)?,
+            ),
             _ => expr.clone(),
         })
     }
@@ -2092,6 +2146,11 @@ impl ParamExpr {
             ParamKind::BindParams { generator, args } => std::iter::once(generator)
                 .chain(args.iter().flatten())
                 .collect(),
+            ParamKind::StructValue { fields, spelling } => fields
+                .iter()
+                .map(|(_, value)| value)
+                .chain(std::iter::once(&spelling.0))
+                .collect(),
             ParamKind::Constant(_)
             | ParamKind::DeclRef(_)
             | ParamKind::IndexRef { .. }
@@ -2112,9 +2171,11 @@ impl ParamExpr {
     }
 
     pub(crate) fn carries_decorations(&self) -> bool {
-        self.embedded_types()
-            .into_iter()
-            .any(|ty| crate::types::mentions(ty, &carries_transfers))
+        matches!(self.kind(), ParamKind::StructValue { .. })
+            || self
+                .embedded_types()
+                .into_iter()
+                .any(|ty| crate::types::mentions(ty, &carries_transfers))
     }
 
     fn rank(&self) -> u8 {
@@ -2138,6 +2199,7 @@ impl ParamExpr {
             ParamKind::ListConcat { .. } => 16,
             ParamKind::TypeMember { .. } => 17,
             ParamKind::BindParams { .. } => 18,
+            ParamKind::StructValue { .. } => 19,
         }
     }
 }
@@ -2217,6 +2279,13 @@ impl Ord for ParamExpr {
                 ) => function
                     .cmp(other_function)
                     .then_with(|| args.cmp(other_args)),
+                (
+                    ParamKind::StructValue { fields, .. },
+                    ParamKind::StructValue {
+                        fields: other_fields,
+                        ..
+                    },
+                ) => fields.cmp(other_fields),
                 _ => Ordering::Equal,
             })
             .then_with(|| self.meta().to_string().cmp(&other.meta().to_string()))
@@ -2339,11 +2408,41 @@ pub enum ParamKind {
         generator: ParamExpr,
         args: Vec<Option<ParamExpr>>,
     },
+    /// The struct value a call of an `@always_inline("builtin")` `__init__`
+    /// folds to, upstream's folded construction: its fields, in declaration
+    /// order, are its identity, so `L(n, 0)` over a body storing `v + w` and
+    /// `L(n)` over one storing `v` are one value. `spelling` is the
+    /// construction it folded from, an application of the `__init__`, which
+    /// a diagnostic shows and the elaborator runs; it takes no part in
+    /// equality, hashing, or order. A field read through it is the field
+    /// ([`ParamContext::field`]).
+    StructValue {
+        fields: Vec<(String, ParamExpr)>,
+        spelling: Spelling,
+    },
     /// Reserved typed unknown/unbound state; see [`ParamContext::hole`].
     /// Its token is one process's, so no encoding carries one. It stays the
     /// last variant: a decoder numbers the variants an encoding skips out.
     #[serde(skip)]
     Hole { kind: HoleKind, token: u64 },
+}
+
+/// The construction a [`ParamKind::StructValue`] folded from: shown and
+/// elaborated, but every spelling of one struct value is equal and hashes
+/// alike, so identity is the fields'.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct Spelling(pub ParamExpr);
+
+impl PartialEq for Spelling {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for Spelling {}
+
+impl Hash for Spelling {
+    fn hash<H: Hasher>(&self, _: &mut H) {}
 }
 
 /// The primitive operators. An enum case does not make a source operation
@@ -3906,6 +4005,7 @@ fn write_expr(f: &mut fmt::Formatter<'_>, expr: &ParamExpr, parent: u8) -> fmt::
             write_operands(f, &values)?;
             write!(f, ")")
         }
+        ParamKind::StructValue { spelling, .. } => write!(f, "{}", spelling.0),
         ParamKind::Hole { kind, token } => match kind {
             HoleKind::Unknown => write!(f, "?unknown{token}"),
             HoleKind::Unbound => write!(f, "?unbound{token}"),
@@ -3971,6 +4071,17 @@ fn bound_generator_params(
             }
             decl
         })
+        .collect()
+}
+
+/// A struct value's fields with each value rebuilt by `rebuild`.
+fn rebuilt_fields(
+    fields: &[(String, ParamExpr)],
+    mut rebuild: impl FnMut(&ParamExpr) -> Result<ParamExpr, ParamError>,
+) -> Result<Vec<(String, ParamExpr)>, ParamError> {
+    fields
+        .iter()
+        .map(|(name, value)| Ok((name.clone(), rebuild(value)?)))
         .collect()
 }
 

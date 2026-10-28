@@ -186,6 +186,12 @@ which names the upstream pass each one follows. Each is measured by the
     Box[T: ImplicitlyCopyable & Deinitable]` with `var v: Self.T` stop with
     "not an associated comptime expression": the constructor's parameter
     is typed by the struct's binder. The pin prints `12` and `10`.
+  - Probe: `SIMD[DType.int8, M(L(n), 3).l.v * 2]` against
+    `SIMD[DType.int8, 2 * n]`, where `M`'s `@always_inline("builtin")` `__init__(out self, l: L,
+    w: Int)` stores `self.l = l` and `L`'s stores `self.v = v`, prints
+    `[1, 1]` at the pin; Mojito says "unsupported associated comptime
+    member access", since `M.__init__` takes a struct, so no
+    `FoldedBody::Fields` is built for it.
   - Plan: `R1472-a-symbolic-tuple-list-or-struct-plan.md`, Slice 1.
   - Related to R397 (a callee's own type parameters).
   - Found while landing R1472 (2026-10-27).
@@ -9625,35 +9631,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Found while landing R1394 (2026-10-27).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1525 A builtin `__init__` does not fold to a struct value in a
-  parameter expression**
-
-  `L(n).v * 2` over a `TrivialRegisterPassable` `L` with an
-  `@always_inline("builtin")` `__init__(out self, v: Int)` that stores
-  `self.v = v` is `2 * n` at the pin, where Mojito keeps the unfolded
-  application and says "expected SIMD[DType.int8, 2 * n], found
-  SIMD[DType.int8, 2 * L(n).v]".
-  - `Checker::called_application` already applies `L(n)`, but
-    `fold_builtin_bodies` (`builtin_fold.rs`) skips a constructor
-    (`ApplicableFunction::constructs`) and folds only a body ending in
-    `return`, so the `__init__`'s `folded_body` is never set.
-  - The pin's folded construction is a struct aggregate displayed as a
-    call: `Tagged[L(n)]` against `Tagged[L(n + 1)]` is rejected as
-    "cannot implicitly convert 'Tagged[L(n)]' value to
-    'Tagged[L((n + Int(1)))]'".
-  - The lever: a struct-value node of R1525's own, if the folded builtin
-    `__init__` needs one (upstream's `foldInlineBuiltinFunction`). An `out
-    self` body that stores each field once folds to it, and
-    `ParamContext::field` reads a field through it.
-  - `called_application` then replaces the folded body over the call's
-    arguments, as it does a builtin function's. `Self(...)` is R58.
-  - Probe: `def f[n: Int](x: SIMD[DType.int8, L(n).v * 2]) ->
-    SIMD[DType.int8, 2 * n]: return x`, called as `f[1](SIMD[DType.int8,
-    2](1))`, prints `[1, 1]` at the pin.
-  - Found while landing R1522 (2026-10-27).
-  - Depends on nothing.
-  - Model: Fable, Not Planned.
 
 - [ ] **R1526 A call of an `@always_inline("builtin")` method with `self`
   is not folded in a parameter expression**

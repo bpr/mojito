@@ -407,6 +407,20 @@ parameter lists alike position by position, names aside, and a result
 that coerces. There is no open generator node: every source spelling in
 scope reaches a `BindParams` over a closed generator or a member read.
 
+A call of an `@always_inline("builtin")` `__init__` is a struct value (R1525):
+`ParamKind::StructValue`, built by `ParamContext::struct_value` from the
+fields the body stores, which `fold_builtin_bodies` folds once at the
+declaration (`FoldedBody::Fields`) and `called_application` replaces at the
+call's arguments. The pin identifies a folded construction by its fields
+(`L(n, 0)` over `self.v = v + w` is `L(n)`) but shows it, and infers through
+it, by the call (`Tagged[L(1, 2)]` does not solve `n` of `Tagged[L(n)]`), so
+the node keeps the call's `Apply` as a `Spelling` that equality, hashing,
+and order ignore: `Display` prints it, `solve_applied_args` matches it, and
+the elaborator answers the node by running it. A field read through the
+node is the stored field. Because interning shares equal nodes, the node
+is a decoration `intern` does not share, so each construction keeps its
+own spelling.
+
 ## Pack elements
 
 A variadic pack that is still a parameter is a binder of meta-type

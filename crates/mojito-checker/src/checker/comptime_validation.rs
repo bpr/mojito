@@ -164,11 +164,11 @@ pub(in crate::checker) struct ApplicableFunction {
     raises: bool,
     /// The inline level its decorators name.
     pub(in crate::checker) inline: mojito_checked::declaration::InlineLevel,
-    /// An `@always_inline("builtin")` body's parameter expression over
+    /// An `@always_inline("builtin")` body folded over
     /// [`super::annotations::builtin_body_binder`] slots, one per argument
     /// in [`Checker::called_application`]'s order, which a call substitutes
     /// its arguments into ([`Checker::fold_builtin_bodies`]).
-    pub(in crate::checker) folded_body: Option<ParamExpr>,
+    pub(in crate::checker) folded_body: Option<FoldedBody>,
     /// Its `where` clauses as the declaration spells them.
     where_clauses: Vec<Expr>,
     /// Those clauses compiled over the same argument slots and its struct's
@@ -176,6 +176,17 @@ pub(in crate::checker) struct ApplicableFunction {
     /// they compile, and a callable whose clauses do not is applied by no
     /// call.
     pub(in crate::checker) constraints: Option<Vec<GenericConstraint>>,
+}
+
+/// A folded `@always_inline("builtin")` body
+/// ([`ApplicableFunction::folded_body`]).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(in crate::checker) enum FoldedBody {
+    /// A function's or static method's result.
+    Value(ParamExpr),
+    /// The fields an `__init__` stores, in declaration order: a call is the
+    /// struct value over them ([`mojito_types::param_expr::ParamContext::struct_value`]).
+    Fields(Vec<(String, ParamExpr)>),
 }
 
 impl ApplicableFunction {
@@ -1095,7 +1106,10 @@ impl Checker {
     /// `foldInlineBuiltinFunction` clones the body with the call's operands
     /// substituted, so `twice(n)` is `n + n`, and a static method's body
     /// reads its struct's parameters, which the call binds from the
-    /// instance, so `G[1].plus(n)` over `return n + Self.k` is `n + 1`.
+    /// instance, so `G[1].plus(n)` over `return n + Self.k` is `n + 1`. A
+    /// builtin `__init__`'s call is the struct value of the fields its body
+    /// stores, spelled as the application, so `L(n).v` over `self.v = v` is
+    /// `n`.
     /// `None` for a callee that is
     /// no such callable ([`applicable_functions`]), a call that selects no
     /// one overload, or an argument that denotes no parameter expression.
@@ -1128,6 +1142,16 @@ impl Checker {
         if function.raises {
             return None;
         }
+        let mut applied = Vec::with_capacity(arguments.len() + 1);
+        if function.on_instance {
+            applied.push(self.param_context.type_shape(instance.clone()?));
+        }
+        applied.extend(arguments.iter().cloned());
+        let application = self.param_context.apply(
+            &function.symbol,
+            &applied,
+            mojito_types::param_expr::MetaTy::value(result),
+        );
         if let Some(body) = &function.folded_body {
             let mut bindings = mojito_types::param_expr::ParamBindings::new();
             for (slot, argument) in arguments.iter().enumerate() {
@@ -1146,29 +1170,29 @@ impl Checker {
                 }
                 _ => None,
             };
-            if let Some(folded) =
+            let replaced = |expr: &ParamExpr| {
                 self.param_context
-                    .replace(body, &bindings)
+                    .replace(expr, &bindings)
                     .ok()
                     .filter(|folded| {
                         declared.as_ref().is_none_or(|(decls, instance_args)| {
                             !reads_rebound_binder(folded, decls, instance_args)
                         })
                     })
-            {
-                return Some(folded);
+            };
+            let folded = match body {
+                FoldedBody::Value(value) => replaced(value),
+                FoldedBody::Fields(fields) => fields
+                    .iter()
+                    .map(|(name, value)| Some((name.clone(), replaced(value)?)))
+                    .collect::<Option<Vec<_>>>()
+                    .map(|fields| self.param_context.struct_value(&fields, &application)),
+            };
+            if folded.is_some() {
+                return folded;
             }
         }
-        let mut applied = Vec::with_capacity(arguments.len() + 1);
-        if function.on_instance {
-            applied.push(self.param_context.type_shape(instance?));
-        }
-        applied.extend(arguments);
-        Some(self.param_context.apply(
-            &function.symbol,
-            &applied,
-            mojito_types::param_expr::MetaTy::value(result),
-        ))
+        Some(application)
     }
 
     /// Whether `expr` calls a `raises` callable a compile-time call would

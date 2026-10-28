@@ -680,14 +680,21 @@ fn substitute_values(ty: &Ty, bindings: &mojito_types::param_expr::ParamBindings
 /// Solve value parameters from the arguments of one function's application
 /// (`h(n)` against `h(2)` solves `n = 2`, `G[n].f()` against `G[2].f()` the
 /// same through the instance), as the pin unifies a call in the parameter
-/// domain argument by argument. First solution wins; any other pair of
-/// expressions contributes nothing.
+/// domain argument by argument. A struct value a builtin `__init__` folds
+/// to is matched by the construction it folded from, as the pin infers
+/// through the call and not through the fields. First solution wins; any
+/// other pair of expressions contributes nothing.
 fn solve_applied_args(
     pattern: &ParamExpr,
     actual: &ParamExpr,
     width_binders: &dyn Fn(&ParamId) -> bool,
     out: &mut HashMap<String, CtValue>,
 ) {
+    let construction = |expr: &ParamExpr| match expr.kind() {
+        ParamKind::StructValue { spelling, .. } => spelling.0.clone(),
+        _ => expr.clone(),
+    };
+    let (pattern, actual) = (construction(pattern), construction(actual));
     let (
         ParamKind::Apply { function, args, .. },
         ParamKind::Apply {

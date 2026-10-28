@@ -11,6 +11,7 @@ assets/ok/abstract_dispatch_effect_free_conformers.mojo	-	ineligible	no-scalar-e
 assets/ok/access_beside_live_ref_binding.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/add.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/allocation_tracked_unsafe_ptr.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/always_inline_builtin_init_fold.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_builtin_parameter_fold.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_builtin_struct_static_fold.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/always_inline_nodebug_binders.mojo	-	ineligible	no-scalar-entry-shape

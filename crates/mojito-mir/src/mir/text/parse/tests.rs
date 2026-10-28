@@ -645,6 +645,35 @@ fn const_value_and_param_field_round_trip() {
     assert_reprints(&program);
 }
 
+/// A builtin construction's struct value reprints as a `param_struct_value`
+/// node, its fields and the construction it folded from.
+#[test]
+fn param_struct_value_round_trips() {
+    let context = ParamContext::detached();
+    let l = Ty::new(TyKind::Struct("L".into(), Vec::new()));
+    let meta = mojito_types::param_expr::MetaTy::value(l.clone());
+    let n = context.decl_ref(
+        test_binder("n").id,
+        "n",
+        mojito_types::param_expr::MetaTy::int(),
+    );
+    let spelling = context.apply("L.__init__", std::slice::from_ref(&n), meta);
+    let value = context.struct_value(&[("v".into(), n)], &spelling);
+    let program = program_with(vec![(
+        "consts".into(),
+        function_with(
+            vec![l],
+            vec![MirInstr::Const {
+                dest: Reg(0),
+                k: Const::Param(value),
+            }],
+        ),
+    )]);
+    let text = write::program(&program);
+    assert!(text.contains("param(param_struct_value"));
+    assert_reprints(&program);
+}
+
 /// A frozen `enum` case reprints as its struct over a `ct_variant`, with
 /// or without a payload.
 #[test]

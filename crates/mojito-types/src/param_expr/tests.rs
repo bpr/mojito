@@ -627,6 +627,49 @@ fn param_apply_is_structural_and_unfolded() {
     assert_eq!(*context.size_of(Ty::int()).meta(), MetaTy::int());
 }
 
+/// A builtin construction's struct value is identified by its fields: two
+/// spellings over equal fields are one value, a field read is the field,
+/// replacement reaches the fields, and an answered construction is the
+/// value it computes.
+#[test]
+fn struct_value_identity_is_its_fields() {
+    let context = ParamContext::new();
+    let point = MetaTy::value(TyKind::Struct("L".to_string(), Vec::new()).into());
+    let n = int_param(&context, "f", 0, "n");
+    let zero = context.constant(CtValue::Int(0)).expect("constant");
+    let one_arg = context.apply("L.__init__", std::slice::from_ref(&n), point.clone());
+    let two_args = context.apply("L.__init__$2", &[n.clone(), zero], point);
+    let fields = [("v".to_string(), n.clone())];
+    let value = context.struct_value(&fields, &one_arg);
+    let respelled = context.struct_value(&fields, &two_args);
+    assert_eq!(value, respelled);
+    assert_eq!(hash_of(&value), hash_of(&respelled));
+    assert_eq!(value.to_string(), "L(n)");
+    assert_eq!(respelled.to_string(), "L(n, 0)");
+    assert_eq!(
+        context
+            .field(&value, "v", MetaTy::int())
+            .expect("a stored field"),
+        n
+    );
+    let two = context.constant(CtValue::Int(2)).expect("constant");
+    let mut bindings = ParamBindings::new();
+    bindings.bind_name("n", two.clone());
+    let replaced = context.replace(&value, &bindings).expect("replacement");
+    assert!(
+        matches!(replaced.kind(), ParamKind::StructValue { fields, .. }
+        if fields == &[("v".to_string(), two)])
+    );
+    let frozen = CtValue::Struct {
+        name: "L".to_string(),
+        fields: vec![("v".to_string(), CtValue::Int(2))],
+    };
+    let answered = context
+        .answer_applications(&replaced, &mut |_, _| Ok(Some(frozen.clone())))
+        .expect("answers");
+    assert_eq!(answered.as_constant(), Some(&frozen));
+}
+
 /// A `DType` float query over a binder is an application `replace` keeps
 /// and a required value answers: the format's width at a float dtype, and
 /// the pin's failed constraint at any other.

@@ -2294,13 +2294,22 @@ impl Checker {
 
     /// The projection of `field` out of `object` when `object` compiles to a
     /// struct-typed parameter value declaring that field: upstream's struct
-    /// extract on a parameter attribute, folded when the value is closed.
+    /// extract on a parameter attribute, folded when the value is closed or
+    /// is the struct value a builtin `__init__` stores, whose fields a
+    /// builtin body reads before its struct's field types are resolved.
     pub(super) fn struct_value_field(
         &self,
         object: &Expr,
         field: &str,
     ) -> Option<Result<ParamExpr, TypeError>> {
         let base = self.compile_dependent_ct_expr(object).ok()?;
+        if let mojito_types::param_expr::ParamKind::StructValue { .. } = base.kind() {
+            return Some(
+                self.param_context
+                    .field(&base, field, base.meta().clone())
+                    .map_err(param_error),
+            );
+        }
         let Some(TyKind::Struct(owner, _)) = base.meta().as_value().map(Ty::kind) else {
             return None;
         };
@@ -3608,6 +3617,7 @@ impl Checker {
                     !matches!(
                         expression.kind(),
                         mojito_types::param_expr::ParamKind::Apply { .. }
+                            | mojito_types::param_expr::ParamKind::StructValue { .. }
                     )
                 }) =>
             {

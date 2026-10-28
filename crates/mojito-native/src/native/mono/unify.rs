@@ -581,6 +581,7 @@ pub(super) fn unify_arg(
             None => match eval_ct(expr, bindings) {
                 Ok(closed) if mojito_types::param_expr::identity_eq(&closed, value) => Ok(()),
                 Ok(_) => Err("generic application arguments disagree".to_string()),
+                Err(_) if struct_value_agrees(expr, value, bindings) => Ok(()),
                 Err(error) => Err(error.construct),
             },
         },
@@ -597,6 +598,27 @@ pub(super) fn unify_arg(
         (TyArg::Origin(_), TyArg::Origin(_)) => Ok(()),
         _ => Err("generic application arguments disagree".to_string()),
     }
+}
+
+/// Whether `expr`, a struct value a builtin `__init__` folds to whose
+/// construction no substitution has run yet, has the fields of the frozen
+/// `value`: a struct value's identity is its fields.
+fn struct_value_agrees(expr: &ParamExpr, value: &CtValue, bindings: &Bindings) -> bool {
+    let (ParamKind::StructValue { fields, .. }, CtValue::Struct { fields: frozen, .. }) =
+        (expr.kind(), value)
+    else {
+        return false;
+    };
+    fields.len() == frozen.len()
+        && fields
+            .iter()
+            .zip(frozen)
+            .all(|((name, field), (frozen_name, frozen_value))| {
+                name == frozen_name
+                    && eval_ct(field, bindings).is_ok_and(|field| {
+                        mojito_types::param_expr::identity_eq(&field, frozen_value)
+                    })
+            })
 }
 
 /// Bind the type pack `binder` to `elements`: as the runtime pack every

@@ -8,6 +8,18 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A call of an `@always_inline("builtin")` `__init__` in a type or a
+  parameter argument is now the struct value its body stores, as at the
+  pin (R1525). It is compared by its fields and shown as its call, so
+  `L(n).v * 2` over `self.v = v` is `2 * n`, `Tagged[L(n, 0)]` is
+  `Tagged[L(n)]` when `L(v, w)` stores `v + w`, and a body may read a field
+  it stored (`self.b = self.a + 1`). Inference still goes through the
+  call, so `Tagged[L(1, 2)]` solves no `n` of `Tagged[L(n)]`. A body
+  that updates a field in place (`self.v += 1`) keeps the application.
+  A builtin `__init__` body is now judged as any builtin body, so a
+  statement `if` or an ordinary call in one is rejected with the pin's
+  message. The MIR schema moves to 1.122 (`param_struct_value`) and the
+  package format to `mojito-package 123`.
 - A struct construction in a type or a parameter argument is now the
   application of the struct's `__init__`, the synthesized fieldwise one
   included, as at the pin, so `Tagged[Extent(n, n + 1)]` in `def gen[n:
