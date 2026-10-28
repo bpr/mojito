@@ -1712,6 +1712,9 @@ impl Checker {
             ExprKind::Prefix(PrefixOp::Neg, operand) => {
                 self.negated_value(expr, operand, recording)
             }
+            ExprKind::Prefix(PrefixOp::Invert, operand) => {
+                self.inverted_value(expr, operand, recording)
+            }
             // `not b` over a compile-time `Bool`; any other operand is the
             // ordinary rejection below.
             ExprKind::Prefix(PrefixOp::Not, operand)
@@ -1783,6 +1786,37 @@ impl Checker {
                 .and_then(|value| self.ct_param(value)),
             None => self.param_context.neg(&built).map_err(param_error),
         }
+    }
+
+    /// The parameter expression of `~operand`, the inversion `expr` spells:
+    /// a closed operand folds, a struct one applies its `__invert__`
+    /// ([`Self::struct_operator_value`]), and any other is `operand ^ -1`,
+    /// `SIMD.__invert__`'s builtin body as upstream folds it.
+    fn inverted_value(
+        &self,
+        expr: &Expr,
+        operand: &Expr,
+        recording: Recording,
+    ) -> Result<ParamExpr, TypeError> {
+        let built = self.build_ct(operand, recording)?;
+        if struct_valued(&built) {
+            return self.struct_operator_value(
+                expr,
+                PrefixOp::Invert.symbol(),
+                &[(operand, PrefixOp::Invert.dunder(), None)],
+            );
+        }
+        if let Some(value) = built.as_constant() {
+            return mojito_types::param_expr::fold::fold_invert(value)
+                .map_err(param_error)
+                .and_then(|value| self.ct_param(value));
+        }
+        let minus_one = self.ct_param(CtValue::IntLiteral(
+            mojito_common::literal::IntLiteral::from(-1i64),
+        ))?;
+        self.param_context
+            .infix(InfixOp::BitXor, &built, &minus_one)
+            .map_err(param_error)
     }
 
     /// The parameter expression of `left op right`, which `expr` spells:

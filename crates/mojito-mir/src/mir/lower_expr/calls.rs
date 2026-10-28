@@ -222,7 +222,7 @@ impl<'a> Flatten<'a> {
                     element,
                     &reference,
                     receiver_root,
-                    false,
+                    (false, false),
                 );
                 let value = self.fresh_typed(
                     call.location(),

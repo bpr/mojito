@@ -836,6 +836,7 @@ impl Checker {
                 .structs
                 .get(name)
                 .is_some_and(|info| info.methods.contains_key(dunder)),
+            TyKind::Simd { .. } => self.declared_receiver_member(operand_ty, dunder).is_some(),
             _ => self.bound_inplace_operator(operand_ty, op),
         };
         if !has_method {
@@ -1648,18 +1649,25 @@ impl Checker {
                         "immutable reference field".to_string(),
                     ));
                 }
-                // A user-defined value dispatches augmented assignment to its
-                // dedicated in-place dunder (`x += y` → `x.__iadd__(y)`), which
-                // mutates `mut self`; Mojo does not fall back to the binary
-                // operator. Native scalars keep the builtin operator path below.
+                // A user-defined value, or a `SIMD` declaring the operator's
+                // in-place dunder, dispatches augmented assignment to it
+                // (`x += y` → `x.__iadd__(y)`), which mutates `mut self`; Mojo
+                // does not fall back to the binary operator. Any other target
+                // (`/=` over a `SIMD` until `__itruediv__` lands, `Bool &=`)
+                // keeps the operator path below.
                 let inplace_operand = matches!(target.kind(), TyKind::Struct(name, _) if self.structs.contains_key(name))
-                    || self.bound_inplace_operator(&target, *op);
+                    || self.bound_inplace_operator(&target, *op)
+                    || op.inplace_dunder().is_some_and(|dunder| {
+                        self.declared_receiver_member(&target, dunder).is_some()
+                    });
                 if !nominal_subscript && inplace_operand {
                     // A reference-returning call's facts share the place's
                     // span, so its dunder is selected on a temporary receiver.
                     let contract = if matches!(
                         place.kind,
-                        ExprKind::Call { .. } | ExprKind::MethodCall { .. }
+                        ExprKind::Call { .. }
+                            | ExprKind::MethodCall { .. }
+                            | ExprKind::Invoke { .. }
                     ) {
                         self.select_subscript_inplace_operator(place, *op, value, &target)?
                     } else {

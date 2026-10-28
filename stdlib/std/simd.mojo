@@ -1,9 +1,13 @@
 # Upstream's `std/simd.mojo`, in part: the `SIMD` struct, its storage, and
 # its instance `__len__`, `__getitem__`, `__setitem__`, `__contains__`,
-# `__add__`, `__sub__`, `__mul__`, `__pos__`, `__neg__`, `__radd__`,
-# `__rsub__`, `__rmul__`, `__bool__`, `__int__`, `__mlir_index__`,
+# `__add__`, `__sub__`, `__mul__`, `__pos__`, `__neg__`, `__and__`,
+# `__xor__`, `__or__`, `__lshift__`, `__rshift__`, `__invert__`, the
+# in-place `__iadd__`, `__isub__`, `__imul__`, `__iand__`, `__ixor__`,
+# `__ior__`, `__ilshift__`, and `__irshift__`, the reflected `__radd__`,
+# `__rsub__`, `__rmul__`, `__rand__`, `__rxor__`, `__ror__`, `__rlshift__`,
+# and `__rrshift__`, and `__bool__`, `__int__`, `__mlir_index__`,
 # `__float__`, and `_refine`. The other members are still served by the
-# compiler (R184, R1552–R1555, R1566, R1567, R330, R276), and the struct
+# compiler (R184, R1553–R1555, R1566, R1567, R330, R276), and the struct
 # declares only the traits whose requirements are ported here; as
 # upstream's, its trait list has no `Floatable`. `Scalar`, `Int`, `UInt`,
 # the sized aliases, and `Byte` stay compiler names until R1557.
@@ -306,6 +310,238 @@ struct SIMD[dtype: DType, length: SIMDLength](
         comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
         return Self(mlir_value=__mlir_op.`pop.neg`(self._mlir_value))
 
+    @always_inline("builtin")
+    def __and__(self, rhs: Self) -> Self:
+        """Returns `self & rhs`.
+
+        Constraints:
+            The element type of the SIMD vector must be bool or integral.
+
+        Args:
+            rhs: The RHS value.
+
+        Returns:
+            `self & rhs`.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "must be an integral or bool type"
+        return Self(
+            mlir_value=__mlir_op.`pop.simd.and`(
+                self._mlir_value, rhs._mlir_value
+            )
+        )
+
+    @always_inline("builtin")
+    def __xor__(self, rhs: Self) -> Self:
+        """Returns `self ^ rhs`.
+
+        Constraints:
+            The element type of the SIMD vector must be bool or integral.
+
+        Args:
+            rhs: The RHS value.
+
+        Returns:
+            `self ^ rhs`.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "must be an integral or bool type"
+        return Self(
+            mlir_value=__mlir_op.`pop.simd.xor`(
+                self._mlir_value, rhs._mlir_value
+            )
+        )
+
+    @always_inline("builtin")
+    def __or__(self, rhs: Self) -> Self:
+        """Returns `self | rhs`.
+
+        Constraints:
+            The element type of the SIMD vector must be bool or integral.
+
+        Args:
+            rhs: The RHS value.
+
+        Returns:
+            `self | rhs`.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "must be an integral or bool type"
+        return Self(
+            mlir_value=__mlir_op.`pop.simd.or`(
+                self._mlir_value, rhs._mlir_value
+            )
+        )
+
+    @always_inline("builtin")
+    def __lshift__(self, rhs: Self) -> Self:
+        """Returns `self << rhs`.
+
+        Constraints:
+            The element type of the SIMD vector must be integral.
+
+        Args:
+            rhs: The RHS value.
+
+        Returns:
+            `self << rhs`.
+        """
+        comptime assert Self.dtype.is_integral(), "must be an integral type"
+        return Self(
+            mlir_value=__mlir_op.`pop.shl`(self._mlir_value, rhs._mlir_value)
+        )
+
+    @always_inline("builtin")
+    def __rshift__(self, rhs: Self) -> Self:
+        """Returns `self >> rhs`.
+
+        Constraints:
+            The element type of the SIMD vector must be integral.
+
+        Args:
+            rhs: The RHS value.
+
+        Returns:
+            `self >> rhs`.
+        """
+        comptime assert Self.dtype.is_integral(), "must be an integral type"
+        return Self(
+            mlir_value=__mlir_op.`pop.shr`(self._mlir_value, rhs._mlir_value)
+        )
+
+    @always_inline("builtin")
+    def __invert__(self) -> Self:
+        """Returns `~self`.
+
+        Constraints:
+            The element type of the SIMD vector must be boolean or integral.
+
+        Returns:
+            The `~self` value.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "must be an integral or bool type"
+
+        return self ^ -1
+
+    # ===------------------------------------------------------------------=== #
+    # In place operations.
+    # ===------------------------------------------------------------------=== #
+
+    @inline(.nodebug)
+    def __iadd__(mut self, rhs: Self):
+        """Performs in-place addition.
+
+        The vector is mutated where each element at position `i` is computed as
+        `self[i] + rhs[i]`.
+
+        Args:
+            rhs: The rhs of the addition operation.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        self = self + rhs
+
+    @inline(.nodebug)
+    def __isub__(mut self, rhs: Self):
+        """Performs in-place subtraction.
+
+        The vector is mutated where each element at position `i` is computed as
+        `self[i] - rhs[i]`.
+
+        Args:
+            rhs: The rhs of the operation.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        self = self - rhs
+
+    @inline(.nodebug)
+    def __imul__(mut self, rhs: Self):
+        """Performs in-place multiplication.
+
+        The vector is mutated where each element at position `i` is computed as
+        `self[i] * rhs[i]`.
+
+        Args:
+            rhs: The rhs of the operation.
+        """
+        comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
+        self = self * rhs
+
+    @inline(.nodebug)
+    def __iand__(mut self, rhs: Self):
+        """Computes `self & rhs` and save the result in `self`.
+
+        Constraints:
+            The element type of the SIMD vector must be bool or integral.
+
+        Args:
+            rhs: The RHS value.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "must be an integral or bool type"
+        self = self & rhs
+
+    @inline(.nodebug)
+    def __ixor__(mut self, rhs: Self):
+        """Computes `self ^ rhs` and save the result in `self`.
+
+        Constraints:
+            The element type of the SIMD vector must be bool or integral.
+
+        Args:
+            rhs: The RHS value.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "must be an integral or bool type"
+        self = self ^ rhs
+
+    @inline(.nodebug)
+    def __ior__(mut self, rhs: Self):
+        """Computes `self | rhs` and save the result in `self`.
+
+        Constraints:
+            The element type of the SIMD vector must be bool or integral.
+
+        Args:
+            rhs: The RHS value.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "must be an integral or bool type"
+        self = self | rhs
+
+    @inline(.nodebug)
+    def __ilshift__(mut self, rhs: Self):
+        """Computes `self << rhs` and save the result in `self`.
+
+        Constraints:
+            The element type of the SIMD vector must be integral.
+
+        Args:
+            rhs: The RHS value.
+        """
+        comptime assert Self.dtype.is_integral(), "must be an integral type"
+        self = self << rhs
+
+    @inline(.nodebug)
+    def __irshift__(mut self, rhs: Self):
+        """Computes `self >> rhs` and save the result in `self`.
+
+        Constraints:
+            The element type of the SIMD vector must be integral.
+
+        Args:
+            rhs: The RHS value.
+        """
+        comptime assert Self.dtype.is_integral(), "must be an integral type"
+        self = self >> rhs
+
     # ===------------------------------------------------------------------=== #
     # Reversed operations
     # ===------------------------------------------------------------------=== #
@@ -348,6 +584,92 @@ struct SIMD[dtype: DType, length: SIMDLength](
         """
         comptime assert Self.dtype.is_numeric(), "the SIMD type must be numeric"
         return value * self
+
+    @always_inline("builtin")
+    def __rand__(self, value: Self) -> Self:
+        """Returns `value & self`.
+
+        Constraints:
+            The element type of the SIMD vector must be bool or integral.
+
+        Args:
+            value: The other value.
+
+        Returns:
+            `value & self`.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "must be an integral or bool type"
+        return value & self
+
+    @always_inline("builtin")
+    def __rxor__(self, value: Self) -> Self:
+        """Returns `value ^ self`.
+
+        Constraints:
+            The element type of the SIMD vector must be bool or integral.
+
+        Args:
+            value: The other value.
+
+        Returns:
+            `value ^ self`.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "must be an integral or bool type"
+        return value ^ self
+
+    @always_inline("builtin")
+    def __ror__(self, value: Self) -> Self:
+        """Returns `value | self`.
+
+        Constraints:
+            The element type of the SIMD vector must be bool or integral.
+
+        Args:
+            value: The other value.
+
+        Returns:
+            `value | self`.
+        """
+        comptime assert (
+            Self.dtype.is_integral() or Self.dtype == DType.bool
+        ), "must be an integral or bool type"
+        return value | self
+
+    @always_inline("builtin")
+    def __rlshift__(self, value: Self) -> Self:
+        """Returns `value << self`.
+
+        Constraints:
+            The element type of the SIMD vector must be integral.
+
+        Args:
+            value: The other value.
+
+        Returns:
+            `value << self`.
+        """
+        comptime assert Self.dtype.is_integral(), "must be an integral type"
+        return value << self
+
+    @always_inline("builtin")
+    def __rrshift__(self, value: Self) -> Self:
+        """Returns `value >> self`.
+
+        Constraints:
+            The element type of the SIMD vector must be integral.
+
+        Args:
+            value: The other value.
+
+        Returns:
+            `value >> self`.
+        """
+        comptime assert Self.dtype.is_integral(), "must be an integral type"
+        return value >> self
 
     # ===------------------------------------------------------------------=== #
     # Trait implementations

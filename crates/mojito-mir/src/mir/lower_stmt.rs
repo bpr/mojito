@@ -1324,8 +1324,13 @@ impl<'a> Flatten<'a> {
         if let Some(inplace) = &plan.inplace
             && let Some(reference) = reference
         {
-            let place =
-                self.materialize_call_reference_place(target, handle, &reference, None, false);
+            let place = self.materialize_call_reference_place(
+                target,
+                handle,
+                &reference,
+                None,
+                (false, true),
+            );
             let recv = self.fresh_typed(
                 target.location(),
                 Some(place.root),

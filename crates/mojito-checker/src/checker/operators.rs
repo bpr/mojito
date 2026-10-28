@@ -14,9 +14,10 @@ impl Checker {
         operand: &Expr,
     ) -> Result<Ty, TypeError> {
         let t = self.infer(operand)?;
-        // `-x` over a `SIMD` is its declared `x.__neg__()`, as upstream's
-        // `UnaryOpNode::emitArith` emits it.
-        if op == PrefixOp::Neg
+        // `-x` and `~x` over a `SIMD` are its declared `x.__neg__()` and
+        // `x.__invert__()`, as upstream's `UnaryOpNode::emitArith` emits
+        // them.
+        if matches!(op, PrefixOp::Neg | PrefixOp::Invert)
             && self.declared_receiver_member(&t, op.dunder()).is_some()
             && let Some(ty) =
                 self.infer_operator_method_call(&span, operand, &t, op.dunder(), &[])?
@@ -34,12 +35,9 @@ impl Checker {
             (PrefixOp::Not, _) if is_numeric(&t) || is_scalar_simd(&t) => {
                 return Ok(Ty::bool());
             }
-            // Bitwise inversion keeps an integer (or `Bool`) type; float
-            // operands and masks have no inversion.
-            (PrefixOp::Invert, TyKind::INT | TyKind::UINT | TyKind::IntLiteral | TyKind::Bool) => {
-                return Ok(t);
-            }
-            (PrefixOp::Invert, TyKind::Simd { dtype, .. }) if dtype.licenses(|d| !d.is_float()) => {
+            // A literal's and a `Bool`'s inversion keep their type; a
+            // `SIMD`'s is its `__invert__` above.
+            (PrefixOp::Invert, TyKind::IntLiteral | TyKind::Bool) => {
                 return Ok(t);
             }
             _ => {}
@@ -145,13 +143,14 @@ impl Checker {
         if matches!(op, In | NotIn) {
             return self.infer_membership(span, op, left, right, &lt, &rt);
         }
-        // `+`, `-`, and `*` beside a `SIMD` operand, a scalar's included, are
-        // `SIMD`'s declared dunders, `a.__add__(b)` else the reflected
-        // `b.__radd__(a)`, as upstream's `emitBinOpCall` resolves them.
+        // `+`, `-`, `*`, the bitwise operators, and the shifts beside a
+        // `SIMD` operand, a scalar's included, are `SIMD`'s declared
+        // dunders, `a.__add__(b)` else the reflected `b.__radd__(a)`, as
+        // upstream's `emitBinOpCall` resolves them.
         let pointer_or_archetype =
             |ty: &Ty| matches!(ty.kind(), TyKind::Pointer { .. }) || is_bound_archetype(ty);
         if let Some(span) = &span
-            && matches!(op, Add | Sub | Mul)
+            && matches!(op, Add | Sub | Mul | BitAnd | BitOr | BitXor | Shl | Shr)
             && (matches!(lt.kind(), TyKind::Simd { .. })
                 || matches!(rt.kind(), TyKind::Simd { .. }))
             && !pointer_or_archetype(&lt)
@@ -274,18 +273,23 @@ impl Checker {
             Add if lt == TyKind::StringLiteral && rt == TyKind::StringLiteral => {
                 Some(Ty::string_literal())
             }
-            // Arithmetic that preserves the operand type: literal
-            // arithmetic, and the binary operator of an augmented
-            // assignment over a scalar, which has no `__iadd__` yet (R1552);
-            // any other `+`, `-`, or `*` beside a `SIMD` is its dunder above.
-            Add | Sub | Mul | FloorDiv | Mod | Pow => common,
-            Shl | Shr | BitAnd | BitOr | BitXor
+            // Literal arithmetic, bitwise logic, and shifts keep the literal
+            // type; the same operators beside a `SIMD` are its dunders above.
+            Add | Sub | Mul
                 if common.as_ref().is_some_and(|ty| {
-                    matches!(ty.kind(), TyKind::INT | TyKind::UINT | TyKind::IntLiteral)
+                    matches!(ty.kind(), TyKind::IntLiteral | TyKind::FloatLiteral)
                 }) =>
             {
                 common
             }
+            Shl | Shr | BitAnd | BitOr | BitXor
+                if common.as_ref().is_some_and(|ty| *ty == TyKind::IntLiteral) =>
+            {
+                common
+            }
+            // `//`, `%`, and `**` keep the common type until their `SIMD`
+            // dunders land (R1566, R1567).
+            FloorDiv | Mod | Pow => common,
             // Literal division stays exact until a runtime context chooses
             // Float64; concrete operands perform fixed-width runtime division.
             Div if common.is_some() => Some(
@@ -538,8 +542,8 @@ impl Checker {
         })
     }
 
-    /// Type a SIMD operator other than an infix `+`, `-`, or `*`, which are
-    /// `SIMD`'s declared dunders. Both operands must be the same SIMD type,
+    /// Type a SIMD operator that is not yet a declared dunder: `//`, `%`,
+    /// `/`, and the comparisons. Both operands must be the same SIMD type,
     /// except a numeric *literal* splats to the other operand's type.
     /// Arithmetic is elementwise and keeps the operand type; a comparison is
     /// upstream's builtin dunder, a `Bool`: `==` when every lane is equal,
@@ -553,10 +557,7 @@ impl Checker {
         lt: &Ty,
         rt: &Ty,
     ) -> Result<Ty, TypeError> {
-        use InfixOp::{
-            Add, BitAnd, BitOr, BitXor, Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Mul, Ne, Shl, Shr,
-            Sub,
-        };
+        use InfixOp::{Div, Eq, FloorDiv, Ge, Gt, Le, Lt, Mod, Ne};
         let bad = || TypeError::BadOperator {
             op: op.symbol().to_string(),
             operands: format!("{lt} and {rt}"),
@@ -584,16 +585,11 @@ impl Checker {
         };
         let same = || simd_of(dtype.clone(), width.clone());
         match op {
-            // Only an augmented assignment's binary operator, which has no
-            // `__iadd__` yet (R1552), reaches here for `+`, `-`, and `*`.
-            Add | Sub | Mul if dtype.licenses(|d| d != Dtype::Bool) => same(),
             // Floor division on numeric lanes (`pop.floordiv`); remainder on
             // integer lanes (upstream defines it on float lanes too, a
             // recorded gap).
             FloorDiv if dtype.licenses(|d| d != Dtype::Bool) => same(),
             Mod if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
-            BitAnd | BitOr | BitXor if dtype.licenses(|d| !d.is_float()) => same(),
-            Shl | Shr if dtype.licenses(|d| d != Dtype::Bool && !d.is_float()) => same(),
             // True division is defined on float lanes only.
             Div if dtype.licenses(Dtype::is_float) => same(),
             // `__eq__` reduces the lanes, `__ne__` is `not __eq__`.

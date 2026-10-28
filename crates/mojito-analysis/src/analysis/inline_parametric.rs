@@ -1602,6 +1602,9 @@ impl<'c> Inliner<'_, 'c> {
         };
         retain_unconsumed(&mut blocks, &part_bound);
         copy_bound_parameters(&mut blocks, callee, &bound);
+        let mut reads = vec![0; callee.n_regs as usize];
+        count_register_reads(&mut blocks, &mut reads);
+        access_bound_parameters_in_place(&mut blocks, callee, &reads, &bound);
         rebind_blocks(&mut blocks, &Registers::new(self.function), &bound)?;
         Some(blocks)
     }
@@ -3081,6 +3084,84 @@ fn copy_bound_parameters<'b>(
                     });
                 }
                 other => rewritten.push(other),
+            }
+        }
+        block.instrs = rewritten;
+    }
+}
+
+/// Rewrite in `blocks` and their regions each whole reference to a
+/// parameter `bound` to a caller's place that the next instruction alone
+/// writes or reads through (`self = value` in a `mut self` body) into a
+/// store to, or a load of, the parameter's place, which composes to the
+/// caller's place as the body's field stores do, and a store to a caller's
+/// whole slot is that slot's `var.store`: upstream's inlined store through
+/// the address its caller passes, which takes no reference. The reference's
+/// register leaves `callee` with its instruction.
+fn access_bound_parameters_in_place<'b>(
+    blocks: &mut [MirBlock],
+    callee: &mut MirFunction,
+    reads: &[u32],
+    bound: &dyn Fn(VarId) -> Option<&'b MirPlace>,
+) {
+    for block in blocks {
+        for region in block.instrs.iter_mut().flat_map(instruction_regions_mut) {
+            access_bound_parameters_in_place(region, callee, reads, bound);
+        }
+        let mut rewritten = Vec::with_capacity(block.instrs.len());
+        let mut instructions = std::mem::take(&mut block.instrs).into_iter().peekable();
+        while let Some(instruction) = instructions.next() {
+            let MirInstr::MakeRef { dest, place } = &instruction else {
+                rewritten.push(instruction);
+                continue;
+            };
+            let outer = (place.proj.is_empty()
+                && place.through.is_none_or(|var| var == place.root)
+                && reads.get(dest.0 as usize) == Some(&1))
+            .then(|| bound(place.root))
+            .flatten();
+            let access = match (outer, instructions.peek()) {
+                (Some(outer), Some(MirInstr::WriteRef { reference, value }))
+                    if reference == dest =>
+                {
+                    let slot = outer.is_whole_root()
+                        && outer.through.is_none()
+                        && !outer.root_ty.as_ref().is_some_and(|ty| {
+                            matches!(ty.kind(), TyKind::Ref(_) | TyKind::Pointer { .. })
+                        });
+                    Some(if slot {
+                        MirInstr::DefVar {
+                            var: outer.root,
+                            src: *value,
+                            binding_ty: None,
+                            in_place: false,
+                        }
+                    } else {
+                        MirInstr::Store {
+                            place: place.clone(),
+                            src: *value,
+                        }
+                    })
+                }
+                (
+                    Some(_),
+                    Some(MirInstr::ReadRef {
+                        dest: read,
+                        reference,
+                    }),
+                ) if reference == dest => Some(MirInstr::LoadPlace {
+                    dest: *read,
+                    place: place.clone(),
+                }),
+                _ => None,
+            };
+            match access {
+                Some(access) => {
+                    callee.reg_types.remove(&dest.0);
+                    instructions.next();
+                    rewritten.push(access);
+                }
+                None => rewritten.push(instruction),
             }
         }
         block.instrs = rewritten;

@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1571**.
+Next free ID: **R1574**.
 
 ## Ordered Work
 
@@ -1076,17 +1076,6 @@ change that needs a new `MJRT_ABI_VERSION`.
   - Found while landing R923 (2026-10-16).
   - Depends on nothing.
   - Model: Fable, Not Planned.
-
-- [ ] **R852 Natively, `~` on a `UInt` is unsupported**
-
-  Problem: `var u: UInt = 5; print(~u)` prints `18446744073709551610` on
-  the VM and at the pin, while the native backend reports "unsupported
-  operator `Invert` on `UInt` operand".
-  - The VM's `apply_prefix` has a `UInt` arm, and Pliron's unary lowering
-    has none.
-  - Found while landing R846 (2026-10-14).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
 
 - [ ] **R541 Natively, an applied constant of a sized scalar type fails IR
   verification**
@@ -2606,6 +2595,26 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1573 A write through a parametric-mutability `ref` field's
+  element is a loan conflict or a rejection**
+
+  In `struct View[m: Bool, //, o: Origin[mut=m]]` with `var src: ref[o]
+  List[C]`, a `mut self` method's `self.src[0].n = 3` fails ownership
+  ("access to '$call_ref_r5.n' conflicts with live reference"), and
+  `self.src[0].inc()` over a `mut self` `inc` is rejected ("expression
+  must be mutable in assignment"), where `self.src[0] += 1` and
+  `self.src[0] = x` run (`assets/extensions/ok/ref_field_parametric_mut_*`).
+  - The hidden reference an accessor returns lends immutably when its
+    mutability is a parameter (`materialize_call_reference_place`,
+    `mir/calls.rs`), unless the caller writes through it in place, which
+    only an augmented store tells it today.
+  - Direct `ref` fields are a kept extension, so the fixture's rule
+    ("judged per instantiation") is Mojito's: make the field store and the
+    `mut` method call follow it as `+=` does.
+  - Found while landing R1552 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 ### Catch Up To Current Mojo: Calls, Overloads, Conversions, And Traits
 
 Track: `calls`.
@@ -3696,16 +3705,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R684 An explicit dunder call on a scalar is rejected**
-
-  Problem: `var q = 5; print(q.__add__(2))` prints `7` at the pin, but
-  Mojito rejects it: "type 'Int' has no method '__add__'".
-  - The operator spelling `q + 2` runs; only the explicit method call on
-    a compiler-known scalar has no member to resolve.
-  - Found while landing R675 (2026-10-13).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1544 A `SIMD` construction takes a subset of upstream's
   conversions: no float into an integer lane, no vector cast, no `Bool`
   through `Intable`, no `SIMDLength` element**
@@ -4261,6 +4260,23 @@ Track: `comptime`.
 
 Within the track, an entry Mojito runs to a wrong result, or accepts where the pin rejects, comes first; then one it rejects where the pin runs it; then a verdict that is right with the wrong words.
 
+- [ ] **R1571 A compile-time operator over a `comptime` constant
+  annotated with a sized integer does not wrap to its width**
+
+  `comptime Q: UInt8 = 5; comptime H = Q + 254` prints `259`, where the
+  pin prints `3`: the constant folds as an unbounded integer, not a
+  `UInt8`.
+  - Probe: `-Q` prints `-5` (pin `251`) and `Q << 6` prints `320` (pin
+    `64`); a local `comptime k: UInt8 = 5` does the same.
+  - `comptime J = UInt8(5) * 100` folds right (`244`), so the
+    annotation's conversion, not the fold, loses the width.
+  - R602 (a local annotated sized constant is no parameter value) and
+    R576 (natively, such a module constant fails IR verification) are the
+    same annotation's other symptoms; one fix may close all three.
+  - Found while planning R1552 (2026-10-28).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1115 `where <cond> else "<message>"` is the preferred constraint
   message**
 
@@ -4516,6 +4532,22 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Generalize it to the field type's conditional `Deinitable` conformance.
   - Depends on nothing.
   - Model: Opus, Planned.
+
+- [ ] **R1572 A method call on a module `comptime` constant of a builtin
+  scalar type is rejected**
+
+  `comptime X: Int = 12`, then `print(X.__str__())` or `print(X.__neg__())`,
+  fails with "type 'Int' has no method", where the pin runs both.
+  - The same call on a parameter (`n.__neg__()` in `def f[n: Int]()`), on a
+    construction (`Int(12).__neg__()`), or on a run-time `Int` runs, so the
+    receiver's resolution as a module constant, not the member, misses
+    `SIMD`'s declaration.
+  - Probe: `comptime W = X.__neg__()` and `comptime Y = X.__and__(5)` print
+    `-12` and `4` at the pin, at module scope and in a body.
+  - Found while landing R1552 (2026-10-28), which retired R684's run-time
+    shape.
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
 
 - [ ] **R602 A local `comptime` constant annotated with a sized scalar is
   no parameter value**
@@ -7035,6 +7067,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
     (and `not x` through `Boolable`); they go with them.
   - `docs/features.md`'s scalar-operation-traits row names them as
     supported bounds.
+  - Since R1552 the VM's and Pliron's `unary invert` arms over `Int`,
+    `UInt`, and integer `SIMD` lanes (`runtime.rs` `apply_prefix`,
+    `lower/simd.rs`, `lower/consts.rs`) serve only these erased bounds:
+    they go with them. The `binary` arms stay, since `pop` ops lower to
+    them.
   - Found while landing R709 (2026-10-13).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -7594,6 +7631,8 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - The compile-time half is `param_expr::fold`'s `Div` over `Int`
     operands, which must truncate as `pop.div` does: `comptime y = x / 2`
     over `comptime x: Int = 7` prints `3` at the pin.
+  - Port `__itruediv__` (`simd.mojo:1709`) with `__truediv__`, so `/=`
+    over a `SIMD` calls it, as R1552 routes `+=`.
   - Pliron's `lower_true_div` and the VM's `Div` arm of `numeric_op`
     retire.
   - Depends on nothing.
@@ -9947,25 +9986,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Planned.
 
-- [ ] **R1552 `SIMD`'s bitwise, shift, and in-place operators are checker
-  rules, where upstream's are library bodies**
-
-  `&`, `|`, `^`, `~`, `<<`, `>>`, and every in-place form over a `SIMD` are
-  typed by rule and run by name-keyed backend arms.
-  - Port `__and__`, `__or__`, `__xor__`, `__invert__`, `__lshift__`,
-    `__rshift__`, and their reflected forms.
-  - Port the in-place forms whose binary operator is a dunder by then:
-    `__iadd__`, `__isub__`, `__imul__`, and the bitwise and shift ones.
-  - `__itruediv__` waits for R184, `__ifloordiv__` and `__imod__` for
-    R1566, and `__ipow__` for R1567.
-  - An augmented `+=`, `-=`, or `*=` over a scalar is still the checker's
-    binary rule (`infer_infix` with no span, `infer_simd_infix`'s `Add |
-    Sub | Mul` arm): retire both once `__iadd__` answers it.
-  - Retire the rest of `infer_simd_infix` but its `FloorDiv`, `Mod`, and
-    `Div` arms, and the backend arms.
-  - Depends on R1551.
-  - Model: Opus, Planned.
-
 - [ ] **R1566 `SIMD`'s `//`, `%`, `divmod`, and `ceildiv` are checker
   rules and a trap, where upstream's are `__floordiv__` … `__ceildiv__`
   bodies**
@@ -9975,6 +9995,8 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Port `__floordiv__`, `__mod__`, `__divmod__`, `__ceildiv__`,
     `__rfloordiv__`, and `__rmod__` verbatim, and route `//` and `%` to
     them as `+` is routed (`Checker::infer_infix`).
+  - Port `__ifloordiv__` (`simd.mojo:1722`) and `__imod__` (`:1735`)
+    too, so `//=` and `%=` call them, as R1552 routes `+=`.
   - The bodies need `and` over masks (R97), `trunc` over a float vector
     (R1554), `Self._Mask(fill=…)` at a symbolic width (R1555), `any`
     (R1568), and `Self()` and `Self(1)` inside the struct.
@@ -10001,6 +10023,7 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - `_pow` reads `CurrentPlugin.binary_math_fn` (R330, R1562), stores
     lanes with `result[i] = …` (R1561), and initializes `out result` with
     `result = {}`.
+  - Port `__ipow__` (`simd.mojo:1748`) too; its `rhs` is `Int`.
   - Retire the `__pow__` arms of `math_operation_requirement` and the
     elaborator's `__pow__` rewrite (`mono/specializer.rs`).
   - Removes `pliron_float_pow.mojo` from R171.

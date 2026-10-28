@@ -1102,13 +1102,16 @@ impl<'a> Flatten<'a> {
     /// analyzable call-place representation as an explicit `ref` binding while
     /// evaluating the accessor exactly once. A checked owner with no MIR slot
     /// of its own lends through `fallback`, the storage the accessor reads.
+    /// A reference the caller writes through (`written`) lends mutably unless
+    /// its mutability is `Immutable`: a parametric one (`Origin[mut=m]`) is
+    /// the instance's to judge, as the checker left it.
     pub(super) fn materialize_call_reference_place(
         &mut self,
         expression: Node<'a>,
         handle: Reg,
         reference: &mojito_types::origin::RefTy,
         fallback: Option<VarId>,
-        setup: bool,
+        (setup, written): (bool, bool),
     ) -> MirPlace {
         let variable = self.var(&format!("$call_ref_r{}", handle.0));
         let storage_ty = Ty::new(TyKind::Ref(reference.clone()));
@@ -1153,7 +1156,11 @@ impl<'a> Flatten<'a> {
                 .then_some(canonical.clone());
             loans.push(MirLoan {
                 place: MirPlace::root(canonical.root, self.var_types.get(&canonical.root).cloned()),
-                mutable: reference.mutability == mojito_types::origin::Mutability::Mutable,
+                mutable: match reference.mutability {
+                    mojito_types::origin::Mutability::Mutable => true,
+                    mojito_types::origin::Mutability::Param(_) => written,
+                    mojito_types::origin::Mutability::Immutable => false,
+                },
                 interior,
                 shared: false,
                 setup,
@@ -1234,7 +1241,7 @@ impl<'a> Flatten<'a> {
             handle,
             &materialized_reference,
             None,
-            setup,
+            (setup, false),
         );
         if setup && let Some(pending) = self.setup_reference.as_mut() {
             pending.read_start = Some((self.cur, self.f.blocks[self.cur].instrs.len()));

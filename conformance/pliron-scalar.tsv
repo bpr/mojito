@@ -898,6 +898,7 @@ assets/ok/shadowed_local_callable_call.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/shadowing_constants.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_abi_crossings.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_arithmetic_dunders.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/simd_bitwise_dunders.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_bool_masks.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_cast.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/simd_cast_float_thresholds.mojo	-	ineligible	no-scalar-entry-shape

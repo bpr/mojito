@@ -8,6 +8,23 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `SIMD`'s `__and__`, `__or__`, `__xor__`, `__lshift__`, `__rshift__`,
+  `__invert__`, their reflected forms, and the in-place `__iadd__`,
+  `__isub__`, `__imul__`, `__iand__`, `__ior__`, `__ixor__`, `__ilshift__`,
+  and `__irshift__` are upstream's bodies in `std.simd`, and `&`, `|`, `^`,
+  `<<`, `>>`, `~`, and `+=` through `>>=` over any `SIMD`, `Int` and `UInt`
+  included, call them (R1552). `a.__and__(b)` and `a.__invert__()` over an
+  `Int` were rejected and run; `f & f` or `~f` over a float, `m << m` and
+  `m += m` over a `bool` mask fail the instance with the pin's asserts.
+  `comptime W = ~X` over a module `Int` constant was silently `None` and is
+  `-13`, and `~k` over a `comptime k: UInt8` wraps to `250`, as at the pin.
+  `w.at[0]() += 1` through a reference-returning call with explicit
+  parameters, and `self.src[0] += 1` through a parametric-mutability `ref`
+  field, which failed with an ABI mismatch and a loan conflict, run.
+  `inline-parametric` stores an inlined `self = ...` to the caller's place
+  and the elaborator keeps a storage-built `SIMD` at its type, so an
+  in-place operator over a field or list element costs no more than `+=`
+  did.
 - `SIMD`'s `__add__`, `__sub__`, `__mul__`, `__pos__`, `__neg__`,
   `__radd__`, `__rsub__`, and `__rmul__` are upstream's bodies in
   `std.simd`, and infix `+`, `-`, `*` and prefix `-` beside any `SIMD`,

@@ -898,6 +898,7 @@ assets/ok/shadowed_local_callable_call.mojo	main	exe-differential	sanitized
 assets/ok/shadowing_constants.mojo	main	exe-differential	sanitized
 assets/ok/simd_abi_crossings.mojo	main	exe-differential	sanitized
 assets/ok/simd_arithmetic_dunders.mojo	main	exe-differential	sanitized
+assets/ok/simd_bitwise_dunders.mojo	main	exe-differential	sanitized
 assets/ok/simd_bool_masks.mojo	main	exe-differential	sanitized
 assets/ok/simd_cast.mojo	main	exe-differential	sanitized
 assets/ok/simd_cast_float_thresholds.mojo	main	exe-differential	sanitized

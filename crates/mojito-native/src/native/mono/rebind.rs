@@ -11,13 +11,17 @@
 use super::*;
 use mojito_mir::mir::Proj;
 use mojito_mir::mir::verify::{instruction_places_mut, place_base_ty, types_agree};
-use mojito_mir::mir::{instruction_regions_mut, instruction_regs_mut, terminator_regs_mut};
+use mojito_mir::mir::{
+    count_register_reads, instruction_regions_mut, instruction_regs_mut, terminator_regs_mut,
+};
 
 impl Specializer<'_> {
     /// Judge every rebind of the instance `function` of
     /// `template`: a value rebind's `dest` register becomes its operand's,
     /// and a rebound place loses its step, whose type now names the
-    /// storage's own.
+    /// storage's own. An operand only the rebind read takes the rebind's
+    /// type, the one the program reads the value at: a `SIMD` built from
+    /// its `!kgen.simd` storage (`Self(mlir_value=...)`) is the `SIMD`.
     pub(super) fn discharge_rebinds(
         &self,
         template: &str,
@@ -27,6 +31,19 @@ impl Specializer<'_> {
         judge_blocks(&mut function.blocks, &function.reg_types, &mut aliases)
             .map_err(|mismatch| self.rebind_mismatch(template, &mismatch.0, &mismatch.1))?;
         if !aliases.is_empty() {
+            let mut reads = vec![0; function.n_regs as usize];
+            count_register_reads(&mut function.blocks, &mut reads);
+            for value in aliases.values() {
+                if let Some(count) = reads.get_mut(value.0 as usize) {
+                    *count += 1;
+                }
+            }
+            let retyped: Vec<(u32, Ty)> = aliases
+                .iter()
+                .filter(|(_, value)| reads.get(value.0 as usize) == Some(&1))
+                .filter_map(|(dest, value)| Some((value.0, function.reg_types.get(dest)?.clone())))
+                .collect();
+            function.reg_types.extend(retyped);
             rename_blocks(&mut function.blocks, &aliases);
         }
         Ok(())
