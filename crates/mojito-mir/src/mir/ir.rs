@@ -1603,7 +1603,8 @@ impl Const {
     /// scalar, a function named by a callable-typed slot, a string read at the
     /// nominal `String` or a vector, struct, or tuple as the typed constant a
     /// backend materializes at that type (upstream's `kgen.param.constant`),
-    /// and any other string as its literal.
+    /// an untyped attribute as the attribute constant the compile-time
+    /// interpreter holds, and any other string as its literal.
     pub fn of_parameter_value(value: &CtValue, slot_ty: Option<&Ty>) -> Option<Self> {
         match value {
             CtValue::Int(value) => Some(Self::Int(*value)),
@@ -1625,6 +1626,11 @@ impl Const {
             }
             CtValue::Str(value) => Some(Self::Str(value.clone())),
             value @ (CtValue::Simd { .. } | CtValue::Struct { .. } | CtValue::Tuple(_)) => {
+                Some(Self::Value(value.clone()))
+            }
+            CtValue::MlirAttr(_)
+                if slot_ty.is_none_or(|ty| mojito_types::types::has_no_llvm_type(ty.kind())) =>
+            {
                 Some(Self::Value(value.clone()))
             }
             _ => None,

@@ -2625,8 +2625,16 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
 - Upstream's `` __mlir_type.`!kgen.deferred` `` is `TyKind::KgenDeferred`
   (displayed `types::KGEN_DEFERRED_TYPE_SPELLING`), the type of an untyped
   `` __mlir_attr.`#…` `` and of a function result returning one, and its
-  values are `CtValue::MlirAttr` (MIR `ct_mlir_attr`), which never cross
-  into the VM. `Checker::infer_member` (`indexing.rs`) and `build_ct`
+  values are `CtValue::MlirAttr` (MIR `ct_mlir_attr`). An attribute
+  crosses into the VM as `Value::Attribute`, which no instruction
+  inspects (`crossing::ct_to_vm`/`vm_to_ct`, `ct_value_as_runtime`), and a
+  read of one is `Const::Value(ct_mlir_attr)` (`Const::of_parameter_value`,
+  paired with an attribute-typed register by `verify/instr.rs`), so a
+  function returning one runs as an elaborator request.
+  `types::has_no_llvm_type` names the types whose values are attributes
+  only: the concrete verifier admits them, and
+  `verify::llvm_translation_findings` rejects a signature, call result,
+  or value of one that survives the pipeline. `Checker::infer_member` (`indexing.rs`) and `build_ct`
   (`constraints.rs`) read an attribute through
   `comptime_validation::mlir_attribute`, which gives a typed `X : T` one
   the constant and type of `T`: an `` `N : index` `` a `CtValue::Index`,
@@ -2745,7 +2753,8 @@ site—must be returned as diagnostics, never encoded with `expect`, `unwrap`, o
   a survivor and erases the rest; `verify/scope.rs` checks its binders,
   `verify/concrete.rs` rejects a survivor; the text form is
   `comptime.assert` (schema 1.81).
-- `mojito_vm::crossing` owns `ct_to_vm`/`vm_to_ct` and `CTFE_FUEL`;
+- `mojito_vm::crossing` owns `ct_to_vm`/`vm_to_ct` (an untyped attribute
+  crossing as the opaque `Value::Attribute`) and `CTFE_FUEL`;
   `VmBackend::{call_concrete, freeze}` run a verified fragment for the
   elaborator; `freeze` takes the result's static type
   (`ConcreteProgram::result_ty`), so a struct the VM holds as its one field

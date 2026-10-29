@@ -52,6 +52,12 @@ pub enum Value {
     },
     /// A `DType` value.
     Dtype(Dtype),
+    /// An attribute the compile-time interpreter holds as a value, as
+    /// upstream's `IREvaluator` holds every value as an `Attribute`. No
+    /// instruction inspects it: it is copied, moved, passed, returned, and
+    /// frozen back as itself. Only an elaborator request runs a body holding
+    /// one, since LLVM translation rejects one that survives the pipeline.
+    Attribute(mojito_types::ct::CtValue),
     /// An `Error` value carrying its message (what `raise` raises).
     Error(String),
     /// A list-shaped compile-time value crossing the narrow VM-CTFE bridge.
@@ -160,6 +166,7 @@ impl PartialEq for Value {
             (Self::FloatLiteral(a), Self::FloatLiteral(b)) => a == b,
             (Self::Bool(a), Self::Bool(b)) => a == b,
             (Self::Dtype(a), Self::Dtype(b)) => a == b,
+            (Self::Attribute(a), Self::Attribute(b)) => a == b,
             (Self::Str(a), Self::Str(b)) => a == b,
             (
                 Self::Pointer {
@@ -320,6 +327,7 @@ impl fmt::Display for Value {
                 write!(f, ")")
             }
             Self::Variant { value, .. } => value.fmt(f),
+            Self::Attribute(value) => write!(f, "{value}"),
         }
     }
 }
@@ -334,6 +342,7 @@ pub fn type_name(value: &Value) -> String {
         Value::FloatLiteral(_) => "FloatLiteral".to_string(),
         Value::Bool(_) => "Bool".to_string(),
         Value::Dtype(_) => "DType".to_string(),
+        Value::Attribute(_) => mojito_types::types::KGEN_DEFERRED_TYPE_SPELLING.to_string(),
         Value::Str(_) => "String".to_string(),
         Value::None => "None".to_string(),
         Value::Function(_) | Value::Closure { .. } => "function".to_string(),

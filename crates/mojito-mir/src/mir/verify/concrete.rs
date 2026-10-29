@@ -10,7 +10,7 @@ use super::*;
 use crate::mir::text::instruction_mnemonic;
 use crate::mir::{Const, MirParamArg, MirSubscriptCall, UseMode, VarId};
 use mojito_types::mlir::storage_bits;
-use mojito_types::types::TyKind;
+use mojito_types::types::{TyKind, has_no_llvm_type};
 
 /// The concreteness findings for one function body.
 ///
@@ -65,12 +65,20 @@ pub fn concrete_function_findings(
 /// pipeline has folded answers it: before `sroa`, `mem-2-reg`, and `sccp`
 /// the index is still a pack element.
 ///
+/// It also rejects what has no LLVM type ([`has_no_llvm_type`]) yet
+/// survived the pipeline, as upstream's KGEN-to-LLVM lowering does: a
+/// signature that mentions one ("failed to convert func signature"), a
+/// call whose result does ("failed to convert call result type"), and any
+/// other value of one.
+///
+/// [`has_no_llvm_type`]: mojito_types::types::has_no_llvm_type
 /// [`LlvmIntrinsic::index_is_immediate`]: mojito_types::llvm_intrinsic::LlvmIntrinsic::index_is_immediate
 /// [`LlvmIntrinsic::index_error`]: mojito_types::llvm_intrinsic::LlvmIntrinsic::index_error
 pub fn llvm_translation_findings(function: &MirFunction) -> Vec<String> {
     let mut constants = HashMap::new();
     integer_constants(&function.blocks, &mut constants);
     let mut errors = Vec::new();
+    untranslatable_values(function, &mut errors);
     translation_blocks(function, &function.blocks, &constants, &mut errors);
     errors
 }
@@ -197,7 +205,8 @@ fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
         ));
     }
     // A trait, a type, a KGEN string, or a generator is a compile-time
-    // value: no run-time value holds one.
+    // value: no run-time value holds one. An attribute is not in that list:
+    // elaborated MIR may hold one, and LLVM translation decides.
     if mojito_types::types::mentions(ty, &|ty| {
         matches!(
             ty.kind(),
@@ -205,7 +214,6 @@ fn require_concrete(head: &str, role: &str, ty: &Ty, errors: &mut Vec<String>) {
                 | TyKind::Trait(_)
                 | TyKind::TypeType
                 | TyKind::KgenString
-                | TyKind::KgenDeferred
                 | TyKind::Generator(_)
         )
     }) {
@@ -637,6 +645,54 @@ fn concrete_llvm_intrinsic(
 }
 
 /// [`llvm_translation_findings`] over `blocks` and the regions they hold.
+fn untranslatable_values(function: &MirFunction, errors: &mut Vec<String>) {
+    let untranslatable =
+        |ty: &Ty| mojito_types::types::mentions(ty, &|ty| has_no_llvm_type(ty.kind()));
+    if function
+        .param_types
+        .iter()
+        .chain(function.ret_ty.iter())
+        .any(untranslatable)
+    {
+        errors.push("failed to convert func signature".to_string());
+    }
+    let mut call_results = HashMap::new();
+    for instruction in crate::mir::nested_instructions(&function.blocks) {
+        match instruction {
+            MirInstr::Call { dest, func, .. } => {
+                call_results.insert(dest.0, format!("'{}'", func.0));
+            }
+            MirInstr::CallIndirect { dest, .. } => {
+                call_results.insert(dest.0, "indirect call".to_string());
+            }
+            _ => {}
+        }
+    }
+    let mut defined = Vec::new();
+    crate::mir::defined_registers(&function.blocks, &mut defined);
+    for reg in defined {
+        let Some(ty) = function
+            .reg_types
+            .get(&reg.0)
+            .filter(|ty| untranslatable(ty))
+        else {
+            continue;
+        };
+        errors.push(match call_results.get(&reg.0) {
+            Some(callee) => format!("{callee}: failed to convert call result type"),
+            None => format!(
+                "failed to legalize operation defining %r{} of type `{ty}`",
+                reg.0
+            ),
+        });
+    }
+    for (var, ty) in &function.var_tys {
+        if untranslatable(ty) {
+            errors.push(format!("failed to legalize slot {var} of type `{ty}`"));
+        }
+    }
+}
+
 fn translation_blocks(
     function: &MirFunction,
     blocks: &[MirBlock],
@@ -865,5 +921,57 @@ mod tests {
             Ty::bool(),
         );
         assert!(concrete_function_findings("f", &function, None).is_empty());
+    }
+
+    fn attribute_constant(dest_ty: Ty) -> MirFunction {
+        let instruction = MirInstr::Const {
+            dest: Reg(0),
+            k: Const::Value(CtValue::MlirAttr("#pop.fmf<fast>".to_string())),
+        };
+        function_with(instruction, dest_ty)
+    }
+
+    #[test]
+    fn attribute_valued_function_is_concrete_but_not_translatable() {
+        let mut function = attribute_constant(TyKind::KgenDeferred.into());
+        function.ret_ty = Some(TyKind::KgenDeferred.into());
+        let findings = concrete_function_findings("attr", &function, None);
+        assert!(findings.is_empty(), "{findings:?}");
+        let findings = llvm_translation_findings(&function);
+        assert!(
+            findings.contains(&"failed to convert func signature".to_string()),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn surviving_attribute_value_is_not_translatable() {
+        let findings = llvm_translation_findings(&attribute_constant(TyKind::KgenDeferred.into()));
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].contains("failed to legalize operation defining %r0"));
+    }
+
+    #[test]
+    fn attribute_constant_is_read_at_an_attribute_type() {
+        let declarations = MirDeclarations::default();
+        let findings =
+            super::super::verify_function_in("f", &attribute_constant(Ty::int()), &declarations);
+        assert!(
+            findings
+                .iter()
+                .any(|finding| finding.contains("attribute constant is read at `Int`")),
+            "{findings:?}"
+        );
+        let findings = super::super::verify_function_in(
+            "f",
+            &attribute_constant(TyKind::KgenDeferred.into()),
+            &declarations,
+        );
+        assert!(
+            !findings
+                .iter()
+                .any(|finding| finding.contains("attribute constant")),
+            "{findings:?}"
+        );
     }
 }

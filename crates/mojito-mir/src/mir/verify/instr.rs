@@ -257,6 +257,19 @@ pub(super) fn verify_instruction(
             }
         }
         MirInstr::Const {
+            k: crate::mir::Const::Value(CtValue::MlirAttr(_)),
+            dest,
+        } => {
+            if let Some(ty) = cx.reg_ty(*dest)
+                && !mojito_types::types::has_no_llvm_type(ty.kind())
+            {
+                errors.push(format!(
+                    "{}: attribute constant is read at `{ty}`, not `!kgen.deferred`",
+                    cx.prefix
+                ));
+            }
+        }
+        MirInstr::Const {
             k: crate::mir::Const::Value(value),
             ..
         } if !value.is_materialized_constant() => errors.push(format!(

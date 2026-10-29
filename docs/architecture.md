@@ -3738,7 +3738,11 @@ op and its region terminators.
 `native::mono` verifies its output in the concrete mode, and asks
 `concrete_function_findings` per instance so that a failure names the
 instance it came from. The concrete mode also rejects a declaration that
-still carries an availability clause or a conformance condition.
+still carries an availability clause or a conformance condition. It admits
+a type with no LLVM type (`types::has_no_llvm_type`, `!kgen.deferred`),
+as upstream's elaborated KGEN holds attributes freely: an elaborator
+request runs a body holding one, the VM carrying the attribute as an
+opaque value, and translation legality decides what survives.
 
 A struct member's `where` clause is declaration metadata:
 `MirFunctionDeclaration.availability`. What decides it rides with it.
@@ -7120,7 +7124,11 @@ After the pipeline and the last `eliminate-dead-symbols`, the driver
 refuses what upstream's LLVM translation refuses in the folded program
 (`SpecializedProgram::translated`, `mir::verify::llvm_translation_findings`,
 R1519): an `llvm_intrinsic` call whose `immarg` index no `const` defines,
-or whose index LLVM's verifier rejects. The index reaches the call as an
+or whose index LLVM's verifier rejects. It also refuses a surviving
+function whose signature, call whose result, or other value has no LLVM
+type, with `LowerKGENToLLVM`'s "failed to convert func signature" and
+"failed to convert call result type"; a function only an elaborator
+request reaches is gone by then. The index reaches the call as an
 element of the intrinsic's loaded pack, so it folds only because `sroa`
 splits a heterogeneous collector of trivial elements and `sccp` folds
 `Int64(n)`. With the pipeline off, nothing folds, and the check is skipped.

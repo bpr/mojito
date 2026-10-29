@@ -3,7 +3,8 @@
 //! A compile-time evaluation hands the VM its arguments as runtime values and
 //! takes the result back as a compile-time value. Both directions admit the
 //! same closed set: scalars and literals, `Bool`, `Str`, tuples,
-//! compile-time lists, fieldwise structs, SIMD values, and `DType`. A nominal
+//! compile-time lists, fieldwise structs, SIMD values, `DType`, and an
+//! untyped attribute, which the VM holds opaquely. A nominal
 //! `String` lives in the VM's heap and is frozen by the VM that owns it
 //! (`VmBackend::freeze`). The fuel every compile-time evaluation shares is
 //! declared here too.
@@ -99,10 +100,10 @@ pub fn ct_to_vm(value: &CtValue) -> Result<Value, RuntimeError> {
             lanes: lanes_of(lanes)?,
         }),
         CtValue::Dtype(dtype) => Ok(Value::Dtype(*dtype)),
+        CtValue::MlirAttr(_) => Ok(Value::Attribute(value.clone())),
         CtValue::Type(_)
         | CtValue::Trait(_)
         | CtValue::KgenString(_)
-        | CtValue::MlirAttr(_)
         | CtValue::Generator(_)
         | CtValue::Expr(_)
         | CtValue::Deferred(_)
@@ -153,6 +154,7 @@ pub fn vm_to_ct(value: Value) -> Result<CtValue, RuntimeError> {
             },
         }),
         Value::Dtype(dtype) => Ok(CtValue::Dtype(dtype)),
+        Value::Attribute(value) => Ok(value),
         Value::None => Err(RuntimeError::Unsupported(
             "VM CTFE function returned None; a compile-time value is required".to_string(),
         )),

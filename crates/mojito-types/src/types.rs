@@ -3738,6 +3738,15 @@ pub const fn trivially_register_passable_leaf(ty: &TyKind) -> bool {
         )
 }
 
+/// Whether this KGEN type's values are attributes only.
+///
+/// The compile-time interpreter holds them as values, and upstream's LLVM
+/// type converter has no type for them, so translation rejects one that
+/// survives the post-elaboration pipeline.
+pub const fn has_no_llvm_type(ty: &TyKind) -> bool {
+    matches!(ty, TyKind::KgenDeferred)
+}
+
 /// Recover the monomorphic or generic callable contract carried either directly
 /// by a function type or indirectly by a callable-bounded type parameter.
 pub fn callable_contract_ty(ty: &Ty) -> Option<&Ty> {

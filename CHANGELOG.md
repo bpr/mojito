@@ -8,6 +8,13 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A function returning `!kgen.deferred` runs at compile time (R1630): the
+  elaborator's VM holds the attribute it returns as a value, so
+  `F[attr()]`, `comptime a = attr()`, a body branching on a parameter,
+  and a computed `flag._mlir_attr()` elaborate as at the pin, on the VM
+  and natively. A function, call result, or value of such a type that
+  survives the post-elaboration pipeline is refused where the pin's LLVM
+  translation refuses it.
 - The bracketed `__mlir_attr[piece, operand, …]` is read as KGEN reads it,
   its pieces concatenated with each operand spliced in, in a `comptime`
   binding, a struct member, a parameter or type argument, and at run time

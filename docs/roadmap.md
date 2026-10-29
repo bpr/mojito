@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1638**.
+Next free ID: **R1639**.
 
 ## Ordered Work
 
@@ -5157,10 +5157,57 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
     elaborated MIR ("holds the compile-time-only metatype").
   - Probe: `ParameterList[names]()[0]` over `*names: KGENString`, which
     reads the elements' runtime storage through `get_span`.
+  - Probe: `G[name()].x()` over `def name() -> __mlir_type.`!kgen.string``
+    returning `"abc".value`, which prints `2` at the pin. Admitting
+    `KgenString` where R1630 admits `!kgen.deferred` (the
+    `deferred_result_bodies` carve-out and the two lifting filters in
+    `comptime_validation.rs`) is not enough: the thunk of `comptime n =
+    name()` reads `"abc".value` as a field of a run-time `Str` ("field
+    access on non-struct String"), so the literal's KGEN string needs this
+    entry's run-time form.
   - A sibling of R1149's raw-list runtime form.
   - Found while landing R1183 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
+
+- [ ] **R1638 A run-time call or read of a `!kgen.deferred` value is
+  rejected by the checker, where the pin runs what its pipeline folds away**
+
+  `_ = attr()` in `main`, over `def attr() -> __mlir_type.`!kgen.deferred``,
+  stops with "failed to convert call result type: … only a compile-time
+  position may call", where the pin prints `ran`.
+  - The pin rejects `!kgen.deferred` only in LLVM lowering, on a function
+    or call that survives inlining and DCE. Mojito already makes that
+    rejection in `verify::llvm_translation_findings` (R1630), so the
+    checker's two rules are a subset restriction on top of it.
+  - Lever: delete `kgen_deferred_runtime_read`,
+    `kgen_deferred_runtime_call`, and `deferred_result_bodies` (the
+    checker), and make `!kgen.deferred` a
+    `trivially_register_passable_leaf` (`mojito-types/src/types.rs`) so
+    `mem-2-reg` promotes `_ = attr()`'s slot.
+  - A 2026-10-29 prototype of that lever ran the first four probes and
+    rejected the sixth as the pin does.
+  - Probe: `_ = attr()` and `var a = attr()` in `main`, which print `ran`
+    at the pin.
+  - Probe: `_ = pick(n > 5)` over a run-time `n`, where `pick(b: Bool)`
+    branches between two attributes, which prints `ran` at the pin.
+  - Probe: `var a = __mlir_attr.`#pop.fmf<none>`` in `main`, which prints
+    `ran` at the pin (R1600 names it too).
+  - Probe: `print(take(__mlir_attr.`#pop.fmf<none>`))` over `def take(a:
+    __mlir_type.`!kgen.deferred`) -> Int: return 7`, with and without
+    `@no_inline`, which prints `7` at the pin. The prototype left a dead
+    `const` of the attribute (and its drop) in `main`, which `canonicalize`
+    does not erase and the pin's DCE does.
+  - Probe: `var a = pick(n > 5)` where `pick` also prints, then
+    `print(take(a))`: the pin rejects it with "failed to convert func
+    signature", since the printing callee survives.
+  - `assets/type_error/mlir_deferred_runtime_call.mojo` stays rejected, then
+    by translation legality ("failed to convert call result type").
+  - Update `docs/features.md`'s `__mlir_op` row, whose run-time-call and
+    "run-time attribute local" clauses this entry retires.
+  - Found while planning R1630 (2026-10-29).
+  - Depends on nothing.
+  - Model: Fable, Planned.
 
 - [ ] **R1193 A member read on a struct applied to a forwarded pack names
   the struct's own pack**
@@ -6731,27 +6778,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Found while landing R1550 (2026-10-28).
   - Depends on nothing.
   - Model: Opus, Not Planned.
-
-- [ ] **R1630 A function returning a compile-time-only KGEN value cannot
-  run at compile time**
-
-  `F[attr()].x()`, with `def attr() -> __mlir_type.`!kgen.deferred``
-  returning `` __mlir_attr.`#pop.fmf<fast>` ``, stops with "return type
-  holds the compile-time-only metatype", where the pin runs it.
-  - The comptime interpreter holds attributes as values. Mojito's VM does
-    not: `CtValue::MlirAttr` and `KgenString` do not cross
-    (`vm/crossing.rs`), and `verify/concrete.rs` rejects a compile-time-only
-    register in every concrete instance.
-  - Lever: an opaque VM value carrying the `CtValue`, and a concrete
-    verifier that admits compile-time-only types in an instance mono reaches
-    only through a CTFE request, while still rejecting a run-time-reached
-    one.
-  - Probe: upstream's `_current_target() -> !kgen.target`, the default of
-    `CompilationTarget`'s parameter (R1562).
-  - Probe: R1600's computed fast-math flag (`flag._mlir_attr()`).
-  - Found while planning R1562 (2026-10-29).
-  - Depends on nothing.
-  - Model: Fable, Planned.
 
 - [ ] **R1631 A static method called on a bare struct name does not bind
   the struct's defaulted parameters**
@@ -10203,7 +10229,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     `current_target`, `target_get_field`, or `target_has_feature`
     attributes upstream's bodies read.
   - Add `!kgen.target` as a compile-time-only type with a
-    `#kgen.target<…>` constant (upstream's `_empty_target`).
+    `#kgen.target<…>` constant (upstream's `_empty_target`), listed in
+    `types::has_no_llvm_type` so the VM holds it as an attribute value and
+    translation legality rejects one that survives, as for
+    `!kgen.deferred`.
   - Keep `current_target` a symbolic application through the check, as the
     pin keeps `_current_target()` an `apply` expression. Mono answers it
     from the elaborator's `NativeTarget`, beside the layout oracle's
@@ -10270,7 +10299,9 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - The GPU predicates answer `False` on a CPU target, so `bitcast`'s and
     `SIMD.cast`'s GPU guards (`std/memory/unsafe.mojo`, `std/simd.mojo`)
     can be restored.
-  - Depends on R1562, R1192, and R432.
+  - `_arch()` is `StaticString(Self.__arch())`, a run-time call of a
+    function returning `!kgen.string`, which needs R1190's run-time form.
+  - Depends on R1562, R1192, R432, and R1190.
   - Model: Opus, Planned.
 
 - [ ] **R1623 `SIMD`'s `%`, `divmod`, and `ceildiv` are checker rules
@@ -10342,15 +10373,14 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
 
   `fastmathFlags=` is typed as a compile-time `!kgen.deferred` value and
   then dropped before MIR, so no flag reaches either backend.
-  - The VM holds no attribute value: `CtValue::MlirAttr` does not cross
-    (`vm/crossing.rs`), so a computed flag such as `flag._mlir_attr()` is
-    never run, and a function returning `!kgen.deferred` never reaches
-    concrete MIR.
+  - A computed flag such as `flag._mlir_attr()` now runs at compile time
+    (R1630), but the flag it yields is still dropped.
   - `MirInstr::Pop` and the float `binary` ops carry no flags, and
     Pliron passes `FastmathFlagsAttr::default()` everywhere
     (`lower/simd.rs`).
   - Probe: `var a = __mlir_attr.`#pop.fmf<none>`` in `main` is rejected
-    ("read at run time is not supported"), where the pin elides it.
+    ("read at run time is not supported"), where the pin elides it. That
+    rejection is R1638's.
   - Exact arithmetic implements every flag (`mlir::is_fastmath_attribute`),
     so output never differs: this is shape, not semantics.
   - Found while landing R1580 (2026-10-28).
