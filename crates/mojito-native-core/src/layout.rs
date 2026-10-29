@@ -104,8 +104,11 @@ impl LayoutCx<'_> {
             TyKind::Bool | TyKind::I1 | TyKind::Dtype => Ok(Layout::new(1, 1)),
             TyKind::None => Ok(Layout::ZERO),
             // The borrowed string-literal descriptor: `{ data: ptr, len: u64 }`
-            // (`MjStrDesc` in the runtime contract).
-            TyKind::StringLiteral(_) => Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout),
+            // (`MjStrDesc` in the runtime contract), which a `!kgen.string`
+            // is too, as KGEN lowers one to its address and size.
+            TyKind::StringLiteral(_) | TyKind::KgenString => {
+                Ok(compose(&[self.pointer(), Layout::new(8, 8)]).layout)
+            }
             // The built-in error value: `{ message: MjString }` where
             // `MjString` is `{ data: ptr, size: i64, cap: i64 }`.
             TyKind::Error => Ok(self.mj_error()),

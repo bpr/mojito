@@ -695,8 +695,9 @@ pub enum TyKind {
     /// Upstream's KGEN string type `!kgen.string`, the type of a
     /// `StringLiteral`'s `value` parameter, displayed
     /// ``__mlir_type.`!kgen.string` ``. Its values are
-    /// [`CtValue::KgenString`](crate::ct::CtValue::KgenString). It is
-    /// compile-time only; no runtime register holds one.
+    /// [`CtValue::KgenString`](crate::ct::CtValue::KgenString). A run-time
+    /// one is the VM's attribute value and a native backend's string-literal
+    /// descriptor, which `pop.string.size` and `pop.string.address` read.
     KgenString,
     /// Upstream's `!kgen.deferred`, the type of an untyped `__mlir_attr`
     /// and of a function result that returns one (`FastMathFlag._mlir_attr`),
@@ -3754,11 +3755,7 @@ pub const fn builtin_copy_is_value_read(ty: &TyKind) -> bool {
 pub const fn binder_read_takes_slot(ty: &TyKind) -> bool {
     matches!(
         ty,
-        TyKind::Func(_)
-            | TyKind::GenericFunc(_)
-            | TyKind::VariadicPack(_)
-            | TyKind::ParamList(_)
-            | TyKind::KgenString
+        TyKind::Func(_) | TyKind::GenericFunc(_) | TyKind::VariadicPack(_) | TyKind::ParamList(_)
     )
 }
 

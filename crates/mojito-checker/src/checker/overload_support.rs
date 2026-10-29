@@ -542,14 +542,17 @@ pub(super) fn is_bundled_variadics_source(source: Option<&str>) -> bool {
     Path::new(stamped_source_module(source)) == root.join("stdlib/std/builtin/variadics.mojo")
 }
 
-/// The bundled `std/builtin/string_literal.mojo`, whose `StringLiteral.ptr`
-/// alone reads a `!kgen.string`'s address as a `Pointer` (upstream's
-/// `pop.string.address` gives the `!kgen.pointer` its `Pointer` wraps).
-pub(super) fn is_bundled_string_literal_source(source: Option<&str>) -> bool {
+/// The bundled `std/builtin/string_literal.mojo` and `std/string.mojo`,
+/// whose `StringLiteral.ptr` and `StaticString(_kgen)` alone read a
+/// `!kgen.string`'s address as a `Pointer` (upstream's `pop.string.address`
+/// gives the `!kgen.pointer` its `Pointer` wraps).
+pub(super) fn is_bundled_kgen_string_source(source: Option<&str>) -> bool {
     let (Some(root), Some(source)) = (mojito_module::module::bundled_root(), source) else {
         return false;
     };
-    Path::new(stamped_source_module(source)) == root.join("stdlib/std/builtin/string_literal.mojo")
+    let module = Path::new(stamped_source_module(source));
+    module == root.join("stdlib/std/builtin/string_literal.mojo")
+        || module == root.join("stdlib/std/string.mojo")
 }
 
 /// Whether a source belongs to a bundled standard-library module, directly or

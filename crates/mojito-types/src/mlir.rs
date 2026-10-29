@@ -58,6 +58,8 @@ pub enum MlirOp {
     IndexAnd,
     IndexShrs,
     IndexCmp(CmpPredicate),
+    PopStringSize,
+    PopStringAddress,
 }
 
 /// Why an `__mlir_op` spelling names no admitted operation.
@@ -117,6 +119,8 @@ impl MlirOp {
             "pop.simd.reduce_or" => Self::PopSimdReduceOr,
             "pop.cast_from_builtin" => Self::PopCastFromBuiltin,
             "pop.cast_to_builtin" => Self::PopCastToBuiltin,
+            "pop.string.size" => Self::PopStringSize,
+            "pop.string.address" => Self::PopStringAddress,
             "index.add" => Self::IndexAdd,
             "index.sub" => Self::IndexSub,
             "index.mul" => Self::IndexMul,
@@ -173,6 +177,8 @@ impl MlirOp {
             Self::IndexAnd => "index.and",
             Self::IndexShrs => "index.shrs",
             Self::IndexCmp(_) => "index.cmp",
+            Self::PopStringSize => "pop.string.size",
+            Self::PopStringAddress => "pop.string.address",
         }
     }
 
@@ -291,6 +297,8 @@ impl MlirOp {
             Self::PopFma => MlirLowering::Pop(PopOp::Fma),
             Self::PopMax => MlirLowering::Pop(PopOp::Max),
             Self::PopMin => MlirLowering::Pop(PopOp::Min),
+            Self::PopStringSize => MlirLowering::Pop(PopOp::StringSize),
+            Self::PopStringAddress => MlirLowering::Pop(PopOp::StringAddress),
             Self::PopSelect => MlirLowering::Select,
             Self::PopSimdSelect => MlirLowering::SimdSelect,
             Self::PopSimdExtractElement => MlirLowering::Extract,
@@ -485,11 +493,13 @@ impl CmpPredicate {
     }
 }
 
-/// The lane operations the MIR `pop` instruction computes.
+/// The operations the MIR `pop` instruction computes.
 ///
-/// These are the `pop` ops whose semantics no built-in operator has (`div`
-/// and `rem` truncate, `abs` wraps, the rounding ops, `fma`, and `max` and
-/// `min`), and `index.cmp`'s unsigned compares.
+/// These are the `pop` lane ops whose semantics no built-in operator has
+/// (`div` and `rem` truncate, `abs` wraps, the rounding ops, `fma`, and
+/// `max` and `min`), `index.cmp`'s unsigned compares, and the reads of a
+/// run-time `!kgen.string`: `pop.string.size`, its byte length as an
+/// `index`, and `pop.string.address`, the address of its bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PopOp {
     Div,
@@ -506,11 +516,13 @@ pub enum PopOp {
     Ule,
     Ugt,
     Uge,
+    StringSize,
+    StringAddress,
 }
 
 impl PopOp {
     /// Every operation, in declaration order.
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 16] = [
         Self::Div,
         Self::Rem,
         Self::Abs,
@@ -525,12 +537,20 @@ impl PopOp {
         Self::Ule,
         Self::Ugt,
         Self::Uge,
+        Self::StringSize,
+        Self::StringAddress,
     ];
 
     /// The number of operands.
     pub const fn arity(self) -> usize {
         match self {
-            Self::Abs | Self::Round | Self::Floor | Self::Ceil | Self::Trunc => 1,
+            Self::Abs
+            | Self::Round
+            | Self::Floor
+            | Self::Ceil
+            | Self::Trunc
+            | Self::StringSize
+            | Self::StringAddress => 1,
             Self::Fma => 3,
             _ => 2,
         }
@@ -540,6 +560,12 @@ impl PopOp {
     /// (`Bool`) rather than its operands' type.
     pub const fn is_compare(self) -> bool {
         matches!(self, Self::Ult | Self::Ule | Self::Ugt | Self::Uge)
+    }
+
+    /// Whether this reads a `!kgen.string` operand, whose result is an
+    /// `index` or a pointer rather than lanes of the operand's type.
+    pub const fn is_string_read(self) -> bool {
+        matches!(self, Self::StringSize | Self::StringAddress)
     }
 
     /// The op's name after `pop.`, its MIR text spelling.
@@ -559,6 +585,8 @@ impl PopOp {
             Self::Ule => "ule",
             Self::Ugt => "ugt",
             Self::Uge => "uge",
+            Self::StringSize => "string.size",
+            Self::StringAddress => "string.address",
         }
     }
 

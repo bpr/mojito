@@ -179,6 +179,9 @@ pub struct ModuleShared {
     /// Interned parameter-list element arrays (`mjplist_<n>`), keyed by
     /// their bytes and alignment.
     param_lists: HashMap<(Vec<u8>, u32), Identifier>,
+    /// Interned arrays of `!kgen.string` descriptors (`mjklist_<n>`), keyed
+    /// by their strings' bytes.
+    kgen_string_lists: HashMap<Vec<Vec<u8>>, Identifier>,
 }
 
 mod abi;

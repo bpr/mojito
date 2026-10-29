@@ -233,6 +233,11 @@ Rules:
   constant globals named `mjstr_<n>` (an underscore — pliron identifiers
   admit no `.`), numbered in deterministic first-use order and deduplicated
   by content within a module.
+- A **`!kgen.string`** (`TyKind::KgenString`) is the same `MjStrDesc`
+  descriptor: a constant is its interned literal's, `pop.string.address`
+  reads its `data`, and `pop.string.size` its `len`. A closed parameter
+  list of them is a private constant global `mjklist_<n>` of descriptors
+  over the interned bytes.
 - The **nominal `String`** is its declared stdlib fields laid out by the
   ordinary aggregate rules — `{ data: *mut u8, size: i64, cap: i64 }` (24/8),
   the runtime's `MjString`. `data` is `size` initialized bytes of UTF-8 in a

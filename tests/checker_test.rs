@@ -8688,25 +8688,19 @@ fn raw_parameter_list_is_no_pack() {
 }
 
 #[test]
-fn kgen_string_has_no_runtime_form() {
+fn kgen_string_has_a_runtime_form() {
     // A string literal's `.value` and a `!kgen.string` binder are KGEN
-    // strings, which a compile-time position reads; a runtime read of one
-    // is rejected explicitly, as is a `StringLiteral` bound to the binder.
+    // strings a run-time position reads as values, but a `StringLiteral`
+    // does not bind to the binder, and a KGEN string is not `Writable`.
     let alias = "comptime KS = __mlir_type.`!kgen.string`\n\n\n";
     for source in [
         "def main():\n    var x = \"a\".value\n    _ = x\n".to_string(),
-        "def main():\n    print(\"a\".value)\n".to_string(),
         format!(
             "{alias}def g[s: KS]():\n    var x = s\n    _ = x\n\n\ndef main():\n    g[\"a\".value]()\n"
         ),
+        format!("{alias}def g[s: KS]():\n    pass\n\n\ndef main():\n    g[\"a\".value]()\n"),
     ] {
-        let error = err_std(&source);
-        assert!(
-            error
-                .to_string()
-                .contains("a '__mlir_type.`!kgen.string`' value read at run time is not supported"),
-            "{error}"
-        );
+        ok_std(&source);
     }
     let literal = err_std(&format!(
         "{alias}def g[s: KS]():\n    pass\n\n\ndef main():\n    g[\"a\"]()\n"
@@ -8715,9 +8709,13 @@ fn kgen_string_has_no_runtime_form() {
         literal.to_string().contains("found StringLiteral"),
         "{literal}"
     );
-    ok_std(&format!(
-        "{alias}def g[s: KS]():\n    pass\n\n\ndef main():\n    g[\"a\".value]()\n"
-    ));
+    let printed = err_std("def main():\n    print(\"a\".value)\n");
+    assert!(
+        printed
+            .to_string()
+            .contains("does not conform to trait 'Writable'"),
+        "{printed}"
+    );
 }
 
 #[test]

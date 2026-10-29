@@ -350,14 +350,13 @@ pub(super) fn raw_list_runtime_read(meta: &mojito_types::param_expr::MetaTy) -> 
     ))
 }
 
-/// The rejection of a KGEN string (a string literal's `.value`, a
-/// `!kgen.string` binder) read as a runtime value, which the pin
-/// materializes and Mojito does not.
-pub(super) fn kgen_string_runtime_read() -> TypeError {
-    TypeError::Unsupported(format!(
-        "a '{}' value read at run time is not supported",
-        mojito_types::types::KGEN_STRING_TYPE_SPELLING
-    ))
+/// The rejection of `s.value` over a value-less `StringLiteral` (a bare
+/// run-time `s: StringLiteral` argument), whose text no type carries, where
+/// the pin's argument is a `StringLiteral[_]` whose parameter it reads.
+pub(super) fn value_less_literal_value() -> TypeError {
+    TypeError::Unsupported(
+        "the 'value' of a bare 'StringLiteral' argument is not supported".to_string(),
+    )
 }
 
 /// The value and type of the attribute `` __mlir_attr.`text` ``.
@@ -1257,9 +1256,9 @@ impl Checker {
             // A struct-, sized-scalar-, or attribute-valued call is an
             // application the elaborator below MIR runs and materializes
             // (an attribute only where an op's attribute takes it), and so
-            // is any
-            // `String` expression, which it freezes to a compile-time string;
-            // no other struct expression lifts.
+            // is any `String` expression, which it freezes to a
+            // compile-time string, and any `!kgen.string` expression; no
+            // other struct expression lifts.
             TyKind::Struct(..)
             | TyKind::Simd { .. }
             | TyKind::Index
@@ -1275,6 +1274,7 @@ impl Checker {
             {
                 ty
             }
+            TyKind::KgenString => ty,
             _ => return None,
         };
         let application = match called {
@@ -1805,6 +1805,7 @@ impl Checker {
                     | TyKind::Simd { .. }
                     | TyKind::Struct(..)
                     | TyKind::KgenDeferred
+                    | TyKind::KgenString
             )
         })?;
         if function.raises {
@@ -4806,7 +4807,10 @@ impl ApplicableShape<'_> {
                 | SourceType::Float64
                 | SourceType::SelfType
                 | SourceType::Named(..) => self.ret.clone(),
-                ret if is_mlir_index_source(ret) || is_mlir_source(ret, "!kgen.deferred") => {
+                ret if is_mlir_index_source(ret)
+                    || is_mlir_source(ret, "!kgen.deferred")
+                    || is_mlir_source(ret, "!kgen.string") =>
+                {
                     ret.clone()
                 }
                 _ => return None,

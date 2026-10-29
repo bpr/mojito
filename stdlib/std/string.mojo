@@ -1477,6 +1477,23 @@ struct StringSpan[mut: Bool, //, origin: Origin[mut=mut]](
         ]()
         self._size = unsafe_from_utf8.__len__()
 
+    # Upstream's `!kgen.string` initializer, which takes the address
+    # `pop.string.address` gives as the `Pointer` itself, where upstream's
+    # wraps the `!kgen.pointer` it gives (R1316).
+    @doc_hidden
+    @inline(.always)
+    def __init__(out self: StaticString, _kgen: __mlir_type.`!kgen.string`):
+        # FIXME(MSTDL-160): !kgen.string's are not guaranteed to be UTF-8
+        # encoded, they can be arbitrary binary data.
+        var length: Int = Int(
+            SIMDLength(mlir_value=__mlir_op.`pop.string.size`(_kgen))
+        )
+        var ptr = __mlir_op.`pop.string.address`(_kgen)
+        self._data = ptr.unsafe_mut_cast[True]().unsafe_origin_cast[
+            origin._get_owned_interior["bytes"]
+        ]()
+        self._size = length
+
     # Upstream's `StaticString` initializer (the origin is erased here): a
     # view over the literal's UTF-8 bytes, which live for the whole program.
     # `@implicit` lets a literal convert wherever a view is expected.

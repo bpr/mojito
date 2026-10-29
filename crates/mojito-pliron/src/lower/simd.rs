@@ -804,6 +804,19 @@ impl FnLowering<'_> {
         if op.is_compare() {
             return self.lower_unsigned_compare(ctx, dest, op, operands);
         }
+        // A `!kgen.string` is the `MjStrDesc` descriptor: `pop.string.address`
+        // reads its `data`, `pop.string.size` its `len`.
+        if op.is_string_read() {
+            let [string] = operands else {
+                return Err(self
+                    .unsupported_reg(format!("`pop.{}` takes one operand", op.mnemonic()), dest));
+            };
+            let descriptor = self.reg_ptr(ctx, *string)?;
+            let (data, len) = self.string_parts(ctx, descriptor, dest);
+            let value = if op == PopOp::StringSize { len } else { data };
+            self.reg_values.insert(dest.0, value);
+            return Ok(());
+        }
         // `index.divs` divides `index` values, held as `Int` lanes.
         let Some((dtype, width)) = self.func.reg_types.get(&dest.0).and_then(|ty| {
             simd_dims(ty).or_else(|| (*ty == Ty::index()).then_some((Dtype::Int, 1)))
@@ -1531,7 +1544,14 @@ impl FnLowering<'_> {
                     PopOp::Fma => "fma",
                     PopOp::Max => "maxnum",
                     PopOp::Min => "minnum",
-                    PopOp::Div | PopOp::Rem | PopOp::Ult | PopOp::Ule | PopOp::Ugt | PopOp::Uge => {
+                    PopOp::Div
+                    | PopOp::Rem
+                    | PopOp::Ult
+                    | PopOp::Ule
+                    | PopOp::Ugt
+                    | PopOp::Uge
+                    | PopOp::StringSize
+                    | PopOp::StringAddress => {
                         return Err(self.unsupported_reg(
                             format!("`pop.{}` operand count", op.mnemonic()),
                             dest,

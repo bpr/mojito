@@ -5,6 +5,8 @@
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
 use super::*;
 use mojito_types::types::TyKind;
+use pliron_llvm::ops::InsertValueOp;
+use pliron_llvm::types::{StructLayout, StructType};
 
 impl ModuleShared {
     pub(crate) fn new(module: ModuleOp) -> Self {
@@ -16,6 +18,7 @@ impl ModuleShared {
             thunks: HashMap::new(),
             drop_thunks: HashMap::new(),
             param_lists: HashMap::new(),
+            kgen_string_lists: HashMap::new(),
         }
     }
 
@@ -72,6 +75,77 @@ impl ModuleShared {
         global.set_alignment(ctx, align);
         self.module.append_operation(ctx, global.get_operation(), 0);
         self.param_lists.insert(key, name.clone());
+        name
+    }
+
+    /// Intern a closed parameter list of `!kgen.string` elements as a
+    /// private constant global `mjklist_<n>`: an array of `MjStrDesc`
+    /// descriptors over each string's interned bytes, built by its
+    /// initializer region since each holds a constant-pool address.
+    pub(super) fn intern_kgen_string_list(
+        &mut self,
+        ctx: &mut Context,
+        strings: &[Vec<u8>],
+    ) -> Identifier {
+        if let Some(name) = self.kgen_string_lists.get(strings) {
+            return name.clone();
+        }
+        let globals: Vec<Identifier> = strings
+            .iter()
+            .map(|bytes| self.intern_string(ctx, bytes))
+            .collect();
+        let name: Identifier = format!("mjklist_{}", self.kgen_string_lists.len())
+            .try_into()
+            .expect("constant-pool names are identifier-safe");
+        let ptr_ty: TypeHandle = PointerType::get(ctx, 0).into();
+        let i64_int = IntegerType::get(ctx, 64, Signedness::Signless);
+        let descriptor_ty: TypeHandle =
+            StructType::get_unnamed(ctx, (vec![ptr_ty, i64_int.into()], StructLayout::Unpacked))
+                .into();
+        let array_ty: TypeHandle = ArrayType::get(ctx, descriptor_ty, strings.len() as u64).into();
+        let global = GlobalOp::new(ctx, name.clone(), array_ty);
+        global.set_attr_llvm_global_linkage(ctx, LinkageAttr::PrivateLinkage);
+        global.set_constant(ctx, true);
+        global.set_alignment(ctx, 8);
+        global.add_initializer_region(ctx);
+        let block = global
+            .get_initializer_block(ctx)
+            .expect("an initializer region has its entry block");
+        let undef = UndefOp::new(ctx, array_ty);
+        undef.get_operation().insert_at_back(block, ctx);
+        let mut array = undef.get_result(ctx);
+        for (index, (bytes, string)) in (0u32..).zip(strings.iter().zip(globals)) {
+            let descriptor = UndefOp::new(ctx, descriptor_ty);
+            descriptor.get_operation().insert_at_back(block, ctx);
+            let address = AddressOfOp::new(ctx, string, 0);
+            address.get_operation().insert_at_back(block, ctx);
+            let with_data = InsertValueOp::new(
+                ctx,
+                descriptor.get_result(ctx),
+                address.get_result(ctx),
+                vec![0],
+            );
+            with_data.get_operation().insert_at_back(block, ctx);
+            let length = IntegerAttr::new(i64_int, APInt::from_u64(bytes.len() as u64, bw(64)));
+            let length = ConstantOp::new(ctx, Box::new(length));
+            length.get_operation().insert_at_back(block, ctx);
+            let with_length = InsertValueOp::new(
+                ctx,
+                with_data.get_result(ctx),
+                length.get_result(ctx),
+                vec![1],
+            );
+            with_length.get_operation().insert_at_back(block, ctx);
+            let element = InsertValueOp::new(ctx, array, with_length.get_result(ctx), vec![index]);
+            element.get_operation().insert_at_back(block, ctx);
+            array = element.get_result(ctx);
+        }
+        ReturnOp::new(ctx, Some(array))
+            .get_operation()
+            .insert_at_back(block, ctx);
+        self.module.append_operation(ctx, global.get_operation(), 0);
+        self.kgen_string_lists
+            .insert(strings.to_vec(), name.clone());
         name
     }
 

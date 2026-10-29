@@ -3,8 +3,7 @@
 //! place, which the bundled standard library spells before writing a value's
 //! storage through pointers and after moving it out through them,
 //! `kgen.struct.extract` of an element of a literal struct,
-//! `pop.string.size` and `pop.string.address` over a compile-time
-//! `!kgen.string`, the `pop` and `index` ops of `pop_ops.rs`, and the LLVM
+//! `pop.string.size` and `pop.string.address` over a `!kgen.string`, the `pop` and `index` ops of `pop_ops.rs`, and the LLVM
 //! intrinsic call of `llvm_intrinsic.rs`.
 
 #[allow(clippy::wildcard_imports, reason = "page of one split module")]
@@ -47,9 +46,7 @@ impl Checker {
             return self.infer_string_op(span, method, ParamOp::StringSize, call);
         }
         if method == STRING_ADDRESS
-            && super::super::overload_support::is_bundled_string_literal_source(
-                span.source.as_deref(),
-            )
+            && super::super::overload_support::is_bundled_kgen_string_source(span.source.as_deref())
         {
             return self.infer_string_op(span, method, ParamOp::StringAddress, call);
         }
@@ -195,11 +192,12 @@ impl Checker {
     }
 
     /// Type ``__mlir_op.`pop.string.size`(s)`` or
-    /// ``__mlir_op.`pop.string.address`(s)`` over a compile-time
-    /// `!kgen.string` (`Self.value` in `StringLiteral.byte_length`): the
+    /// ``__mlir_op.`pop.string.address`(s)`` over a `!kgen.string`: the
     /// string's byte length, an `index`, or the address of its static
-    /// bytes, recorded as the parameter value `op` folds once the string is
-    /// bound. The address is a `Pointer[Byte]`, accepted only in the bundled
+    /// bytes. A compile-time operand (`Self.value` in
+    /// `StringLiteral.byte_length`) records the parameter value `op` folds
+    /// once the string is bound; a run-time one (`StaticString(_kgen)`)
+    /// records the `pop` op that reads it. The address is a `Pointer[Byte]`, accepted only in the bundled
     /// library, where upstream's is the `!kgen.pointer` its `Pointer` wraps.
     fn infer_string_op(
         &self,
@@ -243,22 +241,23 @@ impl Checker {
                 mojito_types::types::KGEN_STRING_TYPE_SPELLING
             )));
         }
-        let string = self.compile_dependent_ct_expr(operand).map_err(|_| {
-            TypeError::Unsupported(format!(
-                "'{name}' reads only a compile-time '{}'",
-                mojito_types::types::KGEN_STRING_TYPE_SPELLING
-            ))
-        })?;
-        let value = self
-            .param_context
-            .op(op, &[string])
-            .map_err(|error| TypeError::Unsupported(error.to_string()))?;
-        self.record_at(span.clone()).adjustment = Some(Box::new(
-            mojito_checked::checked::SemanticAdjustment::ParamValue {
-                value,
+        let adjustment = match self.compile_dependent_ct_expr(operand) {
+            Ok(string) => mojito_checked::checked::SemanticAdjustment::ParamValue {
+                value: self
+                    .param_context
+                    .op(op, &[string])
+                    .map_err(|error| TypeError::Unsupported(error.to_string()))?,
                 materialized: None,
             },
-        ));
+            Err(_) => {
+                mojito_checked::checked::SemanticAdjustment::MlirOp(if op == ParamOp::StringSize {
+                    mojito_types::mlir::MlirOp::PopStringSize
+                } else {
+                    mojito_types::mlir::MlirOp::PopStringAddress
+                })
+            }
+        };
+        self.record_at(span.clone()).adjustment = Some(Box::new(adjustment));
         Ok(if op == ParamOp::StringSize {
             TyKind::Index.into()
         } else {

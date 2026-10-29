@@ -1289,6 +1289,29 @@ fn verify_pop(
     let Some(result) = cx.reg_ty(dest) else {
         return;
     };
+    if op.is_string_read() {
+        let expected = if op == mojito_types::mlir::PopOp::StringSize {
+            Ty::index()
+        } else {
+            mojito_types::types::static_string_address_ty()
+        };
+        if *result != expected {
+            errors.push(format!(
+                "{prefix}: pop.{} defines a register of type {result}, not {expected}",
+                op.mnemonic()
+            ));
+        }
+        if let Some(found) = operands.first().and_then(|operand| cx.reg_ty(*operand))
+            && !matches!(found.kind(), TyKind::KgenString)
+        {
+            errors.push(format!(
+                "{prefix}: pop.{} reads an operand of type {found}, not {}",
+                op.mnemonic(),
+                mojito_types::types::KGEN_STRING_TYPE_SPELLING
+            ));
+        }
+        return;
+    }
     if op.is_compare() {
         if *result != Ty::i1() {
             errors.push(format!(

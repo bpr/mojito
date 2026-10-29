@@ -1232,14 +1232,6 @@ impl Checker {
                         },
                     ));
                 }
-                // A KGEN string binder (`s: KGENString`) has no runtime form.
-                if self
-                    .lookup(name)
-                    .is_some_and(|ty| matches!(ty.kind(), TyKind::KgenString))
-                    && self.crosses_to_runtime()
-                {
-                    return Err(super::comptime_validation::kgen_string_runtime_read());
-                }
                 // A raw-list parameter (`raw: KGENParamList[T]`) has no
                 // runtime form: a compile-time position reads the binder.
                 if let Some(ty) = self.lookup(name)

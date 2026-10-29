@@ -159,7 +159,8 @@ pub fn lower_ty(
         TyKind::None => Ok(LowerTy::ZeroSized),
         // The built-in error value is `MjError { message: MjString }` storage;
         // its message buffer frees invisibly on drop (no user destructor).
-        // `StringLiteral` storage is the borrowed `MjStrDesc` descriptor.
+        // `StringLiteral` storage is the borrowed `MjStrDesc` descriptor,
+        // as is a `!kgen.string`'s.
         // A retained callable is the two-word `{ invoke, env }` value.
         TyKind::Error
         | TyKind::Struct(..)
@@ -169,6 +170,7 @@ pub fn lower_ty(
         | TyKind::Variant(_)
         | TyKind::Simd { .. }
         | TyKind::StringLiteral(_)
+        | TyKind::KgenString
         | TyKind::Func(_) => match layout.layout_of(ty) {
             Ok(computed) => Ok(LowerTy::Aggregate {
                 ty: ty.clone(),

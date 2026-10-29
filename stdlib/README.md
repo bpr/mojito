@@ -273,9 +273,10 @@ point, as upstream's toolchain does.
 - `std/collections/string/string_span.mojo` — upstream's
   `_get_kgen_string[string: StaticString, *extra: StaticString]()` at its
   upstream module path, the `!kgen.string` of the views' bytes, which
-  `std/sys/intrinsics.mojo`'s `llvm_intrinsic` reads its `intrin` through.
-  The rest of upstream's module lives in `std/string.mojo`;
-  `get_static_string` waits for `StaticString(kgen)` (roadmap R1190).
+  `std/sys/intrinsics.mojo`'s `llvm_intrinsic` reads its `intrin` through,
+  and `get_static_string`, the `StaticString` over that string. The rest of
+  upstream's module, including the `StaticString(_kgen)` initializer
+  `get_static_string` calls, lives in `std/string.mojo`.
 
 Underscore-prefixed structs such as `_ListIter` are implementation details,
 following the Python convention that Mojo currently inherits. `DictEntry` is

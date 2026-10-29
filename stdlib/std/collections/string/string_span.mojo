@@ -1,11 +1,9 @@
 # Upstream's `std/collections/string/string_span.mojo` at its own module
-# path, holding `_get_kgen_string` verbatim. Upstream's module also
-# declares `StringSpan` itself, which Mojito keeps in `std/string.mojo`,
-# whence this module imports `StaticString`.
+# path, holding `_get_kgen_string` and `get_static_string` verbatim.
+# Upstream's module also declares `StringSpan` itself, which Mojito keeps
+# in `std/string.mojo`, whence this module imports `StaticString`.
 #
-# Omitted: `get_static_string`, whose `StaticString(kgen)` reads a
-# `!kgen.string` at run time (roadmap R1190), and the rest of upstream's
-# module, which lives in `std/string.mojo`.
+# Omitted: the rest of upstream's module, which lives in `std/string.mojo`.
 """Implements the `StringSpan` type and related utilities for efficient string operations."""
 
 from std.string import StaticString
@@ -31,3 +29,22 @@ def _get_kgen_string[
         extra.values,
         `> : !kgen.string`,
     ]
+
+
+@inline(.nodebug)
+def get_static_string[
+    string: StaticString, *extra: StaticString
+]() -> StaticString:
+    """Form a StaticString from compile-time StringSpan values. This
+    guarantees that the returned string is compile-time constant in static
+    memory.  It also guarantees that there is a 'nul' zero byte at the end,
+    which is not included in the returned range.
+
+    Parameters:
+        string: The first StringSpan value.
+        extra: Additional StringSpan values to concatenate.
+
+    Returns:
+        The string value as a StaticString.
+    """
+    return StaticString(_get_kgen_string[string, *extra]())

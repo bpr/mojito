@@ -52,12 +52,13 @@ pub enum Value {
     },
     /// A `DType` value.
     Dtype(Dtype),
-    /// An attribute the compile-time interpreter holds as a value, as
-    /// upstream's `IREvaluator` holds every value as an `Attribute`. No
-    /// instruction inspects it: it is copied, moved, passed, returned, and
-    /// frozen back as itself: an `!kgen.deferred` attribute, or a
-    /// `!kgen.string`. Only an elaborator request runs a body holding one,
-    /// since translation rejects one that survives the pipeline.
+    /// An attribute held as a value, as upstream's `IREvaluator` holds
+    /// every value as an `Attribute`: it is copied, moved, passed,
+    /// returned, and frozen back as itself. An `!kgen.deferred` attribute
+    /// is inspected by no instruction, and only an elaborator request runs
+    /// a body holding one, since translation rejects one that survives the
+    /// pipeline. A `!kgen.string` is also a run-time value, which the
+    /// `pop.string.size` and `pop.string.address` reads inspect.
     Attribute(mojito_types::ct::CtValue),
     /// An `Error` value carrying its message (what `raise` raises).
     Error(String),

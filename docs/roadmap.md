@@ -173,6 +173,13 @@ which names the upstream pass each one follows. Each is measured by the
   - Probe: `SIMD[DType.int8, cnt(n, True)]` over `def cnt[*Ts:
     AnyType](*xs: *Ts) -> Int` fails the same way. The pin prints `[1, 1]`
     for `n = 5`.
+  - Probe: a compile-time parameter pack (`*extra: StaticString`) is
+    refused the same way: `ApplicableShape::applicable` lists no binder
+    starting with `*`. Upstream's `comptime _from[s: StaticString] =
+    StringLiteral[_get_kgen_string[s]()]` in `struct StringLiteral` makes
+    the std package fail with "not an associated comptime expression", so
+    `_from` is not ported; `StringLiteral._from["xyz"]()` prints `xyz` at
+    the pin. In a body the same call already runs, lifted as a thunk.
   - Checker: `ApplicableFunction` records the collector's index and its
     element `SlotType`, or the `*Ts` binder typing it. `Checker::applied_arguments`
     matches with `CallVariadics { positional: true, .. }`, applies each
@@ -5154,65 +5161,6 @@ Within the track, an entry Mojito runs to a wrong result, or accepts where the p
   - Probes: a `comptime raw = vs.values` then `var x = raw`, and a runtime
     read of a `raw: _MLIR.KGENParamListType[t]` parameter.
   - Found while landing R807 (2026-10-19).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
-- [ ] **R1190 A `!kgen.string` value has no runtime form**
-
-  Problem: `var x = "a".value` is rejected ("a '__mlir_type.`!kgen.string`'
-  value read at run time is not supported"), where the pin materializes the
-  literal's KGEN string as a runtime value.
-  - `TyKind::KgenString` has no layout, no VM value, and no native
-    representation. The checker rejects a runtime read of `.value` or of a
-    `!kgen.string` binder (`comptime_validation::kgen_string_runtime_read`),
-    and translation legality rejects a register, slot, or signature that
-    holds one once the pipeline has run (`llvm_translation_findings`,
-    `verify/concrete.rs`). The VM holds one as a `Value::Attribute` only
-    inside a compile-time evaluation (`_get_kgen_string`).
-  - Probe: a runtime parameter `def f(x: __mlir_type.`!kgen.string`)`
-    called as `f("a".value)`, which the pin runs.
-  - Probe: `var l = List[KGENString]()` then `l.append("a".value)` and
-    `print(len(l))`, which prints `1` at the pin. Mojito rejects it ("not
-    a compile-time Int constant: KGENString").
-  - Probe: `ParameterList[names]()[0]` over `*names: KGENString`, which
-    reads the elements' runtime storage through `get_span`.
-  - Probe: `G[name()].x()` over `def name() -> __mlir_type.`!kgen.string``
-    returning `"abc".value`, which prints `2` at the pin. Admitting
-    `KgenString` where R1630 admits `!kgen.deferred` (the
-    `deferred_result_bodies` carve-out and the two lifting filters in
-    `comptime_validation.rs`) is not enough: the thunk of `comptime n =
-    name()` reads `"abc".value` as a field of a run-time `Str` ("field
-    access on non-struct String"), so the literal's KGEN string needs this
-    entry's run-time form.
-  - Probe: ``__mlir_op.`pop.call_llvm_intrinsic`[intrin=_get_kgen_string[
-    "llvm.ctpop"](), ...](x)`` over an `Int64` is "not a compile-time Int
-    constant: not an associated comptime expression", where the pin prints
-    `3` for `7`. `llvm_intrinsic_name` builds the attribute with
-    `compile_dependent_ct_expr`, and a call whose result is `!kgen.string`
-    is no compile-time application there. Bound first (`comptime k =
-    _get_kgen_string["llvm.", *parts]()`, `intrin=k`), it runs.
-  - Probe: `StringLiteral[_get_kgen_string["abc"]()]()` is "not a
-    compile-time Int constant: not an associated comptime expression",
-    the same `!kgen.string` call in a type argument. So upstream's
-    `comptime _from[s: StaticString] =
-    StringLiteral[_get_kgen_string[s]()]` cannot be declared in
-    `std.builtin.string_literal` (the std package then fails to build).
-    Port it with this entry.
-  - Probe: `print(get_static_string["ab", "cd"]())`, which prints `abcd`
-    at the pin. Upstream declares it in
-    `std.collections.string.string_span` as
-    `StaticString(_get_kgen_string[string, *extra]())`, over
-    `StringSpan.__init__(out self: StaticString, _kgen:
-    __mlir_type.`!kgen.string`)`. That initializer's `pop.string.size` and
-    `pop.string.address` read a run-time operand, where the checker folds
-    them only over a compile-time one (`infer_string_op`,
-    `method_calls/mlir_op.rs`). Port both with this entry.
-  - Probe: `def f(x: __mlir_type.`!kgen.string`) -> Int` returning
-    `Int(SIMDLength(mlir_value=__mlir_op.`pop.string.size`(x)))`, which
-    prints `2` for `f("ab".value)` at the pin and reports "no constructor
-    overload matches" for `SIMDLength` here.
-  - A sibling of R1149's raw-list runtime form.
-  - Found while landing R1183 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
@@ -10227,6 +10175,10 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
     carry the literal's type first.
   - Respell the bundled `_is_identical`'s `rhs: StringLiteral[_]` as the
     bare `StringLiteral`.
+  - Probe: `var x = s.value` over `def f(s: StringLiteral) -> Int`, then
+    `pop.string.size` of `x`, is "the 'value' of a bare 'StringLiteral'
+    argument is not supported" (`value_less_literal_value`), where the pin
+    prints `3` for `f("abc")`.
   - Probe: `print(StringLiteral.__init__)` and every other bare
     `StringLiteral` in an expression is "Undefined variable", because
     `Type::StringLiteral` respells as an identifier no scope binds

@@ -23,10 +23,10 @@ which may be generic; it is always elaborated before it runs.
 Every artifact begins with exactly:
 
 ```text
-mojito-mir 1.134
+mojito-mir 1.135
 ```
 
-The writer emits 1.134. The reader accepts 1.0 through 1.134; *Schema 1.0*
+The writer emits 1.135. The reader accepts 1.0 through 1.135; *Schema 1.0*
 below says how a 1.0 artifact is read, and *Binder identity* under *Types*
 how a binder without an identity is.
 
@@ -891,6 +891,12 @@ literal type, and a symbolic text as its `ct_expr`. The value-less
 `StringLiteral` keeps its atom. The package format moves to
 `mojito-package 147`.
 
+Schema 1.135 gives a `KgenString` a run-time form: a register, slot,
+parameter, or result may hold one, and `pop` gains `string.size` and
+`string.address`, which read a run-time `KgenString` operand's byte length
+(an `index`) and the address of its bytes (a static `Pointer[UInt8]`). The
+package format moves to `mojito-package 148`.
+
 Artifacts are UTF-8, use LF logical newlines, end in exactly one LF, and contain
 no byte-order mark. The header is followed by one artifact record:
 
@@ -1459,7 +1465,8 @@ it types records the bound `__TypeOfAllTypes`.
 
 `KgenString` (schema 1.79) is upstream's KGEN string type `!kgen.string`, the
 type of a `StringLiteral`'s `value` parameter, whose values are
-`ct_kgen_string`. It is compile-time only, as `any_trait` is.
+`ct_kgen_string`. Since schema 1.135 it has a run-time form, which a native
+backend lays out as a string literal's `{ data, len }` descriptor.
 
 `KgenDeferred` (schema 1.132) is upstream's `!kgen.deferred`, the type of
 an untyped MLIR attribute and of a function result returning one, whose
@@ -1645,7 +1652,7 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `ScalarCast` | `scalar.cast { dest, value, target }` (schema 1.118): `target` is `Int`, `UInt`, `Float64`, or `Bool`; the built-in scalar conversion a `call` of the bare name was before |
 | `BuiltinCast` | `builtin.cast { dest, value }` (schema 1.123): one of `dest` and `value` is an `index` and the other an `Int`, the bits unchanged, or (schema 1.133) one is an `i1` (or a `Bool`, as both backends hold it) and the other a `Bool`'s `!kgen.scalar<bool>` storage |
 | `IsRunInComptimeInterpreter` | `is_run_in_comptime_interpreter { dest }` (schema 1.128): a `Bool`, `True` exactly while the comptime interpreter runs the function; never folded before a backend reads it |
-| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133); an integer division by zero traps |
+| `Pop` | `pop { dest, op, operands }` (schema 1.119): `op` is `div`, `rem`, `abs`, `round`, `floor`, `ceil`, `trunc`, `fma`, `max`, or `min` (schema 1.127), taking 2, 2, 1, 1, 1, 1, 1, 3, 2, or 2 operands of the destination's SIMD type, or `ult`, `ule`, `ugt`, or `uge` (schema 1.127), comparing two `index` operands into an `i1` (a `Bool` before schema 1.133), or `string.size` or `string.address` (schema 1.135), reading one `KgenString` operand's byte length into an `index` or its bytes' address into a static `Pointer[UInt8]`; an integer division by zero traps |
 | `ConstructType` | `type.construct_expr` (schema 1.33: `{ dest, type }`) |
 | `ParamListAddress` | `param_list.address` (schema 1.34: `{ dest, values }`, `values` a parameter or closed-tuple constant) |
 | `StoreToMem` | `store_to_mem { dest, src }` (schema 1.56): moves `src` into compile-time memory, which is never destroyed, and sets `dest` to an immutable reference to it — upstream's `store_to_mem`. Only a lifted compile-time evaluation's body holds one |

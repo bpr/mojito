@@ -8,6 +8,20 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- A `!kgen.string` now has a run-time form (R1190): `var x = "a".value`, a
+  `!kgen.string` argument or binder read in a body, and a
+  `List[KGENString]` element hold one, `pop.string.size` and
+  `pop.string.address` read one at run time, and upstream's
+  `StaticString(_kgen)` initializer and `get_static_string` are ported, on
+  the VM and natively, where natively it is a string literal's `{ data,
+  len }` descriptor. A call returning one is now a compile-time application
+  where a parameter or an op's attribute takes it, so `G[name()]`,
+  `StringLiteral[_get_kgen_string["abc"]()]()`, and
+  `intrin=_get_kgen_string["llvm.ctpop"]()` run as at the pin. The MIR
+  schema moves to 1.135 and the package format to `mojito-package 148`.
+  `StringLiteral._from` waits on a compile-time parameter pack in a
+  signature (R1642).
+
 - A string literal's type is now upstream's `StringLiteral[value]` its
   text keys (R1652): `var x: StringLiteral["a".value] = "a"` binds, `"b"`
   there is rejected with the pin's "cannot implicitly convert

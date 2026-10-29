@@ -139,7 +139,10 @@ impl Checker {
         let mojito_ast::ast::ParamArg::Value(expression) = value else {
             return Err(rejected());
         };
-        let built = self.compile_dependent_ct_expr(expression)?;
+        let built = {
+            let _lifting = self.lifting_position();
+            self.compile_dependent_ct_expr(expression)?
+        };
         if !matches!(built.meta(), MetaTy::Value(ty) if matches!(ty.kind(), TyKind::KgenString)) {
             return Err(rejected());
         }

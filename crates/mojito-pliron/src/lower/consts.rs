@@ -122,6 +122,21 @@ impl FnLowering<'_> {
                 dest,
             ));
         };
+        // A `!kgen.string` element is a descriptor over constant-pool bytes.
+        if matches!(element.kind(), TyKind::KgenString)
+            && let Some(strings) = elements
+                .iter()
+                .map(|value| match value {
+                    CtValue::KgenString(text) => Some(text.as_bytes().to_vec()),
+                    _ => None,
+                })
+                .collect::<Option<Vec<_>>>()
+        {
+            let global = self.shared.intern_kgen_string_list(ctx, &strings);
+            let address = self.global_address(ctx, &global, dest);
+            self.reg_values.insert(dest.0, address);
+            return Ok(());
+        }
         let mut bytes = Vec::new();
         for value in elements {
             let encoded = match (element.kind(), value) {
@@ -201,6 +216,11 @@ impl FnLowering<'_> {
                     }
                     _ => self.simd_store_vector(ctx, dest, *dtype, lanes.len(), vector),
                 }
+                Ok(())
+            }
+            // A `!kgen.string` constant is its interned literal bytes.
+            CtValue::KgenString(text) => {
+                self.str_consts.insert(dest.0, text.as_bytes().to_vec());
                 Ok(())
             }
             CtValue::Struct { .. } | CtValue::Tuple(_) | CtValue::Str(_) => {

@@ -368,6 +368,35 @@ impl VmBackend {
             MirInstr::IsRunInComptimeInterpreter { dest } => {
                 regs[dest.0 as usize] = Value::Bool(self.ctfe_fuel.is_some());
             }
+            MirInstr::Pop { dest, op, operands } if op.is_string_read() => {
+                let Some(Value::Attribute(string)) =
+                    operands.first().map(|operand| &regs[operand.0 as usize])
+                else {
+                    return Err(RuntimeError::TypeError(format!(
+                        "'pop.{}' reads a '{}'",
+                        op.mnemonic(),
+                        mojito_types::types::KGEN_STRING_TYPE_SPELLING
+                    )));
+                };
+                let unsupported = |error: mojito_types::param_expr::ParamError| {
+                    RuntimeError::Unsupported(error.to_string())
+                };
+                regs[dest.0 as usize] = if *op == mojito_types::mlir::PopOp::StringSize {
+                    let size = mojito_types::param_expr::fold::fold_string_size(string)
+                        .map_err(unsupported)?;
+                    super::ct_value_as_runtime(size).ok_or_else(|| {
+                        RuntimeError::Unsupported("'pop.string.size' gives no index".to_string())
+                    })?
+                } else {
+                    let address = mojito_types::param_expr::fold::fold_string_address(string)
+                        .map_err(unsupported)?;
+                    self.thaw(
+                        prog,
+                        &address,
+                        Some(&mojito_types::types::static_string_address_ty()),
+                    )?
+                };
+            }
             MirInstr::Pop { dest, op, operands } => {
                 let operands: Vec<Value> = operands
                     .iter()

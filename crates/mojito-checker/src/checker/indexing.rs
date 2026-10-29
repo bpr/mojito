@@ -1883,16 +1883,23 @@ impl Checker {
                 return Ok(ty);
             }
         }
-        // A string literal's `value` parameter is its KGEN string, which a
-        // compile-time position reads and no runtime value holds.
+        // A string literal's `value` parameter is its KGEN string. A
+        // run-time read materializes the parameter, as the pin's
+        // `kgen.param.constant` does.
         if field == mojito_types::ct::LITERAL_VALUE_MEMBER
-            && matches!(obj_ty.kind(), TyKind::StringLiteral(_))
+            && let TyKind::StringLiteral(value) = obj_ty.kind()
         {
-            return if self.crosses_to_runtime() {
-                Err(super::comptime_validation::kgen_string_runtime_read())
-            } else {
-                Ok(TyKind::KgenString.into())
-            };
+            if self.crosses_to_runtime() {
+                let value = value
+                    .as_deref()
+                    .ok_or_else(super::comptime_validation::value_less_literal_value)?;
+                let value = self
+                    .param_context
+                    .constant(value.clone())
+                    .map_err(|error| TypeError::Unsupported(error.to_string()))?;
+                self.record_member_value(span, value);
+            }
+            return Ok(TyKind::KgenString.into());
         }
         Err(TypeError::NoSuchField {
             object_type: obj_ty.to_string(),
