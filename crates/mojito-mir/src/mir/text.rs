@@ -467,7 +467,6 @@ pub const fn intrinsic_subscript_spelling(intrinsic: MirIntrinsicSubscript) -> &
     match intrinsic {
         MirIntrinsicSubscript::TupleStorage => "tuple_storage",
         MirIntrinsicSubscript::VariadicStorage => "variadic_storage",
-        MirIntrinsicSubscript::Simd => "simd",
         MirIntrinsicSubscript::Pointer => "pointer",
         MirIntrinsicSubscript::ComptimeList => "comptime_list",
     }

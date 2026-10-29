@@ -98,7 +98,6 @@ impl Decoder {
         match self.atom(value)? {
             "tuple_storage" => Some(MirIntrinsicSubscript::TupleStorage),
             "variadic_storage" => Some(MirIntrinsicSubscript::VariadicStorage),
-            "simd" => Some(MirIntrinsicSubscript::Simd),
             "pointer" => Some(MirIntrinsicSubscript::Pointer),
             "comptime_list" => Some(MirIntrinsicSubscript::ComptimeList),
             other => {

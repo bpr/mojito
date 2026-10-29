@@ -3962,7 +3962,9 @@ source-bound argument types/conventions/places, capture accesses,
 reference-result origin, and source-ordered compile-time value arguments plus
 their declarations. `Index` carries exactly one nominal call or a checked
 `MirIntrinsicSubscript` discriminator for Tuple/runtime-pack storage, variadic
-storage, SIMD, pointers, or the CTFE-only compile-time-list bridge.
+storage, pointers, or the CTFE-only compile-time-list bridge; a `SIMD`
+subscript is its declared `__getitem__`/`__setitem__` call, and a value
+getter's result is a temporary, never a place.
 `MultiIndex` and `MultiSet` always require a nominal call contract; a slice
 literal is a call of its parameter type's `__slice_literal__` constructor
 whose value they pass like any index. Checked

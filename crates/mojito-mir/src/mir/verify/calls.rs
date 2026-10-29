@@ -358,10 +358,6 @@ pub(super) fn subscript_arg_regs(argument: &crate::mir::MirSubscriptArg, out: &m
     }
 }
 
-pub(super) fn simd_element_type(dtype: &mojito_types::types::SimdDtype) -> Ty {
-    mojito_types::types::simd_lane(dtype)
-}
-
 pub(super) fn subscript_argument_ty(
     function: &MirFunction,
     argument: &crate::mir::MirSubscriptArg,

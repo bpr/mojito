@@ -766,11 +766,11 @@ fn verifier_rejects_missing_nominal_subscript_contracts() {
 
 #[test]
 fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
-    // A lane read is `simd.extract`; as an intrinsic index it is rejected,
-    // and so is a pointer subscript of the vector.
+    // A lane read is `simd.extract`; a pointer subscript of the vector is
+    // rejected.
     let lane_read_as = |intrinsic: MirIntrinsicSubscript| {
-        let mut mir = lower_source(
-            "def main():\n    var lanes = SIMD[DType.int, 2](1, 2)\n    print(lanes[0])\n",
+        let mut mir = lower_linked_source(
+            "def main():\n    var lanes = SIMD[DType.int, 2](1, 2)\n    print(Int(mlir_value=__mlir_op.`pop.simd.extractelement`(lanes._mlir_value, Int(0).__mlir_index__())))\n",
         );
         let instruction = mir
             .functions
@@ -792,10 +792,6 @@ fn verifier_rejects_missing_conflicting_and_mistyped_intrinsic_subscripts() {
         };
         mir
     };
-    expect_finding(
-        &lane_read_as(MirIntrinsicSubscript::Simd),
-        "a SIMD lane read is a simd.extract",
-    );
     expect_finding(
         &lane_read_as(MirIntrinsicSubscript::Pointer),
         "Pointer is incompatible with checked base type",

@@ -3363,19 +3363,6 @@ pub const fn scalar_simd_dtype(ty: &TyKind) -> Option<Dtype> {
     }
 }
 
-/// The type of one lane of a SIMD type: the canonical width-one type of its
-/// dtype slot.
-pub fn simd_lane(dtype: &SimdDtype) -> Ty {
-    match dtype {
-        SimdDtype::Known(dtype) => canonical_simd_ty(*dtype, 1),
-        SimdDtype::Expr(_) => TyKind::Simd {
-            dtype: dtype.clone(),
-            width: SimdWidth::Known(1),
-        }
-        .into(),
-    }
-}
-
 /// The runtime type an exact literal materializes to when no context selects
 /// another (`IntLiteral` → `Int`, `FloatLiteral` → `Float64`), applied through
 /// struct arguments, packs, and variants.

@@ -1005,12 +1005,15 @@ impl Checker {
             }
             .into());
         }
-        // A call is a place only through the reference its inference
-        // records (`w.get()` returning `ref[self.x] Int`); any other operand
-        // is a place before it is read.
+        // A call, or a subscript's accessor call, is a place only through
+        // the reference its inference records (`w.get()` returning
+        // `ref[self.x] Int`); any other operand is a place before it is read.
         let call = matches!(
             value.kind,
-            ExprKind::Call { .. } | ExprKind::MethodCall { .. } | ExprKind::Invoke { .. }
+            ExprKind::Call { .. }
+                | ExprKind::MethodCall { .. }
+                | ExprKind::Invoke { .. }
+                | ExprKind::Index { .. }
         );
         let inferred = call.then(|| self.infer(value)).transpose()?;
         let place = self.origin_place(value).map_err(|error| match error {

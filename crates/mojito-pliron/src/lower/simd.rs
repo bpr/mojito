@@ -1018,66 +1018,6 @@ impl FnLowering<'_> {
         }
     }
 
-    /// A store into one lane of a multi-lane SIMD place — the lane read's
-    /// mirror: load the whole vector, `insertelement`, store it back, so the
-    /// designated storage is touched only at its base by whole-vector typed
-    /// accesses (a byte-offset lane store is a non-promotable use that pins
-    /// the slot in memory). Returns `false` for anything else, leaving the
-    /// caller's lane-addressed path (`place_address`) untouched.
-    pub(super) fn try_lower_simd_lane_store(
-        &mut self,
-        ctx: &mut Context,
-        place: &MirPlace,
-        src: Reg,
-    ) -> Result<bool, PlironError> {
-        let Some(&Proj::Index(index)) = place.proj.last() else {
-            return Ok(false);
-        };
-        // The base type is read from the place's own projection types, so an
-        // untyped compatibility place declines rather than guessing.
-        if !place.is_typed() {
-            return Ok(false);
-        }
-        let base_ty = match place.proj.len() {
-            1 => place.root_ty.clone(),
-            n => place.projection_tys.get(n - 2).cloned(),
-        };
-        let Some((dtype, width)) = base_ty.as_ref().and_then(simd_dims) else {
-            return Ok(false);
-        };
-        let width = width as usize;
-        if width <= 1 {
-            return Ok(false);
-        }
-        // `place_address` derefs a reference at the top of each projection
-        // step, so a base that is itself a reference would be left
-        // undereferenced by truncating the place; and its recorded-prefix
-        // branch accepts a prefix as long as the whole projection, which the
-        // truncated place would silently disqualify.
-        if let Some(through) = place.through.filter(|through| *through != place.root)
-            && let Some(recorded) = self.reference_places.get(&through)
-            && recorded.proj.len() >= place.proj.len()
-        {
-            return Ok(false);
-        }
-        let mut base = place.clone();
-        base.proj.pop();
-        base.projection_tys.pop();
-        base.ty = Some(canonical_simd_ty(dtype, width as i64));
-        let (address, _) = self.place_address(ctx, &base, src)?;
-        self.emit_index_guard(ctx, index, width, src)?;
-        let vector = self.simd_load_vector_from(ctx, address, dtype, width, src);
-        let lane = self.reg_value(ctx, src, ScalarTy::of_dtype(dtype))?;
-        // The guard above makes the dynamic insert index in range (an
-        // out-of-range LLVM index is poison), as the lane read relies on.
-        let position = self.reg_value(ctx, index, ScalarTy::Int)?;
-        let insert = InsertElementOp::new(ctx, vector, lane, position);
-        self.append(ctx, insert.get_operation(), Some(src));
-        let inserted = insert.get_result(ctx);
-        self.simd_store_vector_to(ctx, address, dtype, width, inserted, src);
-        Ok(true)
-    }
-
     // --- vector compute plumbing -------------------------------------------
 
     /// The `<width x lane>` compute type of a multi-lane value (`i1` lanes

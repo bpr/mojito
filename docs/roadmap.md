@@ -30,7 +30,7 @@ landing, filing, or moving an entry edits that entry alone. The **Model:**
 bullet is an estimate, not a sort key. An entry marked *(standing)* is
 guidance kept in view, never scheduled.
 
-Next free ID: **R1629**.
+Next free ID: **R1630**.
 
 ## Ordered Work
 
@@ -1908,27 +1908,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
-- [ ] **R1221 A `ref` binding over an owned subscript result fails MIR
-  verification**
-
-  Problem: `ref r = ns[0]`, over a `__getitem__` that returns an owned
-  `String`, fails with "dynamic element projection requires checked
-  indexed storage, got Names"; the pin binds the materialized result and
-  prints `n0`.
-  - The `RefDecl` arm (`checker/statements.rs`) treats a syntactic index
-    as a place, rather than materializing the call's owned result as
-    `materialized_reference_actual` does for other calls.
-  - Probe: `conformance/probes/ref_binding_owned_subscript_result.mojo`.
-  - Probe: the same over an `Int` result (`ref q = t[1]`) fails the same
-    way, where the pin rejects it with "value of type 'Int' doesn't have a
-    memory origin in 'ref' binding", the rule R169 brings to the plain
-    `ref` declaration.
-  - A sequence pattern's owned element read avoids it by reading into a
-    hidden `var`.
-  - Found while planning R1135 (2026-10-20).
-  - Depends on nothing.
-  - Model: Opus, Not Planned.
-
 - [ ] **R1232 A sequence store's nested tuple element followed by a `try`
   that redeclares its leaves fails MIR verification**
 
@@ -2456,7 +2435,6 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
   - Probe: the bundled `VariadicList.__deinit__` reaches each element
     pointer through its span (`elements[unsafe_offset=i]`) where upstream
     writes `Pointer(to=self[i])`.
-  - Related: R1221 (a `ref` binding over an owned subscript result).
   - Found while landing R743 (2026-10-23).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -2607,6 +2585,9 @@ Every catch-up track closes a gap between Mojito and the pinned Mojo. Within the
     loan extends, as a `ref` binding of a temporary
     (`materialized_reference_actual`) already gets.
   - Probe: `conformance/probes/pointer_to_owned_temporary.mojo`.
+  - Probe: `Pointer(to=v[1])` over a `SIMD`, and `Pointer(to=s[0])` over a
+    user value `__getitem__`, are rejected the same way, where the pin
+    points at the materialized result (`2`).
   - Found while landing R1132 (2026-10-20).
   - Depends on nothing.
   - Model: Opus, Not Planned.
@@ -6785,6 +6766,29 @@ retained on purpose and re-probed rather than fixed; they are listed in
   - Depends on nothing.
   - Model: Opus, Not Planned.
 
+- [ ] **R1629 A `__getitem__(self, idx: Int)` accepts an `Indexer`, which
+  the pin rejects**
+
+  `s[Offset(3)]` over a user struct whose accessors take `idx: Int` prints
+  the element, where the pin reports "invalid call to '__getitem__': value
+  passed to 'idx' cannot be converted from 'Offset' to 'Int'".
+  - Cause: `prepare_index_argument` (`checker/indexing.rs`) records an
+    `__mlir_index__` normalization for any `Indexer` argument when an
+    overload takes `Int` there and none takes the source type.
+  - Upstream converts no subscript argument: a collection that takes a
+    conformer declares it, as `List.__getitem__(ref self, idx:
+    Some[Indexer])` does.
+  - Fix: port those `Some[Indexer]` overloads to the bundled collections
+    (`List`, `Span`, `InlineArray`, …), so
+    `assets/ok/indexer_normalization.mojo` still runs, then delete the
+    nominal arm of the normalization.
+  - `SIMD`'s declared accessors already reject a conformer
+    (`assets/type_error/simd_subscript_indexer.mojo`), since the
+    normalization serves only a `TyKind::Struct` receiver.
+  - Found while landing R1561 (2026-10-29).
+  - Depends on nothing.
+  - Model: Opus, Not Planned.
+
 - [ ] **R1615 A `for` over a bound declaring only `Element` iterates, where
   the pin requires `__iter__`**
 
@@ -7403,12 +7407,11 @@ retained on purpose and re-probed rather than fixed; they are listed in
   (`value of type 'Int32' doesn't have a memory origin in 'ref' binding`)
   but accepted by Mojito.
   - It covers `ref y = f()` for an `Int`-returning `f`, `ref y = a + 1.0`,
-    and a SIMD lane read `ref lane = v[i]`.
-  - The lane binding also writes through to the vector, so `lane += 2`
-    changes `v`.
-  - Once R1561 makes `v[i]` the declared value getter, `ref lane = v[i]`
-    binds a materialized copy instead of writing through, and is still
-    accepted where the pin rejects it.
+    and a SIMD lane read `ref lane = v[i]`, which binds a materialized copy
+    of the lane `SIMD.__getitem__` returns.
+  - Probe: `ref r = s[0]` over a user `__getitem__` returning `Int32`, and
+    `ref q = t[1]` over one returning `Int`, bind a materialized copy, where
+    the pin rejects both with the same text.
   - A memory-backed temporary (`ref x = make_list()`) is accepted by both.
   - The lever is the `StmtKind::RefDecl` arm in
     `crates/mojito-checker/src/checker/statements.rs`, whose
@@ -10116,34 +10119,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   - Depends on nothing.
   - Model: Fable, Not Planned.
 
-- [ ] **R1561 `v[i]` over a `SIMD` is the lane-subscript rule, where
-  upstream's is the declared `__getitem__` and `__setitem__`**
-
-  A subscript read, store, augmented store, or place over a vector or
-  scalar is typed by the checker's lane rule and lowered through
-  `MirIntrinsicSubscript::Simd`, though `std/simd.mojo` declares upstream's
-  bodies, which explicit calls already run.
-  - Route subscripts on a `TyKind::Simd` through `Checker::nominal_struct`,
-    as struct subscripts go (`infer_struct_getitem_call`,
-    `subscript_lvalue`), and delete the lane rule (`simd_lane` in
-    `checker/indexing.rs`) and `MirIntrinsicSubscript::Simd` (MIR, VM,
-    Pliron).
-  - No MIR writer emits `simd` as an intrinsic subscript, so deleting the
-    variant needs no MIR minor bump.
-  - The elaborator's `rewrite_subscript_call` (`mono/infer.rs`) binds the
-    owner through `types::nominal_parts`, as `infer_call` now does.
-  - A `mut` lane argument (`bump(v[i])`) then needs R1503's write-back;
-    `tests/vm_test.rs`'s
-    `dynamic_intrinsic_index_actual_is_evaluated_once_and_writes_back`
-    pins it.
-  - A comptime `c[1]` must still fold, through the CTFE running
-    `SIMD.__getitem__`.
-  - `assets/type_error/simd_subscript_indexer.mojo`'s `# expect:` becomes
-    the declared `__setitem__`'s argument mismatch.
-  - Found while landing R1549 (2026-10-28).
-  - Depends on R1503, for the `mut` lane argument.
-  - Model: Fable, Not Planned.
-
 - [ ] **R1562 `CompilationTarget` is undeclared, where upstream's
   `std/sys/info.mojo` answers target queries from `#kgen.param.expr`
   attributes**
@@ -10600,13 +10575,6 @@ deliberately not on this list; they are in [`docs/non-goals.md`](non-goals.md).
   `checker/operators.rs`, `LaneMask::resolve`, `runtime::simd_method`, and
   Pliron's per-method SIMD lowering serve no program.
   - Delete what the member entries left of them.
-  - A SIMD lane is still a MIR place where a lane is borrowed:
-    `bump(v[2])` over a `mut` lane parameter, and R169's `ref lane =
-    v[i]`. Every other lane read and write is `simd.extract` or
-    `simd.insert` (`Flatten::lane_access`). Once `v[i]` is the library's
-    `__getitem__`/`__setitem__` (R1561), delete `MirPlace::simd_lane`, the lane arms
-    of the VM's `load_place`/`store_place`, and Pliron's
-    `try_lower_simd_lane_store` and lane addressing too.
   - Done when `rg simd_method crates` finds nothing.
   - Depends on R1555, R1589, R1579, R1580, R1581, R1582, R1585, R1586,
     R330, and R276, which port the last members, and R1561, which retires

@@ -1305,7 +1305,6 @@ impl<'a> Flatten<'a> {
                         Some(
                             MirIntrinsicSubscript::TupleStorage
                                 | MirIntrinsicSubscript::VariadicStorage
-                                | MirIntrinsicSubscript::Simd
                                 | MirIntrinsicSubscript::Pointer
                         )
                     ) =>

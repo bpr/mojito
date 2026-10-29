@@ -3806,61 +3806,9 @@ impl<'a> Flatten<'a> {
     /// Emit `i`, followed by its error region ([`Self::error_region`])
     /// when it raises.
     fn emit(&mut self, i: MirInstr) {
-        let Some(i) = self.lane_access(i) else {
-            return;
-        };
         let raises = i.raise_edge().cloned();
         self.f.blocks[self.cur].instrs.push(i);
         self.error_region(raises);
-    }
-
-    /// Emit a read or write of one lane of SIMD storage (`v[i]`,
-    /// `s.v[i] = x`) as upstream's `SIMD.__getitem__` and `__setitem__`
-    /// compute it: a load of the whole vector and `simd.extract`, or that
-    /// load, `simd.insert`, and a store of the vector back. A lane is no
-    /// storage of its own. Any other instruction is returned to emit.
-    fn lane_access(&mut self, i: MirInstr) -> Option<MirInstr> {
-        let (place, value) = match &i {
-            MirInstr::LoadPlace { dest, place } => (place, *dest),
-            MirInstr::Store { place, src } => (place, *src),
-            _ => return Some(i),
-        };
-        let Some((vector_place, index)) = place.simd_lane() else {
-            return Some(i);
-        };
-        let (span, origin) = self
-            .f
-            .spans
-            .0
-            .get(&value.0)
-            .cloned()
-            .unwrap_or_else(|| (SourceSpan::new(None, DUMMY_SPAN), None));
-        let vector_ty = vector_place.ty.clone().unwrap_or_else(Ty::error);
-        let vector = self.fresh_typed(span.clone(), origin, vector_ty.clone());
-        self.emit(MirInstr::LoadPlace {
-            dest: vector,
-            place: vector_place.clone(),
-        });
-        if let MirInstr::LoadPlace { dest, .. } = i {
-            self.emit(MirInstr::SimdExtract {
-                dest,
-                value: vector,
-                index,
-            });
-            return None;
-        }
-        let inserted = self.fresh_typed(span, origin, vector_ty);
-        self.emit(MirInstr::SimdInsert {
-            dest: inserted,
-            value: vector,
-            element: value,
-            index,
-        });
-        self.emit(MirInstr::Store {
-            place: vector_place,
-            src: inserted,
-        });
-        None
     }
 
     /// Emit a raising call whose error region the caller emits once the

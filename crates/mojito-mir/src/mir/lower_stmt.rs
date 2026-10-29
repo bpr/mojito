@@ -2087,6 +2087,13 @@ impl<'a> Flatten<'a> {
                 Some(p)
             }
             (CheckedOp::Index { .. }, Some(object)) if let Some(index) = e.index() => {
+                // A value getter's result is a temporary, not a place.
+                if e.variant_projection_index().is_none()
+                    && e.call_contract()
+                        .is_some_and(|getter| getter.reference_result.is_none())
+                {
+                    return None;
+                }
                 let mut p = self.try_place(object)?;
                 if let Some(index) = e.variant_projection_index() {
                     let ty = e.place_ty().or_else(|| e.ty())?;

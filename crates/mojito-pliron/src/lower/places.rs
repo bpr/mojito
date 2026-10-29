@@ -221,21 +221,6 @@ impl FnLowering<'_> {
                         ty = first.clone();
                         continue;
                     }
-                    if let Some((dtype, width)) = simd_dims(&ty) {
-                        if offset != 0 {
-                            address = self.gep_byte(ctx, address, offset, dest);
-                            offset = 0;
-                        }
-                        self.emit_index_guard(ctx, *index, width as usize, dest)?;
-                        let element = Ty::new(TyKind::Simd {
-                            dtype: mojito_types::types::SimdDtype::Known(dtype),
-                            width: mojito_types::types::SimdWidth::Known(1),
-                        });
-                        let lane = self.layout.layout_of(&element).expect("SIMD lane layout");
-                        address = self.simd_lane_address(ctx, address, *index, lane.size, dest)?;
-                        ty = element;
-                        continue;
-                    }
                     let TyKind::Pointer { element, .. } = ty.kind() else {
                         return Err(
                             self.unsupported_reg(format!("subscript projection on `{ty}`"), dest)

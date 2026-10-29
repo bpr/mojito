@@ -40,12 +40,6 @@ pub(super) fn verify_intrinsic_index(
             MirIntrinsicSubscript::VariadicStorage,
             Some(TyKind::Tuple(elements) | TyKind::RuntimePack(elements)),
         ) => (!elements.is_empty()).then(|| elements.iter().collect::<Vec<_>>()),
-        (MirIntrinsicSubscript::Simd, _) => {
-            errors.push(format!(
-                "{prefix}: a SIMD lane read is a simd.extract, not an intrinsic index"
-            ));
-            return;
-        }
         (MirIntrinsicSubscript::Pointer, Some(TyKind::Pointer { element, .. }))
         | (MirIntrinsicSubscript::ComptimeList, Some(TyKind::ComptimeList(element))) => {
             Some(vec![element])
@@ -82,7 +76,6 @@ pub(super) fn indexed_place_element_types(base: &Ty) -> Option<Vec<Ty>> {
         TyKind::VariadicPack(element)
         | TyKind::ComptimeList(element)
         | TyKind::Pointer { element, .. } => Some(vec![(*element).clone()]),
-        TyKind::Simd { dtype, .. } => Some(vec![simd_element_type(dtype)]),
         other => tuple_elements(other).map(|elements| elements.into_iter().cloned().collect()),
     }
 }

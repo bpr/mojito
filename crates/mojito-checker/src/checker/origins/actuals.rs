@@ -75,6 +75,21 @@ impl Checker {
                 place.path.push(OriginSeg::Field(field.clone()));
                 Ok(place)
             }
+            // A value getter's result is no place: a binding over it
+            // materializes the value, as over any other owned call result.
+            ExprKind::Index { .. }
+                if self.has_fact(&expr.source_span(), |facts| {
+                    facts.subscript_write_back.is_none()
+                        && facts
+                            .selected_call
+                            .as_deref()
+                            .is_some_and(|getter| getter.reference_result.is_none())
+                }) =>
+            {
+                Err(TypeError::Unsupported(
+                    "reference binding to a non-place expression".to_string(),
+                ))
+            }
             ExprKind::Index { object, .. } => {
                 let mut place = self.origin_place(object)?;
                 place.path.push(OriginSeg::AnyIndex);

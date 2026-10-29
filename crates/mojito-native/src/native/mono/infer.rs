@@ -69,7 +69,7 @@ impl Specializer<'_> {
             return Ok(None);
         };
         let receiver_ty = peel_refs(receiver_ty).clone();
-        let TyKind::Struct(receiver_name, _) = receiver_ty.kind() else {
+        let Some((receiver_name, _)) = mojito_types::types::nominal_parts(&receiver_ty) else {
             return Ok(None);
         };
         let method = if dest.is_some() {
@@ -533,23 +533,13 @@ impl Specializer<'_> {
             owner_covered =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
         }
-        // A method of a struct the elaborator mints no instance of (`SIMD`,
-        // which the compiler's type holds) is a generator over its struct's
-        // parameters before its own, as upstream's method generator lists
-        // them: the owner's arguments lead the instance's.
         let mut arguments = match receiver {
-            Some(receiver) if bindings.self_instance.is_none() => {
-                let actual = peel_refs(reg_ty(caller, receiver, owner)?);
-                match mojito_types::types::nominal_parts(actual)
-                    .filter(|_| !matches!(actual.kind(), TyKind::Struct(..)))
-                    .and_then(|(name, _)| self.structs.get(name))
-                {
-                    Some(struct_decl) => {
-                        self.own_arguments(&struct_decl.param_decls, &bindings, target, 0)?
-                    }
-                    None => Vec::new(),
-                }
-            }
+            Some(receiver) if bindings.self_instance.is_none() => self
+                .uninstanced_owner_arguments(
+                    peel_refs(reg_ty(caller, receiver, owner)?),
+                    &bindings,
+                    target,
+                )?,
             _ => Vec::new(),
         };
         // The owner-restating prefix (`__init__` prepends the struct's
@@ -655,10 +645,10 @@ impl Specializer<'_> {
             }
         }
         let mut owner_covered = 0;
-        if let TyKind::Struct(receiver_name, arguments) = receiver.kind()
+        if let Some((receiver_name, arguments)) = mojito_types::types::nominal_parts(receiver)
             && let Some(struct_decl) = self.structs.get(nominal_template(receiver_name))
         {
-            bind_ty_args(&struct_decl.param_decls, arguments, &mut bindings).map_err(|e| {
+            bind_ty_args(&struct_decl.param_decls, &arguments, &mut bindings).map_err(|e| {
                 self.error(
                     Some(owner),
                     format!("monomorphizing receiver for `{target}`: {e}"),
@@ -767,8 +757,17 @@ impl Specializer<'_> {
             owner_covered =
                 owner_covered_prefix(&struct_decl.param_decls, &declaration.param_decls);
         }
-        let arguments =
-            self.own_arguments(&declaration.param_decls, &bindings, target, owner_covered)?;
+        let mut arguments = if bindings.self_instance.is_none() {
+            self.uninstanced_owner_arguments(peel_refs(receiver), &bindings, target)?
+        } else {
+            Vec::new()
+        };
+        arguments.extend(self.own_arguments(
+            &declaration.param_decls,
+            &bindings,
+            target,
+            owner_covered,
+        )?);
         let result = substitute_ty(&declaration.ret_ty, &bindings).map_err(|e| {
             self.error(
                 Some(owner),
@@ -871,6 +870,26 @@ impl Specializer<'_> {
             }
         }
         Ok(())
+    }
+
+    /// A method of a struct the elaborator mints no instance of (`SIMD`,
+    /// which the compiler's type holds) is a generator over its struct's
+    /// parameters before its own, as upstream's method generator lists
+    /// them: the owner's arguments lead the instance's. Empty for any other
+    /// receiver.
+    fn uninstanced_owner_arguments(
+        &self,
+        receiver: &Ty,
+        bindings: &Bindings,
+        target: &str,
+    ) -> Result<Vec<InstanceArg>, MonoError> {
+        match mojito_types::types::nominal_parts(receiver)
+            .filter(|_| !matches!(receiver.kind(), TyKind::Struct(..)))
+            .and_then(|(name, _)| self.structs.get(name))
+        {
+            Some(struct_decl) => self.own_arguments(&struct_decl.param_decls, bindings, target, 0),
+            None => Ok(Vec::new()),
+        }
     }
 }
 

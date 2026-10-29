@@ -165,30 +165,38 @@ fn backend_monomorphizes_one_generic_function_at_multiple_types() {
 }
 
 /// Vector kernels over run-time values (constants would fold away), for
-/// inspecting the code the release pipeline actually selects.
+/// inspecting the code the release pipeline actually selects. Each kernel is
+/// `@no_inline`, so it keeps a body of its own over its parameters rather
+/// than folding into `compute`'s constants.
 const SIMD_KERNELS: &str = "\
+@no_inline
 def scale(v: SIMD[DType.int32, 8], k: Int32) -> SIMD[DType.int32, 8]:
     return v * k + v
 
+@no_inline
 def total(v: SIMD[DType.int32, 8]) -> Int32:
     return (v << 1).reduce_add()
 
+@no_inline
 def mask_sum(v: SIMD[DType.float32, 8], limit: Float32) -> Float32:
     var m = v.gt(limit)
     return m.select(v, 0.0).reduce_add()
 
+@no_inline
 def prefix(v: SIMD[DType.int32, 8]) -> SIMD[DType.int32, 8]:
     var out = v
     for i in range(1, 8):
         out[i] = out[i] + out[i - 1]
     return out
 
+@no_inline
 def carry(v: SIMD[DType.int32, 8], k: Int32) -> Int32:
     var a = v
     var b = a
     a = a + k
     return (a + b).reduce_add()
 
+@no_inline
 def truncate(v: SIMD[DType.float32, 8]) -> SIMD[DType.int32, 8]:
     return v.cast[DType.int32]()
 

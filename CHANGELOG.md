@@ -8,6 +8,17 @@ to evolve under the `0.x` compatibility rules.
 
 ### Added
 
+- `v[i]` over a `SIMD`, `Int` and `Float64` included, is upstream's declared
+  `__getitem__` and `__setitem__` (R1561): a read, store, augmented store,
+  and `bump(v[i])` call the `std.simd` bodies, which native code inlines
+  to one `extractelement` or `insertelement`, and an `Indexer` index is
+  rejected with the getter's mismatch, as at the pin. A value getter's
+  result is now a temporary rather than a place, so `ref r = ns[0]` over
+  an owned result and `String(s[0])` over a user getter run as at the pin
+  (R1221), `ref lane = v[i]` binds a copy (R169), and `Pointer(to=v[i])`
+  is rejected (R1234). The compiler's lane rule, the `simd` intrinsic
+  subscript, and the VM's and Pliron's lane places are gone. A user
+  getter's `Int` index still takes an `Indexer` (R1629).
 - A value `__getitem__`'s result used as a mutable place is written back
   through `__setitem__`, as at the pin (R1503): `s[0].x = 5`,
   `s[0].bump()`, `s[0][1] = 7`, and `bump(s[0])` load the element through

@@ -5,8 +5,8 @@
 # `Int`-returning `f` and `ref y = a + 1.0` the same way, while a
 # memory-backed temporary (`ref x = make_list()`) is accepted by both.
 #
-# Mojito today: accepts and prints `[1, 4, 3, 4]` — the binding writes
-# through to the vector's lane.
+# Mojito today: accepts and prints `[1, 2, 3, 4]` — the binding holds a
+# materialized copy of the lane `SIMD.__getitem__` returns.
 #
 # On the fix: make the checker's `ref` binding reject a register-passable
 # value with upstream's text and move this program to `assets/type_error`.

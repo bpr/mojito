@@ -189,8 +189,8 @@ use mojito_mir::mir::{
     instruction_regions_mut, instruction_regs_mut, instruction_slots, instruction_subscript_call,
     instruction_subscript_call_mut, loop_breaks_mut, loop_continues_mut, lower_copies_and_moves,
     member_receiver_ty, name_constructors, operator_method, region_exit, removed_argument_operands,
-    renumber_block_slots, terminator_regs_mut, with_removed_argument_forwards_erased,
-    without_removed_arguments,
+    renumber_block_slots, subscript_store_call, terminator_regs_mut,
+    with_removed_argument_forwards_erased, without_removed_arguments,
 };
 use mojito_types::ct::CtValue;
 use mojito_types::origin::{Mutability, Origin, OriginParamId, RefTy};
@@ -838,6 +838,9 @@ impl<'c> Inliner<'_, 'c> {
                 if !instruction_regions(&caller.instrs[index]).is_empty() {
                     changed |= self.instruction_regions(&mut caller.instrs[index]);
                 }
+                let store = structured
+                    .then(|| self.setter_call(&mut caller.instrs[index]))
+                    .flatten();
                 if structured
                     && let Some(Inlinable {
                         dest,
@@ -889,10 +892,31 @@ impl<'c> Inliner<'_, 'c> {
                         );
                     continue;
                 }
+                if let Some((original, dest)) = store {
+                    caller.instrs[index] = original;
+                    self.function.n_regs -= 1;
+                    self.function.reg_types.remove(&dest.0);
+                }
                 index += 1;
             }
         }
         changed
+    }
+
+    /// A subscript store `instruction` rewritten into the `__setitem__`
+    /// call it is, as upstream's `SubscriptDLValue::emitStore` emits one,
+    /// so the setter inlines as any other callee; returns the store and
+    /// the call's fresh `None` register, for the caller to restore when
+    /// the call stays a call.
+    fn setter_call(&mut self, instruction: &mut MirInstr) -> Option<(MirInstr, Reg)> {
+        let MirInstr::MultiSet { call, .. } = instruction else {
+            return None;
+        };
+        let declared = self.declarations.function(&call.target)?;
+        let original = instruction.clone();
+        let dest = fresh_register(self.function, Ty::none(), None);
+        subscript_store_call(instruction, dest, declared);
+        Some((original, dest))
     }
 
     /// Whether `target` is a closure's body, its storage's method.

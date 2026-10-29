@@ -5,9 +5,7 @@ use super::*;
 
 /// Navigate a [`MirPlace`] to a mutable slot: the root variable followed by field
 /// and index projections. Used for method write-back and `MovePlace` (a field
-/// chain or statically selected compiler-private Tuple element). A SIMD lane
-/// isn't a `Value` slot; use `store_place`/`load_place` for a place that may end
-/// in a lane.
+/// chain or statically selected compiler-private Tuple element).
 pub(super) fn nav_mut<'a>(
     vars: &'a mut [Value],
     regs: &[Value],
@@ -20,9 +18,7 @@ pub(super) fn nav_mut<'a>(
     Ok(slot)
 }
 
-/// Write `value` into a place, handling a **SIMD lane** target (`v[i] = e`,
-/// `obj.vec[i] = e`) — a lane isn't a `Value` slot, so it is set via
-/// `set_simd_lane` (dtype wrap/round) after navigating the container.
+/// Write `value` into a place.
 pub(super) fn store_place(
     vars: &mut [Value],
     regs: &[Value],
@@ -40,15 +36,6 @@ pub(super) fn store_place(
             for proj in prefix {
                 slot = nav_step(slot, proj, regs)?;
             }
-            if let Proj::Index(ireg) = last
-                && let Some(written) = crate::runtime::set_value_lane(
-                    slot,
-                    value_as_index(&regs[ireg.0 as usize])?,
-                    &value,
-                )
-            {
-                return written;
-            }
             // A final payload write initializes-or-overwrites inline uninit
             // storage without running any destructor: `unsafe_write` leaks a
             // previously initialized payload by design.
@@ -62,34 +49,16 @@ pub(super) fn store_place(
     }
 }
 
-/// Read (clone) the value at a place, handling a **SIMD lane** read (`v[i]`,
-/// `obj.vec[i]`) via `read_simd_lane`.
+/// Read (clone) the value at a place.
 pub(super) fn load_place(
     vars: &mut [Value],
     regs: &[Value],
     place: &MirPlace,
 ) -> Result<Value, RuntimeError> {
-    let place = &*place.storage();
-    if let Some((Proj::Index(ireg), prefix)) = place.proj.split_last() {
-        let mut slot = &mut vars[place.root as usize];
-        for proj in prefix {
-            slot = nav_step(slot, proj, regs)?;
-        }
-        if let Some(lane) =
-            crate::runtime::read_value_lane(slot, value_as_index(&regs[ireg.0 as usize])?)
-        {
-            return lane;
-        }
-        // Not a SIMD parent — fall through to the final index step below.
-        return Ok(nav_step(slot, &Proj::Index(*ireg), regs)?.clone());
-    }
-    Ok(nav_mut(vars, regs, place)?.clone())
+    Ok(nav_mut(vars, regs, &place.storage())?.clone())
 }
 
 /// Navigate one projection step from a container slot to an inner mutable slot.
-/// A SIMD lane is *not* a `Value` slot, so it is not reachable here — callers that
-/// may target a lane (`store_place`/`load_place`) special-case a final `Index`
-/// into a `Value::Simd` before reaching this.
 fn nav_step<'a>(
     slot: &'a mut Value,
     proj: &Proj,

@@ -672,7 +672,7 @@ receiver/argument conventions, source-slot mapping for positional, keyword, and
 default arguments, capture accesses, reference-result origin, and source-ordered
 compile-time value arguments plus declarations. `Index.call` is absent only
 when the instruction carries an explicit `MirIntrinsicSubscript`:
-Tuple/runtime-pack storage, variadic storage, SIMD, pointer, or CTFE
+Tuple/runtime-pack storage, variadic storage, pointer, or CTFE
 compile-time-list indexing. Verification requires exactly one call or intrinsic;
 runtime values never select the family. `MultiIndex.call` and `MultiSet.call`
 are mandatory because the VM has no intrinsic multidimensional operation. The
@@ -706,8 +706,9 @@ read-modify-write operation so index expressions are evaluated exactly once.
 
 An indexed nominal struct, including the bundled List, dispatches through its
 checker-selected `__getitem__`; a pointer place reads the heap arena. Ordinary
-fields, compiler-private heterogeneous pack slots, and SIMD lanes use direct
-place navigation.
+fields and compiler-private heterogeneous pack slots use direct place
+navigation; a SIMD lane is no place, its subscripts being the declared
+`SIMD.__getitem__`/`__setitem__` calls.
 
 ### `place.store` — Write Place
 

@@ -53,7 +53,6 @@ fn closed_supporting_enums_have_canonical_spellings() {
     let intrinsics = [
         (MirIntrinsicSubscript::TupleStorage, "tuple_storage"),
         (MirIntrinsicSubscript::VariadicStorage, "variadic_storage"),
-        (MirIntrinsicSubscript::Simd, "simd"),
         (MirIntrinsicSubscript::Pointer, "pointer"),
         (MirIntrinsicSubscript::ComptimeList, "comptime_list"),
     ];

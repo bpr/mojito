@@ -49,7 +49,7 @@ impl Checker {
     /// must be a mutable location: any variable, or `self` in a `mut self`
     /// method. Recursing on the object of each step verifies the whole chain is
     /// rooted at a mutable place (so `foo().x = e` or `self.x` in a read-only
-    /// method are rejected). SIMD lane writes are not supported yet.
+    /// method are rejected).
     pub(super) fn check_place(&self, place: &Expr) -> Result<Ty, TypeError> {
         let result = self.check_place_impl(place).and_then(|ty| {
             self.check_rebind_place(place, &ty)?;
@@ -116,7 +116,6 @@ impl Checker {
                 elements.get(index).cloned()
             }
             TyKind::Pointer { element, .. } => Some((*element).clone()),
-            TyKind::Simd { dtype, .. } => Some(simd_lane(dtype)),
             _ => None,
         }
     }
@@ -300,12 +299,10 @@ impl Checker {
                         self.check_pointer_write(object, origin)?;
                         (*element).clone()
                     }
-                    // A SIMD lane write `v[i] = e`: the target is the width-1 scalar.
-                    TyKind::Simd { dtype, .. } => simd_lane(dtype),
                     _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
                 };
                 let idx_ty = self.infer(index)?;
-                self.check_subscript_index(&obj_ty, &idx_ty, "index")?;
+                self.check_subscript_index(&idx_ty, "index")?;
                 Ok(match elem.kind() {
                     TyKind::Ref(reference) => reference.referent.clone(),
                     _ => elem,
@@ -545,7 +542,7 @@ impl Checker {
             TyKind::Ref(reference) => reference.referent.clone(),
             _ => receiver,
         };
-        let TyKind::Struct(name, _) = receiver.kind() else {
+        let Some((name, _)) = self.nominal_struct(&receiver) else {
             return Ok(None);
         };
         let Some(info) = self.structs.get(name) else {
@@ -1325,12 +1322,16 @@ impl Checker {
         }
         // A user struct with `__getitem__` is subscriptable: `c[i]` →
         // `c.__getitem__(i)`, typed by the method (the index need not be `Int`).
-        if matches!(obj_ty.kind(), TyKind::Struct(..)) {
-            if let TyKind::Struct(name, _) = obj_ty.kind()
-                && self
-                    .structs
-                    .get(name)
-                    .is_some_and(|info| info.methods.contains_key("__getitem__"))
+        // A `SIMD` lane subscript is its declared `__getitem__` too.
+        if matches!(obj_ty.kind(), TyKind::Struct(..))
+            || self
+                .declared_receiver_member(&obj_ty, "__getitem__")
+                .is_some()
+        {
+            if self
+                .nominal_struct(&obj_ty)
+                .and_then(|(name, _)| self.structs.get(name))
+                .is_some_and(|info| info.methods.contains_key("__getitem__"))
             {
                 let result = self.infer_struct_getitem_call(
                     span,
@@ -1362,9 +1363,8 @@ impl Checker {
                 MethodCallArguments::ordinary(std::slice::from_ref(index), &[]),
             );
         }
-        // The result of indexing: a SIMD lane, a List element, or a pointer pointee.
+        // The result of indexing a pointer: its pointee.
         let result = match obj_ty.kind() {
-            TyKind::Simd { dtype, .. } => simd_lane(dtype),
             TyKind::Pointer { element, origin } => {
                 self.check_pointer_offset(origin, index)?;
                 self.materialize_temporary_holder(object, false);
@@ -1373,7 +1373,7 @@ impl Checker {
             _ => return Err(TypeError::NotIndexable(obj_ty.to_string())),
         };
         let idx_ty = self.infer(index)?;
-        self.check_subscript_index(&obj_ty, &idx_ty, "index")?;
+        self.check_subscript_index(&idx_ty, "index")?;
         Ok(match result.kind() {
             TyKind::Ref(reference) => reference.referent.clone(),
             _ => result,
@@ -1556,29 +1556,19 @@ impl Checker {
         }
     }
 
-    /// Check a primitive subscript's index type. Every receiver but one
-    /// normalizes an `Indexer` through `__mlir_index__`
-    /// (`assets/ok/indexer_normalization.mojo`); a `SIMD` lane index is the
-    /// exception, because upstream's builtin `SIMD.__getitem__`/`__setitem__`
-    /// take a plain `Int` and reject a conformer
-    /// (`assets/type_error/simd_subscript_indexer.mojo`).
+    /// Check a primitive pointer subscript's index type: an `Int`, or an
+    /// `Indexer` normalized through `__mlir_index__`
+    /// (`assets/ok/indexer_normalization.mojo`).
     pub(super) fn check_subscript_index(
         &self,
-        receiver: &Ty,
         idx_ty: &Ty,
         context: &str,
     ) -> Result<(), TypeError> {
-        let lane = matches!(receiver.kind(), TyKind::Simd { .. });
-        let accepted = if lane {
-            coerces(idx_ty, &Ty::int())
-        } else {
-            self.is_index_type(idx_ty)
-        };
-        if accepted {
+        if self.is_index_type(idx_ty) {
             return Ok(());
         }
         Err(TypeError::TypeMismatch {
-            expected: if lane { "Int" } else { "Indexer" }.to_string(),
+            expected: "Indexer".to_string(),
             found: idx_ty.to_string(),
             context: context.to_string(),
         })
@@ -1652,9 +1642,9 @@ impl Checker {
     /// candidate exists there, preserving direct user overloads. Positions in a
     /// `*indices` tail use the variadic element contract. Primitive pointer and
     /// homogeneous private-pack indexing has a fixed Int contract and therefore
-    /// always records the checked normalization fallback; a SIMD lane index
-    /// does not, because upstream's `SIMD.__getitem__` takes a plain `Int`
-    /// (see [`Self::check_subscript_index`]).
+    /// always records the checked normalization fallback. A `SIMD` receiver
+    /// records none: its declared `__getitem__`/`__setitem__` take a plain
+    /// `Int`, which a conformer does not convert to.
     pub(super) fn prepare_index_argument(
         &self,
         receiver: &Ty,

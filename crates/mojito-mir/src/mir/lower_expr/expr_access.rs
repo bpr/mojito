@@ -336,16 +336,6 @@ impl<'a> Flatten<'a> {
         let d = self.fresh(e.location(), None);
         self.emit_interior_invalidations(index, None);
         self.emit_interior_invalidations(e, None);
-        // A lane read is upstream's `SIMD.__getitem__`, one
-        // `pop.simd.extractelement`.
-        if intrinsic == Some(MirIntrinsicSubscript::Simd) {
-            self.emit(MirInstr::SimdExtract {
-                dest: d,
-                value: base,
-                index: idx,
-            });
-            return d;
-        }
         self.record_call(d, call.as_ref().map(|call| call.target.clone()), 0);
         self.emit(MirInstr::Index {
             dest: d,

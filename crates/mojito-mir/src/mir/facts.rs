@@ -841,7 +841,6 @@ impl<'a> Node<'a> {
         match ty.kind() {
             TyKind::Tuple(_) | TyKind::RuntimePack(_) => Some(MirIntrinsicSubscript::TupleStorage),
             TyKind::VariadicPack(_) => Some(MirIntrinsicSubscript::VariadicStorage),
-            TyKind::Simd { .. } => Some(MirIntrinsicSubscript::Simd),
             TyKind::Pointer { .. } => Some(MirIntrinsicSubscript::Pointer),
             TyKind::ComptimeList(_) => Some(MirIntrinsicSubscript::ComptimeList),
             // `Slice.indices` has a public nominal Tuple type but crosses the

@@ -674,8 +674,8 @@ fn utility_builtins_parity() {
 
 #[test]
 fn simd_lane_write_parity() {
-    // `v[i] = e` / `v[i] += e`, both bare and through a struct field, now update a
-    // SIMD lane through `store_place`/`set_simd_lane`.
+    // `v[i] = e` / `v[i] += e`, both bare and through a struct field, update a
+    // SIMD lane through the declared `SIMD.__setitem__`.
     let src = "@fieldwise_init\nstruct Vec4:\n    var data: SIMD[DType.int32, 4]\n\ndef main():\n    var v: SIMD[DType.int32, 4] = SIMD[DType.int32, 4](1, 2, 3, 4)\n    v[0] = 10\n    v[2] += 5\n    print(v[0], v[1], v[2], v[3])\n    var w: Vec4 = Vec4(SIMD[DType.int32, 4](0, 0, 0, 0))\n    w.data[1] = 42\n    print(w.data[1])\n";
     assert_eq!(parity(src), "10 2 8 4\n42\n");
 }

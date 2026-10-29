@@ -859,6 +859,7 @@ assets/ok/rebind_place_projection.mojo	main	exe-differential	sanitized
 assets/ok/receiver_origin_iterator_argument.mojo	main	exe-differential	sanitized
 assets/ok/receiver_unread_struct_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/recursive_argument_instances.mojo	main	exe-differential	sanitized
+assets/ok/ref_binding_owned_subscript_result.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_projected_field_offset.mojo	main	exe-differential	sanitized
 assets/ok/ref_binding_temporary_source.mojo	main	exe-differential	sanitized
 assets/ok/ref_param.mojo	main	exe-differential	sanitized
@@ -1316,6 +1317,7 @@ assets/ok/unused_parameter_instances.mojo	main	exe-differential	sanitized
 assets/ok/user_int_function_beside_library_conversion.mojo	main	exe-differential	sanitized
 assets/ok/user_iterator.mojo	main	exe-differential	sanitized
 assets/ok/value_argument_from_caller_parameter.mojo	main	exe-differential	sanitized
+assets/ok/value_getter_subscript_argument.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_aggregate_served.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_bracket_spread.mojo	main	exe-differential	sanitized
 assets/ok/value_pack_comptime_for_served.mojo	main	exe-differential	sanitized

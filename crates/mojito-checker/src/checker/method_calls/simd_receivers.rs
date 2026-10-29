@@ -48,6 +48,26 @@ impl Checker {
             ..
         } = call;
         let (dtype, width) = (dtype.clone(), width.clone());
+        // A name no compiler-known method answers falls through, keywords
+        // and all, to the declared members (`__setitem__(i, val=…)`).
+        if !matches!(
+            method,
+            "copy"
+                | "shuffle"
+                | "slice"
+                | "join"
+                | "reduce_add"
+                | "reduce_mul"
+                | "reduce_min"
+                | "reduce_max"
+                | "reduce_and"
+                | "reduce_or"
+        ) {
+            return Err(TypeError::NoSuchMethod {
+                object_type: obj_ty.to_string(),
+                method: method.to_string(),
+            });
+        }
         reject_kwargs(kwargs)?;
         // Compiler-known SIMD methods: the lane reductions collapse to
         // the canonicalized width-1 scalar (`reduce_and`/`reduce_or` to

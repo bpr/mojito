@@ -1738,27 +1738,6 @@ fn get_field(base: &Value, field: &str) -> Result<Value, RuntimeError> {
     }
 }
 
-/// Store through a flattened reference whose final projection selects a SIMD
-/// lane. SIMD lanes are packed scalars rather than independent `Value` slots,
-/// so the ordinary mutable projection navigator cannot return one by address.
-#[allow(
-    clippy::needless_pass_by_value,
-    reason = "TODO: only the Index arm stores it"
-)]
-fn write_simd_reference_lane(
-    root: &mut Value,
-    projection: &[RefProjection],
-    value: Value,
-) -> Result<bool, RuntimeError> {
-    let Some((RefProjection::Index(index), prefix)) = projection.split_last() else {
-        return Ok(false);
-    };
-    let parent = navigate_reference_mut(root, prefix)?;
-    crate::runtime::set_value_lane(parent, *index as i64, &value)
-        .transpose()
-        .map(|written| written.is_some())
-}
-
 /// Store through a flattened reference whose final projection is the payload
 /// of inline uninit storage: the write initializes-or-overwrites the payload
 /// raw — no destructor runs and no initialization is required (`unsafe_write`
@@ -1780,22 +1759,18 @@ fn write_uninit_payload(
     Ok(true)
 }
 
-/// Index internal tuple-pack storage or a SIMD value. Nominal collections route
-/// through their checked `__getitem__` implementation before reaching here.
+/// Index internal tuple-pack storage. Nominal collections route through
+/// their checked `__getitem__` implementation before reaching here.
 fn index_value(base: &Value, idx: i64) -> Result<Value, RuntimeError> {
     match base {
         Value::Tuple(items) => {
             let i = crate::runtime::bounds_check(idx, items.len(), "tuple index")?;
             Ok(items[i].clone())
         }
-        // A SIMD lane read returns the width-1 scalar (a width-1 `float64` lane is
-        // a `Float64`, per the SIMD/Float64 unification).
-        other => crate::runtime::read_value_lane(other, idx).unwrap_or_else(|| {
-            Err(RuntimeError::TypeError(format!(
-                "cannot index {}",
-                crate::runtime::type_name(other)
-            )))
-        }),
+        other => Err(RuntimeError::TypeError(format!(
+            "cannot index {}",
+            crate::runtime::type_name(other)
+        ))),
     }
 }
 

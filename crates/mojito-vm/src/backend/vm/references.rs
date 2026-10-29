@@ -438,9 +438,6 @@ impl VmBackend {
             return Ok(());
         }
         let root = self.frame_variable_mut(*frame, *slot).ok_or_else(stale)?;
-        if write_simd_reference_lane(root, projection, value.clone())? {
-            return Ok(());
-        }
         if write_uninit_payload(root, projection, value.clone())? {
             return Ok(());
         }
@@ -496,15 +493,6 @@ impl VmBackend {
                         RuntimeError::TypeError("reference index out of bounds".to_string())
                     })?
                 }
-                (
-                    RefProjection::Index(index),
-                    simd
-                    @ (Value::Simd { .. } | Value::Int(_) | Value::UInt(_) | Value::Float64(_)),
-                ) => crate::runtime::read_value_lane(&simd, *index as i64)
-                    .transpose()?
-                    .ok_or_else(|| {
-                        RuntimeError::TypeError("reference lane of no SIMD value".to_string())
-                    })?,
                 (RefProjection::Index(index), Value::Pointer { allocation, offset }) => {
                     self.heap_read(allocation, offset, *index as i64)?
                 }
@@ -710,9 +698,6 @@ impl VmBackend {
             self.write_heap_projection(region, heap_slot, suffix, value)?;
             return Ok(());
         }
-        if write_simd_reference_lane(root, projection, value.clone())? {
-            return Ok(());
-        }
         if write_uninit_payload(root, projection, value.clone())? {
             return Ok(());
         }
@@ -749,13 +734,6 @@ impl VmBackend {
         {
             let (next_region, next_slot) = self.heap_index(allocation, offset, index as i64)?;
             return self.write_heap_projection(next_region, next_slot, suffix, value);
-        }
-        if write_simd_reference_lane(
-            &mut self.heap[region].slots[slot],
-            projection,
-            value.clone(),
-        )? {
-            return Ok(());
         }
         if write_uninit_payload(
             &mut self.heap[region].slots[slot],

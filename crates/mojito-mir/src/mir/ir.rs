@@ -1517,7 +1517,6 @@ pub enum MirIntrinsicSubscript {
     TupleStorage,
     /// Compiler-private homogeneous `*args` storage.
     VariadicStorage,
-    Simd,
     Pointer,
     ComptimeList,
 }
@@ -1738,31 +1737,6 @@ impl MirPlace {
 
     pub const fn is_typed(&self) -> bool {
         self.root_ty.is_some() && self.ty.is_some() && self.proj.len() == self.projection_tys.len()
-    }
-
-    /// The vector place and lane index of a place designating one lane of
-    /// SIMD storage (`v[i]`, `s.v[i]`): its last step indexes a vector.
-    /// `None` for any other place, or an untyped one.
-    pub fn simd_lane(&self) -> Option<(Self, Reg)> {
-        let Some(&Proj::Index(index)) = self.proj.last() else {
-            return None;
-        };
-        if !self.is_typed() {
-            return None;
-        }
-        let steps = self.proj.len();
-        let vector_ty = match steps {
-            1 => self.root_ty.clone(),
-            _ => self.projection_tys.get(steps - 2).cloned(),
-        }?;
-        if !matches!(vector_ty.kind(), TyKind::Simd { .. }) {
-            return None;
-        }
-        let mut vector = self.clone();
-        vector.proj.pop();
-        vector.projection_tys.pop();
-        vector.ty = Some(vector_ty);
-        Some((vector, index))
     }
 
     /// The type of the storage this place designates: its own, else its

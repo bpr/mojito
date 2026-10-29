@@ -709,8 +709,9 @@ lane an insert writes), an index is an `Int`, a `UInt`, or an
 `IntLiteral`, and one outside the lanes traps. They compute the
 `__mlir_op` lane ops and the compiler `SIMD`'s `select`, `reduce_and`,
 `reduce_or`, and lane subscripts, so `index.get` no longer carries the
-`simd` intrinsic, which the verifier rejects, and a lane read or write is
-a whole-vector `place.load` or `place.store` around the instruction. The
+`simd` intrinsic, which the verifier rejects (and the reader, since,
+cannot spell), and a lane read or write is a whole-vector `place.load` or
+`place.store` around the instruction. The
 checked `SimdReceiverOp` adjustment records a method's op, and the package
 format moves to `mojito-package 118`.
 
@@ -1676,9 +1677,11 @@ schema types above. This table is exhaustive and freezes the variant mapping:
 | `GetIter` / `HasNext` / `Next` | `iter.init { source: $vN, dest: $vN }` / `iter.has_next` / `iter.next` over compiler-private iterator storage (schema 1.94 withdraws `iter.try_next`, and schema 1.109 `iter.init`'s `mode` and `prepare`; see *Compatibility*) |
 
 `UseMode` is `copy`, `move`, `borrow_shared`, `borrow_mut`, or `forward` (schema 1.51: a whole-slot move an owned parameter takes, which runs no move initializer). Intrinsic
-subscripts are `tuple_storage`, `variadic_storage`, `simd`, `pointer`, and
-`comptime_list`; the verifier rejects `simd` from schema 1.120, where a lane
-read is `simd.extract`. Result adapters currently contain only
+subscripts are `tuple_storage`, `variadic_storage`, `pointer`, and
+`comptime_list`. The reader no longer spells `simd`, which no writer has
+emitted since schema 1.120 and the verifier rejected from then on; a lane
+subscript is the declared `SIMD.__getitem__`/`__setitem__` call, and a
+place indexing a vector fails verification. Result adapters currently contain only
 `copy_iterator_reference`.
 
 For `Try`, `body`, `handler`, and `orelse` contain lists of local

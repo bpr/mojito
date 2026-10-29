@@ -859,6 +859,7 @@ assets/ok/rebind_place_projection.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/receiver_origin_iterator_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/receiver_unread_struct_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/recursive_argument_instances.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/ref_binding_owned_subscript_result.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_binding_projected_field_offset.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_binding_temporary_source.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/ref_param.mojo	-	ineligible	no-scalar-entry-shape
@@ -1316,6 +1317,7 @@ assets/ok/unused_parameter_instances.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/user_int_function_beside_library_conversion.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/user_iterator.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_argument_from_caller_parameter.mojo	-	ineligible	no-scalar-entry-shape
+assets/ok/value_getter_subscript_argument.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_aggregate_served.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_bracket_spread.mojo	-	ineligible	no-scalar-entry-shape
 assets/ok/value_pack_comptime_for_served.mojo	-	ineligible	no-scalar-entry-shape
